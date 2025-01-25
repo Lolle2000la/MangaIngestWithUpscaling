@@ -1,0 +1,1 @@
+# manga-ingest-with-upscaling
