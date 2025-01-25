@@ -12,6 +12,7 @@ namespace MangaIngestWithUpscaling.Data
         public DbSet<MangaAlternativeTitle> MangaAlternativeTitles { get; set; }
         public DbSet<Chapter> Chapters { get; set; }
         public DbSet<UpscalerConfig> UpscalerConfigs { get; set; }
+        public DbSet<UpscalingQueueEntry> UpscalingQueueEntries { get; set; }
 
     }
 }

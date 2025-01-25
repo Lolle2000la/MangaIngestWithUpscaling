@@ -11,7 +11,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace mangaingestwithupscaling.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20250125210228_AddUpscalingQueue")]
+    [Migration("20250125211206_AddUpscalingQueue")]
     partial class AddUpscalingQueue
     {
         /// <inheritdoc />
@@ -236,6 +236,30 @@ namespace mangaingestwithupscaling.Migrations
                     b.ToTable("UpscalerConfigs");
                 });
 
+            modelBuilder.Entity("MangaIngestWithUpscaling.Data.LibraryManagement.UpscalingQueueEntry", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ChapterId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("QueuedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("UpscalerConfigId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChapterId");
+
+                    b.HasIndex("UpscalerConfigId");
+
+                    b.ToTable("UpscalingQueueEntries");
+                });
+
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRole", b =>
                 {
                     b.Property<string>("Id")
@@ -412,6 +436,25 @@ namespace mangaingestwithupscaling.Migrations
                         .IsRequired();
 
                     b.Navigation("Manga");
+                });
+
+            modelBuilder.Entity("MangaIngestWithUpscaling.Data.LibraryManagement.UpscalingQueueEntry", b =>
+                {
+                    b.HasOne("MangaIngestWithUpscaling.Data.LibraryManagement.Chapter", "Chapter")
+                        .WithMany()
+                        .HasForeignKey("ChapterId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("MangaIngestWithUpscaling.Data.LibraryManagement.UpscalerConfig", "UpscalerConfig")
+                        .WithMany()
+                        .HasForeignKey("UpscalerConfigId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Chapter");
+
+                    b.Navigation("UpscalerConfig");
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRoleClaim<string>", b =>
