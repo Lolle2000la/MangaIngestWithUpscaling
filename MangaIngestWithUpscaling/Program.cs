@@ -1,6 +1,7 @@
 using MangaIngestWithUpscaling.Components;
 using MangaIngestWithUpscaling.Components.Account;
 using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Services;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -36,6 +37,9 @@ builder.Services.AddIdentityCore<ApplicationUser>(options => options.SignIn.Requ
     .AddDefaultTokenProviders();
 
 builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSender>();
+
+// Add the services used by the app
+builder.Services.RegisterAppServices();
 
 var app = builder.Build();
 
