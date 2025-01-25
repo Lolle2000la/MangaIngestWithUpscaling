@@ -13,6 +13,7 @@
         public string Pattern { get; set; }
         public LibraryFilterPatternType PatternType { get; set; }
         public LibraryFilterTargetField TargetField { get; set; }
+        public FilterAction Action { get; set; }
     }
 
     /// <summary>
@@ -21,7 +22,16 @@
     public enum LibraryFilterPatternType
     {
         Regex,
-        Glob
+        Containes,
+    }
+
+    /// <summary>
+    /// Whether the rule includes or excludes certain chapters.
+    /// </summary>
+    public enum FilterAction
+    {
+        Include,
+        Exclude
     }
 
     /// <summary>
