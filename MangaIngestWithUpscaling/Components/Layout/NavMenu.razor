@@ -13,24 +13,27 @@
     <MudNavLink Href="weather">
         <MudIcon Icon="bi bi-list-nested-nav-menu" /> Weather
     </MudNavLink>
+    <MudNavLink Href="TestChapterRecognition">
+        <MudIcon Icon="@Icons.Material.Filled.ImageSearch" />TestChapterRecognition
+    </MudNavLink>
     <MudNavLink Href="auth">
         <MudIcon Icon="bi bi-lock-nav-menu" /> Auth Required
     </MudNavLink>
     <AuthorizeView>
         <Authorized>
             <MudNavLink Href="Account/Manage">
-                <MudIcon Icon="bi bi-person-fill-nav-menu" /> @context.User.Identity?.Name
+                <MudIcon Icon="@Icons.Material.Filled.ManageAccounts" />@context.User.Identity?.Name
             </MudNavLink>
             <MudNavLink Href="Account/Logout" OnClick="Logout">
-                <MudIcon Icon="bi bi-arrow-bar-left-nav-menu" /> Logout
+                <MudIcon Icon="@Icons.Material.Filled.Logout" />Logout=
             </MudNavLink>
         </Authorized>
         <NotAuthorized>
             <MudNavLink Href="Account/Register">
-                <MudIcon Icon="bi bi-person-nav-menu" /> Register
+                <MudIcon Icon="bi bi-person-nav-menu" />Register=
             </MudNavLink>
             <MudNavLink Href="Account/Login">
-                <MudIcon Icon="bi bi-person-badge-nav-menu" /> Login
+                <MudIcon Icon="@Icons.Material.Filled.Login" />Login
             </MudNavLink>
         </NotAuthorized>
     </AuthorizeView>
