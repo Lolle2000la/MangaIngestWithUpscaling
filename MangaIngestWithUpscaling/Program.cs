@@ -2,17 +2,22 @@ using MangaIngestWithUpscaling.Components;
 using MangaIngestWithUpscaling.Components.Account;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Services;
+using MangaIngestWithUpscaling.Services.ChapterRecognition;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using MudBlazor.Services;
 using System;
+using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
+
+builder.Services.AddMudServices();
 
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddScoped<IdentityUserAccessor>();
