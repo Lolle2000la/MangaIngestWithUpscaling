@@ -1,10 +1,36 @@
 ﻿@page "/TestChapterRecognition"
 @using MangaIngestWithUpscaling.Components.FileSystem
+@using MangaIngestWithUpscaling.Services.ChapterRecognition
+
+@inject IChapterInIngestRecognitionService recognitionService
 
 <h3>TestChapterRecognition</h3>
 
-<FolderPicker />
+<FolderPicker OnPathSelected="OnPathSelected" />
+
+@if (folderPath != null)
+{
+    <MudTable T="FoundChapter" Items="@foundChapters">
+        <HeaderContent>
+            <MudTh>Series</MudTh>
+            <MudTh>Chapter</MudTh>
+            <MudTh>Filename</MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd>@context.Metadata.Series</MudTd>
+            <MudTd>@context.Metadata.ChapterTitle</MudTd>
+            <MudTd>@context.FileName</MudTd>
+        </RowTemplate>
+    </MudTable>
+}
 
 @code {
+    private string? folderPath;
+    private List<FoundChapter> foundChapters = new();
 
+    private void OnPathSelected(string path)
+    {
+        folderPath = path;
+        foundChapters = recognitionService.FindAllChaptersAt(path);
+    }
 }
