@@ -9,6 +9,7 @@
         public int Id { get; set; }
         public string PrimaryTitle { get; set; }
         public string Author { get; set; }
+        public bool? ShouldUpscale { get; set; } = null;
 
         public int LibraryId { get; set; }
         public Library Library { get; set; }
