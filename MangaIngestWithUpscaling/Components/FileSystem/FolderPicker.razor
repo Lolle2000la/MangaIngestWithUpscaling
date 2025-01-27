@@ -23,7 +23,7 @@
                 Go to Parent
             </MudButton>
             <MudSpacer />
-            <MudButton Variant="Variant.Text" Color="Color.Primary" Command="ViewModel.LoadDirectoryItemsCommand">
+            <MudButton Variant="Variant.Text" Color="Color.Primary" OnClick="async (e) => await ViewModel.LoadDirectoryItemsCommand.Execute()">
                 <MudIcon Icon="@Icons.Material.Filled.Refresh" /> Refresh
             </MudButton>
         </MudStack>
