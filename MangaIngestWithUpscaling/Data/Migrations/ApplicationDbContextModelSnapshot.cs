@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
 
-namespace mangaingestwithupscaling.Migrations
+namespace MangaIngestWithUpscaling.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
     partial class ApplicationDbContextModelSnapshot : ModelSnapshot
@@ -81,6 +81,40 @@ namespace mangaingestwithupscaling.Migrations
                     b.ToTable("AspNetUsers", (string)null);
                 });
 
+            modelBuilder.Entity("MangaIngestWithUpscaling.Data.BackqroundTaskQueue.PersistedTask", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Data")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTime?>("ProcessedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("RetryCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("ProcessedAt");
+
+                    b.HasIndex("Status");
+
+                    b.ToTable("PersistedTasks");
+                });
+
             modelBuilder.Entity("MangaIngestWithUpscaling.Data.LibraryManagement.Chapter", b =>
                 {
                     b.Property<int>("Id")
@@ -142,8 +176,9 @@ namespace mangaingestwithupscaling.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
-                    b.Property<int>("Action")
-                        .HasColumnType("INTEGER");
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<int>("LibraryId")
                         .HasColumnType("INTEGER");
@@ -152,11 +187,13 @@ namespace mangaingestwithupscaling.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
-                    b.Property<int>("PatternType")
-                        .HasColumnType("INTEGER");
+                    b.Property<string>("PatternType")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
-                    b.Property<int>("TargetField")
-                        .HasColumnType("INTEGER");
+                    b.Property<string>("TargetField")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
@@ -215,8 +252,9 @@ namespace mangaingestwithupscaling.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
-                    b.Property<int>("CompressionFormat")
-                        .HasColumnType("INTEGER");
+                    b.Property<string>("CompressionFormat")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("Name")
                         .IsRequired()
@@ -225,11 +263,13 @@ namespace mangaingestwithupscaling.Migrations
                     b.Property<int>("Quality")
                         .HasColumnType("INTEGER");
 
-                    b.Property<int>("ScalingFactor")
-                        .HasColumnType("INTEGER");
+                    b.Property<string>("ScalingFactor")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
-                    b.Property<int>("UpscalerMethod")
-                        .HasColumnType("INTEGER");
+                    b.Property<string>("UpscalerMethod")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 

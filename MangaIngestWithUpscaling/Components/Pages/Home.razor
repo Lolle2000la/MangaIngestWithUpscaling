@@ -1,7 +1,26 @@
 ﻿@page "/"
+@using MangaIngestWithUpscaling.Services.BackqroundTaskQueue
+@using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
+
+@inject ITaskQueue TaskQueue
 
 <PageTitle>Home</PageTitle>
 
 <h1>Hello, world!</h1>
 
 Welcome to your new app.
+
+<MudPaper Elevation="2">
+    <h3>Task Queue test</h3>
+    <MudInput @bind-Value="message" Label="Message" />
+    <MudButton OnClick="TestTaskQueue" Variant="Variant.Filled">Enqueue logging Task</MudButton>
+</MudPaper>
+
+@code{
+    private string message = "Hello, world!";
+
+    private async Task TestTaskQueue()
+    {
+        await TaskQueue.EnqueueAsync(new LoggingTask { Message = message });
+    }
+}

@@ -1,4 +1,5 @@
-﻿using MangaIngestWithUpscaling.Services.ChapterRecognition;
+﻿using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
+using MangaIngestWithUpscaling.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Services.LibraryFiltering;
 using MangaIngestWithUpscaling.Services.MetadataExtraction;
 
@@ -11,6 +12,12 @@ namespace MangaIngestWithUpscaling.Services
             services.AddScoped<IChapterInIngestRecognitionService, ChapterInIngestRecognitionService>();
             services.AddScoped<IMetadataExtractionService, MetadataExtractionService>();
             services.AddScoped<ILibraryFilteringService, LibraryFilteringService>();
+
+            services.AddSingleton<TaskQueue>();
+            services.AddSingleton<ITaskQueue>(sp => sp.GetRequiredService<TaskQueue>());
+            services.AddHostedService(sp => sp.GetRequiredService<TaskQueue>());
+            services.AddHostedService<StandardTaskProcessor>();
+            services.AddHostedService<UpscaleTaskProcessor>();
         }
     }
 }

@@ -9,7 +9,7 @@ namespace MangaIngestWithUpscaling.Data.LibraryManagement
     {
         public int Id { get; set; }
         public required string Name { get; set; }             // An identifier for this specific config
-        public UpscalerMethod UpscalerMethod { get; set; } = UpscalerMethod.MangaJanai;   // e.g. "mangajanai"
+        public UpscalerMethod UpscalerMethod { get; set; } = UpscalerMethod.MangaJaNai;   // e.g. "mangajanai"
         public required ScaleFactor ScalingFactor { get; set; }    // e.g. "1x", "2x"
         public required CompressionFormat CompressionFormat { get; set; } // e.g. "avid", "png", "webp"
         [Range(0, 100)]
@@ -18,7 +18,7 @@ namespace MangaIngestWithUpscaling.Data.LibraryManagement
 
     public enum UpscalerMethod
     {
-        MangaJanai
+        MangaJaNai
     }
 
     /// <summary>
@@ -26,9 +26,13 @@ namespace MangaIngestWithUpscaling.Data.LibraryManagement
     /// </summary>
     public enum ScaleFactor
     {
+        [Display(Name = "1x")]
         OneX,
+        [Display(Name = "2x")]
         TwoX,
+        [Display(Name = "3x")]
         ThreeX,
+        [Display(Name = "4x")]
         FourX
     }
 
@@ -37,9 +41,13 @@ namespace MangaIngestWithUpscaling.Data.LibraryManagement
     /// </summary>
     public enum CompressionFormat
     {
+        [Display(Name = "AVIF")]
         Avif,
+        [Display(Name = "PNG")]
         Png,
+        [Display(Name = "WebP")]
         Webp,
+        [Display(Name = "JPEG")]
         Jpg
     }
 }
