@@ -16,8 +16,10 @@ namespace MangaIngestWithUpscaling.Services
             services.AddSingleton<TaskQueue>();
             services.AddSingleton<ITaskQueue>(sp => sp.GetRequiredService<TaskQueue>());
             services.AddHostedService(sp => sp.GetRequiredService<TaskQueue>());
-            services.AddHostedService<StandardTaskProcessor>();
-            services.AddHostedService<UpscaleTaskProcessor>();
+            services.AddSingleton<StandardTaskProcessor>();
+            services.AddHostedService(sp => sp.GetRequiredService<StandardTaskProcessor>());
+            services.AddSingleton<UpscaleTaskProcessor>();
+            services.AddHostedService(sp => sp.GetRequiredService<UpscaleTaskProcessor>());
         }
     }
 }

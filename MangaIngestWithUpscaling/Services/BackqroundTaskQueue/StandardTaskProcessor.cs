@@ -11,6 +11,9 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly ILogger<StandardTaskProcessor> _logger;
 
+        private Lock _lock = new Lock();
+        private CancellationTokenSource currentStoppingToken;
+
         public StandardTaskProcessor(
             TaskQueue taskQueue,
             IServiceScopeFactory scopeFactory,
@@ -21,12 +24,24 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue
             _logger = logger;
         }
 
+        public void CancelCurrent()
+        {
+            using (_lock.EnterScope())
+            {
+                currentStoppingToken?.Cancel();
+            }
+        }
+
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             while (!stoppingToken.IsCancellationRequested)
             {
                 var task = await _reader.ReadAsync(stoppingToken);
-                await ProcessTaskAsync(task, stoppingToken);
+                using (_lock.EnterScope())
+                {
+                    currentStoppingToken = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                }
+                await ProcessTaskAsync(task, currentStoppingToken.Token);
             }
         }
 
