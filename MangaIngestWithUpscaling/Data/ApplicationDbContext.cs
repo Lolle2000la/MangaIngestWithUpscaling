@@ -62,7 +62,6 @@ namespace MangaIngestWithUpscaling.Data
 
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
-            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
             WriteIndented = false,
             AllowTrailingCommas = true
         };
