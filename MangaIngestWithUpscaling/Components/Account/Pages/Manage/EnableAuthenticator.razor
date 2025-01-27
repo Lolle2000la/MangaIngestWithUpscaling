@@ -6,6 +6,7 @@
 @using System.Text.Encodings.Web
 @using Microsoft.AspNetCore.Identity
 @using MangaIngestWithUpscaling.Data
+@using PinguApps.Blazor.QRCode
 
 @inject UserManager<ApplicationUser> UserManager
 @inject IdentityUserAccessor UserAccessor
@@ -38,9 +39,9 @@ else
             </li>
             <li>
                 <p>Scan the QR Code or enter this key <kbd>@sharedKey</kbd> into your two factor authenticator app. Spaces and casing do not matter.</p>
-                <div class="alert alert-info">Learn how to <a href="https://go.microsoft.com/fwlink/?Linkid=852423">enable QR code generation</a>.</div>
-                <div></div>
-                <div data-url="@authenticatorUri"></div>
+                <div data-url="@authenticatorUri">
+                    <QRCode Data="@authenticatorUri" Size="250px" ErrorCorrection="ErrorCorrection.High" Class="mb-3" />
+                </div>
             </li>
             <li>
                 <p>
