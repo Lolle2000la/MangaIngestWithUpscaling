@@ -42,6 +42,15 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue
 
             var channel = taskData is UpscaleTask ? _upscaleChannel : _standardChannel;
             await channel.Writer.WriteAsync(taskItem);
+
+            // cleanup old tasks
+            var oldTasks = await dbContext.PersistedTasks
+                .Where(t => t.Status != PersistedTaskStatus.Completed)
+                .OrderByDescending(t => t.CreatedAt)
+                .Skip(100)
+                .ToListAsync();
+
+            dbContext.PersistedTasks.RemoveRange(oldTasks);
         }
 
         public async Task StartAsync(CancellationToken cancellationToken)
@@ -52,6 +61,8 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue
             var pendingTasks = await dbContext.PersistedTasks
                 .Where(t => t.Status == PersistedTaskStatus.Pending)
                 .ToListAsync();
+
+            _logger.LogInformation("Enqueuing {TaskCount} pending tasks from last run.", pendingTasks.Count);
 
             foreach (var task in pendingTasks)
             {
