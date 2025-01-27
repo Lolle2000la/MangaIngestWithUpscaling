@@ -59,8 +59,18 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue
             var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
             var pendingTasks = await dbContext.PersistedTasks
-                .Where(t => t.Status == PersistedTaskStatus.Pending)
+                .Where(t => t.Status == PersistedTaskStatus.Pending || t.Status == PersistedTaskStatus.Processing)
                 .ToListAsync();
+
+            // make processing tasks pending again
+            foreach (var task in pendingTasks)
+            {
+                if (task.Status == PersistedTaskStatus.Processing)
+                {
+                    task.Status = PersistedTaskStatus.Pending;
+                    dbContext.Update(task);
+                }
+            }
 
             _logger.LogInformation("Enqueuing {TaskCount} pending tasks from last run.", pendingTasks.Count);
 
