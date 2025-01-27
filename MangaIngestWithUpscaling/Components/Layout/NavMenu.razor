@@ -5,35 +5,35 @@
 
 <MudNavMenu>
     <MudNavLink Href="" Match="NavLinkMatch.All">
-        <MudIcon Icon="bi bi-house-door-fill-nav-menu" /> Home
+        <MudIcon Icon="bi bi-house-door-fill-nav-menu" /> <span>Home</span>
     </MudNavLink>
     <MudNavLink Href="counter">
-        <MudIcon Icon="bi bi-plus-square-fill-nav-menu" /> Counter
+        <MudIcon Icon="bi bi-plus-square-fill-nav-menu" /> <span>Counter</span>
     </MudNavLink>
     <MudNavLink Href="weather">
-        <MudIcon Icon="bi bi-list-nested-nav-menu" /> Weather
+        <MudIcon Icon="bi bi-list-nested-nav-menu" /> <span>Weather</span>
     </MudNavLink>
     <MudNavLink Href="TestChapterRecognition">
-        <MudIcon Icon="@Icons.Material.Filled.ImageSearch" />TestChapterRecognition
+        <MudIcon Icon="@Icons.Material.Filled.ImageSearch" /><span>TestChapterRecognition</span>
     </MudNavLink>
     <MudNavLink Href="auth">
-        <MudIcon Icon="bi bi-lock-nav-menu" /> Auth Required
+        <MudIcon Icon="bi bi-lock-nav-menu" /> <span>Auth Required</span>
     </MudNavLink>
     <AuthorizeView>
         <Authorized>
             <MudNavLink Href="Account/Manage">
-                <MudIcon Icon="@Icons.Material.Filled.ManageAccounts" />@context.User.Identity?.Name
+                <MudIcon Icon="@Icons.Material.Filled.ManageAccounts" /><span>@context.User.Identity?.Name</span>
             </MudNavLink>
             <MudNavLink Href="Account/Logout" OnClick="Logout">
-                <MudIcon Icon="@Icons.Material.Filled.Logout" />Logout=
+                <MudIcon Icon="@Icons.Material.Filled.Logout" /><span>Logout</span>
             </MudNavLink>
         </Authorized>
         <NotAuthorized>
             <MudNavLink Href="Account/Register">
-                <MudIcon Icon="bi bi-person-nav-menu" />Register=
+                <MudIcon Icon="bi bi-person-nav-menu" /><span>Register</span>
             </MudNavLink>
             <MudNavLink Href="Account/Login">
-                <MudIcon Icon="@Icons.Material.Filled.Login" />Login
+                <MudIcon Icon="@Icons.Material.Filled.Login" /><span>Login</span>
             </MudNavLink>
         </NotAuthorized>
     </AuthorizeView>
