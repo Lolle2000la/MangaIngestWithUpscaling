@@ -1,202 +1,84 @@
-﻿@using System.IO
+﻿@inherits ReactiveComponentBase<FolderPickerViewModel>
+@using System.IO
 @using MudBlazor
 
+@inject FolderPickerViewModel viewModel
+
 <MudPaper Class="pa-4" Elevation="5">
-    <MudText Typo="Typo.h6" Class="mb-4">@Title</MudText>
+    <MudText Typo="Typo.h6" Class="mb-4">@ViewModel.Title</MudText>
 
     <MudStack Row="true" AlignItems="AlignItems.Baseline">
         <MudText Typo="Typo.subtitle2" Class="mb-2">Current Path: </MudText>
-        <MudInputString @bind-Value="RootDirectory" Class="mb-2 flex-grow-1" FullWidth="true" OnInternalInputChanged="@(e => SetRootDirectory(e.Value.ToString()))" />
+        <MudInputString @bind-Value="ViewModel.RootDirectory" Class="mb-2 flex-grow-1" FullWidth="true" />
     </MudStack>
 
-
-    @if (errorMessage != null)
+    @if (ViewModel.ErrorMessage != null)
     {
-        <MudAlert Severity="Severity.Error">@errorMessage</MudAlert>
+        <MudAlert Severity="Severity.Error">@ViewModel.ErrorMessage</MudAlert>
     }
 
     <MudPaper Elevation="2">
         <MudStack Row="true" AlignItems="AlignItems.Center">
-            <MudButton Variant="Variant.Outlined" OnClick="GoToParent" Disabled="@canGoToParent">
-                Got to Parent
+            <MudButton Variant="Variant.Outlined" OnClick="async (e) => await ViewModel.GoToParentCommand.Execute()" Disabled="@(!ViewModel.CanGoToParent)">
+                Go to Parent
             </MudButton>
             <MudSpacer />
-            <MudButton Variant="Variant.Text" Color="Color.Primary" Disabled="@loading" OnClick="async () => await LoadDirectoryItems(RootDirectory)">
+            <MudButton Variant="Variant.Text" Color="Color.Primary" Command="ViewModel.LoadDirectoryItemsCommand">
                 <MudIcon Icon="@Icons.Material.Filled.Refresh" /> Refresh
             </MudButton>
         </MudStack>
     </MudPaper>
 
-    <MudTreeView T="DirectoryItem" ServerData="@OnExpand" Items="@treeItems" Activatable="true" Hover="true" Loading="@loading"
-                 MaxHeight="20rem">
+    <MudTreeView T="DirectoryItem" ServerData="@ViewModel.HandleExpand" Items="@ViewModel.TreeItems" Activatable="true"
+                 Hover="true" Loading="@ViewModel.Loading" MaxHeight="20rem"
+                 SelectionMode="SelectionMode.SingleSelection"
+                 SelectedValueChanged="v => ViewModel.SelectedPath = v.Path">
         <ItemTemplate>
             <MudTreeViewItem T="DirectoryItem" @key="context.Value.Path" Value="@context.Value" Text="@context.Value?.Name"
                              Icon="@Icons.Material.Filled.FolderOpen"
-                             ItemsChanged="@(new Action<IReadOnlyCollection<TreeItemData<DirectoryItem>>>(items => OnItemsLoaded(context, items)))"
+                             ItemsChanged="@(new Action<IReadOnlyCollection<TreeItemData<DirectoryItem>>>(items => ViewModel.HandleItemsLoaded(context, items)))"
                              CanExpand="@context.Expandable"
                              @bind-Expanded="@context.Expanded"
                              Items="@context.Children"
-                             OnClick="@(() => { context.Selected = true; OnSelect(context.Value);})"
-                             OnDoubleClick="@(() => SetRootDirectory(context.Value.Path))" />
+                             OnDoubleClick="@(() => ViewModel.RootDirectory = context.Value.Path)" />
         </ItemTemplate>
     </MudTreeView>
-    <MudText Typo="Typo.subtitle2" Class="mb-2">Selected Folder: @selectedPath</MudText>
+    <MudText Typo="Typo.subtitle2" Class="mb-2">Selected Folder: @ViewModel.SelectedPath</MudText>
 </MudPaper>
 
 @code {
-    [Parameter] public string RootDirectory { get; set; } = Directory.GetCurrentDirectory();
-    [Parameter] public EventCallback<string> OnPathSelected { get; set; }
-    [Parameter] public string? Title { get; set; } = "Select Folder";
-
-    private List<TreeItemData<DirectoryItem>> GetTreeItemDatas(List<DirectoryItem> items)
+    [Parameter]
+    public string RootDirectory
     {
-        if (items.Count == 0) return null;
-
-        return items.Select(d => new TreeItemData<DirectoryItem>
-            {
-                Value = d,
-                Children = GetTreeItemDatas(d.Children),
-                Expandable = d.HasChildren,
-                Selected = d.Path == selectedPath,
-                Text = d.Name
-            }).ToList();
+        get => ViewModel.RootDirectory;
+        set => ViewModel.RootDirectory = value;
     }
 
-    private List<DirectoryItem> directoryItems = new();
-    private List<DirectoryItem> DirectoryItems
+    private void NotifySelectionChanged(string path)
     {
-        get => directoryItems;
-        set
-        {
-            directoryItems = value;
-            treeItems = GetTreeItemDatas(value);
-        }
-    }
-    private List<TreeItemData<DirectoryItem>> treeItems = new();
-    private string? errorMessage;
-    private bool loading;
-    private string? selectedPath;
-    private bool canGoToParent;
-
-    public string? SelectedPath
-    {
-        get => selectedPath;
-        private set
-        {
-            selectedPath = value;
-            OnPathSelected.InvokeAsync(value);
-        }
+        Console.WriteLine($"Selected path: {path}");
     }
 
-    protected override async Task OnInitializedAsync()
+    [Parameter]
+    public EventCallback<string> OnPathSelected { get; set; }
+
+    [Parameter]
+    public string Title
     {
-        await LoadDirectoryItems(RootDirectory);
+        get => ViewModel.Title;
+        set => ViewModel.Title = value;
     }
 
-    private async Task LoadDirectoryItems(string path)
+    protected override void OnInitialized()
     {
-        try
+        ViewModel = viewModel;
+        this.WhenActivated(disposables =>
         {
-            loading = true;
-            errorMessage = null;
-            var directories = await Task.Run(() => Directory.GetDirectories(path));
-
-            DirectoryItems = directories.Select(d => new DirectoryItem
-                {
-                    Path = d,
-                    Name = Path.GetFileName(d),
-                    HasChildren = DirectoryHasSubdirectories(d)
-                }).ToList();
-
-            canGoToParent = Directory.GetParent(path) == null;
-        }
-        catch (Exception ex)
-        {
-            errorMessage = $"Error accessing directory: {ex.Message}";
-        }
-        finally
-        {
-            loading = false;
-            StateHasChanged();
-        }
-    }
-
-    public async Task SetRootDirectory(string path)
-    {
-        RootDirectory = path;
-        await LoadDirectoryItems(path);
-    }
-
-    public async Task GoToParent()
-    {
-        var parent = Directory.GetParent(RootDirectory)?.FullName;
-        if (parent != null)
-        {
-            await SetRootDirectory(parent);
-        }
-    }
-
-    private bool DirectoryHasSubdirectories(string path)
-    {
-        try
-        {
-            return Directory.GetDirectories(path).Any();
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private async Task<IReadOnlyCollection<TreeItemData<DirectoryItem>>> OnExpand(DirectoryItem item)
-    {
-        try
-        {
-            item.ChildrenLoading = true;
-            var subDirs = await Task.Run(() => Directory.GetDirectories(item.Path));
-
-            item.Children = subDirs.Select(d => new DirectoryItem
-                {
-                    Path = d,
-                    Name = Path.GetFileName(d),
-                    HasChildren = DirectoryHasSubdirectories(d)
-                }).ToList();
-
-            item.IsExpanded = true;
-
-            return GetTreeItemDatas(item.Children); ;
-        }
-        catch (Exception ex)
-        {
-            errorMessage = $"Error loading directory: {ex.Message}";
-        }
-        finally
-        {
-            item.ChildrenLoading = false;
-            StateHasChanged();
-        }
-        return [];
-    }
-
-    private void OnSelect(DirectoryItem item)
-    {
-        SelectedPath = item.Path;
-    }
-
-    private void OnItemsLoaded(TreeItemData<DirectoryItem> treeItemData, IReadOnlyCollection<TreeItemData<DirectoryItem>> children)
-    {
-        // here we store the server-loaded children in the treeItemData so that they are available in the InitialTreeItems
-        // if you don't do this you loose already loaded children on next render update
-        treeItemData.Children = children?.ToList();
-    }
-
-    private class DirectoryItem
-    {
-        public string? Path { get; set; }
-        public string? Name { get; set; }
-        public bool HasChildren { get; set; }
-        public bool IsExpanded { get; set; }
-        public bool ChildrenLoading { get; set; }
-        public List<DirectoryItem> Children { get; set; } = new();
+            Console.WriteLine("FolderPicker Activated");
+            ViewModel.WhenPathSelected
+                .Subscribe(path => OnPathSelected.InvokeAsync(path))
+                .DisposeWith(disposables);
+        });
+        base.OnInitialized();
     }
 }
