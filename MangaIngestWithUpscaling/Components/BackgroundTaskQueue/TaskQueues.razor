@@ -16,7 +16,7 @@
 
 <h3>Running tasks</h3>
 
-<MudGrid >
+<MudGrid>
     <MudItem lg="6" xs="12">
         <TaskTable Tasks="@standardTasks" />
     </MudItem>
@@ -26,39 +26,60 @@
 </MudGrid>
 
 @code {
-    private IReadOnlyCollection<PersistedTask> standardTasks { get; set; }
-    private IReadOnlyCollection<PersistedTask> upscaleTasks { get; set; }
+    private List<PersistedTask> standardTasks { get; set; }
+    private List<PersistedTask> upscaleTasks { get; set; }
 
     protected override async Task OnInitializedAsync()
     {
-        await UpdateTasks();
+        var allTasks = await DbContext.PersistedTasks.ToListAsync();
+        standardTasks = allTasks.Where(x => x.Data is not UpscaleTask).ToList();
+        upscaleTasks = allTasks.Where(x => x.Data is UpscaleTask).ToList();
 
         TaskQueue.TaskEnqueued += OnTaskUpdate;
-        StandardTaskProcessor.StatusChanged += OnTaskUpdate;
-        UpscaleTaskProcessor.StatusChanged += OnTaskUpdate;
+        StandardTaskProcessor.StatusChanged += OnStandardTaskChanged;
+        UpscaleTaskProcessor.StatusChanged += OnUpscaleTaskChanged;
     }
 
     public void Dispose()
     {
         TaskQueue.TaskEnqueued -= OnTaskUpdate;
-        StandardTaskProcessor.StatusChanged -= OnTaskUpdate;
-        UpscaleTaskProcessor.StatusChanged -= OnTaskUpdate;
+        StandardTaskProcessor.StatusChanged -= OnStandardTaskChanged;
+        UpscaleTaskProcessor.StatusChanged -= OnUpscaleTaskChanged;
     }
 
     private async Task OnTaskUpdate(PersistedTask task)
     {
-        await InvokeAsync(() => UpdateTasks());
+        await InvokeAsync(() =>
+        {
+            if (task.Data is UpscaleTask)
+            {
+                upscaleTasks.Add(task);
+            }
+            else
+            {
+                standardTasks.Add(task);
+            }
+            StateHasChanged();
+        });
     }
 
-    private async Task UpdateTasks()
+    private async Task OnStandardTaskChanged(PersistedTask task)
     {
-        Logger.LogInformation("Updating tasks in Tasks-overview");
+        await InvokeAsync(() =>
+        {
+            standardTasks[standardTasks.FindIndex(t => t.Id == task.Id)] = task;
 
-        var allTasks = await DbContext.PersistedTasks.ToListAsync();
+            StateHasChanged();
+        });
+    }
 
-        standardTasks = allTasks.Where(x => x.Data is not UpscaleTask).ToList();
-        upscaleTasks = allTasks.Where(x => x.Data is UpscaleTask).ToList();
+    private async Task OnUpscaleTaskChanged(PersistedTask task)
+    {
+        await InvokeAsync(() =>
+        {
+            upscaleTasks[upscaleTasks.FindIndex(t => t.Id == task.Id)] = task;
 
-        StateHasChanged();
+            StateHasChanged();
+        });
     }
 }

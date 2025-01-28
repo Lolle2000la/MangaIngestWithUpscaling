@@ -4,10 +4,11 @@
           @ref="Table">
     <HeaderContent>
         <MudTh><MudTableSortLabel InitialDirection="SortDirection.Descending" SortBy="new Func<PersistedTask, object>(x=>x.Id)">Id</MudTableSortLabel></MudTh>
-        <MudTh><MudTableSortLabel InitialDirection="SortDirection.Descending" SortBy="new Func<PersistedTask, object>(x=>x.Data.TaskFriendlyName)">Name</MudTableSortLabel></MudTh>
-        <MudTh><MudTableSortLabel InitialDirection="SortDirection.Descending" SortBy="new Func<PersistedTask, object>(x=>x.CreatedAt)">Queued At</MudTableSortLabel></MudTh>
-        <MudTh><MudTableSortLabel InitialDirection="SortDirection.Descending" SortBy="new Func<PersistedTask, object>(x=>x.ProcessedAt)">Finished At</MudTableSortLabel></MudTh>
-        <MudTh><MudTableSortLabel InitialDirection="SortDirection.Descending" SortBy="new Func<PersistedTask, object>(x=>x.Status)">Status</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel SortBy="new Func<PersistedTask, object>(x=>x.Data.TaskFriendlyName)">Name</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel SortBy="new Func<PersistedTask, object>(x=>x.CreatedAt)">Queued At</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel SortBy="new Func<PersistedTask, object>(x=>x.ProcessedAt)">Finished At</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel SortBy="new Func<PersistedTask, object>(x=>x.Status)">Status</MudTableSortLabel></MudTh>
+
     </HeaderContent>
     <RowTemplate>
         <MudTd>@context.Id</MudTd>
@@ -22,4 +23,9 @@
     [Parameter] public IReadOnlyCollection<PersistedTask> Tasks { get; set; }
 
     private MudTable<PersistedTask> Table { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        Tasks = new List<PersistedTask>(Tasks);
+    }
 }
