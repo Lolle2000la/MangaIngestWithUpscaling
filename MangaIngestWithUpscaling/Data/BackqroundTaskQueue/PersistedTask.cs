@@ -1,5 +1,6 @@
 ﻿using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using Microsoft.EntityFrameworkCore;
+using System.ComponentModel;
 
 namespace MangaIngestWithUpscaling.Data.BackqroundTaskQueue
 {
@@ -11,5 +12,23 @@ namespace MangaIngestWithUpscaling.Data.BackqroundTaskQueue
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public int RetryCount { get; set; }
         public DateTime? ProcessedAt { get; set; }
+
+        // override object.Equals
+        public override bool Equals(object? obj)
+        {
+            if (obj is not null and PersistedTask task)
+            {
+                return GetHashCode() == task.GetHashCode();
+            }
+
+
+            return false;
+        }
+
+        // override object.GetHashCode
+        public override int GetHashCode()
+        {
+            return HashCode.Combine(Id, Status, CreatedAt, ProcessedAt, RetryCount);
+        }
     }
 }

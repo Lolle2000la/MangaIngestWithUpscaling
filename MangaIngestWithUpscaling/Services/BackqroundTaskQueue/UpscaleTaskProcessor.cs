@@ -15,7 +15,7 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue
         private CancellationTokenSource? currentStoppingToken;
         private PersistedTask? currentTask;
 
-        public event EventHandler<PersistedTask>? StatusChange;
+        public event Func<PersistedTask, Task>? StatusChanged;
 
         public UpscaleTaskProcessor(
             TaskQueue taskQueue,
@@ -68,16 +68,16 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue
                 task.Status = PersistedTaskStatus.Processing;
                 dbContext.Update(task);
                 await dbContext.SaveChangesAsync();
-                StatusChange?.Invoke(this, task);
+                StatusChanged?.Invoke(task);
 
                 await task.Data.ProcessAsync(scope.ServiceProvider, stoppingToken);
-                StatusChange?.Invoke(this, task);
+                StatusChanged?.Invoke(task);
 
                 task.Status = PersistedTaskStatus.Completed;
                 task.ProcessedAt = DateTime.UtcNow;
                 dbContext.Update(task);
                 await dbContext.SaveChangesAsync();
-                StatusChange?.Invoke(this, task);
+                StatusChanged?.Invoke(task);
             }
             catch (Exception ex)
             {

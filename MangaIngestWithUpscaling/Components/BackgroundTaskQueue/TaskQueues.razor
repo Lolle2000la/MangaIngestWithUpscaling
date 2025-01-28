@@ -3,6 +3,7 @@
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
 @using Microsoft.EntityFrameworkCore
 
+@implements IDisposable
 
 @inject ApplicationDbContext DbContext
 @inject ILogger<TaskQueues> Logger
@@ -15,7 +16,7 @@
 
 <h3>Running tasks</h3>
 
-<MudGrid>
+<MudGrid >
     <MudItem lg="6" xs="12">
         <TaskTable Tasks="@standardTasks" />
     </MudItem>
@@ -25,12 +26,23 @@
 </MudGrid>
 
 @code {
-    private IReadOnlyCollection<PersistedTask> standardTasks;
-    private IReadOnlyCollection<PersistedTask> upscaleTasks;
+    private IReadOnlyCollection<PersistedTask> standardTasks { get; set; }
+    private IReadOnlyCollection<PersistedTask> upscaleTasks { get; set; }
 
     protected override async Task OnInitializedAsync()
     {
         await UpdateTasks();
+
+        TaskQueue.TaskEnqueued += OnTaskUpdate;
+        StandardTaskProcessor.StatusChanged += OnTaskUpdate;
+        UpscaleTaskProcessor.StatusChanged += OnTaskUpdate;
+    }
+
+    public void Dispose()
+    {
+        TaskQueue.TaskEnqueued -= OnTaskUpdate;
+        StandardTaskProcessor.StatusChanged -= OnTaskUpdate;
+        UpscaleTaskProcessor.StatusChanged -= OnTaskUpdate;
     }
 
     private async Task OnTaskUpdate(PersistedTask task)
@@ -46,5 +58,7 @@
 
         standardTasks = allTasks.Where(x => x.Data is not UpscaleTask).ToList();
         upscaleTasks = allTasks.Where(x => x.Data is UpscaleTask).ToList();
+
+        StateHasChanged();
     }
 }

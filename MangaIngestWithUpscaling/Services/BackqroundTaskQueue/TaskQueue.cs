@@ -22,7 +22,7 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue
         public ChannelReader<PersistedTask> StandardReader => _standardChannel.Reader;
         public ChannelReader<PersistedTask> UpscaleReader => _upscaleChannel.Reader;
 
-        public event EventHandler<PersistedTask>? TaskEnqueued;
+        public event Func<PersistedTask, Task>? TaskEnqueued;
 
         public TaskQueue(IServiceScopeFactory scopeFactory, ILogger<TaskQueue> logger)
         {
@@ -45,7 +45,7 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue
             var channel = taskData is UpscaleTask ? _upscaleChannel : _standardChannel;
             await channel.Writer.WriteAsync(taskItem);
 
-            TaskEnqueued?.Invoke(this, taskItem);
+            TaskEnqueued?.Invoke(taskItem);
 
             // cleanup old tasks
             var oldTasks = await dbContext.PersistedTasks
