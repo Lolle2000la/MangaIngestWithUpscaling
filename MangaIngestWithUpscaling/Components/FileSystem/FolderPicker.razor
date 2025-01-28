@@ -1,11 +1,20 @@
-﻿@inherits ReactiveComponentBase<FolderPickerViewModel>
+﻿@inherits ReactiveInjectableComponentBase<FolderPickerViewModel>
 @using System.IO
 @using MudBlazor
 
 @inject FolderPickerViewModel viewModel
 
 <MudPaper Class="pa-4" Elevation="5">
-    <MudText Typo="Typo.h6" Class="mb-4">@ViewModel.Title</MudText>
+    <MudStack Row="true">
+        <MudText Typo="Typo.h6" Class="mb-4">
+            @ViewModel.Title
+
+            @if (Required)
+            {
+                <MudText Typo="Typo.inherit" Class="ml-1" Color="Color.Error">*</MudText>
+            }
+        </MudText>
+    </MudStack>
 
     <MudStack Row="true" AlignItems="AlignItems.Baseline">
         <MudText Typo="Typo.subtitle2" Class="mb-2">Current Path: </MudText>
@@ -43,10 +52,18 @@
                              OnDoubleClick="@(() => ViewModel.RootDirectory = context.Value.Path)" />
         </ItemTemplate>
     </MudTreeView>
-    <MudText Typo="Typo.subtitle2" Class="mb-2">Selected Folder: @ViewModel.SelectedPath</MudText>
+    <MudStack Row="true" AlignItems="AlignItems.Center">
+
+        <MudText Typo="Typo.subtitle2" Class="mb-2">Selected Folder:</MudText>
+        <MudInputString Required="@Required" Value="@ViewModel.SelectedPath"
+                        Class="flex-grow-1" ReadOnly="true" />
+    </MudStack>
 </MudPaper>
 
 @code {
+    [Parameter]
+    public bool Required { get; set; } = false;
+
     [Parameter]
     public string RootDirectory
     {
@@ -54,13 +71,21 @@
         set => ViewModel.RootDirectory = value;
     }
 
-    private void NotifySelectionChanged(string path)
+    [Parameter]
+    public string SelectedPath
     {
-        Console.WriteLine($"Selected path: {path}");
+        get => ViewModel?.SelectedPath ?? "";
+        set
+        {
+            if (ViewModel != null)
+            {
+                ViewModel.SelectedPath = value;
+            }
+        }
     }
 
     [Parameter]
-    public EventCallback<string> OnPathSelected { get; set; }
+    public EventCallback<string> SelectedPathChanged { get; set; }
 
     [Parameter]
     public string Title
@@ -71,12 +96,11 @@
 
     protected override void OnInitialized()
     {
-        ViewModel = viewModel;
         this.WhenActivated(disposables =>
         {
             Console.WriteLine("FolderPicker Activated");
             ViewModel.WhenPathSelected
-                .Subscribe(path => OnPathSelected.InvokeAsync(path))
+                .Subscribe(path => SelectedPathChanged.InvokeAsync(path))
                 .DisposeWith(disposables);
         });
         base.OnInitialized();
