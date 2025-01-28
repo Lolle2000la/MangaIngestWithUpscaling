@@ -1,0 +1,23 @@
+﻿@using MangaIngestWithUpscaling.Data.BackqroundTaskQueue
+
+<MudTable T="PersistedTask" Items="Tasks">
+    <HeaderContent>
+        <MudTh><MudTableSortLabel InitialDirection="SortDirection.Descending" SortBy="new Func<PersistedTask, object>(x=>x.Id)">Id</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel InitialDirection="SortDirection.Descending" SortBy="new Func<PersistedTask, object>(x=>x.Data.TaskFriendlyName)">Name</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel InitialDirection="SortDirection.Descending" SortBy="new Func<PersistedTask, object>(x=>x.CreatedAt)">Queued At</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel InitialDirection="SortDirection.Descending" SortBy="new Func<PersistedTask, object>(x=>x.ProcessedAt)">Finished At</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel InitialDirection="SortDirection.Descending" SortBy="new Func<PersistedTask, object>(x=>x.Status)">Status</MudTableSortLabel></MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd>@context.Id</MudTd>
+        <MudTd>@context.Data.TaskFriendlyName</MudTd>
+        <MudTd>@context.CreatedAt</MudTd>
+        <MudTd>@context.ProcessedAt</MudTd>
+        <MudTd>@context.Status</MudTd>
+    </RowTemplate>
+</MudTable>
+
+@code {
+    [Parameter] public IReadOnlyCollection<PersistedTask> Tasks { get; set; }
+
+}

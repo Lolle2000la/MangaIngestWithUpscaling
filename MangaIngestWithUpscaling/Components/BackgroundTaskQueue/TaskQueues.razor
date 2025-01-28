@@ -1,14 +1,50 @@
-﻿@inherits ReactiveInjectableComponentBase<TaskQueuesViewModel>
+﻿@using MangaIngestWithUpscaling.Data.BackqroundTaskQueue
+@using MangaIngestWithUpscaling.Services.BackqroundTaskQueue
+@using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
+@using Microsoft.EntityFrameworkCore
+
+
+@inject ApplicationDbContext DbContext
+@inject ILogger<TaskQueues> Logger
+
+@inject TaskQueue TaskQueue
+@inject StandardTaskProcessor StandardTaskProcessor
+@inject UpscaleTaskProcessor UpscaleTaskProcessor
 
 @page "/tasks"
 
-<h3>Index</h3>
+<h3>Running tasks</h3>
+
+<MudGrid>
+    <MudItem lg="6" xs="12">
+        <TaskTable Tasks="@standardTasks" />
+    </MudItem>
+    <MudItem lg="6" xs="12">
+        <TaskTable Tasks="@upscaleTasks" />
+    </MudItem>
+</MudGrid>
 
 @code {
-    protected override void OnInitialized()
+    private IReadOnlyCollection<PersistedTask> standardTasks;
+    private IReadOnlyCollection<PersistedTask> upscaleTasks;
+
+    protected override async Task OnInitializedAsync()
     {
-        this.WhenActivated(disposables =>
-        {
-        });
+        await UpdateTasks();
+    }
+
+    private async Task OnTaskUpdate(PersistedTask task)
+    {
+        await InvokeAsync(() => UpdateTasks());
+    }
+
+    private async Task UpdateTasks()
+    {
+        Logger.LogInformation("Updating tasks in Tasks-overview");
+
+        var allTasks = await DbContext.PersistedTasks.ToListAsync();
+
+        standardTasks = allTasks.Where(x => x.Data is not UpscaleTask).ToList();
+        upscaleTasks = allTasks.Where(x => x.Data is UpscaleTask).ToList();
     }
 }

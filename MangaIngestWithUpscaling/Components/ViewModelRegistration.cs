@@ -8,7 +8,6 @@ namespace MangaIngestWithUpscaling.Components
         public static void RegisterViewModels(this IServiceCollection services)
         {
             services.AddTransient<FolderPickerViewModel>();
-            services.AddTransient<TaskQueuesViewModel>();
         }
     }
 }
