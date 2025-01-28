@@ -49,12 +49,18 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue
 
             // cleanup old tasks
             var oldTasks = await dbContext.PersistedTasks
-                .Where(t => t.Status != PersistedTaskStatus.Completed)
+                .Where(t => t.Status == PersistedTaskStatus.Completed)
                 .OrderByDescending(t => t.CreatedAt)
                 .Skip(100)
                 .ToListAsync();
 
+            if (oldTasks.Count > 25)
+            {
+                _logger.LogInformation("Cleaning up {TaskCount} old tasks.", oldTasks.Count);
+            }
+
             dbContext.PersistedTasks.RemoveRange(oldTasks);
+            await dbContext.SaveChangesAsync();
         }
 
         public async Task StartAsync(CancellationToken cancellationToken)
