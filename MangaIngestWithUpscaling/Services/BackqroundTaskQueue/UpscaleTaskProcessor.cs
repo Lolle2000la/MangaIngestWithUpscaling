@@ -11,8 +11,9 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly ILogger<UpscaleTaskProcessor> _logger;
 
-        private Lock _lock = new Lock();
+        private readonly Lock _lock = new Lock();
         private CancellationTokenSource currentStoppingToken;
+        private PersistedTask currentTask;
 
         public UpscaleTaskProcessor(
             TaskQueue taskQueue,
@@ -24,11 +25,20 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue
             _logger = logger;
         }
 
-        public void CancelCurrent()
+        /// <summary>
+        /// Cancels the current task if it matches the given task.
+        /// The task is necessary to prevent canceling another if the task has already been processed.
+        /// Otherwise, consistency issues may arise.
+        /// </summary>
+        /// <param name="checkAgainst">The task to check against if it is still the current task. Does so by using the Id.</param>
+        public void CancelCurrent(PersistedTask checkAgainst)
         {
             using (_lock.EnterScope())
             {
-                currentStoppingToken?.Cancel();
+                if (currentTask.Id == checkAgainst.Id)
+                {
+                    currentStoppingToken?.Cancel();
+                }
             }
         }
 
@@ -40,6 +50,7 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue
                 using (_lock.EnterScope())
                 {
                     currentStoppingToken = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                    currentTask = task;
                 }
                 await ProcessTaskAsync(task, currentStoppingToken.Token);
             }
