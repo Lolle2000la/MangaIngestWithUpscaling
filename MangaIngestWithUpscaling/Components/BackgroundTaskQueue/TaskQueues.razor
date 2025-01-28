@@ -14,14 +14,14 @@
 
 @page "/tasks"
 
-<h3>Running tasks</h3>
+<MudText Typo="Typo.h4" Class="mb-2">Currently running tasks</MudText>
 
 <MudGrid>
     <MudItem lg="6" xs="12">
-        <TaskTable Tasks="@standardTasks" />
+        <TaskTable Tasks="@standardTasks" Title="Standard Tasks" />
     </MudItem>
     <MudItem lg="6" xs="12">
-        <TaskTable Tasks="@upscaleTasks" />
+        <TaskTable Tasks="@upscaleTasks" Title="Upscaling Tasks" />
     </MudItem>
 </MudGrid>
 

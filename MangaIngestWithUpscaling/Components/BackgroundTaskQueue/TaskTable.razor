@@ -1,7 +1,10 @@
 ﻿@using MangaIngestWithUpscaling.Data.BackqroundTaskQueue
 
-<MudTable T="PersistedTask" Items="@Tasks"
+<MudTable T="PersistedTask" Items="@Tasks" RowsPerPage="10" Elevation="3"
           @ref="Table">
+    <ToolBarContent>
+        <MudText Typo="Typo.h6">@Title</MudText>
+    </ToolBarContent>
     <HeaderContent>
         <MudTh><MudTableSortLabel InitialDirection="SortDirection.Descending" SortBy="new Func<PersistedTask, object>(x=>x.Id)">Id</MudTableSortLabel></MudTh>
         <MudTh><MudTableSortLabel SortBy="new Func<PersistedTask, object>(x=>x.Data.TaskFriendlyName)">Name</MudTableSortLabel></MudTh>
@@ -17,10 +20,14 @@
         <MudTd>@context.ProcessedAt</MudTd>
         <MudTd>@context.Status</MudTd>
     </RowTemplate>
+    <PagerContent>
+        <MudTablePager />
+    </PagerContent>
 </MudTable>
 
 @code {
     [Parameter] public IReadOnlyCollection<PersistedTask> Tasks { get; set; }
+    [Parameter] public string Title { get; set; }
 
     private MudTable<PersistedTask> Table { get; set; }
 
