@@ -1,0 +1,61 @@
+﻿@using MangaIngestWithUpscaling.Components.FileSystem
+@using MangaIngestWithUpscaling.Data.LibraryManagement
+
+@inject ApplicationDbContext DbContext
+
+<MudForm onchange="OnInputChanged" IsValidChanged="IsValidChangedHandler">
+    <MudGrid Spacing="2">
+        <MudItem xs="12">
+            <MudTextField Required="true" Label="Library Name" @bind-Value="Library.Name" />
+        </MudItem>
+        <MudItem lg="4" md="12" xs="12">
+            <FolderPicker @bind-SelectedPath="Library.IngestPath"
+                          Title="Ingest Folder"
+                          Required="true" />
+        </MudItem>
+        <MudItem lg="4" md="6" xs="12">
+            <FolderPicker @bind-SelectedPath="Library.NotUpscaledLibraryPath"
+                          Title="Storage Path as-is"
+                          Required="true" />
+        </MudItem>
+        <MudItem lg="4" md="6" xs="12">
+            <FolderPicker @bind-SelectedPath="Library.UpscaledLibraryPath" Title="Upscaled location" />
+        </MudItem>
+    </MudGrid>
+    <MudSelect T="int?" Label="Upscaler Config" @bind-Value="Library.UpscalerConfigId" Clearable="true">
+        <MudSelectItem T="int?" Value="null">None</MudSelectItem>
+        @foreach (var upscalerConfig in DbContext.UpscalerConfigs)
+        {
+            <MudSelectItem Value="@upscalerConfig.Id">@upscalerConfig.Name</MudSelectItem>
+        }
+    </MudSelect>
+</MudForm>
+
+@code {
+    private readonly int? empty = null;
+
+    [Parameter]
+    public Library Library { get; set; } = new Library()
+        {
+            Name = "",
+            UpscalerConfigId = 0
+        };
+    [Parameter]
+    public EventCallback<Library> LibraryChanged { get; set; }
+
+    [Parameter]
+    public bool IsValid { get; set; } = false;
+    [Parameter]
+    public EventCallback<bool> IsValidChanged { get; set; }
+
+    private void IsValidChangedHandler(bool isValid)
+    {
+        IsValid = isValid;
+        IsValidChanged.InvokeAsync(isValid);
+    }
+
+    protected void OnInputChanged()
+    {
+        LibraryChanged.InvokeAsync(Library);
+    }
+}

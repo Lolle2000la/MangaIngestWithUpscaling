@@ -1,0 +1,103 @@
+﻿@page "/Libraries"
+@using MangaIngestWithUpscaling.Data.LibraryManagement
+@using Microsoft.EntityFrameworkCore
+
+
+@inject ApplicationDbContext DbContext
+@inject IDialogService DialogService
+
+<h3>Libraries</h3>
+
+<MudPaper Elevation="3" Class="mb-3">
+    <MudStack Row>
+        <MudButton StartIcon="@Icons.Material.Filled.Add" Variant="Variant.Filled" Color="Color.Primary" OnClick="OnCreateNew">Create</MudButton>
+    </MudStack>
+</MudPaper>
+
+<MudTable T="Library" Items="@LoadedLibraries">
+    <HeaderContent>
+        <MudTh>Library Name</MudTh>
+        <MudTh>Ingest Path</MudTh>
+        <MudTh>Upscaler Config</MudTh>
+        <MudTh>Mangas</MudTh>
+        <MudTh>Chapters</MudTh>
+        <MudTh>Actions</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd>@context.Name</MudTd>
+        <MudTd>@context.IngestPath</MudTd>
+        <MudTd>@context.UpscalerConfig?.Name</MudTd>
+        <MudTd>@context.MangaSeries?.Count()</MudTd>
+        <MudTd>@context.MangaSeries?.SelectMany(m => m.Chapters)?.Count()</MudTd>
+        <MudTd>
+            <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Filled" Color="Color.Primary"
+                           title="Edit this library"
+                           OnClick="e => OnEditLibraryEntry(context)" />
+            <MudIconButton Icon="@Icons.Material.Filled.Delete" Variant="Variant.Filled" Color="Color.Secondary"
+                           title="Delete this library"
+                           OnClick="e => OnDeleteLibraryEntry(context)" />
+        </MudTd>
+    </RowTemplate>
+</MudTable>
+
+@code {
+    private IReadOnlyCollection<Library> LoadedLibraries { get; set; }
+
+    protected override void OnInitialized()
+    {
+        LoadedLibraries = DbContext.Libraries.ToList();
+    }
+
+    private async Task OnLibraryChanged()
+    {
+        LoadedLibraries = await DbContext.Libraries.ToListAsync();
+    }
+
+    protected async Task OnCreateNew()
+    {
+        await DialogService.ShowAsync<CreateLibrary>("Create new Library", new DialogOptions
+            {
+                MaxWidth = MaxWidth.ExtraExtraLarge,
+                CloseButton = true
+            });
+
+        await OnLibraryChanged();
+    }
+
+    protected async Task OnEditLibraryEntry(Library library)
+    {
+        var parameters = new DialogParameters<EditLibrary>
+        {
+            { x => x.Library, library }
+        };
+        await DialogService.ShowAsync<EditLibrary>("Edit Library", parameters, new DialogOptions
+            {
+                MaxWidth = MaxWidth.ExtraExtraLarge,
+                CloseButton = true
+            });
+
+        await OnLibraryChanged();
+    }
+
+    protected async Task OnDeleteLibraryEntry(Library library)
+    {
+        var result = await DialogService.ShowMessageBox(
+            "Delete Library",
+            "Do you really want to delete this library? Note: This does NOT delete any of the files created.",
+            "OK", cancelText: "Cancel",
+            options: new DialogOptions
+                {
+                    CloseButton = true,
+                    BackdropClick = true,
+                    CloseOnEscapeKey = true
+                });
+
+        if (result.HasValue && result.Value)
+        {
+            DbContext.Libraries.Remove(library);
+            await DbContext.SaveChangesAsync();
+        }
+
+        await OnLibraryChanged();
+    }
+}

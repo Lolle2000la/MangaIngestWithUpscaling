@@ -1,0 +1,30 @@
+﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
+
+@inject ApplicationDbContext DbContext
+
+<MudDialog Style="width: 100%" Class="flex-grow-1">
+    <DialogContent>
+        <EditLibraryForm @bind-Library="Library" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton Color="Color.Primary" OnClick="OnSaveLibrary">Save Changes</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; }
+
+    [Parameter]
+    public Library Library { get; set; } = new Library()
+        {
+            Name = ""
+        };
+
+    private async Task OnSaveLibrary()
+    {
+        DbContext.Libraries.Update(Library);
+        await DbContext.SaveChangesAsync();
+        MudDialog.Close(DialogResult.Ok(true));
+    }
+}
