@@ -12,8 +12,10 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue
         private readonly ILogger<UpscaleTaskProcessor> _logger;
 
         private readonly Lock _lock = new Lock();
-        private CancellationTokenSource currentStoppingToken;
-        private PersistedTask currentTask;
+        private CancellationTokenSource? currentStoppingToken;
+        private PersistedTask? currentTask;
+
+        public event EventHandler<PersistedTask>? StatusChange;
 
         public UpscaleTaskProcessor(
             TaskQueue taskQueue,
@@ -35,7 +37,7 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue
         {
             using (_lock.EnterScope())
             {
-                if (currentTask.Id == checkAgainst.Id)
+                if (currentTask?.Id == checkAgainst.Id)
                 {
                     currentStoppingToken?.Cancel();
                 }
@@ -66,13 +68,16 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue
                 task.Status = PersistedTaskStatus.Processing;
                 dbContext.Update(task);
                 await dbContext.SaveChangesAsync();
+                StatusChange?.Invoke(this, task);
 
                 await task.Data.ProcessAsync(scope.ServiceProvider, stoppingToken);
+                StatusChange?.Invoke(this, task);
 
                 task.Status = PersistedTaskStatus.Completed;
                 task.ProcessedAt = DateTime.UtcNow;
                 dbContext.Update(task);
                 await dbContext.SaveChangesAsync();
+                StatusChange?.Invoke(this, task);
             }
             catch (Exception ex)
             {
