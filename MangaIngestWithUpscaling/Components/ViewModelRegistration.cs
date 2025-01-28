@@ -1,4 +1,5 @@
 ﻿using MangaIngestWithUpscaling.Components.FileSystem;
+using MangaIngestWithUpscaling.Components.BackgroundTaskQueue;
 
 namespace MangaIngestWithUpscaling.Components
 {
@@ -7,6 +8,7 @@ namespace MangaIngestWithUpscaling.Components
         public static void RegisterViewModels(this IServiceCollection services)
         {
             services.AddTransient<FolderPickerViewModel>();
+            services.AddTransient<TaskQueuesViewModel>();
         }
     }
 }

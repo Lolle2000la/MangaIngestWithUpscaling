@@ -1,0 +1,14 @@
+﻿@inherits ReactiveInjectableComponentBase<TaskQueuesViewModel>
+
+@page "/tasks"
+
+<h3>Index</h3>
+
+@code {
+    protected override void OnInitialized()
+    {
+        this.WhenActivated(disposables =>
+        {
+        });
+    }
+}
