@@ -86,6 +86,31 @@ public class ScanIngestTask : BaseTask
             await dbContext.SaveChangesAsync(cancellationToken);
         }
 
+        logger.LogInformation("Scanned {seriesCount} series in library {libraryName}. Cleaning.", chaptersBySeries.Count, library.Name);
+        // Clean the ingest path of all empty directories recursively
+        DeleteEmpty(library.IngestPath, logger);
     }
+
+    private static void DeleteEmpty(string startLocation, ILogger<ScanIngestTask> logger)
+    {
+        foreach (var directory in Directory.GetDirectories(startLocation))
+        {
+            DeleteEmpty(directory, logger);
+            try
+            {
+                if (!Directory.EnumerateFileSystemEntries(directory).Any())
+                {
+                    var directoryInfo = new DirectoryInfo(directory);
+                    directoryInfo.Attributes = FileAttributes.Normal;
+                    directoryInfo.Delete();
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error deleting directory {directory}", directory);
+            }
+        }
+    }
+
     public override string TaskFriendlyName => $"Scanning {LibraryName}";
 }
