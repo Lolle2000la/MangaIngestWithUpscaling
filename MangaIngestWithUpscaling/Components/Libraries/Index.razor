@@ -13,7 +13,9 @@
 
 <MudPaper Elevation="3" Class="mb-3">
     <MudStack Row>
-        <MudButton StartIcon="@Icons.Material.Filled.Add" Variant="Variant.Filled" Color="Color.Primary" OnClick="OnCreateNew">Create</MudButton>
+        <a href="libraries/create">
+            <MudButton StartIcon="@Icons.Material.Filled.Add" Variant="Variant.Filled" Color="Color.Primary">Create</MudButton>
+        </a>
     </MudStack>
 </MudPaper>
 
@@ -33,9 +35,10 @@
         <MudTd>@context.MangaSeries?.Count()</MudTd>
         <MudTd>@context.MangaSeries?.SelectMany(m => m.Chapters)?.Count()</MudTd>
         <MudTd>
-            <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Filled" Color="Color.Primary"
-                           title="Edit this library"
-                           OnClick="e => OnEditLibraryEntry(context)" />
+            <a href="libraries/edit/@context.Id">
+                <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Filled" Color="Color.Primary"
+                               title="Edit this library" />
+            </a>
             <MudIconButton Icon="@Icons.Material.Filled.Delete" Variant="Variant.Filled" Color="Color.Secondary"
                            title="Delete this library"
                            OnClick="e => OnDeleteLibraryEntry(context)" />
@@ -60,32 +63,6 @@
     private async Task OnLibraryChanged()
     {
         LoadedLibraries = await DbContext.Libraries.ToListAsync();
-    }
-
-    protected async Task OnCreateNew()
-    {
-        await DialogService.ShowAsync<CreateLibrary>("Create new Library", new DialogOptions
-            {
-                MaxWidth = MaxWidth.ExtraExtraLarge,
-                CloseButton = true
-            });
-
-        await OnLibraryChanged();
-    }
-
-    protected async Task OnEditLibraryEntry(Library library)
-    {
-        var parameters = new DialogParameters<EditLibrary>
-        {
-            { x => x.Library, library }
-        };
-        await DialogService.ShowAsync<EditLibrary>("Edit Library", parameters, new DialogOptions
-            {
-                MaxWidth = MaxWidth.ExtraExtraLarge,
-                CloseButton = true
-            });
-
-        await OnLibraryChanged();
     }
 
     protected async Task OnScanLibrary(Library library)

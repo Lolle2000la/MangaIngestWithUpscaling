@@ -53,10 +53,14 @@
         </ItemTemplate>
     </MudTreeView>
     <MudStack Row="true" AlignItems="AlignItems.Center">
+        <MudStack Row="true" AlignItems="AlignItems.Baseline" Style="flex-grow: 1">
 
-        <MudText Typo="Typo.subtitle2" Class="mb-2">Selected Folder:</MudText>
-        <MudInputString Required="@Required" Value="@ViewModel?.SelectedPath"
-                        Class="flex-grow-1" ReadOnly="true" />
+            <MudText Typo="Typo.subtitle2" Class="mb-2">Selected Folder:</MudText>
+            <MudInputString Required="@Required" Value="@ViewModel?.SelectedPath"
+                            Class="flex-grow-1" ReadOnly="true" />
+        </MudStack>
+        <MudIconButton Icon="@Icons.Material.Sharp.Clear" OnClick="(e) => SelectedPath = null"
+                       title="Clear selection" Disabled="Required" />
     </MudStack>
 </MudPaper>
 
@@ -72,15 +76,12 @@
     }
 
     [Parameter]
-    public string SelectedPath
+    public string? SelectedPath
     {
-        get => ViewModel?.SelectedPath ?? "";
+        get => ViewModel?.SelectedPath;
         set
         {
-            if (ViewModel != null)
-            {
-                ViewModel.SelectedPath = value;
-            }
+            ViewModel.SelectedPath = value;
         }
     }
 

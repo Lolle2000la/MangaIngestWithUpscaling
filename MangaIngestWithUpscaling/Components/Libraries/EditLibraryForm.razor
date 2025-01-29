@@ -3,26 +3,32 @@
 
 @inject ApplicationDbContext DbContext
 
-<MudForm onchange="OnInputChanged" IsValidChanged="IsValidChangedHandler">
+<MudForm Model="@Library">
     <MudGrid Spacing="2">
         <MudItem xs="12">
-            <MudTextField Required="true" Label="Library Name" @bind-Value="Library.Name" />
+            <MudTextField Required="true" Label="Library Name" 
+                          @bind-Value="Library.Name" 
+                          @bind-Value:after="OnInputChanged" />
         </MudItem>
         <MudItem lg="4" md="12" xs="12">
-            <FolderPicker @bind-SelectedPath="Library.IngestPath"
-                          Title="Ingest Folder"
-                          Required="true" />
+            <FolderPicker SelectedPath="@Library.IngestPath" 
+                          SelectedPathChanged="@OnIngestPathChanged"
+                          Title="Ingest Folder" Required="true" />
         </MudItem>
         <MudItem lg="4" md="6" xs="12">
-            <FolderPicker @bind-SelectedPath="Library.NotUpscaledLibraryPath"
-                          Title="Storage Path as-is"
-                          Required="true" />
+            <FolderPicker SelectedPath="@Library.NotUpscaledLibraryPath" 
+                          SelectedPathChanged="@OnNotUpscaledPathChanged"
+                          Title="Storage Path as-is" Required="true" />
         </MudItem>
         <MudItem lg="4" md="6" xs="12">
-            <FolderPicker @bind-SelectedPath="Library.UpscaledLibraryPath" Title="Upscaled location" />
+            <FolderPicker SelectedPath="@Library.UpscaledLibraryPath" 
+                          SelectedPathChanged="@OnUpscaledPathChanged"
+                          Title="Upscaled location" />
         </MudItem>
     </MudGrid>
-    <MudSelect T="int?" Label="Upscaler Config" @bind-Value="Library.UpscalerConfigId" Clearable="true">
+    <MudSelect T="int?" Label="Upscaler Config" 
+               @bind-Value="Library.UpscalerConfigId" 
+               @bind-Value:after="OnInputChanged" Clearable="true">
         <MudSelectItem T="int?" Value="null">None</MudSelectItem>
         @foreach (var upscalerConfig in DbContext.UpscalerConfigs)
         {
@@ -35,11 +41,10 @@
     private readonly int? empty = null;
 
     [Parameter]
-    public Library Library { get; set; } = new Library()
-        {
-            Name = "",
-            UpscalerConfigId = 0
-        };
+    public Library Library { get; set; } = new Library
+    {
+        Name = "",
+    };
     [Parameter]
     public EventCallback<Library> LibraryChanged { get; set; }
 
@@ -54,8 +59,45 @@
         IsValidChanged.InvokeAsync(isValid);
     }
 
+    private void OnIngestPathChanged(string newPath)
+    {
+        Library.IngestPath = newPath;
+        OnInputChanged();
+    }
+
+    private void OnNotUpscaledPathChanged(string newPath)
+    {
+        Library.NotUpscaledLibraryPath = newPath;
+        OnInputChanged();
+    }
+
+    private void OnUpscaledPathChanged(string? newPath)
+    {
+        Library.UpscaledLibraryPath = newPath;
+        OnInputChanged();
+    }
+
     protected void OnInputChanged()
     {
         LibraryChanged.InvokeAsync(Library);
+        IsValid = Validate();
+        IsValidChanged.InvokeAsync(IsValid);
+    }
+
+    private bool Validate()
+    {
+        bool requiredElementsValid = !string.IsNullOrWhiteSpace(Library.Name) &&
+                                     !string.IsNullOrWhiteSpace(Library.IngestPath) &&
+                                     !string.IsNullOrWhiteSpace(Library.NotUpscaledLibraryPath);
+
+        bool pathsAreDifferent = Library.IngestPath != Library.NotUpscaledLibraryPath &&
+                                 Library.IngestPath != Library.UpscaledLibraryPath &&
+                                 Library.NotUpscaledLibraryPath != Library.UpscaledLibraryPath;
+
+        bool pathsExist = Directory.Exists(Library.IngestPath) &&
+                          Directory.Exists(Library.NotUpscaledLibraryPath) &&
+                          (Library.UpscaledLibraryPath == null || Directory.Exists(Library.UpscaledLibraryPath));
+
+        return requiredElementsValid && pathsAreDifferent && pathsExist;
     }
 }

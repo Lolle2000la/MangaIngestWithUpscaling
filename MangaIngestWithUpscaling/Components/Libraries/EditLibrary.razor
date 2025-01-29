@@ -1,30 +1,60 @@
 ﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
 
-@inject ApplicationDbContext DbContext
+@page "/libraries/edit/{LibraryId}"
 
-<MudDialog Style="width: 100%" Class="flex-grow-1">
-    <DialogContent>
-        <EditLibraryForm @bind-Library="Library" />
-    </DialogContent>
-    <DialogActions>
-        <MudButton Color="Color.Primary" OnClick="OnSaveLibrary">Save Changes</MudButton>
-    </DialogActions>
-</MudDialog>
+@inject ApplicationDbContext DbContext
+@inject NavigationManager NavigationManager
+
+<MudCard>
+    <MudCardHeader>
+        <MudText Typo="Typo.h5">Edit Library: @Library.Name</MudText>
+    </MudCardHeader>
+    <MudCardContent>
+        <EditLibraryForm @bind-Library="Library"
+                         @bind-IsValid="IsValid" />
+    </MudCardContent>
+    <MudCardActions>
+        <MudSpacer />
+        <MudButton StartIcon="@Icons.Material.Filled.Save"
+                   Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   Disabled="!IsValid"
+                   OnClick="OnSaveLibrary">Save</MudButton>
+    </MudCardActions>
+</MudCard>
+
 
 @code {
-    [CascadingParameter]
-    private IMudDialogInstance MudDialog { get; set; }
-
     [Parameter]
+    public string? LibraryId { get; set; }
+
     public Library Library { get; set; } = new Library()
         {
             Name = ""
         };
 
+    public bool IsValid { get; set; } = false;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (LibraryId != null)
+        {
+            if (int.TryParse(LibraryId, out var id))
+            {
+                Console.WriteLine("LibraryId: " + id);
+                Library = await DbContext.Libraries.FindAsync(id);
+            }
+            else
+            {
+                NavigationManager.NavigateTo("/libraries");
+            }
+        }
+    }
+
     private async Task OnSaveLibrary()
     {
         DbContext.Libraries.Update(Library);
         await DbContext.SaveChangesAsync();
-        MudDialog.Close(DialogResult.Ok(true));
+        NavigationManager.NavigateTo("/libraries");
     }
 }
