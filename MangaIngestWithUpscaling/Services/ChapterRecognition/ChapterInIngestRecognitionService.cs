@@ -1,4 +1,5 @@
-﻿using MangaIngestWithUpscaling.Data.LibraryManagement;
+﻿using DynamicData.Kernel;
+using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.LibraryFiltering;
 using MangaIngestWithUpscaling.Services.MetadataExtraction;
 using System.IO.Compression;
@@ -12,7 +13,7 @@ namespace MangaIngestWithUpscaling.Services.ChapterRecognition;
 /// identifies what is and what isn't.
 /// </summary>
 public class ChapterInIngestRecognitionService(
-    IMetadataExtractionService metadataExtractionService,
+    IMetadataHandlingService metadataExtractionService,
     ILibraryFilteringService filteringService) : IChapterInIngestRecognitionService
 {
     /// <summary>
