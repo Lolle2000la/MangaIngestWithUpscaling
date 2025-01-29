@@ -98,7 +98,6 @@
     {
         this.WhenActivated(disposables =>
         {
-            Console.WriteLine("FolderPicker Activated");
             ViewModel!.WhenPathSelected
                 .Subscribe(path => SelectedPathChanged.InvokeAsync(path))
                 .DisposeWith(disposables);
