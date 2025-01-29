@@ -7,7 +7,7 @@
 <MudPaper Class="pa-4" Elevation="5">
     <MudStack Row="true">
         <MudText Typo="Typo.h6" Class="mb-4">
-            @ViewModel.Title
+            @ViewModel?.Title
 
             @if (Required)
             {
@@ -18,44 +18,44 @@
 
     <MudStack Row="true" AlignItems="AlignItems.Baseline">
         <MudText Typo="Typo.subtitle2" Class="mb-2">Current Path: </MudText>
-        <MudInputString @bind-Value="ViewModel.RootDirectory" Class="mb-2 flex-grow-1" FullWidth="true" />
+        <MudInputString @bind-Value="ViewModel!.RootDirectory" Class="mb-2 flex-grow-1" FullWidth="true" />
     </MudStack>
 
-    @if (ViewModel.ErrorMessage != null)
+    @if (ViewModel?.ErrorMessage != null)
     {
         <MudAlert Severity="Severity.Error">@ViewModel.ErrorMessage</MudAlert>
     }
 
     <MudPaper Elevation="2">
         <MudStack Row="true" AlignItems="AlignItems.Center">
-            <MudButton Variant="Variant.Outlined" OnClick="async (e) => await ViewModel.GoToParentCommand.Execute()" Disabled="@(!ViewModel.CanGoToParent)">
+            <MudButton Variant="Variant.Outlined" OnClick="async (e) => await ViewModel?.GoToParentCommand.Execute()" Disabled="@(!ViewModel?.CanGoToParent ?? true)">
                 Go to Parent
             </MudButton>
             <MudSpacer />
-            <MudButton Variant="Variant.Text" Color="Color.Primary" OnClick="async (e) => await ViewModel.LoadDirectoryItemsCommand.Execute()">
+            <MudButton Variant="Variant.Text" Color="Color.Primary" OnClick="async (e) => await ViewModel?.LoadDirectoryItemsCommand.Execute()">
                 <MudIcon Icon="@Icons.Material.Filled.Refresh" /> Refresh
             </MudButton>
         </MudStack>
     </MudPaper>
 
-    <MudTreeView T="DirectoryItem" ServerData="@ViewModel.HandleExpand" Items="@ViewModel.TreeItems" Activatable="true"
-                 Hover="true" Loading="@ViewModel.Loading" MaxHeight="20rem"
+    <MudTreeView T="DirectoryItem" ServerData="@ViewModel!.HandleExpand" Items="@ViewModel?.TreeItems" Activatable="true"
+                 Hover="true" Loading="@ViewModel?.Loading" MaxHeight="20rem"
                  SelectionMode="SelectionMode.SingleSelection"
-                 SelectedValueChanged="v => ViewModel.SelectedPath = v.Path">
+                 SelectedValueChanged="v => ViewModel!.SelectedPath = v.Path">
         <ItemTemplate>
-            <MudTreeViewItem T="DirectoryItem" @key="context.Value.Path" Value="@context.Value" Text="@context.Value?.Name"
+            <MudTreeViewItem T="DirectoryItem" @key="context.Value?.Path" Value="@context.Value" Text="@context.Value?.Name"
                              Icon="@Icons.Material.Filled.FolderOpen"
-                             ItemsChanged="@(new Action<IReadOnlyCollection<TreeItemData<DirectoryItem>>>(items => ViewModel.HandleItemsLoaded(context, items)))"
+                             ItemsChanged="@(new Action<IReadOnlyCollection<TreeItemData<DirectoryItem>>>(items => ViewModel?.HandleItemsLoaded(context, items)))"
                              CanExpand="@context.Expandable"
                              @bind-Expanded="@context.Expanded"
                              Items="@context.Children"
-                             OnDoubleClick="@(() => ViewModel.RootDirectory = context.Value.Path)" />
+                             OnDoubleClick="@(() => ViewModel!.RootDirectory = context.Value?.Path)" />
         </ItemTemplate>
     </MudTreeView>
     <MudStack Row="true" AlignItems="AlignItems.Center">
 
         <MudText Typo="Typo.subtitle2" Class="mb-2">Selected Folder:</MudText>
-        <MudInputString Required="@Required" Value="@ViewModel.SelectedPath"
+        <MudInputString Required="@Required" Value="@ViewModel?.SelectedPath"
                         Class="flex-grow-1" ReadOnly="true" />
     </MudStack>
 </MudPaper>
@@ -67,8 +67,8 @@
     [Parameter]
     public string RootDirectory
     {
-        get => ViewModel.RootDirectory;
-        set => ViewModel.RootDirectory = value;
+        get => ViewModel?.RootDirectory ?? Path.GetPathRoot(Path.GetFullPath("."));
+        set => ViewModel!.RootDirectory = value;
     }
 
     [Parameter]
@@ -90,8 +90,8 @@
     [Parameter]
     public string Title
     {
-        get => ViewModel.Title;
-        set => ViewModel.Title = value;
+        get => ViewModel?.Title ?? "";
+        set => ViewModel!.Title = value;
     }
 
     protected override void OnInitialized()
@@ -99,7 +99,7 @@
         this.WhenActivated(disposables =>
         {
             Console.WriteLine("FolderPicker Activated");
-            ViewModel.WhenPathSelected
+            ViewModel!.WhenPathSelected
                 .Subscribe(path => SelectedPathChanged.InvokeAsync(path))
                 .DisposeWith(disposables);
         });

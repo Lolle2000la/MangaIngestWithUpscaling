@@ -15,7 +15,7 @@ public class Manga
     public Library Library { get; set; }
 
     public List<MangaAlternativeTitle> OtherTitles { get; set; }
-        = new List<MangaAlternativeTitle>();
+        = [];
 
-    public List<Chapter> Chapters { get; set; } = new List<Chapter>();
+    public List<Chapter> Chapters { get; set; } = [];
 }

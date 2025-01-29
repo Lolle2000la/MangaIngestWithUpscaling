@@ -5,27 +5,17 @@ using MangaIngestWithUpscaling.Data;
 
 namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 
-public class UpscaleTaskProcessor : BackgroundService
+public class UpscaleTaskProcessor(
+    TaskQueue taskQueue,
+    IServiceScopeFactory scopeFactory,
+    ILogger<UpscaleTaskProcessor> logger) : BackgroundService
 {
-    private readonly ChannelReader<PersistedTask> _reader;
-    private readonly IServiceScopeFactory _scopeFactory;
-    private readonly ILogger<UpscaleTaskProcessor> _logger;
-
-    private readonly Lock _lock = new Lock();
+    private readonly ChannelReader<PersistedTask> _reader = taskQueue.UpscaleReader;
+    private readonly Lock _lock = new();
     private CancellationTokenSource? currentStoppingToken;
     private PersistedTask? currentTask;
 
     public event Func<PersistedTask, Task>? StatusChanged;
-
-    public UpscaleTaskProcessor(
-        TaskQueue taskQueue,
-        IServiceScopeFactory scopeFactory,
-        ILogger<UpscaleTaskProcessor> logger)
-    {
-        _reader = taskQueue.UpscaleReader;
-        _scopeFactory = scopeFactory;
-        _logger = logger;
-    }
 
     /// <summary>
     /// Cancels the current task if it matches the given task.
@@ -60,14 +50,14 @@ public class UpscaleTaskProcessor : BackgroundService
 
     private async Task ProcessTaskAsync(PersistedTask task, CancellationToken stoppingToken)
     {
-        using var scope = _scopeFactory.CreateScope();
+        using var scope = scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         try
         {
             task.Status = PersistedTaskStatus.Processing;
             dbContext.Update(task);
-            await dbContext.SaveChangesAsync();
+            await dbContext.SaveChangesAsync(stoppingToken);
             StatusChanged?.Invoke(task);
 
             await task.Data.ProcessAsync(scope.ServiceProvider, stoppingToken);
@@ -76,16 +66,16 @@ public class UpscaleTaskProcessor : BackgroundService
             task.Status = PersistedTaskStatus.Completed;
             task.ProcessedAt = DateTime.UtcNow;
             dbContext.Update(task);
-            await dbContext.SaveChangesAsync();
+            await dbContext.SaveChangesAsync(stoppingToken);
             StatusChanged?.Invoke(task);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Upscale task {TaskId} failed", task.Id);
+            logger.LogError(ex, "Upscale task {TaskId} failed", task.Id);
             task.Status = PersistedTaskStatus.Failed;
             task.RetryCount++;
             dbContext.Update(task);
-            await dbContext.SaveChangesAsync();
+            await dbContext.SaveChangesAsync(stoppingToken);
         }
     }
 }

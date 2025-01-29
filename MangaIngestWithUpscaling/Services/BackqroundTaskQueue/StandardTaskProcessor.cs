@@ -7,27 +7,18 @@ using ReactiveMarbles.ObservableEvents;
 
 namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 
-public class StandardTaskProcessor : BackgroundService
+public class StandardTaskProcessor(
+    TaskQueue taskQueue,
+    IServiceScopeFactory scopeFactory,
+    ILogger<StandardTaskProcessor> logger) : BackgroundService
 {
-    private readonly ChannelReader<PersistedTask> _reader;
-    private readonly IServiceScopeFactory _scopeFactory;
-    private readonly ILogger<StandardTaskProcessor> _logger;
+    private readonly ChannelReader<PersistedTask> _reader = taskQueue.StandardReader;
 
-    private readonly Lock _lock = new Lock();
+    private readonly Lock _lock = new();
     private CancellationTokenSource? currentStoppingToken;
     private PersistedTask? currentTask;
 
     public event Func<PersistedTask, Task>? StatusChanged;
-
-    public StandardTaskProcessor(
-        TaskQueue taskQueue,
-        IServiceScopeFactory scopeFactory,
-        ILogger<StandardTaskProcessor> logger)
-    {
-        _reader = taskQueue.StandardReader;
-        _scopeFactory = scopeFactory;
-        _logger = logger;
-    }
 
     /// <summary>
     /// Cancels the current task if it matches the given task.
@@ -63,14 +54,14 @@ public class StandardTaskProcessor : BackgroundService
     protected async Task ProcessTaskAsync(PersistedTask task, CancellationToken stoppingToken)
     {
 
-        using var scope = _scopeFactory.CreateScope();
+        using var scope = scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         try
         {
             task.Status = PersistedTaskStatus.Processing;
             dbContext.Update(task);
-            await dbContext.SaveChangesAsync();
+            await dbContext.SaveChangesAsync(stoppingToken);
             StatusChanged?.Invoke(task);
 
             // Polymorphic processing based on concrete type
@@ -80,16 +71,16 @@ public class StandardTaskProcessor : BackgroundService
             task.Status = PersistedTaskStatus.Completed;
             task.ProcessedAt = DateTime.UtcNow;
             dbContext.Update(task);
-            await dbContext.SaveChangesAsync();
+            await dbContext.SaveChangesAsync(stoppingToken);
             StatusChanged?.Invoke(task);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error processing task {TaskId}", task.Id);
+            logger.LogError(ex, "Error processing task {TaskId}", task.Id);
             task.Status = PersistedTaskStatus.Failed;
             task.RetryCount++;
             dbContext.Update(task);
-            await dbContext.SaveChangesAsync();
+            await dbContext.SaveChangesAsync(stoppingToken);
         }
     }
 }

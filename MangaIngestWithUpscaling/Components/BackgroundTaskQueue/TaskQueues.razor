@@ -26,8 +26,8 @@
 </MudGrid>
 
 @code {
-    private List<PersistedTask> standardTasks { get; set; }
-    private List<PersistedTask> upscaleTasks { get; set; }
+    private List<PersistedTask> standardTasks { get; set; } = [];
+    private List<PersistedTask> upscaleTasks { get; set; } = [];
 
     protected override async Task OnInitializedAsync()
     {

@@ -26,10 +26,10 @@
 </MudTable>
 
 @code {
-    [Parameter] public IReadOnlyCollection<PersistedTask> Tasks { get; set; }
-    [Parameter] public string Title { get; set; }
+    [Parameter] public IReadOnlyCollection<PersistedTask> Tasks { get; set; } = [];
+    [Parameter] public string Title { get; set; } = "Tasks";
 
-    private MudTable<PersistedTask> Table { get; set; }
+    private MudTable<PersistedTask> Table { get; set; } = null!;
 
     protected override void OnParametersSet()
     {

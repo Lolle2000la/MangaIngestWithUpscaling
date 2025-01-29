@@ -9,6 +9,10 @@
 		<AssemblyName>$(AssemblyName.Replace(' ', '_'))</AssemblyName>
 	</PropertyGroup>
 
+	<PropertyGroup>
+		<EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+	</PropertyGroup>
+
 	<ItemGroup>
 		<PackageReference Include="DynamicData" Version="9.1.1" />
 		<PackageReference Include="Microsoft.AspNetCore.Diagnostics.EntityFrameworkCore" Version="9.0.1" />

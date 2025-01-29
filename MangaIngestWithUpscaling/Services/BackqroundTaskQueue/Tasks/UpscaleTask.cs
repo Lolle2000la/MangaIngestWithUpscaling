@@ -11,7 +11,7 @@ public class UpscaleTask : BaseTask
     public override async Task ProcessAsync(IServiceProvider services, CancellationToken cancellationToken)
     {
         var dbContext = services.GetRequiredService<ApplicationDbContext>();
-        var upscalingQueueEntry = await dbContext.UpscalingQueueEntries.FindAsync(UpscalingQueueEntryId);
+        var upscalingQueueEntry = await dbContext.UpscalingQueueEntries.FindAsync(new object?[] { UpscalingQueueEntryId }, cancellationToken: cancellationToken);
 
         throw new NotImplementedException();
     }

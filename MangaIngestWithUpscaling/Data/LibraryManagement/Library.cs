@@ -15,6 +15,6 @@ public class Library
     public int? UpscalerConfigId { get; set; }
     public UpscalerConfig? UpscalerConfig { get; set; }
 
-    public List<Manga> MangaSeries { get; set; } = new List<Manga>();
-    public List<LibraryFilterRule> FilterRules { get; set; } = new List<LibraryFilterRule>();
+    public List<Manga> MangaSeries { get; set; } = [];
+    public List<LibraryFilterRule> FilterRules { get; set; } = [];
 }

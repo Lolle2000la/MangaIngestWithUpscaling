@@ -70,7 +70,7 @@ public class TaskQueue : ITaskQueue, IHostedService
 
         var pendingTasks = await dbContext.PersistedTasks
             .Where(t => t.Status == PersistedTaskStatus.Pending || t.Status == PersistedTaskStatus.Processing)
-            .ToListAsync();
+            .ToListAsync(cancellationToken: cancellationToken);
 
         // make processing tasks pending again
         foreach (var task in pendingTasks)
@@ -87,7 +87,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         foreach (var task in pendingTasks)
         {
             var channel = task.Data is UpscaleTask ? _upscaleChannel : _standardChannel;
-            await channel.Writer.WriteAsync(task);
+            await channel.Writer.WriteAsync(task, cancellationToken);
         }
     }
 

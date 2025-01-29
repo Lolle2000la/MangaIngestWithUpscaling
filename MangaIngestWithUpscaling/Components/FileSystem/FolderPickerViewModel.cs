@@ -27,7 +27,7 @@ public class FolderPickerViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _title, value);
     }
 
-    public string ErrorMessage
+    public string? ErrorMessage
     {
         get => _errorMessage;
         set => this.RaiseAndSetIfChanged(ref _errorMessage, value);
@@ -49,7 +49,7 @@ public class FolderPickerViewModel : ViewModelBase
     }
 
     public bool CanGoToParent => _canGoToParent.Value;
-    public ObservableCollection<TreeItemData<DirectoryItem>> TreeItems { get; } = new();
+    public ObservableCollection<TreeItemData<DirectoryItem>> TreeItems { get; } = [];
     public ReactiveCommand<Unit, Unit> LoadDirectoryItemsCommand { get; }
     public ReactiveCommand<Unit, Unit> GoToParentCommand { get; }
     public IObservable<string?> WhenPathSelected { get; }
@@ -131,7 +131,7 @@ public class FolderPickerViewModel : ViewModelBase
         catch (Exception ex)
         {
             ErrorMessage = $"Error loading directory: {ex.Message}";
-            return Array.Empty<TreeItemData<DirectoryItem>>();
+            return [];
         }
         finally
         {
