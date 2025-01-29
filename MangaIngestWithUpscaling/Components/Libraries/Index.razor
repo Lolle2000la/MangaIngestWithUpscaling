@@ -1,10 +1,13 @@
 ﻿@page "/libraries"
 @using MangaIngestWithUpscaling.Data.LibraryManagement
+@using MangaIngestWithUpscaling.Services.BackqroundTaskQueue
+@using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
 @using Microsoft.EntityFrameworkCore
 
 
 @inject ApplicationDbContext DbContext
 @inject IDialogService DialogService
+@inject TaskQueue TaskQueue
 
 <h3>Libraries</h3>
 
@@ -36,6 +39,9 @@
             <MudIconButton Icon="@Icons.Material.Filled.Delete" Variant="Variant.Filled" Color="Color.Secondary"
                            title="Delete this library"
                            OnClick="e => OnDeleteLibraryEntry(context)" />
+            <MudIconButton Icon="@Icons.Material.Filled.Search" Variant="Variant.Filled" Color="Color.Tertiary"
+                           title="Schedule a scan of this library"
+                           OnClick="e => OnScanLibrary(context)" />
         </MudTd>
     </RowTemplate>
 </MudTable>
@@ -77,6 +83,15 @@
             });
 
         await OnLibraryChanged();
+    }
+
+    protected async Task OnScanLibrary(Library library)
+    {
+        await TaskQueue.EnqueueAsync(new ScanIngestTask
+            {
+                LibraryId = library.Id,
+                LibraryName = library.Name
+            });
     }
 
     protected async Task OnDeleteLibraryEntry(Library library)
