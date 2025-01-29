@@ -49,9 +49,12 @@
 @code {
     private IReadOnlyCollection<Library> LoadedLibraries { get; set; }
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
-        LoadedLibraries = DbContext.Libraries.ToList();
+        LoadedLibraries = await DbContext.Libraries
+            .Include(x => x.MangaSeries)
+            .ThenInclude(x => x.Chapters)
+            .ToListAsync();
     }
 
     private async Task OnLibraryChanged()
