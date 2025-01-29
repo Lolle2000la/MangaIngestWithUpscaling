@@ -33,6 +33,7 @@
     private void OnPathSelected(string path)
     {
         folderPath = path;
-        foundChapters = recognitionService.FindAllChaptersAt(path);
+        if (folderPath != null)
+            foundChapters = recognitionService.FindAllChaptersAt(path);
     }
 }
