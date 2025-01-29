@@ -23,6 +23,24 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     {
         base.OnModelCreating(builder);
 
+        builder.Entity<Manga>(entity =>
+        {
+            entity.HasIndex(e => new {e.PrimaryTitle})
+                .IsUnique();
+        });
+
+        builder.Entity<MangaAlternativeTitle>(entity =>
+        {
+            entity.HasIndex(e => new { e.Title })
+                .IsUnique();
+        });
+
+        builder.Entity<Chapter>(entity =>
+        {
+            entity.HasIndex(e => new { e.RelativePath, e.MangaId })
+                .IsUnique();
+        });
+
         builder.Entity<PersistedTask>(entity =>
         {
             entity.Property(e => e.Data)
