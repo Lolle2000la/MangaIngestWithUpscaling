@@ -35,6 +35,7 @@ public class ScanIngestTask : BaseTask
             // Also take into account the alternate names
             var seriesEntity = await dbContext.MangaSeries
                 .Include(s => s.OtherTitles)
+                .Include(s => s.Chapters)
                 .FirstOrDefaultAsync(s => s.PrimaryTitle == series || s.OtherTitles.Any(an => an.Title == series),
                     cancellationToken: cancellationToken);
 
@@ -43,10 +44,19 @@ public class ScanIngestTask : BaseTask
                 seriesEntity = new Manga
                 {
                     PrimaryTitle = series,
-                    OtherTitles = new List<MangaAlternativeTitle>()
+                    OtherTitles = new List<MangaAlternativeTitle>(),
+                    Library = library,
+                    LibraryId = library.Id,
+                    Chapters = new List<Chapter>()
                 };
                 dbContext.MangaSeries.Add(seriesEntity);
             }
+
+            if (seriesEntity.Chapters == null)
+            {
+                seriesEntity.Chapters = new List<Chapter>();
+            }
+
 
             var cbzConverter = services.GetRequiredService<ICbzConverter>();
 
@@ -76,6 +86,7 @@ public class ScanIngestTask : BaseTask
                 var chapterEntity = new Chapter
                 {
                     FileName = chapterCbz.FileName,
+                    Manga = seriesEntity,
                     MangaId = seriesEntity.Id,
                     RelativePath = targetPath,
                     IsUpscaled = false
