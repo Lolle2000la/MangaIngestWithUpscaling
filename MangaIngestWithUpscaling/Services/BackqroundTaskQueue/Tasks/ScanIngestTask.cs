@@ -11,7 +11,7 @@ public class ScanIngestTask : BaseTask
     public int LibraryId { get; set; }
     public string LibraryName { get; set; } = string.Empty;
 
-    public virtual async Task ProcessAsync(IServiceProvider services, CancellationToken cancellationToken)
+    public override async Task ProcessAsync(IServiceProvider services, CancellationToken cancellationToken)
     {
         var logger = services.GetRequiredService<ILogger<ScanIngestTask>>();
         var dbContext = services.GetRequiredService<ApplicationDbContext>();
@@ -87,5 +87,5 @@ public class ScanIngestTask : BaseTask
         }
 
     }
-    public virtual string TaskFriendlyName { get; } = $"Scanning ";
+    public override string TaskFriendlyName => $"Scanning {LibraryName}";
 }
