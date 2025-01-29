@@ -1,7 +1,6 @@
-﻿namespace MangaIngestWithUpscaling.Services.MetadataExtraction
+﻿namespace MangaIngestWithUpscaling.Services.MetadataExtraction;
+
+public interface IMetadataExtractionService
 {
-    public interface IMetadataExtractionService
-    {
-        ExtractedMetadata GetSeriesAndTitleFromComicInfo(string file);
-    }
+    ExtractedMetadata GetSeriesAndTitleFromComicInfo(string file);
 }

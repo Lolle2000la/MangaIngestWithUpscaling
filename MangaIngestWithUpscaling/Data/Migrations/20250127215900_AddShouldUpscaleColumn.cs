@@ -2,27 +2,26 @@
 
 #nullable disable
 
-namespace MangaIngestWithUpscaling.Migrations
+namespace MangaIngestWithUpscaling.Migrations;
+
+/// <inheritdoc />
+public partial class AddShouldUpscaleColumn : Migration
 {
     /// <inheritdoc />
-    public partial class AddShouldUpscaleColumn : Migration
+    protected override void Up(MigrationBuilder migrationBuilder)
     {
-        /// <inheritdoc />
-        protected override void Up(MigrationBuilder migrationBuilder)
-        {
-            migrationBuilder.AddColumn<bool>(
-                name: "ShouldUpscale",
-                table: "MangaSeries",
-                type: "INTEGER",
-                nullable: true);
-        }
+        migrationBuilder.AddColumn<bool>(
+            name: "ShouldUpscale",
+            table: "MangaSeries",
+            type: "INTEGER",
+            nullable: true);
+    }
 
-        /// <inheritdoc />
-        protected override void Down(MigrationBuilder migrationBuilder)
-        {
-            migrationBuilder.DropColumn(
-                name: "ShouldUpscale",
-                table: "MangaSeries");
-        }
+    /// <inheritdoc />
+    protected override void Down(MigrationBuilder migrationBuilder)
+    {
+        migrationBuilder.DropColumn(
+            name: "ShouldUpscale",
+            table: "MangaSeries");
     }
 }

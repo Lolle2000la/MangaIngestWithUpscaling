@@ -1,10 +1,9 @@
-﻿namespace MangaIngestWithUpscaling.Data.BackqroundTaskQueue
+﻿namespace MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
+
+public enum PersistedTaskStatus
 {
-    public enum PersistedTaskStatus
-    {
-        Pending,
-        Processing,
-        Completed,
-        Failed
-    }
+    Pending,
+    Processing,
+    Completed,
+    Failed
 }

@@ -2,58 +2,57 @@
 
 #nullable disable
 
-namespace MangaIngestWithUpscaling.Migrations
+namespace MangaIngestWithUpscaling.Migrations;
+
+/// <inheritdoc />
+public partial class ImproveLibraryColumnsFurther : Migration
 {
     /// <inheritdoc />
-    public partial class ImproveLibraryColumnsFurther : Migration
+    protected override void Up(MigrationBuilder migrationBuilder)
     {
-        /// <inheritdoc />
-        protected override void Up(MigrationBuilder migrationBuilder)
-        {
-            migrationBuilder.DropForeignKey(
-                name: "FK_Libraries_UpscalerConfigs_UpscalerConfigId",
-                table: "Libraries");
+        migrationBuilder.DropForeignKey(
+            name: "FK_Libraries_UpscalerConfigs_UpscalerConfigId",
+            table: "Libraries");
 
-            migrationBuilder.AlterColumn<int>(
-                name: "UpscalerConfigId",
-                table: "Libraries",
-                type: "INTEGER",
-                nullable: true,
-                oldClrType: typeof(int),
-                oldType: "INTEGER");
+        migrationBuilder.AlterColumn<int>(
+            name: "UpscalerConfigId",
+            table: "Libraries",
+            type: "INTEGER",
+            nullable: true,
+            oldClrType: typeof(int),
+            oldType: "INTEGER");
 
-            migrationBuilder.AddForeignKey(
-                name: "FK_Libraries_UpscalerConfigs_UpscalerConfigId",
-                table: "Libraries",
-                column: "UpscalerConfigId",
-                principalTable: "UpscalerConfigs",
-                principalColumn: "Id");
-        }
+        migrationBuilder.AddForeignKey(
+            name: "FK_Libraries_UpscalerConfigs_UpscalerConfigId",
+            table: "Libraries",
+            column: "UpscalerConfigId",
+            principalTable: "UpscalerConfigs",
+            principalColumn: "Id");
+    }
 
-        /// <inheritdoc />
-        protected override void Down(MigrationBuilder migrationBuilder)
-        {
-            migrationBuilder.DropForeignKey(
-                name: "FK_Libraries_UpscalerConfigs_UpscalerConfigId",
-                table: "Libraries");
+    /// <inheritdoc />
+    protected override void Down(MigrationBuilder migrationBuilder)
+    {
+        migrationBuilder.DropForeignKey(
+            name: "FK_Libraries_UpscalerConfigs_UpscalerConfigId",
+            table: "Libraries");
 
-            migrationBuilder.AlterColumn<int>(
-                name: "UpscalerConfigId",
-                table: "Libraries",
-                type: "INTEGER",
-                nullable: false,
-                defaultValue: 0,
-                oldClrType: typeof(int),
-                oldType: "INTEGER",
-                oldNullable: true);
+        migrationBuilder.AlterColumn<int>(
+            name: "UpscalerConfigId",
+            table: "Libraries",
+            type: "INTEGER",
+            nullable: false,
+            defaultValue: 0,
+            oldClrType: typeof(int),
+            oldType: "INTEGER",
+            oldNullable: true);
 
-            migrationBuilder.AddForeignKey(
-                name: "FK_Libraries_UpscalerConfigs_UpscalerConfigId",
-                table: "Libraries",
-                column: "UpscalerConfigId",
-                principalTable: "UpscalerConfigs",
-                principalColumn: "Id",
-                onDelete: ReferentialAction.Cascade);
-        }
+        migrationBuilder.AddForeignKey(
+            name: "FK_Libraries_UpscalerConfigs_UpscalerConfigId",
+            table: "Libraries",
+            column: "UpscalerConfigId",
+            principalTable: "UpscalerConfigs",
+            principalColumn: "Id",
+            onDelete: ReferentialAction.Cascade);
     }
 }

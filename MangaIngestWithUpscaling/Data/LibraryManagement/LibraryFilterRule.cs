@@ -1,47 +1,45 @@
-﻿namespace MangaIngestWithUpscaling.Data.LibraryManagement
+﻿namespace MangaIngestWithUpscaling.Data.LibraryManagement;
+
+/// <summary>
+/// Represents a pattern-based filter rule for a library,
+/// such as a regex or glob, specifying which field to check.
+/// </summary>
+public class LibraryFilterRule
 {
-    /// <summary>
-    /// Represents a pattern-based filter rule for a library,
-    /// such as a regex or glob, specifying which field to check.
-    /// </summary>
-    public class LibraryFilterRule
-    {
-        public int Id { get; set; }
-        public int LibraryId { get; set; }
-        public Library Library { get; set; }
+    public int Id { get; set; }
+    public int LibraryId { get; set; }
+    public Library Library { get; set; }
 
-        public string Pattern { get; set; }
-        public LibraryFilterPatternType PatternType { get; set; }
-        public LibraryFilterTargetField TargetField { get; set; }
-        public FilterAction Action { get; set; }
-    }
+    public string Pattern { get; set; }
+    public LibraryFilterPatternType PatternType { get; set; }
+    public LibraryFilterTargetField TargetField { get; set; }
+    public FilterAction Action { get; set; }
+}
 
-    /// <summary>
-    /// Defines valid pattern types for library filter rules.
-    /// </summary>
-    public enum LibraryFilterPatternType
-    {
-        Regex,
-        Containes,
-    }
+/// <summary>
+/// Defines valid pattern types for library filter rules.
+/// </summary>
+public enum LibraryFilterPatternType
+{
+    Regex,
+    Containes,
+}
 
-    /// <summary>
-    /// Whether the rule includes or excludes certain chapters.
-    /// </summary>
-    public enum FilterAction
-    {
-        Include,
-        Exclude
-    }
+/// <summary>
+/// Whether the rule includes or excludes certain chapters.
+/// </summary>
+public enum FilterAction
+{
+    Include,
+    Exclude
+}
 
-    /// <summary>
-    /// Defines possible fields that a filter rule might target.
-    /// </summary>
-    public enum LibraryFilterTargetField
-    {
-        FilePath,
-        MangaTitle,
-        ChapterTitle
-    }
-
+/// <summary>
+/// Defines possible fields that a filter rule might target.
+/// </summary>
+public enum LibraryFilterTargetField
+{
+    FilePath,
+    MangaTitle,
+    ChapterTitle
 }

@@ -1,9 +1,8 @@
 ﻿using ReactiveUI;
 
-namespace MangaIngestWithUpscaling.Components
+namespace MangaIngestWithUpscaling.Components;
+
+public abstract class ViewModelBase : ReactiveObject, IActivatableViewModel
 {
-    public abstract class ViewModelBase : ReactiveObject, IActivatableViewModel
-    {
-        public ViewModelActivator Activator { get; } = new ViewModelActivator();
-    }
+    public ViewModelActivator Activator { get; } = new ViewModelActivator();
 }
