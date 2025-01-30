@@ -27,4 +27,14 @@
 		<PackageReference Include="ReactiveMarbles.ObservableEvents.SourceGenerator" Version="1.0.2" PrivateAssets="all" />
 	</ItemGroup>
 
+	<ItemGroup>
+		<None Include="../MangaJaNaiConverterGui/MangaJaNaiConverterGui/appstate2.json">
+			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
+		</None>
+		<None Include="../MangaJaNaiConverterGui/MangaJaNaiConverterGui/backend/**">
+			<Link>backend\%(RecursiveDir)%(Filename)%(Extension)</Link>
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
+
 </Project>
