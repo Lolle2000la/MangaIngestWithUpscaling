@@ -24,31 +24,7 @@ public class IngestProcessor(ApplicationDbContext dbContext,
 
         foreach (var (series, chapters) in chaptersBySeries)
         {
-            // create series if it doesn't exist
-            // Also take into account the alternate names
-            var seriesEntity = await dbContext.MangaSeries
-                .Include(s => s.OtherTitles)
-                .Include(s => s.Chapters)
-                .FirstOrDefaultAsync(s => s.PrimaryTitle == series || s.OtherTitles.Any(an => an.Title == series),
-                    cancellationToken: cancellationToken);
-
-            if (seriesEntity == null)
-            {
-                seriesEntity = new Manga
-                {
-                    PrimaryTitle = series,
-                    OtherTitles = new List<MangaAlternativeTitle>(),
-                    Library = library,
-                    LibraryId = library.Id,
-                    Chapters = new List<Chapter>()
-                };
-                dbContext.MangaSeries.Add(seriesEntity);
-            }
-
-            if (seriesEntity.Chapters == null)
-            {
-                seriesEntity.Chapters = new List<Chapter>();
-            }
+            Manga? seriesEntity = await GetMangaSeriesEntity(library, series, cancellationToken);
 
             // Move chapters to the target path in file system as specified by the libraries NotUpscaledLibraryPath property.
             // Then create a Chapter entity for each chapter and add it to the series.
@@ -90,6 +66,37 @@ public class IngestProcessor(ApplicationDbContext dbContext,
         logger.LogInformation("Scanned {seriesCount} series in library {libraryName}. Cleaning.", chaptersBySeries.Count, library.Name);
         // Clean the ingest path of all empty directories recursively
         DeleteEmpty(library.IngestPath, logger);
+    }
+
+    private async Task<Manga?> GetMangaSeriesEntity(Library library, string series, CancellationToken cancellationToken)
+    {
+        // create series if it doesn't exist
+        // Also take into account the alternate names
+        var seriesEntity = await dbContext.MangaSeries
+            .Include(s => s.OtherTitles)
+            .Include(s => s.Chapters)
+            .FirstOrDefaultAsync(s => s.PrimaryTitle == series || s.OtherTitles.Any(an => an.Title == series),
+                cancellationToken: cancellationToken);
+
+        if (seriesEntity == null)
+        {
+            seriesEntity = new Manga
+            {
+                PrimaryTitle = series,
+                OtherTitles = new List<MangaAlternativeTitle>(),
+                Library = library,
+                LibraryId = library.Id,
+                Chapters = new List<Chapter>()
+            };
+            dbContext.MangaSeries.Add(seriesEntity);
+        }
+
+        if (seriesEntity.Chapters == null)
+        {
+            seriesEntity.Chapters = new List<Chapter>();
+        }
+
+        return seriesEntity;
     }
 
     private static void DeleteEmpty(string startLocation, ILogger<IngestProcessor> logger)
