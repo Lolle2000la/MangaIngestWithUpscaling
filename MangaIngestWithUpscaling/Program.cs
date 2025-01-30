@@ -3,6 +3,7 @@ using MangaIngestWithUpscaling.Components.Account;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Services;
 using MangaIngestWithUpscaling.Services.ChapterRecognition;
+using MangaIngestWithUpscaling.Services.Python;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -62,6 +63,21 @@ using (var scope = app.Services.CreateScope())
     {
         Console.WriteLine($"An error occurred while applying migrations: {ex.Message}");
         // Log or handle the exception as appropriate for your app
+    }
+
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+    var pythonService = scope.ServiceProvider.GetRequiredService<IPythonService>();
+    if (!pythonService.IsPythonInstalled())
+    {
+        logger.LogError("Python is not installed on the system. Please install Python 3.6 or newer and ensure it is available on the system PATH.");
+    }
+    else
+    {
+        logger.LogInformation("Python is installed on the system.");
+
+        var environment = await pythonService.PreparePythonEnvironment(Path.Combine(AppContext.BaseDirectory, "python-env"));
+
+        logger.LogInformation($"Python environment prepared at {environment.PythonExecutablePath}");
     }
 }
 
