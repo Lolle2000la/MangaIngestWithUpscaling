@@ -30,9 +30,15 @@
             <MudNavLink Href="Account/Manage">
                 <MudIcon Icon="@Icons.Material.Filled.ManageAccounts" /><span>@context.User.Identity?.Name</span>
             </MudNavLink>
-            <MudNavLink Href="Account/Logout" OnClick="Logout">
-                <MudIcon Icon="@Icons.Material.Filled.Logout" /><span>Logout</span>
-            </MudNavLink>
+            <form action="Account/Logout" method="post">
+                <AntiforgeryToken />
+                <input type="hidden" name="ReturnUrl" value="@currentUrl" />
+                <button type="submit" class="mud-nav-link mud-ripple">
+                    <div class="mud-nav-link-text">
+                        <MudIcon Icon="@Icons.Material.Filled.Logout" /> Logout
+                    </div>
+                </button
+            </form>
         </Authorized>
         <NotAuthorized>
             <MudNavLink Href="Account/Register">
