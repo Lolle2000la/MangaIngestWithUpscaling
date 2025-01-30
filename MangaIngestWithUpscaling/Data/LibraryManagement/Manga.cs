@@ -18,4 +18,23 @@ public class Manga
         = [];
 
     public List<Chapter> Chapters { get; set; } = [];
+
+    public void ChangePrimaryTitle(string newTitle, bool addOldToAlternative)
+    {
+        if (addOldToAlternative
+            && !OtherTitles.Any(t => t.Title == PrimaryTitle))
+        {
+            OtherTitles.Add(new MangaAlternativeTitle
+            {
+                Title = PrimaryTitle,
+                Manga = this,
+                MangaId = Id
+            });
+        }
+        PrimaryTitle = newTitle;
+
+        OtherTitles = OtherTitles
+            .Where(t => t.Title != newTitle)
+            .ToList();
+    }
 }
