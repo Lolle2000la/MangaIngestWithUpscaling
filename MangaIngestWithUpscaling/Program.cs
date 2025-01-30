@@ -65,6 +65,7 @@ using (var scope = app.Services.CreateScope())
         // Log or handle the exception as appropriate for your app
     }
 
+    // Also initialize python environment
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
     var pythonService = scope.ServiceProvider.GetRequiredService<IPythonService>();
     if (!pythonService.IsPythonInstalled())
