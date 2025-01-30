@@ -3,6 +3,7 @@
 public interface IPythonService
 {
     bool IsPythonInstalled();
+    string? GetPythonExecutablePath();
     Task<PythonEnvironment> PreparePythonEnvironment(string desiredDirectory);
     /// <summary>
     /// Runs a python script in the given environment with the given arguments
