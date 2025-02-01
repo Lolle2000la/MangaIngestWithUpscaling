@@ -22,7 +22,7 @@ public class LibraryFilterRule
 public enum LibraryFilterPatternType
 {
     Regex,
-    Containes,
+    Contains,
 }
 
 /// <summary>

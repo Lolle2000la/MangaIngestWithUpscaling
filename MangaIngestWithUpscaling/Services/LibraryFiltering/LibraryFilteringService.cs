@@ -24,7 +24,7 @@ public class LibraryFilteringService : ILibraryFilteringService
 
                 var ruleMatched = rule.PatternType switch
                 {
-                    LibraryFilterPatternType.Containes => targetFieldData.Contains(rule.Pattern),
+                    LibraryFilterPatternType.Contains => targetFieldData.Contains(rule.Pattern),
                     LibraryFilterPatternType.Regex => Regex.IsMatch(targetFieldData, rule.Pattern)
                 };
 
