@@ -25,6 +25,7 @@ public class ScanIngestTask : BaseTask
         }
         else
         {
+            LibraryName = library.Name;
             await ingestProcessor.ProcessAsync(library, cancellationToken);
         }
     }
