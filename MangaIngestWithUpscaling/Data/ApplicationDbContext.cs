@@ -16,7 +16,6 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<MangaAlternativeTitle> MangaAlternativeTitles { get; set; }
     public DbSet<Chapter> Chapters { get; set; }
     public DbSet<UpscalerProfile> UpscalerProfiles { get; set; }
-    public DbSet<UpscalingQueueEntry> UpscalingQueueEntries { get; set; }
     public DbSet<PersistedTask> PersistedTasks { get; set; }
 
     protected override void OnModelCreating(ModelBuilder builder)
