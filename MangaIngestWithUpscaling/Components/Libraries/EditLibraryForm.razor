@@ -27,10 +27,10 @@
         </MudItem>
     </MudGrid>
     <MudSelect T="int?" Label="Upscaler Config" 
-               @bind-Value="Library.UpscalerConfigId" 
+               @bind-Value="Library.UpscalerProfileId" 
                @bind-Value:after="OnInputChanged" Clearable="true">
         <MudSelectItem T="int?" Value="null">None</MudSelectItem>
-        @foreach (var upscalerConfig in DbContext.UpscalerConfigs)
+        @foreach (var upscalerConfig in DbContext.UpscalerProfiles)
         {
             <MudSelectItem Value="@upscalerConfig.Id">@upscalerConfig.Name</MudSelectItem>
         }

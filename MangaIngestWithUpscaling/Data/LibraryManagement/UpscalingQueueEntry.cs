@@ -10,8 +10,8 @@ public class UpscalingQueueEntry
     public int ChapterId { get; set; }
     public Chapter Chapter { get; set; }
 
-    public int UpscalerConfigId { get; set; }
-    public UpscalerConfig UpscalerConfig { get; set; }
+    public int UpscalerProfileId { get; set; }
+    public UpscalerProfile UpscalerProfile { get; set; }
 
     public DateTime QueuedAt { get; set; }
 }

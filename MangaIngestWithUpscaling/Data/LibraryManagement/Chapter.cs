@@ -14,6 +14,6 @@ public class Chapter
     public string RelativePath { get; set; }
 
     public bool IsUpscaled { get; set; }
-    public int? UpscalerConfigId { get; set; }
-    public UpscalerConfig UpscalerConfig { get; set; }
+    public int? UpscalerProfileId { get; set; }
+    public UpscalerProfile UpscalerProfile { get; set; }
 }

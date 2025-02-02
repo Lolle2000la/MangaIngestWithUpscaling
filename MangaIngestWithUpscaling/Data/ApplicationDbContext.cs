@@ -15,7 +15,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Manga> MangaSeries { get; set; }
     public DbSet<MangaAlternativeTitle> MangaAlternativeTitles { get; set; }
     public DbSet<Chapter> Chapters { get; set; }
-    public DbSet<UpscalerConfig> UpscalerConfigs { get; set; }
+    public DbSet<UpscalerProfile> UpscalerProfiles { get; set; }
     public DbSet<UpscalingQueueEntry> UpscalingQueueEntries { get; set; }
     public DbSet<PersistedTask> PersistedTasks { get; set; }
 
@@ -67,7 +67,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 .HasConversion<string>();
         });
 
-        builder.Entity<UpscalerConfig>(entity =>
+        builder.Entity<UpscalerProfile>(entity =>
         {
             entity.Property(e => e.UpscalerMethod)
                 .HasConversion<string>();
