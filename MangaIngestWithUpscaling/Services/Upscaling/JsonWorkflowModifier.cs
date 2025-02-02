@@ -45,20 +45,20 @@ public static class JsonWorkflowModifier
         // Read the JSON document from the original file.
         string jsonContent = File.ReadAllText(originalFile);
         // Parse the JSON document into a mutable DOM.
-        JsonNode rootNode = JsonNode.Parse(jsonContent);
+        JsonNode? rootNode = JsonNode.Parse(jsonContent);
         if (rootNode == null)
             throw new Exception("Invalid JSON document.");
 
         // Navigate to Workflows -> $values.
-        JsonObject workflowsObj = rootNode["Workflows"]?.AsObject();
+        JsonObject? workflowsObj = rootNode["Workflows"]?.AsObject();
         if (workflowsObj == null)
             throw new Exception("Invalid JSON format: 'Workflows' not found.");
-        JsonArray valuesArray = workflowsObj["$values"]?.AsArray();
+        JsonArray? valuesArray = workflowsObj["$values"]?.AsArray();
         if (valuesArray == null)
             throw new Exception("Invalid JSON format: 'Workflows.$values' not found.");
 
         // Find the workflow with WorkflowName == "Upscale Manga (Default)".
-        JsonObject workflow = valuesArray
+        JsonObject? workflow = valuesArray
             .Select(n => n.AsObject())
             .FirstOrDefault(obj => obj["WorkflowName"]?.GetValue<string>() == "Upscale Manga (Default)");
         if (workflow == null)
