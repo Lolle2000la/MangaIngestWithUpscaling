@@ -1,6 +1,6 @@
 ﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
 
-@page "/libraries/edit/{LibraryId}"
+@page "/libraries/edit/{LibraryId:int}"
 
 @inject ApplicationDbContext DbContext
 @inject NavigationManager NavigationManager
@@ -28,28 +28,26 @@
 
 @code {
     [Parameter]
-    public string? LibraryId { get; set; }
+    public int? LibraryId { get; set; }
 
     public Library Library { get; set; } = new Library()
         {
-            Name = ""
+            Name = "",
+            UpscalerProfileId = null,
         };
 
     public bool IsValid { get; set; } = false;
 
     protected override async Task OnParametersSetAsync()
     {
-        if (LibraryId != null)
+        if (LibraryId.HasValue)
         {
-            if (int.TryParse(LibraryId, out var id))
-            {
-                Console.WriteLine("LibraryId: " + id);
-                Library = await DbContext.Libraries.FindAsync(id);
-            }
-            else
-            {
-                NavigationManager.NavigateTo("/libraries");
-            }
+
+            Library = await DbContext.Libraries.FindAsync(LibraryId.Value);
+        }
+        else
+        {
+            NavigationManager.NavigateTo("/libraries");
         }
     }
 

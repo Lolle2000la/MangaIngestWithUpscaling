@@ -32,7 +32,7 @@
         <MudSelectItem T="int?" Value="null">None</MudSelectItem>
         @foreach (var upscalerConfig in DbContext.UpscalerProfiles)
         {
-            <MudSelectItem Value="@upscalerConfig.Id">@upscalerConfig.Name</MudSelectItem>
+            <MudSelectItem T="int?" Value="@upscalerConfig.Id">@upscalerConfig.Name</MudSelectItem>
         }
     </MudSelect>
 </MudForm>
