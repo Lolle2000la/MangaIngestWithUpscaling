@@ -1,0 +1,60 @@
+﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
+
+@page "/upscaling/profiles/edit/{ProfileId:int}"
+
+@inject ApplicationDbContext DbContext
+@inject NavigationManager NavigationManager
+
+<PageTitle>Edit Upscaler Profile "@Profile.Name"</PageTitle>
+
+<MudCard>
+    <MudCardHeader>
+        <MudText Typo="Typo.h5">Edit Upscaler Profile: @Profile.Name</MudText>
+    </MudCardHeader>
+    <MudCardContent>
+        <UpscalerProfileForm @bind-Profile="Profile"
+                             @bind-IsValid="IsValid" />
+    </MudCardContent>
+    <MudCardActions>
+        <MudSpacer />
+        <MudButton StartIcon="@Icons.Material.Filled.Save"
+                   Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   Disabled="!IsValid"
+                   OnClick="OnSaveProfile">Save</MudButton>
+    </MudCardActions>
+</MudCard>
+
+@code {
+    [Parameter]
+    public int? ProfileId { get; set; }
+
+    public UpscalerProfile Profile { get; set; } = new UpscalerProfile()
+        {
+            Name = "",
+            ScalingFactor = ScaleFactor.TwoX,
+            CompressionFormat = CompressionFormat.Webp,
+            Quality = 80
+        };
+
+    public bool IsValid { get; set; } = false;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (ProfileId.HasValue)
+        {
+            Profile = await DbContext.UpscalerProfiles.FindAsync(ProfileId.Value);
+        }
+        else
+        {
+            NavigationManager.NavigateTo("/upscaling/profiles");
+        }
+    }
+
+    private async Task OnSaveProfile()
+    {
+        DbContext.UpscalerProfiles.Update(Profile);
+        await DbContext.SaveChangesAsync();
+        NavigationManager.NavigateTo("/upscaling/profiles");
+    }
+}

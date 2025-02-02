@@ -31,8 +31,12 @@
         <MudTd>@context.CompressionFormat.GetDisplayName()</MudTd>
         <MudTd>@context.Quality</MudTd>
         <MudTd>
+            <a href="upscaling/profiles/edit/@context.Id">
+                <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Filled" Color="Color.Primary"
+                               title="Edit this profile" />
+            </a>
             <MudIconButton Icon="@Icons.Material.Filled.Delete" Variant="Variant.Filled" Color="Color.Secondary"
-                           title="Delete this library"
+                           title="Delete this profile"
                            OnClick="e => OnDeleteProfile(context)" />
         </MudTd>
     </RowTemplate>
