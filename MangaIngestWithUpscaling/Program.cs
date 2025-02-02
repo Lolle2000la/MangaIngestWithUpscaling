@@ -9,10 +9,31 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using MudBlazor.Services;
+using Serilog;
+using Serilog.Events;
 using System;
+using System.Data.SQLite;
 using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
+
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+
+SQLiteConnectionStringBuilder sqliteConnectionStringBuilder = new(connectionString);
+
+//Log.Logger = new LoggerConfiguration()
+//    .ReadFrom.Configuration(builder.Configuration)
+//    .CreateLogger();
+
+builder.Services.AddSerilog((services, lc) => lc
+    .ReadFrom.Configuration(builder.Configuration)
+    .ReadFrom.Services(services)
+    .Enrich.FromLogContext()
+    .WriteTo.Console()
+    .WriteTo.SQLite(
+        Path.GetFullPath(sqliteConnectionStringBuilder.DataSource), 
+        tableName: "Logs",
+        restrictedToMinimumLevel: LogEventLevel.Warning));
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
@@ -33,7 +54,6 @@ builder.Services.AddAuthentication(options =>
     })
     .AddIdentityCookies();
 
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlite(connectionString));
 builder.Services.AddDatabaseDeveloperPageExceptionFilter();
