@@ -12,7 +12,7 @@ public class UpscalerProfile
     public UpscalerMethod UpscalerMethod { get; set; } = UpscalerMethod.MangaJaNai;   // e.g. "mangajanai"
     public required ScaleFactor ScalingFactor { get; set; }    // e.g. "1x", "2x"
     public required CompressionFormat CompressionFormat { get; set; } // e.g. "avid", "png", "webp"
-    [Range(0, 100)]
+    [Range(1, 100)]
     public required int Quality { get; set; }            // e.g. 80, 90
 }
 
