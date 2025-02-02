@@ -26,8 +26,8 @@
     </HeaderContent>
     <RowTemplate>
         <MudTd>@context.Name</MudTd>
-        <MudTd>@context.ScalingFactor.ToString()</MudTd>
-        <MudTd>@context.CompressionFormat.ToString()</MudTd>
+        <MudTd>@context.ScalingFactor.GetDisplayName()</MudTd>
+        <MudTd>@context.CompressionFormat.GetDisplayName()</MudTd>
         <MudTd>@context.Quality</MudTd>
         <MudTd>
         </MudTd>

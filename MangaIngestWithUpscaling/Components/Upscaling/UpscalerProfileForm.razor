@@ -1,5 +1,46 @@
 ﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
 
+<MudForm Model="@Profile">
+    <MudGrid Spacing="4">
+        <MudItem xs="12">
+            <MudTextField Label="Name"
+                          @bind-Value="@Profile.Name"
+                          @bind-Value:after="OnInputChanged"
+                          Required="true" />
+        </MudItem>
+        <MudItem xs="12" sm="4">
+            <MudSelect Label="Scaling Factor"
+                       @bind-Value="@Profile.ScalingFactor"
+                       @bind-Value:after="OnInputChanged"
+                       Required="true">
+                @foreach (ScaleFactor factor in Enum.GetValues(typeof(ScaleFactor)))
+                {
+                    <MudSelectItem Value="@factor">@factor.GetDisplayName()</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" sm="4">
+            <MudSelect Label="Compression Format"
+                       @bind-Value="@Profile.CompressionFormat"
+                       @bind-Value:after="OnInputChanged"
+                       Required="true">
+                @foreach (CompressionFormat format in Enum.GetValues(typeof(CompressionFormat)))
+                {
+                    <MudSelectItem Value="@format">@format.GetDisplayName()</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" sm="4">
+            <MudNumericField Label="Quality"
+                             @bind-Value="@Profile.Quality"
+                             @bind-Value:after="OnInputChanged"
+                             Min="1"
+                             Max="100"
+                             Step="1"
+                             Required="true" />
+        </MudItem>
+    </MudGrid>
+</MudForm>
 
 @code {
     [Parameter]
