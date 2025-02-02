@@ -31,6 +31,11 @@ public class UpscaleTask : BaseTask
 
         FriendlyEntryName = $"Upscaling {chapter.FileName} with {upscalerProfile.Name}";
 
+        if (chapter.Manga.Library.UpscaledLibraryPath == null)
+        {
+            throw new InvalidOperationException("Upscaled library path not set.");
+        }
+
         string upscaleBasePath = Path.Combine(chapter.Manga.Library.UpscaledLibraryPath, chapter.RelativePath);
         if (!Directory.Exists(upscaleBasePath))
         {
