@@ -1,0 +1,44 @@
+﻿@page "/upscaling/profiles/create"
+@using MangaIngestWithUpscaling.Data.LibraryManagement
+
+@inject ApplicationDbContext DbContext
+@inject NavigationManager NavigationManager
+
+<PageTitle>Create Upscaler Profile</PageTitle>
+
+<MudCard>
+    <MudCardHeader>
+        <MudText Typo="Typo.h5">Create new Upscaler Profile</MudText>
+    </MudCardHeader>
+    <MudCardContent>
+        <UpscalerProfileForm @bind-Profile="Profile"
+                         @bind-IsValid="IsValid"/>
+    </MudCardContent>
+    <MudCardActions>
+        <MudSpacer />
+        <MudButton StartIcon="@Icons.Material.Filled.Save"
+        Variant="Variant.Filled"
+        Color="Color.Primary"
+        Disabled="!IsValid"
+        OnClick="OnCreateLibrary">Create</MudButton>
+    </MudCardActions>
+</MudCard>
+
+@code {
+    private UpscalerProfile Profile { get; set; } = new UpscalerProfile
+        {
+            Name = "",
+            ScalingFactor = ScaleFactor.TwoX,
+            CompressionFormat = CompressionFormat.Webp,
+            Quality = 80
+        };
+
+    public bool IsValid { get; set; } = false;
+
+    private async Task OnCreateLibrary()
+    {
+        DbContext.UpscalerProfiles.Add(Profile);
+        await DbContext.SaveChangesAsync();
+        NavigationManager.NavigateTo("/upscaling/profiles");
+    }
+}

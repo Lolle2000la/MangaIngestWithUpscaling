@@ -8,6 +8,14 @@
 
 <MudText Typo="Typo.h4">Create and Edit Profiles configuring Upscaling</MudText>
 
+<MudPaper Elevation="3" Class="mb-3">
+    <MudStack Row>
+        <a href="upscaling/profiles/create">
+            <MudButton StartIcon="@Icons.Material.Filled.Add" Variant="Variant.Filled" Color="Color.Primary">Create</MudButton>
+        </a>
+    </MudStack>
+</MudPaper>
+
 <MudTable T="UpscalerProfile" Items="@Profiles">
     <HeaderContent>
         <MudTh>Name</MudTh>
