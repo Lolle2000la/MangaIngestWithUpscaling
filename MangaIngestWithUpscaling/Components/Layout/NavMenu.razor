@@ -4,39 +4,42 @@
 
 
 <MudNavMenu>
-    <MudNavLink Href="" Match="NavLinkMatch.All">
-        <MudIcon Icon="bi bi-house-door-fill-nav-menu" /> <span>Home</span>
+    <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Home">
+        Home
     </MudNavLink>
-    <MudNavLink Href="libraries">
-        <MudIcon Icon="@Icons.Material.Filled.LibraryBooks" /> <span>Libraries</span>
+    <MudNavLink Href="libraries" Icon="@Icons.Material.Filled.LibraryBooks" >
+        Libraries
     </MudNavLink>
-    <MudNavLink Href="tasks">
-        <MudIcon Icon="@Icons.Material.Filled.Task" /> <span>Tasks</span>
+    <MudNavLink Href="upscaling/profiles" Icon="@Icons.Material.Filled.ImageAspectRatio">
+        Upscale Profiles
     </MudNavLink>
-    <MudNavLink Href="counter">
-        <MudIcon Icon="@Icons.Material.Filled.AccountBalanceWallet" /> <span>Counter</span>
+    <MudNavLink Href="tasks" Icon="@Icons.Material.Filled.Task">
+        Tasks
     </MudNavLink>
-    <MudNavLink Href="weather">
-        <MudIcon Icon="bi bi-list-nested-nav-menu" /> <span>Weather</span>
+    <MudNavLink Href="counter" Icon="@Icons.Material.Filled.AccountBalanceWallet">
+        Counter
     </MudNavLink>
-    <MudNavLink Href="TestChapterRecognition">
-        <MudIcon Icon="@Icons.Material.Filled.ImageSearch" /><span>TestChapterRecognition</span>
+    <MudNavLink Href="weather" Icon="@Icons.Material.Filled.Cloud">
+        Weather
     </MudNavLink>
-    <MudNavLink Href="auth">
-        <MudIcon Icon="bi bi-lock-nav-menu" /> <span>Auth Required</span>
+    <MudNavLink Href="TestChapterRecognition" Icon="@Icons.Material.Filled.ImageSearch" >
+        TestChapterRecognition
+    </MudNavLink>
+    <MudNavLink Href="auth" Icon="@Icons.Material.Filled.NoAccounts" IconColor="Color.Error">
+        Auth Required
     </MudNavLink>
     <AuthorizeView>
         <Authorized>
-            <MudNavLink Href="Account/Manage">
-                <MudIcon Icon="@Icons.Material.Filled.ManageAccounts" /><span>@context.User.Identity?.Name</span>
+            <MudNavLink Href="Account/Manage" Icon="@Icons.Material.Filled.ManageAccounts">
+                @context.User.Identity?.Name
             </MudNavLink>
             <form action="Account/Logout" method="post">
                 <AntiforgeryToken />
                 <input type="hidden" name="ReturnUrl" value="@currentUrl" />
                 <button type="submit" class="mud-nav-link mud-ripple">
-                    <div class="mud-nav-link-text">
-                        <MudIcon Icon="@Icons.Material.Filled.Logout" /> Logout
-                    </div>
+                    <MudIcon Class="mud-icon-root mud-icon-default mud-svg-icon mud-icon-size-medium mud-nav-link-icon mud-nav-link-icon-default"
+                        Icon="@Icons.Material.Filled.Logout" /> 
+                    <div class="mud-nav-link-text">Logout</div>
                 </button
             </form>
         </Authorized>
