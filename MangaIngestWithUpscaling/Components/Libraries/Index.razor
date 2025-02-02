@@ -9,6 +9,8 @@
 @inject IDialogService DialogService
 @inject TaskQueue TaskQueue
 
+<PageTitle>Manage Libraries</PageTitle>
+
 <MudText Typo="Typo.h3">Libraries</MudText>
 
 <MudPaper Elevation="3" Class="mb-3">
@@ -31,7 +33,7 @@
     <RowTemplate>
         <MudTd>@context.Name</MudTd>
         <MudTd>@context.IngestPath</MudTd>
-        <MudTd>@context.UpscalerConfig?.Name</MudTd>
+        <MudTd>@context.UpscalerProfile?.Name</MudTd>
         <MudTd>@context.MangaSeries?.Count()</MudTd>
         <MudTd>@context.MangaSeries?.SelectMany(m => m.Chapters)?.Count()</MudTd>
         <MudTd>
