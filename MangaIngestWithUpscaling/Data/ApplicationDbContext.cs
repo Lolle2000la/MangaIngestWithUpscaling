@@ -74,6 +74,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 .HasConversion<string>();
             entity.Property(e => e.CompressionFormat)
                 .HasConversion<string>();
+            entity.HasQueryFilter(e => !e.Deleted);
         });
     }
 

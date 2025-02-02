@@ -14,6 +14,10 @@ public class UpscalerProfile
     public required CompressionFormat CompressionFormat { get; set; } // e.g. "avid", "png", "webp"
     [Range(1, 100)]
     public required int Quality { get; set; }            // e.g. 80, 90
+    /// <summary>
+    /// Whether this profile is deleted. Deleted profiles cannot be selected but might still be referenced by chapters.
+    /// </summary>
+    public bool Deleted { get; set; } = false;
 }
 
 public enum UpscalerMethod
