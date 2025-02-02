@@ -29,7 +29,7 @@
     <MudSelect T="int?" Label="Upscaler Config" 
                @bind-Value="Library.UpscalerProfileId" 
                @bind-Value:after="OnInputChanged" Clearable="true">
-        <MudSelectItem T="int?" Value="null">None</MudSelectItem>
+        <MudSelectItem T="int?" Value="null">«None (Do Not Upscale)»</MudSelectItem>
         @foreach (var upscalerConfig in DbContext.UpscalerProfiles)
         {
             <MudSelectItem T="int?" Value="@upscalerConfig.Id">@upscalerConfig.Name</MudSelectItem>
