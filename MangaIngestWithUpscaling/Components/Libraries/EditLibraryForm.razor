@@ -3,38 +3,42 @@
 
 @inject ApplicationDbContext DbContext
 
-<MudForm Model="@Library">
-    <MudGrid Spacing="2">
+<MudForm Model="@Library" IsValid="@IsValid">
+    <MudGrid Spacing="4">
         <MudItem xs="12">
-            <MudTextField Required="true" Label="Library Name" 
-                          @bind-Value="Library.Name" 
+            <MudTextField Required="true" Label="Library Name"
+                          HelperText="Name for display purposes only."
+                          @bind-Value="Library.Name"
                           @bind-Value:after="OnInputChanged" />
         </MudItem>
         <MudItem lg="4" md="12" xs="12">
-            <FolderPicker SelectedPath="@Library.IngestPath" 
+            <FolderPicker SelectedPath="@Library.IngestPath"
                           SelectedPathChanged="@OnIngestPathChanged"
                           Title="Ingest Folder" Required="true" />
         </MudItem>
         <MudItem lg="4" md="6" xs="12">
-            <FolderPicker SelectedPath="@Library.NotUpscaledLibraryPath" 
+            <FolderPicker SelectedPath="@Library.NotUpscaledLibraryPath"
                           SelectedPathChanged="@OnNotUpscaledPathChanged"
                           Title="Storage Path as-is" Required="true" />
         </MudItem>
         <MudItem lg="4" md="6" xs="12">
-            <FolderPicker SelectedPath="@Library.UpscaledLibraryPath" 
+            <FolderPicker SelectedPath="@Library.UpscaledLibraryPath"
                           SelectedPathChanged="@OnUpscaledPathChanged"
                           Title="Upscaled location" />
         </MudItem>
+        <MudItem xs="12">
+            <MudSelect T="int?" Label="Upscaler Config"
+                       HelperText="Select an upscaling profile to use for this library. Leave at 'none' if you do not want to upscale any images."
+                       @bind-Value="Library.UpscalerProfileId"
+                       @bind-Value:after="OnInputChanged" Clearable="true">
+                <MudSelectItem T="int?" Value="null">«None (Do Not Upscale)»</MudSelectItem>
+                @foreach (var upscalerConfig in DbContext.UpscalerProfiles)
+                {
+                    <MudSelectItem T="int?" Value="@upscalerConfig.Id">@upscalerConfig.Name</MudSelectItem>
+                }
+            </MudSelect>
+        </MudItem>
     </MudGrid>
-    <MudSelect T="int?" Label="Upscaler Config" 
-               @bind-Value="Library.UpscalerProfileId" 
-               @bind-Value:after="OnInputChanged" Clearable="true">
-        <MudSelectItem T="int?" Value="null">«None (Do Not Upscale)»</MudSelectItem>
-        @foreach (var upscalerConfig in DbContext.UpscalerProfiles)
-        {
-            <MudSelectItem T="int?" Value="@upscalerConfig.Id">@upscalerConfig.Name</MudSelectItem>
-        }
-    </MudSelect>
 </MudForm>
 
 @code {
@@ -42,9 +46,9 @@
 
     [Parameter]
     public Library Library { get; set; } = new Library
-    {
-        Name = "",
-    };
+        {
+            Name = "",
+        };
     [Parameter]
     public EventCallback<Library> LibraryChanged { get; set; }
 

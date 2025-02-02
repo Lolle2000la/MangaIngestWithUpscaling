@@ -1,18 +1,20 @@
 ﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
 
-<MudForm Model="@Profile">
+<MudForm Model="@Profile" IsValid="@IsValid">
     <MudGrid Spacing="4">
         <MudItem xs="12">
             <MudTextField Label="Name"
                           @bind-Value="@Profile.Name"
                           @bind-Value:after="OnInputChanged"
-                          Required="true" />
+                          Required="true"
+                          HelperText="This is for display purposes only." />
         </MudItem>
         <MudItem xs="12" sm="4">
             <MudSelect Label="Scaling Factor"
                        @bind-Value="@Profile.ScalingFactor"
                        @bind-Value:after="OnInputChanged"
-                       Required="true">
+                       Required="true"
+                       HelperText="Whether to scale the respective images by 2x, 3x, ... Refer to MangaJaNaiConverterGui for more info.">
                 @foreach (ScaleFactor factor in Enum.GetValues(typeof(ScaleFactor)))
                 {
                     <MudSelectItem Value="@factor">@factor.GetDisplayName()</MudSelectItem>
@@ -23,7 +25,8 @@
             <MudSelect Label="Compression Format"
                        @bind-Value="@Profile.CompressionFormat"
                        @bind-Value:after="OnInputChanged"
-                       Required="true">
+                       Required="true"
+                       HelperText="The compression format used for the upscaled images. Does NOT the existing ones.">
                 @foreach (CompressionFormat format in Enum.GetValues(typeof(CompressionFormat)))
                 {
                     <MudSelectItem Value="@format">@format.GetDisplayName()</MudSelectItem>
@@ -37,7 +40,8 @@
                              Min="1"
                              Max="100"
                              Step="1"
-                             Required="true" />
+                             Required="true"
+                             HelperText="The quality value of the respective compression format. Refer to the individual formats for details on what values to choose for what results." />
         </MudItem>
     </MudGrid>
 </MudForm>
