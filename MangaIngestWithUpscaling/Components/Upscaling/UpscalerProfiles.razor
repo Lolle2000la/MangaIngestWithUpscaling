@@ -1,0 +1,36 @@
+﻿@page "/upscaling/profiles"
+@using MangaIngestWithUpscaling.Data.LibraryManagement
+@using Microsoft.EntityFrameworkCore
+
+@inject ApplicationDbContext DbContext
+
+<PageTitle>Upscaler Profiles</PageTitle>
+
+<MudText Typo="Typo.h4">Create and Edit Profiles configuring Upscaling</MudText>
+
+<MudTable T="UpscalerProfile" Items="@Profiles">
+    <HeaderContent>
+        <MudTh>Name</MudTh>
+        <MudTh>Scaling Factor</MudTh>
+        <MudTh>Comp. Format</MudTh>
+        <MudTh>Comp. Quality</MudTh>
+        <MudTh>Actions</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd>@context.Name</MudTd>
+        <MudTd>@context.ScalingFactor.ToString()</MudTd>
+        <MudTd>@context.CompressionFormat.ToString()</MudTd>
+        <MudTd>@context.Quality</MudTd>
+        <MudTd>
+        </MudTd>
+    </RowTemplate>
+</MudTable>
+
+@code {
+    private IReadOnlyCollection<UpscalerProfile> Profiles { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        Profiles = await DbContext.UpscalerProfiles.ToListAsync();
+    }
+}
