@@ -1,4 +1,5 @@
 ﻿using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
@@ -15,7 +16,10 @@ public class UpscaleTask : BaseTask
     public override async Task ProcessAsync(IServiceProvider services, CancellationToken cancellationToken)
     {
         var dbContext = services.GetRequiredService<ApplicationDbContext>();
-        var chapter = await dbContext.Chapters.FirstOrDefaultAsync(
+        var chapter = await dbContext.Chapters
+            .Include(c => c.Manga)
+            .ThenInclude(m => m.Library)
+            .FirstOrDefaultAsync(
             c => c.Id == ChapterId, cancellationToken: cancellationToken);
         var upscalerProfile = await dbContext.UpscalerProfiles.FirstOrDefaultAsync(
             c => c.Id == UpscalerProfileId, cancellationToken: cancellationToken);
@@ -27,6 +31,15 @@ public class UpscaleTask : BaseTask
 
         FriendlyEntryName = $"Upscaling {chapter.FileName} with {upscalerProfile.Name}";
 
-        throw new NotImplementedException();
+        string upscaleBasePath = Path.Combine(chapter.Manga.Library.UpscaledLibraryPath, chapter.RelativePath);
+        if (!Directory.Exists(upscaleBasePath))
+        {
+            Directory.CreateDirectory(upscaleBasePath);
+        }
+
+        string currentStoragePath = Path.Combine(chapter.Manga.Library.NotUpscaledLibraryPath, chapter.RelativePath);
+
+        var upscaler = services.GetRequiredService<IUpscaler>();
+        await upscaler.Upscale(currentStoragePath, upscaleBasePath, upscalerProfile, cancellationToken);
     }
 }
