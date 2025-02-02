@@ -3,6 +3,7 @@
 @using Microsoft.EntityFrameworkCore
 
 @inject ApplicationDbContext DbContext
+@inject IDialogService DialogService
 
 <PageTitle>Upscaler Profiles</PageTitle>
 
@@ -30,6 +31,9 @@
         <MudTd>@context.CompressionFormat.GetDisplayName()</MudTd>
         <MudTd>@context.Quality</MudTd>
         <MudTd>
+            <MudIconButton Icon="@Icons.Material.Filled.Delete" Variant="Variant.Filled" Color="Color.Secondary"
+                           title="Delete this library"
+                           OnClick="e => OnDeleteProfile(context)" />
         </MudTd>
     </RowTemplate>
 </MudTable>
@@ -39,6 +43,28 @@
 
     protected override async Task OnInitializedAsync()
     {
+        Profiles = await DbContext.UpscalerProfiles.ToListAsync();
+    }
+
+    private async Task OnDeleteProfile(UpscalerProfile profile)
+    {
+        var result = await DialogService.ShowMessageBox(
+            "Delete Profile",
+            "Do you really want to delete this profile? Note: This does NOT delete any of the files created.",
+            "OK", cancelText: "Cancel",
+            options: new DialogOptions
+                {
+                    CloseButton = true,
+                    BackdropClick = true,
+                    CloseOnEscapeKey = true
+                });
+
+        if (result.HasValue && result.Value)
+        {
+            DbContext.UpscalerProfiles.Remove(profile);
+            await DbContext.SaveChangesAsync();
+        }
+
         Profiles = await DbContext.UpscalerProfiles.ToListAsync();
     }
 }
