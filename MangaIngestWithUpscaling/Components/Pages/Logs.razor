@@ -1,0 +1,93 @@
+﻿@page "/logs"
+@using MangaIngestWithUpscaling.Data.Logs
+@using Microsoft.EntityFrameworkCore
+@using System.Linq
+@inject ApplicationDbContext DbContext
+
+<MudTable T="Log" Items="@_logs" Hover="true" ServerData="@ServerData"
+          SortLabel="Timestamp" SortDirection="SortDirection.Descending"
+          Breakpoint="Breakpoint.None">
+    <ToolBarContent>
+        <MudText Typo="Typo.h6">Application Logs</MudText>
+        <MudSpacer />
+        <MudSelect @bind-Value="_rowsPerPage" Label="Rows per page" Style="width: 150px;">
+            <MudSelectItem Value="10" />
+            <MudSelectItem Value="25" />
+            <MudSelectItem Value="50" />
+        </MudSelect>
+    </ToolBarContent>
+    
+    <HeaderContent>
+        <MudTh>Timestamp</MudTh>
+        <MudTh>Level</MudTh>
+        <MudTh>Message</MudTh>
+        <MudTh>Exception</MudTh>
+    </HeaderContent>
+
+    <RowTemplate>
+        <MudTd DataLabel="Timestamp">
+            @context.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+        </MudTd>
+        
+        <MudTd DataLabel="Level">
+            <MudChip T="string" Color="@GetLevelColor(context.Level)" Variant="Variant.Filled" Class="ma-1">
+                @context.Level
+            </MudChip>
+        </MudTd>
+        
+        <MudTd DataLabel="Message" Style="max-width: 300px;">
+            <MudText Truncate="true">@context.RenderedMessage</MudText>
+        </MudTd>
+        
+        <MudTd DataLabel="Exception" Style="max-width: 200px;">
+            @if (!string.IsNullOrEmpty(context.Exception))
+            {
+                <MudTooltip Text="@context.Exception">
+                    <MudText Truncate="true" Class="text-error">@context.Exception</MudText>
+                </MudTooltip>
+            }
+        </MudTd>
+    </RowTemplate>
+
+    <PagerContent>
+        <MudTablePager />
+    </PagerContent>
+</MudTable>
+
+@code {
+    private List<Log> _logs = new();
+    private int _rowsPerPage = 10;
+
+    private async Task<TableData<Log>> ServerData(TableState state, CancellationToken cancellationToken)
+    {
+        IQueryable<Log> query = DbContext.Logs;
+
+        query = state.SortLabel switch
+        {
+            "Timestamp" => (state.SortDirection == SortDirection.Ascending)
+                ? System.Linq.Queryable.OrderBy(query, log => log.Timestamp)
+                : System.Linq.Queryable.OrderByDescending(query, log => log.Timestamp),
+            _ => System.Linq.Queryable.OrderByDescending(query, log => log.Timestamp)
+        };
+
+        var totalItems = await query.CountAsync(cancellationToken);
+        var items = await query
+            .Skip(state.Page * state.PageSize)
+            .Take(state.PageSize)
+            .ToListAsync(cancellationToken);
+
+        return new TableData<Log> { TotalItems = totalItems, Items = items };
+    }
+
+    private Color GetLevelColor(string level)
+    {
+        return level?.ToUpper() switch
+        {
+            "ERROR" => Color.Error,
+            "WARNING" => Color.Warning,
+            "INFORMATION" => Color.Info,
+            "DEBUG" => Color.Default,
+            _ => Color.Default
+        };
+    }
+}
