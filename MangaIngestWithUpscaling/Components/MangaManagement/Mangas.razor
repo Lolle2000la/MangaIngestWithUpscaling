@@ -72,9 +72,9 @@
         <MudTd>@(context.ShouldUpscale.HasValue ? context.ShouldUpscale.Value : "Use Library settings")</MudTd>
         <MudTd>
             <a href="mangas/@context.Id">
-                <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Info" Variant="Variant.Filled" />
+                <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Text" />
             </a>
-            <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Variant="Variant.Filled"
+            <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Variant="Variant.Text"
                            OnClick="_ => OnDeleteSpecific(context)" />
         </MudTd>
     </RowTemplate>
