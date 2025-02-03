@@ -10,6 +10,7 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 public interface ITaskQueue
 {
     Task EnqueueAsync<T>(T taskData) where T : BaseTask;
+    Task RetryAsync(PersistedTask task);
 }
 
 public class TaskQueue : ITaskQueue, IHostedService
@@ -92,4 +93,18 @@ public class TaskQueue : ITaskQueue, IHostedService
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public async Task RetryAsync(PersistedTask task)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+        task.Status = PersistedTaskStatus.Pending;
+        await dbContext.SaveChangesAsync();
+
+        var channel = task.Data is UpscaleTask ? _upscaleChannel : _standardChannel;
+        await channel.Writer.WriteAsync(task);
+
+        TaskEnqueued?.Invoke(task);
+    }
 }

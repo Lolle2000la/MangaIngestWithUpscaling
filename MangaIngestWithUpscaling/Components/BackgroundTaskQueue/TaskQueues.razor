@@ -21,10 +21,13 @@
 <MudGrid>
     <MudItem lg="6" xs="12">
         <TaskTable Tasks="@standardTasks" Title="Standard Tasks"
-                   OnClearCompleted="OnClearCompletedStandardTasks" />
+                   OnClearCompleted="OnClearCompletedStandardTasks"
+                   OnRetryFailed="OnRetryFailed" />
     </MudItem>
     <MudItem lg="6" xs="12">
-        <TaskTable Tasks="@upscaleTasks" Title="Upscaling Tasks" />
+        <TaskTable Tasks="@upscaleTasks" Title="Upscaling Tasks"
+                   OnClearCompleted="OnClearCompletedUpscaleTasks"
+                   OnRetryFailed="OnRetryFailed" />
     </MudItem>
 </MudGrid>
 
@@ -52,6 +55,12 @@
         }
         await DbContext.SaveChangesAsync();
         upscaleTasks = upscaleTasks.Where(x => x.Status != PersistedTaskStatus.Completed).ToList();
+    }
+
+    private async Task OnRetryFailed(PersistedTask task)
+    {
+        standardTasks.Remove(task);
+        await TaskQueue.RetryAsync(task);
     }
 
     protected override async Task OnInitializedAsync()
