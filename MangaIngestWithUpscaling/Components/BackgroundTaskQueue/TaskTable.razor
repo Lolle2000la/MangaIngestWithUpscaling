@@ -4,6 +4,10 @@
           @ref="Table">
     <ToolBarContent>
         <MudText Typo="Typo.h6">@Title</MudText>
+        <MudSpacer />
+        <MudButton StartIcon="@Icons.Material.Filled.ClearAll"
+                   Variant="Variant.Filled" Color="Color.Primary"
+                   OnClick="OnClearCompleted">Clear Completed</MudButton>
     </ToolBarContent>
     <HeaderContent>
         <MudTh><MudTableSortLabel InitialDirection="SortDirection.Descending" SortBy="new Func<PersistedTask, object>(x=>x.Id)">Id</MudTableSortLabel></MudTh>
@@ -11,7 +15,7 @@
         <MudTh><MudTableSortLabel SortBy="new Func<PersistedTask, object>(x=>x.CreatedAt)">Queued At</MudTableSortLabel></MudTh>
         <MudTh><MudTableSortLabel SortBy="new Func<PersistedTask, object>(x=>x.ProcessedAt)">Finished At</MudTableSortLabel></MudTh>
         <MudTh><MudTableSortLabel SortBy="new Func<PersistedTask, object>(x=>x.Status)">Status</MudTableSortLabel></MudTh>
-
+        <MudTh>Actions</MudTh>
     </HeaderContent>
     <RowTemplate>
         <MudTd>@context.Id</MudTd>
@@ -19,6 +23,34 @@
         <MudTd>@context.CreatedAt</MudTd>
         <MudTd>@context.ProcessedAt</MudTd>
         <MudTd>@context.Status</MudTd>
+        <MudTd>
+            @if (context.Status == PersistedTaskStatus.Pending)
+            {
+                <MudIconButton Icon="@Icons.Material.Filled.PlayArrow"
+                               Variant="Variant.Text"
+                               OnClick="_ => OnRunNow.InvokeAsync(context)" />
+            }
+            else if (context.Status == PersistedTaskStatus.Failed)
+            {
+                <MudIconButton Icon="@Icons.Material.Filled.Refresh"
+                               Variant="Variant.Text"
+                               OnClick="_ => OnRetryFailed.InvokeAsync(context)" />
+            }
+            @if (context.Status == PersistedTaskStatus.Processing)
+            {
+                <MudIconButton Icon="@Icons.Material.Filled.Cancel"
+                               Variant="Variant.Text"
+                               Color="Color.Error"
+                               OnClick="_ => OnCancel.InvokeAsync(context)" />
+            }
+            else
+            {
+                <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                               Variant="Variant.Text"
+                               Color="Color.Error"
+                               OnClick="_ => OnDelete.InvokeAsync(context)" />
+            }
+        </MudTd>
     </RowTemplate>
     <PagerContent>
         <MudTablePager />
@@ -28,6 +60,12 @@
 @code {
     [Parameter] public IReadOnlyCollection<PersistedTask> Tasks { get; set; } = [];
     [Parameter] public string Title { get; set; } = "Tasks";
+
+    [Parameter] public EventCallback OnClearCompleted { get; set; } = EventCallback.Empty;
+    [Parameter] public EventCallback<PersistedTask> OnRetryFailed { get; set; } = EventCallback<PersistedTask>.Empty;
+    [Parameter] public EventCallback<PersistedTask> OnCancel { get; set; } = EventCallback<PersistedTask>.Empty;
+    [Parameter] public EventCallback<PersistedTask> OnRunNow { get; set; } = EventCallback<PersistedTask>.Empty;
+    [Parameter] public EventCallback<PersistedTask> OnDelete { get; set; } = EventCallback<PersistedTask>.Empty;
 
     private MudTable<PersistedTask> Table { get; set; } = null!;
 

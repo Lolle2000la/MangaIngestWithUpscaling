@@ -20,7 +20,8 @@
 
 <MudGrid>
     <MudItem lg="6" xs="12">
-        <TaskTable Tasks="@standardTasks" Title="Standard Tasks" />
+        <TaskTable Tasks="@standardTasks" Title="Standard Tasks"
+                   OnClearCompleted="OnClearCompletedStandardTasks" />
     </MudItem>
     <MudItem lg="6" xs="12">
         <TaskTable Tasks="@upscaleTasks" Title="Upscaling Tasks" />
@@ -30,6 +31,28 @@
 @code {
     private List<PersistedTask> standardTasks { get; set; } = [];
     private List<PersistedTask> upscaleTasks { get; set; } = [];
+
+    private async Task OnClearCompletedStandardTasks()
+    {
+        var completedTasks = standardTasks.Where(x => x.Status == PersistedTaskStatus.Completed).ToList();
+        foreach (var task in completedTasks)
+        {
+            DbContext.PersistedTasks.Remove(task);
+        }
+        await DbContext.SaveChangesAsync();
+        standardTasks = standardTasks.Where(x => x.Status != PersistedTaskStatus.Completed).ToList();
+    }
+
+    private async Task OnClearCompletedUpscaleTasks()
+    {
+        var completedTasks = upscaleTasks.Where(x => x.Status == PersistedTaskStatus.Completed).ToList();
+        foreach (var task in completedTasks)
+        {
+            DbContext.PersistedTasks.Remove(task);
+        }
+        await DbContext.SaveChangesAsync();
+        upscaleTasks = upscaleTasks.Where(x => x.Status != PersistedTaskStatus.Completed).ToList();
+    }
 
     protected override async Task OnInitializedAsync()
     {
