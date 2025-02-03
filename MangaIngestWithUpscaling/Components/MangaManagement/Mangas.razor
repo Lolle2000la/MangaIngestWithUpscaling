@@ -1,0 +1,95 @@
+﻿@page "/mangas"
+@using MangaIngestWithUpscaling.Data.LibraryManagement
+
+@inject ApplicationDbContext DbContext
+
+<MudTable T="Manga" ServerData="GetMangas"
+          Hover="true" MultiSelection="true"
+          @ref="table">
+    <ToolBarContent>
+        <MudGrid>
+            <MudItem xs="12" sm="6" lg="6">
+                <MudText Typo="Typo.h4">Mangas</MudText>
+            </MudItem>
+            <MudItem xs="12" sm="6" lg="3">
+                <MudSelect Label="Library" T="Library?"
+                           @bind-Value="selectedLibrary"
+                           @bind-Value:after="async () => await table.ReloadServerData()">
+                    <MudSelectItem T="Library?" Value="null">All</MudSelectItem>
+                    @foreach (var library in DbContext.Libraries)
+                    {
+                        <MudSelectItem T="Library?" Value="@library">@library.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" sm="12" lg="3">
+                <MudTextField Label="Search" Placeholder="Search..." Variant="Variant.Outlined"
+                              @bind-Value="searchString" />
+            </MudItem>
+        </MudGrid>
+    </ToolBarContent>
+    <HeaderContent>
+        <MudTh>
+            <MudTableSortLabel T="Manga" SortLabel="library_field">
+                Library
+            </MudTableSortLabel>
+        </MudTh>
+        <MudTh>
+            <MudTableSortLabel T="Manga" SortLabel="title_field"
+                               InitialDirection="SortDirection.Ascending">
+                Title
+            </MudTableSortLabel>
+        </MudTh>
+        <MudTh>
+            <MudTableSortLabel T="Manga" SortLabel="chapters_field"
+                               InitialDirection="SortDirection.Descending">
+                Chapters
+            </MudTableSortLabel>
+        </MudTh>
+        <MudTh>Should Upscale</MudTh>
+        <MudTh>Actions</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd>@context.Library.Name</MudTd>
+        <MudTd>@context.PrimaryTitle</MudTd>
+        <MudTd>@context.Chapters.Count()</MudTd>
+        <MudTd>@(context.ShouldUpscale.HasValue ? context.ShouldUpscale.Value : "Use Library settings")</MudTd>
+        <MudTd>
+        </MudTd>
+    </RowTemplate>
+    <PagerContent>
+        <MudTablePager />
+    </PagerContent>
+</MudTable>
+
+@code {
+    private Library? selectedLibrary;
+    private string searchString = "";
+
+    private MudTable<Manga> table;
+
+    private async Task<TableData<Manga>> GetMangas(TableState state, CancellationToken cancellationToken)
+    {
+        var query = DbContext.MangaSeries
+            .Include(x => x.Library)
+            .Include(x => x.Chapters)
+            .AsQueryable();
+
+        if (selectedLibrary != null)
+        {
+            query = query.Where(x => x.LibraryId == selectedLibrary.Id);
+        }
+
+        query = state.SortLabel switch
+        {
+            "library_field" => query.OrderByDirection(state.SortDirection, x => x.Library.Name),
+            "title_field" => query.OrderByDirection(state.SortDirection, x => x.PrimaryTitle),
+            "chapters_field" => query.OrderByDirection(state.SortDirection, x => x.Chapters.Count()),
+            _ => query
+        };
+
+        var totalItems = await query.CountAsync();
+        var items = await query.Skip(state.Page * state.PageSize).Take(state.PageSize).ToListAsync();
+        return new TableData<Manga> { Items = items, TotalItems = totalItems };
+    }
+}
