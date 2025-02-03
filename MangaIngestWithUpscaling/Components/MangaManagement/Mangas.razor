@@ -3,9 +3,14 @@
 
 @inject ApplicationDbContext DbContext
 @inject IDialogService DialogService
+@inject NavigationManager NavigationManager
+
+<PageTitle>Browse and Manage Mangas</PageTitle>
 
 <MudTable T="Manga" ServerData="GetMangas"
           Hover="true" MultiSelection="true"
+          SelectOnRowClick="false"
+          OnRowClick="e => OnRowClicked(e.Item)"
           @bind-SelectedItems="selectedMangas"
           @ref="table">
     <ToolBarContent>
@@ -26,7 +31,8 @@
             </MudItem>
             <MudItem xs="12" sm="12" lg="3">
                 <MudTextField Label="Search" Placeholder="Search..." Variant="Variant.Outlined"
-                              @bind-Value="searchString" />
+                              @bind-Value="searchString"
+                              @bind-Value:after="async () => await table.ReloadServerData()" />
             </MudItem>
             @if (selectedMangas?.Count > 0)
             {
@@ -65,6 +71,11 @@
         <MudTd>@context.Chapters.Count()</MudTd>
         <MudTd>@(context.ShouldUpscale.HasValue ? context.ShouldUpscale.Value : "Use Library settings")</MudTd>
         <MudTd>
+            <a href="mangas/@context.Id">
+                <MudIconButton Icon="@Icons.Material.Filled.Edit" Color="Color.Info" Variant="Variant.Filled" />
+            </a>
+            <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Variant="Variant.Filled"
+                           OnClick="_ => OnDeleteSpecific(context)" />
         </MudTd>
     </RowTemplate>
     <PagerContent>
@@ -119,5 +130,23 @@
         {
             await table.ReloadServerData();
         }
+    }
+
+    private async Task OnDeleteSpecific(Manga manga)
+    {
+        var dialog = await DialogService.ShowAsync<DeleteMangasDialog>("Delete Manga", new DialogParameters<DeleteMangasDialog>
+        {
+            { x=> x.Mangas, new List<Manga> { manga } }
+        });
+        var result = await dialog.Result;
+        if (!result.Canceled)
+        {
+            await table.ReloadServerData();
+        }
+    }
+
+    private void OnRowClicked(Manga manga)
+    {
+        NavigationManager.NavigateTo($"/mangas/{manga.Id}");
     }
 }
