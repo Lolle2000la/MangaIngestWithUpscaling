@@ -58,6 +58,11 @@ public class MangaJaNaiUpscalerConfig
     /// </summary>
     public int? UpscaleScaleFactor { get; set; }
 
+    /// <summary>
+    /// The directory where the models are stored.
+    /// </summary>
+    public string? ModelsDirectory { get; set; }
+
     public static MangaJaNaiUpscalerConfig FromUpscalerProfile(UpscalerProfile profile)
     {
         return new MangaJaNaiUpscalerConfig

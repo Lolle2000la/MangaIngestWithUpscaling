@@ -43,14 +43,17 @@ public class UpscaleTask : BaseTask
         }
 
         string upscaleBasePath = Path.Combine(chapter.Manga.Library.UpscaledLibraryPath, chapter.RelativePath);
-        if (!Directory.Exists(upscaleBasePath))
-        {
-            Directory.CreateDirectory(upscaleBasePath);
-        }
+        //if (!Directory.Exists(Path.GetDirectoryName(upscaleBasePath)))
+        //{
+        //    Directory.CreateDirectory(upscaleBasePath);
+        //}
 
         string currentStoragePath = Path.Combine(chapter.Manga.Library.NotUpscaledLibraryPath, chapter.RelativePath);
 
         var upscaler = services.GetRequiredService<IUpscaler>();
         await upscaler.Upscale(currentStoragePath, upscaleBasePath, upscalerProfile, cancellationToken);
+
+        chapter.IsUpscaled = true;
+        await dbContext.SaveChangesAsync(cancellationToken);
     }
 }

@@ -13,7 +13,7 @@ public interface IPythonService
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation</param>
     /// <param name="timout">A timeout that can be used to cancel the operation if there is no activity.</param>
     /// <returns>A <see cref="IAsyncEnumerable{string}"/> that represents the lines as they are coming from the script.</returns>
-    public IAsyncEnumerable<string> RunPythonScript(string script, string arguments, CancellationToken? cancellationToken = null, TimeSpan? timout = null);
+    public Task<string> RunPythonScript(string script, string arguments, CancellationToken? cancellationToken = null, TimeSpan? timout = null);
     /// <summary>
     /// Runs a python script in the given environment with the given arguments
     /// </summary>
@@ -23,6 +23,6 @@ public interface IPythonService
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation</param>
     /// <param name="timout">A timeout that can be used to cancel the operation if there is no activity.</param>
     /// <returns>A <see cref="IAsyncEnumerable{string}"/> that represents the lines as they are coming from the script.</returns>
-    IAsyncEnumerable<string> RunPythonScript(PythonEnvironment environment, string script, string arguments, CancellationToken? cancellationToken = null, TimeSpan? timout = null);
+    Task<string> RunPythonScript(PythonEnvironment environment, string script, string arguments, CancellationToken? cancellationToken = null, TimeSpan? timout = null);
 }
 

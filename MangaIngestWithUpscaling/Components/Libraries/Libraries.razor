@@ -41,12 +41,18 @@
                 <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Filled" Color="Color.Primary"
                                title="Edit this library" />
             </a>
-            <MudIconButton Icon="@Icons.Material.Filled.Delete" Variant="Variant.Filled" Color="Color.Secondary"
+            <MudIconButton Icon="@Icons.Material.Filled.Delete" Variant="Variant.Filled" Color="Color.Error"
                            title="Delete this library"
                            OnClick="e => OnDeleteLibraryEntry(context)" />
             <MudIconButton Icon="@Icons.Material.Filled.Search" Variant="Variant.Filled" Color="Color.Tertiary"
                            title="Schedule a scan of this library"
                            OnClick="e => OnScanLibrary(context)" />
+            @if (context.UpscalerProfileId.HasValue && !string.IsNullOrEmpty(context.UpscaledLibraryPath))
+            {
+                <MudIconButton Icon="@Icons.Material.Filled.ImageAspectRatio" Variant="Variant.Filled" Color="Color.Secondary"
+                               title="Upscale the entries not yet upscaled"
+                               OnClick="e => OnUpscaleLibrary(context)" />
+            }
         </MudTd>
     </RowTemplate>
 </MudTable>
@@ -96,5 +102,25 @@
         }
 
         await OnLibraryChanged();
+    }
+
+    protected async Task OnUpscaleLibrary(Library library)
+    {
+        if (!library.UpscalerProfileId.HasValue || string.IsNullOrEmpty(library.UpscaledLibraryPath))
+        {
+            return;
+        }
+
+        foreach (var manga in library.MangaSeries)
+        {
+            foreach (var chapter in manga.Chapters)
+            {
+                await TaskQueue.EnqueueAsync(new UpscaleTask
+                    {
+                        ChapterId = chapter.Id,
+                        UpscalerProfileId = library.UpscalerProfileId.Value
+                    });
+            }
+        }
     }
 }

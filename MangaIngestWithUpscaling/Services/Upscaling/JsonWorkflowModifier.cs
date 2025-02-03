@@ -69,10 +69,14 @@ public static class JsonWorkflowModifier
             workflow["JpegSelected"] = config.JpegSelected.Value;
         if (config.UpscaleScaleFactor.HasValue)
             workflow["UpscaleScaleFactor"] = config.UpscaleScaleFactor.Value;
+        if (!string.IsNullOrEmpty(config.ModelsDirectory))
+            rootNode["ModelsDirectory"] = config.ModelsDirectory;
 
         // Write the modified JSON to a temporary file.
         string tempFilePath = Path.GetTempFileName();
         File.WriteAllText(tempFilePath, rootNode.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
-        return tempFilePath;
+        // rename to .json
+        File.Move(tempFilePath, tempFilePath + ".json");
+        return tempFilePath + ".json";
     }
 }

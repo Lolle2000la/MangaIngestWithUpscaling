@@ -48,7 +48,7 @@ public class UpscaleTaskProcessor(
         }
     }
 
-    private async Task ProcessTaskAsync(PersistedTask task, CancellationToken stoppingToken)
+    protected async Task ProcessTaskAsync(PersistedTask task, CancellationToken stoppingToken)
     {
         using var scope = scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();

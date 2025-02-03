@@ -98,6 +98,7 @@ using (var scope = app.Services.CreateScope())
         logger.LogInformation("Python is installed on the system.");
 
         var environment = await pythonService.PreparePythonEnvironment(Path.Combine(AppContext.BaseDirectory, "python-env"));
+        PythonService.Environment = environment;
 
         logger.LogInformation($"Python environment prepared at {environment.PythonExecutablePath}");
     }

@@ -120,7 +120,7 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
         return new PythonEnvironment(relPythonPath, backendSrcDirectory);
     }
 
-    public IAsyncEnumerable<string> RunPythonScript(string script, string arguments, CancellationToken? cancellationToken = null, TimeSpan? timout = null)
+    public Task<string> RunPythonScript(string script, string arguments, CancellationToken? cancellationToken = null, TimeSpan? timout = null)
     {
         if (Environment == null)
         {
@@ -130,93 +130,89 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
         return RunPythonScript(Environment, script, arguments, cancellationToken, timout);
     }
 
-    public async IAsyncEnumerable<string> RunPythonScript(PythonEnvironment environment, string script, string arguments,
-        [EnumeratorCancellation] CancellationToken? cancellationToken = null, TimeSpan? timout = null)
+    public async Task<string> RunPythonScript(
+    PythonEnvironment environment,
+    string script,
+    string arguments,
+    CancellationToken? cancellationToken = null,
+    TimeSpan? timeout = null)
     {
-        CancellationToken token = cancellationToken ?? CancellationToken.None;
-        using (var process = new Process())
+        using var process = new Process();
+        process.StartInfo.FileName = environment.PythonExecutablePath;
+        process.StartInfo.Arguments = $"{script} {arguments}";
+        process.StartInfo.RedirectStandardOutput = true;
+        process.StartInfo.RedirectStandardError = true;
+        process.StartInfo.UseShellExecute = false;
+        process.StartInfo.CreateNoWindow = true;
+        process.StartInfo.StandardOutputEncoding = Encoding.UTF8;
+        process.StartInfo.StandardErrorEncoding = Encoding.UTF8;
+        process.StartInfo.WorkingDirectory = environment.DesiredWorkindDirectory;
+
+        var outputBuilder = new StringBuilder();
+        var errorBuilder = new StringBuilder();
+        var _timeout = timeout ?? TimeSpan.FromSeconds(60);
+        var lastActivity = DateTime.UtcNow;
+
+        process.Start();
+
+        // Start reading output streams
+        var readOutput = ReadStreamAsync(process.StandardOutput, outputBuilder, () => lastActivity = DateTime.UtcNow);
+        var readError = ReadStreamAsync(process.StandardError, errorBuilder, () => lastActivity = DateTime.UtcNow);
+
+        try
         {
-            process.StartInfo.FileName = environment.PythonExecutablePath;
-            process.StartInfo.Arguments = $"{script} {arguments}";
-            process.StartInfo.RedirectStandardOutput = true;
-            process.StartInfo.RedirectStandardError = true;
-            process.StartInfo.UseShellExecute = false;
-            process.StartInfo.CreateNoWindow = true;
-            process.StartInfo.StandardOutputEncoding = Encoding.UTF8;
-            process.StartInfo.StandardErrorEncoding = Encoding.UTF8;
-            process.StartInfo.WorkingDirectory = environment.DesiredWorkindDirectory;
-
-            process.Start();
-
-            var _timeout = timout ?? TimeSpan.FromSeconds(60); // Adjust timeout as needed
-            var lastOutputTime = DateTime.UtcNow;
-            var cts = new CancellationTokenSource();
-            var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(token, cts.Token);
-
-            // Read stderr and update last activity time
-            var stderrTask = ReadAndUpdateActivity(process.StandardError, () => lastOutputTime = DateTime.UtcNow, linkedCts.Token);
-
-            try
+            while (true)
             {
-                while (true)
+                // Check timeout every second
+                if (DateTime.UtcNow - lastActivity > _timeout)
                 {
-                    // Check if timeout has been exceeded
-                    if (DateTime.UtcNow - lastOutputTime >= _timeout)
-                    {
-                        process.Kill();
-                        throw new TimeoutException($"No output received from the process within {_timeout.TotalSeconds} seconds.");
-                    }
-
-                    var readOutTask = process.StandardOutput.ReadLineAsync();
-                    var delayTask = Task.Delay(_timeout, linkedCts.Token);
-                    var completedTask = await Task.WhenAny(readOutTask, delayTask, stderrTask);
-
-                    if (completedTask == delayTask)
-                    {
-                        process.Kill();
-                        throw new TimeoutException($"No output received from the process within {_timeout.TotalSeconds} seconds.");
-                    }
-                    else if (completedTask == readOutTask)
-                    {
-                        var line = await readOutTask;
-                        if (line == null) break; // End of stream
-
-                        lastOutputTime = DateTime.UtcNow;
-                        yield return line;
-                    }
-                    else
-                    {
-                        // stderrTask completed (stream closed), check process exit
-                        await process.WaitForExitAsync(linkedCts.Token);
-                        break;
-                    }
+                    process.Kill();
+                    throw new TimeoutException(
+                        $"Process timed out after {_timeout.TotalSeconds} seconds of inactivity.\n" +
+                        $"Partial error output:\n{errorBuilder}");
                 }
 
-                // Verify exit code
-                if (process.ExitCode != 0)
+                if (process.HasExited)
                 {
-                    throw new InvalidOperationException($"Script failed: {await process.StandardError.ReadToEndAsync(linkedCts.Token)}");
+                    await Task.WhenAll(readOutput, readError);
+                    break;
                 }
+
+                await Task.Delay(1000, cancellationToken ?? CancellationToken.None);
             }
-            finally
+
+            if (process.ExitCode != 0)
             {
-                cts.Cancel();
-                await stderrTask;
+                throw new InvalidOperationException(
+                    $"Python process failed with code {process.ExitCode}\n" +
+                    $"Error output:\n{errorBuilder}");
             }
+
+            return outputBuilder.ToString();
+        }
+        finally
+        {
+            if (!process.HasExited)
+                process.Kill();
         }
     }
 
-    private async Task ReadAndUpdateActivity(StreamReader reader, Action updateActivity, CancellationToken ct)
+    private async Task ReadStreamAsync(
+        StreamReader reader,
+        StringBuilder builder,
+        Action updateActivity)
     {
         try
         {
-            while (!ct.IsCancellationRequested)
+            while (true)
             {
                 var line = await reader.ReadLineAsync();
                 if (line == null) break;
+
+                builder.AppendLine(line);
                 updateActivity();
             }
         }
-        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { } // Handle process disposal
     }
 }

@@ -32,13 +32,16 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<None Include="../MangaJaNaiConverterGui/MangaJaNaiConverterGui/appstate2.json">
-			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
-		</None>
 		<None Include="../MangaJaNaiConverterGui/MangaJaNaiConverterGui/backend/**">
 			<Link>backend\%(RecursiveDir)%(Filename)%(Extension)</Link>
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>
+	</ItemGroup>
+
+	<ItemGroup>
+	  <None Include="appstate2.json">
+	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+	  </None>
 	</ItemGroup>
 
 </Project>

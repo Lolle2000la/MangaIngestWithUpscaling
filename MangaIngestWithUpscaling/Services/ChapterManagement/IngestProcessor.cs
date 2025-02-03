@@ -1,8 +1,10 @@
 ﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.CbzConversion;
 using MangaIngestWithUpscaling.Services.ChapterRecognition;
+using MangaIngestWithUpscaling.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -11,7 +13,9 @@ namespace MangaIngestWithUpscaling.Services.ChapterManagement;
 public class IngestProcessor(ApplicationDbContext dbContext,
     IChapterInIngestRecognitionService chapterRecognitionService,
     ICbzConverter cbzConverter,
-    ILogger<IngestProcessor> logger
+    ILogger<IngestProcessor> logger,
+    IUpscaler upscaler,
+    ITaskQueue taskQueue
     ) : IIngestProcessor
 {
     public async Task ProcessAsync(Library library, CancellationToken cancellationToken)
@@ -49,15 +53,26 @@ public class IngestProcessor(ApplicationDbContext dbContext,
                 }
                 Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
                 File.Move(Path.Combine(library.IngestPath, chapter.RelativePath), targetPath);
+                string relativePath = Path.GetRelativePath(library.NotUpscaledLibraryPath, targetPath);
                 var chapterEntity = new Chapter
                 {
                     FileName = chapterCbz.FileName,
                     Manga = seriesEntity,
                     MangaId = seriesEntity.Id,
-                    RelativePath = targetPath,
+                    RelativePath = relativePath,
                     IsUpscaled = false
                 };
                 seriesEntity.Chapters.Add(chapterEntity);
+
+                if (seriesEntity.ShouldUpscale != false && library.UpscalerProfileId.HasValue)
+                {
+                    var upscaleTask = new UpscaleTask
+                    {
+                        ChapterId = chapterEntity.Id,
+                        UpscalerProfileId = library.UpscalerProfileId!.Value
+                    };
+                    await taskQueue.EnqueueAsync(upscaleTask);
+                }
             }
 
             await dbContext.SaveChangesAsync(cancellationToken);

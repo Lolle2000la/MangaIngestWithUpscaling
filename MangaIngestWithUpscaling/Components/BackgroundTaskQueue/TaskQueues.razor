@@ -55,13 +55,15 @@
 
     private async Task OnClearCompletedUpscaleTasks()
     {
-        var completedTasks = upscaleTasks.Where(x => x.Status == PersistedTaskStatus.Completed).ToList();
-        foreach (var task in completedTasks)
+        var completedOrFailedTasks = upscaleTasks
+            .Where(x => x.Status == PersistedTaskStatus.Completed || x.Status == PersistedTaskStatus.Failed)
+            .ToList();
+        foreach (var task in completedOrFailedTasks)
         {
             DbContext.PersistedTasks.Remove(task);
         }
         await DbContext.SaveChangesAsync();
-        upscaleTasks = upscaleTasks.Where(x => x.Status != PersistedTaskStatus.Completed).ToList();
+        upscaleTasks = upscaleTasks.Where(x => x.Status != PersistedTaskStatus.Completed && x.Status != PersistedTaskStatus.Failed).ToList();
     }
 
     private async Task OnRetryFailed(PersistedTask task)
