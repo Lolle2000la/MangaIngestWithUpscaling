@@ -1,0 +1,47 @@
+﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
+@using MangaIngestWithUpscaling.Services.ChapterManagement
+
+@inject ApplicationDbContext DbContext
+@inject IChapterDeletion DeletionService
+
+<MudDialog>
+    <DialogContent>
+        <MudText>Delete @Chapters.Count Chapters?</MudText>
+
+        <MudCheckBox T="bool" Label="Delete original files from disk" @bind-Checked="DeleteOriginalFiles" />
+        <MudCheckBox T="bool" Label="Delete upscaled files from disk" @bind-Checked="DeleteUpscaledFiles" />
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton StartIcon="@Icons.Material.Filled.DeleteForever"
+                   Color="Color.Error"
+                   Variant="Variant.Filled"
+                   OnClick="Submit">Delete</MudButton>
+    </DialogActions>
+</MudDialog>
+
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; }
+
+    [Parameter]
+    public IReadOnlyCollection<Chapter> Chapters { get; set; }
+
+    private bool DeleteOriginalFiles { get; set; }
+    private bool DeleteUpscaledFiles { get; set; }
+
+    private async Task Submit()
+    {
+        foreach (var chapter in Chapters)
+        {
+            DeletionService.DeleteChapter(chapter, DeleteOriginalFiles, DeleteUpscaledFiles);
+        }
+
+        await DbContext.SaveChangesAsync();
+
+        MudDialog.Close(DialogResult.Ok(true));
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

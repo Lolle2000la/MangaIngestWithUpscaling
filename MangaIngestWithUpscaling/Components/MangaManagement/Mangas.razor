@@ -2,9 +2,11 @@
 @using MangaIngestWithUpscaling.Data.LibraryManagement
 
 @inject ApplicationDbContext DbContext
+@inject IDialogService DialogService
 
 <MudTable T="Manga" ServerData="GetMangas"
           Hover="true" MultiSelection="true"
+          @bind-SelectedItems="selectedMangas"
           @ref="table">
     <ToolBarContent>
         <MudGrid>
@@ -26,7 +28,15 @@
                 <MudTextField Label="Search" Placeholder="Search..." Variant="Variant.Outlined"
                               @bind-Value="searchString" />
             </MudItem>
+            @if (selectedMangas?.Count > 0)
+            {
+                <MudItem xs="12">
+                    <MudButton Variant="Variant.Filled" Color="Color.Secondary"
+                               OnClick="OnDeleteSelected">Delete Selected</MudButton>
+                </MudItem>
+            }
         </MudGrid>
+
     </ToolBarContent>
     <HeaderContent>
         <MudTh>
@@ -66,6 +76,8 @@
     private Library? selectedLibrary;
     private string searchString = "";
 
+    private HashSet<Manga>? selectedMangas;
+
     private MudTable<Manga> table;
 
     private async Task<TableData<Manga>> GetMangas(TableState state, CancellationToken cancellationToken)
@@ -91,5 +103,21 @@
         var totalItems = await query.CountAsync();
         var items = await query.Skip(state.Page * state.PageSize).Take(state.PageSize).ToListAsync();
         return new TableData<Manga> { Items = items, TotalItems = totalItems };
+    }
+
+    private async Task OnDeleteSelected()
+    {
+        var parameters = new DialogParameters<DeleteMangasDialog>
+        {
+            { x=> x.Mangas, selectedMangas }
+        };
+
+        var dialog = await DialogService.ShowAsync<DeleteMangasDialog>("Delete Mangas", parameters);
+        var result = await dialog.Result;
+
+        if (!result.Canceled)
+        {
+            await table.ReloadServerData();
+        }
     }
 }
