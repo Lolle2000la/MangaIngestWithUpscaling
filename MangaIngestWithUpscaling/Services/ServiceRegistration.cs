@@ -5,6 +5,7 @@ using MangaIngestWithUpscaling.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Services.LibraryFiltering;
 using MangaIngestWithUpscaling.Services.MetadataExtraction;
 using MangaIngestWithUpscaling.Services.Python;
+using MangaIngestWithUpscaling.Services.Upscaling;
 
 namespace MangaIngestWithUpscaling.Services;
 
@@ -18,6 +19,7 @@ public static class ServiceRegistration
         services.AddScoped<ICbzConverter, CbzConverter>();
         services.AddScoped<IPythonService, PythonService>();
         services.AddScoped<IIngestProcessor, IngestProcessor>();
+        services.AddScoped<IUpscaler, MangaJaNaiUpscaler>();
 
         services.AddSingleton<TaskQueue>();
         services.AddSingleton<ITaskQueue>(sp => sp.GetRequiredService<TaskQueue>());

@@ -7,26 +7,6 @@ using System.Text.Json.Nodes;
 namespace MangaIngestWithUpscaling.Services.Upscaling;
 
 /// <summary>
-/// Configuration settings for the Upscale Manga workflow.
-/// This directly maps to the JSON structure of the workflow configuration used by MangaJaNaiConvertGui.
-/// </summary>
-public class UpscaleConfig
-{
-    public int? SelectedTabIndex { get; set; }
-    public string InputFilePath { get; set; }
-    public string InputFolderPath { get; set; }
-    public string OutputFilename { get; set; }
-    public string OutputFolderPath { get; set; }
-    public bool? OverwriteExistingFiles { get; set; }
-    public bool? UpscaleImages { get; set; }
-    public bool? WebpSelected { get; set; }
-    public bool? AvifSelected { get; set; }
-    public bool? PngSelected { get; set; }
-    public bool? JpegSelected { get; set; }
-    public int? UpscaleScaleFactor { get; set; }
-}
-
-/// <summary>
 /// Provides functionality to modify a JSON workflow configuration using .NET 9 JSON facilities.
 /// </summary>
 public static class JsonWorkflowModifier
@@ -40,7 +20,7 @@ public static class JsonWorkflowModifier
     /// <param name="config">Configuration object with keys to update.</param>
     /// <returns>Path to the temporary file containing the modified JSON.</returns>
     /// <exception cref="Exception">Thrown if the expected JSON structure is not found.</exception>
-    public static string ModifyWorkflowConfig(string originalFile, UpscaleConfig config)
+    public static string ModifyWorkflowConfig(string originalFile, MangaJaNaiUpscalerConfig config)
     {
         // Read the JSON document from the original file.
         string jsonContent = File.ReadAllText(originalFile);

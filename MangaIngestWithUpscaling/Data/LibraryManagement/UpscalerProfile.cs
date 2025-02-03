@@ -31,13 +31,13 @@ public enum UpscalerMethod
 public enum ScaleFactor
 {
     [Display(Name = "1x")]
-    OneX,
+    OneX = 1,
     [Display(Name = "2x")]
-    TwoX,
+    TwoX = 2,
     [Display(Name = "3x")]
-    ThreeX,
+    ThreeX = 3,
     [Display(Name = "4x")]
-    FourX
+    FourX = 4
 }
 
 /// <summary>

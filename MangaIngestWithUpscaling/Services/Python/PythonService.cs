@@ -1,6 +1,7 @@
 ﻿
 using System.Diagnostics;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -8,6 +9,8 @@ namespace MangaIngestWithUpscaling.Services.Python;
 
 public class PythonService(ILogger<PythonService> logger) : IPythonService
 {
+    public static PythonEnvironment? Environment { get; set; }
+
     public string? GetPythonExecutablePath()
     {
         string executableExtension = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : "";
@@ -43,7 +46,7 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
         };
 
         string assemblyDir = new FileInfo(Assembly.GetExecutingAssembly().Location).Directory!.FullName;
-        string backendSrcDirectory = Path.Combine(assemblyDir, "backend","src");
+        string backendSrcDirectory = Path.Combine(assemblyDir, "backend", "src");
         if (!Directory.Exists(environmentPath))
         {
             // run the command to create the virtual environment
@@ -99,7 +102,7 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
                 process.StartInfo.StandardErrorEncoding = Encoding.UTF8;
                 process.StartInfo.WorkingDirectory = Directory.GetParent(environmentPath)!.FullName;
 
-                process.Start(); 
+                process.Start();
                 while (!process.HasExited && !process.StandardOutput.EndOfStream)
                 {
                     logger.LogInformation(await process.StandardOutput.ReadLineAsync() ?? "<No output>");
@@ -117,8 +120,18 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
         return new PythonEnvironment(relPythonPath, backendSrcDirectory);
     }
 
+    public IAsyncEnumerable<string> RunPythonScript(string script, string arguments, CancellationToken? cancellationToken = null, TimeSpan? timout = null)
+    {
+        if (Environment == null)
+        {
+            throw new InvalidOperationException("Python environment is not initialized.");
+        }
+
+        return RunPythonScript(Environment, script, arguments, cancellationToken, timout);
+    }
+
     public async IAsyncEnumerable<string> RunPythonScript(PythonEnvironment environment, string script, string arguments,
-        CancellationToken? cancellationToken = null)
+        [EnumeratorCancellation] CancellationToken? cancellationToken = null, TimeSpan? timout = null)
     {
         CancellationToken token = cancellationToken ?? CancellationToken.None;
         using (var process = new Process())
@@ -135,24 +148,75 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
 
             process.Start();
 
-            while (process.HasExited && !process.StandardOutput.EndOfStream)
+            var _timeout = timout ?? TimeSpan.FromSeconds(60); // Adjust timeout as needed
+            var lastOutputTime = DateTime.UtcNow;
+            var cts = new CancellationTokenSource();
+            var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(token, cts.Token);
+
+            // Read stderr and update last activity time
+            var stderrTask = ReadAndUpdateActivity(process.StandardError, () => lastOutputTime = DateTime.UtcNow, linkedCts.Token);
+
+            try
             {
-                if (token.IsCancellationRequested)
+                while (true)
                 {
-                    process.Kill();
-                    break;
+                    // Check if timeout has been exceeded
+                    if (DateTime.UtcNow - lastOutputTime >= _timeout)
+                    {
+                        process.Kill();
+                        throw new TimeoutException($"No output received from the process within {_timeout.TotalSeconds} seconds.");
+                    }
+
+                    var readOutTask = process.StandardOutput.ReadLineAsync();
+                    var delayTask = Task.Delay(_timeout, linkedCts.Token);
+                    var completedTask = await Task.WhenAny(readOutTask, delayTask, stderrTask);
+
+                    if (completedTask == delayTask)
+                    {
+                        process.Kill();
+                        throw new TimeoutException($"No output received from the process within {_timeout.TotalSeconds} seconds.");
+                    }
+                    else if (completedTask == readOutTask)
+                    {
+                        var line = await readOutTask;
+                        if (line == null) break; // End of stream
+
+                        lastOutputTime = DateTime.UtcNow;
+                        yield return line;
+                    }
+                    else
+                    {
+                        // stderrTask completed (stream closed), check process exit
+                        await process.WaitForExitAsync(linkedCts.Token);
+                        break;
+                    }
                 }
-                yield return await process.StandardOutput.ReadLineAsync(token) ?? "\n";
-                if (process.HasExited)
+
+                // Verify exit code
+                if (process.ExitCode != 0)
                 {
-                    break;
+                    throw new InvalidOperationException($"Script failed: {await process.StandardError.ReadToEndAsync(linkedCts.Token)}");
                 }
             }
-
-            if (process.ExitCode != 0)
+            finally
             {
-                throw new InvalidOperationException($"Failed to run script:\n\n {await process.StandardError.ReadToEndAsync(token)}");
+                cts.Cancel();
+                await stderrTask;
             }
         }
+    }
+
+    private async Task ReadAndUpdateActivity(StreamReader reader, Action updateActivity, CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                var line = await reader.ReadLineAsync();
+                if (line == null) break;
+                updateActivity();
+            }
+        }
+        catch (OperationCanceledException) { }
     }
 }
