@@ -33,7 +33,8 @@ builder.Services.AddSerilog((services, lc) => lc
     .WriteTo.SQLite(
         Path.GetFullPath(sqliteConnectionStringBuilder.DataSource), 
         tableName: "Logs",
-        restrictedToMinimumLevel: LogEventLevel.Warning));
+        restrictedToMinimumLevel: LogEventLevel.Warning,
+        retentionPeriod: TimeSpan.FromDays(7)));
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
