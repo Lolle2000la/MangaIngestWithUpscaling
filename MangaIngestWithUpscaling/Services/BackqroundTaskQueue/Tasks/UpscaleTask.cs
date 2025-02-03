@@ -31,6 +31,12 @@ public class UpscaleTask : BaseTask
 
         FriendlyEntryName = $"Upscaling {chapter.FileName} with {upscalerProfile.Name}";
 
+
+        if (chapter.IsUpscaled)
+        {
+            throw new InvalidOperationException("Chapter is already upscaled.");
+        }
+
         if (chapter.Manga.Library.UpscaledLibraryPath == null)
         {
             throw new InvalidOperationException("Upscaled library path not set.");
