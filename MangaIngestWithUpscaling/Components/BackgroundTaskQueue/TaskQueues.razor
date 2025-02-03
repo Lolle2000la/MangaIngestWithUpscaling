@@ -1,6 +1,7 @@
 ﻿@using MangaIngestWithUpscaling.Data.BackqroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
+@using MangaIngestWithUpscaling.Services.Helpers
 @using Microsoft.EntityFrameworkCore
 
 @implements IDisposable
@@ -22,12 +23,18 @@
     <MudItem lg="6" xs="12">
         <TaskTable Tasks="@standardTasks" Title="Standard Tasks"
                    OnClearCompleted="OnClearCompletedStandardTasks"
-                   OnRetryFailed="OnRetryFailed" />
+                   OnRetryFailed="OnRetryFailed"
+                   OnDelete="OnDelete"
+                   OnCancel="OnCancelStandardTask"
+                   OnRunNow="OnRunNow" />
     </MudItem>
     <MudItem lg="6" xs="12">
         <TaskTable Tasks="@upscaleTasks" Title="Upscaling Tasks"
                    OnClearCompleted="OnClearCompletedUpscaleTasks"
-                   OnRetryFailed="OnRetryFailed" />
+                   OnRetryFailed="OnRetryFailed"
+                   OnDelete="OnDelete"
+                   OnCancel="OnCancelUpscaleTask"
+                   OnRunNow="OnRunNow" />
     </MudItem>
 </MudGrid>
 
@@ -59,8 +66,35 @@
 
     private async Task OnRetryFailed(PersistedTask task)
     {
-        standardTasks.Remove(task);
         await TaskQueue.RetryAsync(task);
+    }
+
+    private async Task OnDelete(PersistedTask task)
+    {
+        await TaskQueue.RemoveTaskAsync(task);
+        if (task.Data is UpscaleTask)
+        {
+            upscaleTasks.Remove(task);
+        }
+        else
+        {
+            standardTasks.Remove(task);
+        }
+    }
+
+    private void OnCancelStandardTask(PersistedTask task)
+    {
+        StandardTaskProcessor.CancelCurrent(task);
+    }
+
+    private void OnCancelUpscaleTask(PersistedTask task)
+    {
+        UpscaleTaskProcessor.CancelCurrent(task);
+    }
+
+    private async Task OnRunNow(PersistedTask task)
+    {
+        await TaskQueue.ReorderTaskAsync(task, await DbContext.PersistedTasks.MinAsync(x => x.Order) - 1);
     }
 
     protected override async Task OnInitializedAsync()
@@ -69,14 +103,14 @@
         standardTasks = allTasks.Where(x => x.Data is not UpscaleTask).ToList();
         upscaleTasks = allTasks.Where(x => x.Data is UpscaleTask).ToList();
 
-        TaskQueue.TaskEnqueued += OnTaskUpdate;
+        TaskQueue.TaskEnqueuedOrChanged += OnTaskUpdate;
         StandardTaskProcessor.StatusChanged += OnStandardTaskChanged;
         UpscaleTaskProcessor.StatusChanged += OnUpscaleTaskChanged;
     }
 
     public void Dispose()
     {
-        TaskQueue.TaskEnqueued -= OnTaskUpdate;
+        TaskQueue.TaskEnqueuedOrChanged -= OnTaskUpdate;
         StandardTaskProcessor.StatusChanged -= OnStandardTaskChanged;
         UpscaleTaskProcessor.StatusChanged -= OnUpscaleTaskChanged;
     }
@@ -87,11 +121,11 @@
         {
             if (task.Data is UpscaleTask)
             {
-                upscaleTasks.Add(task);
+                upscaleTasks.AddOrReplace(task, t => t.Id == task.Id);
             }
             else
             {
-                standardTasks.Add(task);
+                standardTasks.AddOrReplace(task, t => t.Id == task.Id);
             }
             StateHasChanged();
         });

@@ -54,6 +54,9 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.Property(e => e.Status)
                 .HasConversion<string>();
 
+            entity.Property(e => e.Order)
+                .UseSequence();
+
             entity.HasIndex(e => e.Status);
             entity.HasIndex(e => e.CreatedAt);
             entity.HasIndex(e => e.ProcessedAt);

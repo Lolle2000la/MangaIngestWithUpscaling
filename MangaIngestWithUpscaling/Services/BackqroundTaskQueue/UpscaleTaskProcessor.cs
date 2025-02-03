@@ -75,7 +75,7 @@ public class UpscaleTaskProcessor(
             task.Status = PersistedTaskStatus.Failed;
             task.RetryCount++;
             dbContext.Update(task);
-            await dbContext.SaveChangesAsync(stoppingToken);
+            await dbContext.SaveChangesAsync();
         }
     }
 }

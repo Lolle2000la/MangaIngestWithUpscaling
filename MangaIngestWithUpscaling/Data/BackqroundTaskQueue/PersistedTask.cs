@@ -12,6 +12,7 @@ public class PersistedTask
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public int RetryCount { get; set; }
     public DateTime? ProcessedAt { get; set; }
+    public int Order { get; set; }
 
     // override object.Equals
     public override bool Equals(object? obj)
