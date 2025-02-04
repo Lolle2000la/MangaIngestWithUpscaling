@@ -68,6 +68,7 @@ public class MetadataHandlingService : IMetadataHandlingService
                 }
                 stream.Seek(0, System.IO.SeekOrigin.Begin);
                 document.Save(stream);
+                stream.SetLength(stream.Position); // Truncate the file to the correct length
             }
             else
             {
@@ -80,6 +81,7 @@ public class MetadataHandlingService : IMetadataHandlingService
                     )
                 );
                 document.Save(stream);
+                stream.SetLength(stream.Position); // Truncate the file to the correct length
             }
         }
         else if (file.EndsWith("ComicInfo.xml"))
