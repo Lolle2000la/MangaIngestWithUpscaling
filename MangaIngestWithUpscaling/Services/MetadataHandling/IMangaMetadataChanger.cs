@@ -4,5 +4,5 @@ namespace MangaIngestWithUpscaling.Services.MetadataHandling;
 
 public interface IMangaMetadataChanger
 {
-    Task ChangeTitle(Manga manga, string newTitle, bool addOldToAlternative = false);
+    Task ChangeTitle(Manga manga, string newTitle, bool addOldToAlternative = true);
 }

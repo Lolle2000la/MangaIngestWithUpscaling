@@ -1,6 +1,7 @@
 ﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
+using System.Xml;
 
 namespace MangaIngestWithUpscaling.Services.MetadataHandling;
 
@@ -9,7 +10,7 @@ public class MangaMetadataChanger(
     ApplicationDbContext dbContext,
     ILogger<MangaMetadataChanger> logger) : IMangaMetadataChanger
 {
-    public async Task ChangeTitle(Manga manga, string newTitle, bool addOldToAlternative = false)
+    public async Task ChangeTitle(Manga manga, string newTitle, bool addOldToAlternative = true)
     {
         manga.ChangePrimaryTitle(newTitle, addOldToAlternative);
 
@@ -40,6 +41,10 @@ public class MangaMetadataChanger(
                     var upscaledChapterPath = Path.Combine(manga.Library.UpscaledLibraryPath, chapter.RelativePath);
                     UpdateChapterTitleMetadata(newTitle, upscaledChapterPath);
                 }
+            }
+            catch (XmlException ex)
+            {
+                logger.LogWarning(ex, "Error parsing ComicInfo XML for chapter {ChapterId} ({ChapterPath})", chapter.Id, chapter.RelativePath);
             }
             catch (Exception ex)
             {
