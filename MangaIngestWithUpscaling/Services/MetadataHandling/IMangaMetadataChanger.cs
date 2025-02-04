@@ -1,6 +1,6 @@
 ﻿using MangaIngestWithUpscaling.Data.LibraryManagement;
 
-namespace MangaIngestWithUpscaling.Services.ChapterManagement;
+namespace MangaIngestWithUpscaling.Services.MetadataHandling;
 
 public interface IMangaMetadataChanger
 {

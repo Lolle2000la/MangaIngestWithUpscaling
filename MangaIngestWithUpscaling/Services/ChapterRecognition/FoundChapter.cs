@@ -1,4 +1,4 @@
-﻿using MangaIngestWithUpscaling.Services.MetadataExtraction;
+﻿using MangaIngestWithUpscaling.Services.MetadataHandling;
 
 namespace MangaIngestWithUpscaling.Services.ChapterRecognition;
 

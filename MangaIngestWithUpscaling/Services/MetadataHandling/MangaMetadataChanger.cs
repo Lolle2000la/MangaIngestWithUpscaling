@@ -1,8 +1,8 @@
 ﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
-using MangaIngestWithUpscaling.Services.MetadataExtraction;
+using MangaIngestWithUpscaling.Services.MetadataHandling;
 
-namespace MangaIngestWithUpscaling.Services.ChapterManagement;
+namespace MangaIngestWithUpscaling.Services.MetadataHandling;
 
 public class MangaMetadataChanger(
     IMetadataHandlingService metadataHandling,
@@ -43,7 +43,7 @@ public class MangaMetadataChanger(
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Error updating metadata for chapter {ChapterId}", chapter.Id);
+                logger.LogError(ex, "Error updating metadata for chapter {ChapterId} ({ChapterPath})", chapter.Id, chapter.RelativePath);
             }
         }
 

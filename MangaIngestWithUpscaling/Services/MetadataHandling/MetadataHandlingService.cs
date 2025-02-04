@@ -1,7 +1,7 @@
 ﻿using System.IO.Compression;
 using System.Xml.Linq;
 
-namespace MangaIngestWithUpscaling.Services.MetadataExtraction;
+namespace MangaIngestWithUpscaling.Services.MetadataHandling;
 
 public class MetadataHandlingService : IMetadataHandlingService
 {

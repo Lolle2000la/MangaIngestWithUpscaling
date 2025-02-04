@@ -1,7 +1,7 @@
 ﻿using DynamicData.Kernel;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.LibraryFiltering;
-using MangaIngestWithUpscaling.Services.MetadataExtraction;
+using MangaIngestWithUpscaling.Services.MetadataHandling;
 using System.IO.Compression;
 using System.Xml.Linq;
 

@@ -1,4 +1,4 @@
-﻿namespace MangaIngestWithUpscaling.Services.MetadataExtraction;
+﻿namespace MangaIngestWithUpscaling.Services.MetadataHandling;
 
 /// <summary>
 /// Represents metadata extracted from a ComicInfo.xml file.

@@ -1,6 +1,6 @@
 ﻿using MangaIngestWithUpscaling.Services.ChapterRecognition;
 
-namespace MangaIngestWithUpscaling.Services.MetadataExtraction;
+namespace MangaIngestWithUpscaling.Services.MetadataHandling;
 
 public interface IMetadataHandlingService
 {
