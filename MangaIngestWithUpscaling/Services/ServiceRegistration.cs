@@ -21,6 +21,7 @@ public static class ServiceRegistration
         services.AddScoped<IPythonService, PythonService>();
         services.AddScoped<IIngestProcessor, IngestProcessor>();
         services.AddScoped<IUpscaler, MangaJaNaiUpscaler>();
+        services.AddScoped<IMangaMetadataChanger, MangaMetadataChanger>();
 
         services.AddSingleton<TaskQueue>();
         services.AddSingleton<ITaskQueue>(sp => sp.GetRequiredService<TaskQueue>());
