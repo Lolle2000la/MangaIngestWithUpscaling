@@ -4,6 +4,8 @@
 @using System.Linq
 @inject ApplicationDbContext DbContext
 
+<PageTitle>Logs</PageTitle>
+
 <MudTable T="Log" Items="@_logs" Hover="true" ServerData="@ServerData"
           SortLabel="Timestamp" SortDirection="SortDirection.Descending"
           HorizontalScrollbar="true"
