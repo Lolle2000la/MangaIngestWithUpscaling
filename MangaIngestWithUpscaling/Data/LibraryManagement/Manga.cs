@@ -33,8 +33,13 @@ public class Manga
         }
         PrimaryTitle = newTitle;
 
-        OtherTitles = OtherTitles
-            .Where(t => t.Title != newTitle)
-            .ToList();
+        var titleToRemove = OtherTitles
+            .FirstOrDefault(t => t.Title == newTitle);
+        OtherTitles.Remove(titleToRemove);
+    }
+
+    public Manga Clone()
+    {
+        return (Manga)MemberwiseClone();
     }
 }
