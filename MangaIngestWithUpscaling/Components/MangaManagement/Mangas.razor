@@ -1,16 +1,21 @@
 ﻿@page "/mangas"
 @using MangaIngestWithUpscaling.Data.LibraryManagement
+@using MangaIngestWithUpscaling.Services.MetadataHandling
 
 @inject ApplicationDbContext DbContext
 @inject IDialogService DialogService
 @inject NavigationManager NavigationManager
+@inject IMangaMetadataChanger MangaMetadataChanger
 
 <PageTitle>Browse and Manage Mangas</PageTitle>
 
 <MudTable T="Manga" ServerData="GetMangas"
           Hover="true" MultiSelection="true"
           SelectOnRowClick="false"
-          OnRowClick="e => OnRowClicked(e.Item)"
+          CanCancelEdit="true"
+          RowEditPreview="BackupBeforeEdit"
+          RowEditCancel="RestoreOnCancel"
+          RowEditCommit="async o => await OnCommitEdit(o)"
           @bind-SelectedItems="selectedMangas"
           @ref="table">
     <ToolBarContent>
@@ -66,22 +71,38 @@
         <MudTh>Actions</MudTh>
     </HeaderContent>
     <RowTemplate>
-        <MudTd>@context.Library.Name</MudTd>
-        <MudTd>@context.PrimaryTitle</MudTd>
-        <MudTd>@context.Chapters.Count()</MudTd>
-        <MudTd>@(context.ShouldUpscale.HasValue ? context.ShouldUpscale.Value : "Use Library settings")</MudTd>
+        <MudTd DataLabel="Library">@context.Library.Name</MudTd>
+        <MudTd DataLabel="Primary title">@context.PrimaryTitle</MudTd>
+        <MudTd DataLabel="Chapter count">@context.Chapters.Count()</MudTd>
+        <MudTd DataLabel="Should upscale">@(context.ShouldUpscale.HasValue ? context.ShouldUpscale.Value : "Use Library settings")</MudTd>
         <MudTd>
             <a href="mangas/@context.Id">
-                <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Text" />
+                <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Text"
+                               Size="Size.Small" />
             </a>
             <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Variant="Variant.Text"
-                           OnClick="_ => OnDeleteSpecific(context)" />
+                           OnClick="_ => OnDeleteSpecific(context)"
+                           Size="Size.Small"/>
         </MudTd>
     </RowTemplate>
+    <RowEditingTemplate>
+        <MudTd DataLabel="Library">@context.Library.Name</MudTd>
+        <MudTd DataLabel="Primary title"><MudTextField @bind-Value="context.PrimaryTitle" Required /></MudTd>
+        <MudTd DataLabel="Chapter count">@context.Chapters.Count()</MudTd>
+        <MudTd DataLabel="Should upscale">
+            <MudCheckBox T="bool?" TriState="true" @bind-Value="context.ShouldUpscale" />
+        </MudTd>
+
+    </RowEditingTemplate>
     <PagerContent>
         <MudTablePager />
     </PagerContent>
 </MudTable>
+
+@if (exception != null)
+{
+    <MudAlert Severity="Severity.Error">@exception.Message</MudAlert>
+}
 
 @code {
     private Library? selectedLibrary;
@@ -90,6 +111,10 @@
     private HashSet<Manga>? selectedMangas;
 
     private MudTable<Manga> table;
+
+    private Manga? mangaBeforeEdit;
+
+    private Exception? exception;
 
     private async Task<TableData<Manga>> GetMangas(TableState state, CancellationToken cancellationToken)
     {
@@ -145,8 +170,33 @@
         }
     }
 
-    private void OnRowClicked(Manga manga)
+    private void BackupBeforeEdit(object manga)
     {
-        NavigationManager.NavigateTo($"/mangas/{manga.Id}");
+        mangaBeforeEdit = ((Manga)manga).Clone();
+    }
+
+    private void RestoreOnCancel(object manga)
+    {
+        var mangaToRestore = (Manga)manga;
+        mangaToRestore.PrimaryTitle = mangaBeforeEdit.PrimaryTitle;
+        mangaToRestore.LibraryId = mangaBeforeEdit.LibraryId;
+        mangaToRestore.Library = mangaBeforeEdit.Library;
+        mangaToRestore.ShouldUpscale = mangaBeforeEdit.ShouldUpscale;
+    }
+
+    private async Task OnCommitEdit(object m)
+    {
+        Manga manga = (Manga)m;
+        // if the primary title was changed, change it back and then use the metadata changer.
+        if (manga.PrimaryTitle != mangaBeforeEdit.PrimaryTitle)
+        {
+            await DbContext.Entry(manga).Collection(x => x.OtherTitles).LoadAsync();
+            var newTitle = manga.PrimaryTitle;
+            manga.PrimaryTitle = mangaBeforeEdit.PrimaryTitle;
+            MangaMetadataChanger.ChangeTitle(manga, newTitle.Trim());
+        }
+
+        DbContext.Update((Manga)manga);
+        await DbContext.SaveChangesAsync();
     }
 }
