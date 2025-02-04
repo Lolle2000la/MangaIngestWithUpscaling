@@ -29,7 +29,8 @@ public class MangaMetadataChanger(
             try
             {
                 var origChapterPath = Path.Combine(manga.Library.NotUpscaledLibraryPath, chapter.RelativePath);
-                UpdateChapterTitleMetadata(newTitle, origChapterPath);
+                UpdateChapterTitle(newTitle, origChapterPath);
+                RelocateChapterToNewTitleDirectory(chapter, origChapterPath, manga.Library.NotUpscaledLibraryPath, manga.PrimaryTitle);
 
                 if (chapter.IsUpscaled)
                 {
@@ -39,7 +40,8 @@ public class MangaMetadataChanger(
                         continue;
                     }
                     var upscaledChapterPath = Path.Combine(manga.Library.UpscaledLibraryPath, chapter.RelativePath);
-                    UpdateChapterTitleMetadata(newTitle, upscaledChapterPath);
+                    UpdateChapterTitle(newTitle, upscaledChapterPath);
+                    RelocateChapterToNewTitleDirectory(chapter, upscaledChapterPath, manga.Library.UpscaledLibraryPath, manga.PrimaryTitle);
                 }
             }
             catch (XmlException ex)
@@ -55,7 +57,22 @@ public class MangaMetadataChanger(
         await dbContext.SaveChangesAsync();
     }
 
-    private void UpdateChapterTitleMetadata(string newTitle, string origChapterPath)
+    private void RelocateChapterToNewTitleDirectory(Chapter chapter, string origChapterPath, string libraryBasePath, string newTitle)
+    {
+        // move chapter to the correct directory with the new title
+        var newChapterPath = Path.Combine(libraryBasePath, newTitle, chapter.FileName);
+        var newRelativePath = Path.GetRelativePath(libraryBasePath, newChapterPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(newChapterPath));
+        File.Move(origChapterPath, newChapterPath);
+        if (!Directory.EnumerateFiles(Path.GetDirectoryName(origChapterPath)).Any())
+        {
+            Directory.Delete(Path.GetDirectoryName(origChapterPath));
+        }
+        chapter.RelativePath = newRelativePath;
+        dbContext.Update(chapter);
+    }
+
+    private void UpdateChapterTitle(string newTitle, string origChapterPath)
     {
         if (!File.Exists(origChapterPath))
         {
