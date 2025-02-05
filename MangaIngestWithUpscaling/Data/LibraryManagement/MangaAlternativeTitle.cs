@@ -5,7 +5,6 @@
 /// </summary>
 public class MangaAlternativeTitle
 {
-    public int Id { get; set; }
     public string Title { get; set; }
 
     public int MangaId { get; set; }

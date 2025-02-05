@@ -33,6 +33,13 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 
         builder.Entity<MangaAlternativeTitle>(entity =>
         {
+            entity.HasKey(e => new { e.MangaId, e.Title });
+
+            entity.HasOne(e => e.Manga)
+                .WithMany(e => e.OtherTitles)
+                .HasForeignKey(e => e.MangaId)
+                .OnDelete(DeleteBehavior.Cascade);
+
             entity.HasIndex(e => new { e.Title })
                 .IsUnique();
         });
