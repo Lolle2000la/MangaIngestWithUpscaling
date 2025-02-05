@@ -9,19 +9,22 @@
 
 <MudCard>
     <MudCardHeader>
-        <MudText Typo="Typo.h5">Create Library</MudText>
+        <MudStack Row="true" AlignItems="AlignItems.Center">
+            <a href="libraries"><MudIconButton Icon="@Icons.Material.Filled.ArrowBack" /></a>
+            <MudText Typo="Typo.h5">Create Library</MudText>
+        </MudStack>
     </MudCardHeader>
     <MudCardContent>
         <EditLibraryForm @bind-Library="Library"
-                         @bind-IsValid="IsValid"/>
+                         @bind-IsValid="IsValid" />
     </MudCardContent>
     <MudCardActions>
         <MudSpacer />
         <MudButton StartIcon="@Icons.Material.Filled.Save"
-        Variant="Variant.Filled"
-        Color="Color.Primary"
-        Disabled="!IsValid"
-        OnClick="OnCreateLibrary">Create</MudButton>
+                   Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   Disabled="!IsValid"
+                   OnClick="OnCreateLibrary">Create</MudButton>
     </MudCardActions>
 </MudCard>
 
@@ -39,12 +42,5 @@
         DbContext.Libraries.Add(Library);
         await DbContext.SaveChangesAsync();
         NavigationManager.NavigateTo("/libraries");
-    }
-
-    protected override void OnAfterRender(bool firstRender)
-    {
-        if (!firstRender) return;
-
-        
     }
 }

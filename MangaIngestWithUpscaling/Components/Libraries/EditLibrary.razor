@@ -9,7 +9,10 @@
 
 <MudCard>
     <MudCardHeader>
-        <MudText Typo="Typo.h5">Edit Library: @Library.Name</MudText>
+        <MudStack Row="true" AlignItems="AlignItems.Center">
+            <a href="libraries"><MudIconButton Icon="@Icons.Material.Filled.ArrowBack" /></a>
+            <MudText Typo="Typo.h5">Edit Library: @Library.Name</MudText>
+        </MudStack>
     </MudCardHeader>
     <MudCardContent>
         <EditLibraryForm @bind-Library="Library"
