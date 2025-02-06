@@ -1,6 +1,5 @@
 ﻿using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
 using System.Threading.Channels;
-using System;
 using MangaIngestWithUpscaling.Data;
 using Microsoft.EntityFrameworkCore;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
@@ -205,9 +204,10 @@ public class TaskQueue : ITaskQueue, IHostedService
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         var pendingTasks = await dbContext.PersistedTasks
+            .OrderBy(t => t.Order)
+            .AsAsyncEnumerable()
             .Where(t => t.Status == PersistedTaskStatus.Pending || t.Status == PersistedTaskStatus.Processing
                 || (t.Status == PersistedTaskStatus.Failed && t.RetryCount < t.Data.RetryFor))
-            .OrderBy(t => t.Order)
             .ToListAsync(cancellationToken);
 
         // Reset processing tasks to pending
