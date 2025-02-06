@@ -8,6 +8,7 @@
         <MudItem xs="12">
             <MudTextField Required="true" Label="Library Name"
                           HelperText="Name for display purposes only."
+                          Immediate="true"
                           @bind-Value="Library.Name"
                           @bind-Value:after="OnInputChanged" />
         </MudItem>

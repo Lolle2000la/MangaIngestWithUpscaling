@@ -7,6 +7,7 @@
             <MudTextField Label="Name"
                           @bind-Value="@Profile.Name"
                           @bind-Value:after="OnInputChanged"
+                          Immediate="true"
                           Required="true"
                           HelperText="This is for display purposes only." />
         </MudItem>

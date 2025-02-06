@@ -24,7 +24,7 @@
                 <MudText Typo="Typo.h4">Mangas</MudText>
             </MudItem>
             <MudItem xs="12" sm="6" lg="3">
-                <MudSelect Label="Library" T="Library?"
+                <MudSelect Label="Library to browse" T="Library?"
                            @bind-Value="selectedLibrary"
                            @bind-Value:after="async () => await table.ReloadServerData()">
                     <MudSelectItem T="Library?" Value="null">All</MudSelectItem>
@@ -35,17 +35,18 @@
                 </MudSelect>
             </MudItem>
             <MudItem xs="12" sm="12" lg="3">
-                <MudTextField Label="Search" Placeholder="Search..." Variant="Variant.Outlined"
+                <MudTextField Label="Search by title." Placeholder="Search..." Variant="Variant.Outlined"
                               @bind-Value="searchString"
-                              @bind-Value:after="async () => await table.ReloadServerData()" />
+                              @bind-Value:after="async () => await table.ReloadServerData()"
+                              Immediate="true"
+                              OnInternalInputChanged="async () => await table.ReloadServerData()" />
             </MudItem>
-            @if (selectedMangas?.Count > 0)
-            {
-                <MudItem xs="12">
-                    <MudButton Variant="Variant.Filled" Color="Color.Secondary"
-                               OnClick="OnDeleteSelected">Delete Selected</MudButton>
-                </MudItem>
-            }
+            <MudItem xs="12">
+                <MudButton Variant="Variant.Filled" Color="Color.Error"
+                           OnClick="OnDeleteSelected"
+                           StartIcon="@Icons.Material.Filled.DeleteSweep"
+                           Disabled="@(selectedMangas == null || selectedMangas.Count == 0)">Delete Selected</MudButton>
+            </MudItem>
         </MudGrid>
 
     </ToolBarContent>
@@ -82,7 +83,7 @@
             </a>
             <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Variant="Variant.Text"
                            OnClick="_ => OnDeleteSpecific(context)"
-                           Size="Size.Small"/>
+                           Size="Size.Small" />
         </MudTd>
     </RowTemplate>
     <RowEditingTemplate>
@@ -128,6 +129,11 @@
             query = query.Where(x => x.LibraryId == selectedLibrary.Id);
         }
 
+        if (!string.IsNullOrWhiteSpace(searchString))
+        {
+            query = query.Where(x => x.PrimaryTitle.Contains(searchString) || x.OtherTitles.Any(s => s.Title == searchString));
+        }
+
         query = state.SortLabel switch
         {
             "library_field" => query.OrderByDirection(state.SortDirection, x => x.Library.Name),
@@ -137,7 +143,7 @@
         };
 
         var totalItems = await query.CountAsync();
-        var items = await query.Skip(state.Page * state.PageSize).Take(state.PageSize).ToListAsync();
+        var items = await query.Skip(state.Page * state.PageSize).Take(state.PageSize).ToListAsync(cancellationToken);
         return new TableData<Manga> { Items = items, TotalItems = totalItems };
     }
 
