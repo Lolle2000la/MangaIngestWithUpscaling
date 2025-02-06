@@ -4,7 +4,7 @@ namespace MangaIngestWithUpscaling.Services.FileSystem;
 
 public class FileSystemHelpers
 {
-    public static void DeleteEmpty(string startLocation, ILogger logger)
+    public static void DeleteEmptySubfolders(string startLocation, ILogger logger)
     {
         foreach (var directory in Directory.GetDirectories(startLocation))
         {

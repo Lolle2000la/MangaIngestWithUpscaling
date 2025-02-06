@@ -88,7 +88,7 @@ public class IngestProcessor(ApplicationDbContext dbContext,
 
         logger.LogInformation("Scanned {seriesCount} series in library {libraryName}. Cleaning.", chaptersBySeries.Count, library.Name);
         // Clean the ingest path of all empty directories recursively
-        FileSystemHelpers.DeleteEmpty(library.IngestPath, logger);
+        FileSystemHelpers.DeleteEmptySubfolders(library.IngestPath, logger);
     }
 
     private async Task<Manga?> GetMangaSeriesEntity(Library library, string series, CancellationToken cancellationToken)
