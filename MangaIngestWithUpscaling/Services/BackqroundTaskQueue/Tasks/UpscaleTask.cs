@@ -56,4 +56,6 @@ public class UpscaleTask : BaseTask
         chapter.IsUpscaled = true;
         await dbContext.SaveChangesAsync(cancellationToken);
     }
+
+    public override int RetryFor { get; set; } = 1;
 }

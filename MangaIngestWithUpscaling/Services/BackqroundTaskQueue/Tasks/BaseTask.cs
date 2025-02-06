@@ -1,4 +1,5 @@
-﻿using System.Text.Json.Serialization;
+﻿using System.ComponentModel.DataAnnotations.Schema;
+using System.Text.Json.Serialization;
 
 namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 
@@ -17,4 +18,6 @@ public class BaseTask
         throw new NotImplementedException();
     }
     public virtual string TaskFriendlyName { get; } = "Unknown Task";
+
+    public virtual int RetryFor { get; set; } = 0;
 }

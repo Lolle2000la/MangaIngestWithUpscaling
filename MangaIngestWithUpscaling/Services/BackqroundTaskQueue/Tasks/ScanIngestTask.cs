@@ -31,4 +31,6 @@ public class ScanIngestTask : BaseTask
     }
 
     public override string TaskFriendlyName => $"Scanning {LibraryName}";
+
+    public override int RetryFor { get; set; } = 3;
 }

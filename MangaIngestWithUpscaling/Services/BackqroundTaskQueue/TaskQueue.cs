@@ -204,7 +204,8 @@ public class TaskQueue : ITaskQueue, IHostedService
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         var pendingTasks = await dbContext.PersistedTasks
-            .Where(t => t.Status == PersistedTaskStatus.Pending || t.Status == PersistedTaskStatus.Processing)
+            .Where(t => t.Status == PersistedTaskStatus.Pending || t.Status == PersistedTaskStatus.Processing
+                || (t.Status == PersistedTaskStatus.Failed && t.RetryCount < t.Data.RetryFor))
             .OrderBy(t => t.Order)
             .ToListAsync(cancellationToken);
 

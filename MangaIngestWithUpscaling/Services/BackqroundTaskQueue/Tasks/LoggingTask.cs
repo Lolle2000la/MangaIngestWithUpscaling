@@ -12,4 +12,6 @@ public class LoggingTask : BaseTask
         await Task.Delay(1000, cancellationToken);
         await Task.CompletedTask;
     }
+
+    public override int RetryFor { get; set; } = 1;
 }
