@@ -6,10 +6,12 @@
 
 <MudDialog>
     <DialogContent>
-        <MudText>Delete @Chapters.Count Chapters?</MudText>
+        <MudStack>
+            <MudText>Delete @Chapters.Count Chapters?</MudText>
 
-        <MudCheckBox T="bool" Label="Delete original files from disk" @bind-Checked="DeleteOriginalFiles" />
-        <MudCheckBox T="bool" Label="Delete upscaled files from disk" @bind-Checked="DeleteUpscaledFiles" />
+            <MudCheckBox T="bool" Label="Delete original files from disk" @bind-Checked="DeleteOriginalFiles" />
+            <MudCheckBox T="bool" Label="Delete upscaled files from disk" @bind-Checked="DeleteUpscaledFiles" />
+        </MudStack>
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="Cancel">Cancel</MudButton>

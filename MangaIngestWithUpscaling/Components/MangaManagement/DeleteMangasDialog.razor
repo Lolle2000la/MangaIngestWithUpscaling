@@ -6,10 +6,12 @@
 
 <MudDialog>
     <DialogContent>
-        <MudText>Delete @(Mangas.Count > 1 ? $"{Mangas.Count} Mangas" : '"' + Mangas.First().PrimaryTitle + '"')?</MudText>
+        <MudStack>
+            <MudText>Delete @(Mangas.Count > 1 ? $"{Mangas.Count} Mangas" : '"' + Mangas.First().PrimaryTitle + '"')?</MudText>
 
-        <MudCheckBox T="bool" Label="Delete original files from disk" @bind-Value="DeleteOriginalFiles" />
-        <MudCheckBox T="bool" Label="Delete upscaled files from disk" @bind-Value="DeleteUpscaledFiles" />
+            <MudCheckBox T="bool" Label="Delete original files from disk" @bind-Value="DeleteOriginalFiles" />
+            <MudCheckBox T="bool" Label="Delete upscaled files from disk" @bind-Value="DeleteUpscaledFiles" />
+        </MudStack>
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="Cancel">Cancel</MudButton>
