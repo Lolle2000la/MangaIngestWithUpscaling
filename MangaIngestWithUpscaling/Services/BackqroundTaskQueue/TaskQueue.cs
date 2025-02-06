@@ -13,6 +13,7 @@ public interface ITaskQueue
     Task RetryAsync(PersistedTask task);
     Task ReorderTaskAsync(PersistedTask task, int newOrder);
     Task RemoveTaskAsync(PersistedTask task);
+    Task ReplayPendingOrFailed(CancellationToken cancellationToken = default);
 }
 
 public class TaskQueue : ITaskQueue, IHostedService
@@ -83,39 +84,7 @@ public class TaskQueue : ITaskQueue, IHostedService
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        using var scope = _scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-
-        var pendingTasks = await dbContext.PersistedTasks
-            .Where(t => t.Status == PersistedTaskStatus.Pending || t.Status == PersistedTaskStatus.Processing)
-            .OrderBy(t => t.Order)
-            .ToListAsync(cancellationToken);
-
-        // Reset processing tasks to pending
-        foreach (var task in pendingTasks)
-        {
-            if (task.Status == PersistedTaskStatus.Processing)
-            {
-                task.Status = PersistedTaskStatus.Pending;
-                dbContext.Update(task);
-            }
-        }
-        await dbContext.SaveChangesAsync(cancellationToken);
-
-        // Load tasks into sorted sets
-        foreach (var task in pendingTasks)
-        {
-            if (task.Data is UpscaleTask)
-            {
-                lock (_upscaleTasksLock)
-                    _upscaleTasks.Add(task);
-            }
-            else
-            {
-                lock (_standardTasksLock)
-                    _standardTasks.Add(task);
-            }
-        }
+        await ReplayPendingOrFailed(cancellationToken);
 
         // Start background processing
         _ = ProcessChannelAsync(_standardChannel, _standardTasks, _standardTasksLock, cancellationToken);
@@ -227,5 +196,42 @@ public class TaskQueue : ITaskQueue, IHostedService
         }
 
         TaskEnqueuedOrChanged?.Invoke(task);
+    }
+
+    public async Task ReplayPendingOrFailed(CancellationToken cancellationToken = default)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+        var pendingTasks = await dbContext.PersistedTasks
+            .Where(t => t.Status == PersistedTaskStatus.Pending || t.Status == PersistedTaskStatus.Processing)
+            .OrderBy(t => t.Order)
+            .ToListAsync(cancellationToken);
+
+        // Reset processing tasks to pending
+        foreach (var task in pendingTasks)
+        {
+            if (task.Status == PersistedTaskStatus.Processing)
+            {
+                task.Status = PersistedTaskStatus.Pending;
+                dbContext.Update(task);
+            }
+        }
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        // Load tasks into sorted sets
+        foreach (var task in pendingTasks)
+        {
+            if (task.Data is UpscaleTask)
+            {
+                lock (_upscaleTasksLock)
+                    _upscaleTasks.Add(task);
+            }
+            else
+            {
+                lock (_standardTasksLock)
+                    _standardTasks.Add(task);
+            }
+        }
     }
 }
