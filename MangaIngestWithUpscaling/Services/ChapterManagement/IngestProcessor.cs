@@ -4,6 +4,7 @@ using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.CbzConversion;
 using MangaIngestWithUpscaling.Services.ChapterRecognition;
+using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -16,7 +17,8 @@ public class IngestProcessor(ApplicationDbContext dbContext,
     ICbzConverter cbzConverter,
     ILogger<IngestProcessor> logger,
     IUpscaler upscaler,
-    ITaskQueue taskQueue
+    ITaskQueue taskQueue,
+    IMetadataHandlingService metadataHandling
     ) : IIngestProcessor
 {
     public async Task ProcessAsync(Library library, CancellationToken cancellationToken)
@@ -39,6 +41,10 @@ public class IngestProcessor(ApplicationDbContext dbContext,
                 try
                 {
                     chapterCbz = cbzConverter.ConvertToCbz(chapter, library.IngestPath);
+                    // change title in metadata to the primary title of the series
+                    var cbzPath = Path.Combine(library.IngestPath, chapterCbz.RelativePath);
+                    var existingMetadata = metadataHandling.GetSeriesAndTitleFromComicInfo(cbzPath);
+                    metadataHandling.WriteComicInfo(cbzPath, existingMetadata with { Series = seriesEntity.PrimaryTitle });
                 }
                 catch (Exception ex)
                 {
