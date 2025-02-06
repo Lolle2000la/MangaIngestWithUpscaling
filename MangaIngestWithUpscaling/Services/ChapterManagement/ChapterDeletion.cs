@@ -3,6 +3,7 @@ using MangaIngestWithUpscaling.Data.LibraryManagement;
 
 namespace MangaIngestWithUpscaling.Services.ChapterManagement;
 
+[RegisterScoped]
 public class ChapterDeletion(ApplicationDbContext dbContext) : IChapterDeletion
 {
     /// <inheritdoc/>

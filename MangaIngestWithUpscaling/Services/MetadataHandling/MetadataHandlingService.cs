@@ -3,6 +3,7 @@ using System.Xml.Linq;
 
 namespace MangaIngestWithUpscaling.Services.MetadataHandling;
 
+[RegisterScoped]
 public class MetadataHandlingService : IMetadataHandlingService
 {
     public ExtractedMetadata GetSeriesAndTitleFromComicInfo(string file)

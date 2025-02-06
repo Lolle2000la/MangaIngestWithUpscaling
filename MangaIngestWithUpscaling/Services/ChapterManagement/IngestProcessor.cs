@@ -10,6 +10,7 @@ using Microsoft.Extensions.Logging;
 
 namespace MangaIngestWithUpscaling.Services.ChapterManagement;
 
+[RegisterScoped]
 public class IngestProcessor(ApplicationDbContext dbContext,
     IChapterInIngestRecognitionService chapterRecognitionService,
     ICbzConverter cbzConverter,

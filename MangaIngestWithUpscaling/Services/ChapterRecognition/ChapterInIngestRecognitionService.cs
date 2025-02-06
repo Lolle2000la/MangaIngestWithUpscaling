@@ -12,6 +12,7 @@ namespace MangaIngestWithUpscaling.Services.ChapterRecognition;
 /// Not everything in the ingest path is a chapter, so this service
 /// identifies what is and what isn't.
 /// </summary>
+[RegisterScoped]
 public class ChapterInIngestRecognitionService(
     IMetadataHandlingService metadataExtractionService,
     ILibraryFilteringService filteringService) : IChapterInIngestRecognitionService

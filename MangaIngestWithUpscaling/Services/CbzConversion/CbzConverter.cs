@@ -4,6 +4,7 @@ using System.IO.Compression;
 
 namespace MangaIngestWithUpscaling.Services.CbzConversion;
 
+[RegisterScoped]
 public class CbzConverter : ICbzConverter
 {
     public FoundChapter ConvertToCbz(FoundChapter chapter, string foundIn)

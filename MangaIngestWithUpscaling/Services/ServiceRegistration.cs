@@ -14,16 +14,7 @@ public static class ServiceRegistration
 {
     public static void RegisterAppServices(this IServiceCollection services)
     {
-        services.AddScoped<IChapterInIngestRecognitionService, ChapterInIngestRecognitionService>();
-        services.AddScoped<IChapterDeletion, ChapterDeletion>();
-        services.AddScoped<IMetadataHandlingService, MetadataHandlingService>();
-        services.AddScoped<ILibraryFilteringService, LibraryFilteringService>();
-        services.AddScoped<ICbzConverter, CbzConverter>();
-        services.AddScoped<IPythonService, PythonService>();
-        services.AddScoped<IIngestProcessor, IngestProcessor>();
-        services.AddScoped<IUpscaler, MangaJaNaiUpscaler>();
-        services.AddScoped<IMangaMetadataChanger, MangaMetadataChanger>();
-        services.AddScoped<IQueueCleanup, QueueCleanup>();
+        services.AutoRegister();
 
         services.AddSingleton<TaskQueue>();
         services.AddSingleton<ITaskQueue>(sp => sp.GetRequiredService<TaskQueue>());

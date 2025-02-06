@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 
+[RegisterScoped]
 public class QueueCleanup(
     ApplicationDbContext dbContext,
     ILogger<QueueCleanup> _logger) : IQueueCleanup

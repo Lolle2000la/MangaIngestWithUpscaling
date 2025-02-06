@@ -5,6 +5,7 @@ using System.Xml;
 
 namespace MangaIngestWithUpscaling.Services.MetadataHandling;
 
+[RegisterScoped]
 public class MangaMetadataChanger(
     IMetadataHandlingService metadataHandling,
     ApplicationDbContext dbContext,

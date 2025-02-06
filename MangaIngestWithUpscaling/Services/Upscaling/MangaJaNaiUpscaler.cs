@@ -5,6 +5,7 @@ using System.Reflection;
 
 namespace MangaIngestWithUpscaling.Services.Upscaling;
 
+[RegisterScoped]
 public class MangaJaNaiUpscaler(IPythonService pythonService,
     ILogger<MangaJaNaiUpscaler> logger) : IUpscaler
 {

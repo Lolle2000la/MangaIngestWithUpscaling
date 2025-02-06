@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 
 namespace MangaIngestWithUpscaling.Services.LibraryFiltering;
 
+[RegisterScoped]
 public class LibraryFilteringService : ILibraryFilteringService
 {
     public List<FoundChapter> FilterChapters(List<FoundChapter> chapters, IEnumerable<LibraryFilterRule> libraryFilterRules)

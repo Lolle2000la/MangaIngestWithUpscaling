@@ -7,6 +7,7 @@ using System.Text;
 
 namespace MangaIngestWithUpscaling.Services.Python;
 
+[RegisterScoped]
 public class PythonService(ILogger<PythonService> logger) : IPythonService
 {
     public static PythonEnvironment? Environment { get; set; }
