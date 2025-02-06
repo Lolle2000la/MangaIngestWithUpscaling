@@ -50,9 +50,16 @@ public class MangaMerger(
                             var targetUpscaledPath = Path.Combine(primary.Library.UpscaledLibraryPath, primary.PrimaryTitle!, chapter.FileName);
                             File.Move(upscaledPath, targetUpscaledPath);
                         }
+                        else
+                        {
+                            logger.LogWarning("Chapter {fileName} in {MangaId} is upscaled but the primary manga does not have an upscaled library path. Skipping.",
+                                chapter.FileName, manga.Id);
+                        }
                     }
                 }
                 chapter.RelativePath = Path.GetRelativePath(primary.Library.NotUpscaledLibraryPath, targetPath);
+                chapter.Manga = primary;
+                chapter.MangaId = primary.Id;
                 primary.Chapters.Add(chapter);
                 manga.Chapters.Remove(chapter);
             }
