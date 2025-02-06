@@ -1,0 +1,46 @@
+﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
+@using MangaIngestWithUpscaling.Services.MangaManagement
+
+@inject ApplicationDbContext DbContext
+@inject IMangaMerger MangaMerger
+
+<MudDialog>
+    <DialogContent>
+        <MudStack>
+            <MudText>Merge @(Mangas.Count > 1 ? $"{Mangas.Count} Mangas" : '"' + Mangas.First().PrimaryTitle + '"')?</MudText>
+            <MudSelect Label="Manga to keep (the others will have their titles and chapters merged into this one)." T="Manga" @bind-Value="primary">
+                @foreach (var manga in Mangas)
+                {
+                    <MudSelectItem T="Manga" Value="@manga">@manga.PrimaryTitle</MudSelectItem>
+                }
+            </MudSelect>
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton StartIcon="@Icons.Material.Filled.MergeType"
+                   Color="Color.Primary"
+                   Variant="Variant.Filled"
+                   Disabled="primary == null"
+                   OnClick="Submit">Merge</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; }
+
+    [Parameter]
+    public List<Manga> Mangas { get; set; }
+
+    private Manga primary;
+
+    async Task Submit()
+    {
+        var toBeMerged = Mangas.Where(m => m != primary);
+        await MangaMerger.MergeAsync(primary, toBeMerged);
+        MudDialog.Close(DialogResult.Ok(true));
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}
