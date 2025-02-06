@@ -23,7 +23,13 @@ public class Chapter
     public string NotUpscaledFullPath => Path.Combine(Manga.Library.NotUpscaledLibraryPath, RelativePath);
 
     [NotMapped]
-    public string? UpscaledFullPath => UpscalerProfileId != null
-        ? Path.Combine(Manga.Library.UpscaledLibraryPath!, RelativePath)
-        : null;
+    public string? UpscaledFullPath
+    {
+        get
+        {
+            if (!IsUpscaled || Manga.Library.UpscaledLibraryPath == null)
+                return null;
+            return Path.Combine(Manga.Library.UpscaledLibraryPath, RelativePath);
+        }
+    }
 }
