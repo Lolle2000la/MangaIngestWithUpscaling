@@ -1,4 +1,4 @@
-﻿namespace MangaIngestWithUpscaling.Data.Logs;
+﻿namespace MangaIngestWithUpscaling.Data.LogModel;
 
 public class Log
 {

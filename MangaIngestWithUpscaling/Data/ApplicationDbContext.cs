@@ -5,7 +5,7 @@ using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
 using System.Reflection.Emit;
 using System.Text.Json;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
-using MangaIngestWithUpscaling.Data.Logs;
+using MangaIngestWithUpscaling.Data.LogModel;
 
 namespace MangaIngestWithUpscaling.Data;
 

@@ -18,7 +18,6 @@ public class IngestProcessor(ApplicationDbContext dbContext,
     IChapterInIngestRecognitionService chapterRecognitionService,
     ICbzConverter cbzConverter,
     ILogger<IngestProcessor> logger,
-    IUpscaler upscaler,
     ITaskQueue taskQueue,
     IMetadataHandlingService metadataHandling
     ) : IIngestProcessor
@@ -99,7 +98,7 @@ public class IngestProcessor(ApplicationDbContext dbContext,
         FileSystemHelpers.DeleteEmptySubfolders(library.IngestPath, logger);
     }
 
-    private async Task<Manga?> GetMangaSeriesEntity(Library library, string series, CancellationToken cancellationToken)
+    private async Task<Manga> GetMangaSeriesEntity(Library library, string series, CancellationToken cancellationToken)
     {
         // create series if it doesn't exist
         // Also take into account the alternate names

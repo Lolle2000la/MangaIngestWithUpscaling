@@ -4,5 +4,5 @@ namespace MangaIngestWithUpscaling.Services.ChapterRecognition;
 
 public interface IChapterInIngestRecognitionService
 {
-    List<FoundChapter> FindAllChaptersAt(string ingestPath, IReadOnlyList<LibraryFilterRule> libraryFilterRules = null);
+    List<FoundChapter> FindAllChaptersAt(string ingestPath, IReadOnlyList<LibraryFilterRule>? libraryFilterRules = null);
 }

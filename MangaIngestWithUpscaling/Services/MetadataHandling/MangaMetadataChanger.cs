@@ -63,11 +63,16 @@ public class MangaMetadataChanger(
         // move chapter to the correct directory with the new title
         var newChapterPath = Path.Combine(libraryBasePath, newTitle, chapter.FileName);
         var newRelativePath = Path.GetRelativePath(libraryBasePath, newChapterPath);
-        Directory.CreateDirectory(Path.GetDirectoryName(newChapterPath));
-        File.Move(origChapterPath, newChapterPath);
-        if (!Directory.EnumerateFiles(Path.GetDirectoryName(origChapterPath)).Any())
+        if (File.Exists(newChapterPath))
         {
-            Directory.Delete(Path.GetDirectoryName(origChapterPath));
+            logger.LogWarning("Chapter file already exists: {ChapterPath}", newChapterPath);
+            return;
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(newChapterPath)!);
+        File.Move(origChapterPath, newChapterPath);
+        if (!Directory.EnumerateFiles(Path.GetDirectoryName(origChapterPath)!).Any())
+        {
+            Directory.Delete(Path.GetDirectoryName(origChapterPath)!);
         }
         chapter.RelativePath = newRelativePath;
         dbContext.Update(chapter);

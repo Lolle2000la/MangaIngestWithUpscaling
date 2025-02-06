@@ -4,7 +4,6 @@ using MangaIngestWithUpscaling.Services.ChapterManagement;
 using MangaIngestWithUpscaling.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Services.LibraryFiltering;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
-using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Services.Python;
 using MangaIngestWithUpscaling.Services.Upscaling;
 

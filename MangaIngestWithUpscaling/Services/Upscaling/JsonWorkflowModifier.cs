@@ -39,7 +39,8 @@ public static class JsonWorkflowModifier
 
         // Find the workflow with WorkflowName == "Upscale Manga (Default)".
         JsonObject? workflow = valuesArray
-            .Select(n => n.AsObject())
+            .Where(n => n != null)
+            .Select(n => n!.AsObject())
             .FirstOrDefault(obj => obj["WorkflowName"]?.GetValue<string>() == "Upscale Manga (Default)");
         if (workflow == null)
             throw new Exception("Workflow 'Upscale Manga (Default)' not found.");

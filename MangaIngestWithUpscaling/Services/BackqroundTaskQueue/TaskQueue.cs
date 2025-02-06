@@ -25,8 +25,8 @@ public class TaskQueue : ITaskQueue, IHostedService
 
     private readonly SortedSet<PersistedTask> _standardTasks;
     private readonly SortedSet<PersistedTask> _upscaleTasks;
-    private readonly object _standardTasksLock = new object();
-    private readonly object _upscaleTasksLock = new object();
+    private readonly object _standardTasksLock = new();
+    private readonly object _upscaleTasksLock = new();
 
     public ChannelReader<PersistedTask> StandardReader => _standardChannel.Reader;
     public ChannelReader<PersistedTask> UpscaleReader => _upscaleChannel.Reader;
@@ -99,7 +99,7 @@ public class TaskQueue : ITaskQueue, IHostedService
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            PersistedTask task = null;
+            PersistedTask? task = null;
             lock (lockObj)
             {
                 if (tasks.Count > 0)
@@ -174,7 +174,8 @@ public class TaskQueue : ITaskQueue, IHostedService
         lock (lockObj)
         {
             var toRemove = tasks.FirstOrDefault(t => t.Id == task.Id);
-            tasks.Remove(toRemove);
+            if (toRemove != null)
+                tasks.Remove(toRemove);
         }
     }
 

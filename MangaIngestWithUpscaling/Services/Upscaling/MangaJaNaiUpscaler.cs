@@ -61,7 +61,7 @@ public class MangaJaNaiUpscaler(IPythonService pythonService,
         {
             throw new FileNotFoundException("Input file not found", inputPath);
         }
-        var outputDirectory = Path.GetDirectoryName(outputPath);
+        var outputDirectory = Path.GetDirectoryName(outputPath)!;
         if (!Directory.Exists(outputDirectory))
         {
             Directory.CreateDirectory(outputDirectory);
@@ -94,7 +94,7 @@ public class MangaJaNaiUpscaler(IPythonService pythonService,
 
             logger.LogInformation("Upscaling {inputPath} to {outputPath} with {profile.Name} completed", inputPath, outputPath, profile.Name);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             throw;
         }

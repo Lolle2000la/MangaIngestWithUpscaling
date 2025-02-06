@@ -18,6 +18,10 @@ public class MetadataHandlingService : IMetadataHandlingService
             {
                 using var stream = comicInfoEntry.Open();
                 var document = XDocument.Load(stream);
+                if (document.Root == null)
+                {
+                    return new ExtractedMetadata(series, title);
+                }
                 var titleElement = document.Root.Element("Title");
                 if (titleElement != null)
                 {
@@ -33,6 +37,10 @@ public class MetadataHandlingService : IMetadataHandlingService
         else if (file.EndsWith("ComicInfo.xml"))
         {
             var document = XDocument.Load(file);
+            if (document.Root == null)
+            {
+                return new ExtractedMetadata(series, title);
+            }
             var titleElement = document.Root.Element("Title");
             if (titleElement != null)
             {
@@ -57,6 +65,10 @@ public class MetadataHandlingService : IMetadataHandlingService
             {
                 using var stream = comicInfoEntry.Open();
                 var document = XDocument.Load(stream);
+                if (document.Root == null)
+                {
+                    return;
+                }
                 var titleElement = document.Root.Element("Title");
                 if (titleElement != null && metadata.ChapterTitle != null)
                 {
@@ -88,6 +100,10 @@ public class MetadataHandlingService : IMetadataHandlingService
         else if (file.EndsWith("ComicInfo.xml"))
         {
             var document = XDocument.Load(file);
+            if (document.Root == null)
+            {
+                return;
+            }
             var titleElement = document.Root.Element("Title");
             if (titleElement != null && metadata.ChapterTitle != null)
             {

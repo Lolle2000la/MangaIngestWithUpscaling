@@ -22,7 +22,7 @@ public class ChapterInIngestRecognitionService(
     /// </summary>
     /// <param name="ingestPath"></param>
     /// <returns></returns>
-    public List<FoundChapter> FindAllChaptersAt(string ingestPath, IReadOnlyList<LibraryFilterRule> libraryFilterRules = null)
+    public List<FoundChapter> FindAllChaptersAt(string ingestPath, IReadOnlyList<LibraryFilterRule>? libraryFilterRules = null)
     {
         var foundChapters = new List<FoundChapter>();
         // get either all cbz files or all ComicInfo.xml files
