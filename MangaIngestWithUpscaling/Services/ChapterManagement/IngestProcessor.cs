@@ -4,6 +4,7 @@ using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.CbzConversion;
 using MangaIngestWithUpscaling.Services.ChapterRecognition;
+using MangaIngestWithUpscaling.Services.FileSystem;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
@@ -87,7 +88,7 @@ public class IngestProcessor(ApplicationDbContext dbContext,
 
         logger.LogInformation("Scanned {seriesCount} series in library {libraryName}. Cleaning.", chaptersBySeries.Count, library.Name);
         // Clean the ingest path of all empty directories recursively
-        DeleteEmpty(library.IngestPath, logger);
+        FileSystemHelpers.DeleteEmpty(library.IngestPath, logger);
     }
 
     private async Task<Manga?> GetMangaSeriesEntity(Library library, string series, CancellationToken cancellationToken)
@@ -119,26 +120,5 @@ public class IngestProcessor(ApplicationDbContext dbContext,
         }
 
         return seriesEntity;
-    }
-
-    private static void DeleteEmpty(string startLocation, ILogger<IngestProcessor> logger)
-    {
-        foreach (var directory in Directory.GetDirectories(startLocation))
-        {
-            DeleteEmpty(directory, logger);
-            try
-            {
-                if (!Directory.EnumerateFileSystemEntries(directory).Any())
-                {
-                    var directoryInfo = new DirectoryInfo(directory);
-                    directoryInfo.Attributes = FileAttributes.Normal;
-                    directoryInfo.Delete();
-                }
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error deleting directory {directory}", directory);
-            }
-        }
     }
 }
