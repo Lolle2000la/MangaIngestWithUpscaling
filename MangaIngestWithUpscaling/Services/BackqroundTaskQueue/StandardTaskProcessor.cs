@@ -81,6 +81,7 @@ public class StandardTaskProcessor(
             task.RetryCount++;
             dbContext.Update(task);
             await dbContext.SaveChangesAsync();
+            StatusChanged?.Invoke(task);
         }
     }
 }

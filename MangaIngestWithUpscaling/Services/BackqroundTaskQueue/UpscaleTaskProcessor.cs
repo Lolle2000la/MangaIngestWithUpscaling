@@ -76,6 +76,7 @@ public class UpscaleTaskProcessor(
             task.RetryCount++;
             dbContext.Update(task);
             await dbContext.SaveChangesAsync();
+            StatusChanged?.Invoke(task);
         }
     }
 }
