@@ -31,7 +31,7 @@ builder.Services.AddSerilog((services, lc) => lc
     .Enrich.FromLogContext()
     .WriteTo.Console()
     .WriteTo.SQLite(
-        Path.GetFullPath(sqliteConnectionStringBuilder.DataSource), 
+        Path.GetFullPath(sqliteConnectionStringBuilder.DataSource),
         tableName: "Logs",
         restrictedToMinimumLevel: LogEventLevel.Warning,
         retentionPeriod: TimeSpan.FromDays(7)));
@@ -56,7 +56,10 @@ builder.Services.AddAuthentication(options =>
     .AddIdentityCookies();
 
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlite(connectionString));
+    options.UseSqlite(connectionString, builder =>
+    {
+        builder.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+    }));
 builder.Services.AddDatabaseDeveloperPageExceptionFilter();
 
 builder.Services.AddIdentityCore<ApplicationUser>(options => options.SignIn.RequireConfirmedAccount = true)
