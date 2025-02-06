@@ -77,18 +77,8 @@ public class TaskQueue : ITaskQueue, IHostedService
 
         TaskEnqueuedOrChanged?.Invoke(taskItem);
 
-        // Existing cleanup code...
-        var oldTasks = await dbContext.PersistedTasks
-            .Where(t => t.Status == PersistedTaskStatus.Completed)
-            .OrderByDescending(t => t.CreatedAt)
-            .Skip(100)
-            .ToListAsync();
-
-        if (oldTasks.Count > 25)
-            _logger.LogInformation("Cleaning up {TaskCount} old tasks.", oldTasks.Count);
-
-        dbContext.PersistedTasks.RemoveRange(oldTasks);
-        await dbContext.SaveChangesAsync();
+        var queueCleanup = scope.ServiceProvider.GetRequiredService<IQueueCleanup>();
+        await queueCleanup.CleanupAsync();
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)

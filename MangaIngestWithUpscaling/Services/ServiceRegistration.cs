@@ -23,6 +23,7 @@ public static class ServiceRegistration
         services.AddScoped<IIngestProcessor, IngestProcessor>();
         services.AddScoped<IUpscaler, MangaJaNaiUpscaler>();
         services.AddScoped<IMangaMetadataChanger, MangaMetadataChanger>();
+        services.AddScoped<IQueueCleanup, QueueCleanup>();
 
         services.AddSingleton<TaskQueue>();
         services.AddSingleton<ITaskQueue>(sp => sp.GetRequiredService<TaskQueue>());
