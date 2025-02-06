@@ -13,14 +13,15 @@ public class CbzConverter : ICbzConverter
 
         if (chapter.StorageType == ChapterStorageType.Folder)
         {
-            var cbzPath = Path.Combine(foundIn, $"{chapter.RelativePath}.cbz");
             var targetPath = Path.Combine(foundIn, chapter.RelativePath);
+            var cbzPath = Path.Combine(foundIn, $"{chapter.RelativePath}.cbz");
+            var newRelativePath = Path.GetRelativePath(foundIn, cbzPath);
             ZipFile.CreateFromDirectory(targetPath, cbzPath);
             return chapter with
             {
                 StorageType = ChapterStorageType.Cbz,
-                RelativePath = targetPath,
-                FileName = Path.GetFileName(targetPath)
+                RelativePath = newRelativePath,
+                FileName = Path.GetFileName(cbzPath)
             };
         }
 
