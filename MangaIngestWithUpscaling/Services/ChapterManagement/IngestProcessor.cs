@@ -1,4 +1,5 @@
-﻿using MangaIngestWithUpscaling.Data;
+﻿using DynamicData;
+using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
@@ -29,6 +30,8 @@ public class IngestProcessor(ApplicationDbContext dbContext,
 
         // group chapters by series
         var chaptersBySeries = chapterRecognitionResult.GroupBy(c => c.Metadata.Series).ToDictionary(g => g.Key, g => g.ToList());
+
+        List<(Chapter, int)> chaptersToUpscale = [];
 
         foreach (var (series, chapters) in chaptersBySeries)
         {
@@ -74,16 +77,21 @@ public class IngestProcessor(ApplicationDbContext dbContext,
 
                 if (seriesEntity.ShouldUpscale != false && library.UpscalerProfileId.HasValue)
                 {
-                    var upscaleTask = new UpscaleTask
-                    {
-                        ChapterId = chapterEntity.Id,
-                        UpscalerProfileId = library.UpscalerProfileId!.Value
-                    };
-                    await taskQueue.EnqueueAsync(upscaleTask);
+                    chaptersToUpscale.Add((chapterEntity!, library.UpscalerProfileId.Value));
                 }
             }
 
             await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        foreach(var chapterTuple in chaptersToUpscale)
+        {
+            var upscaleTask = new UpscaleTask
+            {
+                ChapterId = chapterTuple.Item1.Id,
+                UpscalerProfileId = chapterTuple.Item2 // if I use destructuring here, the value becomes 0. I checked with the debugger and I have no idea why this happens.
+            };
+            await taskQueue.EnqueueAsync(upscaleTask);
         }
 
         logger.LogInformation("Scanned {seriesCount} series in library {libraryName}. Cleaning.", chaptersBySeries.Count, library.Name);
