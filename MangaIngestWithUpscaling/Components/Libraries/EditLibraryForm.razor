@@ -12,6 +12,21 @@
                           @bind-Value="Library.Name"
                           @bind-Value:after="OnInputChanged" />
         </MudItem>
+        <MudItem xs="12">
+            <MudStack>
+                <MudText Typo="Typo.h6">Upscaler Config</MudText>
+                <MudSelect T="int?" Label="Upscaler Config"
+                           HelperText="Select an upscaling profile to use for this library. Leave at 'none' if you do not want to upscale any images."
+                           @bind-Value="Library.UpscalerProfileId"
+                           @bind-Value:after="OnInputChanged" Clearable="true">
+                    <MudSelectItem T="int?" Value="null">«None (Do Not Upscale)»</MudSelectItem>
+                    @foreach (var upscalerConfig in DbContext.UpscalerProfiles)
+                    {
+                        <MudSelectItem T="int?" Value="@upscalerConfig.Id">@upscalerConfig.Name</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudStack>
+        </MudItem>
         <MudItem lg="4" md="12" xs="12">
             <FolderPicker SelectedPath="@Library.IngestPath"
                           SelectedPathChanged="@OnIngestPathChanged"
@@ -38,18 +53,6 @@
                           Disabled="Library.MangaSeries.Count > 0"
                           SelectedPathChanged="@OnUpscaledPathChanged"
                           Title="Upscaled location" />
-        </MudItem>
-        <MudItem xs="12">
-            <MudSelect T="int?" Label="Upscaler Config"
-                       HelperText="Select an upscaling profile to use for this library. Leave at 'none' if you do not want to upscale any images."
-                       @bind-Value="Library.UpscalerProfileId"
-                       @bind-Value:after="OnInputChanged" Clearable="true">
-                <MudSelectItem T="int?" Value="null">«None (Do Not Upscale)»</MudSelectItem>
-                @foreach (var upscalerConfig in DbContext.UpscalerProfiles)
-                {
-                    <MudSelectItem T="int?" Value="@upscalerConfig.Id">@upscalerConfig.Name</MudSelectItem>
-                }
-            </MudSelect>
         </MudItem>
     </MudGrid>
 </MudForm>
