@@ -1,0 +1,58 @@
+﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
+@using MangaIngestWithUpscaling.Services.MangaManagement
+
+@inject ApplicationDbContext DbContext
+@inject IMangaLibraryMover MangaMover
+
+<MudDialog>
+    <DialogContent>
+        <MudStack>
+            <MudText>
+                Move @(Mangas.Count > 1 ? $"{Mangas.Count} Mangas" : '"' + Mangas.First().PrimaryTitle + '"')?
+            </MudText>
+            <MudText Color="Color.Error">
+                This will also move <b>ALL</b> files associated with the Manga.
+            </MudText>
+            <MudSelect Label="The libary to move the Manga into." T="Library" @bind-Value="selected">
+                @foreach (var library in DbContext.Libraries)
+                {
+                    <MudSelectItem T="Library" Value="@library">@library.Name</MudSelectItem>
+                }
+            </MudSelect>
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton StartIcon="@Icons.Material.Filled.MergeType"
+                   Color="Color.Primary"
+                   Variant="Variant.Filled"
+                   Disabled="selected == null"
+                   OnClick="Submit">Move</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter]
+    private IMudDialogInstance MudDialog { get; set; }
+
+    [Parameter]
+    public List<Manga> Mangas { get; set; }
+
+    private Library selected;
+
+    async Task Submit()
+    {
+        if (selected == null)
+        {
+            return;
+        }
+
+        foreach (var manga in Mangas)
+        {
+            await MangaMover.MoveMangaAsync(manga, selected);
+        }
+        MudDialog.Close(DialogResult.Ok(true));
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}
