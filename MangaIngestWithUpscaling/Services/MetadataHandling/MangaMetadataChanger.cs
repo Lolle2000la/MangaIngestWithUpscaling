@@ -30,6 +30,11 @@ public class MangaMetadataChanger(
             try
             {
                 var origChapterPath = Path.Combine(manga.Library.NotUpscaledLibraryPath, chapter.RelativePath);
+                if (!File.Exists(origChapterPath))
+                {
+                    logger.LogWarning("Chapter file not found: {ChapterPath}", origChapterPath);
+                    continue;
+                }
                 UpdateChapterTitle(newTitle, origChapterPath);
                 RelocateChapterToNewTitleDirectory(chapter, origChapterPath, manga.Library.NotUpscaledLibraryPath, manga.PrimaryTitle);
 
@@ -41,6 +46,11 @@ public class MangaMetadataChanger(
                         continue;
                     }
                     var upscaledChapterPath = Path.Combine(manga.Library.UpscaledLibraryPath, chapter.RelativePath);
+                    if (!File.Exists(upscaledChapterPath))
+                    {
+                        logger.LogWarning("Upscaled chapter file not found: {ChapterPath}", upscaledChapterPath);
+                        continue;
+                    }
                     UpdateChapterTitle(newTitle, upscaledChapterPath);
                     RelocateChapterToNewTitleDirectory(chapter, upscaledChapterPath, manga.Library.UpscaledLibraryPath, manga.PrimaryTitle);
                 }
