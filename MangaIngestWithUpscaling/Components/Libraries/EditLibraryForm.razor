@@ -119,6 +119,9 @@
                           Directory.Exists(Library.NotUpscaledLibraryPath) &&
                           (Library.UpscaledLibraryPath == null || Directory.Exists(Library.UpscaledLibraryPath));
 
-        return requiredElementsValid && pathsAreDifferent && pathsExist;
+        bool upscalingIsFullyConfiguredOrOff = !Library.UpscaleOnIngest ||
+            (Library.UpscaleOnIngest && Library.UpscalerProfileId.HasValue && !string.IsNullOrEmpty(Library.UpscaledLibraryPath));
+
+        return requiredElementsValid && pathsAreDifferent && pathsExist && upscalingIsFullyConfiguredOrOff;
     }
 }
