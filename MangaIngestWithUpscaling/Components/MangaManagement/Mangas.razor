@@ -1,11 +1,14 @@
 ﻿@page "/mangas"
 @using MangaIngestWithUpscaling.Data.LibraryManagement
+@using MangaIngestWithUpscaling.Services.BackqroundTaskQueue
+@using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
 @using MangaIngestWithUpscaling.Services.MetadataHandling
 
 @inject ApplicationDbContext DbContext
 @inject IDialogService DialogService
 @inject NavigationManager NavigationManager
 @inject IMangaMetadataChanger MangaMetadataChanger
+@inject ITaskQueue TaskQueue
 
 <PageTitle>Browse and Manage Mangas</PageTitle>
 
@@ -87,12 +90,17 @@
         <MudTd DataLabel="Chapter count">@context.Chapters.Count()</MudTd>
         <MudTd DataLabel="Should upscale">@(context.ShouldUpscale.HasValue ? context.ShouldUpscale.Value : "Use Library settings")</MudTd>
         <MudTd>
-            <a href="mangas/@context.Id">
+            <a href="mangas/@context.Id" title="Edit this Manga.">
                 <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Text"
                                Size="Size.Small" />
             </a>
+            <MudIconButton Icon="@Icons.Material.Filled.ImageAspectRatio" Variant="Variant.Text"
+                           Size="Size.Small"
+                           title="Upscale chapter in this manga. This will upscale all chapters that aren't yet or used a different one from the one configured."
+                           OnClick="_ => OnUpscaleSpecific(context)"/>
             <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Variant="Variant.Text"
                            OnClick="_ => OnDeleteSpecific(context)"
+                           title="Delete this Manga."
                            Size="Size.Small" />
         </MudTd>
     </RowTemplate>
@@ -131,6 +139,7 @@
     {
         var query = DbContext.MangaSeries
             .Include(x => x.Library)
+            .ThenInclude(x => x.UpscalerProfile)
             .Include(x => x.Chapters)
             .AsQueryable();
 
@@ -221,6 +230,19 @@
         if (!result.Canceled)
         {
             await table.ReloadServerData();
+        }
+    }
+
+    private async Task OnUpscaleSpecific(Manga manga)
+    {
+        foreach (var chapter in manga.Chapters)
+        {
+            // Upscale if not yet upscaled or if the upscaler profile is different.
+            // The tasks themselves check for this as well, but this will prevent them from piling up in the queue.
+            if (!chapter.IsUpscaled || (chapter.IsUpscaled && chapter.UpscalerProfileId != manga.Library.UpscalerProfileId))
+            {
+                await TaskQueue.EnqueueAsync(new UpscaleTask(chapter, manga.Library.UpscalerProfile));
+            }
         }
     }
 
