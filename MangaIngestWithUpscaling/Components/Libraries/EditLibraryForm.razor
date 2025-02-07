@@ -17,13 +17,25 @@
                           SelectedPathChanged="@OnIngestPathChanged"
                           Title="Ingest Folder" Required="true" />
         </MudItem>
+        @if (Library.MangaSeries.Count > 0)
+        {
+            <MudItem xs="12">
+                <MudText Typo="Typo.h6">This library contains @Library.MangaSeries.Count manga series.</MudText>
+
+                <MudText Typo="Typo.body1" Color="Color.Error">
+                    You cannot change the storage paths of a library that already contains manga series.
+                </MudText>
+            </MudItem>
+        }
         <MudItem lg="4" md="6" xs="12">
             <FolderPicker SelectedPath="@Library.NotUpscaledLibraryPath"
                           SelectedPathChanged="@OnNotUpscaledPathChanged"
+                          Disabled="Library.MangaSeries.Count > 0"
                           Title="Storage Path as-is" Required="true" />
         </MudItem>
         <MudItem lg="4" md="6" xs="12">
             <FolderPicker SelectedPath="@Library.UpscaledLibraryPath"
+                          Disabled="Library.MangaSeries.Count > 0"
                           SelectedPathChanged="@OnUpscaledPathChanged"
                           Title="Upscaled location" />
         </MudItem>
