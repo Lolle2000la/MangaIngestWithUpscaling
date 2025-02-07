@@ -37,13 +37,30 @@
             Quality = 80
         };
 
+    private UpscalerProfile existingProfile;
+
     public bool IsValid { get; set; } = false;
 
     protected override async Task OnParametersSetAsync()
     {
         if (ProfileId.HasValue)
         {
-            Profile = await DbContext.UpscalerProfiles.FindAsync(ProfileId.Value);
+            existingProfile = await DbContext.UpscalerProfiles.FindAsync(ProfileId.Value);
+            if (existingProfile != null)
+            {
+                Profile = new UpscalerProfile
+                    {
+                        Name = existingProfile.Name,
+                        ScalingFactor = existingProfile.ScalingFactor,
+                        CompressionFormat = existingProfile.CompressionFormat,
+                        Quality = existingProfile.Quality,
+                        UpscalerMethod = existingProfile.UpscalerMethod,
+                    };
+            }
+            else
+            {
+                NavigationManager.NavigateTo("/upscaling/profiles");
+            }
         }
         else
         {
@@ -53,7 +70,19 @@
 
     private async Task OnSaveProfile()
     {
-        DbContext.UpscalerProfiles.Update(Profile);
+        DbContext.UpscalerProfiles.Add(Profile);
+        existingProfile.Deleted = true;
+        await DbContext.SaveChangesAsync();
+        // change all references to existingProfile to Profile, except for concrete chapters
+        // (right now this is only the upscaler profile id in the library))
+        await foreach (var library in DbContext.Libraries.AsAsyncEnumerable())
+        {
+            if (library.UpscalerProfileId == existingProfile.Id)
+            {
+                library.UpscalerProfileId = Profile.Id;
+                library.UpscalerProfile = Profile;
+            }
+        }
         await DbContext.SaveChangesAsync();
         NavigationManager.NavigateTo("/upscaling/profiles");
     }
