@@ -64,7 +64,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         await dbContext.SaveChangesAsync();
 
         // Add to the appropriate sorted set
-        if (taskData is UpscaleTask)
+        if (taskData is UpscaleTask or RenameUpscaledChaptersSeriesTask)
         {
             lock (_upscaleTasksLock)
                 _upscaleTasks.Add(taskItem);
@@ -139,7 +139,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         await dbContext.SaveChangesAsync();
 
         // Determine which set to modify
-        var (tasks, lockObj) = existingTask.Data is UpscaleTask
+        var (tasks, lockObj) = existingTask.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask
             ? (_upscaleTasks, _upscaleTasksLock)
             : (_standardTasks, _standardTasksLock);
 
