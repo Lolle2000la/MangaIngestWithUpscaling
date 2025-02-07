@@ -14,6 +14,7 @@ public class FolderPickerViewModel : ViewModelBase
     private bool _loading;
     private string? _selectedPath;
     private readonly ObservableAsPropertyHelper<bool> _canGoToParent;
+    private bool _disabled;
 
     public string RootDirectory
     {
@@ -46,6 +47,12 @@ public class FolderPickerViewModel : ViewModelBase
         {
             this.RaiseAndSetIfChanged(ref _selectedPath, value);
         }
+    }
+
+    public bool Disabled
+    {
+        get => _disabled;
+        set => this.RaiseAndSetIfChanged(ref _disabled, value);
     }
 
     public bool CanGoToParent => _canGoToParent.Value;

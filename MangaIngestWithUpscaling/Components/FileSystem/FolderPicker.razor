@@ -18,7 +18,8 @@
 
     <MudStack Row="true" AlignItems="AlignItems.Baseline">
         <MudText Typo="Typo.subtitle2" Class="mb-2">Current Path: </MudText>
-        <MudInputString @bind-Value="ViewModel!.RootDirectory" Class="mb-2 flex-grow-1" FullWidth="true" />
+        <MudInputString @bind-Value="ViewModel!.RootDirectory" Class="mb-2 flex-grow-1" FullWidth="true"
+                        Disabled="@(ViewModel.Disabled || (ViewModel?.Loading ?? false))" />
     </MudStack>
 
     @if (ViewModel?.ErrorMessage != null)
@@ -28,12 +29,18 @@
 
     <MudPaper Elevation="2">
         <MudStack Row="true" AlignItems="AlignItems.Center">
-            <MudButton Variant="Variant.Outlined" OnClick="async (e) => await ViewModel?.GoToParentCommand.Execute()" Disabled="@(!ViewModel?.CanGoToParent ?? true)">
+            <MudButton Variant="Variant.Outlined"
+                       OnClick="async (e) => await ViewModel?.GoToParentCommand.Execute()"
+                       Disabled="@(ViewModel.Disabled || (ViewModel?.Loading ?? false))">
                 Go to Parent
             </MudButton>
             <MudSpacer />
-            <MudButton Variant="Variant.Text" Color="Color.Primary" OnClick="async (e) => await ViewModel?.LoadDirectoryItemsCommand.Execute()">
-                <MudIcon Icon="@Icons.Material.Filled.Refresh" /> Refresh
+            <MudButton Variant="Variant.Text"
+                       Color="Color.Primary"
+                       StartIcon="@Icons.Material.Filled.Refresh"
+                       Disabled="@(ViewModel.Disabled || (ViewModel?.Loading ?? false))"
+                       OnClick="async (e) => await ViewModel?.LoadDirectoryItemsCommand.Execute()">
+                Refresh
             </MudButton>
         </MudStack>
     </MudPaper>
@@ -41,6 +48,7 @@
     <MudTreeView T="DirectoryItem" ServerData="@ViewModel!.HandleExpand" Items="@ViewModel?.TreeItems" Activatable="true"
                  Hover="true" Loading="@ViewModel?.Loading" MaxHeight="20rem"
                  SelectionMode="SelectionMode.SingleSelection"
+                 Disabled="@(ViewModel.Disabled || (ViewModel?.Loading ?? false))"
                  SelectedValueChanged="v => ViewModel!.SelectedPath = v.Path">
         <ItemTemplate>
             <MudTreeViewItem T="DirectoryItem" @key="context.Value?.Path" Value="@context.Value" Text="@context.Value?.Name"
@@ -57,10 +65,13 @@
 
             <MudText Typo="Typo.subtitle2" Class="mb-2">Selected Folder:</MudText>
             <MudInputString Required="@Required" Value="@ViewModel?.SelectedPath"
+                            Disabled="@(ViewModel.Disabled || (ViewModel?.Loading ?? false))"
                             Class="flex-grow-1" ReadOnly="true" />
         </MudStack>
-        <MudIconButton Icon="@Icons.Material.Sharp.Clear" OnClick="(e) => SelectedPath = null"
-                       title="Clear selection" Disabled="Required" />
+        <MudIconButton Icon="@Icons.Material.Sharp.Clear"
+                       OnClick="(e) => SelectedPath = null"
+                       Disabled="@(ViewModel.Disabled || Required || (ViewModel?.Loading ?? false))"
+                       title="Clear selection"  />
     </MudStack>
 </MudPaper>
 
@@ -93,6 +104,13 @@
     {
         get => ViewModel?.Title ?? "";
         set => ViewModel!.Title = value;
+    }
+
+    [Parameter]
+    public bool Disabled
+    {
+        get => ViewModel?.Disabled ?? false;
+        set => ViewModel!.Disabled = value;
     }
 
     protected override void OnInitialized()
