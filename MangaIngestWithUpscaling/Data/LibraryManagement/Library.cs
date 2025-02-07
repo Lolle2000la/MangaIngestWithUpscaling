@@ -12,6 +12,7 @@ public class Library
     public string NotUpscaledLibraryPath { get; set; }
     public string? UpscaledLibraryPath { get; set; }
 
+    public bool UpscaleOnIngest { get; set; }
     public int? UpscalerProfileId { get; set; }
     public UpscalerProfile? UpscalerProfile { get; set; }
 

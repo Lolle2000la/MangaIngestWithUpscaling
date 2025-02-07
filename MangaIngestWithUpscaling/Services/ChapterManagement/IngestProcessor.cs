@@ -74,7 +74,7 @@ public class IngestProcessor(ApplicationDbContext dbContext,
                 };
                 seriesEntity.Chapters.Add(chapterEntity);
 
-                if (seriesEntity.ShouldUpscale != false && library.UpscalerProfileId.HasValue)
+                if (library.UpscaleOnIngest && seriesEntity.ShouldUpscale != false && library.UpscalerProfileId.HasValue)
                 {
                     dbContext.Entry(chapterEntity).Reference(c => c.UpscalerProfile).Load();
                     chaptersToUpscale.Add((chapterEntity!, library.UpscalerProfile));

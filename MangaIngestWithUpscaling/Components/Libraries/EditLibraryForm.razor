@@ -15,8 +15,11 @@
         <MudItem xs="12">
             <MudStack>
                 <MudText Typo="Typo.h6">Upscaler Config</MudText>
+                <MudCheckBox T="bool" Label="Automatically upscale all mangas ingest."
+                             @bind-Value="Library.UpscaleOnIngest" @bind-Value:after="OnInputChanged" />
                 <MudSelect T="int?" Label="Upscaler Config"
                            HelperText="Select an upscaling profile to use for this library. Leave at 'none' if you do not want to upscale any images."
+                           Immediate="true"
                            @bind-Value="Library.UpscalerProfileId"
                            @bind-Value:after="OnInputChanged" Clearable="true">
                     <MudSelectItem T="int?" Value="null">«None (Do Not Upscale)»</MudSelectItem>
