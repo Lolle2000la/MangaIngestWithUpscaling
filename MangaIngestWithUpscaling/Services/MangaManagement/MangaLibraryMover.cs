@@ -2,6 +2,7 @@
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Services.FileSystem;
 
 namespace MangaIngestWithUpscaling.Services.MangaManagement;
 
@@ -73,6 +74,8 @@ public class MangaLibraryMover(
 
             // We should update the chapter's relative path to reflect the new location.
             chapter.RelativePath = Path.GetRelativePath(targetLibrary.NotUpscaledLibraryPath, targetPath);
+            // we can also check if we can delete the old directory if empty.
+            FileSystemHelpers.DeleteIfEmpty(Path.GetDirectoryName(sourcePath)!, logger);
 
 
             // Now we should move the upscaled chapters. Here we have this quite annoying problem that we can't just move the files.
