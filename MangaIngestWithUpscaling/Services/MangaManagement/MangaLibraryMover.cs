@@ -16,6 +16,12 @@ public class MangaLibraryMover(
         // A manga library change is very close to a rename in how it is handled.
         // But it is a bit simpler because we don't need to change any metadata.
 
+        if (manga.LibraryId == targetLibrary.Id)
+        {
+            // The manga is already in the target library. Nothing to do.
+            return;
+        }
+
         // first, let's load the chapters and the library if they are not already loaded.
         if (!dbContext.Entry(manga).Collection(m => m.Chapters).IsLoaded)
         {
