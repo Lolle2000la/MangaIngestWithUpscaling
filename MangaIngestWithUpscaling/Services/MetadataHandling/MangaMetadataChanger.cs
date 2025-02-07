@@ -54,7 +54,8 @@ public class MangaMetadataChanger(
                         logger.LogWarning("Upscaled chapter file not found: {ChapterPath}", upscaledChapterPath);
                         continue;
                     }
-                    await taskQueue.EnqueueAsync(new RenameUpscaledChaptersSeriesTask(chapter.Id, upscaledChapterPath, newTitle));
+                    await taskQueue.EnqueueAsync(
+                        new RenameUpscaledChaptersSeriesTask(chapter.Id, upscaledChapterPath, newTitle));
                 }
             }
             catch (XmlException ex)

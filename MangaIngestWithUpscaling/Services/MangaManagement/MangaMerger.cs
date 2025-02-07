@@ -1,5 +1,7 @@
 ﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
+using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.FileSystem;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 
@@ -9,7 +11,8 @@ namespace MangaIngestWithUpscaling.Services.MangaManagement;
 public class MangaMerger(
     ApplicationDbContext dbContext,
     IMetadataHandlingService metadataHandling,
-    ILogger<MangaMerger> logger) : IMangaMerger
+    ILogger<MangaMerger> logger,
+    ITaskQueue taskQueue) : IMangaMerger
 {
     /// <inheritdoc/>
     public async Task MergeAsync(Manga primary, IEnumerable<Manga> mergedInto, CancellationToken cancellationToken = default)
@@ -65,16 +68,8 @@ public class MangaMerger(
                     {
                         if (primary.Library.UpscaledLibraryPath != null)
                         {
-                            var targetUpscaledPath = Path.Combine(primary.Library.UpscaledLibraryPath, primary.PrimaryTitle!, chapter.FileName);
-                            try
-                            {
-                                File.Move(upscaledPath, targetUpscaledPath);
-                            }
-                            catch (Exception ex)
-                            {
-                                logger.LogError(ex, "Failed to move upscaled chapter {fileName} from {upscaledPath} to {targetUpscaledPath}.",
-                                    chapter.FileName, upscaledPath, targetUpscaledPath);
-                            }
+                            await taskQueue.EnqueueAsync(
+                                new RenameUpscaledChaptersSeriesTask(chapter.Id, upscaledPath, primary.PrimaryTitle));
                         }
                         else
                         {
