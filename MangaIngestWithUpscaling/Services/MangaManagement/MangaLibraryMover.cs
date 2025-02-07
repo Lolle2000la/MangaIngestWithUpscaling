@@ -38,6 +38,9 @@ public class MangaLibraryMover(
         // Now we can change the library references on the manga entity.
         manga.Library = targetLibrary;
         manga.LibraryId = targetLibrary.Id;
+        
+        dbContext.Update(manga);
+        await dbContext.SaveChangesAsync(cancellationToken);
 
         // Let's get all the target paths we need and ensure they exist.
         // This is where we will move the chapters to.
@@ -85,7 +88,13 @@ public class MangaLibraryMover(
 
             if (!chapter.IsUpscaled) continue; // phew, we don't have to do anything for this chapter.
 
-            var sourceUpscaledPath = chapter.UpscaledFullPath; // this is again only a calculated property.
+            if (oldLibrary.UpscaledLibraryPath == null)
+            {
+                logger.LogWarning("Upscaled library path not set for library {LibraryId} even though chapter {ChapterId} is supposed to be upscaled within it.", oldLibrary.Id, chapter.Id);
+                continue;
+            }
+
+            var sourceUpscaledPath = Path.Combine(oldLibrary.UpscaledLibraryPath, chapter.RelativePath); // this is again only a calculated property.
 
             // Let's make sure we have all the paths we need. If not, we should log a warning and continue with the next chapter.
             if (sourceUpscaledPath == null)
