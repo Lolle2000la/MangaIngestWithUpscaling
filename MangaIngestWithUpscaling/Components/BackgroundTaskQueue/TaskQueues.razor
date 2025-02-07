@@ -55,9 +55,7 @@
 
     private async Task OnClearCompletedUpscaleTasks()
     {
-        var completedOrFailedTasks = upscaleTasks
-            .Where(x => x.Status == PersistedTaskStatus.Completed || x.Status == PersistedTaskStatus.Failed)
-            .ToList();
+        var completedOrFailedTasks = upscaleTasks.Where(x => x.Status == PersistedTaskStatus.Completed).ToList();
         foreach (var task in completedOrFailedTasks)
         {
             DbContext.PersistedTasks.Remove(task);
