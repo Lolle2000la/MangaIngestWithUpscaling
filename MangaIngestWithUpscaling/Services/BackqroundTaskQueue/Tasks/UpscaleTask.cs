@@ -28,6 +28,8 @@ public class UpscaleTask : BaseTask
         var chapter = await dbContext.Chapters
             .Include(c => c.Manga)
             .ThenInclude(m => m.Library)
+            .ThenInclude(l => l.UpscalerProfile)
+            .Include(c => c.UpscalerProfile)
             .FirstOrDefaultAsync(
             c => c.Id == ChapterId, cancellationToken: cancellationToken);
         var upscalerProfile = await dbContext.UpscalerProfiles.FirstOrDefaultAsync(
@@ -41,7 +43,7 @@ public class UpscaleTask : BaseTask
         FriendlyEntryName = $"Upscaling {chapter.FileName} with {upscalerProfile.Name}";
 
 
-        if (chapter.IsUpscaled && chapter.UpscalerProfile.Id == upscalerProfile.Id)
+        if (chapter.IsUpscaled && chapter.UpscalerProfile?.Id == upscalerProfile.Id)
         {
             throw new InvalidOperationException("Chapter is already upscaled.");
         }
