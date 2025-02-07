@@ -55,8 +55,8 @@
 
     private async Task OnClearCompletedUpscaleTasks()
     {
-        var completedOrFailedTasks = upscaleTasks.Where(x => x.Status == PersistedTaskStatus.Completed).ToList();
-        foreach (var task in completedOrFailedTasks)
+        var completedTasks = upscaleTasks.Where(x => x.Status == PersistedTaskStatus.Completed).ToList();
+        foreach (var task in completedTasks)
         {
             DbContext.PersistedTasks.Remove(task);
         }
@@ -101,7 +101,7 @@
     {
         var allTasks = await DbContext.PersistedTasks.ToListAsync();
         standardTasks = allTasks.Where(x => x.Data is not UpscaleTask or RenameUpscaledChaptersSeriesTask).ToList();
-        upscaleTasks = allTasks.Where(x => x.Data is UpscaleTask).ToList();
+        upscaleTasks = allTasks.Where(x => x.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask).ToList();
 
         TaskQueue.TaskEnqueuedOrChanged += OnTaskUpdate;
         StandardTaskProcessor.StatusChanged += OnStandardTaskChanged;
@@ -119,7 +119,7 @@
     {
         await InvokeAsync(() =>
         {
-            if (task.Data is UpscaleTask)
+            if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask)
             {
                 upscaleTasks.AddOrReplace(task, t => t.Id == task.Id);
             }
