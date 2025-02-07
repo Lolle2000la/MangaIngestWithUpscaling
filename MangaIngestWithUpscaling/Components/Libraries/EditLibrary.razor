@@ -45,8 +45,9 @@
     {
         if (LibraryId.HasValue)
         {
-
-            Library = await DbContext.Libraries.FindAsync(LibraryId.Value);
+            Library = await DbContext.Libraries
+                .Include(l => l.MangaSeries)
+                .FirstOrDefaultAsync(l => l.Id == LibraryId);
         }
         else
         {
