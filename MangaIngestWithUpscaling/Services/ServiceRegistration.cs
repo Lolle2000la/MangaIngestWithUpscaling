@@ -1,4 +1,5 @@
-﻿using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
+﻿using MangaIngestWithUpscaling.Services.Background;
+using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.CbzConversion;
 using MangaIngestWithUpscaling.Services.ChapterManagement;
 using MangaIngestWithUpscaling.Services.ChapterRecognition;
@@ -22,5 +23,9 @@ public static class ServiceRegistration
         services.AddHostedService(sp => sp.GetRequiredService<StandardTaskProcessor>());
         services.AddSingleton<UpscaleTaskProcessor>();
         services.AddHostedService(sp => sp.GetRequiredService<UpscaleTaskProcessor>());
+        services.AddSingleton<PeriodicChecker>();
+        services.AddHostedService(sp => sp.GetRequiredService<PeriodicChecker>());
+        services.AddSingleton<LibraryIngestWatcher>();
+        services.AddHostedService(sp => sp.GetRequiredService<LibraryIngestWatcher>());
     }
 }
