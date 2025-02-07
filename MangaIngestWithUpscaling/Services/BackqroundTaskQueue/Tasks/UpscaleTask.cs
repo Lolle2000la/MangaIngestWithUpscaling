@@ -1,4 +1,5 @@
 ﻿using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
 
@@ -11,7 +12,15 @@ public class UpscaleTask : BaseTask
     public int UpscalerProfileId { get; set; }
     public int ChapterId { get; set; }
 
-    private string FriendlyEntryName { get; set; } = string.Empty;
+    public string FriendlyEntryName { get; set; } = string.Empty;
+
+    public UpscaleTask() { }
+    public UpscaleTask(Chapter chapter, UpscalerProfile profile)
+    {
+        ChapterId = chapter.Id;
+        UpscalerProfileId = profile.Id;
+        FriendlyEntryName = $"Upscaling {chapter.FileName} with {profile.Name}";
+    }
 
     public override async Task ProcessAsync(IServiceProvider services, CancellationToken cancellationToken)
     {

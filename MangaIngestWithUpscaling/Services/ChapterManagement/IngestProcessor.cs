@@ -30,7 +30,7 @@ public class IngestProcessor(ApplicationDbContext dbContext,
         // group chapters by series
         var chaptersBySeries = chapterRecognitionResult.GroupBy(c => c.Metadata.Series).ToDictionary(g => g.Key, g => g.ToList());
 
-        List<(Chapter, int)> chaptersToUpscale = [];
+        List<(Chapter, UpscalerProfile)> chaptersToUpscale = [];
 
         foreach (var (series, chapters) in chaptersBySeries)
         {
@@ -76,7 +76,8 @@ public class IngestProcessor(ApplicationDbContext dbContext,
 
                 if (seriesEntity.ShouldUpscale != false && library.UpscalerProfileId.HasValue)
                 {
-                    chaptersToUpscale.Add((chapterEntity!, library.UpscalerProfileId.Value));
+                    dbContext.Entry(chapterEntity).Reference(c => c.UpscalerProfile).Load();
+                    chaptersToUpscale.Add((chapterEntity!, library.UpscalerProfile));
                 }
             }
 
@@ -85,11 +86,7 @@ public class IngestProcessor(ApplicationDbContext dbContext,
 
         foreach(var chapterTuple in chaptersToUpscale)
         {
-            var upscaleTask = new UpscaleTask
-            {
-                ChapterId = chapterTuple.Item1.Id,
-                UpscalerProfileId = chapterTuple.Item2 // if I use destructuring here, the value becomes 0. I checked with the debugger and I have no idea why this happens.
-            };
+            var upscaleTask = new UpscaleTask(chapterTuple.Item1, chapterTuple.Item2);  // if I use destructuring here, the value becomes 0. I checked with the debugger and I have no idea why this happens.
             await taskQueue.EnqueueAsync(upscaleTask);
         }
 

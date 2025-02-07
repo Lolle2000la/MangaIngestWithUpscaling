@@ -115,11 +115,7 @@
         {
             foreach (var chapter in manga.Chapters)
             {
-                await TaskQueue.EnqueueAsync(new UpscaleTask
-                    {
-                        ChapterId = chapter.Id,
-                        UpscalerProfileId = library.UpscalerProfileId.Value
-                    });
+                await TaskQueue.EnqueueAsync(new UpscaleTask(chapter, library.UpscalerProfile));
             }
         }
     }
