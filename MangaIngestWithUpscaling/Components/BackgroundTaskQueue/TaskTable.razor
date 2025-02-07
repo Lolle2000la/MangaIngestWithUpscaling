@@ -11,7 +11,7 @@
                    OnClick="OnClearCompleted">Clear Completed</MudButton>
     </ToolBarContent>
     <HeaderContent>
-        <MudTh><MudTableSortLabel InitialDirection="SortDirection.Descending" SortBy="new Func<PersistedTask, object>(x=>x.Id)">Id</MudTableSortLabel></MudTh>
+        <MudTh><MudTableSortLabel InitialDirection="SortDirection.Descending" SortBy="new Func<PersistedTask, object>(x=>x.Order)">Order</MudTableSortLabel></MudTh>
         <MudTh><MudTableSortLabel SortBy="new Func<PersistedTask, object>(x=>x.Data.TaskFriendlyName)">Name</MudTableSortLabel></MudTh>
         <MudTh><MudTableSortLabel SortBy="new Func<PersistedTask, object>(x=>x.CreatedAt)">Queued At</MudTableSortLabel></MudTh>
         <MudTh><MudTableSortLabel SortBy="new Func<PersistedTask, object>(x=>x.ProcessedAt)">Finished At</MudTableSortLabel></MudTh>
@@ -19,7 +19,7 @@
         <MudTh>Actions</MudTh>
     </HeaderContent>
     <RowTemplate>
-        <MudTd>@context.Id</MudTd>
+        <MudTd>@context.Order</MudTd>
         <MudTd>@context.Data.TaskFriendlyName</MudTd>
         <MudTd>@context.CreatedAt</MudTd>
         <MudTd>@context.ProcessedAt</MudTd>
