@@ -41,7 +41,13 @@
                 <MudText Typo="Typo.h6">This library contains @Library.MangaSeries.Count manga series.</MudText>
 
                 <MudText Typo="Typo.body1" Color="Color.Error">
-                    You cannot change the storage paths of a library that already contains manga series.
+                    You cannot change the storage paths of a library that already contains manga series. Either delete or move
+                    the series to another library before changing the paths.
+                </MudText>
+
+                <MudText Typo="Typo.body1">
+                    You can still change the upscaling configuration and the library name, and set a path for the ingest folder.
+                    In case you <b>haven't set up a target folder for the upscaled mangas</b>, you are still able to set one below.
                 </MudText>
             </MudItem>
         }
@@ -53,7 +59,7 @@
         </MudItem>
         <MudItem lg="4" md="6" xs="12">
             <FolderPicker SelectedPath="@Library.UpscaledLibraryPath"
-                          Disabled="Library.MangaSeries.Count > 0"
+                          Disabled="Library.MangaSeries.Count > 0 && Library.UpscaledLibraryPath != null"
                           SelectedPathChanged="@OnUpscaledPathChanged"
                           Title="Upscaled location" />
         </MudItem>
