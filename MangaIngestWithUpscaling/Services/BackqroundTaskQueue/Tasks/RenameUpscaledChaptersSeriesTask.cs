@@ -8,7 +8,7 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 
 public class RenameUpscaledChaptersSeriesTask : BaseTask
 {
-    public override int RetryFor { get; set; } = 1;
+    public override int RetryFor { get; set; } = 0;
 
     public int ChapterId { get; set; }
     public string? ChapterFileName { get; set; }
