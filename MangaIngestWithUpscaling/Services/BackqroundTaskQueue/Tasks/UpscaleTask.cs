@@ -41,7 +41,7 @@ public class UpscaleTask : BaseTask
         FriendlyEntryName = $"Upscaling {chapter.FileName} with {upscalerProfile.Name}";
 
 
-        if (chapter.IsUpscaled)
+        if (chapter.IsUpscaled && chapter.UpscalerProfile.Id == upscalerProfile.Id)
         {
             throw new InvalidOperationException("Chapter is already upscaled.");
         }
