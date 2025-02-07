@@ -121,11 +121,11 @@
         {
             if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask)
             {
-                upscaleTasks.AddOrReplace(task, t => t.Id == task.Id);
+                AddOrAssignTask(upscaleTasks, task);
             }
             else
             {
-                standardTasks.AddOrReplace(task, t => t.Id == task.Id);
+                AddOrAssignTask(standardTasks, task);
             }
             StateHasChanged();
         });
@@ -135,7 +135,7 @@
     {
         await InvokeAsync(() =>
         {
-            standardTasks[standardTasks.FindIndex(t => t.Id == task.Id)] = task;
+            AssingPersistedTask(standardTasks[standardTasks.FindIndex(t => t.Id == task.Id)], task);
 
             StateHasChanged();
         });
@@ -145,9 +145,31 @@
     {
         await InvokeAsync(() =>
         {
-            upscaleTasks[upscaleTasks.FindIndex(t => t.Id == task.Id)] = task;
+            AssingPersistedTask(upscaleTasks[upscaleTasks.FindIndex(t => t.Id == task.Id)], task);
 
             StateHasChanged();
         });
+    }
+
+    private void AssingPersistedTask(PersistedTask to, PersistedTask from) {
+        to.Data = from.Data;
+        to.CreatedAt = from.CreatedAt;
+        to.Order = from.Order;
+        to.ProcessedAt = from.ProcessedAt;
+        to.Status = from.Status;
+        to.RetryCount = from.RetryCount;
+    }
+
+    private void AddOrAssignTask(List<PersistedTask> tasks, PersistedTask task)
+    {
+        var existingTask = tasks.FirstOrDefault(x => x.Id == task.Id);
+        if (existingTask != null)
+        {
+            AssingPersistedTask(existingTask, task);
+        }
+        else
+        {
+            tasks.Add(DbContext.Attach(task).Entity);
+        }
     }
 }
