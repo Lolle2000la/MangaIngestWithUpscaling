@@ -66,7 +66,9 @@ public class RenameUpscaledChaptersSeriesTask : BaseTask
         File.Move(origChapterPath, newChapterPath);
         if (!Directory.EnumerateFiles(Path.GetDirectoryName(origChapterPath)!).Any())
         {
-            Directory.Delete(Path.GetDirectoryName(origChapterPath)!);
+            var dirInfo = new DirectoryInfo(Path.GetDirectoryName(origChapterPath)!);
+            dirInfo.Attributes = FileAttributes.Normal;
+            dirInfo.Delete();
         }
         chapter.RelativePath = newRelativePath;
         dbContext.Update(chapter);
