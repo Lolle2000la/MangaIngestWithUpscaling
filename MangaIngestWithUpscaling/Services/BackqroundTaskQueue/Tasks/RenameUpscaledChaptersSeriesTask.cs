@@ -50,19 +50,18 @@ public class RenameUpscaledChaptersSeriesTask : BaseTask
             throw new InvalidOperationException("Upscaled library path not set.");
         }
 
-        string upscaleBasePath = Path.Combine(chapter.Manga.Library.UpscaledLibraryPath, chapter.RelativePath);
-        if (!File.Exists(upscaleBasePath))
+        string origChapterPath = ChapterFullPath;
+        if (!File.Exists(origChapterPath))
         {
             throw new InvalidOperationException("Chapter file not found.");
         }
 
         var metadataHandling = services.GetRequiredService<IMetadataHandlingService>();
 
-        var existingMetadata = metadataHandling.GetSeriesAndTitleFromComicInfo(upscaleBasePath);
-        metadataHandling.WriteComicInfo(upscaleBasePath, existingMetadata with { Series = NewTitle });
+        var existingMetadata = metadataHandling.GetSeriesAndTitleFromComicInfo(origChapterPath);
+        metadataHandling.WriteComicInfo(origChapterPath, existingMetadata with { Series = NewTitle });
 
         // move chapter to the correct directory with the new title
-        var origChapterPath = ChapterFullPath;
         var newChapterPath = Path.Combine(chapter.Manga.Library.UpscaledLibraryPath, NewTitle, chapter.FileName);
         var newRelativePath = Path.GetRelativePath(chapter.Manga.Library.UpscaledLibraryPath, newChapterPath);
         if (File.Exists(newChapterPath))
