@@ -18,8 +18,6 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Chapter> Chapters { get; set; }
     public DbSet<UpscalerProfile> UpscalerProfiles { get; set; }
     public DbSet<PersistedTask> PersistedTasks { get; set; }
-    protected DbSet<Log> LogsProtected { get; set; }
-    public IQueryable<Log> Logs => LogsProtected.AsNoTracking();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -88,11 +86,6 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.Property(e => e.CompressionFormat)
                 .HasConversion<string>();
             entity.HasQueryFilter(e => !e.Deleted);
-        });
-
-        builder.Entity<Log>(entity =>
-        {
-            entity.ToTable("Logs", t=> t.ExcludeFromMigrations());
         });
     }
 

@@ -11,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 using MudBlazor.Services;
 using Serilog;
 using Serilog.Events;
+using Splat.ModeDetection;
 using System;
 using System.Data.SQLite;
 using System.Text.Json;
@@ -20,6 +21,11 @@ var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
 
 SQLiteConnectionStringBuilder sqliteConnectionStringBuilder = new(connectionString);
+
+var loggingConnectionString = builder.Configuration.GetConnectionString("LoggingConnection") ?? "Data Source=logs.db";
+
+var loggingConnectionReadOnlyStringBuilder = new SQLiteConnectionStringBuilder(loggingConnectionString);
+var loggingConnectionReadOnlyString = loggingConnectionReadOnlyStringBuilder.ConnectionString;
 
 //Log.Logger = new LoggerConfiguration()
 //    .ReadFrom.Configuration(builder.Configuration)
@@ -31,9 +37,9 @@ builder.Services.AddSerilog((services, lc) => lc
     .Enrich.FromLogContext()
     .WriteTo.Console()
     .WriteTo.SQLite(
-        Path.GetFullPath(sqliteConnectionStringBuilder.DataSource),
+        Path.GetFullPath(loggingConnectionReadOnlyStringBuilder.DataSource),
         tableName: "Logs",
-        restrictedToMinimumLevel: LogEventLevel.Warning,
+        restrictedToMinimumLevel: LogEventLevel.Information,
         retentionPeriod: TimeSpan.FromDays(7)));
 
 // Add services to the container.
@@ -60,6 +66,11 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
     {
         builder.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
     }));
+builder.Services.AddDbContext<LoggingDbContext>(options =>
+    options.UseSqlite(loggingConnectionReadOnlyString, builder =>
+    {
+        builder.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+    }));
 builder.Services.AddDatabaseDeveloperPageExceptionFilter();
 
 builder.Services.AddIdentityCore<ApplicationUser>(options => options.SignIn.RequireConfirmedAccount = true)
@@ -78,10 +89,13 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    var loggingDbContext = scope.ServiceProvider.GetRequiredService<LoggingDbContext>();
     try
     {
         dbContext.Database.Migrate();
         Console.WriteLine("Database migrations applied successfully.");
+
+        //loggingDbContext.Database.EnsureCreated();
     }
     catch (Exception ex)
     {
