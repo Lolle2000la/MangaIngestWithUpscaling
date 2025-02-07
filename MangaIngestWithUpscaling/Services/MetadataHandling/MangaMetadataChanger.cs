@@ -1,5 +1,7 @@
 ﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
+using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using System.Xml;
 
@@ -9,7 +11,8 @@ namespace MangaIngestWithUpscaling.Services.MetadataHandling;
 public class MangaMetadataChanger(
     IMetadataHandlingService metadataHandling,
     ApplicationDbContext dbContext,
-    ILogger<MangaMetadataChanger> logger) : IMangaMetadataChanger
+    ILogger<MangaMetadataChanger> logger,
+    ITaskQueue taskQueue) : IMangaMetadataChanger
 {
     public async Task ChangeTitle(Manga manga, string newTitle, bool addOldToAlternative = true)
     {
@@ -51,8 +54,7 @@ public class MangaMetadataChanger(
                         logger.LogWarning("Upscaled chapter file not found: {ChapterPath}", upscaledChapterPath);
                         continue;
                     }
-                    UpdateChapterTitle(newTitle, upscaledChapterPath);
-                    RelocateChapterToNewTitleDirectory(chapter, upscaledChapterPath, manga.Library.UpscaledLibraryPath, manga.PrimaryTitle);
+                    await taskQueue.EnqueueAsync(new RenameUpscaledChaptersSeriesTask(chapter.Id, chapter.FileName, newTitle));
                 }
             }
             catch (XmlException ex)
