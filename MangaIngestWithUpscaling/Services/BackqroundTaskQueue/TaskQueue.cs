@@ -166,7 +166,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         dbContext.PersistedTasks.Remove(task);
         await dbContext.SaveChangesAsync();
 
-        var (tasks, lockObj) = task.Data is UpscaleTask
+        var (tasks, lockObj) = task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask
             ? (_upscaleTasks, _upscaleTasksLock)
             : (_standardTasks, _standardTasksLock);
 
@@ -186,7 +186,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         task.Status = PersistedTaskStatus.Pending;
         await dbContext.SaveChangesAsync();
 
-        var (tasks, lockObj) = task.Data is UpscaleTask
+        var (tasks, lockObj) = task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask
             ? (_upscaleTasks, _upscaleTasksLock)
             : (_standardTasks, _standardTasksLock);
 
@@ -224,7 +224,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         // Load tasks into sorted sets
         foreach (var task in pendingTasks)
         {
-            if (task.Data is UpscaleTask)
+            if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask)
             {
                 lock (_upscaleTasksLock)
                     _upscaleTasks.Add(task);
