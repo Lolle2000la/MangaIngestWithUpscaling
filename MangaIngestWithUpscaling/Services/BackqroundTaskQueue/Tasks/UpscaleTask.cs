@@ -63,6 +63,8 @@ public class UpscaleTask : BaseTask
         await upscaler.Upscale(currentStoragePath, upscaleBasePath, upscalerProfile, cancellationToken);
 
         chapter.IsUpscaled = true;
+        chapter.UpscalerProfile = upscalerProfile;
+        chapter.UpscalerProfileId = upscalerProfile.Id;
         await dbContext.SaveChangesAsync(cancellationToken);
     }
 
