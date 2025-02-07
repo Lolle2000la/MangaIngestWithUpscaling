@@ -63,6 +63,7 @@
     protected override async Task OnInitializedAsync()
     {
         LoadedLibraries = await DbContext.Libraries
+            .Include(x => x.UpscalerProfile)
             .Include(x => x.MangaSeries)
             .ThenInclude(x => x.Chapters)
             .ToListAsync();
