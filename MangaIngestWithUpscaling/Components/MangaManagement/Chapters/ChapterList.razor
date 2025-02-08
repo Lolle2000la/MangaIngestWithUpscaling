@@ -1,0 +1,186 @@
+﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
+@using MangaIngestWithUpscaling.Services.BackqroundTaskQueue
+@using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
+@using MangaIngestWithUpscaling.Services.MetadataHandling
+@using System.Collections.ObjectModel
+
+@inject ApplicationDbContext DbContext
+@inject IMetadataHandlingService MetadataHandler
+@inject ITaskQueue TaskQueue
+@inject ILogger<ChapterList> Logger
+
+<MudTable T="ChapterItem" @bind-SelectedItems="selectedChapters"
+          Items="@chapterItems"
+          Dense="true"
+          MultiSelection="true">
+    <ToolBarContent>
+        <MudStack Row>
+            <MudButton StartIcon="@Icons.Material.Filled.Delete"
+                      Color="Color.Error"
+                      Variant="Variant.Text"
+                      Disabled="selectedChapters == null || selectedChapters.Count == 0"
+                      OnClick="@(() => selectedChapters?.ToList().ForEach(async c => await DeleteChapter(c.Chapter)))">
+                Delete Selected
+            </MudButton>
+            <MudButton StartIcon="@Icons.Material.Filled.ArrowUpward"
+                      Color="Color.Primary"
+                      Variant="Variant.Text"
+                      Disabled="selectedChapters == null || selectedChapters.Count == 0 || !selectedChapters.Any(c => !c.Chapter.IsUpscaled)"
+                      OnClick="@(() => selectedChapters?.Where(c => !c.Chapter.IsUpscaled).ToList().ForEach(async c => await UpscaleChapter(c.Chapter)))">
+                Upscale Selected
+            </MudButton>
+            <MudButton StartIcon="@Icons.Material.Filled.ArrowDownward"
+                      Color="Color.Secondary"
+                      Variant="Variant.Text"
+                      Disabled="selectedChapters == null || selectedChapters.Count == 0 || !selectedChapters.Any(c => c.Chapter.IsUpscaled)"
+                      OnClick="@(() => selectedChapters?.Where(c => c.Chapter.IsUpscaled).ToList().ForEach(async c => await DeleteUpscaled(c.Chapter)))">
+                Delete Upscaled Selected
+            </MudButton>
+        </MudStack>
+    </ToolBarContent>
+    <HeaderContent>
+        <MudTh>Chapter Title</MudTh>
+        <MudTh>Chapter Path</MudTh>
+        <MudTh>Upscaled</MudTh>
+        <MudTh>Actions</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="Chapter Title">@context.ExtractedMetadata.ChapterTitle</MudTd>
+        <MudTd DataLabel="Chapter Path">@context.Chapter.RelativePath</MudTd>
+        <MudTd DataLabel="Upscaled">
+            @context.Chapter.IsUpscaled
+            @if (!context.Chapter.IsUpscaled)
+            {
+                <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward"
+                               Color="Color.Primary" Variant="Variant.Text"
+                               OnClick="@(() => UpscaleChapter(context.Chapter))"
+                               title="Upscale this chapter." />
+            }
+            else
+            {
+                <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward"
+                               Color="Color.Secondary" Variant="Variant.Text"
+                               OnClick="@(() => DeleteUpscaled(context.Chapter))"
+                               title="Delete upscaled version of this chapter." />
+            }
+        </MudTd>
+        <MudTd DataLabel="Actions">
+            <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                           Color="Color.Error" Variant="Variant.Text"
+                           OnClick="@(() => DeleteChapter(context.Chapter))"
+                           title="Delete this chapter" />
+        </MudTd>
+    </RowTemplate>
+    <PagerContent>
+        <MudTablePager />
+    </PagerContent>
+</MudTable>
+
+@code {
+    [Parameter] public Manga Manga { get; set; }
+
+    private ObservableCollection<ChapterItem> chapterItems = [];
+
+    private HashSet<ChapterItem> selectedChapters;
+
+    private async Task DeleteChapter(Chapter chapter)
+    {
+        await DeleteUpscaled(chapter);
+
+        string toDelete = Path.Combine(Manga.Library.NotUpscaledLibraryPath, chapter.RelativePath);
+
+        if (!File.Exists(toDelete))
+        {
+            return;
+        }
+
+        try
+        {
+            File.Delete(toDelete);
+        }
+        catch (Exception e)
+        {
+            Logger.LogError(e, "Failed to delete file of Chapter {ChapterId}", chapter.Id);
+        }
+
+        DbContext.Remove(chapter);
+
+        await DbContext.SaveChangesAsync();
+    }
+
+    private async Task UpscaleChapter(Chapter chapter)
+    {
+        if (chapter.IsUpscaled)
+        {
+            return;
+        }
+
+        if (!DbContext.Entry(Manga).Reference(c => c.Library).IsLoaded)
+        {
+            await DbContext.Entry(Manga).Reference(c => c.Library).LoadAsync();
+        }
+        if (!DbContext.Entry(Manga.Library).Reference(l => l.UpscalerProfile).IsLoaded)
+        {
+            await DbContext.Entry(Manga.Library).Reference(l => l.UpscalerProfile).LoadAsync();
+        }
+
+        await TaskQueue.EnqueueAsync(
+            new UpscaleTask(chapter, Manga.Library.UpscalerProfile));
+    }
+
+    private async Task DeleteUpscaled(Chapter chapter)
+    {
+        if (!chapter.IsUpscaled)
+        {
+            return;
+        }
+
+        if (!DbContext.Entry(Manga).Reference(c => c.Library).IsLoaded)
+        {
+            await DbContext.Entry(Manga).Reference(c => c.Library).LoadAsync();
+        }
+
+        string toDelete = Path.Combine(Manga.Library.UpscaledLibraryPath, chapter.RelativePath);
+        if (!File.Exists(toDelete))
+        {
+            return;
+        }
+
+        try
+        {
+            File.Delete(toDelete);
+        }
+        catch (Exception e)
+        {
+            Logger.LogError(e, "Failed to delete upscaled file of Chapter {ChapterId}", chapter.Id);
+        }
+
+        chapter.IsUpscaled = false;
+
+        await DbContext.SaveChangesAsync();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!DbContext.Entry(Manga).Collection(m => m.Chapters).IsLoaded)
+        {
+            await DbContext.Entry(Manga).Collection(m => m.Chapters).LoadAsync();
+        }
+        if (!DbContext.Entry(Manga).Reference(m => m.Library).IsLoaded)
+        {
+            await DbContext.Entry(Manga).Reference(m => m.Library).LoadAsync();
+        }
+
+        foreach (var chapter in Manga.Chapters)
+        {
+            var extractedMetadata = MetadataHandler.GetSeriesAndTitleFromComicInfo(Path.Combine(Manga.Library.NotUpscaledLibraryPath, chapter.RelativePath));
+            chapterItems.Add(new ChapterItem { Chapter = chapter, ExtractedMetadata = extractedMetadata });
+        }
+    }
+
+    private record ChapterItem
+    {
+        public Chapter Chapter { get; set; }
+        public ExtractedMetadata ExtractedMetadata { get; set; }
+    }
+}
