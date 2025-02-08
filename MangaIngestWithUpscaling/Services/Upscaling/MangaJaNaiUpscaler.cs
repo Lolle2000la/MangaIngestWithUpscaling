@@ -91,7 +91,7 @@ public class MangaJaNaiUpscaler(IPythonService pythonService,
         {
             var output = await pythonService.RunPythonScript(RunScriptPath, arguments, cancellationToken);
 
-            logger.LogWarning("Upscaling Output {inputPath}: {line}", inputPath, output);
+            logger.LogDebug("Upscaling Output {inputPath}: {line}", inputPath, output);
 
             logger.LogInformation("Upscaling {inputPath} to {outputPath} with {profile.Name} completed", inputPath, outputPath, profile.Name);
         }
