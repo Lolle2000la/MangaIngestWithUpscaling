@@ -100,7 +100,7 @@
     protected override async Task OnInitializedAsync()
     {
         var allTasks = await DbContext.PersistedTasks.ToListAsync();
-        standardTasks = allTasks.Where(x => x.Data is not UpscaleTask or RenameUpscaledChaptersSeriesTask).ToList();
+        standardTasks = allTasks.Where(x => x.Data is not UpscaleTask or not RenameUpscaledChaptersSeriesTask).ToList();
         upscaleTasks = allTasks.Where(x => x.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask).ToList();
 
         TaskQueue.TaskEnqueuedOrChanged += OnTaskUpdate;
@@ -135,7 +135,7 @@
     {
         await InvokeAsync(() =>
         {
-            AssingPersistedTask(standardTasks[standardTasks.FindIndex(t => t.Id == task.Id)], task);
+            AddOrAssignTask(standardTasks, task);
 
             StateHasChanged();
         });
@@ -145,7 +145,7 @@
     {
         await InvokeAsync(() =>
         {
-            AssingPersistedTask(upscaleTasks[upscaleTasks.FindIndex(t => t.Id == task.Id)], task);
+            AddOrAssignTask(upscaleTasks, task);
 
             StateHasChanged();
         });
