@@ -72,7 +72,7 @@
     private async Task OnDelete(PersistedTask task)
     {
         await TaskQueue.RemoveTaskAsync(task);
-        if (task.Data is UpscaleTask)
+        if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask)
         {
             upscaleTasks.Remove(task);
         }
@@ -100,7 +100,7 @@
     protected override async Task OnInitializedAsync()
     {
         var allTasks = await DbContext.PersistedTasks.ToListAsync();
-        standardTasks = allTasks.Where(x => x.Data is not UpscaleTask or not RenameUpscaledChaptersSeriesTask).ToList();
+        standardTasks = allTasks.Where(x => x.Data is not UpscaleTask and not RenameUpscaledChaptersSeriesTask).ToList();
         upscaleTasks = allTasks.Where(x => x.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask).ToList();
 
         TaskQueue.TaskEnqueuedOrChanged += OnTaskUpdate;
