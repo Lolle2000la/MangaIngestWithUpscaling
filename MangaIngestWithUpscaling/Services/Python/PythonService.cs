@@ -170,7 +170,7 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
                     process.Kill();
                     throw new TimeoutException(
                         $"Process timed out after {_timeout.TotalSeconds} seconds of inactivity.\n" +
-                        $"Partial error output:\n{errorBuilder}");
+                        $"Partial error output:\n{errorBuilder}\n\nPartial standard output{outputBuilder}");
                 }
 
                 if (process.HasExited)
@@ -186,7 +186,7 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
             {
                 throw new InvalidOperationException(
                     $"Python process failed with code {process.ExitCode}\n" +
-                    $"Error output:\n{errorBuilder}");
+                    $"Error output:\n{errorBuilder}\n\nPartial standard output{outputBuilder}");
             }
 
             return outputBuilder.ToString();
