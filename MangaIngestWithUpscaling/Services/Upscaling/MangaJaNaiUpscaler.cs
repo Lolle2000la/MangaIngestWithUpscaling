@@ -19,9 +19,7 @@ public class MangaJaNaiUpscaler(IPythonService pythonService,
         new FileInfo(Assembly.GetExecutingAssembly().Location).Directory!.FullName,
         "appstate2.json");
 
-    private string ModelPath => Path.Combine(
-        new FileInfo(Assembly.GetExecutingAssembly().Location).Directory!.FullName,
-        "backend", "models");
+    private string ModelPath => sharedConfig.Value.ModelsDirectory;
 
     private readonly string[] zipsToDownload =
     [
@@ -93,7 +91,7 @@ public class MangaJaNaiUpscaler(IPythonService pythonService,
         {
             var output = await pythonService.RunPythonScript(RunScriptPath, arguments, cancellationToken);
 
-            logger.LogDebug("Upscaling Output {inputPath}: {line}", inputPath, output);
+            logger.LogWarning("Upscaling Output {inputPath}: {line}", inputPath, output);
 
             logger.LogInformation("Upscaling {inputPath} to {outputPath} with {profile.Name} completed", inputPath, outputPath, profile.Name);
         }

@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using MudBlazor.Services;
 using Serilog;
 using Serilog.Events;
@@ -111,6 +112,7 @@ using (var scope = app.Services.CreateScope())
     // Also initialize python environment
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
     var pythonService = scope.ServiceProvider.GetRequiredService<IPythonService>();
+    var upscalerConfig = scope.ServiceProvider.GetRequiredService<IOptions<UpscalerConfig>>();
     if (!pythonService.IsPythonInstalled())
     {
         logger.LogError("Python is not installed on the system. Please install Python 3.6 or newer and ensure it is available on the system PATH.");
@@ -119,7 +121,9 @@ using (var scope = app.Services.CreateScope())
     {
         logger.LogInformation("Python is installed on the system.");
 
-        var environment = await pythonService.PreparePythonEnvironment(Path.Combine(AppContext.BaseDirectory, "python-env"));
+        Directory.CreateDirectory(upscalerConfig.Value.PythonEnvironmentDirectory);
+
+        var environment = await pythonService.PreparePythonEnvironment(upscalerConfig.Value.PythonEnvironmentDirectory);
         PythonService.Environment = environment;
 
         logger.LogInformation($"Python environment prepared at {environment.PythonExecutablePath}");

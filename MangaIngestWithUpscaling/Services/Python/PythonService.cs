@@ -150,7 +150,7 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
         process.StartInfo.WorkingDirectory = environment.DesiredWorkindDirectory;
 
         var outputBuilder = new StringBuilder();
-        var errorBuilder = new StringBuilder();
+    var errorBuilder = new StringBuilder();
         var _timeout = timeout ?? TimeSpan.FromSeconds(60);
         var lastActivity = DateTime.UtcNow;
 
