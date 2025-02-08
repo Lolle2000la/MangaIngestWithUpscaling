@@ -7,14 +7,16 @@
 <PageTitle>Logs</PageTitle>
 
 <MudTable T="Log" Items="@_logs" Hover="true" ServerData="@ServerData"
-          SortLabel="Timestamp" SortDirection="SortDirection.Descending"
+          SortLabel="Timestamp"
+          @ref="table"
           HorizontalScrollbar="true"
           Dense="true"
           Breakpoint="Breakpoint.None">
     <ToolBarContent>
         <MudText Typo="Typo.h6">Application Logs</MudText>
         <MudSpacer />
-        <MudSelect @bind-Value="_selectedLevel" Label="Logging level filter">
+        <MudSelect @bind-Value="_selectedLevel" @bind-Value:after="async () => await table.ReloadServerData()" Label="Logging level filter"
+                   Immediate="true">
             @foreach (var level in Enum.GetValues<LogLevel>())
             {
                 <MudSelectItem Value="@level">@level.ToString()</MudSelectItem>
@@ -62,6 +64,8 @@
 @code {
     private List<Log> _logs = new();
     private LogLevel _selectedLevel = LogLevel.Warning;
+
+    private MudTable<Log> table;
 
     private async Task<TableData<Log>> ServerData(TableState state, CancellationToken cancellationToken)
     {
