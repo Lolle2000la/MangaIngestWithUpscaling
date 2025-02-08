@@ -67,8 +67,20 @@ public class IngestProcessor(ApplicationDbContext dbContext,
                     continue;
                 }
                 Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
-                File.Move(Path.Combine(library.IngestPath, chapter.RelativePath), targetPath);
                 string relativePath = Path.GetRelativePath(library.NotUpscaledLibraryPath, targetPath);
+                if (await dbContext.Chapters.AnyAsync(c => c.RelativePath == relativePath && c.Manga.Id == seriesEntity.Id))
+                {
+                    logger.LogWarning("Chapter {fileName} already exists in the database. Skipping.", chapterCbz.FileName);
+                    continue;
+                }
+                if (File.Exists(targetPath))
+                {
+                    logger.LogWarning("Chapter {fileName} already exists in the target path {targetPath}. Skipping.",
+                        chapterCbz.FileName, targetPath);
+                    continue;
+                }
+
+                File.Move(Path.Combine(library.IngestPath, chapter.RelativePath), targetPath);
                 var chapterEntity = new Chapter
                 {
                     FileName = chapterCbz.FileName,
