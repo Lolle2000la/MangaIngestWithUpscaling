@@ -74,6 +74,7 @@ public class RenameUpscaledChaptersSeriesTask : BaseTask
         FileSystemHelpers.DeleteIfEmpty(Path.GetDirectoryName(origChapterPath)!, logger);
         chapter.RelativePath = newRelativePath;
         dbContext.Update(chapter);
+        await dbContext.SaveChangesAsync(cancellationToken);
     }
 
     public override string TaskFriendlyName => $"Changing {ChapterFileName} title attribute to \"{NewTitle}\"";
