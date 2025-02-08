@@ -114,11 +114,6 @@
         {
             return;
         }
-
-        if (!DbContext.Entry(Manga).Reference(c => c.Library).IsLoaded)
-        {
-            await DbContext.Entry(Manga).Reference(c => c.Library).LoadAsync();
-        }
         if (!DbContext.Entry(Manga.Library).Reference(l => l.UpscalerProfile).IsLoaded)
         {
             await DbContext.Entry(Manga.Library).Reference(l => l.UpscalerProfile).LoadAsync();
@@ -133,11 +128,6 @@
         if (!chapter.IsUpscaled)
         {
             return;
-        }
-
-        if (!DbContext.Entry(Manga).Reference(c => c.Library).IsLoaded)
-        {
-            await DbContext.Entry(Manga).Reference(c => c.Library).LoadAsync();
         }
 
         string toDelete = Path.Combine(Manga.Library.UpscaledLibraryPath, chapter.RelativePath);
