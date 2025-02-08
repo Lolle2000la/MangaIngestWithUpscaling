@@ -24,6 +24,11 @@ public class IngestProcessor(ApplicationDbContext dbContext,
 {
     public async Task ProcessAsync(Library library, CancellationToken cancellationToken)
     {
+        if (!dbContext.Entry(library).Reference(l => l.UpscalerProfile).IsLoaded)
+        {
+            await dbContext.Entry(library).Reference(l => l.UpscalerProfile).LoadAsync(cancellationToken);
+        }
+
         List<FoundChapter> chapterRecognitionResult = chapterRecognitionService.FindAllChaptersAt(
             library.IngestPath, library.FilterRules);
 
