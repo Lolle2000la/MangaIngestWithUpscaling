@@ -72,6 +72,12 @@ public static class JsonWorkflowModifier
             workflow["UpscaleScaleFactor"] = config.UpscaleScaleFactor.Value;
         if (!string.IsNullOrEmpty(config.ModelsDirectory))
             rootNode["ModelsDirectory"] = config.ModelsDirectory;
+        if (config.UseFp16.HasValue)
+            rootNode["UseFp16"] = config.UseFp16;
+        if (config.UseCPU.HasValue)
+            rootNode["UseCPU"] = config.UseCPU;
+        if (config.SelectedDeviceIndex.HasValue)
+            rootNode["SelectedDeviceIndex"] = config.SelectedDeviceIndex;
 
         // Write the modified JSON to a temporary file.
         string tempFilePath = Path.GetTempFileName();

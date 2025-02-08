@@ -63,6 +63,21 @@ public class MangaJaNaiUpscalerConfig
     /// </summary>
     public string? ModelsDirectory { get; set; }
 
+    /// <summary>
+    /// true/false - use fp16 models. If you have a GPU that supports it, it will be faster and use less memory.
+    /// </summary>
+    public bool? UseFp16 { get; set; }
+
+    /// <summary>
+    /// true/false - use CPU instead of GPU.
+    /// </summary>
+    public bool? UseCPU { get; set; }
+
+    /// <summary>
+    /// Index of the GPU to use. 0 is the first device.
+    /// </summary>
+    public int? SelectedDeviceIndex { get; set; }
+
     public static MangaJaNaiUpscalerConfig FromUpscalerProfile(UpscalerProfile profile)
     {
         return new MangaJaNaiUpscalerConfig
@@ -80,5 +95,12 @@ public class MangaJaNaiUpscalerConfig
             JpegSelected = profile.CompressionFormat == CompressionFormat.Jpg,
             UpscaleScaleFactor = (int?)profile.ScalingFactor
         };
+    }
+
+    public void ApplyUpscalerConfig(UpscalerConfig config)
+    {
+        UseFp16 = config.UseFp16;
+        UseCPU = config.UseCPU;
+        SelectedDeviceIndex = config.SelectedDeviceIndex;
     }
 } 

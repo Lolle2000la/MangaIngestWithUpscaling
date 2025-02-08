@@ -1,5 +1,6 @@
 ﻿using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.Python;
+using Microsoft.Extensions.Options;
 using System.IO.Compression;
 using System.Reflection;
 
@@ -7,7 +8,8 @@ namespace MangaIngestWithUpscaling.Services.Upscaling;
 
 [RegisterScoped]
 public class MangaJaNaiUpscaler(IPythonService pythonService,
-    ILogger<MangaJaNaiUpscaler> logger) : IUpscaler
+    ILogger<MangaJaNaiUpscaler> logger,
+    IOptions<UpscalerConfig> sharedConfig) : IUpscaler
 {
     private string RunScriptPath => Path.Combine(
         new FileInfo(Assembly.GetExecutingAssembly().Location).Directory!.FullName,
@@ -76,6 +78,7 @@ public class MangaJaNaiUpscaler(IPythonService pythonService,
         }
 
         var config = MangaJaNaiUpscalerConfig.FromUpscalerProfile(profile);
+        config.ApplyUpscalerConfig(sharedConfig.Value);
         config.SelectedTabIndex = 0;
         config.InputFilePath = inputPath;
         config.OutputFolderPath = outputDirectory;

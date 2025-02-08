@@ -20,7 +20,7 @@
       "Height": 2950
     }
   },
-  "AutoUpdateEnabled": true,
+  "AutoUpdateEnabled": false,
   "SelectedDeviceIndex": 0,
   "UseCpu": false,
   "UseFp16": true,

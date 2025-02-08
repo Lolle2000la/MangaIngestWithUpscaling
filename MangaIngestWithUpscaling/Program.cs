@@ -1,5 +1,6 @@
 using MangaIngestWithUpscaling.Components;
 using MangaIngestWithUpscaling.Components.Account;
+using MangaIngestWithUpscaling.Configuration;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Services;
 using MangaIngestWithUpscaling.Services.ChapterRecognition;
@@ -19,6 +20,8 @@ using System.Text.Json;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Configuration.AddEnvironmentVariables("Ingest_");
+
+builder.RegisterConfig(); // Register the configuration classes
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
 
