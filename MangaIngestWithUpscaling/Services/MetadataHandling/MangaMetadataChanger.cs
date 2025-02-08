@@ -1,4 +1,5 @@
 ﻿using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
@@ -28,6 +29,8 @@ public class MangaMetadataChanger(
             await dbContext.Entry(manga).Collection(m => m.Chapters).LoadAsync();
         }
 
+        List<RenameUpscaledChaptersSeriesTask> renameTasks = [];
+
         foreach (var chapter in manga.Chapters)
         {
             try
@@ -38,6 +41,7 @@ public class MangaMetadataChanger(
                     logger.LogWarning("Chapter file not found: {ChapterPath}", origChapterPath);
                     continue;
                 }
+                var oldRelativePath = chapter.RelativePath;
                 UpdateChapterTitle(newTitle, origChapterPath);
                 RelocateChapterToNewTitleDirectory(chapter, origChapterPath, manga.Library.NotUpscaledLibraryPath, manga.PrimaryTitle);
 
@@ -48,13 +52,13 @@ public class MangaMetadataChanger(
                         logger.LogWarning("Upscaled library path not set for library {LibraryId}", manga.LibraryId);
                         continue;
                     }
-                    var upscaledChapterPath = Path.Combine(manga.Library.UpscaledLibraryPath, chapter.RelativePath);
+                    var upscaledChapterPath = Path.Combine(manga.Library.UpscaledLibraryPath, oldRelativePath);
                     if (!File.Exists(upscaledChapterPath))
                     {
                         logger.LogWarning("Upscaled chapter file not found: {ChapterPath}", upscaledChapterPath);
                         continue;
                     }
-                    await taskQueue.EnqueueAsync(
+                    renameTasks.Add(
                         new RenameUpscaledChaptersSeriesTask(chapter.Id, upscaledChapterPath, newTitle));
                 }
             }
@@ -69,6 +73,11 @@ public class MangaMetadataChanger(
         }
 
         await dbContext.SaveChangesAsync();
+
+        foreach (var task in renameTasks)
+        {
+            await taskQueue.EnqueueAsync(task);
+        }
     }
 
     private void RelocateChapterToNewTitleDirectory(Chapter chapter, string origChapterPath, string libraryBasePath, string newTitle)
