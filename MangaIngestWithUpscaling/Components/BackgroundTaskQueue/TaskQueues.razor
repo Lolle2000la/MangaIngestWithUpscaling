@@ -117,15 +117,15 @@
 
     private async Task OnTaskUpdate(PersistedTask task)
     {
-        await InvokeAsync(() =>
+        await InvokeAsync(async () =>
         {
             if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask)
             {
-                AddOrAssignTask(upscaleTasks, task);
+                await AddOrAssignTask(upscaleTasks, task);
             }
             else
             {
-                AddOrAssignTask(standardTasks, task);
+                await AddOrAssignTask(standardTasks, task);
             }
             StateHasChanged();
         });
@@ -133,9 +133,9 @@
 
     private async Task OnStandardTaskChanged(PersistedTask task)
     {
-        await InvokeAsync(() =>
+        await InvokeAsync(async () =>
         {
-            AddOrAssignTask(standardTasks, task);
+            await AddOrAssignTask(standardTasks, task);
 
             StateHasChanged();
         });
@@ -143,9 +143,9 @@
 
     private async Task OnUpscaleTaskChanged(PersistedTask task)
     {
-        await InvokeAsync(() =>
+        await InvokeAsync(async () =>
         {
-            AddOrAssignTask(upscaleTasks, task);
+            await AddOrAssignTask(upscaleTasks, task);
 
             StateHasChanged();
         });
@@ -162,7 +162,7 @@
         return to;
     }
 
-    private void AddOrAssignTask(List<PersistedTask> tasks, PersistedTask task)
+    private async Task AddOrAssignTask(List<PersistedTask> tasks, PersistedTask task)
     {
         var existingTask = tasks.FirstOrDefault(x => x.Id == task.Id);
         if (existingTask != null)
@@ -171,7 +171,7 @@
         }
         else
         {
-            tasks.Add(AssingPersistedTask(new PersistedTask(), task));
+            tasks.Add(AssingPersistedTask(await DbContext.PersistedTasks.FindAsync(task.Id), task));
         }
     }
 }
