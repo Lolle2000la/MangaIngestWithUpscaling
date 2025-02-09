@@ -19,6 +19,7 @@ using System;
 using System.Data.SQLite;
 using System.Text.Json;
 
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Configuration.AddEnvironmentVariables("Ingest_");

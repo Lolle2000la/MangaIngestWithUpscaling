@@ -1,0 +1,6 @@
+services:
+  mangaingestwithupscaling:
+    image: ${DOCKER_REGISTRY-}mangaingestwithupscaling
+    build:
+      context: .
+      dockerfile: MangaIngestWithUpscaling/Dockerfile

@@ -46,14 +46,20 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
             false => Path.Combine(environmentPath, "bin", "python")
         };
 
+        var relPythonBin = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) switch
+        {
+            true => "python3.exe",
+            false => "python3"
+        };
+
         string assemblyDir = new FileInfo(Assembly.GetExecutingAssembly().Location).Directory!.FullName;
         string backendSrcDirectory = Path.Combine(assemblyDir, "backend", "src");
-        if (!Directory.Exists(environmentPath))
+        if (!File.Exists(relPythonPath))
         {
             // run the command to create the virtual environment
             using (var process = new Process())
             {
-                process.StartInfo.FileName = "python";
+                process.StartInfo.FileName = relPythonBin;
                 process.StartInfo.Arguments = $"-m venv {Path.GetFullPath(environmentPath)}";
                 process.StartInfo.RedirectStandardOutput = true;
                 process.StartInfo.RedirectStandardError = true;
@@ -61,7 +67,7 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
                 process.StartInfo.CreateNoWindow = true;
                 process.StartInfo.StandardOutputEncoding = Encoding.UTF8;
                 process.StartInfo.StandardErrorEncoding = Encoding.UTF8;
-                //process.StartInfo.WorkingDirectory = Directory.GetParent(environmentPath)!.FullName;
+                process.StartInfo.WorkingDirectory = Directory.GetParent(environmentPath)!.FullName;
 
                 process.Start();
 
