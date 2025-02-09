@@ -80,8 +80,15 @@ public class StandardTaskProcessor(
             task.Status = PersistedTaskStatus.Failed;
             task.RetryCount++;
             dbContext.Update(task);
-            await dbContext.SaveChangesAsync();
-            StatusChanged?.Invoke(task);
+            try
+            {
+                await dbContext.SaveChangesAsync();
+                StatusChanged?.Invoke(task);
+            }
+            catch (Exception dbEx)
+            {
+                logger.LogError(dbEx, "Failed to update task {TaskId} status", task.Id);
+            }
         }
     }
 }
