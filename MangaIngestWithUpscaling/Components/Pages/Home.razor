@@ -3,20 +3,34 @@
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
 
 @inject ITaskQueue TaskQueue
+@inject IWebHostEnvironment WebHostEnvironment
 
 <PageTitle>Home</PageTitle>
 
-<MudText Typo="Typo.h3">Hello, world!</MudText>
+<MudStack>
+    <MudText Typo="Typo.h3">How to use</MudText>
 
-Welcome to your new app.
+    <MudText Typo="Typo.body1">
+        A few steps to get you started:
+        <ol class="ml-5">
+            <li>Set up a library in the <MudLink href="libraries">Libraries</MudLink> section.</li>
+            <li>Add a few mangas by adding them to your configured ingest folder.</li>
+            <li>Wait for the system to ingest the mangas and chapters.</li>
+            <li>Upscale the chapters you want to upscale. If you set it up that way, it should automatically start upscaling right now.</li>
+        </ol>
+    </MudText>
 
-<MudPaper Elevation="2">
-    <h3>Task Queue test</h3>
-    <MudInput @bind-Value="message" Label="Message" />
-    <MudButton OnClick="TestTaskQueue" Variant="Variant.Filled">Enqueue logging Task</MudButton>
-</MudPaper>
+    @if (WebHostEnvironment.IsDevelopment())
+    {
+        <MudPaper Elevation="2">
+            <h3>Task Queue test</h3>
+            <MudInput @bind-Value="message" Label="Message" />
+            <MudButton OnClick="TestTaskQueue" Variant="Variant.Filled">Enqueue logging Task</MudButton>
+        </MudPaper>
+    }
+</MudStack>
 
-@code{
+@code {
     private string message = "Hello, world!";
 
     private async Task TestTaskQueue()
