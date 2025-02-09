@@ -45,7 +45,6 @@ builder.Services.AddSerilog((services, lc) => lc
     .WriteTo.SQLite(
         Path.GetFullPath(loggingConnectionReadOnlyStringBuilder.DataSource),
         tableName: "Logs",
-        restrictedToMinimumLevel: LogEventLevel.Information,
         retentionPeriod: TimeSpan.FromDays(7)));
 
 // Add services to the container.
