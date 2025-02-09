@@ -1,4 +1,6 @@
-﻿namespace MangaIngestWithUpscaling.Data.LibraryManagement;
+﻿using System.ComponentModel.DataAnnotations;
+
+namespace MangaIngestWithUpscaling.Data.LibraryManagement;
 
 /// <summary>
 /// Represents a pattern-based filter rule for a library,
@@ -39,7 +41,10 @@ public enum FilterAction
 /// </summary>
 public enum LibraryFilterTargetField
 {
+    [Display(Name = "File Path")]
     FilePath,
+    [Display(Name = "Manga Title")]
     MangaTitle,
+    [Display(Name = "Chapter Title")]
     ChapterTitle
 }

@@ -1,4 +1,5 @@
 ﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
+@using MangaIngestWithUpscaling.Services.Helpers
 <MudStack>
     <MudText Typo="Typo.h5">
         Edit Ingest Filters
@@ -19,9 +20,9 @@
         </HeaderContent>
         <RowTemplate>
             <MudTd DataLabel="Pattern to match">@context.Pattern</MudTd>
-            <MudTd DataLabel="Pattern Type">@context.PatternType</MudTd>
-            <MudTd DataLabel="Target Field">@context.TargetField</MudTd>
-            <MudTd DataLabel="Action">@context.Action</MudTd>
+            <MudTd DataLabel="Pattern Type">@context.PatternType.GetDisplayName()</MudTd>
+            <MudTd DataLabel="Target Field">@context.TargetField.GetDisplayName()</MudTd>
+            <MudTd DataLabel="Action">@context.Action.GetDisplayName()</MudTd>
             <MudTd>
                 <MudIconButton Icon="@Icons.Material.Filled.Delete" 
                                Color="Color.Error"
