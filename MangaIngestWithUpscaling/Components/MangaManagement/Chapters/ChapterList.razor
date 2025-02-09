@@ -10,32 +10,33 @@
 @inject IMetadataHandlingService MetadataHandler
 @inject ITaskQueue TaskQueue
 @inject ILogger<ChapterList> Logger
+@inject IDialogService DialogService
 
 <MudTable T="ChapterItem" @bind-SelectedItems="selectedChapters"
-Items="@chapterItems"
-Dense="true"
-MultiSelection="true">
+          Items="@chapterItems"
+          Dense="true"
+          MultiSelection="true">
     <ToolBarContent>
         <MudStack Row>
             <MudButton StartIcon="@Icons.Material.Filled.Delete"
-            Color="Color.Error"
-            Variant="Variant.Text"
-            Disabled="selectedChapters == null || selectedChapters.Count == 0"
-            OnClick="@(() => selectedChapters?.ToList().ForEach(async c => await DeleteChapter(c.Chapter)))">
+                       Color="Color.Error"
+                       Variant="Variant.Text"
+                       Disabled="selectedChapters == null || selectedChapters.Count == 0"
+                       OnClick="@(async () => await DeleteSelected())">
                 Delete Selected
             </MudButton>
             <MudButton StartIcon="@Icons.Material.Filled.ArrowUpward"
-            Color="Color.Primary"
-            Variant="Variant.Text"
-            Disabled="selectedChapters == null || selectedChapters.Count == 0 || !selectedChapters.Any(c => !c.Chapter.IsUpscaled)"
-            OnClick="@(() => selectedChapters?.Where(c => !c.Chapter.IsUpscaled).ToList().ForEach(async c => await UpscaleChapter(c.Chapter)))">
+                       Color="Color.Primary"
+                       Variant="Variant.Text"
+                       Disabled="selectedChapters == null || selectedChapters.Count == 0 || !selectedChapters.Any(c => !c.Chapter.IsUpscaled)"
+                       OnClick="@(() => selectedChapters?.Where(c => !c.Chapter.IsUpscaled).ToList().ForEach(async c => await UpscaleChapter(c.Chapter)))">
                 Upscale Selected
             </MudButton>
             <MudButton StartIcon="@Icons.Material.Filled.ArrowDownward"
-            Color="Color.Secondary"
-            Variant="Variant.Text"
-            Disabled="selectedChapters == null || selectedChapters.Count == 0 || !selectedChapters.Any(c => c.Chapter.IsUpscaled)"
-            OnClick="@(() => selectedChapters?.Where(c => c.Chapter.IsUpscaled).ToList().ForEach(async c => await DeleteUpscaled(c.Chapter)))">
+                       Color="Color.Secondary"
+                       Variant="Variant.Text"
+                       Disabled="selectedChapters == null || selectedChapters.Count == 0 || !selectedChapters.Any(c => c.Chapter.IsUpscaled)"
+                       OnClick="@(async () => await DeleteSelectedUpscaled())">
                 Delete Upscaled Selected
             </MudButton>
         </MudStack>
@@ -55,16 +56,16 @@ MultiSelection="true">
             @if (!context.Chapter.IsUpscaled)
             {
                 <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward"
-                Color="Color.Primary" Variant="Variant.Text"
-                OnClick="@(() => UpscaleChapter(context.Chapter))"
-                title="Upscale this chapter." />
+                               Color="Color.Primary" Variant="Variant.Text"
+                               OnClick="@(() => UpscaleChapter(context.Chapter))"
+                               title="Upscale this chapter." />
             }
             else
             {
                 <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward"
-                Color="Color.Secondary" Variant="Variant.Text"
-                OnClick="@(() => DeleteUpscaled(context.Chapter))"
-                title="Delete upscaled version of this chapter." />
+                               Color="Color.Secondary" Variant="Variant.Text"
+                               OnClick="@(() => DeleteUpscaledConfirm(context.Chapter))"
+                               title="Delete upscaled version of this chapter." />
             }
         </MudTd>
         <MudTd DataLabel="Upscaler Profile">
@@ -72,9 +73,9 @@ MultiSelection="true">
         </MudTd>
         <MudTd DataLabel="Actions">
             <MudIconButton Icon="@Icons.Material.Filled.Delete"
-            Color="Color.Error" Variant="Variant.Text"
-            OnClick="@(() => DeleteChapter(context.Chapter))"
-            title="Delete this chapter" />
+                           Color="Color.Error" Variant="Variant.Text"
+                           OnClick="@(() => DeleteChapterConfirm(context.Chapter))"
+                           title="Delete this chapter" />
         </MudTd>
     </RowTemplate>
     <PagerContent>
@@ -89,6 +90,25 @@ MultiSelection="true">
     private SourceList<ChapterItem> chapters = new();
 
     private HashSet<ChapterItem> selectedChapters;
+
+
+    private async Task DeleteSelected()
+    {
+        var result = await DialogService.ShowMessageBox("Upscale Selected Chapters", "Are you sure you want to upscale the selected chapters?", yesText: "Yes", cancelText: "No");
+        if (result == true)
+        {
+            selectedChapters?.ToList().ForEach(async c => await DeleteChapter(c.Chapter));
+        }
+    }
+
+    private async Task DeleteChapterConfirm(Chapter chapter)
+    {
+        var result = await DialogService.ShowMessageBox("Delete Chapter", "Are you sure you want to delete this chapter?", yesText: "Yes", cancelText: "No");
+        if (result == true)
+        {
+            await DeleteChapter(chapter);
+        }
+    }
 
     private async Task DeleteChapter(Chapter chapter)
     {
@@ -130,6 +150,24 @@ MultiSelection="true">
 
         await TaskQueue.EnqueueAsync(
             new UpscaleTask(chapter, Manga.Library.UpscalerProfile));
+    }
+
+    private async Task DeleteSelectedUpscaled()
+    {
+        var result = await DialogService.ShowMessageBox("Delete Upscaled Selected Chapters", "Are you sure you want to delete the upscaled versions of the selected chapters?", yesText: "Yes", cancelText: "No");
+        if (result == true)
+        {
+            selectedChapters?.ToList().ForEach(async c => await DeleteUpscaled(c.Chapter));
+        }
+    }
+
+    private async Task DeleteUpscaledConfirm(Chapter chapter)
+    {
+        var result = await DialogService.ShowMessageBox("Delete Upscaled Chapter", "Are you sure you want to delete the upscaled version of this chapter?", yesText: "Yes", cancelText: "No");
+        if (result == true)
+        {
+            await DeleteUpscaled(chapter);
+        }
     }
 
     private async Task DeleteUpscaled(Chapter chapter)
