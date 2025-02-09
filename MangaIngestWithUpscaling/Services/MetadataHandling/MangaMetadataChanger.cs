@@ -1,6 +1,7 @@
 ﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
@@ -83,7 +84,10 @@ public class MangaMetadataChanger(
     private void RelocateChapterToNewTitleDirectory(Chapter chapter, string origChapterPath, string libraryBasePath, string newTitle)
     {
         // move chapter to the correct directory with the new title
-        var newChapterPath = Path.Combine(libraryBasePath, newTitle, chapter.FileName);
+        var newChapterPath = Path.Combine(
+            libraryBasePath, 
+            PathEscaper.EscapeFileName(newTitle), 
+            PathEscaper.EscapeFileName(chapter.FileName));
         var newRelativePath = Path.GetRelativePath(libraryBasePath, newChapterPath);
         if (File.Exists(newChapterPath))
         {

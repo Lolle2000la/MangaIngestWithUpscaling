@@ -62,7 +62,10 @@ public class RenameUpscaledChaptersSeriesTask : BaseTask
         metadataHandling.WriteComicInfo(origChapterPath, existingMetadata with { Series = NewTitle });
 
         // move chapter to the correct directory with the new title
-        var newChapterPath = Path.Combine(chapter.Manga.Library.UpscaledLibraryPath, NewTitle, chapter.FileName);
+        var newChapterPath = Path.Combine(
+            chapter.Manga.Library.UpscaledLibraryPath, 
+            PathEscaper.EscapeFileName(NewTitle), 
+            PathEscaper.EscapeFileName(chapter.FileName));
         var newRelativePath = Path.GetRelativePath(chapter.Manga.Library.UpscaledLibraryPath, newChapterPath);
         if (File.Exists(newChapterPath))
         {

@@ -44,7 +44,10 @@ public class MangaMerger(
                 metadataHandling.WriteComicInfo(chapterPath, existingMetadata with { Series = primary.PrimaryTitle });
 
                 // move chapter into the primary mangas library and folder
-                var targetPath = Path.Combine(primary.Library.NotUpscaledLibraryPath, primary.PrimaryTitle!, chapter.FileName);
+                var targetPath = Path.Combine(
+                    primary.Library.NotUpscaledLibraryPath, 
+                    PathEscaper.EscapeFileName(primary.PrimaryTitle!), 
+                    PathEscaper.EscapeFileName(chapter.FileName));
                 if (File.Exists(targetPath))
                 {
                     logger.LogWarning("Chapter {fileName} already exists in the target path {targetPath}. Skipping.",

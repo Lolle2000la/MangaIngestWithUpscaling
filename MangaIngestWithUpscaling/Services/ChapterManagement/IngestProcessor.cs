@@ -66,7 +66,10 @@ public class IngestProcessor(ApplicationDbContext dbContext,
                     logger.LogError(ex, "Error converting chapter {chapter} to cbz.", chapter.RelativePath);
                     continue;
                 }
-                var targetPath = Path.Combine(library.NotUpscaledLibraryPath, seriesEntity.PrimaryTitle!, chapterCbz.FileName);
+                var targetPath = Path.Combine(
+                    library.NotUpscaledLibraryPath,
+                    PathEscaper.EscapeFileName(seriesEntity.PrimaryTitle!),
+                    PathEscaper.EscapeFileName(chapterCbz.FileName));
                 if (File.Exists(targetPath))
                 {
                     logger.LogWarning("Chapter {fileName} already exists in the target path {targetPath}. Skipping.",
@@ -108,7 +111,7 @@ public class IngestProcessor(ApplicationDbContext dbContext,
             await dbContext.SaveChangesAsync(cancellationToken);
         }
 
-        foreach(var chapterTuple in chaptersToUpscale)
+        foreach (var chapterTuple in chaptersToUpscale)
         {
             var upscaleTask = new UpscaleTask(chapterTuple.Item1, chapterTuple.Item2);  // if I use destructuring here, the value becomes 0. I checked with the debugger and I have no idea why this happens.
             await taskQueue.EnqueueAsync(upscaleTask);

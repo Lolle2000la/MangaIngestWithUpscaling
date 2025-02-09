@@ -38,18 +38,20 @@ public class MangaLibraryMover(
         // Now we can change the library references on the manga entity.
         manga.Library = targetLibrary;
         manga.LibraryId = targetLibrary.Id;
-        
+
         dbContext.Update(manga);
         await dbContext.SaveChangesAsync(cancellationToken);
 
         // Let's get all the target paths we need and ensure they exist.
         // This is where we will move the chapters to.
-        var targetNotUpscaledLibraryPath = Path.Combine(targetLibrary.NotUpscaledLibraryPath, manga.PrimaryTitle);
+        var targetNotUpscaledLibraryPath = Path.Combine(
+            targetLibrary.NotUpscaledLibraryPath, 
+            PathEscaper.EscapeFileName(manga.PrimaryTitle));
         if (!Directory.Exists(targetNotUpscaledLibraryPath))
         {
             Directory.CreateDirectory(targetNotUpscaledLibraryPath);
         }
-        var targetUpscaledLibraryPath = targetLibrary.UpscaledLibraryPath == null 
+        var targetUpscaledLibraryPath = targetLibrary.UpscaledLibraryPath == null
             ? null : Path.Combine(targetLibrary.UpscaledLibraryPath, manga.PrimaryTitle);
         if (!Directory.Exists(targetUpscaledLibraryPath))
         {
@@ -62,7 +64,7 @@ public class MangaLibraryMover(
             // The simple part is moving the not-upscaled mangas.
             // for that we should first create the target directory if it doesn't exist.
             var sourcePath = Path.Combine(oldLibrary.NotUpscaledLibraryPath, chapter.RelativePath);
-            var targetPath = Path.Combine(targetNotUpscaledLibraryPath, chapter.FileName);
+            var targetPath = Path.Combine(targetNotUpscaledLibraryPath, PathEscaper.EscapeFileName(chapter.FileName));
             try
             {
                 File.Move(sourcePath, targetPath);
