@@ -31,12 +31,12 @@
                 </MudSelect>
             </MudStack>
         </MudItem>
-        <MudItem xs="12" md="4">
+        <MudItem xs="12" lg="4">
             <FolderPicker SelectedPath="@Library.IngestPath"
                           SelectedPathChanged="@OnIngestPathChanged"
                           Title="Ingest Folder" Required="true" />
         </MudItem>
-        <MudItem xs="12" md="8">
+        <MudItem xs="12" lg="8">
             <EditLibraryFilters Library="@Library" />
         </MudItem>
         @if (Library.MangaSeries.Count > 0)
