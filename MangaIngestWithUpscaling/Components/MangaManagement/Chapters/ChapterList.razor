@@ -1,4 +1,6 @@
-﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
+﻿@using DynamicData
+@using MangaIngestWithUpscaling.Data.LibraryManagement
+@using MangaIngestWithUpscaling.Helpers
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
 @using MangaIngestWithUpscaling.Services.MetadataHandling
@@ -83,7 +85,8 @@ MultiSelection="true">
 @code {
     [Parameter] public Manga Manga { get; set; }
 
-    private ObservableCollection<ChapterItem> chapterItems = [];
+    private ReadOnlyObservableCollection<ChapterItem> chapterItems;
+    private SourceList<ChapterItem> chapters = new();
 
     private HashSet<ChapterItem> selectedChapters;
 
@@ -110,6 +113,8 @@ MultiSelection="true">
         DbContext.Remove(chapter);
 
         await DbContext.SaveChangesAsync();
+
+        chapters.Remove(chapterItems.First(ci => ci.Chapter == chapter));
     }
 
     private async Task UpscaleChapter(Chapter chapter)
@@ -175,8 +180,13 @@ MultiSelection="true">
             }
             var extractedMetadata = MetadataHandler.GetSeriesAndTitleFromComicInfo(Path.Combine(Manga.Library.NotUpscaledLibraryPath, chapter.RelativePath));
             chapter.UpscalerProfile = await loadProfile;
-            chapterItems.Add(new ChapterItem { Chapter = chapter, ExtractedMetadata = extractedMetadata });
+            chapters.Add(new ChapterItem { Chapter = chapter, ExtractedMetadata = extractedMetadata });
         }
+
+        chapters.Connect()
+            .Sort(new NaturalSortComparer<ChapterItem>(ci => ci.ExtractedMetadata.ChapterTitle))
+            .Bind(out chapterItems)
+            .Subscribe();
     }
 
     private record ChapterItem
