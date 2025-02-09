@@ -6,6 +6,7 @@ using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.CbzConversion;
 using MangaIngestWithUpscaling.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Services.FileSystem;
+using MangaIngestWithUpscaling.Services.LibraryFiltering;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
@@ -28,12 +29,18 @@ public class IngestProcessor(ApplicationDbContext dbContext,
         {
             await dbContext.Entry(library).Reference(l => l.UpscalerProfile).LoadAsync(cancellationToken);
         }
+        if (!dbContext.Entry(library).Collection(l => l.FilterRules).IsLoaded)
+        {
+            await dbContext.Entry(library).Collection(l => l.FilterRules).LoadAsync(cancellationToken);
+        }
 
         List<FoundChapter> chapterRecognitionResult = chapterRecognitionService.FindAllChaptersAt(
             library.IngestPath, library.FilterRules);
 
         // group chapters by series
-        var chaptersBySeries = chapterRecognitionResult.GroupBy(c => c.Metadata.Series).ToDictionary(g => g.Key, g => g.ToList());
+        var chaptersBySeries = chapterRecognitionResult
+            .GroupBy(c => c.Metadata.Series)
+            .ToDictionary(g => g.Key, g => g.ToList());
 
         List<(Chapter, UpscalerProfile)> chaptersToUpscale = [];
 
