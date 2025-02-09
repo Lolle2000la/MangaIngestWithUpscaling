@@ -43,14 +43,14 @@
         </MudTd>
 
         <MudTd DataLabel="Message" Style="max-width: 300px;">
-            <MudText Truncate="true">@context.RenderedMessage</MudText>
+            <MudText >@context.RenderedMessage</MudText>
         </MudTd>
 
         <MudTd DataLabel="Exception" Style="max-width: 200px;">
             @if (!string.IsNullOrEmpty(context.Exception))
             {
                 <MudTooltip Text="@context.Exception">
-                    <MudText Truncate="true" Class="text-error">@context.Exception</MudText>
+                    <MudText Class="text-error">@context.Exception</MudText>
                 </MudTooltip>
             }
         </MudTd>
