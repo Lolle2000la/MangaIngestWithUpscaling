@@ -64,6 +64,6 @@ public partial class NaturalSortComparer<T>(Func<T, string> propSelector) : ICom
         return xParts.Count.CompareTo(yParts.Count);
     }
 
-    [GeneratedRegex(@"(\d+)|(\D+)", RegexOptions.Compiled)]
+    [GeneratedRegex(@"(\d+?\.?\d*)|(\D+?\.?\D*)", RegexOptions.Compiled)]
     private static partial Regex SplitIntoPartsRegex();
 }
