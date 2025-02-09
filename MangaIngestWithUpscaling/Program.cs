@@ -11,6 +11,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using MudBlazor.Services;
+using MudBlazor.Translations;
 using Serilog;
 using Serilog.Events;
 using Splat.ModeDetection;
@@ -51,8 +52,12 @@ builder.Services.AddSerilog((services, lc) => lc
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
+
 builder.Services.AddMudServices();
+builder.Services.AddMudTranslations();
 builder.Services.RegisterViewModels();
+
+builder.Services.AddLocalization();
 
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddScoped<IdentityUserAccessor>();
@@ -133,6 +138,10 @@ using (var scope = app.Services.CreateScope())
         logger.LogInformation($"Python environment prepared at {environment.PythonExecutablePath}");
     }
 }
+
+app.UseRequestLocalization(new RequestLocalizationOptions()
+    .AddSupportedCultures(new[] { "en-US", "de-DE", "ja" })
+    .AddSupportedUICultures(new[] { "en-US", "de-DE", "ja" }));
 
 
 // Configure the HTTP request pipeline.
