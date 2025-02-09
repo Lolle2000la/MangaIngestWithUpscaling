@@ -1,0 +1,52 @@
+﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
+
+<MudForm Model="@FilterRule"
+         @bind-IsValid="IsValid"
+         @bind-IsTouched="IsTouched">
+    <MudGrid>
+        <MudItem xs="12">
+            <MudTextField Label="Pattern to match"
+                          HelperText="This will be matched against the selected target field according to the pattern type."
+                          Immediate="true"
+                          @bind-Value="FilterRule.Pattern" />
+        </MudItem>
+        <MudItem xs="12" md="4">
+            <MudSelect Label="Pattern Type"
+                       HelperText="Select the type of pattern to match."
+                       Immediate="true"
+                       T="LibraryFilterPatternType"
+                       @bind-Value="FilterRule.PatternType">
+                <MudSelectItem Value="LibraryFilterPatternType.Contains">Target field contains pattern</MudSelectItem>
+                <MudSelectItem Value="LibraryFilterPatternType.Regex">Regular Expression</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" md="4">
+            <MudSelect Label="Target Field"
+                       HelperText="Select the field to match the pattern against."
+                       Immediate="true"
+                       T="LibraryFilterTargetField"
+                       @bind-Value="FilterRule.TargetField">
+                <MudSelectItem Value="LibraryFilterTargetField.MangaTitle">Manga Title</MudSelectItem>
+                <MudSelectItem Value="LibraryFilterTargetField.ChapterTitle">Chapter Title (i.e. Chapter 1, 第1話, ...)</MudSelectItem>
+                <MudSelectItem Value="LibraryFilterTargetField.FilePath">File Path (relative to ingest root)</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+        <MudItem xs="12" md="4">
+            <MudSelect Label="Action"
+                       HelperText="Select the action to take when the pattern matches."
+                       Immediate="true"
+                       T="FilterAction"
+                       @bind-Value="FilterRule.Action">
+                <MudSelectItem Value="FilterAction.Include">Include</MudSelectItem>
+                <MudSelectItem Value="FilterAction.Exclude">Exclude</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+    </MudGrid>
+</MudForm>
+
+@code {
+    [Parameter] public LibraryFilterRule FilterRule { get; set; }
+
+    [Parameter] public bool IsValid { get; set; }
+    [Parameter] public bool IsTouched { get; set; }
+}
