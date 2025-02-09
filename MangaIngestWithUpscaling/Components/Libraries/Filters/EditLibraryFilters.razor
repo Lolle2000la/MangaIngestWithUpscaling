@@ -1,0 +1,39 @@
+﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
+<MudStack>
+    <MudText Typo="Typo.h5">
+        Edit Ingest Filters
+    </MudText>
+    <MudText Typo="Typo.body1">
+        Define filters to apply to the files in the ingest folder. Files that do not match the filters will not be ingested.
+    </MudText>
+
+    <MudTable T="LibraryFilterRule" Items="@Library.FilterRules"
+              Dense>
+        <HeaderContent>
+            <MudTh>Pattern to match</MudTh>
+            <MudTh>Pattern Type</MudTh>
+            <MudTh>Target Field</MudTh>
+            <MudTh>Action</MudTh>
+            <MudTh><MudIconButton Icon="@Icons.Material.Filled.Add"
+                                  OnClick="() => Library.FilterRules.Add(new())"/></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Pattern to match">@context.Pattern</MudTd>
+            <MudTd DataLabel="Pattern Type">@context.PatternType</MudTd>
+            <MudTd DataLabel="Target Field">@context.TargetField</MudTd>
+            <MudTd DataLabel="Action">@context.Action</MudTd>
+            <MudTd>
+                <MudIconButton Icon="@Icons.Material.Filled.Delete" 
+                               Color="Color.Error"
+                               OnClick="() => Library.FilterRules.Remove(context)" />
+            </MudTd>
+        </RowTemplate>
+        <RowEditingTemplate>
+            <EditLibraryFilterForm FilterRule="@context" />
+        </RowEditingTemplate>
+    </MudTable>
+</MudStack>
+
+@code {
+    [Parameter] public Library Library { get; set; }
+}

@@ -1,4 +1,5 @@
 ﻿@using MangaIngestWithUpscaling.Components.FileSystem
+@using MangaIngestWithUpscaling.Components.Libraries.Filters
 @using MangaIngestWithUpscaling.Data.LibraryManagement
 
 @inject ApplicationDbContext DbContext
@@ -30,10 +31,13 @@
                 </MudSelect>
             </MudStack>
         </MudItem>
-        <MudItem lg="4" md="12" xs="12">
+        <MudItem xs="12" md="4">
             <FolderPicker SelectedPath="@Library.IngestPath"
                           SelectedPathChanged="@OnIngestPathChanged"
                           Title="Ingest Folder" Required="true" />
+        </MudItem>
+        <MudItem xs="12" md="8">
+            <EditLibraryFilters Library="@Library" />
         </MudItem>
         @if (Library.MangaSeries.Count > 0)
         {
@@ -51,13 +55,13 @@
                 </MudText>
             </MudItem>
         }
-        <MudItem lg="4" md="6" xs="12">
+        <MudItem md="6" xs="12">
             <FolderPicker SelectedPath="@Library.NotUpscaledLibraryPath"
                           SelectedPathChanged="@OnNotUpscaledPathChanged"
                           Disabled="Library.MangaSeries.Count > 0"
                           Title="Storage Path as-is" Required="true" />
         </MudItem>
-        <MudItem lg="4" md="6" xs="12">
+        <MudItem md="6" xs="12">
             <FolderPicker SelectedPath="@Library.UpscaledLibraryPath"
                           Disabled="Library.MangaSeries.Count > 0 && Library.UpscaledLibraryPath != null"
                           SelectedPathChanged="@OnUpscaledPathChanged"
