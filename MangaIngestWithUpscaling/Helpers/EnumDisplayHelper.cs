@@ -1,7 +1,7 @@
 ﻿using System.ComponentModel.DataAnnotations;
 using System.Reflection;
 
-namespace MangaIngestWithUpscaling.Services.Helpers;
+namespace MangaIngestWithUpscaling.Helpers;
 
 public static class EnumDisplayHelper
 {

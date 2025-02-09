@@ -1,4 +1,4 @@
-﻿namespace MangaIngestWithUpscaling.Services.Helpers;
+﻿namespace MangaIngestWithUpscaling.Helpers;
 
 public static class ListHelpers
 {
