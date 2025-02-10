@@ -1,4 +1,4 @@
-# MangaIngestWithUpscaling
+# Manga Ingest With Upscaling
 
 ## Overview
 
@@ -21,8 +21,36 @@ MangaIngestWithUpscaling is a **Blazor-based web application** designed to **ing
 
 The preferred way to run the application is through Docker. Below is an example docker-compose file to get you started.
 
-TODO: Add docker-compose example
+```yaml
+version: '3.4'
 
+services:
+  mangaingestwithupscaling:
+    image: ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest
+    restart: unless-stopped
+    environment:
+      TZ: #your timezone here
+      Ingest_Upscaler__SelectedDeviceIndex: 0 # if you have multiple GPUs, you can select which one to use
+      Ingest_Upscaler__UseFp16: true # if you want to use fp16 instead of fp32, preferred if you have a GPU that supports it
+      Ingest_Upscaler__UseCPU: false # if you want to use the CPU instead of the GPU
+    volumes:
+      - /path/to/store/appdata:/data # for storing the database and logs
+      - /path/to/store/models:/models # for storing the upscaling models. 
+      # ... other folders you want to be able to access from the container
+      - /path/to/ingest:/ingest
+      - /path/to/target:/target
+    ports:
+      - 8080:8080 # the web interface will be available on this port
+    # Make sure you have the nvidia-container-toolkit installed on your host.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+```
 ## Building Prerequisites
 
 - .NET 9.0 SDK or later
