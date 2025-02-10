@@ -34,18 +34,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push multi-arch Docker image with caching
+      - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}
-          platforms: linux/amd64,linux/arm64
+          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }},${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:latest
+          platforms: linux/amd64
 
       - name: Make Docker image public on GHCR
         run: |
           curl -X PATCH \
             -H "Accept: application/vnd.github.v3+json" \
-            -H "Authorization: Bearer ${{ secrets.GHCR_PAT }}" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }} \
             "https://api.github.com/user/packages/container/${{ env.IMAGE_NAME }}/visibility" \
             -d '{"visibility": "public"}'
