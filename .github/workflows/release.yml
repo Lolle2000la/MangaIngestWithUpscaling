@@ -9,30 +9,29 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     env:
-      IMAGE_NAME: my-image                # Update with your Docker image name
+      IMAGE_NAME: manga-ingest-with-upscaling  # Desired image name
       REGISTRY: ghcr.io
-      OWNER: ${{ github.repository_owner }}
       TAG: ${{ github.event.release.tag_name }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Set owner to lowercase
+        run: echo "OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
       - name: Log in to GitHub Container Registry
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login $REGISTRY -u ${{ github.actor }} --password-stdin
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login $REGISTRY -u ${{ github.actor }} --password-stdin
 
       - name: Build Docker image
-        run: |
-          docker build . -t $REGISTRY/$OWNER/$IMAGE_NAME:$TAG
+        run: docker build . -t $REGISTRY/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:$TAG
 
       - name: Push Docker image
-        run: |
-          docker push $REGISTRY/$OWNER/$IMAGE_NAME:$TAG
+        run: docker push $REGISTRY/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:$TAG
 
      # - name: Make Docker image public on GHCR
      #   run: |
      #     curl -X PATCH \
      #       -H "Accept: application/vnd.github.v3+json" \
      #       -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-     #       "https://api.github.com/user/packages/container/$IMAGE_NAME/visibility" \
+     #       "https://api.github.com/user/packages/container/${{ env.IMAGE_NAME }}/visibility" \
      #       -d '{"visibility": "public"}'
