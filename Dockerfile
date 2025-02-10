@@ -44,5 +44,6 @@ ENV Ingest_Upscaler__ModelsDirectory=/models/MangaJaNai
 VOLUME /models
 ENV Ingest_ConnectionStrings__DefaultConnection="Data Source=/data/data.db;Pooling=false"
 ENV Ingest_ConnectionStrings__LoggingConnection="Data Source=/data/logs.db;Pooling=false"
+ENV ASPNETCORE_ENVIRONMENT=Production
 VOLUME [ "/data" ]
 ENTRYPOINT ["dotnet", "MangaIngestWithUpscaling.dll"]
