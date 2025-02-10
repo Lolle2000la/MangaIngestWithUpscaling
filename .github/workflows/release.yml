@@ -34,7 +34,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push multi-arch Docker image with caching
+      - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -46,6 +46,6 @@ jobs:
         run: |
           curl -X PATCH \
             -H "Accept: application/vnd.github.v3+json" \
-            -H "Authorization: Bearer ${{ secrets.GHCR_PAT }}" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }} \
             "https://api.github.com/user/packages/container/${{ env.IMAGE_NAME }}/visibility" \
             -d '{"visibility": "public"}'
