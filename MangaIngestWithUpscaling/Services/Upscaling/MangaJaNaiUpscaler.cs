@@ -3,6 +3,7 @@ using MangaIngestWithUpscaling.Services.Python;
 using Microsoft.Extensions.Options;
 using System.IO.Compression;
 using System.Reflection;
+using System.Security.Cryptography;
 
 namespace MangaIngestWithUpscaling.Services.Upscaling;
 
@@ -21,10 +22,10 @@ public class MangaJaNaiUpscaler(IPythonService pythonService,
 
     private string ModelPath => sharedConfig.Value.ModelsDirectory;
 
-    private readonly string[] zipsToDownload =
+    private readonly (string, string)[] zipsToDownload =
     [
-        "https://github.com/the-database/MangaJaNai/releases/download/1.0.0/IllustrationJaNai_V1_ModelsOnly.zip",
-        "https://github.com/the-database/MangaJaNai/releases/download/1.0.0/MangaJaNai_V1_ModelsOnly.zip",
+        ("https://github.com/the-database/MangaJaNai/releases/download/1.0.0/IllustrationJaNai_V1_ModelsOnly.zip", "6f5496f5ded597474290403de73d7a46c3f8ed328261db2e6ff830a415a6f60b"),
+        ("https://github.com/the-database/MangaJaNai/releases/download/1.0.0/MangaJaNai_V1_ModelsOnly.zip", "5156f4167875bba51a8ed52bd1c794b0d7277f7103f99b397518066e4dda7e55"),
     ];
 
     private async Task DownloadModelsIfNecessary(CancellationToken cancellationToken)
@@ -40,8 +41,10 @@ public class MangaJaNaiUpscaler(IPythonService pythonService,
 
         var httpClient = new HttpClient();
 
+        using var sha256 = SHA256.Create();
+
         // download the zip contents into the models directory. Do not create subdirectories.
-        foreach (var zipUrl in zipsToDownload)
+        foreach (var (zipUrl, sha256Hash) in zipsToDownload)
         {
             var zipPath = Path.Combine(ModelPath, Path.GetFileName(zipUrl));
             if (!File.Exists(zipPath))
@@ -49,8 +52,17 @@ public class MangaJaNaiUpscaler(IPythonService pythonService,
                 using var response = await httpClient.GetAsync(zipUrl, cancellationToken);
                 response.EnsureSuccessStatusCode();
 
+                // verify the hash
+                var hash = sha256.ComputeHash(await response.Content.ReadAsStreamAsync());
+                var hashString = Convert.ToHexStringLower(hash);
+                if (hashString != sha256Hash)
+                {
+                    throw new Exception($"Hash mismatch for {zipUrl}");
+                }
+
                 // extract the zip file
                 ZipFile.ExtractToDirectory(await response.Content.ReadAsStreamAsync(), ModelPath);
+
             }
         }
 
