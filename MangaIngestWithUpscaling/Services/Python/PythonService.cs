@@ -156,7 +156,7 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
         process.StartInfo.WorkingDirectory = environment.DesiredWorkindDirectory;
 
         var outputBuilder = new StringBuilder();
-    var errorBuilder = new StringBuilder();
+        var errorBuilder = new StringBuilder();
         var _timeout = timeout ?? TimeSpan.FromSeconds(60);
         var lastActivity = DateTime.UtcNow;
 
@@ -170,6 +170,8 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
         {
             while (true)
             {
+                cancellationToken?.ThrowIfCancellationRequested();
+
                 // Check timeout every second
                 if (DateTime.UtcNow - lastActivity > _timeout)
                 {
@@ -196,6 +198,11 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
             }
 
             return outputBuilder.ToString();
+        }
+        catch (Exception)
+        {
+            process.Kill();
+            throw;
         }
         finally
         {
