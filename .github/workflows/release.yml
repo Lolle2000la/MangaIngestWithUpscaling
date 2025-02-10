@@ -14,7 +14,9 @@ jobs:
       TAG: ${{ github.event.release.tag_name }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v3 
+        with:
+          submodules: 'true'
 
       - name: Set owner to lowercase
         run: echo "OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
@@ -23,7 +25,7 @@ jobs:
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login $REGISTRY -u ${{ github.actor }} --password-stdin
 
       - name: Build Docker image
-        run: docker build . -t $REGISTRY/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:$TAG
+        run: docker build -t $REGISTRY/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:$TAG -f .\Dockerfile . 
 
       - name: Push Docker image
         run: docker push $REGISTRY/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:$TAG
