@@ -42,10 +42,10 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }},${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:latest
           platforms: linux/amd64
 
-      - name: Make Docker image public on GHCR
-        run: |
-          curl -X PATCH \
-            -H "Accept: application/vnd.github.v3+json" \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }} \
-            "https://api.github.com/user/packages/container/${{ env.IMAGE_NAME }}/visibility" \
-            -d '{"visibility": "public"}'
+#      - name: Make Docker image public on GHCR
+#        run: |
+#          curl -X PATCH \
+#            -H "Accept: application/vnd.github.v3+json" \
+#            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }} \
+#            "https://api.github.com/user/packages/container/${{ env.IMAGE_NAME }}/visibility" \
+#            -d '{"visibility": "public"}'
