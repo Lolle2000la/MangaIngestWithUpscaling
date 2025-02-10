@@ -6,10 +6,11 @@ using System.Reflection.Emit;
 using System.Text.Json;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Data.LogModel;
+using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Data;
 
-public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : IdentityDbContext<ApplicationUser>(options)
+public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : IdentityDbContext<ApplicationUser>(options), IDataProtectionKeyContext
 {
     public DbSet<Library> Libraries { get; set; }
     public DbSet<LibraryFilterRule> LibraryFilterRules { get; set; }
@@ -18,6 +19,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Chapter> Chapters { get; set; }
     public DbSet<UpscalerProfile> UpscalerProfiles { get; set; }
     public DbSet<PersistedTask> PersistedTasks { get; set; }
+
+    public DbSet<DataProtectionKey> DataProtectionKeys { get; set; } = null!;
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
