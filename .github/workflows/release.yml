@@ -1,0 +1,38 @@
+# .github/workflows/docker-publish.yml
+name: Build and Publish Docker Image
+
+on:
+  release:
+    types: [published]  # Trigger on release publish
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: my-image                # Update with your Docker image name
+      REGISTRY: ghcr.io
+      OWNER: ${{ github.repository_owner }}
+      TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Log in to GitHub Container Registry
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login $REGISTRY -u ${{ github.actor }} --password-stdin
+
+      - name: Build Docker image
+        run: |
+          docker build . -t $REGISTRY/$OWNER/$IMAGE_NAME:$TAG
+
+      - name: Push Docker image
+        run: |
+          docker push $REGISTRY/$OWNER/$IMAGE_NAME:$TAG
+
+     # - name: Make Docker image public on GHCR
+     #   run: |
+     #     curl -X PATCH \
+     #       -H "Accept: application/vnd.github.v3+json" \
+     #       -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+     #       "https://api.github.com/user/packages/container/$IMAGE_NAME/visibility" \
+     #       -d '{"visibility": "public"}'
