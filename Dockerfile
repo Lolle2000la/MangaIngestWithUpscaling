@@ -28,12 +28,12 @@ COPY ["MangaIngestWithUpscaling/MangaIngestWithUpscaling.csproj", "MangaIngestWi
 RUN dotnet restore "./MangaIngestWithUpscaling/MangaIngestWithUpscaling.csproj"
 COPY . .
 WORKDIR "/src/MangaIngestWithUpscaling"
-RUN dotnet build "./MangaIngestWithUpscaling.csproj" -c $BUILD_CONFIGURATION -o /app/build
+RUN dotnet build "./MangaIngestWithUpscaling.csproj" -c Release -o /app/build
 
 # This stage is used to publish the service project to be copied to the final stage
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
-RUN dotnet publish "./MangaIngestWithUpscaling.csproj" -c $BUILD_CONFIGURATION -o /app/publish /p:UseAppHost=false
+RUN dotnet publish "./MangaIngestWithUpscaling.csproj" -c Release -o /app/publish /p:UseAppHost=false
 
 # This stage is used in production or when running from VS in regular mode (Default when not using the Debug configuration)
 FROM base AS final
