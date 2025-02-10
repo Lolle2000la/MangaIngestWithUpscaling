@@ -25,7 +25,7 @@ jobs:
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login $REGISTRY -u ${{ github.actor }} --password-stdin
 
       - name: Build Docker image
-        run: docker build -t $REGISTRY/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:$TAG -f .\Dockerfile . 
+        run: docker build -t $REGISTRY/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:$TAG -f ./Dockerfile . 
 
       - name: Push Docker image
         run: docker push $REGISTRY/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:$TAG
