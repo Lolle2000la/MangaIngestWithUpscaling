@@ -40,7 +40,7 @@ FROM base AS final
 WORKDIR /app
 COPY --from=publish /app/publish .
 # configure models save directory
-ENV Ingest_Upscaler__ModelsDirectory=/models
+ENV Ingest_Upscaler__ModelsDirectory=/models/MangaJaNai
 VOLUME /models
 ENV Ingest_ConnectionStrings__DefaultConnection="Data Source=/data/data.db;Pooling=false"
 ENV Ingest_ConnectionStrings__LoggingConnection="Data Source=/data/logs.db;Pooling=false"
