@@ -22,7 +22,7 @@ MangaIngestWithUpscaling is a **Blazor-based web application** designed to **ing
 The preferred way to run the application is through Docker. Below is an example docker-compose file to get you started.
 
 ```yaml
-version: '3.4'
+version: '3.9'
 
 services:
   mangaingestwithupscaling:
