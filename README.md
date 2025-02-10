@@ -49,8 +49,8 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-
 ```
+
 ## Building Prerequisites
 
 - .NET 9.0 SDK or later
