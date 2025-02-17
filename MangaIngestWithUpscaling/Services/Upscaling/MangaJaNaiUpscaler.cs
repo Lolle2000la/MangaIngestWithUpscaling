@@ -1,4 +1,5 @@
 ﻿using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Services.FileSystem;
 using MangaIngestWithUpscaling.Services.Python;
 using Microsoft.Extensions.Options;
 using System.IO.Compression;
@@ -10,7 +11,8 @@ namespace MangaIngestWithUpscaling.Services.Upscaling;
 [RegisterScoped]
 public class MangaJaNaiUpscaler(IPythonService pythonService,
     ILogger<MangaJaNaiUpscaler> logger,
-    IOptions<UpscalerConfig> sharedConfig) : IUpscaler
+    IOptions<UpscalerConfig> sharedConfig,
+    IFileSystem fileSystem) : IUpscaler
 {
     private string RunScriptPath => Path.Combine(
         new FileInfo(Assembly.GetExecutingAssembly().Location).Directory!.FullName,
@@ -32,7 +34,7 @@ public class MangaJaNaiUpscaler(IPythonService pythonService,
     {
         if (!Directory.Exists(ModelPath))
         {
-            Directory.CreateDirectory(ModelPath);
+            fileSystem.CreateDirectory(ModelPath);
         }
         else
         {
@@ -76,7 +78,7 @@ public class MangaJaNaiUpscaler(IPythonService pythonService,
         var outputDirectory = Path.GetDirectoryName(outputPath)!;
         if (!Directory.Exists(outputDirectory))
         {
-            Directory.CreateDirectory(outputDirectory);
+            fileSystem.CreateDirectory(outputDirectory);
         }
         await DownloadModelsIfNecessary(cancellationToken);
 
@@ -101,9 +103,10 @@ public class MangaJaNaiUpscaler(IPythonService pythonService,
         string arguments = $"--settings \"{configPath}\"";
         try
         {
-            var output = await pythonService.RunPythonScript(RunScriptPath, arguments, cancellationToken);
+            var output = await pythonService.RunPythonScript(RunScriptPath, arguments, cancellationToken, TimeSpan.FromMinutes(1));
+            fileSystem.ApplyPermissions(outputPath);
 
-            logger.LogDebug("Upscaling Output {inputPath}: {line}", inputPath, output);
+            logger.LogDebug("Upscaling Output {inputPath}: {output}", inputPath, output);
 
             logger.LogInformation("Upscaling {inputPath} to {outputPath} with {profile.Name} completed", inputPath, outputPath, profile.Name);
         }

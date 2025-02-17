@@ -3,6 +3,7 @@ using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Services.FileSystem;
 
 namespace MangaIngestWithUpscaling.Services.MangaManagement;
 
@@ -10,7 +11,8 @@ namespace MangaIngestWithUpscaling.Services.MangaManagement;
 public class MangaLibraryMover(
     ILogger<MangaLibraryMover> logger,
     ApplicationDbContext dbContext,
-    ITaskQueue taskQueue) : IMangaLibraryMover
+    ITaskQueue taskQueue,
+    IFileSystem fileSystem) : IMangaLibraryMover
 {
     public async Task MoveMangaAsync(Manga manga, Library targetLibrary, CancellationToken cancellationToken = default)
     {
@@ -49,13 +51,13 @@ public class MangaLibraryMover(
             PathEscaper.EscapeFileName(manga.PrimaryTitle));
         if (!Directory.Exists(targetNotUpscaledLibraryPath))
         {
-            Directory.CreateDirectory(targetNotUpscaledLibraryPath);
+            fileSystem.CreateDirectory(targetNotUpscaledLibraryPath);
         }
         var targetUpscaledLibraryPath = targetLibrary.UpscaledLibraryPath == null
             ? null : Path.Combine(targetLibrary.UpscaledLibraryPath, manga.PrimaryTitle);
         if (!Directory.Exists(targetUpscaledLibraryPath))
         {
-            Directory.CreateDirectory(targetUpscaledLibraryPath);
+            fileSystem.CreateDirectory(targetUpscaledLibraryPath);
         }
 
         // Now we can move the chapters that are not upscaled.
@@ -67,7 +69,7 @@ public class MangaLibraryMover(
             var targetPath = Path.Combine(targetNotUpscaledLibraryPath, PathEscaper.EscapeFileName(chapter.FileName));
             try
             {
-                File.Move(sourcePath, targetPath);
+                fileSystem.Move(sourcePath, targetPath);
             }
             catch (Exception ex)
             {

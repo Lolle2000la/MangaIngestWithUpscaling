@@ -4,6 +4,7 @@ using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Services.FileSystem;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using System.Xml;
 
@@ -14,7 +15,8 @@ public class MangaMetadataChanger(
     IMetadataHandlingService metadataHandling,
     ApplicationDbContext dbContext,
     ILogger<MangaMetadataChanger> logger,
-    ITaskQueue taskQueue) : IMangaMetadataChanger
+    ITaskQueue taskQueue,
+    IFileSystem fileSystem) : IMangaMetadataChanger
 {
     public async Task ChangeTitle(Manga manga, string newTitle, bool addOldToAlternative = true)
     {
@@ -94,8 +96,8 @@ public class MangaMetadataChanger(
             logger.LogWarning("Chapter file already exists: {ChapterPath}", newChapterPath);
             return;
         }
-        Directory.CreateDirectory(Path.GetDirectoryName(newChapterPath)!);
-        File.Move(origChapterPath, newChapterPath);
+        fileSystem.CreateDirectory(Path.GetDirectoryName(newChapterPath)!);
+        fileSystem.Move(origChapterPath, newChapterPath);
         if (!Directory.EnumerateFiles(Path.GetDirectoryName(origChapterPath)!).Any())
         {
             Directory.Delete(Path.GetDirectoryName(origChapterPath)!);

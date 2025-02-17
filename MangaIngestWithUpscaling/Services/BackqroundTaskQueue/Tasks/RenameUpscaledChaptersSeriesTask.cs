@@ -1,6 +1,7 @@
 ﻿
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Helpers;
+using MangaIngestWithUpscaling.Services.FileSystem;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using Microsoft.EntityFrameworkCore;
 
@@ -32,6 +33,7 @@ public class RenameUpscaledChaptersSeriesTask : BaseTask
     public override async Task ProcessAsync(IServiceProvider services, CancellationToken cancellationToken)
     {
         var logger = services.GetRequiredService<ILogger<RenameUpscaledChaptersSeriesTask>>();
+        var fileSystem = services.GetRequiredService<IFileSystem>();
 
         var dbContext = services.GetRequiredService<ApplicationDbContext>();
         var chapter = await dbContext.Chapters
@@ -72,8 +74,8 @@ public class RenameUpscaledChaptersSeriesTask : BaseTask
             logger.LogWarning("Chapter file already exists: {ChapterPath}", newChapterPath);
             return;
         }
-        Directory.CreateDirectory(Path.GetDirectoryName(newChapterPath)!);
-        File.Move(origChapterPath, newChapterPath);
+        fileSystem.CreateDirectory(Path.GetDirectoryName(newChapterPath)!);
+        fileSystem.Move(origChapterPath, newChapterPath);
         FileSystemHelpers.DeleteIfEmpty(Path.GetDirectoryName(origChapterPath)!, logger);
         chapter.RelativePath = newRelativePath;
         dbContext.Update(chapter);
