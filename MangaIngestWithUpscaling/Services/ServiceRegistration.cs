@@ -3,10 +3,12 @@ using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.CbzConversion;
 using MangaIngestWithUpscaling.Services.ChapterManagement;
 using MangaIngestWithUpscaling.Services.ChapterRecognition;
+using MangaIngestWithUpscaling.Services.FileSystem;
 using MangaIngestWithUpscaling.Services.LibraryFiltering;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Services.Python;
 using MangaIngestWithUpscaling.Services.Upscaling;
+using System.Runtime.InteropServices;
 
 namespace MangaIngestWithUpscaling.Services;
 
@@ -15,6 +17,16 @@ public static class ServiceRegistration
     public static void RegisterAppServices(this IServiceCollection services)
     {
         services.AutoRegister();
+
+        // register unix file system if running on unix, otherwise use generic file system
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) || RuntimeInformation.IsOSPlatform(OSPlatform.FreeBSD))
+        {
+            services.AddScoped<IFileSystem, UnixFileSystem>();
+        }
+        else
+        {
+            services.AddScoped<IFileSystem, GenericFileSystem>();
+        }
 
         services.AddSingleton<TaskQueue>();
         services.AddSingleton<ITaskQueue>(sp => sp.GetRequiredService<TaskQueue>());
