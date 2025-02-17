@@ -40,6 +40,8 @@ jobs:
           context: .
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }},${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           platforms: linux/amd64
 
 #      - name: Make Docker image public on GHCR
