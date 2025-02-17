@@ -21,11 +21,11 @@ public static class ServiceRegistration
         // register unix file system if running on unix, otherwise use generic file system
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) || RuntimeInformation.IsOSPlatform(OSPlatform.FreeBSD))
         {
-            services.AddScoped<IFileSystem, UnixFileSystem>();
+            services.AddSingleton<IFileSystem, UnixFileSystem>();
         }
         else
         {
-            services.AddScoped<IFileSystem, GenericFileSystem>();
+            services.AddSingleton<IFileSystem, GenericFileSystem>();
         }
 
         services.AddSingleton<TaskQueue>();

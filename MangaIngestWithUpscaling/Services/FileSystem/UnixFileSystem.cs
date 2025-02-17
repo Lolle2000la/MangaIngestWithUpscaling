@@ -1,10 +1,11 @@
 ﻿using MangaIngestWithUpscaling.Configuration;
+using Microsoft.Extensions.Options;
 using Mono.Unix.Native;
 
 namespace MangaIngestWithUpscaling.Services.FileSystem;
 
 public class UnixFileSystem(
-    UnixPermissionsConfig permissionsConfig,
+    IOptions<UnixPermissionsConfig> permissionsConfig,
     ILogger<UnixFileSystem> logger) : IFileSystem
 {
     public void ApplyPermissions(string path)
@@ -15,10 +16,10 @@ public class UnixFileSystem(
         // Retrieve parent's permissions
         if (Syscall.stat(parentDirectory, out Stat parentStat) != 0)
         {
-            throw new Exception($"Unable to get status for {parentDirectory}");
+            logger.LogError("Unable to get status for {parentDirectory}.", parentDirectory);
         }
 
-        UnixPermissionsConfig unixPermissionsConfig = permissionsConfig with { };
+        UnixPermissionsConfig unixPermissionsConfig = permissionsConfig.Value with { };
 
         if (!unixPermissionsConfig.UserId.HasValue || !unixPermissionsConfig.GroupId.HasValue)
         {
@@ -43,7 +44,7 @@ public class UnixFileSystem(
         // Change the owner and group of the file
         if (Syscall.chown(path, unixPermissionsConfig.UserId.Value, unixPermissionsConfig.GroupId.Value) != 0)
         {
-            throw new Exception($"Unable to change ownership of {path}");
+            logger.LogError("Unable to change ownership of {path}.", path);
         }
     }
 
@@ -56,16 +57,16 @@ public class UnixFileSystem(
         // Retrieve parent's permissions
         if (Syscall.stat(parentDirectory, out Stat parentStat) != 0)
         {
-            throw new Exception($"Unable to get status for {parentDirectory}");
+            logger.LogWarning("Unable to get status for {parentDirectory}.", parentDirectory);
         }
 
         // Create the new directory with parent's permission mode
         if (Syscall.mkdir(path, parentStat.st_mode) != 0)
         {
-            throw new Exception($"Unable to create directory {path}");
+            logger.LogError("Unable to create directory {path}.", path);
         }
 
-        UnixPermissionsConfig usedPermissions = permissionsConfig with { };
+        UnixPermissionsConfig usedPermissions = permissionsConfig.Value with { };
 
         if (!usedPermissions.UserId.HasValue || !usedPermissions.GroupId.HasValue)
         {
@@ -92,7 +93,7 @@ public class UnixFileSystem(
         {
             if (Syscall.chown(dir, usedPermissions.UserId!.Value, usedPermissions.GroupId!.Value) != 0)
             {
-                throw new Exception($"Unable to change ownership of {dir}");
+                logger.LogWarning("Unable to change ownership of {dir}.", dir);
             }
         }
     }
@@ -103,12 +104,12 @@ public class UnixFileSystem(
         // Retrieve source file's permissions
         if (Syscall.stat(sourceFileName, out Stat sourceStat) != 0)
         {
-            throw new Exception($"Unable to get status for {sourceFileName}");
+            logger.LogWarning("Unable to get status for {sourceFileName}.", sourceFileName);
         }
 
         File.Move(sourceFileName, destFileName);
 
-        UnixPermissionsConfig usedPermissions = permissionsConfig with { };
+        UnixPermissionsConfig usedPermissions = permissionsConfig.Value with { };
 
         // Apply configured permissions to the new file if set
         if (!usedPermissions.UserId.HasValue || !usedPermissions.GroupId.HasValue)
@@ -134,7 +135,7 @@ public class UnixFileSystem(
         // Change the owner and group of the new file
         if (Syscall.chown(destFileName, usedPermissions.UserId.Value, usedPermissions.GroupId.Value) != 0)
         {
-            throw new Exception($"Unable to change ownership of {destFileName}.");
+            logger.LogWarning("Unable to change ownership of {destFileName}.", destFileName);
         }
     }
 }

@@ -1,5 +1,6 @@
 ﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Services.FileSystem;
 using MangaIngestWithUpscaling.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
 
@@ -53,7 +54,7 @@ public class UpscaleTask : BaseTask
             throw new InvalidOperationException("Upscaled library path not set.");
         }
 
-        string upscaleBasePath = Path.Combine(chapter.Manga.Library.UpscaledLibraryPath, chapter.RelativePath);
+        string upscaleTargetPath = Path.Combine(chapter.Manga.Library.UpscaledLibraryPath, chapter.RelativePath);
         //if (!Directory.Exists(Path.GetDirectoryName(upscaleBasePath)))
         //{
         //    Directory.CreateDirectory(upscaleBasePath);
@@ -62,7 +63,7 @@ public class UpscaleTask : BaseTask
         string currentStoragePath = Path.Combine(chapter.Manga.Library.NotUpscaledLibraryPath, chapter.RelativePath);
 
         var upscaler = services.GetRequiredService<IUpscaler>();
-        await upscaler.Upscale(currentStoragePath, upscaleBasePath, upscalerProfile, cancellationToken);
+        await upscaler.Upscale(currentStoragePath, upscaleTargetPath, upscalerProfile, cancellationToken);
 
         chapter.IsUpscaled = true;
         chapter.UpscalerProfile = upscalerProfile;

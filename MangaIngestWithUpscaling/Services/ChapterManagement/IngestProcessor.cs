@@ -6,6 +6,7 @@ using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.CbzConversion;
 using MangaIngestWithUpscaling.Services.ChapterRecognition;
+using MangaIngestWithUpscaling.Services.FileSystem;
 using MangaIngestWithUpscaling.Services.LibraryFiltering;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Services.Upscaling;
@@ -20,7 +21,8 @@ public class IngestProcessor(ApplicationDbContext dbContext,
     ICbzConverter cbzConverter,
     ILogger<IngestProcessor> logger,
     ITaskQueue taskQueue,
-    IMetadataHandlingService metadataHandling
+    IMetadataHandlingService metadataHandling,
+    IFileSystem fileSystem
     ) : IIngestProcessor
 {
     public async Task ProcessAsync(Library library, CancellationToken cancellationToken)
@@ -76,7 +78,7 @@ public class IngestProcessor(ApplicationDbContext dbContext,
                          chapterCbz.FileName, targetPath);
                     continue;
                 }
-                Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+                fileSystem.CreateDirectory(Path.GetDirectoryName(targetPath)!);
                 string relativePath = Path.GetRelativePath(library.NotUpscaledLibraryPath, targetPath);
                 if (await dbContext.Chapters.AnyAsync(c => c.RelativePath == relativePath && c.Manga.Id == seriesEntity.Id))
                 {
@@ -90,7 +92,7 @@ public class IngestProcessor(ApplicationDbContext dbContext,
                     continue;
                 }
 
-                File.Move(Path.Combine(library.IngestPath, chapter.RelativePath), targetPath);
+                fileSystem.Move(Path.Combine(library.IngestPath, chapter.RelativePath), targetPath);
                 var chapterEntity = new Chapter
                 {
                     FileName = chapterCbz.FileName,
