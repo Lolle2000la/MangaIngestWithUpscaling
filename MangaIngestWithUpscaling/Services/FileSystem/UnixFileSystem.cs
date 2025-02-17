@@ -52,7 +52,22 @@ public class UnixFileSystem(
     public void CreateDirectory(string path)
     {
         path = Path.GetFullPath(path);
-        string? parentDirectory = Path.GetDirectoryName(path) ?? throw new InvalidOperationException($"Unable to get parent directory for {path}");
+        var pathSegments = path.Split(Path.DirectorySeparatorChar);
+        var dirsInPath = Enumerable.Range(1, pathSegments.Length)
+            .Select(i => Path.Combine(pathSegments.Take(i).ToArray()));
+
+        string parentDirectory = Path.GetDirectoryName(path)!;
+
+        foreach (var dir in dirsInPath)
+        {
+            if (Directory.Exists(dir))
+            {
+                parentDirectory = dir;
+                continue;
+            }
+
+            break;
+        }
 
         // Retrieve parent's permissions
         if (Syscall.stat(parentDirectory, out Stat parentStat) != 0)
@@ -88,8 +103,12 @@ public class UnixFileSystem(
             }
         }
 
+        var newDirsInPath = Path.GetRelativePath(parentDirectory, path).Split(Path.DirectorySeparatorChar);
+        var newSubdirs = Enumerable.Range(1, newDirsInPath.Length)
+            .Select(i => Path.Combine(new[] { parentDirectory }.Concat(newDirsInPath.Take(i).ToArray()).ToArray()));
+
         // Change the owner and group of the new directory
-        foreach (var dir in Path.GetRelativePath(parentDirectory, path).Split(Path.DirectorySeparatorChar))
+        foreach (var dir in newSubdirs)
         {
             if (Syscall.chown(dir, usedPermissions.UserId!.Value, usedPermissions.GroupId!.Value) != 0)
             {
