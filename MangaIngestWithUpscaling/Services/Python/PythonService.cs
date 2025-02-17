@@ -175,7 +175,7 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
                 // Check timeout every second
                 if (DateTime.UtcNow - lastActivity > _timeout)
                 {
-                    process.Kill();
+                    process.Kill(true);
                     throw new TimeoutException(
                         $"Process timed out after {_timeout.TotalSeconds} seconds of inactivity.\n" +
                         $"Partial error output:\n{errorBuilder}\n\nPartial standard output{outputBuilder}");
@@ -201,12 +201,12 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
         }
         catch (Exception)
         {
-            process.Kill();
+            process.Kill(true);
             throw;
         }
         finally
         {
-            process.Kill();
+            process.Kill(true);
         }
     }
 
