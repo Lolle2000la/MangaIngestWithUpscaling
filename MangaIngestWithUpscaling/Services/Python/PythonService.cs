@@ -206,8 +206,7 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
         }
         finally
         {
-            if (!process.HasExited)
-                process.Kill();
+            process.Kill();
         }
     }
 
