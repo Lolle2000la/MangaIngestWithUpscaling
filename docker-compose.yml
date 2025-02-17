@@ -4,3 +4,17 @@ services:
     build:
       context: .
       dockerfile: MangaIngestWithUpscaling/Dockerfile
+    ports:
+      - 8080:8080
+      - 8081:8081 
+    volumes:
+      - ./test_data:/data
+      - ./test_data/models:/models
+      - ./test_data/pyenv:/app/pyenv
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
