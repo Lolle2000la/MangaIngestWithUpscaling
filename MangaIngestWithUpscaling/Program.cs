@@ -96,7 +96,8 @@ builder.Services.AddIdentityCore<ApplicationUser>(options =>
     .AddDefaultTokenProviders();
 
 builder.Services.AddDataProtection()
-    .PersistKeysToDbContext<ApplicationDbContext>();
+    .PersistKeysToDbContext<ApplicationDbContext>()
+    .SetApplicationName('manga-ingest-with-upscaling');
 
 builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSender>();
 
