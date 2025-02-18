@@ -8,7 +8,7 @@ MangaIngestWithUpscaling is a **Blazor-based web application** designed to **ing
 
 - **Manga ingestion**: Ingest Mangas into a library structure useful for [Kavita](https://www.kavitareader.com/) and [Komga](https://komga.org/).
   - Keep track of mangas known under many different titles. This software will not just put them into the same folder, but also change the ComicInfo.xml file to reflect the new title.
-  - Change the title of a manga. This may sound simple, but going back and changing the ComicInfo.xml file is quite a hassle.
+  - Change the title of a manga. This may sound simple, but going back and changing the ComicInfo.xml file of a lot of chapters is quite a hassle.
 - **Image upscaling**: Enhance image resolution with [MangaJaNai](https://github.com/the-database/mangajanai) upscaling models. 
 
 ## Usage
