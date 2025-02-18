@@ -112,7 +112,7 @@ Alternatively, you can use environment variables to override the configuration v
 - **Backend:** ASP.NET Core
 - **Database:** SQLite
 - **Logging:** Serilog
-- **Reactive Programming:** ReactiveUI
+- **Reactive Programming:** ReactiveUI (a tiny bit)
 
 ## Contributing
 
@@ -120,12 +120,4 @@ Alternatively, you can use environment variables to override the configuration v
 2. Create a new feature branch.
 3. Commit changes and push to the branch.
 4. Open a pull request.
-
-## License
-
-This project is licensed under the MIT License.
-
-## Contact
-
-For inquiries, please open an issue or reach out via [your contact info].
 
