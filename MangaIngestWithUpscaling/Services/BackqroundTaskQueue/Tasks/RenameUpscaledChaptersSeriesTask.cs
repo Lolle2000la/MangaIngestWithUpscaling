@@ -42,6 +42,11 @@ public class RenameUpscaledChaptersSeriesTask : BaseTask
             .FirstOrDefaultAsync(
             c => c.Id == ChapterId, cancellationToken: cancellationToken);
 
+        if (!chapter.IsUpscaled)
+        {
+            return;
+        }
+
         if (chapter == null)
         {
             throw new InvalidOperationException("Chapter not found.");
