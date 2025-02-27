@@ -6,6 +6,7 @@ using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.FileSystem;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
+using Microsoft.EntityFrameworkCore;
 using System.Xml;
 
 namespace MangaIngestWithUpscaling.Services.MetadataHandling;
@@ -34,6 +35,12 @@ public class MangaMetadataChanger(
 
         List<RenameUpscaledChaptersSeriesTask> renameTasks = [];
 
+        var upscaleTasks = await dbContext.PersistedTasks
+            .ToAsyncEnumerable()
+            .Where(t => t.Data is UpscaleTask)
+            .Select(t => (UpscaleTask)t.Data)
+            .ToListAsync();
+
         foreach (var chapter in manga.Chapters)
         {
             try
@@ -48,7 +55,7 @@ public class MangaMetadataChanger(
                 UpdateChapterTitle(newTitle, origChapterPath);
                 RelocateChapterToNewTitleDirectory(chapter, origChapterPath, manga.Library.NotUpscaledLibraryPath, manga.PrimaryTitle);
 
-                if (chapter.IsUpscaled)
+                if (chapter.IsUpscaled || upscaleTasks.Any(t => t.ChapterId == chapter.Id))
                 {
                     if (manga.Library.UpscaledLibraryPath == null)
                     {
