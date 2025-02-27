@@ -61,7 +61,7 @@
             DbContext.PersistedTasks.Remove(task);
         }
         await DbContext.SaveChangesAsync();
-        upscaleTasks = upscaleTasks.Where(x => x.Status != PersistedTaskStatus.Completed && x.Status != PersistedTaskStatus.Failed).ToList();
+        upscaleTasks = upscaleTasks.Where(x => x.Status != PersistedTaskStatus.Completed).ToList();
     }
 
     private async Task OnRetryFailed(PersistedTask task)
