@@ -25,6 +25,7 @@ public class UpscaleTask : BaseTask
 
     public override async Task ProcessAsync(IServiceProvider services, CancellationToken cancellationToken)
     {
+        var logger = services.GetRequiredService<ILogger<UpscaleTask>>();
         var dbContext = services.GetRequiredService<ApplicationDbContext>();
         var chapter = await dbContext.Chapters
             .Include(c => c.Manga)
@@ -46,7 +47,8 @@ public class UpscaleTask : BaseTask
 
         if (chapter.IsUpscaled && chapter.UpscalerProfile?.Id == upscalerProfile.Id)
         {
-            throw new InvalidOperationException("Chapter is already upscaled.");
+            logger.LogInformation($"Chapter {chapter.FileName} is already upscaled with {upscalerProfile.Name}");
+            return;
         }
 
         if (chapter.Manga.Library.UpscaledLibraryPath == null)
