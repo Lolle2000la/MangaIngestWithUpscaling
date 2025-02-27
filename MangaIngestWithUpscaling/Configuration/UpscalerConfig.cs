@@ -18,4 +18,6 @@ public record UpscalerConfig
         "MangaIngestWithUpscaling",
         "Python-Env"
         );
+
+    public TimeSpan UpscaleTimeout { get; set; } = TimeSpan.FromMinutes(1);
 }

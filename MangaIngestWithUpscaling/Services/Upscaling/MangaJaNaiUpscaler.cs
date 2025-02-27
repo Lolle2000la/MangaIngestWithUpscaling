@@ -103,7 +103,7 @@ public class MangaJaNaiUpscaler(IPythonService pythonService,
         string arguments = $"--settings \"{configPath}\"";
         try
         {
-            var output = await pythonService.RunPythonScript(RunScriptPath, arguments, cancellationToken, TimeSpan.FromMinutes(1));
+            var output = await pythonService.RunPythonScript(RunScriptPath, arguments, cancellationToken, sharedConfig.Value.UpscaleTimeout);
             fileSystem.ApplyPermissions(outputPath);
 
             logger.LogDebug("Upscaling Output {inputPath}: {output}", inputPath, output);
