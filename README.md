@@ -19,7 +19,7 @@ MangaIngestWithUpscaling is a **Blazor-based web application** designed to **ing
 
 ## Installation
 
-The preferred way to run the application is through Docker. Below is an example docker-compose file to get you started.
+The preferred way to run the application is through Docker. Below is an example docker-compose file to get you started with CUDA. See below for ROCm (AMD) support.
 
 ```yaml
 version: '3.9'
@@ -50,6 +50,39 @@ services:
               count: 1
               capabilities: [gpu]
 ```
+
+If you run a ROCm-compatible AMD GPU, you can use the following docker-compose file:
+
+```yaml
+version: '3.9'
+
+services:
+  mangaingestwithupscaling:
+    image: ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest-rocm
+    restart: unless-stopped
+    environment:
+      TZ: #your timezone here
+      Ingest_Upscaler__SelectedDeviceIndex: 0 # if you have multiple GPUs, you can select which one to use
+      Ingest_Upscaler__UseFp16: true # if you want to use fp16 instead of fp32, preferred if you have a GPU that supports it
+      Ingest_Upscaler__UseCPU: false # if you want to use the CPU instead of the GPU
+    volumes:
+      - /path/to/store/appdata:/data # for storing the database and logs
+      - /path/to/store/models:/models # for storing the upscaling models. 
+      # ... other folders you want to be able to access from the container
+      - /path/to/ingest:/ingest
+      - /path/to/target:/target
+    ports:
+      - 8080:8080 # the web interface will be available on this port
+    # The following lines are necessary to run the container with a ROCm-compatible AMD GPU.
+    # See https://rocm.docs.amd.com/projects/install-on-linux/en/latest/how-to/docker.html for more information.
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    security_opt:
+      - seccomp:unconfined
+```
+
+I do not have an AMD GPU, so I cannot test this. If you have any issues, please open an issue.
 
 ## Building Prerequisites
 
