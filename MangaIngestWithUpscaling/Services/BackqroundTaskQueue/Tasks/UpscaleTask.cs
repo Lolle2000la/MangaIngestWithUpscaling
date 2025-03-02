@@ -69,7 +69,7 @@ public class UpscaleTask : BaseTask
         {
         await upscaler.Upscale(currentStoragePath, upscaleTargetPath, upscalerProfile, cancellationToken);
         }
-        catch (OperationCanceledException)
+        catch (Exception)
         {
             if (File.Exists(upscaleTargetPath))
             {
