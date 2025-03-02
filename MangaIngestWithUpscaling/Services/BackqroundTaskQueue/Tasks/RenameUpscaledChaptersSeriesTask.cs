@@ -63,28 +63,9 @@ public class RenameUpscaledChaptersSeriesTask : BaseTask
             throw new InvalidOperationException("Chapter file not found.");
         }
 
-        var metadataHandling = services.GetRequiredService<IMetadataHandlingService>();
+        var metadataChange = services.GetRequiredService<IMangaMetadataChanger>();
 
-        var existingMetadata = metadataHandling.GetSeriesAndTitleFromComicInfo(origChapterPath);
-        metadataHandling.WriteComicInfo(origChapterPath, existingMetadata with { Series = NewTitle });
-
-        // move chapter to the correct directory with the new title
-        var newChapterPath = Path.Combine(
-            chapter.Manga.Library.UpscaledLibraryPath, 
-            PathEscaper.EscapeFileName(NewTitle), 
-            PathEscaper.EscapeFileName(chapter.FileName));
-        var newRelativePath = Path.GetRelativePath(chapter.Manga.Library.UpscaledLibraryPath, newChapterPath);
-        if (File.Exists(newChapterPath))
-        {
-            logger.LogWarning("Chapter file already exists: {ChapterPath}", newChapterPath);
-            return;
-        }
-        fileSystem.CreateDirectory(Path.GetDirectoryName(newChapterPath)!);
-        fileSystem.Move(origChapterPath, newChapterPath);
-        FileSystemHelpers.DeleteIfEmpty(Path.GetDirectoryName(origChapterPath)!, logger);
-        chapter.RelativePath = newRelativePath;
-        dbContext.Update(chapter);
-        await dbContext.SaveChangesAsync(cancellationToken);
+        metadataChange.ApplyUpscaledChapterTitle(chapter, NewTitle, origChapterPath);
     }
 
     public override string TaskFriendlyName => $"Changing {ChapterFileName} title attribute to \"{NewTitle}\"";
