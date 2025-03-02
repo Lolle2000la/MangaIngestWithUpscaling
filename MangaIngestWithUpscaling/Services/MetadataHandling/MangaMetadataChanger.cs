@@ -7,6 +7,7 @@ using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.FileSystem;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Identity.Client;
 using System.Xml;
 
 namespace MangaIngestWithUpscaling.Services.MetadataHandling;
@@ -24,6 +25,16 @@ public class MangaMetadataChanger(
         if (!File.Exists(origChapterPath))
         {
             throw new InvalidOperationException("Chapter file not found.");
+        }
+
+        if (chapter.Manga == null || chapter.Manga.Library == null)
+        {
+            throw new ArgumentNullException("Chapter manga or library not found. Please ensure you have loaded it with the chapter.");
+        }
+
+        if (chapter.Manga.Library.UpscaledLibraryPath == null)
+        {
+            throw new InvalidOperationException("Upscaled library path not set.");
         }
 
         UpdateChapterTitle(newTitle, origChapterPath);
