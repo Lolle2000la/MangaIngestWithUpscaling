@@ -1,6 +1,7 @@
 ﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.FileSystem;
+using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
 
@@ -27,6 +28,7 @@ public class UpscaleTask : BaseTask
     {
         var logger = services.GetRequiredService<ILogger<UpscaleTask>>();
         var dbContext = services.GetRequiredService<ApplicationDbContext>();
+        var metadataChanger = services.GetRequiredService<IMangaMetadataChanger>();
         var chapter = await dbContext.Chapters
             .Include(c => c.Manga)
             .ThenInclude(m => m.Library)
@@ -67,7 +69,7 @@ public class UpscaleTask : BaseTask
         var upscaler = services.GetRequiredService<IUpscaler>();
         try
         {
-        await upscaler.Upscale(currentStoragePath, upscaleTargetPath, upscalerProfile, cancellationToken);
+            await upscaler.Upscale(currentStoragePath, upscaleTargetPath, upscalerProfile, cancellationToken);
         }
         catch (Exception)
         {
@@ -78,11 +80,23 @@ public class UpscaleTask : BaseTask
             throw;
         }
 
+        // save the manga title to see if it has changed in the meantime
+        string oldMangaTitle = chapter.Manga.PrimaryTitle;
+
+        // reload the chapter and manga from db to see if the title has changed in the meantime
+        await dbContext.Entry(chapter).ReloadAsync();
+        await dbContext.Entry(chapter.Manga).ReloadAsync();
 
         chapter.IsUpscaled = true;
         chapter.UpscalerProfile = upscalerProfile;
         chapter.UpscalerProfileId = upscalerProfile.Id;
-        await dbContext.SaveChangesAsync(cancellationToken);
+        await dbContext.SaveChangesAsync();
+
+        // make sure that the new chapter is applied
+        if (oldMangaTitle != chapter.Manga.PrimaryTitle)
+        {
+            metadataChanger.ApplyUpscaledChapterTitle(chapter, chapter.Manga.PrimaryTitle, upscaleTargetPath);
+        }
     }
 
     public override int RetryFor { get; set; } = 1;
