@@ -12,18 +12,19 @@ using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using System.Text.RegularExpressions;
 
 namespace MangaIngestWithUpscaling.Services.ChapterManagement;
 
 [RegisterScoped]
-public class IngestProcessor(ApplicationDbContext dbContext,
-    IChapterInIngestRecognitionService chapterRecognitionService,
-    ICbzConverter cbzConverter,
-    ILogger<IngestProcessor> logger,
-    ITaskQueue taskQueue,
-    IMetadataHandlingService metadataHandling,
-    IFileSystem fileSystem
-    ) : IIngestProcessor
+public partial class IngestProcessor(ApplicationDbContext dbContext,
+                IChapterInIngestRecognitionService chapterRecognitionService,
+                ICbzConverter cbzConverter,
+                ILogger<IngestProcessor> logger,
+                ITaskQueue taskQueue,
+                IMetadataHandlingService metadataHandling,
+                IFileSystem fileSystem
+                ) : IIngestProcessor
 {
     public async Task ProcessAsync(Library library, CancellationToken cancellationToken)
     {
@@ -39,21 +40,39 @@ public class IngestProcessor(ApplicationDbContext dbContext,
         List<FoundChapter> chapterRecognitionResult = chapterRecognitionService.FindAllChaptersAt(
             library.IngestPath, library.FilterRules);
 
-        // group chapters by series
+        // group chapters by series, ensuring chapters in "_upscaled" folder come after others
         var chaptersBySeries = chapterRecognitionResult
             .GroupBy(c => c.Metadata.Series)
-            .ToDictionary(g => g.Key, g => g.ToList());
+            .ToDictionary(g => g.Key,
+                g => g.OrderBy(ch => IsUpscaledChapter().IsMatch(ch.RelativePath)).ToList());
 
-        List<(Chapter, UpscalerProfile)> chaptersToUpscale = [];
+        List<(Chapter, UpscalerProfile)> chaptersToUpscale = new();
 
         foreach (var (series, chapters) in chaptersBySeries)
         {
-            Manga? seriesEntity = await GetMangaSeriesEntity(library, series, cancellationToken);
+            Manga seriesEntity = await GetMangaSeriesEntity(library, series, cancellationToken);
 
             // Move chapters to the target path in file system as specified by the libraries NotUpscaledLibraryPath property.
             // Then create a Chapter entity for each chapter and add it to the series.
             foreach (var chapter in chapters)
             {
+                // if this is an already upscaled chapter, go a different route
+                if (IsUpscaledChapter().IsMatch(chapter.RelativePath))
+                {
+                    if (!chapter.RelativePath.EndsWith(".cbz"))
+                    {
+                        logger.LogError("Upscaled chapter {chapter} is not a cbz file. At this moment only cbz-files are supported for ingest of already existing files.", chapter.RelativePath);
+                        continue;
+                    }
+
+                    var foundMatch = IngestUpscaledChapterIfMatchFound(chapter, seriesEntity, library);
+                    if (foundMatch != null)
+                    {
+                        chaptersToUpscale.RemoveAt(chaptersToUpscale.FindIndex(c => c.Item1.Id == foundMatch.Id));
+                    }
+                    continue;
+                }
+
                 FoundChapter chapterCbz;
                 try
                 {
@@ -154,4 +173,46 @@ public class IngestProcessor(ApplicationDbContext dbContext,
 
         return seriesEntity;
     }
+
+    private Chapter IngestUpscaledChapterIfMatchFound(FoundChapter found, Manga seriesEntity, Library library)
+    {
+        // find the non-upscaled chapter that matches the found upscaled chapter
+        var nonUpscaledChapter = seriesEntity.Chapters.FirstOrDefault(c => c.IsUpscaled == false && c.FileName == found.FileName);
+
+        if (nonUpscaledChapter == null)
+        {
+            logger.LogWarning("Upscaled chapter {chapter} does not have a matching non-upscaled chapter. Skipping.", found.RelativePath);
+            return null;
+        }
+        if (library.UpscaledLibraryPath == null)
+        {
+            logger.LogWarning("Found matching upscaled chapter, but no path is set for the upscale-folder in library {LibraryName}.\n\n" +
+                "Found: {RelativePath}", library.Name, found.RelativePath);
+        }
+
+        // apply primary title to metadata
+        var cbzPath = Path.Combine(library.IngestPath, found.RelativePath);
+        try
+        {
+            var existingMetadata = metadataHandling.GetSeriesAndTitleFromComicInfo(cbzPath);
+            metadataHandling.WriteComicInfo(cbzPath, existingMetadata with { Series = seriesEntity.PrimaryTitle });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error updating metadata for chapter {chapter}. This suggests a possibly corrupt archive.", found.RelativePath);
+            return null;
+        }
+
+        var upscaleTargetPath = Path.Combine(
+                    library.UpscaledLibraryPath,
+                    PathEscaper.EscapeFileName(seriesEntity.PrimaryTitle!),
+                    PathEscaper.EscapeFileName(nonUpscaledChapter.FileName));
+
+        nonUpscaledChapter.IsUpscaled = true;
+
+        return nonUpscaledChapter;
+    }
+
+    [GeneratedRegex(@"(?:^|[\\/])_upscaled(?=[\\/])")]
+    private static partial Regex IsUpscaledChapter();
 }
