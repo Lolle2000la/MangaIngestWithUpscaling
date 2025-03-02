@@ -65,7 +65,19 @@ public class UpscaleTask : BaseTask
         string currentStoragePath = Path.Combine(chapter.Manga.Library.NotUpscaledLibraryPath, chapter.RelativePath);
 
         var upscaler = services.GetRequiredService<IUpscaler>();
+        try
+        {
         await upscaler.Upscale(currentStoragePath, upscaleTargetPath, upscalerProfile, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            if (File.Exists(upscaleTargetPath))
+            {
+                File.Delete(upscaleTargetPath);
+            }
+            throw;
+        }
+
 
         chapter.IsUpscaled = true;
         chapter.UpscalerProfile = upscalerProfile;
