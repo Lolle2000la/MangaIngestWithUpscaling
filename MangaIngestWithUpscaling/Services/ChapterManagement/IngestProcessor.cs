@@ -198,8 +198,11 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
 
         // find the non-upscaled chapter that matches the found upscaled chapter
         var nonUpscaledChapter = seriesEntity.Chapters.FirstOrDefault(c =>
-                (c.FileName == found.FileName || c.FileName == PathEscaper.EscapeFileName(found.FileName) // try comparing escaped filenames
-                || (!string.IsNullOrEmpty(found.Metadata.ChapterTitle) && OriginalChapterName(c) == found.Metadata.ChapterTitle))); // try comparing the chapter title in the metadata
+                (c.FileName == found.FileName || c.FileName == PathEscaper.EscapeFileName(found.FileName))); // try comparing escaped filenames
+
+        // try comparing the chapter title in the metadata if no match was found by filename
+        nonUpscaledChapter ??= seriesEntity.Chapters.FirstOrDefault(c =>
+                !string.IsNullOrEmpty(found.Metadata.ChapterTitle) && OriginalChapterName(c) == found.Metadata.ChapterTitle);
 
         if (nonUpscaledChapter == null)
         {
