@@ -227,6 +227,7 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
         fileSystem.Move(cbzPath, upscaleTargetPath);
 
         nonUpscaledChapter.IsUpscaled = true;
+        dbContext.Update(nonUpscaledChapter);
 
         return nonUpscaledChapter;
     }
