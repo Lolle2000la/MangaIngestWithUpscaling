@@ -181,7 +181,7 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
     {
         // find the non-upscaled chapter that matches the found upscaled chapter
         var nonUpscaledChapter = seriesEntity.Chapters.FirstOrDefault(c => 
-            c.IsUpscaled == false && c.FileName == found.FileName);
+            c.IsUpscaled == false && (c.FileName == found.FileName || c.FileName == PathEscaper.EscapeFileName(c.FileName)));
 
         if (nonUpscaledChapter == null)
         {
