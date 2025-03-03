@@ -42,6 +42,8 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-amd64,${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:latest-amd64
           # cache-from: type=gha
           # cache-to: type=gha,mode=max
+          provenance: false
+          platforms: linux/amd64
 
   build-and-push-rocm-x86:
     permissions: 
@@ -120,6 +122,8 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-arm64,${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:latest-arm64
           # cache-from: type=gha
           # cache-to: type=gha,mode=max
+          provenance: false
+          platforms: linux/amd64
 
       # Un-comment if you also want a ROCm ARM64 image:
       # - name: Build and push ROCm Docker image (ARM64)
