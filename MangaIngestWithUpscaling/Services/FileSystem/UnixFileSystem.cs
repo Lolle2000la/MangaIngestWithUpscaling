@@ -51,12 +51,11 @@ public class UnixFileSystem(
     /// <inheritdoc/>
     public void CreateDirectory(string path)
     {
+        path = Path.GetFullPath(path);
         if (Directory.Exists(path))
         {
             return;
         }
-
-        path = Path.GetFullPath(path);
         var pathSegments = path.Split(Path.DirectorySeparatorChar);
         var dirsInPath = Enumerable.Range(1, pathSegments.Length)
             .Select(i => Path.Combine(pathSegments.Take(i).ToArray()));
