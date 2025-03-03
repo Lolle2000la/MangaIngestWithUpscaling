@@ -42,16 +42,22 @@
             </MudChip>
         </MudTd>
 
-        <MudTd DataLabel="Message" Style="max-width: 300px;">
-            <MudText >@context.RenderedMessage</MudText>
+        <MudTd DataLabel="Message" Class="log-message">
+            <div class="log-message">
+                <MudTooltip Text="@context.RenderedMessage">
+                    <MudText>@context.RenderedMessage</MudText>
+                </MudTooltip>
+            </div>
         </MudTd>
 
-        <MudTd DataLabel="Exception" Style="max-width: 200px;">
+        <MudTd DataLabel="Exception">
             @if (!string.IsNullOrEmpty(context.Exception))
             {
-                <MudTooltip Text="@context.Exception">
-                    <MudText Class="text-error">@context.Exception</MudText>
-                </MudTooltip>
+                <div class="log-message">
+                    <MudTooltip Text="@context.Exception">
+                        <MudText>@context.Exception</MudText>
+                    </MudTooltip>
+                </div>
             }
         </MudTd>
     </RowTemplate>

@@ -1,0 +1,10 @@
+﻿.log-message {
+    text-overflow: ellipsis;
+}
+
+::deep * {
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-height: 5em;
+}
