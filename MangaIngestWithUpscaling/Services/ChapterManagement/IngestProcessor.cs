@@ -1,4 +1,5 @@
 ﻿using DynamicData;
+using MangaIngestWithUpscaling.Components.FileSystem;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
@@ -179,7 +180,8 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
     private Chapter IngestUpscaledChapterIfMatchFound(FoundChapter found, Manga seriesEntity, Library library)
     {
         // find the non-upscaled chapter that matches the found upscaled chapter
-        var nonUpscaledChapter = seriesEntity.Chapters.FirstOrDefault(c => c.IsUpscaled == false && c.FileName == found.FileName);
+        var nonUpscaledChapter = seriesEntity.Chapters.FirstOrDefault(c => 
+            c.IsUpscaled == false && c.FileName == found.FileName);
 
         if (nonUpscaledChapter == null)
         {
@@ -205,10 +207,15 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
             return null;
         }
 
-        var upscaleTargetPath = Path.Combine(
-                    library.UpscaledLibraryPath,
-                    PathEscaper.EscapeFileName(seriesEntity.PrimaryTitle!),
+        var upscaleTargetFolder = Path.Combine(library.UpscaledLibraryPath!,
+                    PathEscaper.EscapeFileName(seriesEntity.PrimaryTitle!));
+
+        fileSystem.CreateDirectory(upscaleTargetFolder);
+
+        var upscaleTargetPath = Path.Combine(upscaleTargetFolder,
                     PathEscaper.EscapeFileName(nonUpscaledChapter.FileName));
+
+        fileSystem.Move(cbzPath, upscaleTargetPath);
 
         nonUpscaledChapter.IsUpscaled = true;
 
