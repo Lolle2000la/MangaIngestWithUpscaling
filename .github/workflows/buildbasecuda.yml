@@ -1,5 +1,5 @@
 # .github/workflows/docker-build.yml
-name: Build and Push Cuda Base Docker Image
+name: Build and Push Cuda Base Image
 
 on:
   workflow_dispatch: 
