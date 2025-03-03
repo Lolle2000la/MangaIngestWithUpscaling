@@ -177,15 +177,15 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
         return seriesEntity;
     }
 
-    private Chapter IngestUpscaledChapterIfMatchFound(FoundChapter found, Manga seriesEntity, Library library)
+    private Chapter? IngestUpscaledChapterIfMatchFound(FoundChapter found, Manga seriesEntity, Library library)
     {
         // find the non-upscaled chapter that matches the found upscaled chapter
-        var nonUpscaledChapter = seriesEntity.Chapters.FirstOrDefault(c => 
+        var nonUpscaledChapter = seriesEntity.Chapters.FirstOrDefault(c =>
             c.IsUpscaled == false && (c.FileName == found.FileName || c.FileName == PathEscaper.EscapeFileName(c.FileName)));
 
         if (nonUpscaledChapter == null)
         {
-            logger.LogWarning("Upscaled chapter {chapter} does not have a matching non-upscaled chapter. Skipping.", found.RelativePath);
+            logger.LogWarning("Upscaled chapter {FoundFileName} does not have a matching non-upscaled chapter in series {MangaTitle} ({MangaId}). Skipping.", found.FileName, seriesEntity.PrimaryTitle, seriesEntity.Id);
             return null;
         }
         if (library.UpscaledLibraryPath == null)
@@ -214,6 +214,10 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
 
         var upscaleTargetPath = Path.Combine(upscaleTargetFolder,
                     PathEscaper.EscapeFileName(nonUpscaledChapter.FileName));
+
+        // if the file already exists, we don't need to do anything
+        if (File.Exists(upscaleTargetPath))
+            return null;
 
         fileSystem.Move(cbzPath, upscaleTargetPath);
 
