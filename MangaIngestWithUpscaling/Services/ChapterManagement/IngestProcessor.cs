@@ -68,7 +68,9 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
                     var foundMatch = IngestUpscaledChapterIfMatchFound(chapter, seriesEntity, library);
                     if (foundMatch != null)
                     {
-                        chaptersToUpscale.RemoveAt(chaptersToUpscale.FindIndex(c => c.Item1.Id == foundMatch.Id));
+                        var chapterIndex = chaptersToUpscale.FindIndex(c => c.Item1.Id == foundMatch.Id);
+                        if (chapterIndex != -1)
+                            chaptersToUpscale.RemoveAt(chapterIndex);
                     }
                     continue;
                 }
