@@ -13,6 +13,7 @@ jobs:
     env:
       IMAGE_NAME: manga-ingest-with-upscaling
       REGISTRY: ghcr.io
+      OWNER: ${{ github.repository_owner }}
       TAG: ${{ github.event.release.tag_name }}
     steps:
       - name: Checkout code
@@ -50,6 +51,7 @@ jobs:
     env:
       IMAGE_NAME: manga-ingest-with-upscaling
       REGISTRY: ghcr.io
+      OWNER: ${{ github.repository_owner }}
       TAG: ${{ github.event.release.tag_name }}
     steps:
       - name: Checkout code
@@ -89,6 +91,7 @@ jobs:
     env:
       IMAGE_NAME: manga-ingest-with-upscaling
       REGISTRY: ghcr.io
+      OWNER: ${{ github.repository_owner }}
       TAG: ${{ github.event.release.tag_name }}
     steps:
       - name: Checkout code
