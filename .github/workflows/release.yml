@@ -2,7 +2,7 @@ name: Build and Publish Docker Image
 
 on:
   release:
-    types: [published]  # Trigger on release publish
+    types: [published]
 
 jobs:
   build-and-push-x86:
@@ -11,7 +11,7 @@ jobs:
       packages: write 
     runs-on: ubuntu-latest
     env:
-      IMAGE_NAME: manga-ingest-with-upscaling  # Desired image name
+      IMAGE_NAME: manga-ingest-with-upscaling
       REGISTRY: ghcr.io
       TAG: ${{ github.event.release.tag_name }}
     steps:
@@ -33,17 +33,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push Cuda Docker image (AMD64)
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }},${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:latest
+          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-amd64,${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:latest-amd64
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/amd64
 
-      - name: Build and push ROCm Docker image
+      - name: Build and push ROCm Docker image (AMD64)
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -60,7 +59,7 @@ jobs:
       packages: write 
     runs-on: ubuntu-24.04-arm
     env:
-      IMAGE_NAME: manga-ingest-with-upscaling  # Desired image name
+      IMAGE_NAME: manga-ingest-with-upscaling
       REGISTRY: ghcr.io
       TAG: ${{ github.event.release.tag_name }}
     steps:
@@ -82,23 +81,50 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push Cuda Docker image (ARM64)
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }},${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:latest
+          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-arm64,${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:latest-arm64
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/arm64
 
-      # - name: Build and push ROCm Docker image
+      # Un-comment if you also want a ROCm ARM64 image:
+      # - name: Build and push ROCm Docker image (ARM64)
       #   uses: docker/build-push-action@v6
       #   with:
       #     context: .
       #     file: rocm.Dockerfile
       #     push: true
-      #     tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-rocm,${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:latest-rocm
+      #     tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-rocm-arm64,${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:latest-rocm-arm64
       #     cache-from: type=gha
       #     cache-to: type=gha,mode=max
       #     platforms: linux/arm64
+
+  create-manifest:
+    permissions:
+      contents: read
+      packages: write 
+    runs-on: ubuntu-latest
+    needs: [build-and-push-x86, build-and-push-arm64]
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push multi-arch manifest for main image
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}"
+          docker manifest create "$IMAGE:${{ env.TAG }}" \
+            --amend "$IMAGE:${{ env.TAG }}-amd64" \
+            --amend "$IMAGE:${{ env.TAG }}-arm64"
+          docker manifest push "$IMAGE:${{ env.TAG }}"
+
+          docker manifest create "$IMAGE:latest" \
+            --amend "$IMAGE:latest-amd64" \
+            --amend "$IMAGE:latest-arm64"
+          docker manifest push "$IMAGE:latest"
