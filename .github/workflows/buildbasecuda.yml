@@ -90,7 +90,7 @@ jobs:
       contents: read
       packages: write 
     runs-on: ubuntu-latest
-    needs: [build-amd64, build-arm64]
+    needs: [build-amd64, build-arm64, generate-tag]
     steps:
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
