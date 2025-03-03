@@ -5,5 +5,6 @@ public enum PersistedTaskStatus
     Pending,
     Processing,
     Completed,
-    Failed
+    Failed,
+    Canceled
 }

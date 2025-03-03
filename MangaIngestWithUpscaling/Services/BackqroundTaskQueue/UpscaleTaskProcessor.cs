@@ -69,6 +69,21 @@ public class UpscaleTaskProcessor(
             await dbContext.SaveChangesAsync(stoppingToken);
             StatusChanged?.Invoke(task);
         }
+        catch (OperationCanceledException)
+        {
+            logger.LogInformation("Task {TaskId} was canceled", task.Id);
+            task.Status = PersistedTaskStatus.Canceled;
+            dbContext.Update(task);
+            try
+            {
+                await dbContext.SaveChangesAsync();
+                StatusChanged?.Invoke(task);
+            }
+            catch (Exception dbEx)
+            {
+                logger.LogError(dbEx, "Failed to update task {TaskId} status", task.Id);
+            }
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "Upscale task {TaskId} failed", task.Id);
