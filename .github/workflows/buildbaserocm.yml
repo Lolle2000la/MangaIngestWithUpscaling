@@ -7,6 +7,8 @@ on:
     # Trigger only when the Dockerfile is changed
     paths:
       - rocmBase.Dockerfile
+    tags-ignore:
+      - '**'
 
 jobs:
   build:

@@ -6,6 +6,8 @@ on:
   push:
     paths:
       - baseCuda.Dockerfile
+    tags-ignore:
+      - '**'
 
 jobs:
   generate-tag:
