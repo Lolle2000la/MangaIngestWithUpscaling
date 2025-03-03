@@ -219,7 +219,10 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
 
         // if the file already exists, we don't need to do anything
         if (File.Exists(upscaleTargetPath))
+        {
+            logger.LogWarning("Upscaled chapter {FoundFileName} already exists in the target path {TargetPath}. Skipping.", found.FileName, upscaleTargetPath);
             return null;
+        }
 
         fileSystem.Move(cbzPath, upscaleTargetPath);
 
