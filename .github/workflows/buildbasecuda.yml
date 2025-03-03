@@ -105,13 +105,13 @@ jobs:
           IMAGE=ghcr.io/lolle2000la/manga-ingest-with-upscaling-base
 
           echo "Creating manifest for tag: $TAG"
-          docker manifest create $IMAGE:$TAG-cuda \
-            --amend $IMAGE:$TAG-cuda-amd64 \
-            --amend $IMAGE:$TAG-cuda-arm64
-          docker manifest push $IMAGE:$TAG-cuda
+          docker manifest create "$IMAGE:$TAG-cuda" \
+            --amend "$IMAGE:$TAG-cuda-amd64" \
+            --amend "$IMAGE:$TAG-cuda-arm64"
+          docker manifest push "$IMAGE:$TAG-cuda"
 
           echo "Creating manifest for latest tag"
-          docker manifest create $IMAGE:latest-cuda \
-            --amend $IMAGE:$TAG-amd64 \
-            --amend $IMAGE:$TAG-arm64
-          docker manifest push $IMAGE:latest-cuda
+          docker manifest create "$IMAGE:latest-cuda" \
+            --amend "$IMAGE:$TAG-cuda-amd64" \
+            --amend "$IMAGE:$TAG-cuda-arm64"
+          docker manifest push "$IMAGE:latest-cuda"
