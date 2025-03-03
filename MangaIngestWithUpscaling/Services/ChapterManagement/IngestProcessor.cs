@@ -100,7 +100,8 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
                          chapterCbz.FileName, targetPath);
                     continue;
                 }
-                fileSystem.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+                if (!Directory.Exists(Path.GetDirectoryName(targetPath)))
+                    fileSystem.CreateDirectory(Path.GetDirectoryName(targetPath)!);
                 string relativePath = Path.GetRelativePath(library.NotUpscaledLibraryPath, targetPath);
                 if (await dbContext.Chapters.AnyAsync(c => c.RelativePath == relativePath && c.Manga.Id == seriesEntity.Id))
                 {
