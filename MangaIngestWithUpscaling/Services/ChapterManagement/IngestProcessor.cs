@@ -210,7 +210,8 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
         var upscaleTargetFolder = Path.Combine(library.UpscaledLibraryPath!,
                     PathEscaper.EscapeFileName(seriesEntity.PrimaryTitle!));
 
-        fileSystem.CreateDirectory(upscaleTargetFolder);
+        if (!Directory.Exists(upscaleTargetFolder))
+            fileSystem.CreateDirectory(upscaleTargetFolder);
 
         var upscaleTargetPath = Path.Combine(upscaleTargetFolder,
                     PathEscaper.EscapeFileName(nonUpscaledChapter.FileName));
