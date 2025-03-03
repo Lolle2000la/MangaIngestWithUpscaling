@@ -180,10 +180,26 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
 
     private Chapter? IngestUpscaledChapterIfMatchFound(FoundChapter found, Manga seriesEntity, Library library)
     {
+        string? OriginalChapterName(Chapter existing)
+        {
+            try
+            {
+
+                var originalPath = Path.Combine(library.IngestPath, existing.RelativePath);
+                var metadata = metadataHandling.GetSeriesAndTitleFromComicInfo(originalPath);
+                return metadata.ChapterTitle;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error reading metadata for chapter {chapter} ({chapterId}). This suggests a possibly corrupt archive.", existing.RelativePath, existing.Id);
+                return null;
+            }
+        }
+
         // find the non-upscaled chapter that matches the found upscaled chapter
         var nonUpscaledChapter = seriesEntity.Chapters.FirstOrDefault(c =>
-            c.IsUpscaled == false && 
-            (c.FileName == found.FileName || c.FileName == PathEscaper.EscapeFileName(found.FileName)));
+                (c.FileName == found.FileName || c.FileName == PathEscaper.EscapeFileName(found.FileName) // try comparing escaped filenames
+                || (!string.IsNullOrEmpty(found.Metadata.ChapterTitle) && OriginalChapterName(c) == found.Metadata.ChapterTitle))); // try comparing the chapter title in the metadata
 
         if (nonUpscaledChapter == null)
         {
@@ -225,7 +241,15 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
             return null;
         }
 
-        fileSystem.Move(cbzPath, upscaleTargetPath);
+        try
+        {
+            fileSystem.Move(cbzPath, upscaleTargetPath);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error moving upscaled chapter {FoundFileName} to target path {TargetPath}.", found.FileName, upscaleTargetPath);
+            return null;
+        }
 
         nonUpscaledChapter.IsUpscaled = true;
         dbContext.Update(nonUpscaledChapter);
