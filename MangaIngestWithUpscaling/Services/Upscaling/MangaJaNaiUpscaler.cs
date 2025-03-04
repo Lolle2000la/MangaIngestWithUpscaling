@@ -1,5 +1,6 @@
 ﻿using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.FileSystem;
+using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Services.Python;
 using Microsoft.Extensions.Options;
 using System.IO.Compression;
@@ -12,7 +13,8 @@ namespace MangaIngestWithUpscaling.Services.Upscaling;
 public class MangaJaNaiUpscaler(IPythonService pythonService,
     ILogger<MangaJaNaiUpscaler> logger,
     IOptions<UpscalerConfig> sharedConfig,
-    IFileSystem fileSystem) : IUpscaler
+    IFileSystem fileSystem,
+    IMetadataHandlingService metadataHandling) : IUpscaler
 {
     private string RunScriptPath => Path.Combine(
         new FileInfo(Assembly.GetExecutingAssembly().Location).Directory!.FullName,
@@ -84,9 +86,23 @@ public class MangaJaNaiUpscaler(IPythonService pythonService,
 
         var outputFilename = Path.GetFileNameWithoutExtension(outputPath);
 
-        if (outputPath.EndsWith(".cbz"))
+        if (!outputPath.EndsWith(".cbz"))
         {
-            
+            throw new ArgumentException("Output path must be a cbz file", nameof(outputPath));
+        }
+
+        if (File.Exists(outputPath))
+        {
+            if (metadataHandling.PagesEqual(inputPath, outputPath))
+            {
+                logger.LogInformation("The target to upscale is seemingly already upscaled, so we will accept this as is.\n\n" +
+                    "Tried to upscale \"{inputPath}\" with the target location {outputPath}.", inputPath, outputPath);
+                return;
+            }
+            else
+            {
+                File.Delete(outputPath);
+            }
         }
 
         var config = MangaJaNaiUpscalerConfig.FromUpscalerProfile(profile);
