@@ -109,7 +109,7 @@ RowEditCommit="async o => await OnCommitEdit(o)"
     <RowEditingTemplate>
         <MudTd DataLabel="Library">@context.Library.Name</MudTd>
         <MudTd DataLabel="Primary title"><MudTextField @bind-Value="context.PrimaryTitle" Required /></MudTd>
-        <MudTd DataLabel="Chapter count">@context.Chapters.Count()</MudTd>
+        <MudTd DataLabel="Chapter count">@context.Chapters.Count() (@context.Chapters.Count(c => c.IsUpscaled) upscaled)</MudTd>
         <MudTd DataLabel="Should upscale">
             <MudCheckBox T="bool?" TriState="true" @bind-Value="context.ShouldUpscale" />
         </MudTd>
