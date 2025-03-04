@@ -20,6 +20,7 @@ public class MangaMetadataChanger(
     ITaskQueue taskQueue,
     IFileSystem fileSystem) : IMangaMetadataChanger
 {
+    /// <inheritdoc/>
     public void ApplyUpscaledChapterTitle(Chapter chapter, string newTitle, string origChapterPath)
     {
         if (!File.Exists(origChapterPath))
@@ -41,6 +42,7 @@ public class MangaMetadataChanger(
         RelocateChapterToNewTitleDirectory(chapter, origChapterPath, chapter.Manga.Library.UpscaledLibraryPath, newTitle);
     }
 
+    /// <inheritdoc/>
     public async Task ChangeTitle(Manga manga, string newTitle, bool addOldToAlternative = true)
     {
         manga.ChangePrimaryTitle(newTitle, addOldToAlternative);
