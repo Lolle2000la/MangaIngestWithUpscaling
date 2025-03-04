@@ -1,9 +1,6 @@
-﻿using MangaIngestWithUpscaling.Data;
+﻿using System.Threading.Channels;
+using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
-using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
-using System;
-using System.Threading.Channels;
-using ReactiveMarbles.ObservableEvents;
 
 namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 
@@ -13,8 +10,8 @@ public class StandardTaskProcessor(
     ILogger<StandardTaskProcessor> logger) : BackgroundService
 {
     private readonly ChannelReader<PersistedTask> _reader = taskQueue.StandardReader;
-
     private readonly Lock _lock = new();
+    private CancellationToken serviceStoppingToken;
     private CancellationTokenSource? currentStoppingToken;
     private PersistedTask? currentTask;
 
@@ -39,6 +36,7 @@ public class StandardTaskProcessor(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        serviceStoppingToken = stoppingToken;
         while (!stoppingToken.IsCancellationRequested)
         {
             var task = await _reader.ReadAsync(stoppingToken);
@@ -77,7 +75,9 @@ public class StandardTaskProcessor(
         catch (OperationCanceledException)
         {
             logger.LogInformation("Task {TaskId} was canceled", task.Id);
-            task.Status = PersistedTaskStatus.Canceled;
+            // only set to canceled if the cancellation was user requested
+            task.Status = serviceStoppingToken.IsCancellationRequested
+                ? PersistedTaskStatus.Pending : PersistedTaskStatus.Canceled; 
             dbContext.Update(task);
             try
             {
