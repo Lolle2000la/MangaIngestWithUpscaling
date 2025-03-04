@@ -5,7 +5,8 @@ using System.Xml.Linq;
 namespace MangaIngestWithUpscaling.Services.MetadataHandling;
 
 [RegisterScoped]
-public class MetadataHandlingService : IMetadataHandlingService
+public class MetadataHandlingService(
+    ILogger<MetadataHandlingService> logger) : IMetadataHandlingService
 {
     public ExtractedMetadata GetSeriesAndTitleFromComicInfo(string file)
     {
@@ -65,27 +66,44 @@ public class MetadataHandlingService : IMetadataHandlingService
             return false;
         }
 
-        using var archive1 = ZipFile.OpenRead(file1);
-        using var archive2 = ZipFile.OpenRead(file2);
-
-        var files1 = archive1.Entries
-            .Where(e => e.FullName.EndsWithAny("png", "jpg", "jpeg", "avif", "webp", "bmp"))
-            .Select(e => Path.GetFileNameWithoutExtension(e.FullName)) // upscaled images can have different formats
-            .OrderBy(e => e)
-            .ToList();
-
-        var files2 = archive2.Entries
-            .Where(e => e.FullName.EndsWithAny("png", "jpg", "jpeg", "avif", "webp", "bmp"))
-            .Select(e => Path.GetFileNameWithoutExtension(e.FullName))
-            .OrderBy(e => e)
-            .ToList();
-
-        if (files1.Count != files2.Count)
+        try
         {
+            using var archive1 = ZipFile.OpenRead(file1);
+            using var archive2 = ZipFile.OpenRead(file2);
+
+            var files1 = archive1.Entries
+                .Where(e => e.FullName.EndsWithAny("png", "jpg", "jpeg", "avif", "webp", "bmp"))
+                .Select(e => Path.GetFileNameWithoutExtension(e.FullName)) // upscaled images can have different formats
+                .OrderBy(e => e)
+                .ToList();
+
+            var files2 = archive2.Entries
+                .Where(e => e.FullName.EndsWithAny("png", "jpg", "jpeg", "avif", "webp", "bmp"))
+                .Select(e => Path.GetFileNameWithoutExtension(e.FullName))
+                .OrderBy(e => e)
+                .ToList();
+
+            if (files1.Count != files2.Count)
+            {
+                return false;
+            }
+
+            return files1.SequenceEqual(files2);
+        }
+        catch (InvalidDataException ex)
+        {
+            logger.LogError(ex, "The format of one of the following two archives is invalid.\n" +
+                "Tried to compare \"{file1}\" to \"{file2}\"",
+                file1, file2);
             return false;
         }
-
-        return files1.SequenceEqual(files2);
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to compare cbz files.\n\n" +
+                "Tried to compare \"{file1}\" to \"{file2}\"",
+                file1, file2);
+            return false;
+        }
     }
 
     public void WriteComicInfo(string file, ExtractedMetadata metadata)
