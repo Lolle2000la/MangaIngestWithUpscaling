@@ -116,6 +116,10 @@
         {
             foreach (var chapter in manga.Chapters)
             {
+                if (chapter.Upscaled)
+                {
+                    continue;
+                }
                 await TaskQueue.EnqueueAsync(new UpscaleTask(chapter, library.UpscalerProfile));
             }
         }
