@@ -85,12 +85,7 @@ public class MetadataHandlingService : IMetadataHandlingService
             return false;
         }
 
-        if (files1.SequenceEqual(files2))
-        {
-            return true;
-        }
-
-        return false;
+        return files1.SequenceEqual(files2);
     }
 
     public void WriteComicInfo(string file, ExtractedMetadata metadata)
