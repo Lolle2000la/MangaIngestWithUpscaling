@@ -104,10 +104,7 @@ public class MangaMetadataChanger(
         }
         fileSystem.CreateDirectory(Path.GetDirectoryName(newChapterPath)!);
         fileSystem.Move(origChapterPath, newChapterPath);
-        if (!Directory.EnumerateFiles(Path.GetDirectoryName(origChapterPath)!).Any())
-        {
-            Directory.Delete(Path.GetDirectoryName(origChapterPath)!);
-        }
+        FileSystemHelpers.DeleteIfEmpty(Path.GetDirectoryName(origChapterPath)!, logger);
         chapter.RelativePath = newRelativePath;
         dbContext.Update(chapter);
     }

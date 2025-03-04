@@ -1,10 +1,12 @@
 ﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Helpers;
 
 namespace MangaIngestWithUpscaling.Services.ChapterManagement;
 
 [RegisterScoped]
-public class ChapterDeletion(ApplicationDbContext dbContext) : IChapterDeletion
+public class ChapterDeletion(ApplicationDbContext dbContext,
+    ILogger<ChapterDeletion> logger) : IChapterDeletion
 {
     /// <inheritdoc/>
     public void DeleteChapter(Chapter chapter, bool deleteNormal, bool deleteUpscaled)
@@ -14,9 +16,9 @@ public class ChapterDeletion(ApplicationDbContext dbContext) : IChapterDeletion
         {
             File.Delete(normalPath);
             var normalDir = Path.GetDirectoryName(normalPath);
-            if (normalDir != null && Directory.EnumerateFiles(normalDir).Count() == 0)
+            if (normalDir != null)
             {
-                Directory.Delete(normalDir);
+                FileSystemHelpers.DeleteIfEmpty(normalDir, logger);
             }
         }
         if (deleteUpscaled && chapter.IsUpscaled && !string.IsNullOrEmpty(chapter.Manga.Library.UpscaledLibraryPath))
@@ -27,9 +29,9 @@ public class ChapterDeletion(ApplicationDbContext dbContext) : IChapterDeletion
                 File.Delete(upscaledPath);
             }
             var upscaledDir = Path.GetDirectoryName(upscaledPath);
-            if (upscaledDir != null && Directory.EnumerateFiles(upscaledDir).Count() == 0)
+            if (upscaledDir != null)
             {
-                Directory.Delete(upscaledDir);
+                FileSystemHelpers.DeleteIfEmpty(upscaledDir, logger);
             }
         }
 
