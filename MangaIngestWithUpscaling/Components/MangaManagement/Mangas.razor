@@ -89,7 +89,7 @@ RowEditCommit="async o => await OnCommitEdit(o)"
     <RowTemplate>
         <MudTd DataLabel="Library">@context.Library.Name</MudTd>
         <MudTd DataLabel="Primary title">@context.PrimaryTitle</MudTd>
-        <MudTd DataLabel="Chapter count">@context.Chapters.Count()</MudTd>
+        <MudTd DataLabel="Chapter count">@context.Chapters.Count() (@context.Chapters.Count(c => c.IsUpscaled) upscaled)</MudTd>
         <MudTd DataLabel="Should upscale">@(context.ShouldUpscale.HasValue ? context.ShouldUpscale.Value : "Use Library settings")</MudTd>
         <MudTd>
             <a href="mangas/@context.Id" title="Edit this Manga.">
