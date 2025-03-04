@@ -1,11 +1,8 @@
 # See https://aka.ms/customizecontainer to learn how to customize your debug container and how Visual Studio uses this Dockerfile to build your images for faster debugging.
 
 # This stage is used when running from VS in fast mode (Default for Debug configuration)
-FROM mcr.microsoft.com/dotnet/aspnet:9.0-noble AS base
+FROM ghcr.io/lolle2000la/manga-ingest-with-upscaling-base:latest-cuda AS base
 WORKDIR /app
-# Install the required dependencies for the service
-RUN apt-get update && apt-get install -y \
-	python3 python3.12-venv
 # configure models save directory
 ENV Ingest_Upscaler__ModelsDirectory=/models/MangaJaNai
 VOLUME /models
@@ -13,8 +10,6 @@ ENV Ingest_ConnectionStrings__DefaultConnection="Data Source=/data/data.db;Pooli
 ENV Ingest_ConnectionStrings__LoggingConnection="Data Source=/data/logs.db;Pooling=false"
 VOLUME [ "/data" ]
 # Create a volume for the pyenv directory to persist the python environment (only for development, see other Dockerfile for production)
-VOLUME /app/pyenv
-ENV Ingest_Upscaler__PythonEnvironmentDirectory=/app/pyenv/env
 EXPOSE 8080
 EXPOSE 8081
 
