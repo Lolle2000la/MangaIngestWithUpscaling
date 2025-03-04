@@ -17,6 +17,7 @@ public interface IMangaMetadataChanger
     /// If <c>true</c>, this will add the old title to the list of other titles.
     /// This is useful to recognize ingested chapters of the same series with different titles (i.e english and japanese).
     /// </param>
+    /// <exception cref="TitleAlreadyUsedException">Indicates that the title has already been used.</exception>
     /// <returns></returns>
     Task ChangeTitle(Manga manga, string newTitle, bool addOldToAlternative = true);
     /// <summary>
