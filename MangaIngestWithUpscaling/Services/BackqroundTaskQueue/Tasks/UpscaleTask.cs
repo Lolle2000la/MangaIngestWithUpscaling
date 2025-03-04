@@ -16,6 +16,8 @@ public class UpscaleTask : BaseTask
 
     public string FriendlyEntryName { get; set; } = string.Empty;
 
+    public bool UpdateIfProfileNew { get; set; } = false;
+
     public UpscaleTask() { }
     public UpscaleTask(Chapter chapter, UpscalerProfile profile)
     {
@@ -29,6 +31,7 @@ public class UpscaleTask : BaseTask
         var logger = services.GetRequiredService<ILogger<UpscaleTask>>();
         var dbContext = services.GetRequiredService<ApplicationDbContext>();
         var metadataChanger = services.GetRequiredService<IMangaMetadataChanger>();
+        var metadataHandling = services.GetRequiredService<IMetadataHandlingService>();
         var chapter = await dbContext.Chapters
             .Include(c => c.Manga)
             .ThenInclude(m => m.Library)
@@ -46,26 +49,23 @@ public class UpscaleTask : BaseTask
 
         FriendlyEntryName = $"Upscaling {chapter.FileName} with {upscalerProfile.Name}";
 
-
-        if (chapter.IsUpscaled && chapter.UpscalerProfile?.Id == upscalerProfile.Id)
-        {
-            logger.LogInformation("Chapter \"{chapterFileName}\" of {seriesTitle} is already upscaled with {upscalerProfileName}",
-                chapter.FileName, chapter.Manga.PrimaryTitle, upscalerProfile.Name);
-            return;
-        }
-
         if (chapter.Manga.Library.UpscaledLibraryPath == null)
         {
             throw new InvalidOperationException($"Upscaled library path of library {chapter.Manga.Library.Name} ({chapter.Manga.Library.Id}) not set.");
         }
 
         string upscaleTargetPath = Path.Combine(chapter.Manga.Library.UpscaledLibraryPath, chapter.RelativePath);
-        //if (!Directory.Exists(Path.GetDirectoryName(upscaleBasePath)))
-        //{
-        //    Directory.CreateDirectory(upscaleBasePath);
-        //}
-
         string currentStoragePath = Path.Combine(chapter.Manga.Library.NotUpscaledLibraryPath, chapter.RelativePath);
+
+        if (chapter.IsUpscaled && (!UpdateIfProfileNew || chapter.UpscalerProfile?.Id == upscalerProfile.Id))
+        {
+            if (metadataHandling.PagesEqual(currentStoragePath, upscaleTargetPath))
+            {
+                logger.LogInformation("Chapter \"{chapterFileName}\" of {seriesTitle} is already upscaled with {upscalerProfileName}",
+                    chapter.FileName, chapter.Manga.PrimaryTitle, upscalerProfile.Name);
+                return;
+            }
+        }
 
         var upscaler = services.GetRequiredService<IUpscaler>();
         try
