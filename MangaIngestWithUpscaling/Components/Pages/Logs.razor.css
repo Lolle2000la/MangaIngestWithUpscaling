@@ -2,9 +2,14 @@
     text-overflow: ellipsis;
 }
 
-::deep * {
+td * {
     width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     max-height: 5em;
+    white-space: pre-wrap;
+}
+
+td {
+    max-height: 6em;
 }
