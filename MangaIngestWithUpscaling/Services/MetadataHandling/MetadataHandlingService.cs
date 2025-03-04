@@ -1,4 +1,5 @@
-﻿using System.IO.Compression;
+﻿using MangaIngestWithUpscaling.Helpers;
+using System.IO.Compression;
 using System.Xml.Linq;
 
 namespace MangaIngestWithUpscaling.Services.MetadataHandling;
@@ -53,6 +54,43 @@ public class MetadataHandlingService : IMetadataHandlingService
             }
         }
         return new ExtractedMetadata(series, title);
+    }
+
+
+    /// <inheritdoc/>
+    public bool PagesEqual(string file1, string file2)
+    {
+        if (!file1.EndsWith(".cbz") || !file2.EndsWith(".cbz"))
+        {
+            return false;
+        }
+
+        using var archive1 = ZipFile.OpenRead(file1);
+        using var archive2 = ZipFile.OpenRead(file2);
+
+        var files1 = archive1.Entries
+            .Where(e => e.FullName.EndsWithAny("png", "jpg", "jpeg", "avif", "webp", "bmp"))
+            .Select(e => Path.GetFileNameWithoutExtension(e.FullName)) // upscaled images can have different formats
+            .OrderBy(e => e)
+            .ToList();
+
+        var files2 = archive2.Entries
+            .Where(e => e.FullName.EndsWithAny("png", "jpg", "jpeg", "avif", "webp", "bmp"))
+            .Select(e => Path.GetFileNameWithoutExtension(e.FullName))
+            .OrderBy(e => e)
+            .ToList();
+
+        if (files1.Count != files2.Count)
+        {
+            return false;
+        }
+
+        if (files1.SequenceEqual(files2))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     public void WriteComicInfo(string file, ExtractedMetadata metadata)
