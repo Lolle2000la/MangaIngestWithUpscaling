@@ -21,7 +21,7 @@ public class UpscaleTask : BaseTask
     {
         ChapterId = chapter.Id;
         UpscalerProfileId = profile.Id;
-        FriendlyEntryName = $"Upscaling {chapter.FileName} with {profile.Name}";
+        FriendlyEntryName = $"Upscaling {chapter.FileName} of {chapter.Manga.PrimaryTitle} with {profile.Name}";
     }
 
     public override async Task ProcessAsync(IServiceProvider services, CancellationToken cancellationToken)
@@ -49,13 +49,14 @@ public class UpscaleTask : BaseTask
 
         if (chapter.IsUpscaled && chapter.UpscalerProfile?.Id == upscalerProfile.Id)
         {
-            logger.LogInformation($"Chapter {chapter.FileName} is already upscaled with {upscalerProfile.Name}");
+            logger.LogInformation("Chapter \"{chapterFileName}\" of {seriesTitle} is already upscaled with {upscalerProfileName}",
+                chapter.FileName, chapter.Manga.PrimaryTitle, upscalerProfile.Name);
             return;
         }
 
         if (chapter.Manga.Library.UpscaledLibraryPath == null)
         {
-            throw new InvalidOperationException("Upscaled library path not set.");
+            throw new InvalidOperationException($"Upscaled library path of library {chapter.Manga.Library.Name} ({chapter.Manga.Library.Id}) not set.");
         }
 
         string upscaleTargetPath = Path.Combine(chapter.Manga.Library.UpscaledLibraryPath, chapter.RelativePath);
