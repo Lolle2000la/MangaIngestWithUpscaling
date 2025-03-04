@@ -41,7 +41,7 @@ public class UpscaleTask : BaseTask
 
         if (chapter == null || upscalerProfile == null)
         {
-            throw new InvalidOperationException($"Chapter ({chapter.RelativePath}) or upscaler profile ({upscalerProfile.Name}, id: {upscalerProfile.Id}) not found.");
+            throw new InvalidOperationException($"Chapter ({chapter?.RelativePath ?? "Not found"}) or upscaler profile ({upscalerProfile?.Name ?? "Not found"}, id: {upscalerProfile.Id}) not found.");
         }
 
         FriendlyEntryName = $"Upscaling {chapter.FileName} with {upscalerProfile.Name}";
