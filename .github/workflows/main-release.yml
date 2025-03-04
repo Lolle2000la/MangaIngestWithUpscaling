@@ -1,9 +1,6 @@
 name: Build and Publish Development Docker Image
 
 on:
-  push:
-    branches:
-      - main
   workflow_run: 
     workflows: [".NET Build Main"]
     branches: 
