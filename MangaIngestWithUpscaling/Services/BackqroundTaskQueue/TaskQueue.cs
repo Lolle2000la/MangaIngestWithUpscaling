@@ -164,6 +164,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         dbContext.PersistedTasks.Remove(task);
+        dbContext.Update(task);
         await dbContext.SaveChangesAsync();
 
         var (tasks, lockObj) = task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask
@@ -184,6 +185,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         task.Status = PersistedTaskStatus.Pending;
+        dbContext.Update(task);
         await dbContext.SaveChangesAsync();
 
         var (tasks, lockObj) = task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask
