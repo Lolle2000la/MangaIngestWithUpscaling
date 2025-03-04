@@ -31,7 +31,7 @@
                                Variant="Variant.Text"
                                OnClick="_ => OnRunNow.InvokeAsync(context)" />
             }
-            else if (context.Status == PersistedTaskStatus.Failed)
+            else if (context.Status is PersistedTaskStatus.Failed or PersistedTaskStatus.Canceled)
             {
                 <MudIconButton Icon="@Icons.Material.Filled.Refresh"
                                Variant="Variant.Text"
