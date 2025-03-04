@@ -136,7 +136,7 @@ jobs:
         with:
           context: .
           push: true
-          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-arm64,${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:latest-arm64
+          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-arm64,${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:latest-dev-arm64
           # cache-from: type=gha
           # cache-to: type=gha,mode=max
 
@@ -175,5 +175,5 @@ jobs:
         run: |
           IMAGE="${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}"
           docker buildx imagetools create -t "$IMAGE:${{ env.TAG }}" -t "$IMAGE:latest-dev" \
-            "$IMAGE:${{ env.TAG }}-dev-amd64" \
-            "$IMAGE:${{ env.TAG }}-dev-arm64"
+            "$IMAGE:${{ env.TAG }}-amd64" \
+            "$IMAGE:${{ env.TAG }}-arm64"
