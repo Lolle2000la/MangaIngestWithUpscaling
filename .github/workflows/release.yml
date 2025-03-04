@@ -158,4 +158,3 @@ jobs:
           docker buildx imagetools create -t "$IMAGE:${{ env.TAG }}" -t "$IMAGE:latest" \
             "$IMAGE:${{ env.TAG }}-amd64" \
             "$IMAGE:${{ env.TAG }}-arm64"
-          docker push "$IMAGE:${{ env.TAG }}"
