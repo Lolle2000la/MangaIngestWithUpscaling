@@ -12,6 +12,7 @@ namespace MangaIngestWithUpscaling.Services.MangaManagement;
 public class MangaMerger(
     ApplicationDbContext dbContext,
     IMetadataHandlingService metadataHandling,
+    IMangaMetadataChanger metadataChanger,
     ILogger<MangaMerger> logger,
     ITaskQueue taskQueue,
     IFileSystem fileSystem) : IMangaMerger
@@ -42,7 +43,19 @@ public class MangaMerger(
                         chapter.FileName, manga.LibraryId, manga.Id);
                     continue;
                 }
-                var existingMetadata = metadataHandling.GetSeriesAndTitleFromComicInfo(chapterPath);
+
+                ExtractedMetadata? existingMetadata = null;
+
+                try
+                {
+                    existingMetadata = metadataHandling.GetSeriesAndTitleFromComicInfo(chapterPath);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to read metadata from {chapterPath}. Skipping.",
+                        chapterPath);
+                    continue;
+                }
                 metadataHandling.WriteComicInfo(chapterPath, existingMetadata with { Series = primary.PrimaryTitle });
 
                 // move chapter into the primary mangas library and folder
@@ -73,8 +86,15 @@ public class MangaMerger(
                     {
                         if (primary.Library.UpscaledLibraryPath != null)
                         {
-                            await taskQueue.EnqueueAsync(
-                                new RenameUpscaledChaptersSeriesTask(chapter.Id, upscaledPath, primary.PrimaryTitle));
+                            try
+                            {
+                                metadataChanger.ApplyUpscaledChapterTitle(chapter, primary.PrimaryTitle!, upscaledPath);
+                            }
+                            catch (Exception ex)
+                            {
+                                logger.LogError(ex, "Failed to update metadata of upscaled chapter {fileName} in {MangaId}.",
+                                    chapter.FileName, manga.Id);
+                            }
                         }
                         else
                         {

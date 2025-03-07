@@ -15,7 +15,8 @@ namespace MangaIngestWithUpscaling.Services.ChapterRecognition;
 [RegisterScoped]
 public class ChapterInIngestRecognitionService(
     IMetadataHandlingService metadataExtractionService,
-    ILibraryFilteringService filteringService) : IChapterInIngestRecognitionService
+    ILibraryFilteringService filteringService,
+    ILogger<ChapterInIngestRecognitionService> logger) : IChapterInIngestRecognitionService
 {
     /// <summary>
     /// Finds all chapters in the ingest path.
@@ -34,10 +35,17 @@ public class ChapterInIngestRecognitionService(
         {
             var relativePath = Path.GetRelativePath(ingestPath, file);
             var storageType = file.EndsWith(".cbz") ? ChapterStorageType.Cbz : ChapterStorageType.Folder;
-            var metadata = metadataExtractionService.GetSeriesAndTitleFromComicInfo(file);
+            try
+            {
+                var metadata = metadataExtractionService.GetSeriesAndTitleFromComicInfo(file);
 
-            foundChapters.Add(new FoundChapter(Path.GetFileName(file), relativePath, storageType,
-                metadata));
+                foundChapters.Add(new FoundChapter(Path.GetFileName(file), relativePath, storageType,
+                    metadata));
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to extract metadata from {file}", file);
+            }
         }
 
         if (libraryFilterRules != null && libraryFilterRules.Count > 0)
