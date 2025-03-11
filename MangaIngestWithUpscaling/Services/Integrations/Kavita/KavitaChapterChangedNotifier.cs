@@ -1,14 +1,19 @@
-﻿using MangaIngestWithUpscaling.Data.LibraryManagement;
+﻿using MangaIngestWithUpscaling.Configuration;
+using MangaIngestWithUpscaling.Data.LibraryManagement;
+using Microsoft.Extensions.Options;
 
 namespace MangaIngestWithUpscaling.Services.Integrations.Kavita;
 
 public class KavitaChapterChangedNotifier(
     IKavitaClient kavitaClient,
+    IOptions<KavitaConfiguration> kavitaConfig,
     ILogger<KavitaChapterChangedNotifier> logger) : IChapterChangedNotifier
 {
     /// <inheritdoc />
     public async Task Notify(Chapter chapter, bool upscaled)
     {
+        if (!kavitaConfig.Value.Enabled) return;
+
         string? integrationPath = upscaled ?
             chapter.Manga.Library.KavitaConfig.UpscaledMountPoint
             : chapter.Manga.Library.KavitaConfig.NotUpscaledMountPoint;
