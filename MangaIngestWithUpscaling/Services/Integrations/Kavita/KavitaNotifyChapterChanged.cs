@@ -19,7 +19,7 @@ public class KavitaNotifyChapterChanged(
 
         try
         {
-            await kavitaClient.ScanFolder(folderToScan));
+            await kavitaClient.ScanFolder(folderToScan);
         }
         catch (Exception e)
         {
