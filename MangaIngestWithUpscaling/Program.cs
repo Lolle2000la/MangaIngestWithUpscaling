@@ -162,7 +162,8 @@ else
     app.UseHsts();
 }
 
-app.UseHttpsRedirection();
+// For self hosted apps https redirection doesn't work all too well, so we disable it
+//app.UseHttpsRedirection();
 
 
 app.UseAntiforgery();
