@@ -4,6 +4,7 @@ using MangaIngestWithUpscaling.Services.CbzConversion;
 using MangaIngestWithUpscaling.Services.ChapterManagement;
 using MangaIngestWithUpscaling.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Services.FileSystem;
+using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.LibraryFiltering;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Services.Python;
@@ -27,6 +28,8 @@ public static class ServiceRegistration
         {
             services.AddSingleton<IFileSystem, GenericFileSystem>();
         }
+
+        services.RegisterIntegrations();
 
         services.AddSingleton<TaskQueue>();
         services.AddSingleton<ITaskQueue>(sp => sp.GetRequiredService<TaskQueue>());
