@@ -8,6 +8,7 @@ using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.CbzConversion;
 using MangaIngestWithUpscaling.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Services.FileSystem;
+using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.LibraryFiltering;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Services.Upscaling;
@@ -24,7 +25,8 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
                 ILogger<IngestProcessor> logger,
                 ITaskQueue taskQueue,
                 IMetadataHandlingService metadataHandling,
-                IFileSystem fileSystem
+                IFileSystem fileSystem,
+                IChapterChangedNotifier chapterChangedNotifier
                 ) : IIngestProcessor
 {
     public async Task ProcessAsync(Library library, CancellationToken cancellationToken)
@@ -48,6 +50,7 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
                 g => g.OrderBy(ch => IsUpscaledChapter().IsMatch(ch.RelativePath)).ToList());
 
         List<(Chapter, UpscalerProfile)> chaptersToUpscale = new();
+        List<Task> scans = new();
 
         foreach (var (series, chapters) in chaptersBySeries)
         {
@@ -125,6 +128,7 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
                     IsUpscaled = false
                 };
                 seriesEntity.Chapters.Add(chapterEntity);
+                scans.Add(chapterChangedNotifier.Notify(chapterEntity, false));
 
                 if (library.UpscaleOnIngest && seriesEntity.ShouldUpscale != false && library.UpscalerProfileId.HasValue)
                 {
@@ -141,6 +145,8 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
             var upscaleTask = new UpscaleTask(chapterTuple.Item1, chapterTuple.Item2);  // if I use destructuring here, the value becomes 0. I checked with the debugger and I have no idea why this happens.
             await taskQueue.EnqueueAsync(upscaleTask);
         }
+
+        await Task.WhenAll(scans);
 
         logger.LogInformation("Scanned {seriesCount} series in library {libraryName}. Cleaning.", chaptersBySeries.Count, library.Name);
         // Clean the ingest path of all empty directories recursively
