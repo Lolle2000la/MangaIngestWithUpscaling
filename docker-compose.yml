@@ -18,3 +18,15 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+  kavita:
+    image: jvmilazz0/kavita:latest
+    container_name: kavita
+    environment:
+      - TZ=Etc/UTC
+      - DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=true
+    volumes:
+      - ./test_data/kavita/config:/kavita/config 
+      - ./test_data:/test_data
+    ports:
+      - 5000:5000
+    restart: unless-stopped
