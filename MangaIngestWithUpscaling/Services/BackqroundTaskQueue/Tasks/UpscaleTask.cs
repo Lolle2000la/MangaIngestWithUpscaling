@@ -1,6 +1,7 @@
 ﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.FileSystem;
+using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
@@ -32,6 +33,8 @@ public class UpscaleTask : BaseTask
         var dbContext = services.GetRequiredService<ApplicationDbContext>();
         var metadataChanger = services.GetRequiredService<IMangaMetadataChanger>();
         var metadataHandling = services.GetRequiredService<IMetadataHandlingService>();
+        var chapterChangedNotifier = services.GetRequiredService<IChapterChangedNotifier>();
+
         var chapter = await dbContext.Chapters
             .Include(c => c.Manga)
             .ThenInclude(m => m.Library)
@@ -71,6 +74,7 @@ public class UpscaleTask : BaseTask
         try
         {
             await upscaler.Upscale(currentStoragePath, upscaleTargetPath, upscalerProfile, cancellationToken);
+            _ = chapterChangedNotifier.Notify(chapter, true);
         }
         catch (Exception)
         {

@@ -1,8 +1,11 @@
 ﻿@using MangaIngestWithUpscaling.Components.FileSystem
 @using MangaIngestWithUpscaling.Components.Libraries.Filters
 @using MangaIngestWithUpscaling.Data.LibraryManagement
+@using MangaIngestWithUpscaling.Configuration
+@using Microsoft.Extensions.Options
 
 @inject ApplicationDbContext DbContext
+@inject IOptions<KavitaConfiguration> KavitaConfig
 
 <MudForm Model="@Library" IsValid="@IsValid">
     <MudGrid Spacing="4">
@@ -67,6 +70,43 @@
                           SelectedPathChanged="@OnUpscaledPathChanged"
                           Title="Upscaled location" />
         </MudItem>
+        @if (KavitaConfig.Value.Enabled)
+        {
+            <MudItem md="6" xs="12">
+                <MudText Typo="Typo.h4">
+                    Kavita Integration Configuration
+                </MudText>
+
+                <MudText>
+                    The following settings are used to configure the integration with Kavita. If you do not use Kavita, you can
+                    ignore these settings.
+                </MudText>
+
+                <MudText>
+                    Leaving any of the mount points empty will disable the integration for either the as-is or the upscaled chapters.
+                </MudText>
+
+                <MudText>
+                    Note: You do not need to configure both mount points, but only the one you want to notify Kavita about.
+                </MudText>
+
+                <MudText Color="Color.Info">
+                    Hint: You can use the path as its set in the library settings in Kavita.
+                </MudText>
+
+                <MudTextField Label="As-Is-Mount Point in Kavita"
+                              HelperText="The mount point within the Kavita environment that contains the chapters as-is."
+                              Immediate="true"
+                              @bind-Value="Library.KavitaConfig.NotUpscaledMountPoint"
+                              @bind-Value:after="OnInputChanged" />
+
+                <MudTextField Label="Upscaled-Mount Point in Kavita"
+                              HelperText="The mount point within the Kavita environment that contains the chapters as-is."
+                              Immediate="true"
+                              @bind-Value="Library.KavitaConfig.UpscaledMountPoint"
+                              @bind-Value:after="OnInputChanged" />
+            </MudItem>
+        }
     </MudGrid>
 </MudForm>
 

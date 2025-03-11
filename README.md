@@ -33,6 +33,10 @@ services:
       Ingest_Upscaler__SelectedDeviceIndex: 0 # if you have multiple GPUs, you can select which one to use
       Ingest_Upscaler__UseFp16: true # if you want to use fp16 instead of fp32, preferred if you have a GPU that supports it
       Ingest_Upscaler__UseCPU: false # if you want to use the CPU instead of the GPU
+      # Kavita integration
+      #Ingest_Kavita__BaseUrl: http://kavita:5000 # the base URL of your Kavita instance
+      #Ingest_Kavita__ApiKey: #Your API key here
+      #Ingest_Kavita__Enabled: True # defaults to false
     volumes:
       - /path/to/store/appdata:/data # for storing the database and logs
       - /path/to/store/models:/models # for storing the upscaling models. 
@@ -65,6 +69,7 @@ services:
       Ingest_Upscaler__SelectedDeviceIndex: 0 # if you have multiple GPUs, you can select which one to use
       Ingest_Upscaler__UseFp16: true # if you want to use fp16 instead of fp32, preferred if you have a GPU that supports it
       Ingest_Upscaler__UseCPU: false # if you want to use the CPU instead of the GPU
+      # Rest is same as for the CUDA version
     volumes:
       - /path/to/store/appdata:/data # for storing the database and logs
       - /path/to/store/models:/models # for storing the upscaling models. 
