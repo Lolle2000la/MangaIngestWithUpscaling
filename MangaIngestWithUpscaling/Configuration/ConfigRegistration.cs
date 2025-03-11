@@ -6,5 +6,6 @@ public static class ConfigRegistration
     {
         builder.Services.Configure<UpscalerConfig>(builder.Configuration.GetSection(UpscalerConfig.Position));
         builder.Services.Configure<KavitaConfiguration>(builder.Configuration.GetSection(KavitaConfiguration.Position));
+        builder.Services.Configure<UnixPermissionsConfig>(builder.Configuration.GetSection(UnixPermissionsConfig.Position));
     }
 }
