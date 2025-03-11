@@ -2,7 +2,7 @@
 
 namespace MangaIngestWithUpscaling.Services.Integrations;
 
-public interface INotifyChapterChanged
+public interface IChapterChangedNotifier
 {
     /// <summary>
     /// Notify the integration(s) that a chapter has changed (both additions and new ones).

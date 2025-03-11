@@ -2,9 +2,9 @@
 
 namespace MangaIngestWithUpscaling.Services.Integrations.Kavita;
 
-public class KavitaNotifyChapterChanged(
+public class KavitaChapterChangedNotifier(
     IKavitaClient kavitaClient,
-    ILogger<KavitaNotifyChapterChanged> logger) : INotifyChapterChanged
+    ILogger<KavitaChapterChangedNotifier> logger) : IChapterChangedNotifier
 {
     /// <inheritdoc />
     public async Task Notify(Chapter chapter, bool upscaled)
