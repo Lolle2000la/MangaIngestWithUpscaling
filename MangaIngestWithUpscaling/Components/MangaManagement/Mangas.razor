@@ -15,14 +15,14 @@
 <PageTitle>Browse and Manage Mangas</PageTitle>
 
 <MudTable T="Manga" ServerData="GetMangas"
-Hover="true" MultiSelection="true"
-SelectOnRowClick="false"
-CanCancelEdit="true"
-RowEditPreview="BackupBeforeEdit"
-RowEditCancel="RestoreOnCancel"
-RowEditCommit="async o => await OnCommitEdit(o)"
-@bind-SelectedItems="selectedMangas"
-@ref="table">
+          Hover="true" MultiSelection="true"
+          SelectOnRowClick="false"
+          CanCancelEdit="true"
+          RowEditPreview="BackupBeforeEdit"
+          RowEditCancel="RestoreOnCancel"
+          RowEditCommit="async o => await OnCommitEdit(o)"
+          @bind-SelectedItems="selectedMangas"
+          @ref="table">
     <ToolBarContent>
         <MudGrid>
             <MudItem xs="12" sm="6" lg="6">
@@ -30,8 +30,8 @@ RowEditCommit="async o => await OnCommitEdit(o)"
             </MudItem>
             <MudItem xs="12" sm="6" lg="3">
                 <MudSelect Label="Library to browse" T="Library?"
-                @bind-Value="selectedLibrary"
-                @bind-Value:after="async () => await table.ReloadServerData()">
+                           @bind-Value="selectedLibrary"
+                           @bind-Value:after="async () => await table.ReloadServerData()">
                     <MudSelectItem T="Library?" Value="null">All</MudSelectItem>
                     @foreach (var library in DbContext.Libraries)
                     {
@@ -41,25 +41,25 @@ RowEditCommit="async o => await OnCommitEdit(o)"
             </MudItem>
             <MudItem xs="12" sm="12" lg="3">
                 <MudTextField Label="Search by title." Placeholder="Search..." Variant="Variant.Outlined"
-                @bind-Value="searchString"
-                @bind-Value:after="async () => await table.ReloadServerData()"
-                Immediate="true"
-                OnInternalInputChanged="async () => await table.ReloadServerData()" />
+                              @bind-Value="searchString"
+                              @bind-Value:after="async () => await table.ReloadServerData()"
+                              Immediate="true"
+                              OnInternalInputChanged="async () => await table.ReloadServerData()" />
             </MudItem>
             <MudItem xs="12">
                 <MudStack Row="true">
                     <MudButton Variant="Variant.Filled" Color="Color.Primary"
-                    StartIcon="@Icons.Material.Filled.Merge"
-                    Disabled="@(selectedMangas == null || selectedMangas.Count < 2)"
-                    OnClick="OnMergeSelected">Merge Selected</MudButton>
+                               StartIcon="@Icons.Material.Filled.Merge"
+                               Disabled="@(selectedMangas == null || selectedMangas.Count < 2)"
+                               OnClick="OnMergeSelected">Merge Selected</MudButton>
                     <MudButton Variant="Variant.Filled" Color="Color.Secondary"
-                    StartIcon="@Icons.Material.Filled.Shuffle"
-                    Disabled="selectedMangas == null || selectedMangas.Count == 0"
-                    OnClick="OnMoveSelectedToNewLibrary">Move Selected to New Library</MudButton>
+                               StartIcon="@Icons.Material.Filled.Shuffle"
+                               Disabled="selectedMangas == null || selectedMangas.Count == 0"
+                               OnClick="OnMoveSelectedToNewLibrary">Move Selected to New Library</MudButton>
                     <MudButton Variant="Variant.Filled" Color="Color.Error"
-                    OnClick="OnDeleteSelected"
-                    StartIcon="@Icons.Material.Filled.DeleteSweep"
-                    Disabled="@(selectedMangas == null || selectedMangas.Count == 0)">Delete Selected</MudButton>
+                               OnClick="OnDeleteSelected"
+                               StartIcon="@Icons.Material.Filled.DeleteSweep"
+                               Disabled="@(selectedMangas == null || selectedMangas.Count == 0)">Delete Selected</MudButton>
                 </MudStack>
             </MudItem>
         </MudGrid>
@@ -73,13 +73,13 @@ RowEditCommit="async o => await OnCommitEdit(o)"
         </MudTh>
         <MudTh>
             <MudTableSortLabel T="Manga" SortLabel="title_field"
-            InitialDirection="SortDirection.Ascending">
+                               InitialDirection="SortDirection.Ascending">
                 Title
             </MudTableSortLabel>
         </MudTh>
         <MudTh>
             <MudTableSortLabel T="Manga" SortLabel="chapters_field"
-            InitialDirection="SortDirection.Descending">
+                               InitialDirection="SortDirection.Descending">
                 Chapters
             </MudTableSortLabel>
         </MudTh>
@@ -94,16 +94,16 @@ RowEditCommit="async o => await OnCommitEdit(o)"
         <MudTd>
             <a href="mangas/@context.Id" title="Edit this Manga.">
                 <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Text"
-                Size="Size.Small" />
+                               Size="Size.Small" />
             </a>
             <MudIconButton Icon="@Icons.Material.Filled.ImageAspectRatio" Variant="Variant.Text"
-            Size="Size.Small"
-            title="Upscale chapter in this manga. This will upscale all chapters that aren't yet or used a different one from the one configured."
-            OnClick="_ => OnUpscaleSpecific(context)"/>
+                           Size="Size.Small"
+                           title="Upscale chapter in this manga. This will upscale all chapters that aren't yet or used a different one from the one configured."
+                           OnClick="_ => OnUpscaleSpecific(context)" />
             <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Variant="Variant.Text"
-            OnClick="_ => OnDeleteSpecific(context)"
-            title="Delete this Manga."
-            Size="Size.Small" />
+                           OnClick="_ => OnDeleteSpecific(context)"
+                           title="Delete this Manga."
+                           Size="Size.Small" />
         </MudTd>
     </RowTemplate>
     <RowEditingTemplate>
@@ -177,11 +177,20 @@ RowEditCommit="async o => await OnCommitEdit(o)"
             { x=> x.Mangas, selectedMangas.ToList() }
         };
 
-        var dialog = await DialogService.ShowAsync<MergeMangaDialog>("Merge Mangas", parameters);
-        var result = await dialog.Result;
-
-        if (!result.Canceled)
+        try
         {
+            var dialog = await DialogService.ShowAsync<MergeMangaDialog>("Merge Mangas", parameters);
+            var result = await dialog.Result;
+
+            if (!result.Canceled)
+            {
+                await table.ReloadServerData();
+            }
+        }
+        catch (Exception e)
+        {
+            Snackbar.Add($"Error: {e.Message}", Severity.Error);
+            Logger.LogError(e, "Error merging mangas.");
             await table.ReloadServerData();
         }
     }
@@ -192,10 +201,19 @@ RowEditCommit="async o => await OnCommitEdit(o)"
         {
             { x=> x.Mangas, selectedMangas.ToList() }
         };
-        var dialog = await DialogService.ShowAsync<MoveMangasToLibraryDialog>("Move Mangas", parameters);
-        var result = await dialog.Result;
-        if (!result.Canceled)
+        try
         {
+            var dialog = await DialogService.ShowAsync<MoveMangasToLibraryDialog>("Move Mangas", parameters);
+            var result = await dialog.Result;
+            if (!result.Canceled)
+            {
+                await table.ReloadServerData();
+            }
+        }
+        catch (Exception e)
+        {
+            Snackbar.Add($"Error: {e.Message}", Severity.Error);
+            Logger.LogError(e, "Error moving mangas to new library.");
             await table.ReloadServerData();
         }
     }
@@ -207,24 +225,36 @@ RowEditCommit="async o => await OnCommitEdit(o)"
             { x=> x.Mangas, selectedMangas }
         };
 
-        var dialog = await DialogService.ShowAsync<DeleteMangasDialog>("Delete Mangas", parameters);
-        var result = await dialog.Result;
-
-        if (!result.Canceled)
+        try
         {
-            await table.ReloadServerData();
+            var dialog = await DialogService.ShowAsync<DeleteMangasDialog>("Delete Mangas", parameters);
+            var result = await dialog.Result;
+
+            if (!result.Canceled)
+            {
+                await table.ReloadServerData();
+            }
         }
     }
 
     private async Task OnDeleteSpecific(Manga manga)
     {
-        var dialog = await DialogService.ShowAsync<DeleteMangasDialog>("Delete Manga", new DialogParameters<DeleteMangasDialog>
+        try
         {
-            { x=> x.Mangas, new List<Manga> { manga } }
-        });
-        var result = await dialog.Result;
-        if (!result.Canceled)
+            var dialog = await DialogService.ShowAsync<DeleteMangasDialog>("Delete Manga", new DialogParameters<DeleteMangasDialog>
+            {
+                { x=> x.Mangas, new List<Manga> { manga } }
+            });
+            var result = await dialog.Result;
+            if (!result.Canceled)
+            {
+                await table.ReloadServerData();
+            }
+        }
+        catch (Exception e)
         {
+            Snackbar.Add($"Error: {e.Message}", Severity.Error);
+            Logger.LogError(e, "Error deleting manga {MangaId}", manga.Id);
             await table.ReloadServerData();
         }
     }
