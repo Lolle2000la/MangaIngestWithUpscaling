@@ -8,6 +8,7 @@
 
 @inject ApplicationDbContext DbContext
 @inject ILogger<TaskQueues> Logger
+@inject ISnackbar Snackbar
 
 @inject TaskQueue TaskQueue
 @inject StandardTaskProcessor StandardTaskProcessor
@@ -22,19 +23,19 @@
 <MudGrid>
     <MudItem lg="6" xs="12">
         <TaskTable Tasks="@standardTasks" Title="Standard Tasks"
-        OnClearCompleted="OnClearCompletedStandardTasks"
-        OnRetryFailed="OnRetryFailed"
-        OnDelete="OnDelete"
-        OnCancel="OnCancelStandardTask"
-        OnRunNow="OnRunNow" />
+                   OnClearCompleted="OnClearCompletedStandardTasks"
+                   OnRetryFailed="OnRetryFailed"
+                   OnDelete="OnDelete"
+                   OnCancel="OnCancelStandardTask"
+                   OnRunNow="OnRunNow" />
     </MudItem>
     <MudItem lg="6" xs="12">
         <TaskTable Tasks="@upscaleTasks" Title="Upscaling Tasks"
-        OnClearCompleted="OnClearCompletedUpscaleTasks"
-        OnRetryFailed="OnRetryFailed"
-        OnDelete="OnDelete"
-        OnCancel="OnCancelUpscaleTask"
-        OnRunNow="OnRunNow" />
+                   OnClearCompleted="OnClearCompletedUpscaleTasks"
+                   OnRetryFailed="OnRetryFailed"
+                   OnDelete="OnDelete"
+                   OnCancel="OnCancelUpscaleTask"
+                   OnRunNow="OnRunNow" />
     </MudItem>
 </MudGrid>
 
@@ -44,52 +45,106 @@
 
     private async Task OnClearCompletedStandardTasks()
     {
-        var completedTasks = standardTasks.Where(x => x.Status == PersistedTaskStatus.Completed).ToList();
-        foreach (var task in completedTasks)
+        try
         {
-            DbContext.PersistedTasks.Remove(task);
+            var completedTasks = standardTasks.Where(x => x.Status == PersistedTaskStatus.Completed).ToList();
+            foreach (var task in completedTasks)
+            {
+                DbContext.PersistedTasks.Remove(task);
+            }
+            await DbContext.SaveChangesAsync();
+            standardTasks = standardTasks.Where(x => x.Status != PersistedTaskStatus.Completed).ToList();
         }
-        await DbContext.SaveChangesAsync();
-        standardTasks = standardTasks.Where(x => x.Status != PersistedTaskStatus.Completed).ToList();
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to clear completed tasks");
+            Snackbar.Add("Failed to clear completed tasks: " + ex.Message, Severity.Error);
+            await LoadTasks();
+        }
     }
 
     private async Task OnClearCompletedUpscaleTasks()
     {
-        var completedTasks = upscaleTasks.Where(x => x.Status == PersistedTaskStatus.Completed).ToList();
-        foreach (var task in completedTasks)
+        try
         {
-            DbContext.PersistedTasks.Remove(task);
+            var completedTasks = upscaleTasks.Where(x => x.Status == PersistedTaskStatus.Completed).ToList();
+            foreach (var task in completedTasks)
+            {
+                DbContext.PersistedTasks.Remove(task);
+            }
+            await DbContext.SaveChangesAsync();
+            upscaleTasks = upscaleTasks.Where(x => x.Status != PersistedTaskStatus.Completed).ToList();
         }
-        await DbContext.SaveChangesAsync();
-        upscaleTasks = upscaleTasks.Where(x => x.Status != PersistedTaskStatus.Completed).ToList();
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to clear completed tasks");
+            Snackbar.Add("Failed to clear completed tasks: " + ex.Message, Severity.Error);
+            await LoadTasks();
+        }
     }
 
     private async Task OnRetryFailed(PersistedTask task)
     {
-        await TaskQueue.RetryAsync(task);
+        try
+        {
+            await TaskQueue.RetryAsync(task);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to retry task {TaskId}", task.Id);
+            Snackbar.Add("Failed to retry task: " + ex.Message, Severity.Error);
+            await LoadTasks();
+        }
     }
 
     private async Task OnDelete(PersistedTask task)
     {
-        await TaskQueue.RemoveTaskAsync(task);
-        if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask)
+        try
         {
-            upscaleTasks.Remove(task);
+            await TaskQueue.RemoveTaskAsync(task);
+            if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask)
+            {
+                upscaleTasks.Remove(task);
+            }
+            else
+            {
+                standardTasks.Remove(task);
+            }
         }
-        else
+        catch (Exception ex)
         {
-            standardTasks.Remove(task);
+            Logger.LogError(ex, "Failed to delete task {TaskId}", task.Id);
+            Snackbar.Add("Failed to delete task: " + ex.Message, Severity.Error);
+            await LoadTasks();
         }
     }
 
     private void OnCancelStandardTask(PersistedTask task)
     {
-        StandardTaskProcessor.CancelCurrent(task);
+        try
+        {
+            StandardTaskProcessor.CancelCurrent(task);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to cancel task {TaskId}", task.Id);
+            Snackbar.Add("Failed to cancel task: " + ex.Message, Severity.Error);
+            LoadTasks();
+        }
     }
 
     private void OnCancelUpscaleTask(PersistedTask task)
     {
-        UpscaleTaskProcessor.CancelCurrent(task);
+        try
+        {
+            UpscaleTaskProcessor.CancelCurrent(task);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to cancel task {TaskId}", task.Id);
+            Snackbar.Add("Failed to cancel task: " + ex.Message, Severity.Error);
+            LoadTasks();
+        }
     }
 
     private async Task OnRunNow(PersistedTask task)
@@ -99,13 +154,18 @@
 
     protected override async Task OnInitializedAsync()
     {
-        var allTasks = await DbContext.PersistedTasks.ToListAsync();
-        standardTasks = allTasks.Where(x => x.Data is not UpscaleTask and not RenameUpscaledChaptersSeriesTask).ToList();
-        upscaleTasks = allTasks.Where(x => x.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask).ToList();
+        await LoadTasks();
 
         TaskQueue.TaskEnqueuedOrChanged += OnTaskUpdate;
         StandardTaskProcessor.StatusChanged += OnStandardTaskChanged;
         UpscaleTaskProcessor.StatusChanged += OnUpscaleTaskChanged;
+    }
+
+    private async Task LoadTasks()
+    {
+        var allTasks = await DbContext.PersistedTasks.ToListAsync();
+        standardTasks = allTasks.Where(x => x.Data is not UpscaleTask and not RenameUpscaledChaptersSeriesTask).ToList();
+        upscaleTasks = allTasks.Where(x => x.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask).ToList();
     }
 
     public void Dispose()
@@ -151,7 +211,8 @@
         });
     }
 
-    private PersistedTask AssingPersistedTask(PersistedTask to, PersistedTask from) {
+    private PersistedTask AssingPersistedTask(PersistedTask to, PersistedTask from)
+    {
         to.Data = from.Data;
         to.CreatedAt = from.CreatedAt;
         to.Order = from.Order;
