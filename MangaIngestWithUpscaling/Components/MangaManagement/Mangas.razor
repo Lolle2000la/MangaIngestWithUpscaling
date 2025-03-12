@@ -235,6 +235,12 @@
                 await table.ReloadServerData();
             }
         }
+        catch (Exception e)
+        {
+            Snackbar.Add($"Error: {e.Message}", Severity.Error);
+            Logger.LogError(e, "Error deleting mangas.");
+            await table.ReloadServerData();
+        }
     }
 
     private async Task OnDeleteSpecific(Manga manga)
