@@ -42,7 +42,7 @@ public class MangaMetadataChanger(
 
         UpdateChapterTitle(newTitle, origChapterPath);
         RelocateChapterToNewTitleDirectory(chapter, origChapterPath, chapter.Manga.Library.UpscaledLibraryPath, newTitle);
-        _ = chapterChangedNotifier.Notify(chapter, false);
+        _ = chapterChangedNotifier.Notify(chapter, true);
     }
 
     /// <inheritdoc/>
