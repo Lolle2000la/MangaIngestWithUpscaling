@@ -50,8 +50,6 @@ public class UpscaleTask : BaseTask
             throw new InvalidOperationException($"Chapter ({chapter?.RelativePath ?? "Not found"}) or upscaler profile ({upscalerProfile?.Name ?? "Not found"}, id: {upscalerProfile.Id}) not found.");
         }
 
-        FriendlyEntryName = $"Upscaling {chapter.FileName} with {upscalerProfile.Name}";
-
         if (chapter.Manga.Library.UpscaledLibraryPath == null)
         {
             throw new InvalidOperationException($"Upscaled library path of library {chapter.Manga.Library.Name} ({chapter.Manga.Library.Id}) not set.");
