@@ -5,6 +5,7 @@ using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.FileSystem;
+using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Identity.Client;
@@ -18,7 +19,8 @@ public class MangaMetadataChanger(
     ApplicationDbContext dbContext,
     ILogger<MangaMetadataChanger> logger,
     ITaskQueue taskQueue,
-    IFileSystem fileSystem) : IMangaMetadataChanger
+    IFileSystem fileSystem,
+    IChapterChangedNotifier chapterChangedNotifier) : IMangaMetadataChanger
 {
     /// <inheritdoc/>
     public void ApplyUpscaledChapterTitle(Chapter chapter, string newTitle, string origChapterPath)
@@ -40,6 +42,7 @@ public class MangaMetadataChanger(
 
         UpdateChapterTitle(newTitle, origChapterPath);
         RelocateChapterToNewTitleDirectory(chapter, origChapterPath, chapter.Manga.Library.UpscaledLibraryPath, newTitle);
+        _ = chapterChangedNotifier.Notify(chapter, false);
     }
 
     /// <inheritdoc/>
@@ -70,6 +73,7 @@ public class MangaMetadataChanger(
                 var oldRelativePath = chapter.RelativePath;
                 UpdateChapterTitle(newTitle, origChapterPath);
                 RelocateChapterToNewTitleDirectory(chapter, origChapterPath, manga.Library.NotUpscaledLibraryPath, manga.PrimaryTitle);
+                _ = chapterChangedNotifier.Notify(chapter, false);
 
                 if (chapter.IsUpscaled)
                 {
