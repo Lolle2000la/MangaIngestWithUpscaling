@@ -4,6 +4,7 @@ using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.FileSystem;
+using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 
 namespace MangaIngestWithUpscaling.Services.MangaManagement;
@@ -15,7 +16,8 @@ public class MangaMerger(
     IMangaMetadataChanger metadataChanger,
     ILogger<MangaMerger> logger,
     ITaskQueue taskQueue,
-    IFileSystem fileSystem) : IMangaMerger
+    IFileSystem fileSystem,
+    IChapterChangedNotifier chapterChangedNotifier) : IMangaMerger
 {
     /// <inheritdoc/>
     public async Task MergeAsync(Manga primary, IEnumerable<Manga> mergedInto, CancellationToken cancellationToken = default)
@@ -72,6 +74,7 @@ public class MangaMerger(
                 try
                 {
                     fileSystem.Move(chapterPath, targetPath);
+                    _ = chapterChangedNotifier.Notify(chapter, false);
                 }
                 catch (Exception ex)
                 {
