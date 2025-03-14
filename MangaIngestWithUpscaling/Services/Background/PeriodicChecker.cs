@@ -2,6 +2,7 @@
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.ChapterManagement;
+using MangaIngestWithUpscaling.Services.LibraryIntegrety;
 using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Services.Background;
@@ -48,6 +49,10 @@ public class PeriodicChecker : BackgroundService
                 var ingestWatcher = scope.ServiceProvider.GetRequiredService<LibraryIngestWatcher>();
                 ingestWatcher.NotifyLibrariesHaveChanged();
             }
+
+            // Ensure the library integrity. This will at this point primarily check for missing files.
+            var libraryIntegrityChecker = scope.ServiceProvider.GetRequiredService<ILibraryIntegrityChecker>();
+            await libraryIntegrityChecker.CheckIntegrity(stoppingToken);
         }
     }
 }
