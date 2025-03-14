@@ -144,9 +144,6 @@ using (var scope = app.Services.CreateScope())
 
         logger.LogInformation($"Python environment prepared at {environment.PythonExecutablePath}");
     }
-
-    var libraryIntegrityChecker = scope.ServiceProvider.GetRequiredService<ILibraryIntegrityChecker>();
-    await libraryIntegrityChecker.CheckIntegrity(CancellationToken.None);
 }
 
 app.UseRequestLocalization(new RequestLocalizationOptions()
