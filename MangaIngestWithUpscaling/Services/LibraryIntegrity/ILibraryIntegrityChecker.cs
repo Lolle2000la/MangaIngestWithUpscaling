@@ -1,6 +1,6 @@
 ﻿using MangaIngestWithUpscaling.Data.LibraryManagement;
 
-namespace MangaIngestWithUpscaling.Services.LibraryIntegrety;
+namespace MangaIngestWithUpscaling.Services.LibraryIntegrity;
 
 public interface ILibraryIntegrityChecker
 {

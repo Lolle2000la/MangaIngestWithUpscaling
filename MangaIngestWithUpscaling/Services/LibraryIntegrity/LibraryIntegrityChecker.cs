@@ -2,8 +2,9 @@
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using Microsoft.EntityFrameworkCore;
 
-namespace MangaIngestWithUpscaling.Services.LibraryIntegrety;
+namespace MangaIngestWithUpscaling.Services.LibraryIntegrity;
 
+[RegisterScoped]
 public class LibraryIntegrityChecker(
     ApplicationDbContext dbContext) : ILibraryIntegrityChecker
 {

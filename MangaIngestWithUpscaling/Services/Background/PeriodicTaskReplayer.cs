@@ -2,7 +2,7 @@
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.ChapterManagement;
-using MangaIngestWithUpscaling.Services.LibraryIntegrety;
+using MangaIngestWithUpscaling.Services.LibraryIntegrity;
 using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Services.Background;
