@@ -13,5 +13,5 @@ public interface IMetadataHandlingService
     /// <param name="file1"></param>
     /// <param name="file2"></param>
     /// <returns>True if for every image file in 1 there is a equally named on in 2.</returns>
-    bool PagesEqual(string file1, string file2);
+    bool PagesEqual(string? file1, string? file2);
 }
