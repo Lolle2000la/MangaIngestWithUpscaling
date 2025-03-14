@@ -21,10 +21,36 @@ public class Library
 
     public List<Manga> MangaSeries { get; set; } = [];
     public List<LibraryFilterRule> FilterRules { get; set; } = [];
+
+    public override bool Equals(object obj)
+    {
+        if (obj == null || GetType() != obj.GetType())
+        {
+            return false;
+        }
+
+        Library other = (Library)obj;
+
+        return Id == other.Id &&
+               Name == other.Name &&
+               IngestPath == other.IngestPath &&
+               NotUpscaledLibraryPath == other.NotUpscaledLibraryPath &&
+               UpscaledLibraryPath == other.UpscaledLibraryPath &&
+               KavitaConfig == other.KavitaConfig &&
+               UpscaleOnIngest == other.UpscaleOnIngest &&
+               UpscalerProfileId == other.UpscalerProfileId;
+    }
+
+    // override object.GetHashCode
+    public override int GetHashCode()
+    {
+        // TODO: write your implementation of GetHashCode() here
+        return HashCode.Combine(Id, Name, IngestPath, NotUpscaledLibraryPath, UpscaledLibraryPath, KavitaConfig, UpscaleOnIngest, UpscalerProfile);
+    }
 }
 
 [ComplexType]
-public class KavitaLibraryConfig
+public record KavitaLibraryConfig
 {
     /// <summary>
     /// The mount point for the folder with the originals in Kavita.
