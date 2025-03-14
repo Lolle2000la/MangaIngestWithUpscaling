@@ -27,7 +27,7 @@ public class Chapter
     {
         get
         {
-            if (!IsUpscaled || Manga.Library.UpscaledLibraryPath == null)
+            if (Manga.Library.UpscaledLibraryPath == null)
                 return null;
             return Path.Combine(Manga.Library.UpscaledLibraryPath, RelativePath);
         }
