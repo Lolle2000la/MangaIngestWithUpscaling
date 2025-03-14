@@ -48,41 +48,94 @@ public class LibraryIntegrityChecker(
 
     public async Task CheckIntegrity(Chapter chapter, CancellationToken cancellationToken)
     {
-        await CheckOriginalIntegrity(chapter, cancellationToken);
-        await CheckUpscaledIntegrity(chapter, cancellationToken);
-    }
+        var origIntegrity = await CheckOriginalIntegrity(chapter, cancellationToken);
+        var upscaledIntegrity = IntegrityCheckResult.Ok;
+        if (origIntegrity != IntegrityCheckResult.Missing && origIntegrity != IntegrityCheckResult.Invalid)
+            upscaledIntegrity = await CheckUpscaledIntegrity(chapter, cancellationToken);
 
-    private async Task CheckOriginalIntegrity(Chapter chapter, CancellationToken cancellationToken)
-    {
-
-    }
-
-    private async Task CheckUpscaledIntegrity(Chapter chapter, CancellationToken cancellationToken)
-    {
-        var taskQuery = dbContext.PersistedTasks
-            .FromSql($"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(UpscaleTask)} AND Data->>'$.ChapterId' = {chapter.Id}");
-        var tasks = await taskQuery.ToListAsync(cancellationToken);
-
-        // ensure we find out whether one of the tasks is still pending or processing, otherwise we might find past tasks that superseeded.
-        var task = tasks.FirstOrDefault(t =>
-            t.Status == PersistedTaskStatus.Pending
-            || t.Status == PersistedTaskStatus.Processing);
-
-        if (task != null)
+        if (origIntegrity != IntegrityCheckResult.Ok || upscaledIntegrity != IntegrityCheckResult.Ok)
         {
-            tasks.FirstOrDefault();
+            logger.LogWarning("Chapter {chapterFileName} ({chapterId}) of {seriesTitle} has integrity issues. Original: {origIntegrity}, Upscaled: {upscaledIntegrity}. Check the other log messages for more information on the cause of this.",
+                chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle, origIntegrity, upscaledIntegrity);
+        }
+    }
+
+    private enum IntegrityCheckResult
+    {
+        Ok,
+        Missing,
+        Invalid,
+        Corrected
+    }
+
+    private async Task<IntegrityCheckResult> CheckOriginalIntegrity(Chapter chapter, CancellationToken cancellationToken)
+    {
+        if (!File.Exists(chapter.NotUpscaledFullPath))
+        {
+            logger.LogWarning("Chapter {chapterFileName} ({chapterId}) of {seriesTitle} is missing. Removing.",
+                chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
+
+            if (chapter.IsUpscaled)
+            {
+                try
+                {
+                    if (File.Exists(chapter.UpscaledFullPath))
+                        File.Delete(chapter.UpscaledFullPath);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to delete upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle}.",
+                        chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
+                }
+            }
+
+            dbContext.Remove(chapter);
+            try
+            {
+                await dbContext.SaveChangesAsync(cancellationToken);
+
+                return IntegrityCheckResult.Missing;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to remove chapter {chapterFileName} ({chapterId}) of {seriesTitle} from database.",
+                    chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
+
+                return IntegrityCheckResult.Invalid;
+            }
         }
 
+        return IntegrityCheckResult.Ok;
+    }
+
+    private async Task<IntegrityCheckResult> CheckUpscaledIntegrity(Chapter chapter, CancellationToken cancellationToken)
+    {
         if (!chapter.IsUpscaled)
         {
             if (File.Exists(chapter.UpscaledFullPath))
             {
-                // don't accidentally interfere with a running upscale.
-                if (task?.Status != PersistedTaskStatus.Processing || task?.Status != PersistedTaskStatus.Pending)
+                var taskQuery = dbContext.PersistedTasks
+                    .FromSql($"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(UpscaleTask)} AND Data->>'$.ChapterId' = {chapter.Id}");
+                var tasks = await taskQuery.ToListAsync(cancellationToken);
+
+                // ensure we find out whether one of the tasks is still pending or processing, otherwise we might find past tasks that superseeded.
+                var task = tasks.FirstOrDefault(t =>
+                    t.Status == PersistedTaskStatus.Pending
+                    || t.Status == PersistedTaskStatus.Processing);
+
+                if (task != null)
                 {
-                    await CheckUpscaledArchiveValidity(chapter, cancellationToken);
+                    tasks.FirstOrDefault();
+                }
+
+                // don't accidentally interfere with a running upscale.
+                if (task?.Status != PersistedTaskStatus.Processing && task?.Status != PersistedTaskStatus.Pending)
+                {
+                    return await CheckUpscaledArchiveValidity(chapter, cancellationToken);
                 }
             }
+
+            return IntegrityCheckResult.Ok;
         }
         else
         {
@@ -93,15 +146,16 @@ public class LibraryIntegrityChecker(
                 chapter.IsUpscaled = false;
                 dbContext.Update(chapter);
                 await dbContext.SaveChangesAsync(cancellationToken);
+                return IntegrityCheckResult.Missing;
             }
             else
             {
-                await CheckUpscaledArchiveValidity(chapter, cancellationToken);
+                return await CheckUpscaledArchiveValidity(chapter, cancellationToken);
             }
         }
     }
 
-    private async Task CheckUpscaledArchiveValidity(Chapter chapter, CancellationToken cancellationToken)
+    private async Task<IntegrityCheckResult> CheckUpscaledArchiveValidity(Chapter chapter, CancellationToken cancellationToken)
     {
         try
         {
@@ -109,13 +163,14 @@ public class LibraryIntegrityChecker(
             {
                 if (chapter.IsUpscaled)
                 {
-                    return;
+                    return IntegrityCheckResult.Ok;
                 }
                 logger.LogInformation("A seemingly valid upscale was found for {chapterFileName}({chapterId}) of {seriesTitle}. Marking chapter as upscaled.",
                     chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
                 chapter.IsUpscaled = true;
                 dbContext.Update(chapter);
                 await dbContext.SaveChangesAsync(cancellationToken);
+                return IntegrityCheckResult.Corrected;
             }
             else
             {
@@ -136,11 +191,13 @@ public class LibraryIntegrityChecker(
                     dbContext.Update(chapter);
                     await dbContext.SaveChangesAsync(cancellationToken);
                 }
+                return IntegrityCheckResult.Invalid;
             }
             catch (Exception ex2)
             {
                 logger.LogError(ex2, "Failed to delete invalid upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle}.",
                     chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
+                return IntegrityCheckResult.Invalid;
             }
         }
     }
