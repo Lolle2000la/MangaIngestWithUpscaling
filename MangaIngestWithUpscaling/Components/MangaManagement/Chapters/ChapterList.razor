@@ -216,7 +216,7 @@
         await LoadChapters();
         _ = LibraryIntegrityChecker.CheckIntegrity(Manga).ContinueWith(async resultedInChanges =>
         {
-            if (resultedInChanges)
+            if (resultedInChanges.Result)
             {
                 await InvokeAsync(async () => await LoadChapters());
             }
