@@ -3,6 +3,7 @@
 @using MangaIngestWithUpscaling.Helpers
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
+@using MangaIngestWithUpscaling.Services.LibraryIntegrity
 @using MangaIngestWithUpscaling.Services.MetadataHandling
 @using System.Collections.ObjectModel
 
@@ -12,32 +13,33 @@
 @inject ILogger<ChapterList> Logger
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
+@inject ILibraryIntegrityChecker LibraryIntegrityChecker
 
 <MudTable T="ChapterItem" @bind-SelectedItems="selectedChapters"
-Items="@chapterItems"
-Dense="true"
-MultiSelection="true">
+          Items="@chapterItems"
+          Dense="true"
+          MultiSelection="true">
     <ToolBarContent>
         <MudStack Row>
             <MudButton StartIcon="@Icons.Material.Filled.Delete"
-            Color="Color.Error"
-            Variant="Variant.Text"
-            Disabled="selectedChapters == null || selectedChapters.Count == 0"
-            OnClick="@(async () => await DeleteSelected())">
+                       Color="Color.Error"
+                       Variant="Variant.Text"
+                       Disabled="selectedChapters == null || selectedChapters.Count == 0"
+                       OnClick="@(async () => await DeleteSelected())">
                 Delete Selected
             </MudButton>
             <MudButton StartIcon="@Icons.Material.Filled.ArrowUpward"
-            Color="Color.Primary"
-            Variant="Variant.Text"
-            Disabled="selectedChapters == null || selectedChapters.Count == 0 || !selectedChapters.Any(c => !c.Chapter.IsUpscaled)"
-            OnClick="@(() => selectedChapters?.Where(c => !c.Chapter.IsUpscaled).ToList().ForEach(async c => await UpscaleChapter(c.Chapter)))">
+                       Color="Color.Primary"
+                       Variant="Variant.Text"
+                       Disabled="selectedChapters == null || selectedChapters.Count == 0 || !selectedChapters.Any(c => !c.Chapter.IsUpscaled)"
+                       OnClick="@(() => selectedChapters?.Where(c => !c.Chapter.IsUpscaled).ToList().ForEach(async c => await UpscaleChapter(c.Chapter)))">
                 Upscale Selected
             </MudButton>
             <MudButton StartIcon="@Icons.Material.Filled.ArrowDownward"
-            Color="Color.Secondary"
-            Variant="Variant.Text"
-            Disabled="selectedChapters == null || selectedChapters.Count == 0 || !selectedChapters.Any(c => c.Chapter.IsUpscaled)"
-            OnClick="@(async () => await DeleteSelectedUpscaled())">
+                       Color="Color.Secondary"
+                       Variant="Variant.Text"
+                       Disabled="selectedChapters == null || selectedChapters.Count == 0 || !selectedChapters.Any(c => c.Chapter.IsUpscaled)"
+                       OnClick="@(async () => await DeleteSelectedUpscaled())">
                 Delete Upscaled Selected
             </MudButton>
         </MudStack>
@@ -57,16 +59,16 @@ MultiSelection="true">
             @if (!context.Chapter.IsUpscaled)
             {
                 <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward"
-                Color="Color.Primary" Variant="Variant.Text"
-                OnClick="@(() => UpscaleChapter(context.Chapter))"
-                title="Upscale this chapter." />
+                               Color="Color.Primary" Variant="Variant.Text"
+                               OnClick="@(() => UpscaleChapter(context.Chapter))"
+                               title="Upscale this chapter." />
             }
             else
             {
                 <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward"
-                Color="Color.Secondary" Variant="Variant.Text"
-                OnClick="@(() => DeleteUpscaledConfirm(context.Chapter))"
-                title="Delete upscaled version of this chapter." />
+                               Color="Color.Secondary" Variant="Variant.Text"
+                               OnClick="@(() => DeleteUpscaledConfirm(context.Chapter))"
+                               title="Delete upscaled version of this chapter." />
             }
         </MudTd>
         <MudTd DataLabel="Upscaler Profile">
@@ -74,9 +76,9 @@ MultiSelection="true">
         </MudTd>
         <MudTd DataLabel="Actions">
             <MudIconButton Icon="@Icons.Material.Filled.Delete"
-            Color="Color.Error" Variant="Variant.Text"
-            OnClick="@(() => DeleteChapterConfirm(context.Chapter))"
-            title="Delete this chapter" />
+                           Color="Color.Error" Variant="Variant.Text"
+                           OnClick="@(() => DeleteChapterConfirm(context.Chapter))"
+                           title="Delete this chapter" />
         </MudTd>
     </RowTemplate>
     <PagerContent>
@@ -129,6 +131,7 @@ MultiSelection="true">
         catch (Exception e)
         {
             Logger.LogError(e, "Failed to delete file of Chapter {ChapterId}", chapter.Id);
+            Snackbar.Add($"Failed to delete {chapter.FileName}. Check the logs for more information.", Severity.Error);
         }
 
         DbContext.Remove(chapter);
@@ -191,6 +194,7 @@ MultiSelection="true">
         catch (Exception e)
         {
             Logger.LogError(e, "Failed to delete upscaled file of Chapter {ChapterId}", chapter.Id);
+            Snackbar.Add($"Failed to delete upscaled {chapter.FileName}. Check the logs for more information.", Severity.Error);
         }
 
         chapter.IsUpscaled = false;
@@ -209,6 +213,26 @@ MultiSelection="true">
             await DbContext.Entry(Manga).Reference(m => m.Library).LoadAsync();
         }
 
+        bool loadingFailed = await LoadChapters();
+        if (loadingFailed)
+        {
+            bool resultedInChanges = LibraryIntegrityChecker.CheckIntegrity(Manga)
+            if (resultedInChanges.Result)
+            {
+                await LoadChapters();
+            }
+        }
+
+        chapters.Connect()
+            .Sort(new NaturalSortComparer<ChapterItem>(ci => ci.ExtractedMetadata.ChapterTitle))
+            .Bind(out chapterItems)
+                .Subscribe();
+    }
+
+    private async Task<bool> LoadChapters()
+    {
+        bool loadingFailed = false;
+
         foreach (var chapter in Manga.Chapters)
         {
             Task<UpscalerProfile?> loadProfile = Task.FromResult<UpscalerProfile?>(null);
@@ -217,7 +241,8 @@ MultiSelection="true">
                 // The following is used to ignore soft deleted profiles
                 loadProfile = DbContext.UpscalerProfiles.IgnoreQueryFilters().FirstOrDefaultAsync(p => p.Id == chapter.UpscalerProfileId);
             }
-            try{
+            try
+            {
                 var extractedMetadata = MetadataHandler.GetSeriesAndTitleFromComicInfo(Path.Combine(Manga.Library.NotUpscaledLibraryPath, chapter.RelativePath));
                 chapter.UpscalerProfile = await loadProfile;
                 chapters.Add(new ChapterItem { Chapter = chapter, ExtractedMetadata = extractedMetadata });
@@ -226,14 +251,12 @@ MultiSelection="true">
             {
                 Logger.LogError(e, "Failed to load metadata for Chapter {ChapterId}", chapter.Id);
                 Snackbar.Add($"Failed to load metadata for {chapter.FileName}. Check the logs for more information.", Severity.Error);
+                loadingFailed = true;
                 continue;
             }
         }
 
-        chapters.Connect()
-            .Sort(new NaturalSortComparer<ChapterItem>(ci => ci.ExtractedMetadata.ChapterTitle))
-            .Bind(out chapterItems)
-            .Subscribe();
+        return loadingFailed;
     }
 
     private record ChapterItem
