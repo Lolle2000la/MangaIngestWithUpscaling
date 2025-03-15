@@ -10,25 +10,25 @@ public interface ILibraryIntegrityChecker
     /// <param name="library">The library to check.</param>
     /// <param name="cancellationToken"></param>
     /// <returns>Whether the check has resulted in changes. If <c>true</c> you should reload your data.</returns>
-    Task<bool> CheckIntegrity(Library library, CancellationToken cancellationToken);
+    Task<bool> CheckIntegrity(Library library, CancellationToken? cancellationToken = null);
     /// <summary>
     /// Checks the integrity of a manga series. Will check all of its chapters one-by-one.
     /// </summary>
     /// <param name="manga">The manga series to check.</param>
     /// <param name="cancellationToken"></param>
     /// <returns>Whether the check has resulted in changes. If <c>true</c> you should reload your data.</returns>
-    Task<bool> CheckIntegrity(Manga manga, CancellationToken cancellationToken);
+    Task<bool> CheckIntegrity(Manga manga, CancellationToken? cancellationToken = null);
     /// <summary>
     /// Checks the integrity of a chapter.
     /// </summary>
     /// <param name="chapter">The chapter to check.</param>
     /// <param name="cancellationToken"></param>
     /// <returns>Whether the check has resulted in changes. If <c>true</c> you should reload your data.</returns>
-    Task<bool> CheckIntegrity(Chapter chapter, CancellationToken cancellationToken);
+    Task<bool> CheckIntegrity(Chapter chapter, CancellationToken? cancellationToken = null);
     /// <summary>
     /// Checks the integrity of all libraries.
     /// </summary>
     /// <param name="cancellationToken"></param>
     /// <returns>Whether the check has resulted in changes. If <c>true</c> you should reload your data.</returns>
-    Task<bool> CheckIntegrity(CancellationToken cancellationToken);
+    Task<bool> CheckIntegrity(CancellationToken? cancellationToken = null);
 }

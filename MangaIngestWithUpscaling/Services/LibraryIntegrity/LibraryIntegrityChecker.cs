@@ -14,7 +14,7 @@ public class LibraryIntegrityChecker(
         ILogger<LibraryIntegrityChecker> logger) : ILibraryIntegrityChecker
 {
     /// <inheritdoc/>
-    public async Task<bool> CheckIntegrity(CancellationToken cancellationToken)
+    public async Task<bool> CheckIntegrity(CancellationToken? cancellationToken = null)
     {
         var libraries = await dbContext.Libraries
             .Include(l => l.UpscalerProfile)
@@ -23,7 +23,7 @@ public class LibraryIntegrityChecker(
             .ThenInclude(c => c.UpscalerProfile)
                 .Include(l => l.MangaSeries)
                     .ThenInclude(m => m.OtherTitles)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken ?? CancellationToken.None);
 
         bool changesHappened = false;
 
@@ -36,7 +36,7 @@ public class LibraryIntegrityChecker(
     }
 
     /// <inheritdoc/>
-    public async Task<bool> CheckIntegrity(Library library, CancellationToken cancellationToken)
+    public async Task<bool> CheckIntegrity(Library library, CancellationToken? cancellationToken = null)
     {
         bool changesHappened = false;
 
@@ -49,7 +49,7 @@ public class LibraryIntegrityChecker(
     }
 
     /// <inheritdoc/>   
-    public async Task<bool> CheckIntegrity(Manga manga, CancellationToken cancellationToken)
+    public async Task<bool> CheckIntegrity(Manga manga, CancellationToken? cancellationToken = null)
     {
         bool changesHappened = false;
 
@@ -62,7 +62,7 @@ public class LibraryIntegrityChecker(
     }
 
     /// <inheritdoc/>
-    public async Task<bool> CheckIntegrity(Chapter chapter, CancellationToken cancellationToken)
+    public async Task<bool> CheckIntegrity(Chapter chapter, CancellationToken? cancellationToken = null)
     {
         var origIntegrity = await CheckOriginalIntegrity(chapter, cancellationToken);
         var upscaledIntegrity = IntegrityCheckResult.Ok;
@@ -87,7 +87,7 @@ public class LibraryIntegrityChecker(
         Corrected
     }
 
-    private async Task<IntegrityCheckResult> CheckOriginalIntegrity(Chapter chapter, CancellationToken cancellationToken)
+    private async Task<IntegrityCheckResult> CheckOriginalIntegrity(Chapter chapter, CancellationToken? cancellationToken = null)
     {
         if (!File.Exists(chapter.NotUpscaledFullPath))
         {
@@ -111,7 +111,7 @@ public class LibraryIntegrityChecker(
             dbContext.Remove(chapter);
             try
             {
-                await dbContext.SaveChangesAsync(cancellationToken);
+                await dbContext.SaveChangesAsync(cancellationToken ?? CancellationToken.None);
 
                 return IntegrityCheckResult.Missing;
             }
@@ -127,7 +127,7 @@ public class LibraryIntegrityChecker(
         return IntegrityCheckResult.Ok;
     }
 
-    private async Task<IntegrityCheckResult> CheckUpscaledIntegrity(Chapter chapter, CancellationToken cancellationToken)
+    private async Task<IntegrityCheckResult> CheckUpscaledIntegrity(Chapter chapter, CancellationToken? cancellationToken = null)
     {
         if (!chapter.IsUpscaled)
         {
@@ -135,7 +135,7 @@ public class LibraryIntegrityChecker(
             {
                 var taskQuery = dbContext.PersistedTasks
                     .FromSql($"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(UpscaleTask)} AND Data->>'$.ChapterId' = {chapter.Id}");
-                var tasks = await taskQuery.ToListAsync(cancellationToken);
+                var tasks = await taskQuery.ToListAsync(cancellationToken ?? CancellationToken.None);
 
                 // ensure we find out whether one of the tasks is still pending or processing, otherwise we might find past tasks that superseeded.
                 var task = tasks.FirstOrDefault(t =>
@@ -164,7 +164,7 @@ public class LibraryIntegrityChecker(
                     chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
                 chapter.IsUpscaled = false;
                 dbContext.Update(chapter);
-                await dbContext.SaveChangesAsync(cancellationToken);
+                await dbContext.SaveChangesAsync(cancellationToken ?? CancellationToken.None);
                 return IntegrityCheckResult.Missing;
             }
             else
@@ -174,7 +174,7 @@ public class LibraryIntegrityChecker(
         }
     }
 
-    private async Task<IntegrityCheckResult> CheckUpscaledArchiveValidity(Chapter chapter, CancellationToken cancellationToken)
+    private async Task<IntegrityCheckResult> CheckUpscaledArchiveValidity(Chapter chapter, CancellationToken? cancellationToken = null)
     {
         try
         {
@@ -188,7 +188,7 @@ public class LibraryIntegrityChecker(
                     chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
                 chapter.IsUpscaled = true;
                 dbContext.Update(chapter);
-                await dbContext.SaveChangesAsync(cancellationToken);
+                await dbContext.SaveChangesAsync(cancellationToken ?? CancellationToken.None);
                 return IntegrityCheckResult.Corrected;
             }
             else
@@ -208,7 +208,7 @@ public class LibraryIntegrityChecker(
                 {
                     chapter.IsUpscaled = false;
                     dbContext.Update(chapter);
-                    await dbContext.SaveChangesAsync(cancellationToken);
+                    await dbContext.SaveChangesAsync(cancellationToken ?? CancellationToken.None);
                 }
                 return IntegrityCheckResult.Invalid;
             }
