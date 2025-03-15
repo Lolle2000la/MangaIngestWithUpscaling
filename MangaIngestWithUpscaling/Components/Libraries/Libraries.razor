@@ -53,6 +53,9 @@
                                title="Upscale the entries not yet upscaled"
                                OnClick="e => OnUpscaleLibrary(context)" />
             }
+            <MudIconButton Icon="@Icons.Material.Filled.Checklist" Variant="Variant.Filled" Color="Color.Info"
+                           title="Check integrity of this library"
+                           OnClick="e => OnCheckIntegrity(context)" />
         </MudTd>
     </RowTemplate>
 </MudTable>
@@ -123,5 +126,10 @@
                 await TaskQueue.EnqueueAsync(new UpscaleTask(chapter, library.UpscalerProfile));
             }
         }
+    }
+
+    protected async Task OnCheckIntegrity(Library library)
+    {
+        await TaskQueue.EnqueueAsync(new LibraryIntegrityCheckTask(library));
     }
 }

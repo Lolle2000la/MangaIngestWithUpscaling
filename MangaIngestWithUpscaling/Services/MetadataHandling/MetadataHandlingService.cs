@@ -59,8 +59,10 @@ public class MetadataHandlingService(
 
 
     /// <inheritdoc/>
-    public bool PagesEqual(string file1, string file2)
+    public bool PagesEqual(string? file1, string? file2)
     {
+        if (string.IsNullOrEmpty(file1) || string.IsNullOrEmpty(file2)) return false;
+
         if (!file1.EndsWith(".cbz") || !file2.EndsWith(".cbz"))
         {
             return false;

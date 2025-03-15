@@ -4,6 +4,7 @@ using MangaIngestWithUpscaling.Configuration;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Services;
 using MangaIngestWithUpscaling.Services.ChapterRecognition;
+using MangaIngestWithUpscaling.Services.LibraryIntegrity;
 using MangaIngestWithUpscaling.Services.Python;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.DataProtection;
