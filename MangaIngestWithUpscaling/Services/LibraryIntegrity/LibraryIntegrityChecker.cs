@@ -27,7 +27,7 @@ public class LibraryIntegrityChecker(
 
         bool changesHappened = false;
 
-        foreach (var library in libraries)
+        foreach (var library in libraries.ToArray())
         {
             changesHappened = changesHappened || await CheckIntegrity(library, cancellationToken);
         }
@@ -40,7 +40,7 @@ public class LibraryIntegrityChecker(
     {
         bool changesHappened = false;
 
-        foreach (var manga in library.MangaSeries)
+        foreach (var manga in library.MangaSeries.ToArray())
         {
             changesHappened = changesHappened || await CheckIntegrity(manga, cancellationToken);
         }
@@ -53,7 +53,7 @@ public class LibraryIntegrityChecker(
     {
         bool changesHappened = false;
 
-        foreach (var chapter in manga.Chapters)
+        foreach (var chapter in manga.Chapters.ToArray())
         {
             changesHappened = changesHappened || await CheckIntegrity(chapter, cancellationToken);
         }
