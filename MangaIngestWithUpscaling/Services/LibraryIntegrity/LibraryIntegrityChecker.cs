@@ -13,7 +13,8 @@ public class LibraryIntegrityChecker(
         IMetadataHandlingService metadataHandling,
         ILogger<LibraryIntegrityChecker> logger) : ILibraryIntegrityChecker
 {
-    public async Task CheckIntegrity(CancellationToken cancellationToken)
+    /// <inheritdoc/>
+    public async Task<bool> CheckIntegrity(CancellationToken cancellationToken)
     {
         var libraries = await dbContext.Libraries
             .Include(l => l.UpscalerProfile)
@@ -24,29 +25,44 @@ public class LibraryIntegrityChecker(
                     .ThenInclude(m => m.OtherTitles)
             .ToListAsync(cancellationToken);
 
+        bool changesHappened = false;
+
         foreach (var library in libraries)
         {
-            await CheckIntegrity(library, cancellationToken);
+            changesHappened = changesHappened || await CheckIntegrity(library, cancellationToken);
         }
+
+        return changesHappened;
     }
 
-    public async Task CheckIntegrity(Library library, CancellationToken cancellationToken)
+    /// <inheritdoc/>
+    public async Task<bool> CheckIntegrity(Library library, CancellationToken cancellationToken)
     {
+        bool changesHappened = false;
+
         foreach (var manga in library.MangaSeries)
         {
-            await CheckIntegrity(manga, cancellationToken);
+            changesHappened = changesHappened || await CheckIntegrity(manga, cancellationToken);
         }
+
+        return changesHappened;
     }
 
-    public async Task CheckIntegrity(Manga manga, CancellationToken cancellationToken)
+    /// <inheritdoc/>   
+    public async Task<bool> CheckIntegrity(Manga manga, CancellationToken cancellationToken)
     {
+        bool changesHappened = false;
+
         foreach (var chapter in manga.Chapters)
         {
-            await CheckIntegrity(chapter, cancellationToken);
+            changesHappened = changesHappened || await CheckIntegrity(chapter, cancellationToken);
         }
+
+        return changesHappened;
     }
 
-    public async Task CheckIntegrity(Chapter chapter, CancellationToken cancellationToken)
+    /// <inheritdoc/>
+    public async Task<bool> CheckIntegrity(Chapter chapter, CancellationToken cancellationToken)
     {
         var origIntegrity = await CheckOriginalIntegrity(chapter, cancellationToken);
         var upscaledIntegrity = IntegrityCheckResult.Ok;
@@ -55,9 +71,12 @@ public class LibraryIntegrityChecker(
 
         if (origIntegrity != IntegrityCheckResult.Ok || upscaledIntegrity != IntegrityCheckResult.Ok)
         {
-            logger.LogWarning("Chapter {chapterFileName} ({chapterId}) of {seriesTitle} has integrity issues. Original: {origIntegrity}, Upscaled: {upscaledIntegrity}. Check the other log messages for more information on the cause of this.",
+            logger.LogWarning("Chapter {chapterFileName} ({chapterId}) of {seriesTitle} has integrity issues. Original: {origIntegrity}, Upscaled: {upscaledIntegrity}. Check the other log messages for more information on the cause of this.\n\nNote that this doesn't have to be a problem as many problems can and probably were corrected.",
                 chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle, origIntegrity, upscaledIntegrity);
+            return true;
         }
+
+        return false;
     }
 
     private enum IntegrityCheckResult
