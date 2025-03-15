@@ -16,30 +16,30 @@
 @inject ILibraryIntegrityChecker LibraryIntegrityChecker
 
 <MudTable T="ChapterItem" @bind-SelectedItems="selectedChapters"
-          Items="@chapterItems"
-          Dense="true"
-          MultiSelection="true">
+Items="@chapterItems"
+Dense="true"
+MultiSelection="true">
     <ToolBarContent>
         <MudStack Row>
             <MudButton StartIcon="@Icons.Material.Filled.Delete"
-                       Color="Color.Error"
-                       Variant="Variant.Text"
-                       Disabled="selectedChapters == null || selectedChapters.Count == 0"
-                       OnClick="@(async () => await DeleteSelected())">
+            Color="Color.Error"
+            Variant="Variant.Text"
+            Disabled="selectedChapters == null || selectedChapters.Count == 0"
+            OnClick="@(async () => await DeleteSelected())">
                 Delete Selected
             </MudButton>
             <MudButton StartIcon="@Icons.Material.Filled.ArrowUpward"
-                       Color="Color.Primary"
-                       Variant="Variant.Text"
-                       Disabled="selectedChapters == null || selectedChapters.Count == 0 || !selectedChapters.Any(c => !c.Chapter.IsUpscaled)"
-                       OnClick="@(() => selectedChapters?.Where(c => !c.Chapter.IsUpscaled).ToList().ForEach(async c => await UpscaleChapter(c.Chapter)))">
+            Color="Color.Primary"
+            Variant="Variant.Text"
+            Disabled="selectedChapters == null || selectedChapters.Count == 0 || !selectedChapters.Any(c => !c.Chapter.IsUpscaled)"
+            OnClick="@(() => selectedChapters?.Where(c => !c.Chapter.IsUpscaled).ToList().ForEach(async c => await UpscaleChapter(c.Chapter)))">
                 Upscale Selected
             </MudButton>
             <MudButton StartIcon="@Icons.Material.Filled.ArrowDownward"
-                       Color="Color.Secondary"
-                       Variant="Variant.Text"
-                       Disabled="selectedChapters == null || selectedChapters.Count == 0 || !selectedChapters.Any(c => c.Chapter.IsUpscaled)"
-                       OnClick="@(async () => await DeleteSelectedUpscaled())">
+            Color="Color.Secondary"
+            Variant="Variant.Text"
+            Disabled="selectedChapters == null || selectedChapters.Count == 0 || !selectedChapters.Any(c => c.Chapter.IsUpscaled)"
+            OnClick="@(async () => await DeleteSelectedUpscaled())">
                 Delete Upscaled Selected
             </MudButton>
         </MudStack>
@@ -59,16 +59,16 @@
             @if (!context.Chapter.IsUpscaled)
             {
                 <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward"
-                               Color="Color.Primary" Variant="Variant.Text"
-                               OnClick="@(() => UpscaleChapter(context.Chapter))"
-                               title="Upscale this chapter." />
+                Color="Color.Primary" Variant="Variant.Text"
+                OnClick="@(() => UpscaleChapter(context.Chapter))"
+                title="Upscale this chapter." />
             }
             else
             {
                 <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward"
-                               Color="Color.Secondary" Variant="Variant.Text"
-                               OnClick="@(() => DeleteUpscaledConfirm(context.Chapter))"
-                               title="Delete upscaled version of this chapter." />
+                Color="Color.Secondary" Variant="Variant.Text"
+                OnClick="@(() => DeleteUpscaledConfirm(context.Chapter))"
+                title="Delete upscaled version of this chapter." />
             }
         </MudTd>
         <MudTd DataLabel="Upscaler Profile">
@@ -76,9 +76,9 @@
         </MudTd>
         <MudTd DataLabel="Actions">
             <MudIconButton Icon="@Icons.Material.Filled.Delete"
-                           Color="Color.Error" Variant="Variant.Text"
-                           OnClick="@(() => DeleteChapterConfirm(context.Chapter))"
-                           title="Delete this chapter" />
+            Color="Color.Error" Variant="Variant.Text"
+            OnClick="@(() => DeleteChapterConfirm(context.Chapter))"
+            title="Delete this chapter" />
         </MudTd>
     </RowTemplate>
     <PagerContent>
@@ -216,9 +216,10 @@
         bool loadingFailed = await LoadChapters();
         if (loadingFailed)
         {
-            bool resultedInChanges = LibraryIntegrityChecker.CheckIntegrity(Manga)
-            if (resultedInChanges.Result)
+            bool resultedInChanges = await LibraryIntegrityChecker.CheckIntegrity(Manga);
+            if (resultedInChanges)
             {
+                await DbContext.Entry(Manga.Chapters).ReloadAsync();
                 await LoadChapters();
             }
         }
