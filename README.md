@@ -45,6 +45,7 @@ services:
       - /path/to/target:/target
     ports:
       - 8080:8080 # the web interface will be available on this port
+    #user: '1000:1000' # change the user/group for improved security. Note: The user must be part of the 'video' group and have the correct permissions for its mount points.
     # Make sure you have the nvidia-container-toolkit installed on your host.
     deploy:
       resources:
@@ -78,6 +79,7 @@ services:
       - /path/to/target:/target
     ports:
       - 8080:8080 # the web interface will be available on this port
+    #user: '1000:1000' # change the user/group for improved security. Note: The user must be part of the 'video' group and have the correct permissions for its mount points.
     # The following lines are necessary to run the container with a ROCm-compatible AMD GPU.
     # See https://rocm.docs.amd.com/projects/install-on-linux/en/latest/how-to/docker.html for more information.
     devices:
