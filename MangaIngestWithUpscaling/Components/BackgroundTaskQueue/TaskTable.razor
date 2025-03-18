@@ -24,17 +24,19 @@
         <MudTd>@context.CreatedAt</MudTd>
         <MudTd>@context.ProcessedAt</MudTd>
         <MudTd>@context.Status</MudTd>
-        <MudTd>
+        <MudTd Style="white-space: nowrap">
             @if (context.Status == PersistedTaskStatus.Pending)
             {
                 <MudIconButton Icon="@Icons.Material.Filled.PlayArrow"
                                Variant="Variant.Text"
+                               Size="Size.Small"
                                OnClick="_ => OnRunNow.InvokeAsync(context)" />
             }
             else if (context.Status is PersistedTaskStatus.Failed or PersistedTaskStatus.Canceled)
             {
                 <MudIconButton Icon="@Icons.Material.Filled.Refresh"
                                Variant="Variant.Text"
+                               Size="Size.Small"
                                OnClick="_ => OnRetryFailed.InvokeAsync(context)" />
             }
             @if (context.Status == PersistedTaskStatus.Processing)
@@ -42,13 +44,15 @@
                 <MudIconButton Icon="@Icons.Material.Filled.Cancel"
                                Variant="Variant.Text"
                                Color="Color.Error"
+                               Size="Size.Small"
                                OnClick="_ => OnCancel.InvokeAsync(context)" />
             }
             else
             {
                 <MudIconButton Icon="@Icons.Material.Filled.Delete"
                                Variant="Variant.Text"
-                               Color="Color.Error"
+                                   Color="Color.Error"
+                                   Size="Size.Small"
                                OnClick="_ => OnDelete.InvokeAsync(context)" />
             }
         </MudTd>
