@@ -19,12 +19,15 @@
         <MudTh>Actions</MudTh>
     </HeaderContent>
     <RowTemplate>
-        <MudTd>@context.Order</MudTd>
-        <MudTd>@context.Data.TaskFriendlyName</MudTd>
-        <MudTd>@context.CreatedAt</MudTd>
-        <MudTd>@context.ProcessedAt</MudTd>
-        <MudTd>@context.Status</MudTd>
-        <MudTd Style="white-space: nowrap">
+        <MudTd DataLabel="Order">
+            @context.Order
+        </MudTd>
+        <MudTd DataLabel="Name">@context.Data.TaskFriendlyName</MudTd>
+        <MudTd>@context.CreatedAt.ToLocalTime()</MudTd>
+        <MudTd DataLabel="Queued At">@(context.ProcessedAt.HasValue ? context.ProcessedAt.Value.ToLocalTime() : "")</MudTd>
+        <MudTd DataLabel="Finished At">@context.Status</MudTd>
+        <MudTd DataLabel="Status"
+               Style="white-space: nowrap">
             @if (context.Status == PersistedTaskStatus.Pending)
             {
                 <MudIconButton Icon="@Icons.Material.Filled.PlayArrow"
@@ -51,8 +54,8 @@
             {
                 <MudIconButton Icon="@Icons.Material.Filled.Delete"
                                Variant="Variant.Text"
-                                   Color="Color.Error"
-                                   Size="Size.Small"
+                               Color="Color.Error"
+                               Size="Size.Small"
                                OnClick="_ => OnDelete.InvokeAsync(context)" />
             }
         </MudTd>
