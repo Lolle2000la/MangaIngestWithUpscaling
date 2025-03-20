@@ -65,7 +65,7 @@ public class RenameUpscaledChaptersSeriesTask : BaseTask
 
         var metadataChange = services.GetRequiredService<IMangaMetadataChanger>();
 
-        metadataChange.ApplyUpscaledChapterTitle(chapter, NewTitle, origChapterPath);
+        metadataChange.ApplyMangaTitleToUpscaled(chapter, NewTitle, origChapterPath);
     }
 
     public override string TaskFriendlyName => $"Changing {ChapterFileName} title attribute to \"{NewTitle}\"";

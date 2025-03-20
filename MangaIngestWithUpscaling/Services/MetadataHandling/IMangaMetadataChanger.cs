@@ -30,5 +30,5 @@ public interface IMangaMetadataChanger
     /// This is mainly used outside of <see cref="MangaMetadataChanger"/> to ensure that the Metadata changes are applied to the currently upscaled chapters as well.
     /// If the upscaling takes too long, then the metadata might be stale and not reflect the current state of the manga series.
     /// </remarks>
-    void ApplyUpscaledChapterTitle(Chapter chapter, string newTitle, string origChapterPath);
+    void ApplyMangaTitleToUpscaled(Chapter chapter, string newTitle, string origChapterPath);
 }

@@ -23,7 +23,7 @@ public class MangaMetadataChanger(
     IChapterChangedNotifier chapterChangedNotifier) : IMangaMetadataChanger
 {
     /// <inheritdoc/>
-    public void ApplyUpscaledChapterTitle(Chapter chapter, string newTitle, string origChapterPath)
+    public void ApplyMangaTitleToUpscaled(Chapter chapter, string newTitle, string origChapterPath)
     {
         if (!File.Exists(origChapterPath))
         {
@@ -77,7 +77,7 @@ public class MangaMetadataChanger(
 
                 if (chapter.IsUpscaled)
                 {
-                    ApplyUpscaledChapterTitle(chapter, newTitle, Path.Combine(manga.Library.UpscaledLibraryPath!, oldRelativePath));
+                    ApplyMangaTitleToUpscaled(chapter, newTitle, Path.Combine(manga.Library.UpscaledLibraryPath!, oldRelativePath));
                 }
             }
             catch (XmlException ex)
