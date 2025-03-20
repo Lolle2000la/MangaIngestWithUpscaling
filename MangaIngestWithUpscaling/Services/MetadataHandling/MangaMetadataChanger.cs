@@ -46,7 +46,7 @@ public class MangaMetadataChanger(
     }
 
     /// <inheritdoc/>
-    public async Task ChangeTitle(Manga manga, string newTitle, bool addOldToAlternative = true)
+    public async Task ChangeMangaTitle(Manga manga, string newTitle, bool addOldToAlternative = true)
     {
         manga.ChangePrimaryTitle(newTitle, addOldToAlternative);
 

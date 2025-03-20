@@ -19,7 +19,7 @@ public interface IMangaMetadataChanger
     /// </param>
     /// <exception cref="TitleAlreadyUsedException">Indicates that the title has already been used.</exception>
     /// <returns></returns>
-    Task ChangeTitle(Manga manga, string newTitle, bool addOldToAlternative = true);
+    Task ChangeMangaTitle(Manga manga, string newTitle, bool addOldToAlternative = true);
     /// <summary>
     /// Updates the title of a upscaled chapter file and moves it to the correct directory.
     /// </summary>
