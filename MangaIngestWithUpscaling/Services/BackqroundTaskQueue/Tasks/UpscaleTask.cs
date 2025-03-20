@@ -99,7 +99,7 @@ public class UpscaleTask : BaseTask
         // make sure that the new chapter is applied
         if (oldMangaTitle != chapter.Manga.PrimaryTitle)
         {
-            metadataChanger.ApplyUpscaledChapterTitle(chapter, chapter.Manga.PrimaryTitle, upscaleTargetPath);
+            metadataChanger.ApplyMangaTitleToUpscaled(chapter, chapter.Manga.PrimaryTitle, upscaleTargetPath);
         }
     }
 

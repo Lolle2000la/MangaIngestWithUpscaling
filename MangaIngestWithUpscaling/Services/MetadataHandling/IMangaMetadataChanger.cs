@@ -19,7 +19,7 @@ public interface IMangaMetadataChanger
     /// </param>
     /// <exception cref="TitleAlreadyUsedException">Indicates that the title has already been used.</exception>
     /// <returns></returns>
-    Task ChangeTitle(Manga manga, string newTitle, bool addOldToAlternative = true);
+    Task ChangeMangaTitle(Manga manga, string newTitle, bool addOldToAlternative = true);
     /// <summary>
     /// Updates the title of a upscaled chapter file and moves it to the correct directory.
     /// </summary>
@@ -30,5 +30,11 @@ public interface IMangaMetadataChanger
     /// This is mainly used outside of <see cref="MangaMetadataChanger"/> to ensure that the Metadata changes are applied to the currently upscaled chapters as well.
     /// If the upscaling takes too long, then the metadata might be stale and not reflect the current state of the manga series.
     /// </remarks>
-    void ApplyUpscaledChapterTitle(Chapter chapter, string newTitle, string origChapterPath);
+    void ApplyMangaTitleToUpscaled(Chapter chapter, string newTitle, string origChapterPath);
+    /// <summary>
+    /// Changes the title of a chapter in the ComicInfo.xml metadata file.
+    /// </summary>
+    /// <param name="chapter">The chapter whose metadata to change.</param>
+    /// <param name="newTitle">The new title to apply.</param>
+    Task ChangeChapterTitle(Chapter chapter, string newTitle);
 }

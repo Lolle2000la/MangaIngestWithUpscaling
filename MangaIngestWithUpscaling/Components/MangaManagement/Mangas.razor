@@ -303,7 +303,7 @@
             manga.PrimaryTitle = mangaBeforeEdit.PrimaryTitle;
             try
             {
-                await MangaMetadataChanger.ChangeTitle(manga, newTitle.Trim());
+                await MangaMetadataChanger.ChangeMangaTitle(manga, newTitle.Trim());
             }
             catch (Exception e)
             {

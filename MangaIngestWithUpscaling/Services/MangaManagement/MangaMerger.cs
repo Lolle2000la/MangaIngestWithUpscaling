@@ -91,7 +91,7 @@ public class MangaMerger(
                         {
                             try
                             {
-                                metadataChanger.ApplyUpscaledChapterTitle(chapter, primary.PrimaryTitle!, upscaledPath);
+                                metadataChanger.ApplyMangaTitleToUpscaled(chapter, primary.PrimaryTitle!, upscaledPath);
                             }
                             catch (Exception ex)
                             {

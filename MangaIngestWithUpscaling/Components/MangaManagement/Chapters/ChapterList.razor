@@ -9,6 +9,7 @@
 
 @inject ApplicationDbContext DbContext
 @inject IMetadataHandlingService MetadataHandler
+@inject IMangaMetadataChanger MangaMetadataChanger
 @inject ITaskQueue TaskQueue
 @inject ILogger<ChapterList> Logger
 @inject IDialogService DialogService
@@ -18,7 +19,10 @@
 <MudTable T="ChapterItem" @bind-SelectedItems="selectedChapters"
           Items="@chapterItems"
           Dense="true"
-          MultiSelection="true">
+          MultiSelection="true" 
+          CanCancelEdit="true"
+          RowEditCommit="r => OnChapterMetadataCommit((ChapterItem)r)"
+          RowEditCancel="r => OnChapterMetadataDiscard((ChapterItem)r)">
     <ToolBarContent>
         <MudStack Row>
             <MudButton StartIcon="@Icons.Material.Filled.Delete"
@@ -81,6 +85,30 @@
                            title="Delete this chapter" />
         </MudTd>
     </RowTemplate>
+    <RowEditingTemplate>
+        <MudTd DataLabel="Chapter Title"><MudInput @bind-Value="context.NewTitle"/></MudTd>
+        <MudTd DataLabel="Chapter Path">@context.Chapter.RelativePath</MudTd>
+        <MudTd DataLabel="Upscaled">
+            @context.Chapter.IsUpscaled
+            @if (!context.Chapter.IsUpscaled)
+            {
+                <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward"
+                               Color="Color.Primary" Variant="Variant.Text"
+                               OnClick="@(() => UpscaleChapter(context.Chapter))"
+                               title="Upscale this chapter." />
+            }
+            else
+            {
+                <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward"
+                               Color="Color.Secondary" Variant="Variant.Text"
+                               OnClick="@(() => DeleteUpscaledConfirm(context.Chapter))"
+                               title="Delete upscaled version of this chapter." />
+            }
+        </MudTd>
+        <MudTd DataLabel="Upscaler Profile">
+            @(context.Chapter.UpscalerProfile?.Deleted == true ? $"{context.Chapter.UpscalerProfile.Name} (old)" : context.Chapter.UpscalerProfile?.Name)
+        </MudTd>
+    </RowEditingTemplate>
     <PagerContent>
         <MudTablePager />
     </PagerContent>
@@ -111,6 +139,20 @@
         {
             await DeleteChapter(chapter);
         }
+    }
+
+    private async Task OnChapterMetadataCommit(ChapterItem chapter)
+    {
+        if (chapter.ExtractedMetadata.ChapterTitle != chapter.NewTitle)
+        {
+            await MangaMetadataChanger.ChangeChapterTitle(chapter.Chapter, chapter.NewTitle);
+            chapter.ExtractedMetadata = chapter.ExtractedMetadata with { ChapterTitle = chapter.NewTitle };
+        }
+    }
+
+    private void OnChapterMetadataDiscard(ChapterItem chapter)
+    {
+        chapter.NewTitle = chapter.ExtractedMetadata.ChapterTitle;
     }
 
     private async Task DeleteChapter(Chapter chapter)
@@ -245,7 +287,7 @@
             {
                 var extractedMetadata = MetadataHandler.GetSeriesAndTitleFromComicInfo(Path.Combine(Manga.Library.NotUpscaledLibraryPath, chapter.RelativePath));
                 chapter.UpscalerProfile = await loadProfile;
-                chapters.Add(new ChapterItem { Chapter = chapter, ExtractedMetadata = extractedMetadata });
+                chapters.Add(new ChapterItem { Chapter = chapter, ExtractedMetadata = extractedMetadata, NewTitle = extractedMetadata.ChapterTitle });
             }
             catch (Exception e)
             {
@@ -263,5 +305,6 @@
     {
         public Chapter Chapter { get; set; }
         public ExtractedMetadata ExtractedMetadata { get; set; }
+        public string NewTitle { get; set; }
     }
 }
