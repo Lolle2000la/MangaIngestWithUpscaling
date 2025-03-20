@@ -125,7 +125,7 @@
 
     private async Task DeleteSelected()
     {
-        var result = await DialogService.ShowMessageBox("Upscale Selected Chapters", "Are you sure you want to upscale the selected chapters?", yesText: "Yes", cancelText: "No");
+        var result = await DialogService.ShowMessageBox("Delete Selected Chapters", "Are you sure you want to delete the selected chapters?", yesText: "Yes", cancelText: "No");
         if (result == true)
         {
             selectedChapters?.ToList().ForEach(async c => await DeleteChapter(c.Chapter));
