@@ -3,4 +3,11 @@
   "extends": [
     "config:recommended"
   ]
+  "packageRules": [
+    {
+      "description": "Automerge all updates if they build",
+      "matchPackageNames": ["*"],
+      "automerge": true
+    }
+  ]
 }
