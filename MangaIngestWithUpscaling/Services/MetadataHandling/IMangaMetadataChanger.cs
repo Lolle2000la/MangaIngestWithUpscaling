@@ -31,4 +31,10 @@ public interface IMangaMetadataChanger
     /// If the upscaling takes too long, then the metadata might be stale and not reflect the current state of the manga series.
     /// </remarks>
     void ApplyMangaTitleToUpscaled(Chapter chapter, string newTitle, string origChapterPath);
+    /// <summary>
+    /// Changes the title of a chapter in the ComicInfo.xml metadata file.
+    /// </summary>
+    /// <param name="chapter">The chapter whose metadata to change.</param>
+    /// <param name="newTitle">The new title to apply.</param>
+    Task ChangeChapterTitle(Chapter chapter, string newTitle);
 }

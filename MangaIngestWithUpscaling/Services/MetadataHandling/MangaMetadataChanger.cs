@@ -97,8 +97,8 @@ public class MangaMetadataChanger(
     {
         // move chapter to the correct directory with the new title
         var newChapterPath = Path.Combine(
-            libraryBasePath, 
-            PathEscaper.EscapeFileName(newTitle), 
+            libraryBasePath,
+            PathEscaper.EscapeFileName(newTitle),
             PathEscaper.EscapeFileName(chapter.FileName));
         var newRelativePath = Path.GetRelativePath(libraryBasePath, newChapterPath);
         if (File.Exists(newChapterPath))
@@ -124,4 +124,38 @@ public class MangaMetadataChanger(
         var newMetadata = metadata with { Series = newTitle };
         metadataHandling.WriteComicInfo(origChapterPath, newMetadata);
     }
+
+    /// <inheritdoc/>
+    public async Task ChangeChapterTitle(Chapter chapter, string newTitle)
+    {
+        await dbContext.Entry(chapter).Reference(c => c.Manga).LoadAsync();
+        await dbContext.Entry(chapter.Manga).Reference(m => m.Library).LoadAsync();
+
+        try
+        {
+            metadataHandling.WriteComicInfo(chapter.NotUpscaledFullPath,
+                metadataHandling.GetSeriesAndTitleFromComicInfo(chapter.NotUpscaledFullPath) with { ChapterTitle = newTitle });
+
+            if (chapter.IsUpscaled)
+            {
+                if (chapter.UpscaledFullPath == null)
+                {
+                    logger.LogWarning("Upscaled chapter file not found: {ChapterPath}", chapter.UpscaledFullPath);
+                    return;
+                }
+
+                metadataHandling.WriteComicInfo(chapter.UpscaledFullPath,
+                    metadataHandling.GetSeriesAndTitleFromComicInfo(chapter.UpscaledFullPath) with { ChapterTitle = newTitle });
+            }
+        }
+        catch (XmlException ex)
+        {
+            logger.LogWarning(ex, "Error parsing ComicInfo XML for chapter {ChapterId} ({ChapterPath})", chapter.Id, chapter.RelativePath);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error updating metadata for chapter {ChapterId} ({ChapterPath})", chapter.Id, chapter.RelativePath);
+        }
+    }
+
 }
