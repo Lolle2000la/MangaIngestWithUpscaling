@@ -31,6 +31,8 @@ public class MangaMerger(
                 await dbContext.Entry(manga).Reference(m => m.Library).LoadAsync(cancellationToken);
             if (!dbContext.Entry(manga).Collection(m => m.Chapters).IsLoaded)
                 await dbContext.Entry(manga).Collection(m => m.Chapters).LoadAsync(cancellationToken);
+            if (!dbContext.Entry(manga).Collection(m => m.OtherTitles).IsLoaded)
+                await dbContext.Entry(manga).Collection(m => m.OtherTitles).LoadAsync(cancellationToken);
 
             // collect all the chapters to move in a separate list to avoid modifying the collection while iterating
             List<Chapter> chaptersToMove = [];
@@ -136,11 +138,38 @@ public class MangaMerger(
                 }
                 var upscaledMangaDir = Path.Combine(manga.Library.UpscaledLibraryPath, manga.PrimaryTitle);
                 FileSystemHelpers.DeleteIfEmpty(upscaledMangaDir, logger);
-            }
+
+                try
+                {
+                    // add the other titles to the primary manga if they are not already there
+                    if (!primary.OtherTitles.Any(t => t.Title == manga.PrimaryTitle))
+                    {
+                        primary.OtherTitles.Add(new MangaAlternativeTitle
+                        {
+                            Title = manga.PrimaryTitle,
+                            Manga = primary,
+                            MangaId = primary.Id
+                        });
+                    }
+                    foreach (var title in manga.OtherTitles
+                        .Where(title => !primary.OtherTitles.Any(t => t.Title == title.Title))
+                        .ToList())
+                    {
+                        title.Manga = primary;
+                        title.MangaId = primary.Id;
+                        primary.OtherTitles.Add(title);
+                        manga.OtherTitles.Remove(title);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to move other titles from {MangaId} to {PrimaryMangaId}.",
+                        manga.Id, primary.Id);
+                }
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);
-
+         
         _ = Task.Run(() =>
         {
             foreach (var uniqueLibraryPath in mergedInto
