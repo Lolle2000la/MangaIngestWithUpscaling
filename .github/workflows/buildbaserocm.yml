@@ -2,6 +2,8 @@
 name: Build and Push ROCm Base Image
 
 on:
+  schedule:
+    - cron: '0 4 15 * *' # Make sure we get the latest base image every month
   workflow_dispatch: 
   push:
     # Trigger only when the Dockerfile is changed
