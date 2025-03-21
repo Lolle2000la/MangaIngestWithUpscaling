@@ -38,11 +38,12 @@ public class DistributedUpscaleTaskProcessor(
                 currentTask.Status = PersistedTaskStatus.Canceled;
                 _ = StatusChanged?.Invoke(currentTask);
                 dbContext.Update(currentTask);
-                await dbContext.SaveChangesAsync();
 
                 runningTasks.Remove(checkAgainst.Id);
             }
         }
+
+        await dbContext.SaveChangesAsync();
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -67,10 +68,11 @@ public class DistributedUpscaleTaskProcessor(
                         task.Status = PersistedTaskStatus.Failed;
                         _ = StatusChanged?.Invoke(task);
                         dbContext.Update(task);
-                        await dbContext.SaveChangesAsync();
                         runningTasks.Remove(taskId);
                     }
                 }
+
+                await dbContext.SaveChangesAsync();
             }
         }, stoppingToken);
 
@@ -81,8 +83,8 @@ public class DistributedUpscaleTaskProcessor(
             using (_lock.EnterScope())
             {
                 runningTasks[task.Id] = task;
-                await _tasksDistributionChannel.Writer.WriteAsync(task);
             }
+            await _tasksDistributionChannel.Writer.WriteAsync(task);
         }
     }
 

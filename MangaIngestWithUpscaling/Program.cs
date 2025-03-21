@@ -56,6 +56,8 @@ builder.Services.AddSerilog((services, lc) => lc
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
+builder.Services.AddGrpc();
+
 
 builder.Services.AddMudServices();
 builder.Services.AddMudTranslations();
