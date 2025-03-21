@@ -88,17 +88,26 @@ public class DistributedUpscaleTaskProcessor(
         }
     }
 
-    public async Task<PersistedTask> GetTask(CancellationToken stoppingToken)
+    public async Task<PersistedTask?> GetTask(CancellationToken stoppingToken)
     {
         _taskRequested.Release(1);
-        return await _tasksDistributionChannel.Reader.ReadAsync(stoppingToken);
+        var cancelToken = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        cancelToken.CancelAfter(TimeSpan.FromSeconds(10));
+        try
+        {
+            return await _tasksDistributionChannel.Reader.ReadAsync(stoppingToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return null;
+        }
     }
 
-    public bool KeepAlive(PersistedTask task)
+    public bool KeepAlive(int taskId)
     {
         using (_lock.EnterScope())
         {
-            if (runningTasks.TryGetValue(task.Id, out var currentTask) && currentTask.Id == task.Id)
+            if (runningTasks.TryGetValue(taskId, out var currentTask))
             {
                 currentTask.LastKeepAlive = DateTime.UtcNow;
                 return true;
