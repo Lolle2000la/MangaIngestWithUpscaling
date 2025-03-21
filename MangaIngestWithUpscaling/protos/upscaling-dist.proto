@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+import "google/protobuf/empty.proto";
+
+package upscaling;
+
+message UpscaleTaskDelegationResponse {
+    int32 task_id = 1; // Task ID of the upscaling task, -1 if none available
+    string config_json = 2; // JSON string of the upscaling configuration used by MangaJaNaiUpscalerGui-cli tool, needs editing.
+}
+
+message CbzToUpscaleRequest {
+    int32 task_id = 1; // Task ID of the upscaling task
+}
+
+message CbzFileChunkRequest {
+    int32 task_id = 1; // Task ID of the upscaling task
+    int32 chunk_number = 2; // Chunk number of the Cbz file
+}
+
+message CbzFileChunk {
+    int32 task_id = 1; // Task ID of the upscaling task
+    int32 chunk_number = 2; // Chunk number of the Cbz file
+    bytes chunk = 3; // Chunk of the Cbz file
+}
+
+message KeepAliveRequest {
+    // Keep alive request to keep the connection open, needs to be sent every minute
+    int32 task_id = 1; // Task ID of the upscaling task
+}
+
+message KeepAliveResponse {
+    bool is_alive = 1; // True if the connection is still alive
+}
+
+message UploadUpscaledCbzResponse {
+    bool success = 1; // True if the upload was successful
+    string message = 2; // Message from the server
+    UpscaleTaskDelegationResponse task = 3; // Task ID of the upscaling task
+}
+
+service UpscalingService {
+    // Request a task to be upscaled
+    rpc RequestUpscaleTask(google.protobuf.Empty) returns (UpscaleTaskDelegationResponse);
+    rpc GetCbzFile(CbzToUpscaleRequest) returns (stream CbzFileChunk);
+    rpc RequestCbzFileChunk(CbzFileChunkRequest) returns (CbzFileChunk);
+    rpc UploadUpscaledCbzFile(stream CbzFileChunk) returns (google.protobuf.Empty);
+    rpc KeepAlive(KeepAliveRequest) returns (KeepAliveResponse);
+}

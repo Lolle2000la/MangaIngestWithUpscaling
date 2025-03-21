@@ -16,8 +16,13 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<Protobuf Include="Protos\upscaling-dist.proto" GrpcServices="Server" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<PackageReference Include="AutoRegisterInject" Version="1.4.1" />
 		<PackageReference Include="DynamicData" Version="9.2.1" />
+		<PackageReference Include="Grpc.AspNetCore" Version="2.70.0" />
 		<PackageReference Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" Version="9.0.3" />
 		<PackageReference Include="Microsoft.AspNetCore.Diagnostics.EntityFrameworkCore" Version="9.0.3" />
 		<PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="9.0.3" />
