@@ -2,7 +2,7 @@ syntax = "proto3";
 
 import "google/protobuf/empty.proto";
 
-package upscaling;
+package manga_ingest_with_upscaling.api.upscaling;
 
 message UpscaleTaskDelegationResponse {
     int32 task_id = 1; // Task ID of the upscaling task, -1 if none available

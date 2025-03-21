@@ -1,10 +1,11 @@
 ﻿using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
-using Upscaling;
+using Microsoft.AspNetCore.Authorization;
 
-namespace MangaIngestWithUpscaling.Api;
+namespace MangaIngestWithUpscaling.Api.Upscaling;
 
+[Authorize]
 public partial class UpscalingDistributionService(
     TaskQueue taskQueue) : UpscalingService.UpscalingServiceBase
 {

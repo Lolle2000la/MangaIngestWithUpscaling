@@ -1,4 +1,6 @@
-﻿namespace MangaIngestWithUpscaling.Api;
+﻿using MangaIngestWithUpscaling.Api.Upscaling;
+
+namespace MangaIngestWithUpscaling.Api;
 
 public static class ApiMappings
 {
