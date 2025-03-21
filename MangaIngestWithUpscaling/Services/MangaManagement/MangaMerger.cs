@@ -64,8 +64,8 @@ public class MangaMerger(
 
                 // move chapter into the primary mangas library and folder
                 var targetPath = Path.Combine(
-                    primary.Library.NotUpscaledLibraryPath, 
-                    PathEscaper.EscapeFileName(primary.PrimaryTitle!), 
+                    primary.Library.NotUpscaledLibraryPath,
+                    PathEscaper.EscapeFileName(primary.PrimaryTitle!),
                     PathEscaper.EscapeFileName(chapter.FileName));
                 if (File.Exists(targetPath))
                 {
@@ -166,20 +166,21 @@ public class MangaMerger(
                     logger.LogError(ex, "Failed to move other titles from {MangaId} to {PrimaryMangaId}.",
                         manga.Id, primary.Id);
                 }
-        }
-
-        await dbContext.SaveChangesAsync(cancellationToken);
-         
-        _ = Task.Run(() =>
-        {
-            foreach (var uniqueLibraryPath in mergedInto
-                .SelectMany(m => new[] { m.Library.NotUpscaledLibraryPath, m.Library.UpscaledLibraryPath })
-                .Where(path => path is not null)
-                .Distinct())
-            {
-                // remove the folder if it is empty
-                FileSystemHelpers.DeleteEmptySubfolders(uniqueLibraryPath!, logger);
             }
-        });
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            _ = Task.Run(() =>
+            {
+                foreach (var uniqueLibraryPath in mergedInto
+                    .SelectMany(m => new[] { m.Library.NotUpscaledLibraryPath, m.Library.UpscaledLibraryPath })
+                    .Where(path => path is not null)
+                    .Distinct())
+                {
+                    // remove the folder if it is empty
+                    FileSystemHelpers.DeleteEmptySubfolders(uniqueLibraryPath!, logger);
+                }
+            });
+        }
     }
 }
