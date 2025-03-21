@@ -1,6 +1,7 @@
 ﻿using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using Microsoft.EntityFrameworkCore;
 using System.ComponentModel;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
 
@@ -13,6 +14,13 @@ public class PersistedTask
     public int RetryCount { get; set; }
     public DateTime? ProcessedAt { get; set; }
     public int Order { get; set; }
+
+    /// <summary>
+    /// The last time the task was kept alive.
+    /// Only used for network-distributed tasks.
+    /// </summary>
+    [NotMapped]
+    public DateTime LastKeepAlive { get; set; } = DateTime.UtcNow;
 
     // override object.Equals
     public override bool Equals(object? obj)
