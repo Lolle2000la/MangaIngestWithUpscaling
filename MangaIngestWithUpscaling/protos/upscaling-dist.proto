@@ -36,7 +36,7 @@ message KeepAliveResponse {
 message UploadUpscaledCbzResponse {
     bool success = 1; // True if the upload was successful
     string message = 2; // Message from the server
-    UpscaleTaskDelegationResponse task = 3; // Task ID of the upscaling task
+    int32 taskId = 3; // Task ID of the upscaling task
 }
 
 service UpscalingService {
@@ -44,7 +44,7 @@ service UpscalingService {
     rpc RequestUpscaleTask(google.protobuf.Empty) returns (UpscaleTaskDelegationResponse);
     rpc GetCbzFile(CbzToUpscaleRequest) returns (stream CbzFileChunk);
     rpc RequestCbzFileChunk(CbzFileChunkRequest) returns (CbzFileChunk);
-    rpc UploadUpscaledCbzFile(stream CbzFileChunk) returns (google.protobuf.Empty);
+    rpc UploadUpscaledCbzFile(stream CbzFileChunk) returns (stream UploadUpscaledCbzResponse);
     rpc KeepAlive(KeepAliveRequest) returns (KeepAliveResponse);
 }
 
