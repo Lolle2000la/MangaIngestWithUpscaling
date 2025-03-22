@@ -85,6 +85,7 @@ public class UpscaleTask : BaseTask
 
         // save the manga title to see if it has changed in the meantime
         string oldMangaTitle = chapter.Manga.PrimaryTitle;
+        string oldChapterFileName = chapter.FileName;
 
         // reload the chapter and manga from db to see if the title has changed in the meantime
         await dbContext.Entry(chapter).ReloadAsync();
@@ -97,7 +98,7 @@ public class UpscaleTask : BaseTask
         await dbContext.SaveChangesAsync();
 
         // make sure that the new chapter is applied
-        if (oldMangaTitle != chapter.Manga.PrimaryTitle)
+        if (oldMangaTitle != chapter.Manga.PrimaryTitle || oldChapterFileName != chapter.FileName)
         {
             metadataChanger.ApplyMangaTitleToUpscaled(chapter, chapter.Manga.PrimaryTitle, upscaleTargetPath);
         }
