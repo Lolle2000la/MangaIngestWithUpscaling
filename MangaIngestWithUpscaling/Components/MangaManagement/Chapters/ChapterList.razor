@@ -3,6 +3,7 @@
 @using MangaIngestWithUpscaling.Helpers
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
+@using MangaIngestWithUpscaling.Services.FileSystem
 @using MangaIngestWithUpscaling.Services.LibraryIntegrity
 @using MangaIngestWithUpscaling.Services.MetadataHandling
 @using System.Collections.ObjectModel
@@ -15,11 +16,12 @@
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
 @inject ILibraryIntegrityChecker LibraryIntegrityChecker
+@inject IFileSystem FileSystem
 
 <MudTable T="ChapterItem" @bind-SelectedItems="selectedChapters"
           Items="@chapterItems"
           Dense="true"
-          MultiSelection="true" 
+          MultiSelection="true"
           CanCancelEdit="true"
           RowEditCommit="r => OnChapterMetadataCommit((ChapterItem)r)"
           RowEditCancel="r => OnChapterMetadataDiscard((ChapterItem)r)">
@@ -86,8 +88,8 @@
         </MudTd>
     </RowTemplate>
     <RowEditingTemplate>
-        <MudTd DataLabel="Chapter Title"><MudInput @bind-Value="context.NewTitle"/></MudTd>
-        <MudTd DataLabel="Chapter Path">@context.Chapter.RelativePath</MudTd>
+        <MudTd DataLabel="Chapter Title"><MudInput @bind-Value="context.NewTitle" /></MudTd>
+        <MudTd DataLabel="Chapter Path"><MudInput @bind-Value="context.NewFileName" Label="Filename" HelperText="Filename" />.cbz</MudTd>
         <MudTd DataLabel="Upscaled">
             @context.Chapter.IsUpscaled
             @if (!context.Chapter.IsUpscaled)
@@ -148,11 +150,20 @@
             await MangaMetadataChanger.ChangeChapterTitle(chapter.Chapter, chapter.NewTitle);
             chapter.ExtractedMetadata = chapter.ExtractedMetadata with { ChapterTitle = chapter.NewTitle };
         }
+
+        if (Path.GetFileNameWithoutExtension(chapter.Chapter.FileName) != chapter.NewFileName)
+        {
+            if (!await RenameChapterFile(chapter.Chapter, chapter.NewFileName + ".cbz"))
+            {
+                chapter.NewFileName = Path.GetFileNameWithoutExtension(chapter.Chapter.FileName);
+            }
+        }
     }
 
     private void OnChapterMetadataDiscard(ChapterItem chapter)
     {
         chapter.NewTitle = chapter.ExtractedMetadata.ChapterTitle;
+        chapter.NewFileName = Path.GetFileNameWithoutExtension(chapter.Chapter.FileName);
     }
 
     private async Task DeleteChapter(Chapter chapter)
@@ -244,6 +255,83 @@
         await DbContext.SaveChangesAsync();
     }
 
+    private async Task<bool> RenameChapterFile(Chapter chapter, string newFileName)
+    {
+        // Check if the new name contains invalid characters
+        if (newFileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        {
+            Snackbar.Add("The new name contains invalid characters.", Severity.Error);
+            return false;
+        }
+
+        string oldPath = Path.Combine(chapter.Manga.Library.NotUpscaledLibraryPath, chapter.RelativePath);
+        string targetRelativePath = Path.Combine(PathEscaper.EscapeFileName(Manga.PrimaryTitle), newFileName);
+        string newPath = Path.Combine(chapter.Manga.Library.NotUpscaledLibraryPath, targetRelativePath);
+        bool success = true;
+        try
+        {
+            FileSystem.Move(oldPath, newPath);
+        }
+        catch (Exception e)
+        {
+            Logger.LogError(e, "Failed to rename file of Chapter {ChapterId}", chapter.Id);
+            Snackbar.Add($"Failed to rename {chapter.FileName}. Check the logs for more information.", Severity.Error);
+            success = false;
+        }
+        string oldUpscaledPath = Path.Combine(chapter.Manga.Library.UpscaledLibraryPath, chapter.RelativePath);
+        string newUpscaledPath = Path.Combine(chapter.Manga.Library.UpscaledLibraryPath, targetRelativePath);
+        if (success && chapter.IsUpscaled)
+        {
+            try
+            {
+                FileSystem.Move(oldUpscaledPath, newUpscaledPath);
+            }
+            catch (Exception e)
+            {
+                Logger.LogError(e, "Failed to rename upscaled file of Chapter {ChapterId}", chapter.Id);
+                Snackbar.Add($"Failed to rename upscaled {chapter.FileName}. Check the logs for more information.", Severity.Error);
+                success = false;
+                // Try to revert the rename of the not upscaled file
+                FileSystem.Move(newPath, oldPath);
+            }
+        }
+        if (success)
+        {
+            chapter.RelativePath = targetRelativePath;
+            chapter.FileName = newFileName;
+            DbContext.Update(chapter);
+            await DbContext.SaveChangesAsync();
+        }
+        else 
+        {
+            if (File.Exists(newPath))
+            {
+                try
+                {
+                    FileSystem.Move(newPath, oldPath);
+                }
+                catch (Exception e)
+                {
+                    Logger.LogError(e, "Failed to revert rename of file of Chapter {ChapterId}", chapter.Id);
+                    Snackbar.Add($"Failed to revert rename of {chapter.FileName}. Check the logs for more information.", Severity.Error);
+                }
+            }
+            if (File.Exists(newUpscaledPath))
+            {
+                try
+                {
+                    FileSystem.Move(newUpscaledPath, oldUpscaledPath);
+                }
+                catch (Exception e)
+                {
+                    Logger.LogError(e, "Failed to revert rename of upscaled file of Chapter {ChapterId}", chapter.Id);
+                    Snackbar.Add($"Failed to revert rename of upscaled {chapter.FileName}. Check the logs for more information.", Severity.Error);
+                }
+            }
+        }
+        return success;
+    }
+
     protected override async Task OnInitializedAsync()
     {
         if (!DbContext.Entry(Manga).Collection(m => m.Chapters).IsLoaded)
@@ -287,7 +375,13 @@
             {
                 var extractedMetadata = MetadataHandler.GetSeriesAndTitleFromComicInfo(Path.Combine(Manga.Library.NotUpscaledLibraryPath, chapter.RelativePath));
                 chapter.UpscalerProfile = await loadProfile;
-                chapters.Add(new ChapterItem { Chapter = chapter, ExtractedMetadata = extractedMetadata, NewTitle = extractedMetadata.ChapterTitle });
+                chapters.Add(new ChapterItem
+                    {
+                        Chapter = chapter,
+                        ExtractedMetadata = extractedMetadata,
+                        NewTitle = extractedMetadata.ChapterTitle,
+                        NewFileName = Path.GetFileNameWithoutExtension(chapter.FileName)
+                    });
             }
             catch (Exception e)
             {
@@ -303,8 +397,9 @@
 
     private record ChapterItem
     {
-        public Chapter Chapter { get; set; }
-        public ExtractedMetadata ExtractedMetadata { get; set; }
-        public string NewTitle { get; set; }
+        public required Chapter Chapter { get; set; }
+        public required ExtractedMetadata ExtractedMetadata { get; set; }
+        public required string NewTitle { get; set; }
+        public required string NewFileName { get; set; }
     }
 }
