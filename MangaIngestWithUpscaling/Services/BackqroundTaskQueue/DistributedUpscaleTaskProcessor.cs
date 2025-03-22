@@ -2,6 +2,7 @@
 using System.Threading.Tasks;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
+using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 
@@ -90,11 +91,18 @@ public class DistributedUpscaleTaskProcessor(
 
     public async Task<PersistedTask?> GetTask(CancellationToken stoppingToken)
     {
+        using var scope = scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         _taskRequested.Release(1);
         var cancelToken = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         cancelToken.CancelAfter(TimeSpan.FromSeconds(10));
         try
         {
+            var task = await _tasksDistributionChannel.Reader.ReadAsync(cancelToken.Token);
+            task.Status = PersistedTaskStatus.Processing;
+            task.LastKeepAlive = DateTime.UtcNow.AddSeconds(5); // Bridge network latency
+            dbContext.Update(task);
+            await dbContext.SaveChangesAsync();
             return await _tasksDistributionChannel.Reader.ReadAsync(stoppingToken);
         }
         catch (OperationCanceledException)
