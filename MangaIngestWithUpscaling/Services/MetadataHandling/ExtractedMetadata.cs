@@ -26,7 +26,7 @@ public partial record ExtractedMetadata(string Series, string? ChapterTitle, str
             {
                 return this with { Number = chapterNum.ToString() };
             }
-            else if (numIsValidNumber)
+            else if (!numIsValidNumber)
             {
                 correctedNumber = chapterNum.ToString();
             }
