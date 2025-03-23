@@ -165,8 +165,6 @@ public class MetadataHandlingService(
 
     public void WriteComicInfo(string file, ExtractedMetadata metadata)
     {
-        
-
         if (file.EndsWith(".cbz"))
         {
             using var archive = ZipFile.Open(file, ZipArchiveMode.Update);
