@@ -12,6 +12,7 @@ public class MetadataHandlingService(
     {
         var title = string.Empty;
         var series = string.Empty;
+        var number = string.Empty;
         if (file.EndsWith(".cbz"))
         {
             using var archive = ZipFile.OpenRead(file);
@@ -22,7 +23,7 @@ public class MetadataHandlingService(
                 var document = XDocument.Load(stream);
                 if (document.Root == null)
                 {
-                    return new ExtractedMetadata(series, title);
+                    return new ExtractedMetadata(series, title, number);
                 }
                 var titleElement = document.Root.Element("Title");
                 if (titleElement != null)
@@ -34,6 +35,11 @@ public class MetadataHandlingService(
                 {
                     series = seriesElement.Value;
                 }
+                var numberElement = document.Root.Element("Number");
+                if (numberElement != null)
+                {
+                    number = numberElement.Value;
+                }
             }
         }
         else if (file.EndsWith("ComicInfo.xml"))
@@ -41,7 +47,7 @@ public class MetadataHandlingService(
             var document = XDocument.Load(file);
             if (document.Root == null)
             {
-                return new ExtractedMetadata(series, title);
+                return new ExtractedMetadata(series, title, number);
             }
             var titleElement = document.Root.Element("Title");
             if (titleElement != null)
@@ -53,8 +59,13 @@ public class MetadataHandlingService(
             {
                 series = seriesElement.Value;
             }
+            var numberElement = document.Root.Element("Number");
+            if (numberElement != null)
+            {
+                number = numberElement.Value;
+            }
         }
-        return new ExtractedMetadata(series, title);
+        return new ExtractedMetadata(series, title, number);
     }
 
 
@@ -108,8 +119,77 @@ public class MetadataHandlingService(
         }
     }
 
+    private void WriteMetadataToXmlDoc(XDocument document, ExtractedMetadata metadata)
+    {
+        if (document.Root == null)
+        {
+            return;
+        }
+        if (metadata.ChapterTitle != null)
+        {
+            var titleElement = document.Root.Element("Title");
+            if (titleElement != null && metadata.ChapterTitle != null)
+            {
+                titleElement.Value = metadata.ChapterTitle;
+            }
+            else if (metadata.ChapterTitle != null)
+            {
+                document.Root.Add(new XElement("Title", metadata.ChapterTitle));
+            }
+        }
+        else
+        {
+            var titleElement = document.Root.Element("Title");
+            if (titleElement != null)
+            {
+                titleElement.Remove();
+            }
+        }
+        if (metadata.Series != null)
+        {
+            var seriesElement = document.Root.Element("Series");
+            if (seriesElement != null && metadata.Series != null)
+            {
+                seriesElement.Value = metadata.Series;
+            }
+            else if (metadata.Series != null)
+            {
+                document.Root.Add(new XElement("Series", metadata.Series));
+            }
+        }
+        else
+        {
+            var seriesElement = document.Root.Element("Series");
+            if (seriesElement != null)
+            {
+                seriesElement.Remove();
+            }
+        }
+        if (metadata.Number != null)
+        {
+            var numberElement = document.Root.Element("Number");
+            if (numberElement != null)
+            {
+                numberElement.Value = metadata.Number;
+            }
+            else
+            {
+                document.Root.Add(new XElement("Number", metadata.Number));
+            }
+        }
+        else
+        {
+            var numberElement = document.Root.Element("Number");
+            if (numberElement != null)
+            {
+                numberElement.Remove();
+            }
+        }
+    }
+
     public void WriteComicInfo(string file, ExtractedMetadata metadata)
     {
+        metadata = metadata.CheckAndCorrect();
         if (file.EndsWith(".cbz"))
         {
             using var archive = ZipFile.Open(file, ZipArchiveMode.Update);
@@ -118,20 +198,7 @@ public class MetadataHandlingService(
             {
                 using var stream = comicInfoEntry.Open();
                 var document = XDocument.Load(stream);
-                if (document.Root == null)
-                {
-                    return;
-                }
-                var titleElement = document.Root.Element("Title");
-                if (titleElement != null && metadata.ChapterTitle != null)
-                {
-                    titleElement.Value = metadata.ChapterTitle;
-                }
-                var seriesElement = document.Root.Element("Series");
-                if (seriesElement != null && metadata.Series != null)
-                {
-                    seriesElement.Value = metadata.Series;
-                }
+                WriteMetadataToXmlDoc(document, metadata);
                 stream.Seek(0, System.IO.SeekOrigin.Begin);
                 document.Save(stream);
                 stream.SetLength(stream.Position); // Truncate the file to the correct length
@@ -143,7 +210,10 @@ public class MetadataHandlingService(
                 var document = new XDocument(
                     new XElement("ComicInfo",
                         new XElement("Title", metadata.ChapterTitle),
-                        new XElement("Series", metadata.Series)
+                        new XElement("Series", metadata.Series),
+                        new XElement("Number", metadata.Number),
+                        new XAttribute("xmlns", "http://www.w3.org/2001/XMLSchema"),
+                        new XAttribute("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance")
                     )
                 );
                 document.Save(stream);
@@ -153,24 +223,7 @@ public class MetadataHandlingService(
         else if (file.EndsWith("ComicInfo.xml"))
         {
             var document = XDocument.Load(file);
-            if (document.Root == null)
-            {
-                return;
-            }
-            var titleElement = document.Root.Element("Title");
-            if (titleElement != null && metadata.ChapterTitle != null)
-            {
-                titleElement.Value = metadata.ChapterTitle;
-            }
-            var seriesElement = document.Root.Element("Series");
-            if (seriesElement != null && metadata.Series != null)
-            {
-                seriesElement.Value = metadata.Series;
-            }
-            else if (metadata.Series != null)
-            {
-                document.Root.Add(new XElement("Series", metadata.Series));
-            }
+            WriteMetadataToXmlDoc(document, metadata);
             document.Save(file);
         }
     }

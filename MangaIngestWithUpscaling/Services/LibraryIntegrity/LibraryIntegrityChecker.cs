@@ -87,6 +87,24 @@ public class LibraryIntegrityChecker(
         Corrected
     }
 
+    /// <summary>
+    /// Checks metadata and corrects it if necessary.
+    /// </summary>
+    /// <param name="metadata">The metadata to check.</param>
+    /// <param name="corrected">The possibly corrected metadata</param>
+    /// <returns><c>true</c> if no changes necessary, <c>false</c> if something has was corrected.</returns>
+    private bool CheckMetadata(ExtractedMetadata metadata, out ExtractedMetadata corrected)
+    {
+        var correctedMetadata = metadata.CheckAndCorrect();
+        if (correctedMetadata != metadata)
+        {
+            corrected = correctedMetadata;
+            return false;
+        }
+        corrected = metadata;
+        return true;
+    }
+
     private async Task<IntegrityCheckResult> CheckOriginalIntegrity(Chapter chapter, CancellationToken? cancellationToken = null)
     {
         if (!File.Exists(chapter.NotUpscaledFullPath))
@@ -122,6 +140,15 @@ public class LibraryIntegrityChecker(
 
                 return IntegrityCheckResult.Invalid;
             }
+        }
+
+        var metadata = metadataHandling.GetSeriesAndTitleFromComicInfo(chapter.NotUpscaledFullPath);
+        if (!CheckMetadata(metadata, out var correctedMetadata))
+        {
+            logger.LogWarning("Metadata of chapter {chapterFileName} ({chapterId}) of {seriesTitle} is incorrect. Correcting.",
+                chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
+            metadataHandling.WriteComicInfo(chapter.NotUpscaledFullPath, correctedMetadata);
+            return IntegrityCheckResult.Corrected;
         }
 
         return IntegrityCheckResult.Ok;
@@ -180,6 +207,14 @@ public class LibraryIntegrityChecker(
         {
             if (metadataHandling.PagesEqual(chapter.NotUpscaledFullPath, chapter.UpscaledFullPath))
             {
+                var metadata = metadataHandling.GetSeriesAndTitleFromComicInfo(chapter.UpscaledFullPath);
+                if (!CheckMetadata(metadata, out var correctedMetadata))
+                {
+                    logger.LogWarning("Metadata of upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle} is incorrect. Correcting.",
+                        chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
+                    metadataHandling.WriteComicInfo(chapter.UpscaledFullPath, correctedMetadata);
+                }
+
                 if (chapter.IsUpscaled)
                 {
                     return IntegrityCheckResult.Ok;
