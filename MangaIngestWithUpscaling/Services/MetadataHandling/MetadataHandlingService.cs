@@ -137,6 +137,14 @@ public class MetadataHandlingService(
                 document.Root.Add(new XElement("Title", metadata.ChapterTitle));
             }
         }
+        else
+        {
+            var titleElement = document.Root.Element("Title");
+            if (titleElement != null)
+            {
+                titleElement.Remove();
+            }
+        }
         if (metadata.Series != null)
         {
             var seriesElement = document.Root.Element("Series");
@@ -147,6 +155,14 @@ public class MetadataHandlingService(
             else if (metadata.Series != null)
             {
                 document.Root.Add(new XElement("Series", metadata.Series));
+            }
+        }
+        else
+        {
+            var seriesElement = document.Root.Element("Series");
+            if (seriesElement != null)
+            {
+                seriesElement.Remove();
             }
         }
         if (metadata.Number != null)
@@ -161,6 +177,14 @@ public class MetadataHandlingService(
                 document.Root.Add(new XElement("Number", metadata.Number));
             }
         }
+        else
+        {
+            var numberElement = document.Root.Element("Number");
+            if (numberElement != null)
+            {
+                numberElement.Remove();
+            }
+    }
     }
 
     public void WriteComicInfo(string file, ExtractedMetadata metadata)
