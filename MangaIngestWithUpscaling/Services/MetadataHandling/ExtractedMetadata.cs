@@ -16,13 +16,12 @@ public partial record ExtractedMetadata(string Series, string? ChapterTitle, str
     /// <returns>The corrected metadata.</returns>
     public ExtractedMetadata CheckAndCorrect()
     {
-        const double maxDifference = 1.0; // if the difference is this high, it might be a mistake and should be corrected.
         string? correctedNumber = Number;
         // compare the chapter number extracted from the title with the number extracted from the metadata
         if (TryExtractChapterNumber(out var chapterNum))
         {
-            bool numIsValidNumber = double.TryParse(Number, out var num);
-            if (numIsValidNumber && double.Abs(chapterNum - num) > maxDifference)
+            bool numIsValidNumber = decimal.TryParse(Number, out var num);
+            if (numIsValidNumber && decimal.Abs(chapterNum - num) > 0)
             {
                 return this with { Number = chapterNum.ToString() };
             }
@@ -38,7 +37,7 @@ public partial record ExtractedMetadata(string Series, string? ChapterTitle, str
     [GeneratedRegex(@"(?:Chapter\s*(?'num'\d+\.?\d*)|第(?'num'\d+\.?\d*)(?:話|章)(?:(?:-|ー|－)(?'subnum'\d*))?|Kapitel\s*(?'num'\d+\.?\d*))")]
     private static partial Regex ChapterNumExtract();
 
-    private bool TryExtractChapterNumber(out double chapterNum)
+    private bool TryExtractChapterNumber(out decimal chapterNum)
     {
         if (ChapterTitle == null)
         {
@@ -56,8 +55,8 @@ public partial record ExtractedMetadata(string Series, string? ChapterTitle, str
         var subnum = match.Groups["subnum"].Value;
         if (string.IsNullOrEmpty(subnum))
         {
-            return double.TryParse(num, out chapterNum);
+            return decimal.TryParse(num, out chapterNum);
         }
-        return double.TryParse($"{num}.{subnum}", out chapterNum);
+        return decimal.TryParse($"{num}.{subnum}", out chapterNum);
     }
 };
