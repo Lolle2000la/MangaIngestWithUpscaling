@@ -184,11 +184,12 @@ public class MetadataHandlingService(
             {
                 numberElement.Remove();
             }
-    }
+        }
     }
 
     public void WriteComicInfo(string file, ExtractedMetadata metadata)
     {
+        metadata = metadata.CheckAndCorrect();
         if (file.EndsWith(".cbz"))
         {
             using var archive = ZipFile.Open(file, ZipArchiveMode.Update);
