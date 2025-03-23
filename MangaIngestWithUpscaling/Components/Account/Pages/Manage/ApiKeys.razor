@@ -1,0 +1,89 @@
+﻿@page "/Account/Manage/ApiKeys"
+
+@using System.ComponentModel.DataAnnotations
+@using MangaIngestWithUpscaling.Services.Auth
+@using Microsoft.AspNetCore.Identity
+@using MangaIngestWithUpscaling.Data
+
+@inject UserManager<ApplicationUser> UserManager
+@inject SignInManager<ApplicationUser> SignInManager
+@inject IdentityUserAccessor UserAccessor
+@inject IdentityRedirectManager RedirectManager
+@inject IApiKeyService ApiKeyService
+@inject ApplicationDbContext DbContext
+
+<PageTitle>API Key</PageTitle>
+
+<h3>API Key</h3>
+<StatusMessage />
+
+<div class="row">
+    <div class="col-xl-6">
+        <EditForm Model="Input" FormName="apiKey" OnValidSubmit="OnValidSubmitAsync" method="post">
+            <div class="form-floating mb-3">
+                <input type="text" value="@apiKey.Key" id="apiKey" class="form-control" placeholder="API Key." readonly />
+                <label for="apiKey" class="form-label">API Key (Click to copy)</label>
+            </div>
+            <button type="submit" class="w-100 btn btn-lg btn-primary">Regenerate API Key</button>
+        </EditForm>
+    </div>
+</div>
+
+<script>
+    let apiKeyEl = document.getElementById("apiKey");
+
+    apiKeyEl.addEventListener("click", function () {
+    apiKeyEl.select();
+    apiKeyEl.setSelectionRange(0, 99999);
+    navigator.clipboard.writeText(apiKeyEl.value);
+    apiKeyEl.title += " (copied to clipboard)";
+    });
+</script>
+
+@code {
+    private ApplicationUser user = default!;
+    private ApiKey? apiKey;
+
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    [SupplyParameterFromForm]
+    private InputModel Input { get; set; } = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        user = await UserAccessor.GetRequiredUserAsync(HttpContext);
+        apiKey = await DbContext.ApiKeys.FirstOrDefaultAsync(k => k.User == user && k.IsActive);
+
+        if (apiKey == null)
+        {
+            apiKey = await ApiKeyService.CreateApiKeyAsync(user.Id);
+        }
+
+        if (Input == null)
+        {
+            Input = new();
+        }
+
+        Input.ApiKey ??= apiKey.Key;
+    }
+
+    private async Task OnValidSubmitAsync()
+    {
+        apiKey.IsActive = false;
+        DbContext.ApiKeys.Update(apiKey);
+        await DbContext.SaveChangesAsync();
+        apiKey = await ApiKeyService.CreateApiKeyAsync(user.Id);
+
+        await SignInManager.RefreshSignInAsync(user);
+        RedirectManager.RedirectToCurrentPage();
+    }
+
+    private sealed class InputModel
+    {
+        [Required]
+        [DataType(DataType.Password)]
+        [Display(Name = "API Key")]
+        public string ApiKey { get; set; } = "";
+    }
+}

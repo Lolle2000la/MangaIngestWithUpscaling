@@ -19,6 +19,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Chapter> Chapters { get; set; }
     public DbSet<UpscalerProfile> UpscalerProfiles { get; set; }
     public DbSet<PersistedTask> PersistedTasks { get; set; }
+    public DbSet<ApiKey> ApiKeys { get; set; }
 
     public DbSet<DataProtectionKey> DataProtectionKeys { get; set; } = null!;
 
