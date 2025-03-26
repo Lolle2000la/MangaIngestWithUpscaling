@@ -19,6 +19,16 @@ public partial class UpscalingDistributionService(
     IFileSystem fileSystem,
     IChapterChangedNotifier chapterChangedNotifier) : UpscalingService.UpscalingServiceBase
 {
+    public override Task<CheckConnectionResponse> CheckConnection(Empty request, ServerCallContext context)
+    {
+        context.Status = new Status(StatusCode.OK, "Connection established");
+        return Task.FromResult(new CheckConnectionResponse()
+        {
+            Message = "Connection established",
+            Success = true
+        });
+    }
+
     public override async Task<UpscaleTaskDelegationResponse> RequestUpscaleTask(Empty request, ServerCallContext context)
     {
         var task = await taskProcessor.GetTask(context.CancellationToken);
