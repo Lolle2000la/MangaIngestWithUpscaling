@@ -1,5 +1,8 @@
+using MangaIngestWithUpscaling.Api.Upscaling;
+using MangaIngestWithUpscaling.RemoteWorker.Configuration;
 using MangaIngestWithUpscaling.RemoteWorker.Services;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -21,8 +24,20 @@ builder.WebHost.ConfigureKestrel(serverOptions =>
     });
 });
 
+builder.Services.Configure<WorkerConfig>(builder.Configuration.GetSection(WorkerConfig.SectionName));
+
 // Add services to the container.
 builder.Services.AddGrpc();
+builder.Services.AddGrpcClient<UpscalingService.UpscalingServiceClient>(o =>
+{
+    o.CallOptionsActions.Add(context =>
+    {
+        var config = context.ServiceProvider.GetRequiredService<IOptions<WorkerConfig>>().Value;
+        context.CallOptions.Headers!.Add("X-Api-Key", config.ApiKey);
+    });
+
+    o.Address = new Uri(builder.Configuration["WorkerConfig:ApiUrl"]!);
+});
 
 builder.Services.RegisterRemoteWorkerServices();
 
