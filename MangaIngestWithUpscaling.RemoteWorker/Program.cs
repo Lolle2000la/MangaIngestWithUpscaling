@@ -24,6 +24,8 @@ builder.WebHost.ConfigureKestrel(serverOptions =>
 // Add services to the container.
 builder.Services.AddGrpc();
 
+builder.Services.RegisterRemoteWorkerServices();
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
