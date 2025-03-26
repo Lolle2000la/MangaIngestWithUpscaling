@@ -1,5 +1,6 @@
 using MangaIngestWithUpscaling.Api;
 using MangaIngestWithUpscaling.Api.Auth;
+using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.Components;
 using MangaIngestWithUpscaling.Components.Account;
 using MangaIngestWithUpscaling.Configuration;
@@ -169,10 +170,11 @@ else
 
 app.UseAntiforgery();
 
+app.MapApiEndpoints();
 app.MapStaticAssets();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
-app.MapApiEndpoints();
+
 
 // Add additional endpoints required by the Identity /Account Razor components.
 app.MapAdditionalIdentityEndpoints();

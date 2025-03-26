@@ -6,6 +6,7 @@ public static class ApiMappings
 {
     public static void MapApiEndpoints(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapGrpcService<UpscalingDistributionService>();
+        endpoints.MapGroup("/grpc")
+            .MapGrpcService<UpscalingDistributionService>();
     }
 }

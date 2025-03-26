@@ -1,4 +1,5 @@
-﻿using MangaIngestWithUpscaling.Shared.Services;
+﻿using MangaIngestWithUpscaling.RemoteWorker.Background;
+using MangaIngestWithUpscaling.Shared.Services;
 
 namespace MangaIngestWithUpscaling.RemoteWorker.Services;
 
@@ -8,5 +9,8 @@ public static class ServiceRegistration
     {
         services.RegisterSharedServices();
         services.AutoRegister();
+
+        services.AddSingleton<RemoteTaskProcessor>();
+        services.AddHostedService(sp => sp.GetRequiredService<RemoteTaskProcessor>());
     }
 }

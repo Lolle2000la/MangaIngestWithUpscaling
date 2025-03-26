@@ -1,8 +1,10 @@
+using Google.Protobuf.WellKnownTypes;
 using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.RemoteWorker.Configuration;
 using MangaIngestWithUpscaling.RemoteWorker.Services;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.Options;
+using System.Reflection.PortableExecutable;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -33,10 +35,12 @@ builder.Services.AddGrpcClient<UpscalingService.UpscalingServiceClient>(o =>
     o.CallOptionsActions.Add(context =>
     {
         var config = context.ServiceProvider.GetRequiredService<IOptions<WorkerConfig>>().Value;
-        context.CallOptions.Headers!.Add("X-Api-Key", config.ApiKey);
+        var metadata = context.CallOptions.Headers ?? new Grpc.Core.Metadata();
+        metadata.Add("X-Api-Key", config.ApiKey);
+        context.CallOptions = context.CallOptions.WithHeaders(metadata);
     });
 
-    o.Address = new Uri(builder.Configuration["WorkerConfig:ApiUrl"]!);
+    o.Address = new Uri(builder.Configuration["WorkerConfig:ApiUrl"]! + "/grpc");
 });
 
 builder.Services.RegisterRemoteWorkerServices();
@@ -46,5 +50,14 @@ var app = builder.Build();
 // Configure the HTTP request pipeline.
 app.MapGrpcService<GreeterService>();
 app.MapGet("/", () => "Communication with gRPC endpoints must be made through a gRPC client. To learn how to create a client, visit: https://go.microsoft.com/fwlink/?linkid=2086909");
+
+using (var scope = app.Services.CreateScope())
+{
+    var client = scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+
+    var testResponse = client.CheckConnection(new Empty());
+    logger.LogInformation("Connection test response: {Response}", testResponse);
+}
 
 app.Run();
