@@ -9,6 +9,8 @@ Project("{E53339B2-1760-4266-BCC7-CA923CBCF16C}") = "docker-compose", "docker-co
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling.Shared", "MangaIngestWithUpscaling.Shared\MangaIngestWithUpscaling.Shared.csproj", "{C931B926-9AB8-46CF-8282-70468A723212}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling.RemoteWorker", "MangaIngestWithUpscaling.RemoteWorker\MangaIngestWithUpscaling.RemoteWorker.csproj", "{7C729037-BDE9-431B-A199-5666C4905B87}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -27,8 +29,15 @@ Global
 		{C931B926-9AB8-46CF-8282-70468A723212}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C931B926-9AB8-46CF-8282-70468A723212}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C931B926-9AB8-46CF-8282-70468A723212}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7C729037-BDE9-431B-A199-5666C4905B87}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7C729037-BDE9-431B-A199-5666C4905B87}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7C729037-BDE9-431B-A199-5666C4905B87}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7C729037-BDE9-431B-A199-5666C4905B87}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {06A01183-B554-46EC-93AC-B484F9BB8346}
 	EndGlobalSection
 EndGlobal
