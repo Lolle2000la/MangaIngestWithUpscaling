@@ -1,4 +1,5 @@
 ﻿using Google.Protobuf.WellKnownTypes;
+using Grpc.Core;
 using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 
@@ -10,21 +11,81 @@ public class RemoteTaskProcessor(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+        using var scope = serviceScopeFactory.CreateScope();
+        var logger = scope.ServiceProvider.GetRequiredService<ILogger<RemoteTaskProcessor>>();
 
         while (!stoppingToken.IsCancellationRequested && await timer.WaitForNextTickAsync(stoppingToken))
         {
-            using var scope = serviceScopeFactory.CreateScope();
-            var client = scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
-
-            var taskResponse = await client.RequestUpscaleTaskAsync(new Empty(), cancellationToken: stoppingToken);
-
-            if (taskResponse.TaskId == -1)
+            try
             {
-                continue;
+                await RunCycle(stoppingToken);
             }
-
-            var profile = GetProfileFromResponse(taskResponse.UpscalerProfile);
+            catch (RpcException ex) when (ex.StatusCode == StatusCode.Unavailable)
+            {
+                // The server is unavailable, wait for a bit before trying again
+                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+            }
+            catch (Exception ex)
+            {
+                // Log the exception and continue
+                logger.LogError(ex, "Failed to process remote task.");
+            }
         }
+    }
+
+    private async Task RunCycle(CancellationToken stoppingToken)
+    {
+        using var scope = serviceScopeFactory.CreateScope();
+        var client = scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
+        var logger = scope.ServiceProvider.GetRequiredService<ILogger<RemoteTaskProcessor>>();
+
+        var taskResponse = await client.RequestUpscaleTaskAsync(new Empty(), cancellationToken: stoppingToken);
+
+        if (taskResponse.TaskId == -1)
+        {
+            return;
+        }
+
+        var profile = GetProfileFromResponse(taskResponse.UpscalerProfile);
+
+        var stream = client.GetCbzFile(new CbzToUpscaleRequest() { TaskId = taskResponse.TaskId }, cancellationToken: stoppingToken);
+
+        var mergedFile = await FetchFile(taskResponse.TaskId, stream.ResponseStream.ReadAllAsync(stoppingToken));
+
+        logger.LogInformation("Merged file {file} for task {taskId}.", mergedFile, taskResponse.TaskId);
+    }
+
+    private async Task<string> FetchFile(int taskId, IAsyncEnumerable<CbzFileChunk> stream)
+    {
+        Dictionary<int, byte[]> chunks = new();
+
+        await foreach (var chunk in stream)
+        {
+            Console.WriteLine($"Received chunk {chunk.ChunkNumber}.");
+            chunks.Add(chunk.ChunkNumber, chunk.Chunk.ToByteArray());
+        }
+
+        var tempFile = PrepareTempFile(taskId);
+
+        // Sort the files by chunk number and merge them into a single file using binary concatenation
+        using (var output = File.OpenWrite(tempFile))
+        {
+            foreach (var chunk in chunks.OrderBy(c => c.Key))
+            {
+                output.Write(chunk.Value, 0, chunk.Value.Length);
+            }
+        }
+
+        Console.WriteLine($"Merged file {tempFile}.");
+
+        return tempFile;
+    }
+
+    private string PrepareTempFile(int taskId)
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "mangaingestwithupscaling");
+        Directory.CreateDirectory(tempDir);
+        return Path.Combine(Path.GetTempPath(), $"upscaled_{taskId}.cbz");
     }
 
     private static Shared.Data.LibraryManagement.UpscalerProfile GetProfileFromResponse(Api.Upscaling.UpscalerProfile upscalerProfile)
