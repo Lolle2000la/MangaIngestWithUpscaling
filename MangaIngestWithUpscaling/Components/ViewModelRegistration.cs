@@ -1,5 +1,4 @@
 ﻿using MangaIngestWithUpscaling.Components.FileSystem;
-using MangaIngestWithUpscaling.Components.BackgroundTaskQueue;
 
 namespace MangaIngestWithUpscaling.Components;
 

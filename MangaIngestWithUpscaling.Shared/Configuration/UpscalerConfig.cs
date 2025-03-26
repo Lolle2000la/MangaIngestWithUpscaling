@@ -1,3 +1,4 @@
+namespace MangaIngestWithUpscaling.Shared.Configuration;
 
 public record UpscalerConfig
 {

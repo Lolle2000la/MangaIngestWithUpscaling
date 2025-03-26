@@ -1,4 +1,4 @@
-﻿namespace MangaIngestWithUpscaling.Helpers;
+﻿namespace MangaIngestWithUpscaling.Shared.Helpers;
 
 public static class StringHelpers
 {

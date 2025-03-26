@@ -1,4 +1,5 @@
-﻿using System.ComponentModel.DataAnnotations.Schema;
+﻿using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace MangaIngestWithUpscaling.Data.LibraryManagement;
 

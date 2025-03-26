@@ -1,4 +1,4 @@
-﻿namespace MangaIngestWithUpscaling.Configuration;
+﻿namespace MangaIngestWithUpscaling.Shared.Configuration;
 
 public record UnixPermissionsConfig
 {

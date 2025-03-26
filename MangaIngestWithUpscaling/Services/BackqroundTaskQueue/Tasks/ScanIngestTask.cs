@@ -1,9 +1,5 @@
 ﻿using MangaIngestWithUpscaling.Data;
-using MangaIngestWithUpscaling.Data.LibraryManagement;
-using MangaIngestWithUpscaling.Services.CbzConversion;
 using MangaIngestWithUpscaling.Services.ChapterManagement;
-using MangaIngestWithUpscaling.Services.ChapterRecognition;
-using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 

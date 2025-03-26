@@ -2,14 +2,12 @@
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Data;
-using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
-using MangaIngestWithUpscaling.Services.FileSystem;
 using MangaIngestWithUpscaling.Services.Integrations;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.EntityFrameworkCore;
+using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 
 namespace MangaIngestWithUpscaling.Api.Upscaling;
 
@@ -56,24 +54,24 @@ public partial class UpscalingDistributionService(
                     Name = upscalerProfile.Name,
                     UpscalerMethod = upscalerProfile.UpscalerMethod switch
                     {
-                        Data.LibraryManagement.UpscalerMethod.MangaJaNai => UpscalerMethod.MangaJaNai,
+                        MangaIngestWithUpscaling.Shared.Data.LibraryManagement.UpscalerMethod.MangaJaNai => UpscalerMethod.MangaJaNai,
                         _ => UpscalerMethod.Unspecified
                     },
                     CompressionFormat = upscalerProfile.CompressionFormat switch
                     {
-                        Data.LibraryManagement.CompressionFormat.Avif => CompressionFormat.Avif,
-                        Data.LibraryManagement.CompressionFormat.Jpg => CompressionFormat.Jpg,
-                        Data.LibraryManagement.CompressionFormat.Png => CompressionFormat.Png,
-                        Data.LibraryManagement.CompressionFormat.Webp => CompressionFormat.Webp,
+                        MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat.Avif => CompressionFormat.Avif,
+                        MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat.Jpg => CompressionFormat.Jpg,
+                        MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat.Png => CompressionFormat.Png,
+                        MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat.Webp => CompressionFormat.Webp,
                         _ => CompressionFormat.Unspecified
                     },
                     Quality = upscalerProfile.Quality,
                     ScalingFactor = upscalerProfile.ScalingFactor switch
                     {
-                        Data.LibraryManagement.ScaleFactor.OneX => ScaleFactor.OneX,
-                        Data.LibraryManagement.ScaleFactor.TwoX => ScaleFactor.TwoX,
-                        Data.LibraryManagement.ScaleFactor.ThreeX => ScaleFactor.ThreeX,
-                        Data.LibraryManagement.ScaleFactor.FourX => ScaleFactor.FourX,
+                        MangaIngestWithUpscaling.Shared.Data.LibraryManagement.ScaleFactor.OneX => ScaleFactor.OneX,
+                        MangaIngestWithUpscaling.Shared.Data.LibraryManagement.ScaleFactor.TwoX => ScaleFactor.TwoX,
+                        MangaIngestWithUpscaling.Shared.Data.LibraryManagement.ScaleFactor.ThreeX => ScaleFactor.ThreeX,
+                        MangaIngestWithUpscaling.Shared.Data.LibraryManagement.ScaleFactor.FourX => ScaleFactor.FourX,
                         _ => ScaleFactor.Unspecified
                     }
                 },

@@ -1,13 +1,15 @@
 ﻿@using DynamicData
 @using MangaIngestWithUpscaling.Data.LibraryManagement
+@using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Helpers
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
-@using MangaIngestWithUpscaling.Services.FileSystem
+@using MangaIngestWithUpscaling.Shared.Services.FileSystem
 @using MangaIngestWithUpscaling.Services.Integrations
 @using MangaIngestWithUpscaling.Services.LibraryIntegrity
 @using MangaIngestWithUpscaling.Services.MetadataHandling
 @using System.Collections.ObjectModel
+@using MangaIngestWithUpscaling.Shared.Services.MetadataHandling
 
 @inject ApplicationDbContext DbContext
 @inject IMetadataHandlingService MetadataHandler

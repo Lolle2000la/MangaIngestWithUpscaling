@@ -1,6 +1,6 @@
 ﻿using System.Text.RegularExpressions;
 
-namespace MangaIngestWithUpscaling.Services.MetadataHandling;
+namespace MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 
 /// <summary>
 /// Represents metadata extracted from a ComicInfo.xml file.

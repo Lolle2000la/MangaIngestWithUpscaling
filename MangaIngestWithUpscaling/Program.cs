@@ -5,24 +5,18 @@ using MangaIngestWithUpscaling.Components.Account;
 using MangaIngestWithUpscaling.Configuration;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Services;
-using MangaIngestWithUpscaling.Services.ChapterRecognition;
-using MangaIngestWithUpscaling.Services.LibraryIntegrity;
 using MangaIngestWithUpscaling.Services.Python;
+using MangaIngestWithUpscaling.Shared.Configuration;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using MudBlazor.Services;
 using MudBlazor.Translations;
 using Serilog;
-using Serilog.Events;
-using Splat.ModeDetection;
-using System;
 using System.Data.SQLite;
-using System.Text.Json;
 
 
 var builder = WebApplication.CreateBuilder(args);

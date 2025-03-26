@@ -1,8 +1,9 @@
-﻿using MangaIngestWithUpscaling.Helpers;
+﻿using MangaIngestWithUpscaling.Shared.Helpers;
+using Microsoft.Extensions.Logging;
 using System.IO.Compression;
 using System.Xml.Linq;
 
-namespace MangaIngestWithUpscaling.Services.MetadataHandling;
+namespace MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 
 [RegisterScoped]
 public class MetadataHandlingService(
@@ -199,7 +200,7 @@ public class MetadataHandlingService(
                 using var stream = comicInfoEntry.Open();
                 var document = XDocument.Load(stream);
                 WriteMetadataToXmlDoc(document, metadata);
-                stream.Seek(0, System.IO.SeekOrigin.Begin);
+                stream.Seek(0, SeekOrigin.Begin);
                 document.Save(stream);
                 stream.SetLength(stream.Position); // Truncate the file to the correct length
             }

@@ -1,6 +1,4 @@
 ﻿using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
-using Microsoft.EntityFrameworkCore;
-using System.ComponentModel;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace MangaIngestWithUpscaling.Data.BackqroundTaskQueue;

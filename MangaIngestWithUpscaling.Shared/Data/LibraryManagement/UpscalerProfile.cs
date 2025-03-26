@@ -1,6 +1,6 @@
 ﻿using System.ComponentModel.DataAnnotations;
 
-namespace MangaIngestWithUpscaling.Data.LibraryManagement;
+namespace MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 
 /// <summary>
 /// Represents a preconfigured upscaler setting that can be associated with chapters.

@@ -1,9 +1,7 @@
 ﻿
 using MangaIngestWithUpscaling.Data;
-using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
-using MangaIngestWithUpscaling.Services.ChapterManagement;
 using Microsoft.EntityFrameworkCore;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;

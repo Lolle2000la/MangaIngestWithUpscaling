@@ -1,4 +1,4 @@
-﻿namespace MangaIngestWithUpscaling.Services.FileSystem;
+﻿namespace MangaIngestWithUpscaling.Shared.Services.FileSystem;
 
 public interface IFileSystem
 {

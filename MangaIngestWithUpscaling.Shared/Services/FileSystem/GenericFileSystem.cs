@@ -1,6 +1,4 @@
-﻿using Mono.Unix.Native;
-
-namespace MangaIngestWithUpscaling.Services.FileSystem;
+﻿namespace MangaIngestWithUpscaling.Shared.Services.FileSystem;
 
 public class GenericFileSystem : IFileSystem
 {

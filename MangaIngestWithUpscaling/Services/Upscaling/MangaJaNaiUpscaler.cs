@@ -1,11 +1,12 @@
-﻿using MangaIngestWithUpscaling.Data.LibraryManagement;
-using MangaIngestWithUpscaling.Services.FileSystem;
-using MangaIngestWithUpscaling.Services.MetadataHandling;
+﻿using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Services.Python;
 using Microsoft.Extensions.Options;
 using System.IO.Compression;
 using System.Reflection;
 using System.Security.Cryptography;
+using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 
 namespace MangaIngestWithUpscaling.Services.Upscaling;
 

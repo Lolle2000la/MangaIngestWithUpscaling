@@ -1,4 +1,6 @@
-﻿namespace MangaIngestWithUpscaling.Configuration;
+﻿using MangaIngestWithUpscaling.Shared.Configuration;
+
+namespace MangaIngestWithUpscaling.Configuration;
 
 public static class ConfigRegistration
 {

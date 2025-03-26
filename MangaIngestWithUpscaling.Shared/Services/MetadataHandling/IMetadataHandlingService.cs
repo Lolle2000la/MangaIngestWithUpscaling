@@ -1,6 +1,4 @@
-﻿using MangaIngestWithUpscaling.Services.ChapterRecognition;
-
-namespace MangaIngestWithUpscaling.Services.MetadataHandling;
+﻿namespace MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 
 public interface IMetadataHandlingService
 {

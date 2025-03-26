@@ -1,5 +1,4 @@
-﻿using MangaIngestWithUpscaling.Data.LibraryManagement;
-using MangaIngestWithUpscaling.Services.ChapterRecognition;
+﻿using MangaIngestWithUpscaling.Services.ChapterRecognition;
 
 namespace MangaIngestWithUpscaling.Services.CbzConversion;
 
