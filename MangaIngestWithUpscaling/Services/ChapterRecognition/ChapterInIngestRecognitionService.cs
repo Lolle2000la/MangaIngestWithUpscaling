@@ -1,5 +1,6 @@
 ﻿using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.LibraryFiltering;
+using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 
 namespace MangaIngestWithUpscaling.Services.ChapterRecognition;
