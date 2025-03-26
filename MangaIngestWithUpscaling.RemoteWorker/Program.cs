@@ -2,6 +2,9 @@ using Google.Protobuf.WellKnownTypes;
 using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.RemoteWorker.Configuration;
 using MangaIngestWithUpscaling.RemoteWorker.Services;
+using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Services.Python;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.Options;
 using System.Reflection.PortableExecutable;
@@ -58,6 +61,27 @@ using (var scope = app.Services.CreateScope())
 
     var testResponse = client.CheckConnection(new Empty());
     logger.LogInformation("Connection test response: {Response}", testResponse);
+
+    var pythonService = scope.ServiceProvider.GetRequiredService<IPythonService>();
+    var upscalerConfig = scope.ServiceProvider.GetRequiredService<IOptions<UpscalerConfig>>();
+    if (!pythonService.IsPythonInstalled())
+    {
+        logger.LogError("Python is not installed on the system. Please install Python 3.6 or newer and ensure it is available on the system PATH.");
+    }
+    else
+    {
+        logger.LogInformation("Python is installed on the system.");
+
+        Directory.CreateDirectory(upscalerConfig.Value.PythonEnvironmentDirectory);
+
+        var environment = await pythonService.PreparePythonEnvironment(upscalerConfig.Value.PythonEnvironmentDirectory);
+        PythonService.Environment = environment;
+
+        logger.LogInformation($"Python environment prepared at {environment.PythonExecutablePath}");
+    }
+
+    var upscaler = scope.ServiceProvider.GetRequiredService<IUpscaler>();
+    await upscaler.DownloadModelsIfNecessary(CancellationToken.None);
 }
 
 app.Run();

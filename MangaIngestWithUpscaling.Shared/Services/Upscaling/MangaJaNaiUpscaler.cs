@@ -34,7 +34,7 @@ public class MangaJaNaiUpscaler(IPythonService pythonService,
         ("https://github.com/the-database/MangaJaNai/releases/download/1.0.0/MangaJaNai_V1_ModelsOnly.zip", "5156f4167875bba51a8ed52bd1c794b0d7277f7103f99b397518066e4dda7e55"),
     ];
 
-    private async Task DownloadModelsIfNecessary(CancellationToken cancellationToken)
+    public async Task DownloadModelsIfNecessary(CancellationToken cancellationToken)
     {
         if (!Directory.Exists(ModelPath))
         {
