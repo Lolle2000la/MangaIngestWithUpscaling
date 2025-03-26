@@ -36,11 +36,11 @@ builder.Services.AddGrpcClient<UpscalingService.UpscalingServiceClient>(o =>
     {
         var config = context.ServiceProvider.GetRequiredService<IOptions<WorkerConfig>>().Value;
         var metadata = context.CallOptions.Headers ?? new Grpc.Core.Metadata();
-        metadata.Add("X-Api-Key", config.ApiKey);
+        metadata.Add("Authorization", $"ApiKey {config.ApiKey}");
         context.CallOptions = context.CallOptions.WithHeaders(metadata);
     });
 
-    o.Address = new Uri(builder.Configuration["WorkerConfig:ApiUrl"]! + "/grpc");
+    o.Address = new Uri(builder.Configuration["WorkerConfig:ApiUrl"]!);
 });
 
 builder.Services.RegisterRemoteWorkerServices();

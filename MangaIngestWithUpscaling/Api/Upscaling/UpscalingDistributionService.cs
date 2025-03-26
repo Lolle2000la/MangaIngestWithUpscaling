@@ -11,7 +11,7 @@ using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 
 namespace MangaIngestWithUpscaling.Api.Upscaling;
 
-[Authorize]
+[Authorize(AuthenticationSchemes = "ApiKey")]
 public partial class UpscalingDistributionService(
     TaskQueue taskQueue,
     DistributedUpscaleTaskProcessor taskProcessor,
