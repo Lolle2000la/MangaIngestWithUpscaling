@@ -365,3 +365,4 @@ FodyWeavers.xsd
 # Test db
 MangaIngestWithUpscaling/data.db*
 /MangaIngestWithUpscaling/logs.db
+/MangaIngestWithUpscaling.RemoteWorker/appsettings.Development.json
