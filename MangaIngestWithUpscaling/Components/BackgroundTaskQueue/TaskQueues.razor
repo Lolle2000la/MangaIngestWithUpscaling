@@ -24,6 +24,7 @@
     <MudItem lg="6" xs="12">
         <TaskTable Tasks="@standardTasks" Title="Standard Tasks"
                    OnClearCompleted="OnClearCompletedStandardTasks"
+                   OnClearFailed="OnClearFailedStandardTasks"
                    OnRetryFailed="OnRetryFailed"
                    OnDelete="OnDelete"
                    OnCancel="OnCancelStandardTask"
@@ -32,6 +33,7 @@
     <MudItem lg="6" xs="12">
         <TaskTable Tasks="@upscaleTasks" Title="Upscaling Tasks"
                    OnClearCompleted="OnClearCompletedUpscaleTasks"
+                   OnClearFailed="OnClearFailedUpscaleTasks"
                    OnRetryFailed="OnRetryFailed"
                    OnDelete="OnDelete"
                    OnCancel="OnCancelUpscaleTask"
@@ -63,6 +65,26 @@
         }
     }
 
+    private async Task OnClearFailedStandardTasks()
+    {
+        try
+        {
+            var failedTasks = standardTasks.Where(x => x.Status == PersistedTaskStatus.Failed).ToList();
+            foreach (var task in failedTasks)
+            {
+                DbContext.PersistedTasks.Remove(task);
+            }
+            await DbContext.SaveChangesAsync();
+            standardTasks = standardTasks.Where(x => x.Status != PersistedTaskStatus.Failed).ToList();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to clear failed tasks");
+            Snackbar.Add("Failed to clear failed tasks: " + ex.Message, Severity.Error);
+            await LoadTasks();
+        }
+    }
+
     private async Task OnClearCompletedUpscaleTasks()
     {
         try
@@ -79,6 +101,26 @@
         {
             Logger.LogError(ex, "Failed to clear completed tasks");
             Snackbar.Add("Failed to clear completed tasks: " + ex.Message, Severity.Error);
+            await LoadTasks();
+        }
+    }
+
+    private async Task OnClearFailedUpscaleTasks()
+    {
+        try
+        {
+            var failedTasks = upscaleTasks.Where(x => x.Status == PersistedTaskStatus.Failed).ToList();
+            foreach (var task in failedTasks)
+            {
+                DbContext.PersistedTasks.Remove(task);
+            }
+            await DbContext.SaveChangesAsync();
+            upscaleTasks = upscaleTasks.Where(x => x.Status != PersistedTaskStatus.Failed).ToList();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to clear failed tasks");
+            Snackbar.Add("Failed to clear failed tasks: " + ex.Message, Severity.Error);
             await LoadTasks();
         }
     }

@@ -5,7 +5,10 @@
           @ref="Table">
     <ToolBarContent>
         <MudText Typo="Typo.h6">@Title</MudText>
-        <MudSpacer />
+        <MudSpacer/>
+        <MudButton StartIcon="@Icons.Material.Filled.Delete"
+                   Variant="Variant.Outlined" Color="Color.Primary"
+                   OnClick="OnClearCompleted">Clear Failed</MudButton>
         <MudButton StartIcon="@Icons.Material.Filled.ClearAll"
                    Variant="Variant.Filled" Color="Color.Primary"
                    OnClick="OnClearCompleted">Clear Completed</MudButton>
@@ -70,6 +73,7 @@
     [Parameter] public string Title { get; set; } = "Tasks";
 
     [Parameter] public EventCallback OnClearCompleted { get; set; } = EventCallback.Empty;
+    [Parameter] public EventCallback OnClearFailed { get; set; } = EventCallback.Empty;
     [Parameter] public EventCallback<PersistedTask> OnRetryFailed { get; set; } = EventCallback<PersistedTask>.Empty;
     [Parameter] public EventCallback<PersistedTask> OnCancel { get; set; } = EventCallback<PersistedTask>.Empty;
     [Parameter] public EventCallback<PersistedTask> OnRunNow { get; set; } = EventCallback<PersistedTask>.Empty;
