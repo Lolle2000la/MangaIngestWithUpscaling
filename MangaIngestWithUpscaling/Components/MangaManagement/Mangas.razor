@@ -145,7 +145,8 @@
 
         if (!string.IsNullOrWhiteSpace(searchString))
         {
-            query = query.Where(x => x.PrimaryTitle.Contains(searchString.Trim()) || x.OtherTitles.Any(s => s.Title == searchString.Trim()));
+            string trimmedSearchString = searchString.Trim();
+            query = query.Where(x => x.PrimaryTitle.ToLower().Contains(trimmedSearchString.ToLower()) || x.OtherTitles.Any(s => s.Title.ToLower().Contains(trimmedSearchString.ToLower())));
         }
 
         query = state.SortLabel switch
