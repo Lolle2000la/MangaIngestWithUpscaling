@@ -16,16 +16,13 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
     {
         string executableExtension = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : "";
 
-        if (PathHelpers.ExistsOnPath($"python{executableExtension}"))
+        if (PathHelpers.ExistsOnPath($"python3.12{executableExtension}"))
         {
-            return PathHelpers.GetFullPath($"python{executableExtension}");
-        }
-        else if (PathHelpers.ExistsOnPath($"python3{executableExtension}"))
-        {
-            return PathHelpers.GetFullPath($"python3{executableExtension}");
+            return PathHelpers.GetFullPath($"python3.12{executableExtension}");
         }
         else
         {
+            logger.LogCritical("Python 3.12 must be installed on the system in order to use upscaling!");
             return null;
         }
     }
@@ -42,14 +39,14 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
         var environmentPath = Path.GetFullPath(desiredDirectory);
         var relPythonPath = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) switch
         {
-            true => Path.Combine(environmentPath, "Scripts", "python.exe"),
-            false => Path.Combine(environmentPath, "bin", "python")
+            true => Path.Combine(environmentPath, "Scripts", "python3.12.exe"),
+            false => Path.Combine(environmentPath, "bin", "python3.12")
         };
 
         var relPythonBin = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) switch
         {
-            true => "python3.exe",
-            false => "python3"
+            true => "python3.12.exe",
+            false => "python3.12"
         };
 
         string assemblyDir = new FileInfo(Assembly.GetExecutingAssembly().Location).Directory!.FullName;
