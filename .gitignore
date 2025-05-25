@@ -366,3 +366,6 @@ FodyWeavers.xsd
 MangaIngestWithUpscaling/data.db*
 /MangaIngestWithUpscaling/logs.db
 /MangaIngestWithUpscaling.RemoteWorker/appsettings.Development.json
+
+# IDEA
+.idea/
