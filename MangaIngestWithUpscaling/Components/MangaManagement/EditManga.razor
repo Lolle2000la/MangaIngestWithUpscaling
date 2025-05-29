@@ -16,7 +16,9 @@
         <MudCard Elevation="2">
             <MudCardHeader>
                 <MudStack Row="true" AlignItems="AlignItems.Center">
-                    <a href="mangas"><MudIconButton Icon="@Icons.Material.Filled.ArrowBack" /></a>
+                    <a href="mangas">
+                        <MudIconButton Icon="@Icons.Material.Filled.ArrowBack"/>
+                    </a>
                     <MudText Typo="Typo.h4">Edit "@manga.PrimaryTitle"</MudText>
                 </MudStack>
             </MudCardHeader>
@@ -28,14 +30,14 @@
                     <MudItem xs="12">
                         <MudStack Spacing="0">
                             <MudTextField Label="Primary Title"
-                            @bind-Value="manga.PrimaryTitle"
-                            Immediate="true"
-                            Variant="Variant.Outlined"
-                            HelperText="The primary title you want this manga to go by."
-                            Required />
+                                          @bind-Value="manga.PrimaryTitle"
+                                          Immediate="true"
+                                          Variant="Variant.Outlined"
+                                          HelperText="The primary title you want this manga to go by."
+                                          Required/>
                             <MudCheckBox T="bool" Label="Add old title to other titles automatically when changed."
-                            @bind-Value="addOldTitleToOtherTitles"
-                            Size="Size.Small" />
+                                         @bind-Value="addOldTitleToOtherTitles"
+                                         Size="Size.Small"/>
                         </MudStack>
                     </MudItem>
                     <MudItem xs="12">
@@ -48,26 +50,26 @@
                             <MudStack>
                                 <MudStack Row="true" Spacing="1">
                                     <MudTextField Label="New Title" @bind-Value="newTitle"
-                                    Immediate="true"
-                                    Class="flex-grow-1"
-                                    @ref="newTitleField" />
+                                                  Immediate="true"
+                                                  Class="flex-grow-1"
+                                                  @ref="newTitleField"/>
                                     <MudIconButton Icon="@Icons.Material.Filled.AddCircle"
-                                    Size="Size.Medium" Class="flex-shrink-0"
-                                    Disabled="string.IsNullOrWhiteSpace(newTitle)"
-                                    OnClick="_ => AddAlternativeTitle()" Color="Color.Success" />
+                                                   Size="Size.Medium" Class="flex-shrink-0"
+                                                   Disabled="string.IsNullOrWhiteSpace(newTitle)"
+                                                   OnClick="_ => AddAlternativeTitle()" Color="Color.Success"/>
                                 </MudStack>
                                 <MudList T="MangaAlternativeTitle"
-                                @ref="titlesList" @bind-SelectedValues="selectedTitles">
+                                         @ref="titlesList" @bind-SelectedValues="selectedTitles">
                                     @foreach (var title in manga.OtherTitles.OrderBy(t => t.Title))
                                     {
                                         <MudListItem Value="@title">
                                             <MudStack Row="true" AlignItems="AlignItems.Center">
                                                 <MudText>@title.Title</MudText>
-                                                <MudSpacer />
+                                                <MudSpacer/>
                                                 <MudIconButton Icon="@Icons.Material.Filled.RemoveCircle"
-                                                Color="Color.Error"
-                                                Size="Size.Small"
-                                                OnClick="() => manga.OtherTitles.Remove(title)" />
+                                                               Color="Color.Error"
+                                                               Size="Size.Small"
+                                                               OnClick="() => manga.OtherTitles.Remove(title)"/>
                                             </MudStack>
                                         </MudListItem>
                                     }
@@ -78,7 +80,9 @@
                 </MudGrid>
             </MudCardContent>
             <MudCardActions>
-                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save" Disabled="@(!isTouched || !isValid)">Save</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save"
+                           Disabled="@(!isTouched || !isValid)">Save
+                </MudButton>
             </MudCardActions>
         </MudCard>
     </MudForm>
@@ -96,7 +100,7 @@
             </MudStack>
         </MudCardHeader>
         <MudCardContent>
-            <ChapterList Manga="@manga" />
+            <ChapterList Manga="@manga"/>
         </MudCardContent>
     </MudCard>
 </MudStack>
@@ -129,6 +133,7 @@
         {
             NavigationManager.NavigateTo("/mangas");
         }
+
         originalTitle = manga.PrimaryTitle;
     }
 
@@ -136,11 +141,11 @@
     {
         if (!string.IsNullOrEmpty(newTitle))
             manga.OtherTitles.Add(new MangaAlternativeTitle
-                {
-                    Title = newTitle,
-                    MangaId = manga.Id,
-                    Manga = manga
-                });
+            {
+                Title = newTitle,
+                MangaId = manga.Id,
+                Manga = manga
+            });
     }
 
     private async Task Save()
@@ -151,10 +156,14 @@
             {
                 var newTitle = manga.PrimaryTitle.Trim();
                 manga.PrimaryTitle = originalTitle;
-                originalTitle = newTitle;
                 try
                 {
-                    await MetadataChanger.ChangeMangaTitle(manga, newTitle, addOldTitleToOtherTitles);
+                    var renameResult = await MetadataChanger.ChangeMangaTitle(manga, newTitle, addOldTitleToOtherTitles);
+                    if (renameResult == RenameResult.Cancelled)
+                    {
+                        manga.PrimaryTitle = newTitle;
+                        return;
+                    }
                 }
                 catch (Exception e)
                 {
@@ -175,4 +184,5 @@
             }
         }
     }
+
 }
