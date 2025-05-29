@@ -6,6 +6,7 @@ using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.FileSystem;
 using MangaIngestWithUpscaling.Services.Integrations;
+using MangaIngestWithUpscaling.Services.MangaManagement;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Identity.Client;
@@ -16,6 +17,7 @@ namespace MangaIngestWithUpscaling.Services.MetadataHandling;
 [RegisterScoped]
 public class MangaMetadataChanger(
     IMetadataHandlingService metadataHandling,
+    IMangaMerger merger,
     ApplicationDbContext dbContext,
     ILogger<MangaMetadataChanger> logger,
     ITaskQueue taskQueue,
@@ -46,8 +48,18 @@ public class MangaMetadataChanger(
     }
 
     /// <inheritdoc/>
-    public async Task ChangeMangaTitle(Manga manga, string newTitle, bool addOldToAlternative = true)
+    public async Task<RenameResult> ChangeMangaTitle(Manga manga, string newTitle, bool addOldToAlternative = true,
+        CancellationToken cancellationToken = default)
     {
+        var possibleCurrent = await dbContext.MangaSeries.FirstOrDefaultAsync(m => 
+            m.PrimaryTitle == newTitle || m.OtherTitles.Any(t => t.Title == newTitle));
+
+        if (possibleCurrent != null)
+        {
+            await merger.MergeAsync(possibleCurrent, [manga], cancellationToken);
+            return RenameResult.Merged;
+        }
+        
         manga.ChangePrimaryTitle(newTitle, addOldToAlternative);
 
         // load library and chapters if not already loaded
@@ -90,7 +102,8 @@ public class MangaMetadataChanger(
             }
         }
 
-        await dbContext.SaveChangesAsync();
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return RenameResult.Ok;
     }
 
     private void RelocateChapterToNewTitleDirectory(Chapter chapter, string origChapterPath, string libraryBasePath, string newTitle)

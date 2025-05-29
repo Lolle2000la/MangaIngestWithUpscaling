@@ -17,9 +17,10 @@ public interface IMangaMetadataChanger
     /// If <c>true</c>, this will add the old title to the list of other titles.
     /// This is useful to recognize ingested chapters of the same series with different titles (i.e english and japanese).
     /// </param>
+    /// <param name="cancellationToken">The token to cancel the operation.</param>
     /// <exception cref="TitleAlreadyUsedException">Indicates that the title has already been used.</exception>
     /// <returns></returns>
-    Task ChangeMangaTitle(Manga manga, string newTitle, bool addOldToAlternative = true);
+    Task<RenameResult> ChangeMangaTitle(Manga manga, string newTitle, bool addOldToAlternative = true, CancellationToken cancellationToken = default);
     /// <summary>
     /// Updates the title of a upscaled chapter file and moves it to the correct directory.
     /// </summary>
@@ -37,4 +38,9 @@ public interface IMangaMetadataChanger
     /// <param name="chapter">The chapter whose metadata to change.</param>
     /// <param name="newTitle">The new title to apply.</param>
     Task ChangeChapterTitle(Chapter chapter, string newTitle);
+}
+
+public enum RenameResult
+{
+    Ok, Merged 
 }

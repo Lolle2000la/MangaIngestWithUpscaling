@@ -304,7 +304,11 @@
             manga.PrimaryTitle = mangaBeforeEdit.PrimaryTitle;
             try
             {
-                await MangaMetadataChanger.ChangeMangaTitle(manga, newTitle.Trim());
+                var renameResult = await MangaMetadataChanger.ChangeMangaTitle(manga, newTitle.Trim());
+                if (renameResult is RenameResult.Merged)
+                {
+                    await table.ReloadServerData();
+                }
             }
             catch (Exception e)
             {
