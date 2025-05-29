@@ -308,6 +308,7 @@
                 if (renameResult is not RenameResult.Ok)
                 {
                     await table.ReloadServerData();
+                    return;
                 }
             }
             catch (Exception e)

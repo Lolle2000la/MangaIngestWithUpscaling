@@ -13,6 +13,7 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 [JsonDerivedType(typeof(ScanIngestTask), nameof(ScanIngestTask))]
 [JsonDerivedType(typeof(RenameUpscaledChaptersSeriesTask), nameof(RenameUpscaledChaptersSeriesTask))]
 [JsonDerivedType(typeof(LibraryIntegrityCheckTask), nameof(LibraryIntegrityCheckTask))]
+[JsonDerivedType(typeof(MergeMangaTask), nameof(MergeMangaTask))]
 public class BaseTask
 {
     public virtual Task ProcessAsync(IServiceProvider services, CancellationToken cancellationToken)
