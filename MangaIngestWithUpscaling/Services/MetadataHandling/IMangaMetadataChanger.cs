@@ -42,5 +42,5 @@ public interface IMangaMetadataChanger
 
 public enum RenameResult
 {
-    Ok, Merged 
+    Ok, Merged, Cancelled
 }
