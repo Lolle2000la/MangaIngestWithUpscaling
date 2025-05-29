@@ -24,7 +24,8 @@ public class MergeMangaTask : BaseTask
     {
         IntoMangaId = into.Id;
         ToMerge = toMerge.Select(m => m.Id).ToList();
-        MergeMessage = $"Merging {toMerge.Count} Mangas into {into.PrimaryTitle}";
+        string pluralSuffix = toMerge.Count > 1 ? "s" : "";
+        MergeMessage = $"Merging {toMerge.Count} manga{pluralSuffix} into {into.PrimaryTitle}";
     }
 
     public override async Task ProcessAsync(IServiceProvider services, CancellationToken cancellationToken)
