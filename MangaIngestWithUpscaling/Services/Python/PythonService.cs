@@ -84,7 +84,7 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
 
 
             // install the required modules
-            string moduleInstallCommand = $@"{relPythonPath} -m pip install -U pip wheel --no-warn-script-location && {relPythonPath} -m pip install torch==2.5.1 torchvision --index-url https://download.pytorch.org/whl/cu124 --no-warn-script-location && {relPythonPath} -m pip install ""{backendSrcDirectory}"" --no-warn-script-location";
+            string moduleInstallCommand = $@"{relPythonPath} -m pip install -U pip wheel --no-warn-script-location && {relPythonPath} -m pip install ""{backendSrcDirectory}"" --no-warn-script-location";
 
             using (var process = new Process())
             {
