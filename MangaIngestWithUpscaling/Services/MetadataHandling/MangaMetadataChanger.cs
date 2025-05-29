@@ -55,7 +55,8 @@ public class MangaMetadataChanger(
         CancellationToken cancellationToken = default)
     {
         var possibleCurrent = await dbContext.MangaSeries.FirstOrDefaultAsync(m =>
-            m.PrimaryTitle == newTitle || m.OtherTitles.Any(t => t.Title == newTitle),
+                m.Id != manga.Id && // prevent accidental self-merge
+            (m.PrimaryTitle == newTitle || m.OtherTitles.Any(t => t.Title == newTitle)),
             cancellationToken: cancellationToken);
 
         if (possibleCurrent != null)
