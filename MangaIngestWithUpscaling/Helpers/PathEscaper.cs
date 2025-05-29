@@ -4,6 +4,9 @@ namespace MangaIngestWithUpscaling.Helpers;
 
 public static class PathEscaper
 {
+    private static List<char> invalidChars =
+        Path.GetInvalidFileNameChars().Concat(Path.GetInvalidPathChars()).Distinct().ToList();
+    
     /// <summary>
     /// Escapes forbidden characters in a filesystem file name by percent-encoding them.
     /// </summary>
@@ -12,7 +15,6 @@ public static class PathEscaper
     public static string EscapeFileName(string fileName)
     {
         // Retrieve the set of characters not allowed in a file name.
-        char[] invalidChars = Path.GetInvalidFileNameChars();
         StringBuilder sb = new StringBuilder();
         foreach (char c in fileName)
         {
