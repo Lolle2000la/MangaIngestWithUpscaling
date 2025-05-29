@@ -369,3 +369,6 @@ MangaIngestWithUpscaling/data.db*
 
 # IDEA
 .idea/
+
+# test data
+test_data/
