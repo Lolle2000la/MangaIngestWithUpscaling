@@ -287,17 +287,9 @@ if (app.Configuration.GetValue<bool>("OIDC:Enabled"))
 {
     app.MapPost("/Account/LogoutOidc", async (HttpContext context, SignInManager<ApplicationUser> signInManager, string? returnUrl) =>
     {
-        await signInManager.SignOutAsync(); // Handles local cookie sign out
-        // For OIDC, we also need to trigger a sign-out with the OIDC provider.
-        // The OpenIdConnectEvents.OnRedirectToIdentityProviderForSignOut can be used for this,
-        // or we can directly challenge the OIDC scheme for signout.
-        // However, a simple SignOutAsync on the scheme is often enough if the OIDC handler is configured for it.
+        await signInManager.SignOutAsync();
         await context.SignOutAsync(OpenIdConnectDefaults.AuthenticationScheme, 
             new AuthenticationProperties { RedirectUri = returnUrl ?? "/" });
-        // Note: Depending on the OIDC provider, a GET request to a specific logout URL might be required after local signout.
-        // If the above doesn't trigger RP-initiated logout, you might need to redirect to a specific logout page
-        // that then redirects to the OIDC provider's end_session_endpoint.
-        // For now, this attempts the standard SignOutAsync for the OIDC scheme.
     }).RequireAuthorization(); 
 }
 
