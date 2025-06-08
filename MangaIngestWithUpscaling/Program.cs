@@ -24,6 +24,7 @@ using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.HttpOverrides; // Required for Forwarded Headers
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -53,6 +54,15 @@ builder.Services.AddSerilog((services, lc) => lc
         Path.GetFullPath(loggingConnectionReadOnlyStringBuilder.DataSource),
         tableName: "Logs",
         retentionPeriod: TimeSpan.FromDays(7)));
+
+// Configure Forwarded Headers
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    // If the proxy isn't on localhost from the app container's perspective
+    options.KnownProxies.Clear(); 
+    options.KnownNetworks.Clear();
+});
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
@@ -193,6 +203,8 @@ builder.Services.AddAuthorization(options =>
 builder.Services.RegisterAppServices();
 
 var app = builder.Build();
+
+app.UseForwardedHeaders();
 
 // Apply migrations on startup
 using (var scope = app.Services.CreateScope())
