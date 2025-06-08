@@ -20,7 +20,8 @@ using Splat.ModeDetection;
 using System;
 using System.Data.SQLite;
 using System.Text.Json;
-
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -73,6 +74,24 @@ builder.Services.AddAuthentication(options =>
         options.DefaultSignInScheme = IdentityConstants.ExternalScheme;
     })
     .AddIdentityCookies();
+
+// Conditionally add OIDC authentication
+if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
+{
+    builder.Services.AddAuthentication()
+        .AddOpenIdConnect("OIDC", options =>
+        {
+            builder.Configuration.GetSection("OIDC").Bind(options);
+            options.ResponseType = OpenIdConnectResponseType.Code;
+            options.SaveTokens = true;
+            options.GetClaimsFromUserInfoEndpoint = true;
+            options.UseTokenLifetime = false; // Can be true if you want to use the OIDC token lifetime
+                                            // options.Scope.Add("openid"); // Usually added by default
+                                            // options.Scope.Add("profile"); // Usually added by default
+                                            // options.CallbackPath = "/signin-oidc"; // Default, ensure it matches your OIDC provider redirect URI
+                                            // options.SignedOutCallbackPath = "/signout-callback-oidc"; // Default, ensure it matches your OIDC provider redirect URI
+        });
+}
 
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlite(connectionString, builder =>
@@ -150,6 +169,9 @@ app.UseRequestLocalization(new RequestLocalizationOptions()
     .AddSupportedCultures(new[] { "en-US", "de-DE", "ja" })
     .AddSupportedUICultures(new[] { "en-US", "de-DE", "ja" }));
 
+
+app.UseAuthentication();
+app.UseAuthorization();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
