@@ -98,14 +98,53 @@ if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
 {
     authBuilder.AddOpenIdConnect(OpenIdConnectDefaults.AuthenticationScheme, options => // Use the constant for scheme name, "OIDC"
     {
-        builder.Configuration.GetSection("OIDC").Bind(options);
-        options.ResponseType = OpenIdConnectResponseType.Code;
-        options.SaveTokens = true;
-        options.GetClaimsFromUserInfoEndpoint = true;
-        options.UseTokenLifetime = false;
+        // Bind configuration from OIDC section
+        builder.Configuration.GetSection("OIDC").Bind(options); 
+        
+        // Ensure essential OIDC parameters are correctly set
+        options.ResponseType = OpenIdConnectResponseType.Code; // Use Authorization Code Flow
+        options.SaveTokens = true; // Save tokens in authentication properties
+        options.GetClaimsFromUserInfoEndpoint = true; // Fetch claims from UserInfo endpoint
+        // options.UseTokenLifetime = false; // Default is true, consider if session lifetime needs to be independent of token
+
+        // Explicitly enable PKCE (Proof Key for Code Exchange) - IMPORTANT for security
+        options.UsePkce = true;
+
+        // Configure Correlation and Nonce cookies - CRITICAL for state handling, especially behind proxies
+        options.CorrelationCookie.Name = ".AspNetCore.Correlation.Oidc";
+        options.CorrelationCookie.HttpOnly = true;
+        options.CorrelationCookie.SecurePolicy = CookieSecurePolicy.Always; // Essential for SameSite=None and reverse proxies
+        options.CorrelationCookie.SameSite = SameSiteMode.None; // Required for OIDC flows involving cross-site redirects
+
+        options.NonceCookie.Name = ".AspNetCore.OpenIdConnect.Nonce";
+        options.NonceCookie.HttpOnly = true;
+        options.NonceCookie.SecurePolicy = CookieSecurePolicy.Always; // Essential for SameSite=None
+        options.NonceCookie.SameSite = SameSiteMode.None; // Nonce cookie must be sent cross-site
+
+        // Scopes define what information is requested from the OIDC provider
+        // Ensure these scopes are configured as allowed in Authentik for your client
+        // options.Scope.Clear(); // Clear defaults if any before adding
         options.Scope.Add("openid");
         options.Scope.Add("profile");
         options.Scope.Add("email");
+        // options.Scope.Add("groups"); // If you need group claims and Authentik is configured to provide them
+
+        // TokenValidationParameters control how tokens are validated
+        options.TokenValidationParameters = new Microsoft.IdentityModel.Tokens.TokenValidationParameters
+        {
+            NameClaimType = ClaimTypes.Name, // Or "name" depending on what Authentik sends
+            RoleClaimType = ClaimTypes.Role,   // Or "groups" or "roles"
+            // ValidateIssuer = true, // Good practice, ensure Authority is correct
+        };
+        
+        // Claim actions map claims from the OIDC provider to ASP.NET Core Identity claims
+        // options.ClaimActions.MapJsonKey(ClaimTypes.NameIdentifier, "sub"); // Standard
+        // options.ClaimActions.MapJsonKey(ClaimTypes.Name, "name");
+        // options.ClaimActions.MapJsonKey(ClaimTypes.Email, "email");
+        // options.ClaimActions.MapJsonKey(ClaimTypes.GivenName, "given_name");
+        // options.ClaimActions.MapJsonKey(ClaimTypes.Surname, "family_name");
+        options.ClaimActions.MapJsonKey("preferred_username", "preferred_username");
+        // options.ClaimActions.MapJsonKey(ClaimTypes.Role, "groups"); // If Authentik sends roles/groups in a 'groups' claim
 
         options.Events = new OpenIdConnectEvents
         {
@@ -155,6 +194,22 @@ if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
                     ctx.Fail("Email or NameIdentifier claim not found.");
                     return;
                 }
+            },
+            OnRemoteFailure = context =>
+            {
+                var loggerFactory = context.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>();
+                var logger = loggerFactory.CreateLogger("OidcEvents");
+
+                logger.LogError(context.Failure, "OIDC remote authentication failure. Error: {ErrorMessage}. Description: {ErrorDescription}. Properties: {Properties}", 
+                    context.Failure?.Message, 
+                    context.Properties?.Items[OpenIdConnectParameterNames.ErrorDescription],
+                    JsonSerializer.Serialize(context.Properties?.Items)); // Log all properties for more details
+
+                context.HandleResponse(); // Suppress the default exception handling
+                var errorMessage = System.Net.WebUtility.UrlEncode(context.Failure?.Message ?? "OIDC authentication failed.");
+                var errorDescription = context.Properties?.Items.TryGetValue(OpenIdConnectParameterNames.ErrorDescription, out var desc) == true ? System.Net.WebUtility.UrlEncode(desc) : "";
+                context.Response.Redirect($"/?oidc_error={errorMessage}&oidc_error_description={errorDescription}"); 
+                return Task.CompletedTask;
             }
         };
     });
