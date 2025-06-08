@@ -1,13 +1,14 @@
 ﻿@implements IDisposable
 
 @inject NavigationManager NavigationManager
+@inject IConfiguration Configuration
 
 
 <MudNavMenu>
     <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Home">
         Home
     </MudNavLink>
-    <MudNavLink Href="libraries" Icon="@Icons.Material.Filled.LibraryBooks" >
+    <MudNavLink Href="libraries" Icon="@Icons.Material.Filled.LibraryBooks">
         Libraries
     </MudNavLink>
     <MudNavLink Href="upscaling/profiles" Icon="@Icons.Material.Filled.ImageAspectRatio">
@@ -24,26 +25,54 @@
     </MudNavLink>
     <AuthorizeView>
         <Authorized>
-            <MudNavLink Href="Account/Manage" Icon="@Icons.Material.Filled.ManageAccounts">
-                @context.User.Identity?.Name
-            </MudNavLink>
-            <form action="Account/Logout" method="post">
-                <AntiforgeryToken />
-                <input type="hidden" name="ReturnUrl" value="@currentUrl" />
-                <button type="submit" class="mud-nav-link mud-ripple">
-                    <MudIcon Class="mud-icon-root mud-icon-default mud-svg-icon mud-icon-size-medium mud-nav-link-icon mud-nav-link-icon-default"
-                             Icon="@Icons.Material.Filled.Logout" /> 
-                    <div class="mud-nav-link-text">Logout</div>
-                </button>
-            </form>
+            @if (Configuration.GetValue<bool>("OIDC:Enabled"))
+            {
+                // When OIDC is enabled, show user email and a logout button that redirects to OIDC logout
+                <MudNavLink Href="#" Icon="@Icons.Material.Filled.ManageAccounts" Disabled="true">
+                    @context.User.Identity?.Name
+                </MudNavLink>
+                <form action="/Account/LogoutOidc" method="post"> @* Changed action for OIDC logout *@
+                    <AntiforgeryToken />
+                    <input type="hidden" name="ReturnUrl" value="@currentUrl" />
+                    <button type="submit" class="mud-nav-link mud-ripple">
+                        <MudIcon Class="mud-icon-root mud-icon-default mud-svg-icon mud-icon-size-medium mud-nav-link-icon mud-nav-link-icon-default"
+                                 Icon="@Icons.Material.Filled.Logout" />
+                        <div class="mud-nav-link-text">Logout</div>
+                    </button>
+                </form>
+            }
+            else
+            {
+                // non-OIDC authorized view
+                <MudNavLink Href="Account/Manage" Icon="@Icons.Material.Filled.ManageAccounts">
+                    @context.User.Identity?.Name
+                </MudNavLink>
+                <form action="Account/Logout" method="post">
+                    <AntiforgeryToken />
+                    <input type="hidden" name="ReturnUrl" value="@currentUrl" />
+                    <button type="submit" class="mud-nav-link mud-ripple">
+                        <MudIcon Class="mud-icon-root mud-icon-default mud-svg-icon mud-icon-size-medium mud-nav-link-icon mud-nav-link-icon-default"
+                                 Icon="@Icons.Material.Filled.Logout" />
+                        <div class="mud-nav-link-text">Logout</div>
+                    </button>
+                </form>
+            }
         </Authorized>
         <NotAuthorized>
-            <MudNavLink Href="Account/Register">
-                <MudIcon Icon="bi bi-person-nav-menu" /><span>Register</span>
-            </MudNavLink>
-            <MudNavLink Href="Account/Login">
-                <MudIcon Icon="@Icons.Material.Filled.Login" /><span>Login</span>
-            </MudNavLink>
+            @if (!Configuration.GetValue<bool>("OIDC:Enabled")) // Only show Register/Login if OIDC is NOT enabled
+            {
+                <MudNavLink Href="Account/Register">
+                    <MudIcon Icon="bi bi-person-nav-menu" /><span>Register</span>
+                </MudNavLink>
+                <MudNavLink Href="Account/Login">
+                    <MudIcon Icon="@Icons.Material.Filled.Login" /><span>Login</span>
+                </MudNavLink>
+            }
+            else
+            {
+                 // Optionally, show a login button that triggers OIDC challenge if OIDC is enabled and user is not authorized
+                 <MudNavLink Href="/Account/LoginOidc" Icon="@Icons.Material.Filled.Login">Login with OIDC</MudNavLink>
+            }
         </NotAuthorized>
     </AuthorizeView>
 </MudNavMenu>

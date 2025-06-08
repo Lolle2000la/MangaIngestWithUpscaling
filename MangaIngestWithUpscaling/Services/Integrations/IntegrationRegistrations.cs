@@ -11,10 +11,11 @@ public static class IntegrationRegistrations
         services.AddScoped<IChapterChangedNotifier, KavitaChapterChangedNotifier>();
 
         services.AddHttpClient<IKavitaClient, KavitaClient>((provider, client) =>
-        {
-            var config = provider.GetRequiredService<IOptions<KavitaConfiguration>>().Value;
-            client.BaseAddress = new Uri(config.BaseUrl);
-        })
+            {
+                var config = provider.GetRequiredService<IOptions<KavitaConfiguration>>().Value;
+                if (!string.IsNullOrWhiteSpace(config.BaseUrl))
+                    client.BaseAddress = new Uri(config.BaseUrl);
+            })
             .AddStandardResilienceHandler();
 
         return services;
