@@ -22,6 +22,8 @@ using System.Data.SQLite;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authentication;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -68,29 +70,84 @@ builder.Services.AddScoped<IdentityUserAccessor>();
 builder.Services.AddScoped<IdentityRedirectManager>();
 builder.Services.AddScoped<AuthenticationStateProvider, IdentityRevalidatingAuthenticationStateProvider>();
 
-builder.Services.AddAuthentication(options =>
+// Configure Authentication
+var authBuilder = builder.Services.AddAuthentication(options =>
     {
         options.DefaultScheme = IdentityConstants.ApplicationScheme;
         options.DefaultSignInScheme = IdentityConstants.ExternalScheme;
-    })
-    .AddIdentityCookies();
+        if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
+        {
+            options.DefaultChallengeScheme = OpenIdConnectDefaults.AuthenticationScheme; // "OIDC"
+        }
+    });
+
+authBuilder.AddIdentityCookies();
 
 // Conditionally add OIDC authentication
 if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
 {
-    builder.Services.AddAuthentication()
-        .AddOpenIdConnect("OIDC", options =>
+    authBuilder.AddOpenIdConnect(OpenIdConnectDefaults.AuthenticationScheme, options => // Use the constant for scheme name, "OIDC"
+    {
+        builder.Configuration.GetSection("OIDC").Bind(options);
+        options.ResponseType = OpenIdConnectResponseType.Code;
+        options.SaveTokens = true;
+        options.GetClaimsFromUserInfoEndpoint = true;
+        options.UseTokenLifetime = false;
+        options.Scope.Add("openid");
+        options.Scope.Add("profile");
+        options.Scope.Add("email");
+
+        options.Events = new OpenIdConnectEvents
         {
-            builder.Configuration.GetSection("OIDC").Bind(options);
-            options.ResponseType = OpenIdConnectResponseType.Code;
-            options.SaveTokens = true;
-            options.GetClaimsFromUserInfoEndpoint = true;
-            options.UseTokenLifetime = false; // Can be true if you want to use the OIDC token lifetime
-                                            // options.Scope.Add("openid"); // Usually added by default
-                                            // options.Scope.Add("profile"); // Usually added by default
-                                            // options.CallbackPath = "/signin-oidc"; // Default, ensure it matches your OIDC provider redirect URI
-                                            // options.SignedOutCallbackPath = "/signout-callback-oidc"; // Default, ensure it matches your OIDC provider redirect URI
-        });
+            OnTokenValidated = async ctx =>
+            {
+                var signInManager = ctx.HttpContext.RequestServices.GetRequiredService<SignInManager<ApplicationUser>>();
+                var userManager = ctx.HttpContext.RequestServices.GetRequiredService<UserManager<ApplicationUser>>();
+
+                if (ctx.Principal == null)
+                {
+                    ctx.Fail("Principal is null.");
+                    return;
+                }
+
+                var emailClaim = ctx.Principal.FindFirstValue(ClaimTypes.Email) ?? ctx.Principal.FindFirstValue("email");
+                var nameIdentifier = ctx.Principal.FindFirstValue(ClaimTypes.NameIdentifier);
+
+                if (emailClaim != null && nameIdentifier != null)
+                {
+                    var user = await userManager.FindByEmailAsync(emailClaim);
+                    if (user == null)
+                    {
+                        user = new ApplicationUser { UserName = emailClaim, Email = emailClaim, EmailConfirmed = true };
+                        var createUserResult = await userManager.CreateAsync(user);
+                        if (!createUserResult.Succeeded)
+                        {
+                            ctx.Fail($"Failed to create user: {string.Join(", ", createUserResult.Errors.Select(e => e.Description))}");
+                            return;
+                        }
+                    }
+                    
+                    var externalLoginInfo = new UserLoginInfo(ctx.Scheme.Name, nameIdentifier, ctx.Scheme.Name);
+                    var logins = await userManager.GetLoginsAsync(user);
+                    if (!logins.Any(l => l.LoginProvider == externalLoginInfo.LoginProvider && l.ProviderKey == externalLoginInfo.ProviderKey))
+                    {
+                        var addLoginResult = await userManager.AddLoginAsync(user, externalLoginInfo);
+                        if (!addLoginResult.Succeeded)
+                        {
+                            ctx.Fail($"Failed to add OIDC login to user: {string.Join(", ", addLoginResult.Errors.Select(e => e.Description))}");
+                            return;
+                        }
+                    }
+                    await signInManager.SignInAsync(user, isPersistent: false);
+                }
+                else
+                {
+                    ctx.Fail("Email or NameIdentifier claim not found.");
+                    return;
+                }
+            }
+        };
+    });
 }
 
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
@@ -120,6 +177,17 @@ builder.Services.AddDataProtection()
     .SetApplicationName("manga-ingest-with-upscaling");
 
 builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSender>();
+
+builder.Services.AddAuthorization(options =>
+{
+    if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
+    {
+        options.FallbackPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
+            .RequireAuthenticatedUser()
+            .Build();
+    }
+});
+
 
 // Add the services used by the app
 builder.Services.RegisterAppServices();
@@ -196,6 +264,29 @@ app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
 // Add additional endpoints required by the Identity /Account Razor components.
-app.MapAdditionalIdentityEndpoints();
+// Only map these if OIDC is NOT enabled, or map them conditionally
+if (!app.Configuration.GetValue<bool>("OIDC:Enabled"))
+{
+    app.MapAdditionalIdentityEndpoints();
+}
+
+// Add OIDC Logout Endpoint if OIDC is enabled
+if (app.Configuration.GetValue<bool>("OIDC:Enabled"))
+{
+    app.MapPost("/Account/LogoutOidc", async (HttpContext context, SignInManager<ApplicationUser> signInManager, string? returnUrl) =>
+    {
+        await signInManager.SignOutAsync(); // Handles local cookie sign out
+        // For OIDC, we also need to trigger a sign-out with the OIDC provider.
+        // The OpenIdConnectEvents.OnRedirectToIdentityProviderForSignOut can be used for this,
+        // or we can directly challenge the OIDC scheme for signout.
+        // However, a simple SignOutAsync on the scheme is often enough if the OIDC handler is configured for it.
+        await context.SignOutAsync(OpenIdConnectDefaults.AuthenticationScheme, 
+            new AuthenticationProperties { RedirectUri = returnUrl ?? "/" });
+        // Note: Depending on the OIDC provider, a GET request to a specific logout URL might be required after local signout.
+        // If the above doesn't trigger RP-initiated logout, you might need to redirect to a specific logout page
+        // that then redirects to the OIDC provider's end_session_endpoint.
+        // For now, this attempts the standard SignOutAsync for the OIDC scheme.
+    }).RequireAuthorization(); 
+}
 
 app.Run();
