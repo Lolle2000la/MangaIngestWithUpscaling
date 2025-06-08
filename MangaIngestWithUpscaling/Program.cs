@@ -59,9 +59,9 @@ builder.Services.AddSerilog((services, lc) => lc
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-    // If the proxy isn't on localhost from the app container's perspective
-    options.KnownProxies.Clear(); 
-    options.KnownNetworks.Clear();
+    // // If the proxy isn't on localhost from the app container's perspective
+    // options.KnownProxies.Clear(); 
+    // options.KnownNetworks.Clear();
 });
 
 // Add services to the container.
