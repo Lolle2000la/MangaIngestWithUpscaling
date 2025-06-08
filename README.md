@@ -141,6 +141,22 @@ When configuring the OIDC client in your identity provider, you will need to spe
 
 Make sure your OIDC provider is configured to accept these URIs.
 
+**Problems when running behind a reverse proxy:**
+
+If you encounter issues with OIDC authentication when running behind a reverse proxy, ensure that the proxy is correctly forwarding the necessary headers. You may need to configure your reverse proxy to pass through headers like `X-Forwarded-For`, `X-Forwarded-Proto`, and `X-Forwarded-Host` to maintain the correct request context.
+
+In the case of nginx in particular, you might have to add the following configuration to your nginx server block (shoutout to [@dankennedy](https://github.com/DuendeArchive/IdentityServer4/issues/1670#issuecomment-340774293)):
+
+```nginx
+proxy_buffer_size          128k;
+
+proxy_buffers              4 256k;
+
+proxy_busy_buffers_size    256k;
+```
+
+Without this, after being redirected back to the application, you might be faced with a 502 Bad Gateway error or a blank page.
+
 ## Building Prerequisites
 
 - .NET 9.0 SDK or later
