@@ -37,6 +37,13 @@ services:
       #Ingest_Kavita__BaseUrl: http://kavita:5000 # the base URL of your Kavita instance
       #Ingest_Kavita__ApiKey: #Your API key here
       #Ingest_Kavita__Enabled: True # defaults to false
+      # OIDC Authentication (v0.12.0+)
+      #Ingest_OIDC__Enabled: false # Set to true to enable OIDC authentication
+      #Ingest_OIDC__Authority: # Your OIDC provider's authority URL (e.g., https://authentik.yourdomain.com/application/o/your-app/)
+      #Ingest_OIDC__ClientId: # Your OIDC client ID
+      #Ingest_OIDC__ClientSecret: # Your OIDC client secret
+      #Ingest_OIDC__MetadataAddress: # Optional: Full URL to the OIDC discovery document (e.g., https://authentik.yourdomain.com/application/o/your-app/.well-known/openid-configuration)
+                                   # Usually not needed if Authority is set correctly.
     volumes:
       - /path/to/store/appdata:/data # for storing the database and logs
       - /path/to/store/models:/models # for storing the upscaling models. 
@@ -70,6 +77,17 @@ services:
       Ingest_Upscaler__SelectedDeviceIndex: 0 # if you have multiple GPUs, you can select which one to use
       Ingest_Upscaler__UseFp16: true # if you want to use fp16 instead of fp32, preferred if you have a GPU that supports it
       Ingest_Upscaler__UseCPU: false # if you want to use the CPU instead of the GPU
+      # Kavita integration
+      #Ingest_Kavita__BaseUrl: http://kavita:5000 # the base URL of your Kavita instance
+      #Ingest_Kavita__ApiKey: #Your API key here
+      #Ingest_Kavita__Enabled: True # defaults to false
+      # OIDC Authentication (v0.12.0+)
+      #Ingest_OIDC__Enabled: false # Set to true to enable OIDC authentication
+      #Ingest_OIDC__Authority: # Your OIDC provider's authority URL (e.g., https://authentik.yourdomain.com/application/o/your-app/)
+      #Ingest_OIDC__ClientId: # Your OIDC client ID
+      #Ingest_OIDC__ClientSecret: # Your OIDC client secret
+      #Ingest_OIDC__MetadataAddress: # Optional: Full URL to the OIDC discovery document (e.g., https://authentik.yourdomain.com/application/o/your-app/.well-known/openid-configuration)
+                                   # Usually not needed if Authority is set correctly.
       # Rest is same as for the CUDA version
     volumes:
       - /path/to/store/appdata:/data # for storing the database and logs
@@ -90,6 +108,38 @@ services:
 ```
 
 I do not have an AMD GPU, so I cannot test this. If you have any issues, please open an issue.
+
+### OIDC Configuration (v0.12.0+)
+
+For version 0.12.0 and later, you can configure OpenID Connect (OIDC) for authentication. This allows you to use an external identity provider instead of the built-in user accounts.
+
+To enable and configure OIDC when running with Docker, add the following environment variables to your `docker-compose.yml` under the `mangaingestwithupscaling.services.environment` section:
+
+```yaml
+# ... other environment variables ...
+      Ingest_OIDC__Enabled: "true"  # Set to "true" to enable OIDC, "false" to disable
+      Ingest_OIDC__Authority: "https://your-oidc-provider.com/auth/realms/your-realm" # URL of your OIDC provider (e.g., Keycloak, Authentik)
+      Ingest_OIDC__ClientId: "your-client-id" # The Client ID registered with your OIDC provider
+      Ingest_OIDC__ClientSecret: "your-client-secret" # The Client Secret for your OIDC client
+      # Optional: Full URL to the OIDC discovery document. 
+      # If your Authority URL is already the discovery endpoint (e.g., ends with /.well-known/openid-configuration), 
+      # this might not be needed.
+      # Ingest_OIDC__MetadataAddress: "https://your-oidc-provider.com/auth/realms/your-realm/.well-known/openid-configuration" 
+# ... rest of your docker-compose.yml ...
+```
+
+Note that in most cases, you either need to set `Ingest_OIDC__Authority` or `Ingest_OIDC__MetadataAddress`, but not both. The `Authority` is often sufficient as long as the discovery document is accessible at the standard path (`/.well-known/openid-configuration`).
+
+**Redirect URIs for your OIDC Provider:**
+
+When configuring the OIDC client in your identity provider, you will need to specify the following redirect URIs:
+
+*   **Login Redirect URI:** `https://<your-app-base-url>/signin-oidc`
+    *   Replace `<your-app-base-url>` with the actual base URL where MangaIngestWithUpscaling is accessible (e.g., `https://manga.example.com`).
+*   **Post-Logout Redirect URI:** `https://<your-app-base-url>/`
+    *   This is where users will be redirected after logging out from the OIDC provider. You can adjust this to a different page if needed, but the application root is a common choice.
+
+Make sure your OIDC provider is configured to accept these URIs.
 
 ## Building Prerequisites
 
@@ -141,6 +191,13 @@ Alternatively, you can use environment variables to override the configuration v
     "UseFp16": true,
     "UseCPU": false,
     "SelectedDeviceIndex": 0
+  },
+  "OIDC": {
+    "Enabled": false, // Set to true to enable OIDC
+    "Authority": "YOUR_OIDC_AUTHORITY_URL", // e.g., https://authentik.example.com/application/o/slug/
+    "MetadataAddress": "YOUR_FULL_DISCOVERY_DOCUMENT_URL", // Optional, Authority is often sufficient if it's the discovery endpoint
+    "ClientId": "YOUR_CLIENT_ID",
+    "ClientSecret": "YOUR_CLIENT_SECRET"
   }
 }
 
