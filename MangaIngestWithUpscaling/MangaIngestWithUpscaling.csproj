@@ -28,7 +28,7 @@
 		<PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.22.0" />
 		<PackageReference Include="Mono.Posix.NETStandard" Version="1.0.0" />
 		<PackageReference Include="MudBlazor" Version="8.7.0" />
-		<PackageReference Include="MudBlazor.Translations" Version="2.4.0" />
+		<PackageReference Include="MudBlazor.Translations" Version="2.5.0" />
 		<PackageReference Include="PinguApps.Blazor.QRCode" Version="1.1.4" />
 		<PackageReference Include="ReactiveUI" Version="20.3.1" />
 		<PackageReference Include="ReactiveUI.Blazor" Version="20.3.1" />
