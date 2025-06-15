@@ -5,6 +5,7 @@
 @using Microsoft.AspNetCore.Components
 @inject ILibraryRenamingService RenamingService
 @inject IChapterInIngestRecognitionService ChapterRecognition
+@inject IMetadataHandlingService MetadataHandlingService
 
 <MudStack Spacing="2">
     <MudText Typo="Typo.h5">Preview Rename Effects</MudText>
@@ -159,6 +160,8 @@
     private void GeneratePreviews()
     {
         SeriesPreviews.Clear();
+        ExistingChapterFilePreviews.Clear();
+        ExistingChapterTitlePreviews.Clear();
         if (Library.MangaSeries != null && Library.RenameRules != null)
         {
             foreach (var m in Library.MangaSeries)
@@ -178,50 +181,47 @@
                     SeriesPreviews.Add(new SeriesPreview { Orig = orig, NewNameHtml = diff });
                 }
             }
-        }
-
-        ExistingChapterFilePreviews.Clear();
-        ExistingChapterTitlePreviews.Clear();
-        if (Library.MangaSeries != null && Library.RenameRules != null)
-        {
+            
             foreach (var series in Library.MangaSeries)
             {
                 if (series.Chapters == null) continue;
                 foreach (var chapter in series.Chapters)
                 {
-                    var chapterForFilePath = new FoundChapter(
+                    var chapterMetadata = MetadataHandlingService.GetSeriesAndTitleFromComicInfo(chapter.NotUpscaledFullPath);
+
+                    var originalFoundChapter = new FoundChapter(
                         FileName: chapter.FileName,
                         RelativePath: chapter.RelativePath,
                         StorageType: ChapterStorageType.Cbz,
-                        Metadata: new ExtractedMetadata(series.PrimaryTitle, chapter.FileName, null)
+                        Metadata: chapterMetadata
                     );
-                    var renamedFilePath = RenamingService.ApplyRenameRules(chapterForFilePath, Library.RenameRules.Where(r => r.TargetField == LibraryRenameTargetField.FileName).ToList());
-                    if (renamedFilePath.FileName != chapter.FileName)
+
+                    var finalRenamedChapter = RenamingService.ApplyRenameRules(originalFoundChapter, Library.RenameRules);
+
+                    // Check for File Name changes
+                    if (finalRenamedChapter.FileName != chapter.FileName)
                     {
-                        var diff = ComputeDiffHtml(chapter.FileName, renamedFilePath.FileName);
-                        ExistingChapterFilePreviews.Add(new ChapterFilePathPreview 
-                        { 
+                        var diff = ComputeDiffHtml(chapter.FileName, finalRenamedChapter.FileName);
+                        ExistingChapterFilePreviews.Add(new ChapterFilePathPreview
+                        {
                             SeriesTitle = series.PrimaryTitle,
                             OriginalFilePath = chapter.FileName,
-                            NewFilePathHtml = diff 
+                            NewFilePathHtml = diff
                         });
                     }
 
-                    var chapterForTitle = new FoundChapter(
-                        FileName: chapter.FileName,
-                        RelativePath: chapter.RelativePath,
-                        StorageType: ChapterStorageType.Cbz,
-                        Metadata: new ExtractedMetadata(series.PrimaryTitle, chapter.FileName, null)
-                    );
-                    var renamedChapterTitle = RenamingService.ApplyRenameRules(chapterForTitle, Library.RenameRules.Where(r => r.TargetField == LibraryRenameTargetField.ChapterTitle).ToList());
-                    if (renamedChapterTitle.Metadata.ChapterTitle != chapter.FileName)
+                    // Check for Chapter Title changes
+                    var originalChapterTitleProxy = originalFoundChapter.Metadata.ChapterTitle;
+                    var finalChapterTitle = finalRenamedChapter.Metadata.ChapterTitle ?? finalRenamedChapter.FileName;
+
+                    if (finalChapterTitle != originalChapterTitleProxy)
                     {
-                        var diff = ComputeDiffHtml(chapter.FileName, renamedChapterTitle.Metadata.ChapterTitle ?? string.Empty);
-                        ExistingChapterTitlePreviews.Add(new ChapterTitlePreview 
-                        { 
+                        var diff = ComputeDiffHtml(originalChapterTitleProxy, finalChapterTitle);
+                        ExistingChapterTitlePreviews.Add(new ChapterTitlePreview
+                        {
                             SeriesTitle = series.PrimaryTitle,
-                            OriginalChapterTitle = chapter.FileName,
-                            NewChapterTitleHtml = diff 
+                            OriginalChapterTitle = originalChapterTitleProxy,
+                            NewChapterTitleHtml = diff
                         });
                     }
                 }
@@ -234,9 +234,8 @@
         if (Library.IngestPath != null && Library.FilterRules != null && Library.RenameRules != null)
         {
             var foundInIngest = ChapterRecognition.FindAllChaptersAt(Library.IngestPath, Library.FilterRules);
-            foreach (var f in foundInIngest)
+            foreach (var originalChapter in foundInIngest)
             {
-                var originalChapter = f; // Keep a reference to the state after filtering
                 var finalRenamedChapter = RenamingService.ApplyRenameRules(originalChapter, Library.RenameRules);
 
                 // Series Title Preview for Ingest
@@ -290,5 +289,5 @@
         var html = $"{prefix}<mark>{changed}</mark>{suffix}";
         return (MarkupString)html;
     }
-}
 
+}
