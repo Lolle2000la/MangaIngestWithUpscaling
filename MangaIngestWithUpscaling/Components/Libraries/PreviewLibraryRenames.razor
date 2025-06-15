@@ -2,8 +2,13 @@
 @using MangaIngestWithUpscaling.Services.ChapterRecognition
 @using MangaIngestWithUpscaling.Services.LibraryFiltering
 @using MangaIngestWithUpscaling.Services.MetadataHandling
+@using Microsoft.AspNetCore.Components
+@using System.Threading
+@using System.Threading.Tasks
 @inject IChapterInIngestRecognitionService ChapterRecognition
 @inject ILibraryRenamingService RenamingService
+
+@implements IDisposable
 
 <MudStack Spacing="2">
     <MudText Typo="Typo.h5">Preview Rename Effects</MudText>
@@ -16,7 +21,7 @@
                 </HeaderContent>
                 <RowTemplate Context="sp">
                     <MudTd DataLabel="Original Series">@sp.Orig</MudTd>
-                    <MudTd DataLabel="Renamed Series">@sp.NewName</MudTd>
+                    <MudTd DataLabel="Renamed Series">@sp.NewNameHtml</MudTd>
                 </RowTemplate>
             </MudTable>
         </MudExpansionPanel>
@@ -30,7 +35,7 @@
                 <RowTemplate Context="ip">
                     <MudTd DataLabel="Original File">@ip.OrigFile</MudTd>
                     <MudTd DataLabel="After Filters">@ip.AfterFilter</MudTd>
-                    <MudTd DataLabel="After Rename">@ip.AfterRename</MudTd>
+                    <MudTd DataLabel="After Rename">@ip.AfterRenameHtml</MudTd>
                 </RowTemplate>
             </MudTable>
         </MudExpansionPanel>
@@ -43,12 +48,53 @@
     private List<SeriesPreview> SeriesPreviews = new();
     private List<IngestPreview> IngestPreviews = new();
 
-    private class SeriesPreview { public string Orig { get; set; } = string.Empty; public string NewName { get; set; } = string.Empty; }
-    private class IngestPreview { public string OrigFile { get; set; } = string.Empty; public string AfterFilter { get; set; } = string.Empty; public string AfterRename { get; set; } = string.Empty; }
+    private class SeriesPreview
+    {
+        public string Orig { get; set; } = string.Empty;
+        public MarkupString NewNameHtml { get; set; }
+    }
+
+    private class IngestPreview
+    {
+        public string OrigFile { get; set; } = string.Empty;
+        public string AfterFilter { get; set; } = string.Empty;
+        public MarkupString AfterRenameHtml { get; set; }
+    }
+
+    private CancellationTokenSource _cts;
+
+    protected override void OnInitialized()
+    {
+        _cts = new CancellationTokenSource();
+        _ = RefreshLoopAsync(_cts.Token);
+    }
 
     protected override void OnParametersSet()
     {
         GeneratePreviews();
+    }
+
+    private async Task RefreshLoopAsync(CancellationToken token)
+    {
+        while (!token.IsCancellationRequested)
+        {
+            GeneratePreviews();
+            await InvokeAsync(StateHasChanged);
+            try
+            {
+                await Task.Delay(500, token);
+            }
+            catch (TaskCanceledException)
+            {
+                break;
+            }
+        }
+    }
+
+    public void Dispose()
+    {
+        _cts?.Cancel();
+        _cts?.Dispose();
     }
 
     private void GeneratePreviews()
@@ -59,20 +105,44 @@
             var dummy = new FoundChapter(string.Empty, string.Empty, ChapterStorageType.Cbz,
                 new ExtractedMetadata(m.PrimaryTitle, null, null));
             var renamed = RenamingService.ApplyRenameRules(dummy, Library.RenameRules);
-            SeriesPreviews.Add(new SeriesPreview { Orig = m.PrimaryTitle, NewName = renamed.Metadata.Series });
+            if (renamed.Metadata.Series != m.PrimaryTitle)
+            {
+                var orig = m.PrimaryTitle;
+                var result = renamed.Metadata.Series;
+                var diff = ComputeDiffHtml(orig, result);
+                SeriesPreviews.Add(new SeriesPreview { Orig = orig, NewNameHtml = diff });
+            }
         }
 
         IngestPreviews.Clear();
         var found = ChapterRecognition.FindAllChaptersAt(Library.IngestPath, Library.FilterRules);
         foreach (var f in found)
         {
-            var afterFilter = f;
             var renamed = RenamingService.ApplyRenameRules(f, Library.RenameRules);
-            IngestPreviews.Add(new IngestPreview {
-                OrigFile = f.FileName,
-                AfterFilter = afterFilter.FileName,
-                AfterRename = renamed.FileName
-            });
+            if (renamed.FileName != f.FileName)
+            {
+                var diff = ComputeDiffHtml(f.FileName, renamed.FileName);
+                IngestPreviews.Add(new IngestPreview
+                {
+                    OrigFile = f.FileName,
+                    AfterFilter = f.FileName,
+                    AfterRenameHtml = diff
+                });
+            }
         }
+    }
+
+    private MarkupString ComputeDiffHtml(string orig, string result)
+    {
+        int min = Math.Min(orig.Length, result.Length);
+        int start = 0;
+        while (start < min && orig[start] == result[start]) start++;
+        int end = 0;
+        while (end < min - start && orig[orig.Length - 1 - end] == result[result.Length - 1 - end]) end++;
+        var prefix = result.Substring(0, start);
+        var suffix = end > 0 ? result.Substring(result.Length - end, end) : string.Empty;
+        var changed = result.Substring(start, result.Length - start - end);
+        var html = $"{prefix}<b>{changed}</b>{suffix}";
+        return (MarkupString)html;
     }
 }
