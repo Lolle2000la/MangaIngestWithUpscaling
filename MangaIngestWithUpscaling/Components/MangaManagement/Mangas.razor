@@ -181,7 +181,6 @@
             .Where(s => HttpUtility.ParseQueryString(new Uri(NavigationManager.Uri).Query).Get("search") != s)
             .Subscribe(s =>
             {
-                Console.WriteLine("Updating search string");
                 string newUrl = NavigationManager.GetUriWithQueryParameter("search", s);
                 NavigationManager.NavigateTo(newUrl, forceLoad: false, replace: true);
             })
