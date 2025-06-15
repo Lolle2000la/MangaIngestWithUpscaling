@@ -19,7 +19,7 @@ public class LibraryRenamingService : ILibraryRenamingService
 
         foreach (var rule in rules)
         {
-            string input = rule.TargetField switch
+            string? input = rule.TargetField switch
             {
                 LibraryRenameTargetField.SeriesTitle => series,
                 LibraryRenameTargetField.ChapterTitle => chapterTitle,
@@ -33,6 +33,7 @@ public class LibraryRenamingService : ILibraryRenamingService
                 LibraryRenamePatternType.Contains => input.Replace(rule.Pattern, rule.Replacement),
                 _ => input
             };
+            result = result.Trim();
             if (result != input)
             {
                 switch (rule.TargetField)
