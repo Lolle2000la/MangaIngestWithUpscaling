@@ -48,6 +48,7 @@
             Library = await DbContext.Libraries
                 .Include(l => l.MangaSeries)
                 .Include(l => l.FilterRules)
+                .Include(l => l.RenameRules)
                 .FirstOrDefaultAsync(l => l.Id == LibraryId);
         }
         else

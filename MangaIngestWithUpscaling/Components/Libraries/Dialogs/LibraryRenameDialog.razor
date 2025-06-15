@@ -1,0 +1,32 @@
+@using MangaIngestWithUpscaling.Data.LibraryManagement
+@using MangaIngestWithUpscaling.Components.Libraries.Filters
+@using MangaIngestWithUpscaling.Components.Libraries
+@using MangaIngestWithUpscaling.Services.ChapterRecognition
+@using MangaIngestWithUpscaling.Services.LibraryFiltering
+@using MangaIngestWithUpscaling.Services.MetadataHandling
+@using MudBlazor
+@inject IChapterInIngestRecognitionService ChapterRecognition
+@inject ILibraryRenamingService RenamingService
+
+<MudDialog>
+    <TitleContent>Edit & Preview Rename Rules</TitleContent>
+    <DialogContent>
+        <MudGrid Spacing="3">
+            <MudItem xs="12" lg="6">
+                <EditLibraryRenames Library="@Library" />
+            </MudItem>
+            <MudItem xs="12" lg="6">
+                <PreviewLibraryRenames Library="@Library" />
+            </MudItem>
+        </MudGrid>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Color="Color.Primary" OnClick="Close">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter, EditorRequired] public required Library Library { get; set; }
+    void Close() => MudDialog.Close();
+}

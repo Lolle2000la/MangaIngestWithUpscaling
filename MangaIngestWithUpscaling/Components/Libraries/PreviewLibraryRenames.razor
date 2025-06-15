@@ -1,0 +1,78 @@
+@using MangaIngestWithUpscaling.Data.LibraryManagement
+@using MangaIngestWithUpscaling.Services.ChapterRecognition
+@using MangaIngestWithUpscaling.Services.LibraryFiltering
+@using MangaIngestWithUpscaling.Services.MetadataHandling
+@inject IChapterInIngestRecognitionService ChapterRecognition
+@inject ILibraryRenamingService RenamingService
+
+<MudStack Spacing="2">
+    <MudText Typo="Typo.h5">Preview Rename Effects</MudText>
+    <MudExpansionPanels>
+        <MudExpansionPanel Text="Existing Series Preview">
+            <MudTable T="SeriesPreview" Items="@SeriesPreviews" Dense>
+                <HeaderContent>
+                    <MudTh>Original Series</MudTh>
+                    <MudTh>Renamed Series</MudTh>
+                </HeaderContent>
+                <RowTemplate Context="sp">
+                    <MudTd DataLabel="Original Series">@sp.Orig</MudTd>
+                    <MudTd DataLabel="Renamed Series">@sp.NewName</MudTd>
+                </RowTemplate>
+            </MudTable>
+        </MudExpansionPanel>
+        <MudExpansionPanel Text="Ingest Folder Preview">
+            <MudTable T="IngestPreview" Items="@IngestPreviews" Dense>
+                <HeaderContent>
+                    <MudTh>Original File</MudTh>
+                    <MudTh>After Filters</MudTh>
+                    <MudTh>After Rename</MudTh>
+                </HeaderContent>
+                <RowTemplate Context="ip">
+                    <MudTd DataLabel="Original File">@ip.OrigFile</MudTd>
+                    <MudTd DataLabel="After Filters">@ip.AfterFilter</MudTd>
+                    <MudTd DataLabel="After Rename">@ip.AfterRename</MudTd>
+                </RowTemplate>
+            </MudTable>
+        </MudExpansionPanel>
+    </MudExpansionPanels>
+</MudStack>
+
+@code {
+    [Parameter, EditorRequired] public required Library Library { get; set; }
+
+    private List<SeriesPreview> SeriesPreviews = new();
+    private List<IngestPreview> IngestPreviews = new();
+
+    private class SeriesPreview { public string Orig { get; set; } = string.Empty; public string NewName { get; set; } = string.Empty; }
+    private class IngestPreview { public string OrigFile { get; set; } = string.Empty; public string AfterFilter { get; set; } = string.Empty; public string AfterRename { get; set; } = string.Empty; }
+
+    protected override void OnParametersSet()
+    {
+        GeneratePreviews();
+    }
+
+    private void GeneratePreviews()
+    {
+        SeriesPreviews.Clear();
+        foreach (var m in Library.MangaSeries)
+        {
+            var dummy = new FoundChapter(string.Empty, string.Empty, ChapterStorageType.Cbz,
+                new ExtractedMetadata(m.PrimaryTitle, null, null));
+            var renamed = RenamingService.ApplyRenameRules(dummy, Library.RenameRules);
+            SeriesPreviews.Add(new SeriesPreview { Orig = m.PrimaryTitle, NewName = renamed.Metadata.Series });
+        }
+
+        IngestPreviews.Clear();
+        var found = ChapterRecognition.FindAllChaptersAt(Library.IngestPath, Library.FilterRules);
+        foreach (var f in found)
+        {
+            var afterFilter = f;
+            var renamed = RenamingService.ApplyRenameRules(f, Library.RenameRules);
+            IngestPreviews.Add(new IngestPreview {
+                OrigFile = f.FileName,
+                AfterFilter = afterFilter.FileName,
+                AfterRename = renamed.FileName
+            });
+        }
+    }
+}
