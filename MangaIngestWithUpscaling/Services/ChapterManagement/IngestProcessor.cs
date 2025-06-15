@@ -30,6 +30,8 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
                 IChapterChangedNotifier chapterChangedNotifier
                 ) : IIngestProcessor
 {
+    private record ProcessedChapterInfo(FoundChapter Original, FoundChapter Renamed);
+
     public async Task ProcessAsync(Library library, CancellationToken cancellationToken)
     {
         if (!dbContext.Entry(library).Reference(l => l.UpscalerProfile).IsLoaded)
@@ -51,39 +53,45 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
         // preserve original series for alternative title
         var originalSeriesMap = foundChapters.ToDictionary(c => c.RelativePath, c => c.Metadata.Series);
 
-        // apply rename rules
-        var renamedChapters = foundChapters
-            .Select(c => renamingService.ApplyRenameRules(c, library.RenameRules))
+        // apply rename rules and keep track of original and renamed versions
+        var processedChapters = foundChapters
+            .Select(originalChapter => new ProcessedChapterInfo(
+                Original: originalChapter,
+                Renamed: renamingService.ApplyRenameRules(originalChapter, library.RenameRules)))
             .ToList();
 
         // group chapters by new series title
-        var chaptersBySeries = renamedChapters
-            .GroupBy(c => c.Metadata.Series)
+        var chaptersBySeries = processedChapters
+            .GroupBy(pci => pci.Renamed.Metadata.Series)
             .ToDictionary(g => g.Key,
-                g => g.OrderBy(ch => IsUpscaledChapter().IsMatch(ch.RelativePath)).ToList());
+                g => g.OrderBy(pci => IsUpscaledChapter().IsMatch(pci.Renamed.RelativePath)).ToList());
 
         List<(Chapter, UpscalerProfile)> chaptersToUpscale = new();
         List<Task> scans = new();
 
-        foreach (var (series, chapters) in chaptersBySeries)
+        foreach (var (series, processedItems) in chaptersBySeries)
         {
-            var original = originalSeriesMap[chapters.First().RelativePath];
-            Manga seriesEntity = await GetMangaSeriesEntity(library, series, original, cancellationToken);
+            var firstOriginalRelativePath = processedItems.First().Original.RelativePath;
+            var originalSeriesTitle = originalSeriesMap[firstOriginalRelativePath];
+            Manga seriesEntity = await GetMangaSeriesEntity(library, series, originalSeriesTitle, cancellationToken);
 
             // Move chapters to the target path in file system as specified by the libraries NotUpscaledLibraryPath property.
             // Then create a Chapter entity for each chapter and add it to the series.
-            foreach (var chapter in chapters)
+            foreach (var pci in processedItems)
             {
+                var originalChapter = pci.Original;
+                var renamedChapter = pci.Renamed;
+
                 // if this is an already upscaled chapter, go a different route
-                if (IsUpscaledChapter().IsMatch(chapter.RelativePath))
+                if (IsUpscaledChapter().IsMatch(renamedChapter.RelativePath))
                 {
-                    if (!chapter.RelativePath.EndsWith(".cbz"))
+                    if (!renamedChapter.RelativePath.EndsWith(".cbz"))
                     {
-                        logger.LogError("Upscaled chapter {chapter} is not a cbz file. At this moment only cbz-files are supported for ingest of already existing files.", chapter.RelativePath);
+                        logger.LogError("Upscaled chapter {chapter} is not a cbz file. At this moment only cbz-files are supported for ingest of already existing files.", renamedChapter.RelativePath);
                         continue;
                     }
 
-                    var foundMatch = IngestUpscaledChapterIfMatchFound(chapter, seriesEntity, library);
+                    var foundMatch = IngestUpscaledChapterIfMatchFound(renamedChapter, seriesEntity, library);
                     if (foundMatch != null)
                     {
                         var chapterIndex = chaptersToUpscale.FindIndex(c => c.Item1.Id == foundMatch.Id);
@@ -93,52 +101,67 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
                     continue;
                 }
 
-                FoundChapter chapterCbz;
+                FoundChapter chapterCbzFromConverter;
+                string sourceCbzAcutalPathInIngest;
                 try
                 {
-                    chapterCbz = cbzConverter.ConvertToCbz(chapter, library.IngestPath);
+                    // ConvertToCbz should use originalChapter to find source files.
+                    // The FileName in the returned FoundChapter will be based on originalChapter.FileName.
+                    chapterCbzFromConverter = cbzConverter.ConvertToCbz(originalChapter, library.IngestPath);
+                    
+                    // Path to the newly created CBZ (e.g., originalName.cbz)
+                    sourceCbzAcutalPathInIngest = Path.Combine(library.IngestPath, chapterCbzFromConverter.RelativePath);
+                    
                     // change title in metadata to the primary title of the series
-                    var cbzPath = Path.Combine(library.IngestPath, chapterCbz.RelativePath);
-                    var existingMetadata = metadataHandling.GetSeriesAndTitleFromComicInfo(cbzPath);
-                    metadataHandling.WriteComicInfo(cbzPath, existingMetadata with { Series = seriesEntity.PrimaryTitle });
+                    var existingMetadata = metadataHandling.GetSeriesAndTitleFromComicInfo(sourceCbzAcutalPathInIngest);
+                    metadataHandling.WriteComicInfo(sourceCbzAcutalPathInIngest, existingMetadata with { Series = seriesEntity.PrimaryTitle });
                 }
                 catch (Exception ex)
                 {
-                    logger.LogError(ex, "Error converting chapter {chapter} to cbz.", chapter.RelativePath);
+                    logger.LogError(ex, "Error converting chapter {chapter} to cbz.", originalChapter.RelativePath);
                     continue;
                 }
+                
+                // Target path uses renamedChapter.FileName
                 var targetPath = Path.Combine(
                     library.NotUpscaledLibraryPath,
                     PathEscaper.EscapeFileName(seriesEntity.PrimaryTitle!),
-                    PathEscaper.EscapeFileName(chapterCbz.FileName));
+                    PathEscaper.EscapeFileName(renamedChapter.FileName)); // Use renamedChapter.FileName
+                
                 if (File.Exists(targetPath))
                 {
                     logger.LogWarning("Chapter {fileName} already exists in the target path {targetPath}. Skipping.",
-                         chapterCbz.FileName, targetPath);
+                         renamedChapter.FileName, targetPath); // Log renamed name
+                    // Optionally, clean up the created CBZ from ingest path if it's not moved
+                    // fileSystem.DeleteFile(sourceCbzAcutalPathInIngest); 
                     continue;
                 }
                 if (!Directory.Exists(Path.GetDirectoryName(targetPath)))
                     fileSystem.CreateDirectory(Path.GetDirectoryName(targetPath)!);
-                string relativePath = Path.GetRelativePath(library.NotUpscaledLibraryPath, targetPath);
-                if (await dbContext.Chapters.AnyAsync(c => c.RelativePath == relativePath && c.Manga.Id == seriesEntity.Id))
+                
+                string relativePathForDb = Path.GetRelativePath(library.NotUpscaledLibraryPath, targetPath);
+                if (await dbContext.Chapters.AnyAsync(c => c.RelativePath == relativePathForDb && c.Manga.Id == seriesEntity.Id, cancellationToken: cancellationToken))
                 {
-                    logger.LogWarning("Chapter {fileName} already exists in the database. Skipping.", chapterCbz.FileName);
+                    logger.LogWarning("Chapter {fileName} already exists in the database. Skipping.", renamedChapter.FileName);
+                    // fileSystem.DeleteFile(sourceCbzAcutalPathInIngest);
                     continue;
                 }
-                if (File.Exists(targetPath))
-                {
-                    logger.LogWarning("Chapter {fileName} already exists in the target path {targetPath}. Skipping.",
-                        chapterCbz.FileName, targetPath);
-                    continue;
-                }
+                // This check is redundant due to the one above, but kept for safety, ensure it uses targetPath.
+                // if (File.Exists(targetPath)) 
+                // {
+                //     logger.LogWarning("Chapter {fileName} already exists in the target path {targetPath}. Skipping.",
+                //         renamedChapter.FileName, targetPath);
+                //     continue;
+                // }
 
-                fileSystem.Move(Path.Combine(library.IngestPath, chapter.RelativePath), targetPath);
+                // Move the created/processed CBZ from its location in ingestPath to the final targetPath
+                fileSystem.Move(sourceCbzAcutalPathInIngest, targetPath);
                 var chapterEntity = new Chapter
                 {
-                    FileName = chapterCbz.FileName,
+                    FileName = renamedChapter.FileName, // Use renamed name
                     Manga = seriesEntity,
                     MangaId = seriesEntity.Id,
-                    RelativePath = relativePath,
+                    RelativePath = relativePathForDb, // Use relative path based on target
                     IsUpscaled = false
                 };
                 seriesEntity.Chapters.Add(chapterEntity);
