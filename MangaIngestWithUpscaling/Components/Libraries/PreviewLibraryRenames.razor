@@ -3,12 +3,8 @@
 @using MangaIngestWithUpscaling.Services.LibraryFiltering
 @using MangaIngestWithUpscaling.Services.MetadataHandling
 @using Microsoft.AspNetCore.Components
-@using System.Threading
-@using System.Threading.Tasks
-@inject IChapterInIngestRecognitionService ChapterRecognition
 @inject ILibraryRenamingService RenamingService
-
-@implements IDisposable
+@inject IChapterInIngestRecognitionService ChapterRecognition
 
 <MudStack Spacing="2">
     <MudText Typo="Typo.h5">Preview Rename Effects</MudText>
@@ -61,45 +57,15 @@
         public MarkupString AfterRenameHtml { get; set; }
     }
 
-    private CancellationTokenSource _cts;
-
-    protected override void OnInitialized()
-    {
-        _cts = new CancellationTokenSource();
-        _ = RefreshLoopAsync(_cts.Token);
-    }
-
     protected override void OnParametersSet()
     {
         GeneratePreviews();
     }
 
-    private async Task RefreshLoopAsync(CancellationToken token)
-    {
-        while (!token.IsCancellationRequested)
-        {
-            GeneratePreviews();
-            await InvokeAsync(StateHasChanged);
-            try
-            {
-                await Task.Delay(500, token);
-            }
-            catch (TaskCanceledException)
-            {
-                break;
-            }
-        }
-    }
-
-    public void Dispose()
-    {
-        _cts?.Cancel();
-        _cts?.Dispose();
-    }
-
     private void GeneratePreviews()
     {
         SeriesPreviews.Clear();
+        if (Library.MangaSeries == null || Library.RenameRules == null) return;
         foreach (var m in Library.MangaSeries)
         {
             var dummy = new FoundChapter(string.Empty, string.Empty, ChapterStorageType.Cbz,
@@ -115,6 +81,7 @@
         }
 
         IngestPreviews.Clear();
+        if (Library.IngestPath == null || Library.FilterRules == null || Library.RenameRules == null) return;
         var found = ChapterRecognition.FindAllChaptersAt(Library.IngestPath, Library.FilterRules);
         foreach (var f in found)
         {
@@ -122,8 +89,7 @@
             if (renamed.FileName != f.FileName)
             {
                 var diff = ComputeDiffHtml(f.FileName, renamed.FileName);
-                IngestPreviews.Add(new IngestPreview
-                {
+                IngestPreviews.Add(new IngestPreview {
                     OrigFile = f.FileName,
                     AfterFilter = f.FileName,
                     AfterRenameHtml = diff
@@ -142,7 +108,7 @@
         var prefix = result.Substring(0, start);
         var suffix = end > 0 ? result.Substring(result.Length - end, end) : string.Empty;
         var changed = result.Substring(start, result.Length - start - end);
-        var html = $"{prefix}<b>{changed}</b>{suffix}";
+        var html = $"{prefix}<mark>{changed}</mark>{suffix}";
         return (MarkupString)html;
     }
 }

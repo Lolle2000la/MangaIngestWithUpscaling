@@ -12,7 +12,7 @@
             <MudTh>Pattern Type</MudTh>
             <MudTh>Target Field</MudTh>
             <MudTh>Replacement</MudTh>
-            <MudTh><MudIconButton Icon="@Icons.Material.Filled.Add" OnClick="() => Library.RenameRules.Add(new())" /></MudTh>
+            <MudTh><MudIconButton Icon="@Icons.Material.Filled.Add" OnClick="async () => { Library.RenameRules.Add(new()); await RulesChanged.InvokeAsync(); }" /></MudTh>
         </HeaderContent>
         <RowTemplate>
             <MudTd DataLabel="Pattern">@context.Pattern</MudTd>
@@ -21,15 +21,16 @@
             <MudTd DataLabel="Replacement">@context.Replacement</MudTd>
             <MudTd>
                 <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
-                               OnClick="() => Library.RenameRules.Remove(context)" />
+                               OnClick="async () => { Library.RenameRules.Remove(context); await RulesChanged.InvokeAsync(); }" />
             </MudTd>
         </RowTemplate>
         <RowEditingTemplate>
-            <EditLibraryRenameForm RenameRule="@context" />
+            <EditLibraryRenameForm RenameRule="@context" RulesChanged="RulesChanged" />
         </RowEditingTemplate>
     </MudTable>
 </MudStack>
 
 @code {
     [Parameter] public Library Library { get; set; }
+    [Parameter] public EventCallback RulesChanged { get; set; }
 }

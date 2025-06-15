@@ -7,10 +7,10 @@
     <DialogContent>
         <MudGrid Spacing="3">
             <MudItem xs="12" lg="6">
-                <EditLibraryRenames Library="@Library" />
+                <EditLibraryRenames Library="@Library" RulesChanged="OnRulesChanged" />
             </MudItem>
             <MudItem xs="12" lg="6">
-                <PreviewLibraryRenames Library="@Library" />
+                <PreviewLibraryRenames Library="@Library" @key="_previewKey" />
             </MudItem>
         </MudGrid>
     </DialogContent>
@@ -22,5 +22,10 @@
 @code {
     [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
     [Parameter, EditorRequired] public required Library Library { get; set; }
+    private int _previewKey = 0;
+    private void OnRulesChanged()
+    {
+        _previewKey++;
+    }
     void Close() => MudDialog.Close();
 }
