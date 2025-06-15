@@ -1,0 +1,35 @@
+@using MangaIngestWithUpscaling.Data.LibraryManagement
+@using MangaIngestWithUpscaling.Helpers
+<MudStack>
+    <MudText Typo="Typo.h5">Edit Rename Rules</MudText>
+    <MudText Typo="Typo.body1">
+        Define regex or substring replacements to apply during ingest.
+    </MudText>
+
+    <MudTable T="LibraryRenameRule" Items="@Library.RenameRules" Dense>
+        <HeaderContent>
+            <MudTh>Pattern</MudTh>
+            <MudTh>Pattern Type</MudTh>
+            <MudTh>Target Field</MudTh>
+            <MudTh>Replacement</MudTh>
+            <MudTh><MudIconButton Icon="@Icons.Material.Filled.Add" OnClick="() => Library.RenameRules.Add(new())" /></MudTh>
+        </HeaderContent>
+        <RowTemplate>
+            <MudTd DataLabel="Pattern">@context.Pattern</MudTd>
+            <MudTd DataLabel="Pattern Type">@context.PatternType.GetDisplayName()</MudTd>
+            <MudTd DataLabel="Target Field">@context.TargetField.GetDisplayName()</MudTd>
+            <MudTd DataLabel="Replacement">@context.Replacement</MudTd>
+            <MudTd>
+                <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
+                               OnClick="() => Library.RenameRules.Remove(context)" />
+            </MudTd>
+        </RowTemplate>
+        <RowEditingTemplate>
+            <EditLibraryRenameForm RenameRule="@context" />
+        </RowEditingTemplate>
+    </MudTable>
+</MudStack>
+
+@code {
+    [Parameter] public Library Library { get; set; }
+}

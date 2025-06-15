@@ -21,6 +21,7 @@ public class Library
 
     public List<Manga> MangaSeries { get; set; } = [];
     public List<LibraryFilterRule> FilterRules { get; set; } = [];
+    public List<LibraryRenameRule> RenameRules { get; set; } = new List<LibraryRenameRule>();
 
     public override bool Equals(object obj)
     {

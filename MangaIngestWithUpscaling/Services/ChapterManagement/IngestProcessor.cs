@@ -21,6 +21,7 @@ namespace MangaIngestWithUpscaling.Services.ChapterManagement;
 [RegisterScoped]
 public partial class IngestProcessor(ApplicationDbContext dbContext,
                 IChapterInIngestRecognitionService chapterRecognitionService,
+                ILibraryRenamingService renamingService, // add renaming service
                 ICbzConverter cbzConverter,
                 ILogger<IngestProcessor> logger,
                 ITaskQueue taskQueue,
@@ -39,12 +40,24 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
         {
             await dbContext.Entry(library).Collection(l => l.FilterRules).LoadAsync(cancellationToken);
         }
+        if (!dbContext.Entry(library).Collection(l => l.RenameRules).IsLoaded)
+        {
+            await dbContext.Entry(library).Collection(l => l.RenameRules).LoadAsync(cancellationToken);
+        }
 
-        List<FoundChapter> chapterRecognitionResult = chapterRecognitionService.FindAllChaptersAt(
+        var foundChapters = chapterRecognitionService.FindAllChaptersAt(
             library.IngestPath, library.FilterRules);
 
-        // group chapters by series, ensuring chapters in "_upscaled" folder come after others
-        var chaptersBySeries = chapterRecognitionResult
+        // preserve original series for alternative title
+        var originalSeriesMap = foundChapters.ToDictionary(c => c.RelativePath, c => c.Metadata.Series);
+
+        // apply rename rules
+        var renamedChapters = foundChapters
+            .Select(c => renamingService.ApplyRenameRules(c, library.RenameRules))
+            .ToList();
+
+        // group chapters by new series title
+        var chaptersBySeries = renamedChapters
             .GroupBy(c => c.Metadata.Series)
             .ToDictionary(g => g.Key,
                 g => g.OrderBy(ch => IsUpscaledChapter().IsMatch(ch.RelativePath)).ToList());
@@ -54,7 +67,8 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
 
         foreach (var (series, chapters) in chaptersBySeries)
         {
-            Manga seriesEntity = await GetMangaSeriesEntity(library, series, cancellationToken);
+            var original = originalSeriesMap[chapters.First().RelativePath];
+            Manga seriesEntity = await GetMangaSeriesEntity(library, series, original, cancellationToken);
 
             // Move chapters to the target path in file system as specified by the libraries NotUpscaledLibraryPath property.
             // Then create a Chapter entity for each chapter and add it to the series.
@@ -153,26 +167,31 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
         FileSystemHelpers.DeleteEmptySubfolders(library.IngestPath, logger);
     }
 
-    private async Task<Manga> GetMangaSeriesEntity(Library library, string series, CancellationToken cancellationToken)
+    private async Task<Manga> GetMangaSeriesEntity(Library library, string newSeries, string originalSeries, CancellationToken cancellationToken)
     {
         // create series if it doesn't exist
         // Also take into account the alternate names
         var seriesEntity = await dbContext.MangaSeries
             .Include(s => s.OtherTitles)
             .Include(s => s.Chapters)
-            .FirstOrDefaultAsync(s => s.PrimaryTitle == series || s.OtherTitles.Any(an => an.Title == series),
+            .FirstOrDefaultAsync(s => s.PrimaryTitle == newSeries || s.OtherTitles.Any(an => an.Title == newSeries),
                 cancellationToken: cancellationToken);
 
         if (seriesEntity == null)
         {
             seriesEntity = new Manga
             {
-                PrimaryTitle = series,
+                PrimaryTitle = newSeries,
                 OtherTitles = new List<MangaAlternativeTitle>(),
                 Library = library,
                 LibraryId = library.Id,
                 Chapters = new List<Chapter>()
             };
+            // add original as alternative title if changed
+            if (!string.Equals(originalSeries, newSeries, StringComparison.Ordinal))
+            {
+                seriesEntity.OtherTitles.Add(new MangaAlternativeTitle { Manga = seriesEntity, Title = originalSeries });
+            }
             dbContext.MangaSeries.Add(seriesEntity);
         }
 

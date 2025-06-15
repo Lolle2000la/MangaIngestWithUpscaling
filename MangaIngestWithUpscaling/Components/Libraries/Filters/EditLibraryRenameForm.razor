@@ -1,0 +1,25 @@
+@using MangaIngestWithUpscaling.Data.LibraryManagement
+
+<MudTd DataLabel="Pattern">
+    <MudTextField Immediate="true" Required="true" @bind-Value="RenameRule.Pattern" />
+</MudTd>
+<MudTd DataLabel="Pattern Type">
+    <MudSelect Immediate="true" T="LibraryRenamePatternType" @bind-Value="RenameRule.PatternType">
+        <MudSelectItem Value="LibraryRenamePatternType.Contains">Target contains pattern</MudSelectItem>
+        <MudSelectItem Value="LibraryRenamePatternType.Regex">Regular Expression</MudSelectItem>
+    </MudSelect>
+</MudTd>
+<MudTd DataLabel="Target Field">
+    <MudSelect Immediate="true" T="LibraryRenameTargetField" @bind-Value="RenameRule.TargetField">
+        <MudSelectItem Value="LibraryRenameTargetField.SeriesTitle">Series Title</MudSelectItem>
+        <MudSelectItem Value="LibraryRenameTargetField.FileName">File Name</MudSelectItem>
+        <MudSelectItem Value="LibraryRenameTargetField.ChapterTitle">Chapter Title</MudSelectItem>
+    </MudSelect>
+</MudTd>
+<MudTd DataLabel="Replacement">
+    <MudTextField Immediate="true" Required="true" @bind-Value="RenameRule.Replacement" />
+</MudTd>
+
+@code {
+    [Parameter] public LibraryRenameRule RenameRule { get; set; }
+}
