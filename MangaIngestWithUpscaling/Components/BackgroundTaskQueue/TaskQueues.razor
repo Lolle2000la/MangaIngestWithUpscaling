@@ -114,7 +114,7 @@
             foreach (var task in failedTasks)
             {
                 DbContext.Remove(task);
-                standardTasks.Remove(task);
+                upscaleTasks.Remove(task);
             }
             await DbContext.SaveChangesAsync();
         }
