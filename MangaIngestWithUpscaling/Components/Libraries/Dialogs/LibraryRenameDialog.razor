@@ -44,8 +44,6 @@
         {
             foreach (var series in Library.MangaSeries)
             {
-                // Explicitly load chapters for each series if not already loaded
-                // This assumes MangaSeries are already loaded on the Library object.
                 var entry = DbContext.Entry(series);
                 if (!entry.Collection(s => s.Chapters).IsLoaded)
                 {
