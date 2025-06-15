@@ -83,15 +83,16 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
                 var renamedChapter = pci.Renamed;
 
                 // if this is an already upscaled chapter, go a different route
-                if (IsUpscaledChapter().IsMatch(renamedChapter.RelativePath))
+                if (IsUpscaledChapter().IsMatch(originalChapter.RelativePath)) // Check original path for _upscaled marker
                 {
-                    if (!renamedChapter.RelativePath.EndsWith(".cbz"))
+                    if (!originalChapter.RelativePath.EndsWith(".cbz")) // Check original path for .cbz
                     {
-                        logger.LogError("Upscaled chapter {chapter} is not a cbz file. At this moment only cbz-files are supported for ingest of already existing files.", renamedChapter.RelativePath);
+                        logger.LogError("Upscaled chapter {chapter} is not a cbz file. At this moment only cbz-files are supported for ingest of already existing files.", originalChapter.RelativePath);
                         continue;
                     }
 
-                    var foundMatch = IngestUpscaledChapterIfMatchFound(renamedChapter, seriesEntity, library);
+                    // Pass both original and renamed info
+                    var foundMatch = IngestUpscaledChapterIfMatchFound(originalChapter, renamedChapter, seriesEntity, library);
                     if (foundMatch != null)
                     {
                         var chapterIndex = chaptersToUpscale.FindIndex(c => c.Item1.Id == foundMatch.Id);
@@ -106,19 +107,28 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
                 try
                 {
                     // ConvertToCbz should use originalChapter to find source files.
-                    // The FileName in the returned FoundChapter will be based on originalChapter.FileName.
                     chapterCbzFromConverter = cbzConverter.ConvertToCbz(originalChapter, library.IngestPath);
-                    
-                    // Path to the newly created CBZ (e.g., originalName.cbz)
                     sourceCbzAcutalPathInIngest = Path.Combine(library.IngestPath, chapterCbzFromConverter.RelativePath);
                     
-                    // change title in metadata to the primary title of the series
-                    var existingMetadata = metadataHandling.GetSeriesAndTitleFromComicInfo(sourceCbzAcutalPathInIngest);
-                    metadataHandling.WriteComicInfo(sourceCbzAcutalPathInIngest, existingMetadata with { Series = seriesEntity.PrimaryTitle });
+                    // Get metadata currently in the (potentially newly converted) CBZ file
+                    var metadataInFile = originalChapter.Metadata;
+
+                    // Determine the final desired metadata
+                    // Series title comes from the seriesEntity (canonical)
+                    // ChapterTitle and Volume come from the rename rules applied (via renamedChapter.Metadata)
+                    var finalDesiredMetadata = renamedChapter.Metadata;
+
+                    // Check if the metadata in the file matches the final desired metadata
+                    if (!metadataInFile.Equals(finalDesiredMetadata))
+                    {
+                        logger.LogInformation("Metadata for {ChapterPath} changed. Writing new metadata. Old: {OldMetadata}, New: {NewMetadata}", 
+                            sourceCbzAcutalPathInIngest, metadataInFile, finalDesiredMetadata);
+                        metadataHandling.WriteComicInfo(sourceCbzAcutalPathInIngest, finalDesiredMetadata);
+                    }
                 }
                 catch (Exception ex)
                 {
-                    logger.LogError(ex, "Error converting chapter {chapter} to cbz.", originalChapter.RelativePath);
+                    logger.LogError(ex, "Error converting chapter {chapter} to cbz or updating its metadata.", originalChapter.RelativePath);
                     continue;
                 }
                 
@@ -226,56 +236,83 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
         return seriesEntity;
     }
 
-    private Chapter? IngestUpscaledChapterIfMatchFound(FoundChapter found, Manga seriesEntity, Library library)
+    private Chapter? IngestUpscaledChapterIfMatchFound(FoundChapter originalUpscaled, FoundChapter renamedUpscaled, Manga seriesEntity, Library library)
     {
-        string? OriginalChapterName(Chapter existing)
-        {
-            try
-            {
+        // Path to the upscaled CBZ file in the ingest directory (using original path info)
+        var cbzPath = Path.Combine(library.IngestPath, originalUpscaled.RelativePath);
 
-                var originalPath = Path.Combine(library.IngestPath, existing.RelativePath);
-                var metadata = metadataHandling.GetSeriesAndTitleFromComicInfo(originalPath);
-                return metadata.ChapterTitle;
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error reading metadata for chapter {chapter} ({chapterId}). This suggests a possibly corrupt archive.", existing.RelativePath, existing.Id);
-                return null;
-            }
+        // Check if the source file actually exists before trying to process it
+        if (!File.Exists(cbzPath))
+        {
+            logger.LogError("Source upscaled chapter file not found at {path}. Original RelativePath: {origPath}, Renamed RelativePath: {renamedPath}. Skipping.", 
+                cbzPath, originalUpscaled.RelativePath, renamedUpscaled.RelativePath);
+            return null;
         }
 
         // find the non-upscaled chapter that matches the found upscaled chapter
+        // Match using renamed information as that's what the user expects to align with library state
         var nonUpscaledChapter = seriesEntity.Chapters.FirstOrDefault(c =>
-                (c.FileName == found.FileName || c.FileName == PathEscaper.EscapeFileName(found.FileName))); // try comparing escaped filenames
+                (c.FileName == renamedUpscaled.FileName || c.FileName == PathEscaper.EscapeFileName(renamedUpscaled.FileName)));
 
-        // try comparing the chapter title in the metadata if no match was found by filename
-        nonUpscaledChapter ??= seriesEntity.Chapters.FirstOrDefault(c =>
-                !string.IsNullOrEmpty(found.Metadata.ChapterTitle) && OriginalChapterName(c) == found.Metadata.ChapterTitle);
+        if (nonUpscaledChapter == null && !string.IsNullOrEmpty(renamedUpscaled.Metadata.ChapterTitle))
+        {
+            nonUpscaledChapter = seriesEntity.Chapters.FirstOrDefault(c =>
+            {
+                try
+                {
+                    // Path to the existing non-upscaled chapter file in the library
+                    var existingNonUpscaledFilePath = Path.Combine(library.NotUpscaledLibraryPath, c.RelativePath);
+                    if (!File.Exists(existingNonUpscaledFilePath))
+                    {
+                        return false;
+                    }
+                    var existingMetadata = metadataHandling.GetSeriesAndTitleFromComicInfo(existingNonUpscaledFilePath);
+                    return existingMetadata.ChapterTitle == renamedUpscaled.Metadata.ChapterTitle;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Error reading metadata for existing chapter {chapterPath} ({chapterId}) during upscaled matching.", Path.Combine(library.NotUpscaledLibraryPath, c.RelativePath), c.Id);
+                    return false;
+                }
+            });
+        }
 
         if (nonUpscaledChapter == null)
         {
-            logger.LogWarning("Upscaled chapter {FoundFileName} does not have a matching non-upscaled chapter in series {MangaTitle} ({MangaId}). Skipping.", found.FileName, seriesEntity.PrimaryTitle, seriesEntity.Id);
+            logger.LogWarning("Upscaled chapter {FoundFileName} (Original: {OriginalIngestPath}) does not have a matching non-upscaled chapter in series {MangaTitle} ({MangaId}). Skipping.", 
+                renamedUpscaled.FileName, originalUpscaled.RelativePath, seriesEntity.PrimaryTitle, seriesEntity.Id);
             return null;
         }
-        if (library.UpscaledLibraryPath == null)
-        {
-            logger.LogWarning("Found matching upscaled chapter, but no path is set for the upscale-folder in library {LibraryName}.\n\n" +
-                "Found: {RelativePath}", library.Name, found.RelativePath);
-        }
-
-        // apply primary title to metadata
-        var cbzPath = Path.Combine(library.IngestPath, found.RelativePath);
+        
         try
         {
-            var existingMetadata = metadataHandling.GetSeriesAndTitleFromComicInfo(cbzPath);
-            metadataHandling.WriteComicInfo(cbzPath, existingMetadata with { Series = seriesEntity.PrimaryTitle });
+            var metadataInFile = originalUpscaled.Metadata;
+            var finalDesiredMetadata = renamedUpscaled.Metadata with
+            {
+                Series = seriesEntity.PrimaryTitle
+            };
+
+            if (!metadataInFile.Equals(finalDesiredMetadata))
+            {
+                logger.LogInformation("Metadata for upscaled chapter {ChapterPath} changed. Writing new metadata. Old: {OldMetadata}, New: {NewMetadata}", 
+                    cbzPath, metadataInFile, finalDesiredMetadata);
+                metadataHandling.WriteComicInfo(cbzPath, finalDesiredMetadata);
+            }
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Error updating metadata for chapter {chapter}. This suggests a possibly corrupt archive.", found.RelativePath);
-            return null;
+            logger.LogError(ex, "Error reading or updating metadata for upscaled chapter {chapterPath}. Original ingest path: {origIngestPath}. Skipping move.", 
+                cbzPath, originalUpscaled.RelativePath);
+            return null; // If metadata handling fails, don't proceed to move
         }
 
+        if (library.UpscaledLibraryPath == null) 
+        {
+            logger.LogWarning("Found matching upscaled chapter {RenamedFileName} (Original: {OriginalIngestPath}), but no path is set for the upscale-folder in library {LibraryName}. Metadata updated, but file not moved.", 
+                renamedUpscaled.FileName, originalUpscaled.RelativePath, library.Name);
+            return null; 
+        }
+        
         var upscaleTargetFolder = Path.Combine(library.UpscaledLibraryPath!,
                     PathEscaper.EscapeFileName(seriesEntity.PrimaryTitle!));
 
@@ -288,7 +325,7 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
         // if the file already exists, we don't need to do anything
         if (File.Exists(upscaleTargetPath))
         {
-            logger.LogWarning("Upscaled chapter {FoundFileName} already exists in the target path {TargetPath}. Skipping.", found.FileName, upscaleTargetPath);
+            logger.LogWarning("Upscaled chapter {FoundFileName} already exists in the target path {TargetPath}. Skipping.", originalUpscaled.FileName, upscaleTargetPath);
             return null;
         }
 
@@ -298,7 +335,7 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Error moving upscaled chapter {FoundFileName} to target path {TargetPath}.", found.FileName, upscaleTargetPath);
+            logger.LogError(ex, "Error moving upscaled chapter {FoundFileName} to target path {TargetPath}.", originalUpscaled.FileName, upscaleTargetPath);
             return null;
         }
 
