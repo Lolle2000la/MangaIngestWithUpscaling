@@ -17,7 +17,7 @@
                     <MudTh>Renamed Series</MudTh>
                 </HeaderContent>
                 <RowTemplate Context="sp">
-                    <MudTd DataLabel="Original Series">@sp.Orig</MudTd>
+                    <MudTd DataLabel="Original Series">@sp.OrigHtml</MudTd>
                     <MudTd DataLabel="Renamed Series">@sp.NewNameHtml</MudTd>
                 </RowTemplate>
             </MudTable>
@@ -31,7 +31,7 @@
                 </HeaderContent>
                 <RowTemplate Context="cfp">
                     <MudTd DataLabel="Series">@cfp.SeriesTitle</MudTd>
-                    <MudTd DataLabel="Original File Path">@cfp.OriginalFilePath</MudTd>
+                    <MudTd DataLabel="Original File Path">@cfp.OriginalFilePathHtml</MudTd>
                     <MudTd DataLabel="New File Path">@cfp.NewFilePathHtml</MudTd>
                 </RowTemplate>
             </MudTable>
@@ -45,7 +45,7 @@
                 </HeaderContent>
                 <RowTemplate Context="ctp">
                     <MudTd DataLabel="Series">@ctp.SeriesTitle</MudTd>
-                    <MudTd DataLabel="Original Chapter Title">@ctp.OriginalChapterTitle</MudTd>
+                    <MudTd DataLabel="Original Chapter Title">@ctp.OriginalChapterTitleHtml</MudTd>
                     <MudTd DataLabel="New Chapter Title">@ctp.NewChapterTitleHtml</MudTd>
                 </RowTemplate>
             </MudTable>
@@ -59,7 +59,7 @@
                 </HeaderContent>
                 <RowTemplate Context="istp">
                     <MudTd DataLabel="Original Ingest Path">@istp.OriginalIngestPath</MudTd>
-                    <MudTd DataLabel="Original Series Title">@istp.OriginalSeriesTitle</MudTd>
+                    <MudTd DataLabel="Original Series Title">@istp.OriginalSeriesTitleHtml</MudTd>
                     <MudTd DataLabel="New Series Title">@istp.NewSeriesTitleHtml</MudTd>
                 </RowTemplate>
             </MudTable>
@@ -73,7 +73,7 @@
                 </HeaderContent>
                 <RowTemplate Context="ictp">
                     <MudTd DataLabel="Original Ingest Path">@ictp.OriginalIngestPath</MudTd>
-                    <MudTd DataLabel="Original Chapter Title">@ictp.OriginalChapterTitle</MudTd>
+                    <MudTd DataLabel="Original Chapter Title">@ictp.OriginalChapterTitleHtml</MudTd>
                     <MudTd DataLabel="New Chapter Title">@ictp.NewChapterTitleHtml</MudTd>
                 </RowTemplate>
             </MudTable>
@@ -87,7 +87,7 @@
                 </HeaderContent>
                 <RowTemplate Context="ifnp">
                     <MudTd DataLabel="Original Ingest Path">@ifnp.OriginalIngestPath</MudTd>
-                    <MudTd DataLabel="Original File Name">@ifnp.OriginalFileName</MudTd>
+                    <MudTd DataLabel="Original File Name">@ifnp.OriginalFileNameHtml</MudTd>
                     <MudTd DataLabel="New File Name">@ifnp.NewFileNameHtml</MudTd>
                 </RowTemplate>
             </MudTable>
@@ -105,45 +105,53 @@
     private List<IngestChapterTitlePreview> IngestChapterTitlePreviews = new();
     private List<IngestFileNamePreview> IngestFileNamePreviews = new();
 
+    private enum DiffHighlightType { Addition, Removal }
+
     private class SeriesPreview
     {
         public string Orig { get; set; } = string.Empty;
-        public MarkupString NewNameHtml { get; set; }
+        public MarkupString OrigHtml { get; set; } = new(string.Empty);
+        public MarkupString NewNameHtml { get; set; } = new(string.Empty);
     }
 
     private class ChapterFilePathPreview
     {
         public string SeriesTitle { get; set; } = string.Empty;
         public string OriginalFilePath { get; set; } = string.Empty;
-        public MarkupString NewFilePathHtml { get; set; }
+        public MarkupString OriginalFilePathHtml { get; set; } = new(string.Empty);
+        public MarkupString NewFilePathHtml { get; set; } = new(string.Empty);
     }
 
     private class ChapterTitlePreview
     {
         public string SeriesTitle { get; set; } = string.Empty;
         public string OriginalChapterTitle { get; set; } = string.Empty;
-        public MarkupString NewChapterTitleHtml { get; set; }
+        public MarkupString OriginalChapterTitleHtml { get; set; } = new(string.Empty);
+        public MarkupString NewChapterTitleHtml { get; set; } = new(string.Empty);
     }
 
     private class IngestSeriesTitlePreview
     {
-        public string OriginalIngestPath { get; set; }
-        public string OriginalSeriesTitle { get; set; }
-        public MarkupString NewSeriesTitleHtml { get; set; }
+        public string OriginalIngestPath { get; set; } = string.Empty;
+        public string OriginalSeriesTitle { get; set; } = string.Empty;
+        public MarkupString OriginalSeriesTitleHtml { get; set; } = new(string.Empty);
+        public MarkupString NewSeriesTitleHtml { get; set; } = new(string.Empty);
     }
 
     private class IngestChapterTitlePreview
     {
-        public string OriginalIngestPath { get; set; }
-        public string OriginalChapterTitle { get; set; }
-        public MarkupString NewChapterTitleHtml { get; set; }
+        public string OriginalIngestPath { get; set; } = string.Empty;
+        public string OriginalChapterTitle { get; set; } = string.Empty;
+        public MarkupString OriginalChapterTitleHtml { get; set; } = new(string.Empty);
+        public MarkupString NewChapterTitleHtml { get; set; } = new(string.Empty);
     }
 
     private class IngestFileNamePreview
     {
-        public string OriginalIngestPath { get; set; }
-        public string OriginalFileName { get; set; }
-        public MarkupString NewFileNameHtml { get; set; }
+        public string OriginalIngestPath { get; set; } = string.Empty;
+        public string OriginalFileName { get; set; } = string.Empty;
+        public MarkupString OriginalFileNameHtml { get; set; } = new(string.Empty);
+        public MarkupString NewFileNameHtml { get; set; } = new(string.Empty);
     }
 
     protected override void OnParametersSet()
@@ -177,8 +185,9 @@
                 {
                     var orig = m.PrimaryTitle;
                     var result = renamedSeries.Metadata.Series;
-                    var diff = ComputeDiffHtml(orig, result);
-                    SeriesPreviews.Add(new SeriesPreview { Orig = orig, NewNameHtml = diff });
+                    var diffNew = ComputeDiffHtml(orig, result, DiffHighlightType.Addition);
+                    var diffOrig = ComputeDiffHtml(result, orig, DiffHighlightType.Removal);
+                    SeriesPreviews.Add(new SeriesPreview { Orig = orig, OrigHtml = diffOrig, NewNameHtml = diffNew });
                 }
             }
             
@@ -201,27 +210,33 @@
                     // Check for File Name changes
                     if (finalRenamedChapter.FileName != chapter.FileName)
                     {
-                        var diff = ComputeDiffHtml(chapter.FileName, finalRenamedChapter.FileName);
+                        var origFileName = chapter.FileName;
+                        var newFileName = finalRenamedChapter.FileName;
+                        var diffNew = ComputeDiffHtml(origFileName, newFileName, DiffHighlightType.Addition);
+                        var diffOrig = ComputeDiffHtml(newFileName, origFileName, DiffHighlightType.Removal);
                         ExistingChapterFilePreviews.Add(new ChapterFilePathPreview
                         {
                             SeriesTitle = series.PrimaryTitle,
-                            OriginalFilePath = chapter.FileName,
-                            NewFilePathHtml = diff
+                            OriginalFilePath = origFileName,
+                            OriginalFilePathHtml = diffOrig,
+                            NewFilePathHtml = diffNew
                         });
                     }
 
                     // Check for Chapter Title changes
-                    var originalChapterTitleProxy = originalFoundChapter.Metadata.ChapterTitle;
-                    var finalChapterTitle = finalRenamedChapter.Metadata.ChapterTitle ?? finalRenamedChapter.FileName;
+                    var originalChapterTitleProxy = originalFoundChapter.Metadata.ChapterTitle ?? originalFoundChapter.FileName; // Use FileName as fallback
+                    var finalChapterTitle = finalRenamedChapter.Metadata.ChapterTitle ?? finalRenamedChapter.FileName; // Use FileName as fallback
 
                     if (finalChapterTitle != originalChapterTitleProxy)
                     {
-                        var diff = ComputeDiffHtml(originalChapterTitleProxy, finalChapterTitle);
+                        var diffNew = ComputeDiffHtml(originalChapterTitleProxy, finalChapterTitle, DiffHighlightType.Addition);
+                        var diffOrig = ComputeDiffHtml(finalChapterTitle, originalChapterTitleProxy, DiffHighlightType.Removal);
                         ExistingChapterTitlePreviews.Add(new ChapterTitlePreview
                         {
                             SeriesTitle = series.PrimaryTitle,
                             OriginalChapterTitle = originalChapterTitleProxy,
-                            NewChapterTitleHtml = diff
+                            OriginalChapterTitleHtml = diffOrig,
+                            NewChapterTitleHtml = diffNew
                         });
                     }
                 }
@@ -241,11 +256,14 @@
                 // Series Title Preview for Ingest
                 if (originalChapter.Metadata.Series != finalRenamedChapter.Metadata.Series)
                 {
+                    var origSeriesTitle = originalChapter.Metadata.Series;
+                    var newSeriesTitle = finalRenamedChapter.Metadata.Series;
                     IngestSeriesTitlePreviews.Add(new IngestSeriesTitlePreview
                     {
                         OriginalIngestPath = originalChapter.RelativePath,
-                        OriginalSeriesTitle = originalChapter.Metadata.Series,
-                        NewSeriesTitleHtml = ComputeDiffHtml(originalChapter.Metadata.Series, finalRenamedChapter.Metadata.Series)
+                        OriginalSeriesTitle = origSeriesTitle,
+                        OriginalSeriesTitleHtml = ComputeDiffHtml(newSeriesTitle, origSeriesTitle, DiffHighlightType.Removal),
+                        NewSeriesTitleHtml = ComputeDiffHtml(origSeriesTitle, newSeriesTitle, DiffHighlightType.Addition)
                     });
                 }
 
@@ -258,36 +276,77 @@
                     {
                         OriginalIngestPath = originalChapter.RelativePath,
                         OriginalChapterTitle = originalIngestChapterTitle,
-                        NewChapterTitleHtml = ComputeDiffHtml(originalIngestChapterTitle, finalIngestChapterTitle)
+                        OriginalChapterTitleHtml = ComputeDiffHtml(finalIngestChapterTitle, originalIngestChapterTitle, DiffHighlightType.Removal),
+                        NewChapterTitleHtml = ComputeDiffHtml(originalIngestChapterTitle, finalIngestChapterTitle, DiffHighlightType.Addition)
                     });
                 }
 
                 // File Name Preview for Ingest
                 if (originalChapter.FileName != finalRenamedChapter.FileName)
                 {
+                    var origFileName = originalChapter.FileName;
+                    var newFileName = finalRenamedChapter.FileName;
                     IngestFileNamePreviews.Add(new IngestFileNamePreview
                     {
                         OriginalIngestPath = originalChapter.RelativePath,
-                        OriginalFileName = originalChapter.FileName,
-                        NewFileNameHtml = ComputeDiffHtml(originalChapter.FileName, finalRenamedChapter.FileName)
+                        OriginalFileName = origFileName,
+                        OriginalFileNameHtml = ComputeDiffHtml(newFileName, origFileName, DiffHighlightType.Removal),
+                        NewFileNameHtml = ComputeDiffHtml(origFileName, newFileName, DiffHighlightType.Addition)
                     });
                 }
             }
         }
     }
 
-    private MarkupString ComputeDiffHtml(string orig, string result)
+    private MarkupString ComputeDiffHtml(string baseString, string displayString, DiffHighlightType highlightType)
     {
-        int min = Math.Min(orig.Length, result.Length);
-        int start = 0;
-        while (start < min && orig[start] == result[start]) start++;
-        int end = 0;
-        while (end < min - start && orig[orig.Length - 1 - end] == result[result.Length - 1 - end]) end++;
-        var prefix = result.Substring(0, start);
-        var suffix = end > 0 ? result.Substring(result.Length - end, end) : string.Empty;
-        var changed = result.Substring(start, result.Length - start - end);
-        var html = $"{prefix}<mark>{changed}</mark>{suffix}";
-        return (MarkupString)html;
-    }
+        baseString ??= string.Empty;
+        displayString ??= string.Empty;
 
+        if (baseString == displayString)
+        {
+            return (MarkupString)System.Net.WebUtility.HtmlEncode(displayString);
+        }
+
+        int minLength = Math.Min(baseString.Length, displayString.Length);
+        int start = 0;
+        while (start < minLength && baseString[start] == displayString[start])
+        {
+            start++;
+        }
+
+        int end = 0;
+        while (end < minLength - start && 
+               baseString[baseString.Length - 1 - end] == displayString[displayString.Length - 1 - end])
+        {
+            end++;
+        }
+
+        var prefix = displayString.Substring(0, start);
+        var suffix = displayString.Substring(displayString.Length - end, end);
+        var changed = displayString.Substring(start, displayString.Length - start - end);
+
+        var encodedPrefix = System.Net.WebUtility.HtmlEncode(prefix);
+        var encodedSuffix = System.Net.WebUtility.HtmlEncode(suffix);
+        var encodedChanged = System.Net.WebUtility.HtmlEncode(changed);
+        
+        string style;
+        if (highlightType == DiffHighlightType.Addition)
+        {
+            style = "background-color: #d4edda; color: #155724; border-radius: 2px; padding: 0 2px;"; // Light green background, dark green text
+        }
+        else // Removal
+        {
+            style = "background-color: #f8d7da; color: #721c24; border-radius: 2px; padding: 0 2px;"; // Light red background, dark red text
+        }
+
+        if (!string.IsNullOrEmpty(changed))
+        {
+            return (MarkupString)$"{encodedPrefix}<mark style='{style}'>{encodedChanged}</mark>{encodedSuffix}";
+        }
+        
+        // If changed is empty but strings are not identical, it means one is a pure prefix/suffix of the other.
+        // The displayString itself is what's shown, without internal highlighting.
+        return (MarkupString)System.Net.WebUtility.HtmlEncode(displayString);
+    }
 }
