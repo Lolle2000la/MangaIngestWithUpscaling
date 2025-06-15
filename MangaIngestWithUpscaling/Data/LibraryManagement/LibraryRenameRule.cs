@@ -15,7 +15,7 @@ public class LibraryRenameRule
     public string Pattern { get; set; }
     public LibraryRenamePatternType PatternType { get; set; }
     public LibraryRenameTargetField TargetField { get; set; }
-    public string Replacement { get; set; }
+    public string Replacement { get; set; } = string.Empty;
 }
 
 /// <summary>

@@ -17,9 +17,9 @@
     </MudSelect>
 </MudTd>
 <MudTd DataLabel="Replacement">
-    <MudTextField Immediate="true" Required="true" @bind-Value="RenameRule.Replacement" />
+    <MudTextField Immediate="true" @bind-Value="RenameRule.Replacement" />
 </MudTd>
 
 @code {
-    [Parameter] public LibraryRenameRule RenameRule { get; set; }
+    [Parameter, EditorRequired] public required LibraryRenameRule RenameRule { get; set; }
 }
