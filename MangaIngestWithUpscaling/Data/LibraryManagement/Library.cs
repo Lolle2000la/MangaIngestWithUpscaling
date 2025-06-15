@@ -1,4 +1,5 @@
-﻿using System.ComponentModel.DataAnnotations.Schema;
+﻿using System.Collections.ObjectModel;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace MangaIngestWithUpscaling.Data.LibraryManagement;
 
@@ -21,6 +22,7 @@ public class Library
 
     public List<Manga> MangaSeries { get; set; } = [];
     public List<LibraryFilterRule> FilterRules { get; set; } = [];
+    public ObservableCollection<LibraryRenameRule> RenameRules { get; set; } = new System.Collections.ObjectModel.ObservableCollection<LibraryRenameRule>();
 
     public override bool Equals(object obj)
     {

@@ -2,7 +2,6 @@ using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
-using System.Reflection.Emit;
 using System.Text.Json;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Data.LogModel;
@@ -14,6 +13,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 {
     public DbSet<Library> Libraries { get; set; }
     public DbSet<LibraryFilterRule> LibraryFilterRules { get; set; }
+    public DbSet<LibraryRenameRule> LibraryRenameRules { get; set; }
     public DbSet<Manga> MangaSeries { get; set; }
     public DbSet<MangaAlternativeTitle> MangaAlternativeTitles { get; set; }
     public DbSet<Chapter> Chapters { get; set; }
@@ -78,6 +78,11 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 .HasConversion<string>();
             entity.Property(e => e.Action)
                 .HasConversion<string>();
+        });
+        builder.Entity<LibraryRenameRule>(entity =>
+        {
+            entity.Property(e => e.PatternType).HasConversion<string>();
+            entity.Property(e => e.TargetField).HasConversion<string>();
         });
 
         builder.Entity<UpscalerProfile>(entity =>

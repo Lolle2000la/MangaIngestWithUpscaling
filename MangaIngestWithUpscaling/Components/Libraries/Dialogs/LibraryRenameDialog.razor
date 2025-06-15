@@ -1,0 +1,71 @@
+@using MangaIngestWithUpscaling.Data.LibraryManagement
+@using MangaIngestWithUpscaling.Components.Libraries.Filters
+@using MangaIngestWithUpscaling.Components.Libraries
+@inject ApplicationDbContext DbContext
+
+<MudDialog>
+    <TitleContent>Edit & Preview Rename Rules</TitleContent>
+    <DialogContent>
+        <MudGrid Spacing="3">
+            <MudItem xs="12" lg="6">
+                <EditLibraryRenames Library="@Library" RulesChanged="OnRulesChanged" />
+            </MudItem>
+            <MudItem xs="12" lg="6">
+                <PreviewLibraryRenames @ref="_previewLibraryRenamesComponent" Library="@Library" />
+            </MudItem>
+        </MudGrid>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Color="Color.Primary" OnClick="Close">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter, EditorRequired] public required Library Library { get; set; }
+    
+    private PreviewLibraryRenames _previewLibraryRenamesComponent = default!;
+    private bool _chaptersLoaded = false;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !_chaptersLoaded)
+        {
+            await LoadChaptersAsync();
+            _chaptersLoaded = true;
+            // Ensure preview is updated after chapters are loaded
+            await OnRulesChanged(); 
+        }
+    }
+
+    private async Task LoadChaptersAsync()
+    {
+        if (Library?.MangaSeries != null)
+        {
+            foreach (var series in Library.MangaSeries)
+            {
+                var entry = DbContext.Entry(series);
+                if (!entry.Collection(s => s.Chapters).IsLoaded)
+                {
+                    await entry.Collection(s => s.Chapters).LoadAsync();
+                }
+            }
+        }
+    }
+
+    private async Task OnRulesChanged()
+    {
+        if (_previewLibraryRenamesComponent != null)
+        {
+            // If chapters haven't been loaded yet, load them first.
+            // This might happen if rules are changed very quickly before initial chapter load completes.
+            if (!_chaptersLoaded) 
+            {
+                await LoadChaptersAsync();
+                _chaptersLoaded = true;
+            }
+            await _previewLibraryRenamesComponent.RefreshPreviewsAsync();
+        }
+    }
+    void Close() => MudDialog.Close();
+}

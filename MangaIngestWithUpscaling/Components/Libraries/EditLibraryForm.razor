@@ -6,6 +6,7 @@
 
 @inject ApplicationDbContext DbContext
 @inject IOptions<KavitaConfiguration> KavitaConfig
+@inject IDialogService DialogService
 
 <MudForm Model="@Library" IsValid="@IsValid">
     <MudGrid Spacing="4">
@@ -14,13 +15,13 @@
                           HelperText="Name for display purposes only."
                           Immediate="true"
                           @bind-Value="Library.Name"
-                          @bind-Value:after="OnInputChanged" />
+                          @bind-Value:after="OnInputChanged"/>
         </MudItem>
         <MudItem xs="12">
             <MudStack>
                 <MudText Typo="Typo.h6">Upscaler Config</MudText>
                 <MudCheckBox T="bool" Label="Automatically upscale all mangas ingest."
-                             @bind-Value="Library.UpscaleOnIngest" @bind-Value:after="OnInputChanged" />
+                             @bind-Value="Library.UpscaleOnIngest" @bind-Value:after="OnInputChanged"/>
                 <MudSelect T="int?" Label="Upscaler Config"
                            HelperText="Select an upscaling profile to use for this library. Leave at 'none' if you do not want to upscale any images."
                            Immediate="true"
@@ -37,10 +38,16 @@
         <MudItem xs="12" lg="4">
             <FolderPicker SelectedPath="@Library.IngestPath"
                           SelectedPathChanged="@OnIngestPathChanged"
-                          Title="Ingest Folder" Required="true" />
+                          Title="Ingest Folder" Required="true"/>
         </MudItem>
         <MudItem xs="12" lg="8">
-            <EditLibraryFilters Library="@Library" />
+            <EditLibraryFilters Library="@Library"/>
+        </MudItem>
+        <MudItem xs="12" lg="8">
+            <MudButton Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Edit"
+                       OnClick="ShowRenameDialog">
+                Edit Rename Rules & Preview
+            </MudButton>
         </MudItem>
         @if (Library.MangaSeries.Count > 0)
         {
@@ -48,13 +55,16 @@
                 <MudText Typo="Typo.h6">This library contains @Library.MangaSeries.Count manga series.</MudText>
 
                 <MudText Typo="Typo.body1" Color="Color.Error">
-                    You cannot change the storage paths of a library that already contains manga series. Either delete or move
+                    You cannot change the storage paths of a library that already contains manga series. Either delete
+                    or move
                     the series to another library before changing the paths.
                 </MudText>
 
                 <MudText Typo="Typo.body1">
-                    You can still change the upscaling configuration and the library name, and set a path for the ingest folder.
-                    In case you <b>haven't set up a target folder for the upscaled mangas</b>, you are still able to set one below.
+                    You can still change the upscaling configuration and the library name, and set a path for the ingest
+                    folder.
+                    In case you <b>haven't set up a target folder for the upscaled mangas</b>, you are still able to set
+                    one below.
                 </MudText>
             </MudItem>
         }
@@ -62,13 +72,13 @@
             <FolderPicker SelectedPath="@Library.NotUpscaledLibraryPath"
                           SelectedPathChanged="@OnNotUpscaledPathChanged"
                           Disabled="Library.MangaSeries.Count > 0"
-                          Title="Storage Path as-is" Required="true" />
+                          Title="Storage Path as-is" Required="true"/>
         </MudItem>
         <MudItem md="6" xs="12">
             <FolderPicker SelectedPath="@Library.UpscaledLibraryPath"
                           Disabled="Library.MangaSeries.Count > 0 && Library.UpscaledLibraryPath != null"
                           SelectedPathChanged="@OnUpscaledPathChanged"
-                          Title="Upscaled location" />
+                          Title="Upscaled location"/>
         </MudItem>
         @if (KavitaConfig.Value.Enabled)
         {
@@ -78,16 +88,19 @@
                 </MudText>
 
                 <MudText>
-                    The following settings are used to configure the integration with Kavita. If you do not use Kavita, you can
+                    The following settings are used to configure the integration with Kavita. If you do not use Kavita,
+                    you can
                     ignore these settings.
                 </MudText>
 
                 <MudText>
-                    Leaving any of the mount points empty will disable the integration for either the as-is or the upscaled chapters.
+                    Leaving any of the mount points empty will disable the integration for either the as-is or the
+                    upscaled chapters.
                 </MudText>
 
                 <MudText>
-                    Note: You do not need to configure both mount points, but only the one you want to notify Kavita about.
+                    Note: You do not need to configure both mount points, but only the one you want to notify Kavita
+                    about.
                 </MudText>
 
                 <MudText Color="Color.Info">
@@ -98,31 +111,30 @@
                               HelperText="The mount point within the Kavita environment that contains the chapters as-is."
                               Immediate="true"
                               @bind-Value="Library.KavitaConfig.NotUpscaledMountPoint"
-                              @bind-Value:after="OnInputChanged" />
+                              @bind-Value:after="OnInputChanged"/>
 
                 <MudTextField Label="Upscaled-Mount Point in Kavita"
                               HelperText="The mount point within the Kavita environment that contains the chapters as-is."
                               Immediate="true"
                               @bind-Value="Library.KavitaConfig.UpscaledMountPoint"
-                              @bind-Value:after="OnInputChanged" />
+                              @bind-Value:after="OnInputChanged"/>
             </MudItem>
         }
     </MudGrid>
 </MudForm>
 
 @code {
-    [Parameter]
-    public Library Library { get; set; } = new Library
-        {
-            Name = "",
-        };
-    [Parameter]
-    public EventCallback<Library> LibraryChanged { get; set; }
 
     [Parameter]
-    public bool IsValid { get; set; } = false;
-    [Parameter]
-    public EventCallback<bool> IsValidChanged { get; set; }
+    public Library Library { get; set; } = new Library
+    {
+        Name = "",
+    };
+
+    [Parameter] public EventCallback<Library> LibraryChanged { get; set; }
+
+    [Parameter] public bool IsValid { get; set; } = false;
+    [Parameter] public EventCallback<bool> IsValidChanged { get; set; }
 
     private void IsValidChangedHandler(bool isValid)
     {
@@ -170,8 +182,21 @@
                           (Library.UpscaledLibraryPath == null || Directory.Exists(Library.UpscaledLibraryPath));
 
         bool upscalingIsFullyConfiguredOrOff = !Library.UpscaleOnIngest ||
-            (Library.UpscaleOnIngest && Library.UpscalerProfileId.HasValue && !string.IsNullOrEmpty(Library.UpscaledLibraryPath));
+                                               (Library.UpscaleOnIngest && Library.UpscalerProfileId.HasValue && !string.IsNullOrEmpty(Library.UpscaledLibraryPath));
 
         return requiredElementsValid && pathsAreDifferent && pathsExist && upscalingIsFullyConfiguredOrOff;
     }
+
+    private async Task ShowRenameDialog()
+    {
+        var parameters = new DialogParameters { ["Library"] = Library, };
+        var options = new DialogOptions
+        {
+            CloseButton = true,
+            FullScreen = true
+        };
+
+        await DialogService.ShowAsync<LibraryRenameDialog>("Edit & Preview Rename Rules", parameters, options);
+    }
+
 }
