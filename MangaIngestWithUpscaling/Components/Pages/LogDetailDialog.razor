@@ -1,0 +1,38 @@
+@using MangaIngestWithUpscaling.Data.LogModel
+@using Microsoft.AspNetCore.Components
+@using MudBlazor
+@namespace MangaIngestWithUpscaling.Components.Pages
+
+<MudDialog Style="max-height:90vh; max-width: 100%; display:flex; flex-direction:column;">
+    <TitleContent>Log Details</TitleContent>
+    <DialogContent>
+        <div Style="overflow-y:auto; flex:1 1 auto;">
+            <MudStack Spacing="3">
+                <MudText><b>Timestamp:</b> @Log.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</MudText>
+                <MudText><b>Level:</b> @Log.Level</MudText>
+
+                <MudText Typo="Typo.subtitle2"><b>Message:</b></MudText>
+                <MudPaper Class="pa-2" Style="overflow-x: auto; width: 100%; white-space:pre-wrap;">@Log.RenderedMessage</MudPaper>
+
+                @if (!string.IsNullOrEmpty(Log.Exception))
+                {
+                    <MudText Typo="Typo.subtitle2"><b>Exception:</b></MudText>
+                    <MudPaper Class="pa-2" Style="overflow-x: auto; width: 100%; white-space:pre-wrap;">@Log.Exception</MudPaper>
+                }
+
+                <MudText Typo="Typo.subtitle2"><b>Properties:</b></MudText>
+                <MudPaper Class="pa-2" Style="overflow-x: auto; width: 100%; white-space:pre-wrap;">@Log.Properties</MudPaper>
+            </MudStack>
+        </div>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Variant="Variant.Text" OnClick="Close">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; }
+    [Parameter] public Log Log { get; set; }
+
+    private void Close() => MudDialog.Close();
+}

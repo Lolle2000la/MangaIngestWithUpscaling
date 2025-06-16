@@ -2,7 +2,9 @@
 @using MangaIngestWithUpscaling.Data.LogModel
 @using Microsoft.EntityFrameworkCore
 @using System.Linq
+@using MangaIngestWithUpscaling.Components.Pages
 @inject LoggingDbContext DbContext
+@inject IDialogService DialogService
 
 <PageTitle>Logs</PageTitle>
 
@@ -11,7 +13,8 @@
           @ref="table"
           HorizontalScrollbar="true"
           Dense="true"
-          Breakpoint="Breakpoint.None">
+          Breakpoint="Breakpoint.None"
+          OnRowClick="OnRowClick">
     <ToolBarContent>
         <MudText Typo="Typo.h6">Application Logs</MudText>
         <MudSpacer />
@@ -106,5 +109,17 @@
             "DEBUG" => Color.Default,
             _ => Color.Default
         };
+    }
+
+    private async Task OnRowClick(TableRowClickEventArgs<Log> args)
+    {
+        await ShowLogDialog(args.Item);
+    }
+
+    private async Task ShowLogDialog(Log log)
+    {
+        var parameters = new DialogParameters { ["Log"] = log };
+        var options = new DialogOptions { CloseButton = true, MaxWidth = MaxWidth.Medium, FullWidth = true };
+        await DialogService.ShowAsync<LogDetailDialog>("Log Details", parameters, options);
     }
 }
