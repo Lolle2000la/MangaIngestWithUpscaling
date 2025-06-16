@@ -193,7 +193,7 @@
             foreach (var series in Library.MangaSeries)
             {
                 if (series.Chapters == null) continue;
-                foreach (var chapter in series.Chapters)
+                foreach (var chapter in series.Chapters.Take(500)) // arbitrarily limit to 500 chapters since this is god awfully slow
                 {
                     var chapterMetadata = MetadataHandlingService.GetSeriesAndTitleFromComicInfo(chapter.NotUpscaledFullPath);
 
@@ -248,7 +248,7 @@
         if (Library.IngestPath != null && Library.FilterRules != null && Library.RenameRules != null)
         {
             var foundInIngest = ChapterRecognition.FindAllChaptersAt(Library.IngestPath, Library.FilterRules);
-            foreach (var originalChapter in foundInIngest)
+            foreach (var originalChapter in foundInIngest.Take(500)) // arbitrarily limit to 500 chapters since this is god awfully slow
             {
                 var finalRenamedChapter = RenamingService.ApplyRenameRules(originalChapter, Library.RenameRules);
 
