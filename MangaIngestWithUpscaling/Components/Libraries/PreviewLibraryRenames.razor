@@ -236,6 +236,8 @@
 
     private async Task GeneratePreviews(CancellationToken cancellationToken = default)
     {
+        await Task.Run(() => {}, cancellationToken);
+        
         _seriesPreviewSource.Clear();
         _existingChapterFilePreviewsSource.Clear();
         _existingChapterTitlePreviewsSource.Clear();
