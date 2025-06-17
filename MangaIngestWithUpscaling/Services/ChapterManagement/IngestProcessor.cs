@@ -48,17 +48,17 @@ public partial class IngestProcessor(ApplicationDbContext dbContext,
         }
 
         var foundChapters = chapterRecognitionService.FindAllChaptersAt(
-            library.IngestPath, library.FilterRules);
+            library.IngestPath, library.FilterRules, cancellationToken);
 
         // preserve original series for alternative title
-        var originalSeriesMap = foundChapters.ToDictionary(c => c.RelativePath, c => c.Metadata.Series);
+        var originalSeriesMap = await foundChapters.ToDictionaryAsync(c => c.RelativePath, c => c.Metadata.Series, cancellationToken: cancellationToken);
 
         // apply rename rules and keep track of original and renamed versions
-        var processedChapters = foundChapters
+        var processedChapters = await foundChapters
             .Select(originalChapter => new ProcessedChapterInfo(
                 Original: originalChapter,
                 Renamed: renamingService.ApplyRenameRules(originalChapter, library.RenameRules)))
-            .ToList();
+            .ToListAsync(cancellationToken: cancellationToken);
 
         // group chapters by new series title
         var chaptersBySeries = processedChapters

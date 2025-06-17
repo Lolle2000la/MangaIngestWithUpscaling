@@ -1,8 +1,11 @@
 ﻿using MangaIngestWithUpscaling.Data.LibraryManagement;
+using System.Runtime.CompilerServices;
 
 namespace MangaIngestWithUpscaling.Services.ChapterRecognition;
 
 public interface IChapterInIngestRecognitionService
 {
-    List<FoundChapter> FindAllChaptersAt(string ingestPath, IReadOnlyList<LibraryFilterRule>? libraryFilterRules = null);
+    public IAsyncEnumerable<FoundChapter> FindAllChaptersAt(string ingestPath,
+        IReadOnlyList<LibraryFilterRule>? libraryFilterRules = null,
+        CancellationToken cancellationToken = default);
 }
