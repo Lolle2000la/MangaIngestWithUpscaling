@@ -4,8 +4,6 @@
 @using Microsoft.EntityFrameworkCore.Query
 @inject ApplicationDbContext DbContext
 
-@implements IDisposable
-
 <MudDialog>
     <TitleContent>Edit & Preview Rename Rules</TitleContent>
     <DialogContent>
@@ -29,7 +27,6 @@
     
     private PreviewLibraryRenames? _previewLibraryRenamesComponent;
     private bool _chaptersLoaded = false;
-    private CancellationTokenSource? lastPreviewGeneration;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -45,28 +42,10 @@
     {
         if (_previewLibraryRenamesComponent != null)
         {
-            if (lastPreviewGeneration != null)
-            {
-                await lastPreviewGeneration.CancelAsync();
-            }
-            lastPreviewGeneration = new CancellationTokenSource();
-            
             // If chapters haven't been loaded yet, load them first.
             // This might happen if rules are changed very quickly before initial chapter load completes.
-            await _previewLibraryRenamesComponent.RefreshPreviewsAsync(lastPreviewGeneration.Token);
+            await _previewLibraryRenamesComponent.RefreshPreviewsAsync();
         }
     }
     void Close() => MudDialog.Close();
-
-    public void Dispose()
-    {
-        if (lastPreviewGeneration?.IsCancellationRequested == false)
-        {
-            lastPreviewGeneration?.Cancel();
-        }
-        
-        lastPreviewGeneration?.Dispose();
-        DbContext?.Dispose();
-    }
-
 }

@@ -9,6 +9,7 @@
 @inject ILibraryRenamingService RenamingService
 @inject IChapterInIngestRecognitionService ChapterRecognition
 @inject IMetadataHandlingService MetadataHandlingService
+@inject ILogger<PreviewLibraryRenames> Logger
 
 <MudStack Spacing="2">
     <MudText Typo="Typo.h5">Preview Rename Effects</MudText>
@@ -20,8 +21,8 @@
                     <MudTh>Renamed Series</MudTh>
                 </HeaderContent>
                 <RowTemplate Context="sp">
-                    <MudTd DataLabel="Original Series">@sp.OrigHtml</MudTd>
-                    <MudTd DataLabel="Renamed Series">@sp.NewNameHtml</MudTd>
+                    <MudTd DataLabel="Original Series" Style="white-space: pre">@sp.OrigHtml</MudTd>
+                    <MudTd DataLabel="Renamed Series" Style="white-space: pre">@sp.NewNameHtml</MudTd>
                 </RowTemplate>
             </MudTable>
         </MudExpansionPanel>
@@ -34,8 +35,8 @@
                 </HeaderContent>
                 <RowTemplate Context="cfp">
                     <MudTd DataLabel="Series">@cfp.SeriesTitle</MudTd>
-                    <MudTd DataLabel="Original File Path">@cfp.OriginalFilePathHtml</MudTd>
-                    <MudTd DataLabel="New File Path">@cfp.NewFilePathHtml</MudTd>
+                    <MudTd DataLabel="Original File Path" Style="white-space: pre">@cfp.OriginalFilePathHtml</MudTd>
+                    <MudTd DataLabel="New File Path" Style="white-space: pre">@cfp.NewFilePathHtml</MudTd>
                 </RowTemplate>
             </MudTable>
         </MudExpansionPanel>
@@ -48,8 +49,9 @@
                 </HeaderContent>
                 <RowTemplate Context="ctp">
                     <MudTd DataLabel="Series">@ctp.SeriesTitle</MudTd>
-                    <MudTd DataLabel="Original Chapter Title">@ctp.OriginalChapterTitleHtml</MudTd>
-                    <MudTd DataLabel="New Chapter Title">@ctp.NewChapterTitleHtml</MudTd>
+                    <MudTd DataLabel="Original Chapter Title"
+                           Style="white-space: pre">@ctp.OriginalChapterTitleHtml</MudTd>
+                    <MudTd DataLabel="New Chapter Title" Style="white-space: pre">@ctp.NewChapterTitleHtml</MudTd>
                 </RowTemplate>
             </MudTable>
         </MudExpansionPanel>
@@ -62,8 +64,9 @@
                 </HeaderContent>
                 <RowTemplate Context="istp">
                     <MudTd DataLabel="Original Ingest Path">@istp.OriginalIngestPath</MudTd>
-                    <MudTd DataLabel="Original Series Title">@istp.OriginalSeriesTitleHtml</MudTd>
-                    <MudTd DataLabel="New Series Title">@istp.NewSeriesTitleHtml</MudTd>
+                    <MudTd DataLabel="Original Series Title"
+                           Style="white-space: pre">@istp.OriginalSeriesTitleHtml</MudTd>
+                    <MudTd DataLabel="New Series Title" Style="white-space: pre">@istp.NewSeriesTitleHtml</MudTd>
                 </RowTemplate>
             </MudTable>
         </MudExpansionPanel>
@@ -76,8 +79,9 @@
                 </HeaderContent>
                 <RowTemplate Context="ictp">
                     <MudTd DataLabel="Original Ingest Path">@ictp.OriginalIngestPath</MudTd>
-                    <MudTd DataLabel="Original Chapter Title">@ictp.OriginalChapterTitleHtml</MudTd>
-                    <MudTd DataLabel="New Chapter Title">@ictp.NewChapterTitleHtml</MudTd>
+                    <MudTd DataLabel="Original Chapter Title"
+                           Style="white-space: pre">@ictp.OriginalChapterTitleHtml</MudTd>
+                    <MudTd DataLabel="New Chapter Title" Style="white-space: pre">@ictp.NewChapterTitleHtml</MudTd>
                 </RowTemplate>
             </MudTable>
         </MudExpansionPanel>
@@ -90,8 +94,8 @@
                 </HeaderContent>
                 <RowTemplate Context="ifnp">
                     <MudTd DataLabel="Original Ingest Path">@ifnp.OriginalIngestPath</MudTd>
-                    <MudTd DataLabel="Original File Name">@ifnp.OriginalFileNameHtml</MudTd>
-                    <MudTd DataLabel="New File Name">@ifnp.NewFileNameHtml</MudTd>
+                    <MudTd DataLabel="Original File Name" Style="white-space: pre">@ifnp.OriginalFileNameHtml</MudTd>
+                    <MudTd DataLabel="New File Name" Style="white-space: pre">@ifnp.NewFileNameHtml</MudTd>
                 </RowTemplate>
             </MudTable>
         </MudExpansionPanel>
@@ -100,6 +104,7 @@
 
 @code {
     [Parameter, EditorRequired] public required Library Library { get; set; }
+    private CancellationTokenSource? lastPreviewGeneration;
 
     private SourceList<SeriesPreview> _seriesPreviewSource = new();
     private ReadOnlyObservableCollection<SeriesPreview> seriesPreviews;
@@ -114,7 +119,11 @@
     private SourceList<IngestFileNamePreview> _ingestFileNamePreviewsSource = new();
     private ReadOnlyObservableCollection<IngestFileNamePreview> ingestFileNamePreviews;
 
-    private enum DiffHighlightType { Addition, Removal }
+    private enum DiffHighlightType
+    {
+        Addition,
+        Removal
+    }
 
     private class SeriesPreview
     {
@@ -163,14 +172,28 @@
         public MarkupString NewFileNameHtml { get; set; } = new(string.Empty);
     }
 
-    protected override void OnParametersSet()
+    protected override async Task OnInitializedAsync()
     {
-        GeneratePreviews();
+        try
+        {
+            if (lastPreviewGeneration is { IsCancellationRequested: false })
+            {
+                await lastPreviewGeneration.CancelAsync();
+            }
+
+            lastPreviewGeneration = new CancellationTokenSource();
+            await GeneratePreviews();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error generating previews during initialization");
+        }
     }
+
     protected override void OnInitialized()
     {
         _seriesPreviewSource.Connect()
-            .ObserveOn(RxApp.MainThreadScheduler) 
+            .ObserveOn(RxApp.MainThreadScheduler)
             .Bind(out seriesPreviews).Subscribe();
         _existingChapterFilePreviewsSource.Connect()
             .ObserveOn(RxApp.MainThreadScheduler)
@@ -192,142 +215,167 @@
 
     public async Task RefreshPreviewsAsync(CancellationToken cancellationToken = default)
     {
-        await GeneratePreviews(cancellationToken);
-        await InvokeAsync(StateHasChanged);
+        try
+        {
+            if (lastPreviewGeneration is { IsCancellationRequested: false })
+            {
+                await lastPreviewGeneration.CancelAsync();
+            }
+
+            lastPreviewGeneration = new CancellationTokenSource();
+            var combinedCancellationToken = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lastPreviewGeneration.Token).Token;
+            await GeneratePreviews(combinedCancellationToken);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            // Handle exceptions gracefully, maybe log them or show a message to the user
+            Logger.LogError(ex, "Error generating previews");
+        }
     }
 
     private async Task GeneratePreviews(CancellationToken cancellationToken = default)
     {
+        await Task.Run(() => {}, cancellationToken);
+        
         _seriesPreviewSource.Clear();
         _existingChapterFilePreviewsSource.Clear();
         _existingChapterTitlePreviewsSource.Clear();
 
-     if (Library.MangaSeries != null && Library.RenameRules != null)
-     {
-         foreach (var m in Library.MangaSeries)
-         {
-             var dummySeriesChapter = new FoundChapter(
-                 FileName: string.Empty,
-                 RelativePath: string.Empty,
-                 StorageType: ChapterStorageType.Cbz,
-                 Metadata: new ExtractedMetadata(m.PrimaryTitle, null, null)
-             );
-             var renamedSeries = RenamingService.ApplyRenameRules(dummySeriesChapter, Library.RenameRules);
-             if (renamedSeries.Metadata.Series != m.PrimaryTitle)
-             {
-                 var orig = m.PrimaryTitle;
-                 var result = renamedSeries.Metadata.Series;
-                 var diffNew = ComputeDiffHtml(orig, result, DiffHighlightType.Addition);
-                 var diffOrig = ComputeDiffHtml(result, orig, DiffHighlightType.Removal);
-                 _seriesPreviewSource.Add(new SeriesPreview { Orig = orig, OrigHtml = diffOrig, NewNameHtml = diffNew });
-             }
-         }
-         
-         foreach (var series in Library.MangaSeries)
-         {
-             await foreach (var chapter in DbContext.Chapters.Where(c => c.MangaId == series.Id).AsAsyncEnumerable().WithCancellation(cancellationToken))
-             {
-                 var chapterMetadata = MetadataHandlingService.GetSeriesAndTitleFromComicInfo(chapter.NotUpscaledFullPath);
+        if (Library.MangaSeries != null && Library.RenameRules != null)
+        {
+            foreach (var m in Library.MangaSeries)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
 
-                 var originalFoundChapter = new FoundChapter(
-                     FileName: chapter.FileName,
-                     RelativePath: chapter.RelativePath,
-                     StorageType: ChapterStorageType.Cbz,
-                     Metadata: chapterMetadata
-                 );
+                var dummySeriesChapter = new FoundChapter(
+                    FileName: string.Empty,
+                    RelativePath: string.Empty,
+                    StorageType: ChapterStorageType.Cbz,
+                    Metadata: new ExtractedMetadata(m.PrimaryTitle, null, null)
+                );
+                var renamedSeries = RenamingService.ApplyRenameRules(dummySeriesChapter, Library.RenameRules);
+                if (renamedSeries.Metadata.Series != m.PrimaryTitle)
+                {
+                    var orig = m.PrimaryTitle;
+                    var result = renamedSeries.Metadata.Series;
+                    var diffNew = ComputeDiffHtml(orig, result, DiffHighlightType.Addition);
+                    var diffOrig = ComputeDiffHtml(result, orig, DiffHighlightType.Removal);
+                    _seriesPreviewSource.Add(new SeriesPreview { Orig = orig, OrigHtml = diffOrig, NewNameHtml = diffNew });
+                }
+            }
 
-                 var finalRenamedChapter = RenamingService.ApplyRenameRules(originalFoundChapter, Library.RenameRules);
+            foreach (var series in Library.MangaSeries)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
 
-                 // Check for File Name changes
-                 if (finalRenamedChapter.FileName != chapter.FileName)
-                 {
-                     var origFileName = chapter.FileName;
-                     var newFileName = finalRenamedChapter.FileName;
-                     var diffNew = ComputeDiffHtml(origFileName, newFileName, DiffHighlightType.Addition);
-                     var diffOrig = ComputeDiffHtml(newFileName, origFileName, DiffHighlightType.Removal);
-                     _existingChapterFilePreviewsSource.Add(new ChapterFilePathPreview
-                     {
-                         SeriesTitle = series.PrimaryTitle,
-                         OriginalFilePath = origFileName,
-                         OriginalFilePathHtml = diffOrig,
-                         NewFilePathHtml = diffNew
-                     });
-                 }
+                await foreach (var chapter in DbContext.Chapters.Where(c => c.MangaId == series.Id).AsAsyncEnumerable().WithCancellation(cancellationToken))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
 
-                 // Check for Chapter Title changes
-                 var originalChapterTitleProxy = originalFoundChapter.Metadata.ChapterTitle ?? originalFoundChapter.FileName; // Use FileName as fallback
-                 var finalChapterTitle = finalRenamedChapter.Metadata.ChapterTitle ?? finalRenamedChapter.FileName; // Use FileName as fallback
+                    var chapterMetadata = MetadataHandlingService.GetSeriesAndTitleFromComicInfo(chapter.NotUpscaledFullPath);
 
-                 if (finalChapterTitle != originalChapterTitleProxy)
-                 {
-                     var diffNew = ComputeDiffHtml(originalChapterTitleProxy, finalChapterTitle, DiffHighlightType.Addition);
-                     var diffOrig = ComputeDiffHtml(finalChapterTitle, originalChapterTitleProxy, DiffHighlightType.Removal);
-                     _existingChapterTitlePreviewsSource.Add(new ChapterTitlePreview
-                     {
-                         SeriesTitle = series.PrimaryTitle,
-                         OriginalChapterTitle = originalChapterTitleProxy,
-                         OriginalChapterTitleHtml = diffOrig,
-                         NewChapterTitleHtml = diffNew
-                     });
-                 }
-             }
-         }
-     }
+                    var originalFoundChapter = new FoundChapter(
+                        FileName: chapter.FileName,
+                        RelativePath: chapter.RelativePath,
+                        StorageType: ChapterStorageType.Cbz,
+                        Metadata: chapterMetadata
+                    );
 
-    _ingestSeriesTitlePreviewsSource.Clear();
-    _ingestChapterTitlePreviewsSource.Clear();
-    _ingestFileNamePreviewsSource.Clear();
-     if (Library.IngestPath != null && Library.FilterRules != null && Library.RenameRules != null)
-     {
-         var foundInIngest = ChapterRecognition.FindAllChaptersAt(Library.IngestPath, Library.FilterRules);
-         await foreach (var originalChapter in foundInIngest.ToAsyncEnumerable().WithCancellation(cancellationToken)) // arbitrarily limit to 500 chapters since this is god awfully slow
-         {
-             var finalRenamedChapter = RenamingService.ApplyRenameRules(originalChapter, Library.RenameRules);
+                    var finalRenamedChapter = RenamingService.ApplyRenameRules(originalFoundChapter, Library.RenameRules);
 
-             // Series Title Preview for Ingest
-             if (originalChapter.Metadata.Series != finalRenamedChapter.Metadata.Series)
-             {
-                 var origSeriesTitle = originalChapter.Metadata.Series;
-                 var newSeriesTitle = finalRenamedChapter.Metadata.Series;
-                 _ingestSeriesTitlePreviewsSource.Add(new IngestSeriesTitlePreview
-                 {
-                     OriginalIngestPath = originalChapter.RelativePath,
-                     OriginalSeriesTitle = origSeriesTitle,
-                     OriginalSeriesTitleHtml = ComputeDiffHtml(newSeriesTitle, origSeriesTitle, DiffHighlightType.Removal),
-                     NewSeriesTitleHtml = ComputeDiffHtml(origSeriesTitle, newSeriesTitle, DiffHighlightType.Addition)
-                 });
-             }
+                    // Check for File Name changes
+                    if (finalRenamedChapter.FileName != chapter.FileName)
+                    {
+                        var origFileName = chapter.FileName;
+                        var newFileName = finalRenamedChapter.FileName;
+                        var diffNew = ComputeDiffHtml(origFileName, newFileName, DiffHighlightType.Addition);
+                        var diffOrig = ComputeDiffHtml(newFileName, origFileName, DiffHighlightType.Removal);
+                        _existingChapterFilePreviewsSource.Add(new ChapterFilePathPreview
+                        {
+                            SeriesTitle = series.PrimaryTitle,
+                            OriginalFilePath = origFileName,
+                            OriginalFilePathHtml = diffOrig,
+                            NewFilePathHtml = diffNew
+                        });
+                    }
 
-             // Chapter Title Preview for Ingest
-             var originalIngestChapterTitle = originalChapter.Metadata.ChapterTitle ?? originalChapter.FileName;
-             var finalIngestChapterTitle = finalRenamedChapter.Metadata.ChapterTitle ?? finalRenamedChapter.FileName;
-             if (originalIngestChapterTitle != finalIngestChapterTitle)
-             {
-                 _ingestChapterTitlePreviewsSource.Add(new IngestChapterTitlePreview
-                 {
-                     OriginalIngestPath = originalChapter.RelativePath,
-                     OriginalChapterTitle = originalIngestChapterTitle,
-                     OriginalChapterTitleHtml = ComputeDiffHtml(finalIngestChapterTitle, originalIngestChapterTitle, DiffHighlightType.Removal),
-                     NewChapterTitleHtml = ComputeDiffHtml(originalIngestChapterTitle, finalIngestChapterTitle, DiffHighlightType.Addition)
-                 });
-             }
+                    // Check for Chapter Title changes
+                    var originalChapterTitleProxy = originalFoundChapter.Metadata.ChapterTitle ?? originalFoundChapter.FileName; // Use FileName as fallback
+                    var finalChapterTitle = finalRenamedChapter.Metadata.ChapterTitle ?? finalRenamedChapter.FileName; // Use FileName as fallback
 
-             // File Name Preview for Ingest
-             if (originalChapter.FileName != finalRenamedChapter.FileName)
-             {
-                 var origFileName = originalChapter.FileName;
-                 var newFileName = finalRenamedChapter.FileName;
-                 _ingestFileNamePreviewsSource.Add(new IngestFileNamePreview
-                 {
-                     OriginalIngestPath = originalChapter.RelativePath,
-                     OriginalFileName = origFileName,
-                     OriginalFileNameHtml = ComputeDiffHtml(newFileName, origFileName, DiffHighlightType.Removal),
-                     NewFileNameHtml = ComputeDiffHtml(origFileName, newFileName, DiffHighlightType.Addition)
-                 });
-             }
-         }
-     }
- }
+                    if (finalChapterTitle != originalChapterTitleProxy)
+                    {
+                        var diffNew = ComputeDiffHtml(originalChapterTitleProxy, finalChapterTitle, DiffHighlightType.Addition);
+                        var diffOrig = ComputeDiffHtml(finalChapterTitle, originalChapterTitleProxy, DiffHighlightType.Removal);
+                        _existingChapterTitlePreviewsSource.Add(new ChapterTitlePreview
+                        {
+                            SeriesTitle = series.PrimaryTitle,
+                            OriginalChapterTitle = originalChapterTitleProxy,
+                            OriginalChapterTitleHtml = diffOrig,
+                            NewChapterTitleHtml = diffNew
+                        });
+                    }
+                }
+            }
+        }
+
+        _ingestSeriesTitlePreviewsSource.Clear();
+        _ingestChapterTitlePreviewsSource.Clear();
+        _ingestFileNamePreviewsSource.Clear();
+        if (Library.IngestPath != null && Library.FilterRules != null && Library.RenameRules != null)
+        {
+            var foundInIngest = ChapterRecognition.FindAllChaptersAt(Library.IngestPath, Library.FilterRules, cancellationToken);
+            await foreach (var originalChapter in foundInIngest) // arbitrarily limit to 500 chapters since this is god awfully slow
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var finalRenamedChapter = RenamingService.ApplyRenameRules(originalChapter, Library.RenameRules);
+
+                // Series Title Preview for Ingest
+                if (originalChapter.Metadata.Series != finalRenamedChapter.Metadata.Series)
+                {
+                    var origSeriesTitle = originalChapter.Metadata.Series;
+                    var newSeriesTitle = finalRenamedChapter.Metadata.Series;
+                    _ingestSeriesTitlePreviewsSource.Add(new IngestSeriesTitlePreview
+                    {
+                        OriginalIngestPath = originalChapter.RelativePath,
+                        OriginalSeriesTitle = origSeriesTitle,
+                        OriginalSeriesTitleHtml = ComputeDiffHtml(newSeriesTitle, origSeriesTitle, DiffHighlightType.Removal),
+                        NewSeriesTitleHtml = ComputeDiffHtml(origSeriesTitle, newSeriesTitle, DiffHighlightType.Addition)
+                    });
+                }
+
+                // Chapter Title Preview for Ingest
+                var originalIngestChapterTitle = originalChapter.Metadata.ChapterTitle ?? originalChapter.FileName;
+                var finalIngestChapterTitle = finalRenamedChapter.Metadata.ChapterTitle ?? finalRenamedChapter.FileName;
+                if (originalIngestChapterTitle != finalIngestChapterTitle)
+                {
+                    _ingestChapterTitlePreviewsSource.Add(new IngestChapterTitlePreview
+                    {
+                        OriginalIngestPath = originalChapter.RelativePath,
+                        OriginalChapterTitle = originalIngestChapterTitle,
+                        OriginalChapterTitleHtml = ComputeDiffHtml(finalIngestChapterTitle, originalIngestChapterTitle, DiffHighlightType.Removal),
+                        NewChapterTitleHtml = ComputeDiffHtml(originalIngestChapterTitle, finalIngestChapterTitle, DiffHighlightType.Addition)
+                    });
+                }
+
+                // File Name Preview for Ingest
+                if (originalChapter.FileName != finalRenamedChapter.FileName)
+                {
+                    var origFileName = originalChapter.FileName;
+                    var newFileName = finalRenamedChapter.FileName;
+                    _ingestFileNamePreviewsSource.Add(new IngestFileNamePreview
+                    {
+                        OriginalIngestPath = originalChapter.RelativePath,
+                        OriginalFileName = origFileName,
+                        OriginalFileNameHtml = ComputeDiffHtml(newFileName, origFileName, DiffHighlightType.Removal),
+                        NewFileNameHtml = ComputeDiffHtml(origFileName, newFileName, DiffHighlightType.Addition)
+                    });
+                }
+            }
+        }
+    }
 
     private MarkupString ComputeDiffHtml(string baseString, string displayString, DiffHighlightType highlightType)
     {
@@ -347,7 +395,7 @@
         }
 
         int end = 0;
-        while (end < minLength - start && 
+        while (end < minLength - start &&
                baseString[baseString.Length - 1 - end] == displayString[displayString.Length - 1 - end])
         {
             end++;
@@ -360,7 +408,7 @@
         var encodedPrefix = System.Net.WebUtility.HtmlEncode(prefix);
         var encodedSuffix = System.Net.WebUtility.HtmlEncode(suffix);
         var encodedChanged = System.Net.WebUtility.HtmlEncode(changed);
-        
+
         string style;
         if (highlightType == DiffHighlightType.Addition)
         {
@@ -375,7 +423,7 @@
         {
             return (MarkupString)$"{encodedPrefix}<mark style='{style}'>{encodedChanged}</mark>{encodedSuffix}";
         }
-        
+
         // If changed is empty but strings are not identical, it means one is a pure prefix/suffix of the other.
         // The displayString itself is what's shown, without internal highlighting.
         return (MarkupString)System.Net.WebUtility.HtmlEncode(displayString);
