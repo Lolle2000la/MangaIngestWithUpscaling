@@ -182,7 +182,7 @@
             }
 
             lastPreviewGeneration = new CancellationTokenSource();
-            await GeneratePreviews();
+            _ = GeneratePreviews(lastPreviewGeneration.Token);
         }
         catch (Exception ex)
         {
@@ -193,22 +193,17 @@
     protected override void OnInitialized()
     {
         _seriesPreviewSource.Connect()
-            .ObserveOn(RxApp.MainThreadScheduler)
             .Bind(out seriesPreviews).Subscribe();
         _existingChapterFilePreviewsSource.Connect()
-            .ObserveOn(RxApp.MainThreadScheduler)
             .Bind(out existingChapterFilePreviews).Subscribe();
         _existingChapterTitlePreviewsSource.Connect()
             .ObserveOn(RxApp.MainThreadScheduler)
             .Bind(out existingChapterTitlePreviews).Subscribe();
         _ingestSeriesTitlePreviewsSource.Connect()
-            .ObserveOn(RxApp.MainThreadScheduler)
             .Bind(out ingestSeriesTitlePreviews).Subscribe();
         _ingestChapterTitlePreviewsSource.Connect()
-            .ObserveOn(RxApp.MainThreadScheduler)
             .Bind(out ingestChapterTitlePreviews).Subscribe();
         _ingestFileNamePreviewsSource.Connect()
-            .ObserveOn(RxApp.MainThreadScheduler)
             .Bind(out ingestFileNamePreviews).Subscribe();
         base.OnInitialized();
     }
@@ -224,8 +219,9 @@
 
             lastPreviewGeneration = new CancellationTokenSource();
             var combinedCancellationToken = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lastPreviewGeneration.Token).Token;
-            await GeneratePreviews(combinedCancellationToken);
-            await InvokeAsync(StateHasChanged);
+            _ = GeneratePreviews(combinedCancellationToken)
+                .ContinueWith(async (t,o) => await InvokeAsync(StateHasChanged), null, combinedCancellationToken);
+            ;
         }
         catch (Exception ex)
         {
@@ -236,145 +232,123 @@
 
     private async Task GeneratePreviews(CancellationToken cancellationToken = default)
     {
-        await Task.Run(() => {}, cancellationToken);
-        
-        _seriesPreviewSource.Clear();
-        _existingChapterFilePreviewsSource.Clear();
-        _existingChapterTitlePreviewsSource.Clear();
-
-        if (Library.MangaSeries != null && Library.RenameRules != null)
+        await Task.Run(async () =>
         {
-            foreach (var m in Library.MangaSeries)
+            // Clear previous previews
+            await InvokeAsync(() =>
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                _seriesPreviewSource.Clear();
+                _existingChapterFilePreviewsSource.Clear();
+                _existingChapterTitlePreviewsSource.Clear();
+                _ingestSeriesTitlePreviewsSource.Clear();
+                _ingestChapterTitlePreviewsSource.Clear();
+                _ingestFileNamePreviewsSource.Clear();
+            });
 
-                var dummySeriesChapter = new FoundChapter(
-                    FileName: string.Empty,
-                    RelativePath: string.Empty,
-                    StorageType: ChapterStorageType.Cbz,
-                    Metadata: new ExtractedMetadata(m.PrimaryTitle, null, null)
-                );
-                var renamedSeries = RenamingService.ApplyRenameRules(dummySeriesChapter, Library.RenameRules);
-                if (renamedSeries.Metadata.Series != m.PrimaryTitle)
-                {
-                    var orig = m.PrimaryTitle;
-                    var result = renamedSeries.Metadata.Series;
-                    var diffNew = ComputeDiffHtml(orig, result, DiffHighlightType.Addition);
-                    var diffOrig = ComputeDiffHtml(result, orig, DiffHighlightType.Removal);
-                    _seriesPreviewSource.Add(new SeriesPreview { Orig = orig, OrigHtml = diffOrig, NewNameHtml = diffNew });
-                }
-            }
-
-            foreach (var series in Library.MangaSeries)
+            if (Library.MangaSeries != null && Library.RenameRules != null)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                await foreach (var chapter in DbContext.Chapters.Where(c => c.MangaId == series.Id).AsAsyncEnumerable().WithCancellation(cancellationToken))
+                foreach (var m in Library.MangaSeries)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-
-                    var chapterMetadata = MetadataHandlingService.GetSeriesAndTitleFromComicInfo(chapter.NotUpscaledFullPath);
-
-                    var originalFoundChapter = new FoundChapter(
-                        FileName: chapter.FileName,
-                        RelativePath: chapter.RelativePath,
-                        StorageType: ChapterStorageType.Cbz,
-                        Metadata: chapterMetadata
-                    );
-
-                    var finalRenamedChapter = RenamingService.ApplyRenameRules(originalFoundChapter, Library.RenameRules);
-
-                    // Check for File Name changes
-                    if (finalRenamedChapter.FileName != chapter.FileName)
+                    var dummy = new FoundChapter("", "", ChapterStorageType.Cbz,
+                        new ExtractedMetadata(m.PrimaryTitle, null, null));
+                    var renamed = RenamingService.ApplyRenameRules(dummy, Library.RenameRules);
+                    if (renamed.Metadata.Series != m.PrimaryTitle)
                     {
-                        var origFileName = chapter.FileName;
-                        var newFileName = finalRenamedChapter.FileName;
-                        var diffNew = ComputeDiffHtml(origFileName, newFileName, DiffHighlightType.Addition);
-                        var diffOrig = ComputeDiffHtml(newFileName, origFileName, DiffHighlightType.Removal);
-                        _existingChapterFilePreviewsSource.Add(new ChapterFilePathPreview
+                        var preview = new SeriesPreview
                         {
-                            SeriesTitle = series.PrimaryTitle,
-                            OriginalFilePath = origFileName,
-                            OriginalFilePathHtml = diffOrig,
-                            NewFilePathHtml = diffNew
-                        });
+                            Orig = m.PrimaryTitle,
+                            OrigHtml = ComputeDiffHtml(renamed.Metadata.Series, m.PrimaryTitle, DiffHighlightType.Removal),
+                            NewNameHtml = ComputeDiffHtml(m.PrimaryTitle, renamed.Metadata.Series, DiffHighlightType.Addition)
+                        };
+                        await InvokeAsync(() => _seriesPreviewSource.Add(preview));
                     }
+                }
 
-                    // Check for Chapter Title changes
-                    var originalChapterTitleProxy = originalFoundChapter.Metadata.ChapterTitle ?? originalFoundChapter.FileName; // Use FileName as fallback
-                    var finalChapterTitle = finalRenamedChapter.Metadata.ChapterTitle ?? finalRenamedChapter.FileName; // Use FileName as fallback
-
-                    if (finalChapterTitle != originalChapterTitleProxy)
+                foreach (var series in Library.MangaSeries)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    await foreach (var chapter in DbContext.Chapters.Where(c => c.MangaId == series.Id)
+                                       .AsAsyncEnumerable().WithCancellation(cancellationToken))
                     {
-                        var diffNew = ComputeDiffHtml(originalChapterTitleProxy, finalChapterTitle, DiffHighlightType.Addition);
-                        var diffOrig = ComputeDiffHtml(finalChapterTitle, originalChapterTitleProxy, DiffHighlightType.Removal);
-                        _existingChapterTitlePreviewsSource.Add(new ChapterTitlePreview
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var meta = MetadataHandlingService.GetSeriesAndTitleFromComicInfo(chapter.NotUpscaledFullPath);
+                        var original = new FoundChapter(chapter.FileName, chapter.RelativePath, ChapterStorageType.Cbz, meta);
+                        var renamed = RenamingService.ApplyRenameRules(original, Library.RenameRules);
+                        if (renamed.FileName != chapter.FileName)
                         {
-                            SeriesTitle = series.PrimaryTitle,
-                            OriginalChapterTitle = originalChapterTitleProxy,
-                            OriginalChapterTitleHtml = diffOrig,
-                            NewChapterTitleHtml = diffNew
-                        });
+                            var preview = new ChapterFilePathPreview
+                            {
+                                SeriesTitle = series.PrimaryTitle,
+                                OriginalFilePathHtml = ComputeDiffHtml(renamed.FileName, chapter.FileName, DiffHighlightType.Removal),
+                                NewFilePathHtml = ComputeDiffHtml(chapter.FileName, renamed.FileName, DiffHighlightType.Addition)
+                            };
+                            await InvokeAsync(() => _existingChapterFilePreviewsSource.Add(preview));
+                        }
+
+                        var origTitle = original.Metadata.ChapterTitle ?? original.FileName;
+                        var newTitle = renamed.Metadata.ChapterTitle ?? renamed.FileName;
+                        if (newTitle != origTitle)
+                        {
+                            var preview = new ChapterTitlePreview
+                            {
+                                SeriesTitle = series.PrimaryTitle,
+                                OriginalChapterTitleHtml = ComputeDiffHtml(newTitle, origTitle, DiffHighlightType.Removal),
+                                NewChapterTitleHtml = ComputeDiffHtml(origTitle, newTitle, DiffHighlightType.Addition)
+                            };
+                            await InvokeAsync(() => _existingChapterTitlePreviewsSource.Add(preview));
+                        }
                     }
                 }
             }
-        }
 
-        _ingestSeriesTitlePreviewsSource.Clear();
-        _ingestChapterTitlePreviewsSource.Clear();
-        _ingestFileNamePreviewsSource.Clear();
-        if (Library.IngestPath != null && Library.FilterRules != null && Library.RenameRules != null)
-        {
-            var foundInIngest = ChapterRecognition.FindAllChaptersAt(Library.IngestPath, Library.FilterRules, cancellationToken);
-            await foreach (var originalChapter in foundInIngest) // arbitrarily limit to 500 chapters since this is god awfully slow
+            // Stream ingest previews
+            if (Library.IngestPath != null && Library.FilterRules != null && Library.RenameRules != null)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                var finalRenamedChapter = RenamingService.ApplyRenameRules(originalChapter, Library.RenameRules);
-
-                // Series Title Preview for Ingest
-                if (originalChapter.Metadata.Series != finalRenamedChapter.Metadata.Series)
+                var found = ChapterRecognition.FindAllChaptersAt(Library.IngestPath, Library.FilterRules, cancellationToken);
+                await foreach (var origChap in found)
                 {
-                    var origSeriesTitle = originalChapter.Metadata.Series;
-                    var newSeriesTitle = finalRenamedChapter.Metadata.Series;
-                    _ingestSeriesTitlePreviewsSource.Add(new IngestSeriesTitlePreview
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var renamed = RenamingService.ApplyRenameRules(origChap, Library.RenameRules);
+                    if (origChap.Metadata.Series != renamed.Metadata.Series)
                     {
-                        OriginalIngestPath = originalChapter.RelativePath,
-                        OriginalSeriesTitle = origSeriesTitle,
-                        OriginalSeriesTitleHtml = ComputeDiffHtml(newSeriesTitle, origSeriesTitle, DiffHighlightType.Removal),
-                        NewSeriesTitleHtml = ComputeDiffHtml(origSeriesTitle, newSeriesTitle, DiffHighlightType.Addition)
-                    });
-                }
+                        var preview = new IngestSeriesTitlePreview
+                        {
+                            OriginalIngestPath = origChap.RelativePath,
+                            OriginalSeriesTitleHtml = ComputeDiffHtml(renamed.Metadata.Series, origChap.Metadata.Series, DiffHighlightType.Removal),
+                            NewSeriesTitleHtml = ComputeDiffHtml(origChap.Metadata.Series, renamed.Metadata.Series, DiffHighlightType.Addition)
+                        };
+                        await InvokeAsync(() => _ingestSeriesTitlePreviewsSource.Add(preview));
+                    }
 
-                // Chapter Title Preview for Ingest
-                var originalIngestChapterTitle = originalChapter.Metadata.ChapterTitle ?? originalChapter.FileName;
-                var finalIngestChapterTitle = finalRenamedChapter.Metadata.ChapterTitle ?? finalRenamedChapter.FileName;
-                if (originalIngestChapterTitle != finalIngestChapterTitle)
-                {
-                    _ingestChapterTitlePreviewsSource.Add(new IngestChapterTitlePreview
+                    var origCT = origChap.Metadata.ChapterTitle ?? origChap.FileName;
+                    var newCT = renamed.Metadata.ChapterTitle ?? renamed.FileName;
+                    if (origCT != newCT)
                     {
-                        OriginalIngestPath = originalChapter.RelativePath,
-                        OriginalChapterTitle = originalIngestChapterTitle,
-                        OriginalChapterTitleHtml = ComputeDiffHtml(finalIngestChapterTitle, originalIngestChapterTitle, DiffHighlightType.Removal),
-                        NewChapterTitleHtml = ComputeDiffHtml(originalIngestChapterTitle, finalIngestChapterTitle, DiffHighlightType.Addition)
-                    });
-                }
+                        var preview = new IngestChapterTitlePreview
+                        {
+                            OriginalIngestPath = origChap.RelativePath,
+                            OriginalChapterTitleHtml = ComputeDiffHtml(newCT, origCT, DiffHighlightType.Removal),
+                            NewChapterTitleHtml = ComputeDiffHtml(origCT, newCT, DiffHighlightType.Addition)
+                        };
+                        await InvokeAsync(() => _ingestChapterTitlePreviewsSource.Add(preview));
+                    }
 
-                // File Name Preview for Ingest
-                if (originalChapter.FileName != finalRenamedChapter.FileName)
-                {
-                    var origFileName = originalChapter.FileName;
-                    var newFileName = finalRenamedChapter.FileName;
-                    _ingestFileNamePreviewsSource.Add(new IngestFileNamePreview
+                    if (origChap.FileName != renamed.FileName)
                     {
-                        OriginalIngestPath = originalChapter.RelativePath,
-                        OriginalFileName = origFileName,
-                        OriginalFileNameHtml = ComputeDiffHtml(newFileName, origFileName, DiffHighlightType.Removal),
-                        NewFileNameHtml = ComputeDiffHtml(origFileName, newFileName, DiffHighlightType.Addition)
-                    });
+                        var preview = new IngestFileNamePreview
+                        {
+                            OriginalIngestPath = origChap.RelativePath,
+                            OriginalFileNameHtml = ComputeDiffHtml(renamed.FileName, origChap.FileName, DiffHighlightType.Removal),
+                            NewFileNameHtml = ComputeDiffHtml(origChap.FileName, renamed.FileName, DiffHighlightType.Addition)
+                        };
+                        await InvokeAsync(() => _ingestFileNamePreviewsSource.Add(preview));
+                    }
                 }
             }
-        }
+
+            // Completed streaming
+        }, cancellationToken);
     }
 
     private MarkupString ComputeDiffHtml(string baseString, string displayString, DiffHighlightType highlightType)
@@ -428,4 +402,5 @@
         // The displayString itself is what's shown, without internal highlighting.
         return (MarkupString)System.Net.WebUtility.HtmlEncode(displayString);
     }
+
 }
