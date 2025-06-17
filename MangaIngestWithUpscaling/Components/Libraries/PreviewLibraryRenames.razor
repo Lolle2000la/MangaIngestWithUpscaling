@@ -168,27 +168,33 @@
     protected override void OnInitialized()
     {
         _seriesPreviewSource.Connect()
+            .ObserveOn(RxApp.MainThreadScheduler) 
             .Bind(out seriesPreviews).Subscribe();
         _existingChapterFilePreviewsSource.Connect()
+            .ObserveOn(RxApp.MainThreadScheduler)
             .Bind(out existingChapterFilePreviews).Subscribe();
         _existingChapterTitlePreviewsSource.Connect()
+            .ObserveOn(RxApp.MainThreadScheduler)
             .Bind(out existingChapterTitlePreviews).Subscribe();
         _ingestSeriesTitlePreviewsSource.Connect()
+            .ObserveOn(RxApp.MainThreadScheduler)
             .Bind(out ingestSeriesTitlePreviews).Subscribe();
         _ingestChapterTitlePreviewsSource.Connect()
+            .ObserveOn(RxApp.MainThreadScheduler)
             .Bind(out ingestChapterTitlePreviews).Subscribe();
         _ingestFileNamePreviewsSource.Connect()
+            .ObserveOn(RxApp.MainThreadScheduler)
             .Bind(out ingestFileNamePreviews).Subscribe();
         base.OnInitialized();
     }
 
-    public Task RefreshPreviewsAsync()
+    public async Task RefreshPreviewsAsync(CancellationToken cancellationToken = default)
     {
-        GeneratePreviews();
-        return InvokeAsync(StateHasChanged);
+        await GeneratePreviews(cancellationToken);
+        await InvokeAsync(StateHasChanged);
     }
 
-    private void GeneratePreviews()
+    private async Task GeneratePreviews(CancellationToken cancellationToken = default)
     {
         _seriesPreviewSource.Clear();
         _existingChapterFilePreviewsSource.Clear();
@@ -196,7 +202,7 @@
 
      if (Library.MangaSeries != null && Library.RenameRules != null)
      {
-         foreach (var m in Library.MangaSeries)
+         await foreach (var m in Library.MangaSeries.ToAsyncEnumerable().WithCancellation(cancellationToken))
          {
              var dummySeriesChapter = new FoundChapter(
                  FileName: string.Empty,
@@ -215,10 +221,10 @@
              }
          }
          
-         foreach (var series in Library.MangaSeries)
+         await foreach (var series in Library.MangaSeries.ToAsyncEnumerable().WithCancellation(cancellationToken))
          {
              if (series.Chapters == null) continue;
-             foreach (var chapter in series.Chapters.Take(500)) // arbitrarily limit to 500 chapters since this is god awfully slow
+             await foreach (var chapter in series.Chapters.ToAsyncEnumerable().WithCancellation(cancellationToken)) // arbitrarily limit to 500 chapters since this is god awfully slow
              {
                  var chapterMetadata = MetadataHandlingService.GetSeriesAndTitleFromComicInfo(chapter.NotUpscaledFullPath);
 
@@ -273,7 +279,7 @@
      if (Library.IngestPath != null && Library.FilterRules != null && Library.RenameRules != null)
      {
          var foundInIngest = ChapterRecognition.FindAllChaptersAt(Library.IngestPath, Library.FilterRules);
-         foreach (var originalChapter in foundInIngest.Take(500)) // arbitrarily limit to 500 chapters since this is god awfully slow
+         await foreach (var originalChapter in foundInIngest.ToAsyncEnumerable().WithCancellation(cancellationToken)) // arbitrarily limit to 500 chapters since this is god awfully slow
          {
              var finalRenamedChapter = RenamingService.ApplyRenameRules(originalChapter, Library.RenameRules);
 

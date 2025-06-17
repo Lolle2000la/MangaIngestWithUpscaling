@@ -3,6 +3,8 @@
 @using MangaIngestWithUpscaling.Components.Libraries
 @inject ApplicationDbContext DbContext
 
+@implements IDisposable
+
 <MudDialog>
     <TitleContent>Edit & Preview Rename Rules</TitleContent>
     <DialogContent>
@@ -24,8 +26,9 @@
     [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
     [Parameter, EditorRequired] public required Library Library { get; set; }
     
-    private PreviewLibraryRenames _previewLibraryRenamesComponent = default!;
+    private PreviewLibraryRenames? _previewLibraryRenamesComponent;
     private bool _chaptersLoaded = false;
+    private CancellationTokenSource? lastPreviewGeneration;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -38,16 +41,16 @@
         }
     }
 
-    private async Task LoadChaptersAsync()
+    private async Task LoadChaptersAsync(CancellationToken token = default)
     {
         if (Library?.MangaSeries != null)
         {
-            foreach (var series in Library.MangaSeries)
+            await foreach (var series in Library.MangaSeries.ToAsyncEnumerable().WithCancellation(token))
             {
                 var entry = DbContext.Entry(series);
                 if (!entry.Collection(s => s.Chapters).IsLoaded)
                 {
-                    await entry.Collection(s => s.Chapters).LoadAsync();
+                    await entry.Collection(s => s.Chapters).LoadAsync(token);
                 }
             }
         }
@@ -57,15 +60,33 @@
     {
         if (_previewLibraryRenamesComponent != null)
         {
+            if (lastPreviewGeneration != null)
+            {
+                await lastPreviewGeneration.CancelAsync();
+            }
+            lastPreviewGeneration = new CancellationTokenSource();
+            
             // If chapters haven't been loaded yet, load them first.
             // This might happen if rules are changed very quickly before initial chapter load completes.
             if (!_chaptersLoaded) 
             {
-                await LoadChaptersAsync();
+                await LoadChaptersAsync(lastPreviewGeneration.Token);
                 _chaptersLoaded = true;
             }
-            await _previewLibraryRenamesComponent.RefreshPreviewsAsync();
+            await _previewLibraryRenamesComponent.RefreshPreviewsAsync(lastPreviewGeneration.Token);
         }
     }
     void Close() => MudDialog.Close();
+
+    public void Dispose()
+    {
+        if (lastPreviewGeneration?.IsCancellationRequested == false)
+        {
+            lastPreviewGeneration?.Cancel();
+        }
+        
+        lastPreviewGeneration?.Dispose();
+        DbContext?.Dispose();
+    }
+
 }
