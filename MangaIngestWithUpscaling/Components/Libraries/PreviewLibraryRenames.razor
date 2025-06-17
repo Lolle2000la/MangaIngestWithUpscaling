@@ -4,6 +4,8 @@
 @using MangaIngestWithUpscaling.Services.MetadataHandling
 @using DynamicData
 @using System.Collections.ObjectModel
+
+@inject ApplicationDbContext DbContext
 @inject ILibraryRenamingService RenamingService
 @inject IChapterInIngestRecognitionService ChapterRecognition
 @inject IMetadataHandlingService MetadataHandlingService
@@ -202,7 +204,7 @@
 
      if (Library.MangaSeries != null && Library.RenameRules != null)
      {
-         await foreach (var m in Library.MangaSeries.ToAsyncEnumerable().WithCancellation(cancellationToken))
+         foreach (var m in Library.MangaSeries)
          {
              var dummySeriesChapter = new FoundChapter(
                  FileName: string.Empty,
@@ -221,10 +223,9 @@
              }
          }
          
-         await foreach (var series in Library.MangaSeries.ToAsyncEnumerable().WithCancellation(cancellationToken))
+         foreach (var series in Library.MangaSeries)
          {
-             if (series.Chapters == null) continue;
-             await foreach (var chapter in series.Chapters.ToAsyncEnumerable().WithCancellation(cancellationToken)) // arbitrarily limit to 500 chapters since this is god awfully slow
+             await foreach (var chapter in DbContext.Chapters.Where(c => c.MangaId == series.Id).AsAsyncEnumerable().WithCancellation(cancellationToken))
              {
                  var chapterMetadata = MetadataHandlingService.GetSeriesAndTitleFromComicInfo(chapter.NotUpscaledFullPath);
 

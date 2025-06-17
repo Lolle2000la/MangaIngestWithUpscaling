@@ -1,6 +1,7 @@
 @using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Components.Libraries.Filters
 @using MangaIngestWithUpscaling.Components.Libraries
+@using Microsoft.EntityFrameworkCore.Query
 @inject ApplicationDbContext DbContext
 
 @implements IDisposable
@@ -34,25 +35,9 @@
     {
         if (firstRender && !_chaptersLoaded)
         {
-            await LoadChaptersAsync();
             _chaptersLoaded = true;
             // Ensure preview is updated after chapters are loaded
             await OnRulesChanged(); 
-        }
-    }
-
-    private async Task LoadChaptersAsync(CancellationToken token = default)
-    {
-        if (Library?.MangaSeries != null)
-        {
-            await foreach (var series in Library.MangaSeries.ToAsyncEnumerable().WithCancellation(token))
-            {
-                var entry = DbContext.Entry(series);
-                if (!entry.Collection(s => s.Chapters).IsLoaded)
-                {
-                    await entry.Collection(s => s.Chapters).LoadAsync(token);
-                }
-            }
         }
     }
 
@@ -68,11 +53,6 @@
             
             // If chapters haven't been loaded yet, load them first.
             // This might happen if rules are changed very quickly before initial chapter load completes.
-            if (!_chaptersLoaded) 
-            {
-                await LoadChaptersAsync(lastPreviewGeneration.Token);
-                _chaptersLoaded = true;
-            }
             await _previewLibraryRenamesComponent.RefreshPreviewsAsync(lastPreviewGeneration.Token);
         }
     }
