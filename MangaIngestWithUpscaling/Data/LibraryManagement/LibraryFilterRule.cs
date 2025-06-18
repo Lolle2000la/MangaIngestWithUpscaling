@@ -10,9 +10,9 @@ public class LibraryFilterRule
 {
     public int Id { get; set; }
     public int LibraryId { get; set; }
-    public Library Library { get; set; }
+    public required Library Library { get; set; }
 
-    public string Pattern { get; set; }
+    public string Pattern { get; set; } = string.Empty;
     public LibraryFilterPatternType PatternType { get; set; }
     public LibraryFilterTargetField TargetField { get; set; }
     public FilterAction Action { get; set; }
@@ -41,10 +41,7 @@ public enum FilterAction
 /// </summary>
 public enum LibraryFilterTargetField
 {
-    [Display(Name = "File Path")]
-    FilePath,
-    [Display(Name = "Manga Title")]
-    MangaTitle,
-    [Display(Name = "Chapter Title")]
-    ChapterTitle
+    [Display(Name = "File Path")] FilePath,
+    [Display(Name = "Manga Title")] MangaTitle,
+    [Display(Name = "Chapter Title")] ChapterTitle
 }

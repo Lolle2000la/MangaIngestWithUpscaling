@@ -10,9 +10,9 @@ namespace MangaIngestWithUpscaling.Data.LibraryManagement;
 public class Library
 {
     public int Id { get; set; }
-    public string Name { get; set; }
-    public string IngestPath { get; set; }
-    public string NotUpscaledLibraryPath { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string IngestPath { get; set; } = string.Empty;
+    public string NotUpscaledLibraryPath { get; set; } = string.Empty;
     public string? UpscaledLibraryPath { get; set; }
     public KavitaLibraryConfig KavitaConfig { get; set; } = new KavitaLibraryConfig();
 
@@ -22,9 +22,10 @@ public class Library
 
     public List<Manga> MangaSeries { get; set; } = [];
     public List<LibraryFilterRule> FilterRules { get; set; } = [];
-    public ObservableCollection<LibraryRenameRule> RenameRules { get; set; } = new System.Collections.ObjectModel.ObservableCollection<LibraryRenameRule>();
 
-    public override bool Equals(object obj)
+    public ObservableCollection<LibraryRenameRule> RenameRules { get; set; } = new();
+
+    public override bool Equals(object? obj)
     {
         if (obj == null || GetType() != obj.GetType())
         {
@@ -45,7 +46,8 @@ public class Library
 
     public override int GetHashCode()
     {
-        return HashCode.Combine(Id, Name, IngestPath, NotUpscaledLibraryPath, UpscaledLibraryPath, KavitaConfig, UpscaleOnIngest, UpscalerProfile);
+        return HashCode.Combine(Id, Name, IngestPath, NotUpscaledLibraryPath, UpscaledLibraryPath, KavitaConfig,
+            UpscaleOnIngest, UpscalerProfile);
     }
 }
 
@@ -57,6 +59,7 @@ public record KavitaLibraryConfig
     /// This may differ from the normal path due to the usage of different mount points across containers.
     /// </summary>
     public string? NotUpscaledMountPoint { get; set; }
+
     /// <summary>
     /// The mount point for the folder with the upscaled images in Kavita.
     /// This may differ from the normal path due to the usage of different mount points across containers.
