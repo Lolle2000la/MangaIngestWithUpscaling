@@ -1,6 +1,4 @@
 ﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
-
-
 <MudTd DataLabel="Pattern to match">
     <MudTextField Immediate="true"
                   Required="true"
@@ -33,5 +31,5 @@
 </MudTd>
 
 @code {
-    [Parameter] public LibraryFilterRule FilterRule { get; set; }
+    [Parameter] public required LibraryFilterRule FilterRule { get; set; }
     }
