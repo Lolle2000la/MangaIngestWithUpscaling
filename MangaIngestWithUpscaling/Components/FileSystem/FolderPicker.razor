@@ -74,45 +74,19 @@
 </MudPaper>
 
 @code {
-#pragma
-
     [Parameter]
     public bool Required { get; set; } = false;
 
-    [Parameter]
-    public string RootDirectory
-    {
-        get => ViewModel?.RootDirectory ?? Path.GetPathRoot(Path.GetFullPath("."))!;
-        set => ViewModel!.RootDirectory = value;
-    }
+    [Parameter][EditorRequired] public required string RootDirectory { get; set; }
 
-    [Parameter]
-    public string? SelectedPath
-    {
-        get => ViewModel?.SelectedPath;
-        set
-        {
-            if (ViewModel != null)
-                ViewModel.SelectedPath = value;
-        }
-    }
+    [Parameter] public string? SelectedPath { get; set; }
 
     [Parameter]
     public EventCallback<string> SelectedPathChanged { get; set; }
 
-    [Parameter]
-    public string Title
-    {
-        get => ViewModel?.Title ?? "";
-        set => ViewModel!.Title = value;
-    }
+    [Parameter][EditorRequired] public required string Title { get; set; }
 
-    [Parameter]
-    public bool Disabled
-    {
-        get => ViewModel?.Disabled ?? false;
-        set => ViewModel!.Disabled = value;
-    }
+    [Parameter] public bool Disabled { get; set; }
 
     protected override void OnInitialized()
     {
@@ -124,6 +98,4 @@
         });
         base.OnInitialized();
     }
-
-#pragma warning restore BL0007
 }
