@@ -39,12 +39,24 @@ public class DistributedUpscaleTaskProcessor(
             {
                 currentTask.Status = PersistedTaskStatus.Canceled;
                 _ = StatusChanged?.Invoke(currentTask);
-                dbContext.Update(currentTask);
 
                 runningTasks.Remove(checkAgainst.Id);
             }
+            else
+            {
+                return;
+            }
         }
 
+
+        PersistedTask? task = await dbContext.PersistedTasks.FirstOrDefaultAsync(t => t.Id == checkAgainst.Id);
+        if (task == null)
+        {
+            return; // Task not found in the database, nothing to do
+        }
+
+        task.Status = PersistedTaskStatus.Canceled;
+        dbContext.Update(task);
         await dbContext.SaveChangesAsync();
     }
 

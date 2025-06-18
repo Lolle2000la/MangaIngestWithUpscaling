@@ -179,6 +179,7 @@
         try
         {
             UpscaleTaskProcessor.CancelCurrent(task);
+            await DistributedUpscaleTaskProcessor.CancelCurrent(task);
         }
         catch (Exception ex)
         {
