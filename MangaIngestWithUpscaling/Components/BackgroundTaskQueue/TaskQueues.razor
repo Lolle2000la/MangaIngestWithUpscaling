@@ -2,9 +2,6 @@
 @using MangaIngestWithUpscaling.Data.BackqroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
-@using MangaIngestWithUpscaling.Helpers
-@using Microsoft.EntityFrameworkCore
-
 @implements IDisposable
 
 @inject ApplicationDbContext DbContext
@@ -162,7 +159,7 @@
         }
     }
 
-    private void OnCancelStandardTask(PersistedTask task)
+    private async Task OnCancelStandardTask(PersistedTask task)
     {
         try
         {
@@ -172,11 +169,11 @@
         {
             Logger.LogError(ex, "Failed to cancel task {TaskId}", task.Id);
             Snackbar.Add("Failed to cancel task: " + ex.Message, Severity.Error);
-            LoadTasks();
+            await LoadTasks();
         }
     }
 
-    private void OnCancelUpscaleTask(PersistedTask task)
+    private async Task OnCancelUpscaleTask(PersistedTask task)
     {
         try
         {
@@ -186,7 +183,7 @@
         {
             Logger.LogError(ex, "Failed to cancel task {TaskId}", task.Id);
             Snackbar.Add("Failed to cancel task: " + ex.Message, Severity.Error);
-            LoadTasks();
+            await LoadTasks();
         }
     }
 
@@ -275,7 +272,16 @@
         }
         else
         {
-            tasks.Add(AssingPersistedTask(await DbContext.PersistedTasks.FindAsync(task.Id), task));
+            var taskFromDb = await DbContext.PersistedTasks.FindAsync(task.Id);
+            if (taskFromDb != null)
+            {
+                tasks.Add(AssingPersistedTask(taskFromDb, task));
+            }
+            else
+            {
+                Snackbar.Add("Some task has been received, but no matching task was found.", Severity.Warning);
+                Logger.LogWarning("Some task has been received, but no matching task was found. (ID: {TaskId})", task.Id);
+            }
         }
     }
 }
