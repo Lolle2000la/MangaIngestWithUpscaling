@@ -66,7 +66,8 @@ public class LibraryIntegrityChecker(
     {
         var origIntegrity = await CheckOriginalIntegrity(chapter, cancellationToken);
         var upscaledIntegrity = IntegrityCheckResult.Ok;
-        if (origIntegrity != IntegrityCheckResult.Missing && origIntegrity != IntegrityCheckResult.Invalid)
+        if (origIntegrity != IntegrityCheckResult.Missing && origIntegrity != IntegrityCheckResult.Invalid &&
+            origIntegrity != IntegrityCheckResult.MaybeInProgress)
             upscaledIntegrity = await CheckUpscaledIntegrity(chapter, cancellationToken);
 
         if (origIntegrity != IntegrityCheckResult.Ok || upscaledIntegrity != IntegrityCheckResult.Ok)
@@ -157,31 +158,23 @@ public class LibraryIntegrityChecker(
     {
         if (!chapter.IsUpscaled)
         {
-            if (File.Exists(chapter.UpscaledFullPath))
+            if (!File.Exists(chapter.UpscaledFullPath))
             {
-                var taskQuery = dbContext.PersistedTasks
-                    .FromSql(
-                        $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(UpscaleTask)} AND Data->>'$.ChapterId' = {chapter.Id}");
-                var tasks = await taskQuery.ToListAsync(cancellationToken ?? CancellationToken.None);
-
-                // ensure we find out whether one of the tasks is still pending or processing, otherwise we might find past tasks that superseeded.
-                var task = tasks.FirstOrDefault(t =>
-                    t.Status == PersistedTaskStatus.Pending
-                    || t.Status == PersistedTaskStatus.Processing);
-
-                if (task != null)
-                {
-                    tasks.FirstOrDefault();
-                }
-
-                // don't accidentally interfere with a running upscale.
-                if (task?.Status != PersistedTaskStatus.Processing && task?.Status != PersistedTaskStatus.Pending)
-                {
-                    return await CheckUpscaledArchiveValidity(chapter, cancellationToken);
-                }
+                return IntegrityCheckResult.Ok;
             }
 
-            return IntegrityCheckResult.Ok;
+            IQueryable<PersistedTask> taskQuery = dbContext.PersistedTasks
+                .FromSql(
+                    $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(UpscaleTask)} AND Data->>'$.ChapterId' = {chapter.Id}");
+            PersistedTask? task = await taskQuery.FirstOrDefaultAsync();
+
+            // Do not modify the chapter from under the processing task.
+            if (task != null)
+            {
+                return IntegrityCheckResult.MaybeInProgress;
+            }
+
+            return await CheckUpscaledArchiveValidity(chapter, cancellationToken);
         }
         else
         {
@@ -281,6 +274,7 @@ public class LibraryIntegrityChecker(
         Ok,
         Missing,
         Invalid,
-        Corrected
+        Corrected,
+        MaybeInProgress
     }
 }
