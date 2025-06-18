@@ -1,7 +1,9 @@
-﻿using Google.Protobuf.WellKnownTypes;
+﻿using Google.Protobuf;
+using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Api.Upscaling;
-using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
+using UpscalerProfile = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.UpscalerProfile;
 
 namespace MangaIngestWithUpscaling.RemoteWorker.Background;
 
@@ -23,6 +25,7 @@ public class RemoteTaskProcessor(
             catch (RpcException ex) when (ex.StatusCode == StatusCode.Unavailable)
             {
                 // The server is unavailable, wait for a bit before trying again
+                logger.LogWarning("Server unavailable, retrying in 5 seconds.");
                 await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
             }
             catch (Exception ex)
@@ -38,6 +41,7 @@ public class RemoteTaskProcessor(
         using var scope = serviceScopeFactory.CreateScope();
         var client = scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
         var logger = scope.ServiceProvider.GetRequiredService<ILogger<RemoteTaskProcessor>>();
+        var upscaler = scope.ServiceProvider.GetRequiredService<IUpscaler>();
 
         var taskResponse = await client.RequestUpscaleTaskAsync(new Empty(), cancellationToken: stoppingToken);
 
@@ -46,13 +50,113 @@ public class RemoteTaskProcessor(
             return;
         }
 
+        logger.LogInformation("Received task {taskId}.", taskResponse.TaskId);
+
         var profile = GetProfileFromResponse(taskResponse.UpscalerProfile);
 
-        var stream = client.GetCbzFile(new CbzToUpscaleRequest() { TaskId = taskResponse.TaskId }, cancellationToken: stoppingToken);
+        var keepAliveCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        Task keepAliveTask = Task.Run(async () =>
+        {
+            var keepAliveTimer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+            while (await keepAliveTimer.WaitForNextTickAsync(keepAliveCts.Token) &&
+                   !keepAliveCts.IsCancellationRequested)
+            {
+                try
+                {
+                    KeepAliveResponse? response = await client.KeepAliveAsync(
+                        new KeepAliveRequest { TaskId = taskResponse.TaskId },
+                        cancellationToken: keepAliveCts.Token);
+                    if (!response.IsAlive)
+                    {
+                        logger.LogWarning(
+                            "Keep-alive for task {taskId} failed. Server reports task is no longer alive. Aborting.",
+                            taskResponse.TaskId);
+                        await keepAliveCts.CancelAsync();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to send keep-alive for task {taskId}", taskResponse.TaskId);
+                }
+            }
+        }, stoppingToken);
 
-        var mergedFile = await FetchFile(taskResponse.TaskId, stream.ResponseStream.ReadAllAsync(stoppingToken));
+        string? downloadedFile = null;
+        string? upscaledFile = null;
+        try
+        {
+            AsyncServerStreamingCall<CbzFileChunk>? stream = client.GetCbzFile(
+                new CbzToUpscaleRequest { TaskId = taskResponse.TaskId },
+                cancellationToken: stoppingToken);
 
-        logger.LogInformation("Merged file {file} for task {taskId}.", mergedFile, taskResponse.TaskId);
+            downloadedFile = await FetchFile(taskResponse.TaskId, stream.ResponseStream.ReadAllAsync(stoppingToken));
+
+            logger.LogInformation("Downloaded file {file} for task {taskId}.", downloadedFile, taskResponse.TaskId);
+
+            upscaledFile = PrepareTempFile(taskResponse.TaskId, "_upscaled");
+            await upscaler.Upscale(downloadedFile, upscaledFile, profile, stoppingToken);
+
+            logger.LogInformation("Upscaled file {file} for task {taskId}.", upscaledFile, taskResponse.TaskId);
+
+            await UploadFile(client, logger, taskResponse.TaskId, upscaledFile, stoppingToken);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to process task {taskId}.", taskResponse.TaskId);
+        }
+        finally
+        {
+            await keepAliveCts.CancelAsync();
+            try
+            {
+                await keepAliveTask;
+            }
+            catch (OperationCanceledException) { }
+
+            if (downloadedFile != null && File.Exists(downloadedFile))
+            {
+                File.Delete(downloadedFile);
+            }
+
+            if (upscaledFile != null && File.Exists(upscaledFile))
+            {
+                File.Delete(upscaledFile);
+            }
+        }
+    }
+
+    private async Task UploadFile(UpscalingService.UpscalingServiceClient client, ILogger<RemoteTaskProcessor> logger,
+        int taskId, string upscaledFile, CancellationToken stoppingToken)
+    {
+        await using FileStream fileStream = File.OpenRead(upscaledFile);
+        AsyncDuplexStreamingCall<CbzFileChunk, UploadUpscaledCbzResponse>? uploadStream =
+            client.UploadUpscaledCbzFile(cancellationToken: stoppingToken);
+        byte[] buffer = new byte[1024 * 1024];
+        int bytesRead;
+        int chunkNumber = 0;
+        while ((bytesRead = await fileStream.ReadAsync(buffer, 0, buffer.Length, stoppingToken)) > 0)
+        {
+            await uploadStream.RequestStream.WriteAsync(
+                new CbzFileChunk
+                {
+                    TaskId = taskId, ChunkNumber = chunkNumber++, Chunk = ByteString.CopyFrom(buffer, 0, bytesRead)
+                }, stoppingToken);
+        }
+
+        await uploadStream.RequestStream.CompleteAsync();
+
+        await foreach (UploadUpscaledCbzResponse response in uploadStream.ResponseStream.ReadAllAsync(stoppingToken))
+        {
+            if (response.Success)
+            {
+                logger.LogInformation("Successfully uploaded upscaled file for task {taskId}.", response.TaskId);
+            }
+            else
+            {
+                logger.LogError("Failed to upload upscaled file for task {taskId}: {message}", response.TaskId,
+                    response.Message);
+            }
+        }
     }
 
     private async Task<string> FetchFile(int taskId, IAsyncEnumerable<CbzFileChunk> stream)
@@ -61,58 +165,55 @@ public class RemoteTaskProcessor(
 
         await foreach (var chunk in stream)
         {
-            Console.WriteLine($"Received chunk {chunk.ChunkNumber}.");
             chunks.Add(chunk.ChunkNumber, chunk.Chunk.ToByteArray());
         }
 
         var tempFile = PrepareTempFile(taskId);
 
         // Sort the files by chunk number and merge them into a single file using binary concatenation
-        using (var output = File.OpenWrite(tempFile))
+        await using (FileStream output = File.OpenWrite(tempFile))
         {
             foreach (var chunk in chunks.OrderBy(c => c.Key))
             {
-                output.Write(chunk.Value, 0, chunk.Value.Length);
+                await output.WriteAsync(chunk.Value.AsMemory(0, chunk.Value.Length));
             }
         }
-
-        Console.WriteLine($"Merged file {tempFile}.");
 
         return tempFile;
     }
 
-    private string PrepareTempFile(int taskId)
+    private string PrepareTempFile(int taskId, string? suffix = null)
     {
         var tempDir = Path.Combine(Path.GetTempPath(), "mangaingestwithupscaling");
         Directory.CreateDirectory(tempDir);
-        return Path.Combine(Path.GetTempPath(), $"upscaled_{taskId}.cbz");
+        return Path.Combine(tempDir, $"task_{taskId}{suffix ?? ""}.cbz");
     }
 
-    private static Shared.Data.LibraryManagement.UpscalerProfile GetProfileFromResponse(Api.Upscaling.UpscalerProfile upscalerProfile)
+    private static UpscalerProfile GetProfileFromResponse(Api.Upscaling.UpscalerProfile upscalerProfile)
     {
-        return new Shared.Data.LibraryManagement.UpscalerProfile()
+        return new UpscalerProfile
         {
             CompressionFormat = upscalerProfile.CompressionFormat switch
             {
-                Api.Upscaling.CompressionFormat.Webp => Shared.Data.LibraryManagement.CompressionFormat.Webp,
-                Api.Upscaling.CompressionFormat.Png => Shared.Data.LibraryManagement.CompressionFormat.Png,
-                Api.Upscaling.CompressionFormat.Jpg => Shared.Data.LibraryManagement.CompressionFormat.Jpg,
-                Api.Upscaling.CompressionFormat.Avif => Shared.Data.LibraryManagement.CompressionFormat.Avif,
+                CompressionFormat.Webp => Shared.Data.LibraryManagement.CompressionFormat.Webp,
+                CompressionFormat.Png => Shared.Data.LibraryManagement.CompressionFormat.Png,
+                CompressionFormat.Jpg => Shared.Data.LibraryManagement.CompressionFormat.Jpg,
+                CompressionFormat.Avif => Shared.Data.LibraryManagement.CompressionFormat.Avif,
                 _ => throw new InvalidOperationException("Unknown compression format.")
             },
             Name = upscalerProfile.Name,
             Quality = upscalerProfile.Quality,
             ScalingFactor = upscalerProfile.ScalingFactor switch
             {
-                Api.Upscaling.ScaleFactor.OneX => Shared.Data.LibraryManagement.ScaleFactor.OneX,
-                Api.Upscaling.ScaleFactor.TwoX => Shared.Data.LibraryManagement.ScaleFactor.TwoX,
-                Api.Upscaling.ScaleFactor.ThreeX => Shared.Data.LibraryManagement.ScaleFactor.ThreeX,
-                Api.Upscaling.ScaleFactor.FourX => Shared.Data.LibraryManagement.ScaleFactor.FourX,
+                ScaleFactor.OneX => Shared.Data.LibraryManagement.ScaleFactor.OneX,
+                ScaleFactor.TwoX => Shared.Data.LibraryManagement.ScaleFactor.TwoX,
+                ScaleFactor.ThreeX => Shared.Data.LibraryManagement.ScaleFactor.ThreeX,
+                ScaleFactor.FourX => Shared.Data.LibraryManagement.ScaleFactor.FourX,
                 _ => throw new InvalidOperationException("Unknown scaling factor.")
             },
             UpscalerMethod = upscalerProfile.UpscalerMethod switch
             {
-                Api.Upscaling.UpscalerMethod.MangaJaNai => Shared.Data.LibraryManagement.UpscalerMethod.MangaJaNai,
+                UpscalerMethod.MangaJaNai => Shared.Data.LibraryManagement.UpscalerMethod.MangaJaNai,
                 _ => throw new InvalidOperationException("Unknown upscaler method.")
             }
         };
