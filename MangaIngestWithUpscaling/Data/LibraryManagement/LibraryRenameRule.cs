@@ -10,9 +10,9 @@ public class LibraryRenameRule
 {
     public int Id { get; set; }
     public int LibraryId { get; set; }
-    public Library Library { get; set; }
+    public Library Library { get; set; } = default!;
 
-    public string Pattern { get; set; }
+    public string Pattern { get; set; } = string.Empty;
     public LibraryRenamePatternType PatternType { get; set; }
     public LibraryRenameTargetField TargetField { get; set; }
     public string Replacement { get; set; } = string.Empty;
@@ -32,10 +32,7 @@ public enum LibraryRenamePatternType
 /// </summary>
 public enum LibraryRenameTargetField
 {
-    [Display(Name = "Series Title")]
-    SeriesTitle,
-    [Display(Name = "File Name")]
-    FileName,
-    [Display(Name = "Chapter Title")]
-    ChapterTitle
+    [Display(Name = "Series Title")] SeriesTitle,
+    [Display(Name = "File Name")] FileName,
+    [Display(Name = "Chapter Title")] ChapterTitle
 }
