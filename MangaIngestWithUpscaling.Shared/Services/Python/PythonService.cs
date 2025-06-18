@@ -1,4 +1,4 @@
-﻿
+﻿using MangaIngestWithUpscaling.Shared.Services.Python;
 using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Reflection;
@@ -16,16 +16,13 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
     {
         string executableExtension = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : "";
 
-        if (PathHelpers.ExistsOnPath($"python{executableExtension}"))
+        if (PathHelpers.ExistsOnPath($"python3.12{executableExtension}"))
         {
-            return PathHelpers.GetFullPath($"python{executableExtension}");
-        }
-        else if (PathHelpers.ExistsOnPath($"python3{executableExtension}"))
-        {
-            return PathHelpers.GetFullPath($"python3{executableExtension}");
+            return PathHelpers.GetFullPath($"python3.12{executableExtension}");
         }
         else
         {
+            logger.LogCritical("Python 3.12 must be installed on the system in order to use upscaling!");
             return null;
         }
     }
@@ -33,7 +30,8 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
     public bool IsPythonInstalled()
     {
         string executableExtension = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : "";
-        return PathHelpers.ExistsOnPath($"python{executableExtension}") || PathHelpers.ExistsOnPath($"python3{executableExtension}");
+        return PathHelpers.ExistsOnPath($"python{executableExtension}") ||
+               PathHelpers.ExistsOnPath($"python3{executableExtension}");
     }
 
     public async Task<PythonEnvironment> PreparePythonEnvironment(string desiredDirectory)
@@ -42,14 +40,14 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
         var environmentPath = Path.GetFullPath(desiredDirectory);
         var relPythonPath = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) switch
         {
-            true => Path.Combine(environmentPath, "Scripts", "python.exe"),
-            false => Path.Combine(environmentPath, "bin", "python")
+            true => Path.Combine(environmentPath, "Scripts", "python3.12.exe"),
+            false => Path.Combine(environmentPath, "bin", "python3.12")
         };
 
         var relPythonBin = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) switch
         {
-            true => "python3.exe",
-            false => "python3"
+            true => "python3.12.exe",
+            false => "python3.12"
         };
 
         string assemblyDir = new FileInfo(Assembly.GetExecutingAssembly().Location).Directory!.FullName;
@@ -80,14 +78,15 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
 
                 if (process.ExitCode != 0)
                 {
-                    throw new InvalidOperationException($"Failed to create virtual environment:\n\n {await process.StandardError.ReadToEndAsync()}");
+                    throw new InvalidOperationException(
+                        $"Failed to create virtual environment:\n\n {await process.StandardError.ReadToEndAsync()}");
                 }
             }
 
 
-
             // install the required modules
-            string moduleInstallCommand = $@"{relPythonPath} -m pip install -U pip wheel --no-warn-script-location && {relPythonPath} -m pip install torch==2.5.1 torchvision --index-url https://download.pytorch.org/whl/cu124 --no-warn-script-location && {relPythonPath} -m pip install ""{backendSrcDirectory}"" --no-warn-script-location";
+            string moduleInstallCommand =
+                $@"{relPythonPath} -m pip install -U pip wheel --no-warn-script-location && {relPythonPath} -m pip install ""{backendSrcDirectory}"" --no-warn-script-location";
 
             using (var process = new Process())
             {
@@ -101,6 +100,7 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
                     process.StartInfo.FileName = "sh";
                     process.StartInfo.Arguments = $"-c \"{moduleInstallCommand}\"";
                 }
+
                 process.StartInfo.RedirectStandardOutput = true;
                 process.StartInfo.RedirectStandardError = true;
                 process.StartInfo.UseShellExecute = false;
@@ -119,7 +119,8 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
 
                 if (process.ExitCode != 0)
                 {
-                    throw new InvalidOperationException($"Failed to install required modules:\n\n {await process.StandardError.ReadToEndAsync()}");
+                    throw new InvalidOperationException(
+                        $"Failed to install required modules:\n\n {await process.StandardError.ReadToEndAsync()}");
                 }
             }
         }
@@ -127,7 +128,8 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
         return new PythonEnvironment(relPythonPath, backendSrcDirectory);
     }
 
-    public Task<string> RunPythonScript(string script, string arguments, CancellationToken? cancellationToken = null, TimeSpan? timout = null)
+    public Task<string> RunPythonScript(string script, string arguments, CancellationToken? cancellationToken = null,
+        TimeSpan? timout = null)
     {
         if (Environment == null)
         {
@@ -138,11 +140,11 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
     }
 
     public async Task<string> RunPythonScript(
-    PythonEnvironment environment,
-    string script,
-    string arguments,
-    CancellationToken? cancellationToken = null,
-    TimeSpan? timeout = null)
+        PythonEnvironment environment,
+        string script,
+        string arguments,
+        CancellationToken? cancellationToken = null,
+        TimeSpan? timeout = null)
     {
         using var process = new Process();
         process.StartInfo.FileName = environment.PythonExecutablePath;
@@ -223,6 +225,7 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
                 if (line == null) break;
 
                 builder.AppendLine(line);
+                logger.LogDebug("Python Output: {line}", line);
                 updateActivity();
             }
         }

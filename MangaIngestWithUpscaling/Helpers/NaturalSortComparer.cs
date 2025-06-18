@@ -22,13 +22,28 @@ public partial class NaturalSortComparer<T>(Func<T, string> propSelector) : ICom
     /// </returns>
     public int Compare(T? x, T? y)
     {
+        if (ReferenceEquals(x, y))
+        {
+            return 0;
+        }
+
+        if (x is null)
+        {
+            return -1;
+        }
+
+        if (y is null)
+        {
+            return 1;
+        }
+
         string xProp = propSelector(x);
         string yProp = propSelector(y);
 
-        // Handle nulls.
-        if (ReferenceEquals(xProp, yProp)) return 0;
-        if (xProp is null) return -1;
-        if (yProp is null) return 1;
+        if (xProp == yProp)
+        {
+            return 0;
+        }
 
         // Split both strings into numeric and non-numeric parts.
         var xParts = _regex.Matches(xProp);

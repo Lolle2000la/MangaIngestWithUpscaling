@@ -1,9 +1,11 @@
 ﻿@page "/mangas"
+@using System.Web
 @using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
 @using MangaIngestWithUpscaling.Services.MetadataHandling
+@implements IDisposable
 
 @inject ApplicationDbContext DbContext
 @inject IDialogService DialogService
@@ -15,12 +17,12 @@
 
 <PageTitle>Browse and Manage Mangas</PageTitle>
 
-<MudTable T="Manga" ServerData="GetMangas"
+<MudTable T="Manga" ServerData="@GetMangas"
           Hover="true" MultiSelection="true"
           SelectOnRowClick="false"
           CanCancelEdit="true"
-          RowEditPreview="BackupBeforeEdit"
-          RowEditCancel="RestoreOnCancel"
+          RowEditPreview="@BackupBeforeEdit"
+          RowEditCancel="@RestoreOnCancel"
           RowEditCommit="async o => await OnCommitEdit(o)"
           @bind-SelectedItems="selectedMangas"
           @ref="table">
@@ -42,25 +44,28 @@
             </MudItem>
             <MudItem xs="12" sm="12" lg="3">
                 <MudTextField Label="Search by title." Placeholder="Search..." Variant="Variant.Outlined"
-                              @bind-Value="searchString"
+                              @bind-Value="SearchString"
                               @bind-Value:after="async () => await table.ReloadServerData()"
                               Immediate="true"
-                              OnInternalInputChanged="async () => await table.ReloadServerData()" />
+                              OnInternalInputChanged="async () => await table.ReloadServerData()"/>
             </MudItem>
             <MudItem xs="12">
                 <MudStack Row="true">
                     <MudButton Variant="Variant.Filled" Color="Color.Primary"
                                StartIcon="@Icons.Material.Filled.Merge"
                                Disabled="@(selectedMangas == null || selectedMangas.Count < 2)"
-                               OnClick="OnMergeSelected">Merge Selected</MudButton>
+                               OnClick="OnMergeSelected">Merge Selected
+                    </MudButton>
                     <MudButton Variant="Variant.Filled" Color="Color.Secondary"
                                StartIcon="@Icons.Material.Filled.Shuffle"
                                Disabled="selectedMangas == null || selectedMangas.Count == 0"
-                               OnClick="OnMoveSelectedToNewLibrary">Move Selected to New Library</MudButton>
+                               OnClick="OnMoveSelectedToNewLibrary">Move Selected to New Library
+                    </MudButton>
                     <MudButton Variant="Variant.Filled" Color="Color.Error"
                                OnClick="OnDeleteSelected"
                                StartIcon="@Icons.Material.Filled.DeleteSweep"
-                               Disabled="@(selectedMangas == null || selectedMangas.Count == 0)">Delete Selected</MudButton>
+                               Disabled="@(selectedMangas == null || selectedMangas.Count == 0)">Delete Selected
+                    </MudButton>
                 </MudStack>
             </MudItem>
         </MudGrid>
@@ -90,46 +95,59 @@
     <RowTemplate>
         <MudTd DataLabel="Library">@context.Library.Name</MudTd>
         <MudTd DataLabel="Primary title">@context.PrimaryTitle</MudTd>
-        <MudTd DataLabel="Chapter count">@context.Chapters.Count() (@context.Chapters.Count(c => c.IsUpscaled) upscaled)</MudTd>
-        <MudTd DataLabel="Should upscale">@(context.ShouldUpscale.HasValue ? context.ShouldUpscale.Value : "Use Library settings")</MudTd>
+        <MudTd
+            DataLabel="Chapter count">@context.Chapters.Count() (@context.Chapters.Count(c => c.IsUpscaled) upscaled)
+        </MudTd>
+        <MudTd
+            DataLabel="Should upscale">@(context.ShouldUpscale.HasValue ? context.ShouldUpscale.Value : "Use Library settings")</MudTd>
         <MudTd>
             <a href="mangas/@context.Id" title="Edit this Manga.">
                 <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Text"
-                               Size="Size.Small" />
+                               Size="Size.Small"/>
             </a>
             <MudIconButton Icon="@Icons.Material.Filled.ImageAspectRatio" Variant="Variant.Text"
                            Size="Size.Small"
                            title="Upscale chapter in this manga. This will upscale all chapters that aren't yet or used a different one from the one configured."
-                           OnClick="_ => OnUpscaleSpecific(context)" />
+                           OnClick="_ => OnUpscaleSpecific(context)"/>
             <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Variant="Variant.Text"
                            OnClick="_ => OnDeleteSpecific(context)"
                            title="Delete this Manga."
-                           Size="Size.Small" />
+                           Size="Size.Small"/>
         </MudTd>
     </RowTemplate>
     <RowEditingTemplate>
         <MudTd DataLabel="Library">@context.Library.Name</MudTd>
-        <MudTd DataLabel="Primary title"><MudTextField @bind-Value="context.PrimaryTitle" Required /></MudTd>
-        <MudTd DataLabel="Chapter count">@context.Chapters.Count() (@context.Chapters.Count(c => c.IsUpscaled) upscaled)</MudTd>
+        <MudTd DataLabel="Primary title">
+            <MudTextField @bind-Value="context.PrimaryTitle" Required/>
+        </MudTd>
+        <MudTd
+            DataLabel="Chapter count">@context.Chapters.Count() (@context.Chapters.Count(c => c.IsUpscaled) upscaled)
+        </MudTd>
         <MudTd DataLabel="Should upscale">
-            <MudCheckBox T="bool?" TriState="true" @bind-Value="context.ShouldUpscale" />
+            <MudCheckBox T="bool?" TriState="true" @bind-Value="context.ShouldUpscale"/>
         </MudTd>
 
     </RowEditingTemplate>
     <PagerContent>
-        <MudTablePager />
+        <MudTablePager/>
     </PagerContent>
 </MudTable>
 
 @code {
     private Library? selectedLibrary;
-    private string searchString = "";
 
-    private HashSet<Manga>? selectedMangas;
 
-    private MudTable<Manga> table;
+    [Parameter]
+    [SupplyParameterFromQuery(Name = "search")]
+    public string SearchString { get; set; } = "";
+
+    private HashSet<Manga> selectedMangas = new();
+
+    private MudTable<Manga> table = default!;
 
     private Manga? mangaBeforeEdit;
+
+    private CompositeDisposable disposables = new();
 
     private async Task<TableData<Manga>> GetMangas(TableState state, CancellationToken cancellationToken)
     {
@@ -144,9 +162,10 @@
             query = query.Where(x => x.LibraryId == selectedLibrary.Id);
         }
 
-        if (!string.IsNullOrWhiteSpace(searchString))
+        if (!string.IsNullOrWhiteSpace(SearchString))
         {
-            query = query.Where(x => x.PrimaryTitle.Contains(searchString.Trim()) || x.OtherTitles.Any(s => s.Title == searchString.Trim()));
+            string trimmedSearchString = SearchString.Trim();
+            query = query.Where(x => x.PrimaryTitle.ToLower().Contains(trimmedSearchString.ToLower()) || x.OtherTitles.Any(s => s.Title.ToLower().Contains(trimmedSearchString.ToLower())));
         }
 
         query = state.SortLabel switch
@@ -157,9 +176,19 @@
             _ => query
         };
 
+        this.WhenAnyValue(x => x.SearchString)
+            .Throttle(TimeSpan.FromMilliseconds(250))
+            .Where(s => HttpUtility.ParseQueryString(new Uri(NavigationManager.Uri).Query).Get("search") != s)
+            .Subscribe(s =>
+            {
+                string newUrl = NavigationManager.GetUriWithQueryParameter("search", s);
+                NavigationManager.NavigateTo(newUrl, forceLoad: false, replace: true);
+            })
+            .DisposeWith(disposables);
+
         try
         {
-            var totalItems = await query.CountAsync();
+            var totalItems = await query.CountAsync(cancellationToken: cancellationToken);
             var items = await query.Skip(state.Page * state.PageSize).Take(state.PageSize).ToListAsync(cancellationToken);
             return new TableData<Manga> { Items = items, TotalItems = totalItems };
         }
@@ -173,9 +202,10 @@
 
     private async Task OnMergeSelected()
     {
+        if (selectedMangas == null || !selectedMangas.Any()) return;
         var parameters = new DialogParameters<MergeMangaDialog>
         {
-            { x=> x.Mangas, selectedMangas.ToList() }
+            { x => x.Mangas, selectedMangas.ToList() }
         };
 
         try
@@ -183,7 +213,7 @@
             var dialog = await DialogService.ShowAsync<MergeMangaDialog>("Merge Mangas", parameters);
             var result = await dialog.Result;
 
-            if (!result.Canceled)
+            if (result is { Canceled: false })
             {
                 await table.ReloadServerData();
             }
@@ -198,15 +228,16 @@
 
     private async Task OnMoveSelectedToNewLibrary()
     {
+        if (!selectedMangas.Any()) return;
         var parameters = new DialogParameters<MoveMangasToLibraryDialog>
         {
-            { x=> x.Mangas, selectedMangas.ToList() }
+            { x => x.Mangas, selectedMangas.ToList() }
         };
         try
         {
             var dialog = await DialogService.ShowAsync<MoveMangasToLibraryDialog>("Move Mangas", parameters);
             var result = await dialog.Result;
-            if (!result.Canceled)
+            if (result is { Canceled: false })
             {
                 await table.ReloadServerData();
             }
@@ -221,9 +252,10 @@
 
     private async Task OnDeleteSelected()
     {
+        if (!selectedMangas.Any()) return;
         var parameters = new DialogParameters<DeleteMangasDialog>
         {
-            { x=> x.Mangas, selectedMangas }
+            { x => x.Mangas, selectedMangas }
         };
 
         try
@@ -231,7 +263,7 @@
             var dialog = await DialogService.ShowAsync<DeleteMangasDialog>("Delete Mangas", parameters);
             var result = await dialog.Result;
 
-            if (!result.Canceled)
+            if (result is { Canceled: false })
             {
                 await table.ReloadServerData();
             }
@@ -250,10 +282,10 @@
         {
             var dialog = await DialogService.ShowAsync<DeleteMangasDialog>("Delete Manga", new DialogParameters<DeleteMangasDialog>
             {
-                { x=> x.Mangas, new List<Manga> { manga } }
+                { x => x.Mangas, new List<Manga> { manga } }
             });
             var result = await dialog.Result;
-            if (!result.Canceled)
+            if (result is { Canceled: false })
             {
                 await table.ReloadServerData();
             }
@@ -268,14 +300,11 @@
 
     private async Task OnUpscaleSpecific(Manga manga)
     {
-        foreach (var chapter in manga.Chapters)
+        if (manga.Library.UpscalerProfile == null) return;
+        foreach (var chapter in manga.Chapters
+                     .Where(chapter => !chapter.IsUpscaled || (chapter.IsUpscaled && chapter.UpscalerProfileId != manga.Library.UpscalerProfileId)))
         {
-            // Upscale if not yet upscaled or if the upscaler profile is different.
-            // The tasks themselves check for this as well, but this will prevent them from piling up in the queue.
-            if (!chapter.IsUpscaled || (chapter.IsUpscaled && chapter.UpscalerProfileId != manga.Library.UpscalerProfileId))
-            {
-                await TaskQueue.EnqueueAsync(new UpscaleTask(chapter, manga.Library.UpscalerProfile));
-            }
+            await TaskQueue.EnqueueAsync(new UpscaleTask(chapter, manga.Library.UpscalerProfile));
         }
     }
 
@@ -286,16 +315,17 @@
 
     private void RestoreOnCancel(object manga)
     {
+        if (mangaBeforeEdit == null) return;
         var mangaToRestore = (Manga)manga;
         mangaToRestore.PrimaryTitle = mangaBeforeEdit.PrimaryTitle;
         mangaToRestore.LibraryId = mangaBeforeEdit.LibraryId;
-        mangaToRestore.Library = mangaBeforeEdit.Library;
         mangaToRestore.ShouldUpscale = mangaBeforeEdit.ShouldUpscale;
     }
 
     private async Task OnCommitEdit(object m)
     {
         Manga manga = (Manga)m;
+        if (mangaBeforeEdit == null) return;
         // if the primary title was changed, change it back and then use the metadata changer.
         if (manga.PrimaryTitle != mangaBeforeEdit.PrimaryTitle)
         {
@@ -304,7 +334,12 @@
             manga.PrimaryTitle = mangaBeforeEdit.PrimaryTitle;
             try
             {
-                await MangaMetadataChanger.ChangeMangaTitle(manga, newTitle.Trim());
+                var renameResult = await MangaMetadataChanger.ChangeMangaTitle(manga, newTitle.Trim());
+                if (renameResult is not RenameResult.Ok)
+                {
+                    await table.ReloadServerData();
+                    return;
+                }
             }
             catch (Exception e)
             {
@@ -324,4 +359,10 @@
             Logger.LogError(e, "Error saving changes to manga {MangaId}", manga.Id);
         }
     }
+
+    public void Dispose()
+    {
+        disposables.Dispose();
+    }
+
 }

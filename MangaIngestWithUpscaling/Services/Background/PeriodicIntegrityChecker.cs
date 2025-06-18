@@ -15,7 +15,6 @@ public class PeriodicIntegrityChecker : BackgroundService
         {
             using var scope = _serviceScopeFactory.CreateScope();
             var logger = scope.ServiceProvider.GetRequiredService<ILogger<PeriodicIntegrityChecker>>();
-            var dbContext = scope.ServiceProvider.GetRequiredService<LibraryIntegrityChecker>();
 
             // Ensure the library integrity. This will at this point primarily check for missing files.
             var libraryIntegrityChecker = scope.ServiceProvider.GetRequiredService<ILibraryIntegrityChecker>();

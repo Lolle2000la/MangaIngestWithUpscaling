@@ -7,15 +7,11 @@ namespace MangaIngestWithUpscaling.Services.LibraryFiltering;
 [RegisterScoped]
 public class LibraryFilteringService : ILibraryFilteringService
 {
-    public List<FoundChapter> FilterChapters(List<FoundChapter> chapters, IEnumerable<LibraryFilterRule> libraryFilterRules)
+    public bool FilterChapter(FoundChapter chapter, IEnumerable<LibraryFilterRule> libraryFilterRules)
     {
-        var filteredChapters = new List<FoundChapter>();
-
-        foreach (var chapter in chapters)
-        {
-            var accepted = libraryFilterRules.Select(rule =>
+        bool accepted = libraryFilterRules.Select(rule =>
             {
-                var targetFieldData = rule.TargetField switch
+                string? targetFieldData = rule.TargetField switch
                 {
                     LibraryFilterTargetField.MangaTitle => chapter.Metadata.ChapterTitle,
                     LibraryFilterTargetField.ChapterTitle => chapter.Metadata.ChapterTitle,
@@ -37,15 +33,9 @@ public class LibraryFilteringService : ILibraryFilteringService
                 // then return false, since we want want to exclude what was matched here.
                 return rule.Action == FilterAction.Include ? ruleMatched : !ruleMatched;
             })
-                // Ensure all rules are satisfied.
-                .Aggregate(true, (current, next) => current && next);
+            // Ensure all rules are satisfied.
+            .Aggregate(true, (current, next) => current && next);
 
-            if (accepted)
-            {
-                filteredChapters.Add(chapter);
-            }
-        }
-        return filteredChapters;
-
+        return accepted;
     }
 }

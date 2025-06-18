@@ -19,6 +19,12 @@ using MudBlazor.Translations;
 using Serilog;
 using System.Data.SQLite;
 
+using System.Text.Json;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.HttpOverrides; // Required for Forwarded Headers
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -49,6 +55,15 @@ builder.Services.AddSerilog((services, lc) => lc
         tableName: "Logs",
         retentionPeriod: TimeSpan.FromDays(7)));
 
+// Configure Forwarded Headers
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    // If the proxy isn't on localhost from the app container's perspective
+    options.KnownProxies.Clear(); 
+    options.KnownNetworks.Clear();
+});
+
 // Add services to the container.
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
@@ -67,13 +82,86 @@ builder.Services.AddScoped<IdentityUserAccessor>();
 builder.Services.AddScoped<IdentityRedirectManager>();
 builder.Services.AddScoped<AuthenticationStateProvider, IdentityRevalidatingAuthenticationStateProvider>();
 
-builder.Services.AddAuthentication(options =>
+// Configure Authentication
+var authBuilder = builder.Services.AddAuthentication(options =>
     {
         options.DefaultScheme = IdentityConstants.ApplicationScheme;
         options.DefaultSignInScheme = IdentityConstants.ExternalScheme;
-    })
-    .AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>("ApiKey", null)
-    .AddIdentityCookies();
+        if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
+        {
+            options.DefaultChallengeScheme = OpenIdConnectDefaults.AuthenticationScheme; // "OIDC"
+        }
+    });
+
+authBuilder.AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>("ApiKey", null);
+authBuilder.AddIdentityCookies();
+
+// Conditionally add OIDC authentication
+if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
+{
+    authBuilder.AddOpenIdConnect(OpenIdConnectDefaults.AuthenticationScheme, options => // Use the constant for scheme name, "OIDC"
+    {
+        builder.Configuration.GetSection("OIDC").Bind(options);
+        options.ResponseType = OpenIdConnectResponseType.Code;
+        options.SaveTokens = true;
+        options.GetClaimsFromUserInfoEndpoint = true;
+        options.UseTokenLifetime = false;
+        options.Scope.Add("openid");
+        options.Scope.Add("profile");
+        options.Scope.Add("email");
+
+        options.Events = new OpenIdConnectEvents
+        {
+            OnTokenValidated = async ctx =>
+            {
+                var signInManager = ctx.HttpContext.RequestServices.GetRequiredService<SignInManager<ApplicationUser>>();
+                var userManager = ctx.HttpContext.RequestServices.GetRequiredService<UserManager<ApplicationUser>>();
+
+                if (ctx.Principal == null)
+                {
+                    ctx.Fail("Principal is null.");
+                    return;
+                }
+
+                var emailClaim = ctx.Principal.FindFirstValue(ClaimTypes.Email) ?? ctx.Principal.FindFirstValue("email");
+                var nameIdentifier = ctx.Principal.FindFirstValue(ClaimTypes.NameIdentifier);
+
+                if (emailClaim != null && nameIdentifier != null)
+                {
+                    var user = await userManager.FindByEmailAsync(emailClaim);
+                    if (user == null)
+                    {
+                        user = new ApplicationUser { UserName = emailClaim, Email = emailClaim, EmailConfirmed = true };
+                        var createUserResult = await userManager.CreateAsync(user);
+                        if (!createUserResult.Succeeded)
+                        {
+                            ctx.Fail($"Failed to create user: {string.Join(", ", createUserResult.Errors.Select(e => e.Description))}");
+                            return;
+                        }
+                    }
+                    
+                    var externalLoginInfo = new UserLoginInfo(ctx.Scheme.Name, nameIdentifier, ctx.Scheme.Name);
+                    var logins = await userManager.GetLoginsAsync(user);
+                    if (!logins.Any(l => l.LoginProvider == externalLoginInfo.LoginProvider && l.ProviderKey == externalLoginInfo.ProviderKey))
+                    {
+                        var addLoginResult = await userManager.AddLoginAsync(user, externalLoginInfo);
+                        if (!addLoginResult.Succeeded)
+                        {
+                            ctx.Fail($"Failed to add OIDC login to user: {string.Join(", ", addLoginResult.Errors.Select(e => e.Description))}");
+                            return;
+                        }
+                    }
+                    await signInManager.SignInAsync(user, isPersistent: false);
+                }
+                else
+                {
+                    ctx.Fail("Email or NameIdentifier claim not found.");
+                    return;
+                }
+            }
+        };
+    });
+}
 
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseSqlite(connectionString, builder =>
@@ -103,10 +191,23 @@ builder.Services.AddDataProtection()
 
 builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSender>();
 
+builder.Services.AddAuthorization(options =>
+{
+    if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
+    {
+        options.FallbackPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
+            .RequireAuthenticatedUser()
+            .Build();
+    }
+});
+
+
 // Add the services used by the app
 builder.Services.RegisterAppServices();
 
 var app = builder.Build();
+
+app.UseForwardedHeaders();
 
 // Apply migrations on startup
 using (var scope = app.Services.CreateScope())
@@ -152,6 +253,9 @@ app.UseRequestLocalization(new RequestLocalizationOptions()
     .AddSupportedUICultures(new[] { "en-US", "de-DE", "ja" }));
 
 
+app.UseAuthentication();
+app.UseAuthorization();
+
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
@@ -175,8 +279,22 @@ app.MapStaticAssets();
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
-
 // Add additional endpoints required by the Identity /Account Razor components.
-app.MapAdditionalIdentityEndpoints();
+// Only map these if OIDC is NOT enabled, or map them conditionally
+if (!app.Configuration.GetValue<bool>("OIDC:Enabled"))
+{
+    app.MapAdditionalIdentityEndpoints();
+}
+
+// Add OIDC Logout Endpoint if OIDC is enabled
+if (app.Configuration.GetValue<bool>("OIDC:Enabled"))
+{
+    app.MapPost("/Account/LogoutOidc", async (HttpContext context, SignInManager<ApplicationUser> signInManager, string? returnUrl) =>
+    {
+        await signInManager.SignOutAsync();
+        await context.SignOutAsync(OpenIdConnectDefaults.AuthenticationScheme, 
+            new AuthenticationProperties { RedirectUri = returnUrl ?? "/" });
+    }).RequireAuthorization(); 
+}
 
 app.Run();

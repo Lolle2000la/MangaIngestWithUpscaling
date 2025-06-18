@@ -1,11 +1,13 @@
 ﻿@using MangaIngestWithUpscaling.Data.BackqroundTaskQueue
-
 <MudTable T="PersistedTask" Items="@Tasks" RowsPerPage="10" Elevation="3"
           Dense="true"
           @ref="Table">
     <ToolBarContent>
         <MudText Typo="Typo.h6">@Title</MudText>
-        <MudSpacer />
+        <MudSpacer/>
+        <MudButton StartIcon="@Icons.Material.Filled.Delete"
+                   Variant="Variant.Outlined" Color="Color.Primary"
+                   OnClick="OnClearFailed">Clear Failed</MudButton>
         <MudButton StartIcon="@Icons.Material.Filled.ClearAll"
                    Variant="Variant.Filled" Color="Color.Primary"
                    OnClick="OnClearCompleted">Clear Completed</MudButton>
@@ -14,7 +16,10 @@
         <MudTh><MudTableSortLabel InitialDirection="SortDirection.Descending" SortBy="new Func<PersistedTask, object>(x=>x.Order)">Order</MudTableSortLabel></MudTh>
         <MudTh><MudTableSortLabel SortBy="new Func<PersistedTask, object>(x=>x.Data.TaskFriendlyName)">Name</MudTableSortLabel></MudTh>
         <MudTh><MudTableSortLabel SortBy="new Func<PersistedTask, object>(x=>x.CreatedAt)">Queued At</MudTableSortLabel></MudTh>
-        <MudTh><MudTableSortLabel SortBy="new Func<PersistedTask, object>(x=>x.ProcessedAt)">Finished At</MudTableSortLabel></MudTh>
+        <MudTh>
+            <MudTableSortLabel SortBy="new Func<PersistedTask, object?>(x=>x.ProcessedAt)">Finished At
+            </MudTableSortLabel>
+        </MudTh>
         <MudTh><MudTableSortLabel SortBy="new Func<PersistedTask, object>(x=>x.Status)">Status</MudTableSortLabel></MudTh>
         <MudTh>Actions</MudTh>
     </HeaderContent>
@@ -70,6 +75,7 @@
     [Parameter] public string Title { get; set; } = "Tasks";
 
     [Parameter] public EventCallback OnClearCompleted { get; set; } = EventCallback.Empty;
+    [Parameter] public EventCallback OnClearFailed { get; set; } = EventCallback.Empty;
     [Parameter] public EventCallback<PersistedTask> OnRetryFailed { get; set; } = EventCallback<PersistedTask>.Empty;
     [Parameter] public EventCallback<PersistedTask> OnCancel { get; set; } = EventCallback<PersistedTask>.Empty;
     [Parameter] public EventCallback<PersistedTask> OnRunNow { get; set; } = EventCallback<PersistedTask>.Empty;

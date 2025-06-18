@@ -1,7 +1,6 @@
 ﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.MangaManagement
-
 @inject ApplicationDbContext DbContext
 @inject IMangaLibraryMover MangaMover
 
@@ -33,13 +32,11 @@
 </MudDialog>
 
 @code {
-    [CascadingParameter]
-    private IMudDialogInstance MudDialog { get; set; }
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
 
-    [Parameter]
-    public List<Manga> Mangas { get; set; }
+    [Parameter] public required List<Manga> Mangas { get; set; }
 
-    private Library selected;
+    private Library? selected;
 
     async Task Submit()
     {

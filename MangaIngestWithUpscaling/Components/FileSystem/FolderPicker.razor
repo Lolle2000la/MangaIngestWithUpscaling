@@ -1,6 +1,4 @@
 ﻿@inherits ReactiveInjectableComponentBase<FolderPickerViewModel>
-@using System.IO
-@using MudBlazor
 
 @inject FolderPickerViewModel viewModel
 
@@ -30,7 +28,7 @@
     <MudPaper Elevation="2">
         <MudStack Row="true" AlignItems="AlignItems.Center">
             <MudButton Variant="Variant.Outlined"
-                       OnClick="async (e) => await ViewModel?.GoToParentCommand.Execute()"
+                       OnClick="async e => await ViewModel!.GoToParentCommand.Execute()"
                        Disabled="@(ViewModel?.Disabled == true || (ViewModel?.Loading ?? false))">
                 Go to Parent
             </MudButton>
@@ -39,7 +37,7 @@
                        Color="Color.Primary"
                        StartIcon="@Icons.Material.Filled.Refresh"
                        Disabled="@(ViewModel?.Disabled == true || (ViewModel?.Loading ?? false))"
-                       OnClick="async (e) => await ViewModel?.LoadDirectoryItemsCommand.Execute()">
+                       OnClick="async e => await ViewModel!.LoadDirectoryItemsCommand.Execute()">
                 Refresh
             </MudButton>
         </MudStack>
@@ -51,9 +49,10 @@
                  Disabled="@(ViewModel?.Disabled == true || (ViewModel?.Loading ?? false))"
                  SelectedValueChanged="v => ViewModel!.SelectedPath = v.Path">
         <ItemTemplate>
-            <MudTreeViewItem T="DirectoryItem" @key="context.Value?.Path" Value="@context.Value" Text="@context.Value?.Name"
+            <MudTreeViewItem T="DirectoryItem?" @key="context.Value?.Path" Value="@context.Value"
+                             Text="@context.Value?.Name"
                              Icon="@Icons.Material.Filled.FolderOpen"
-                             ItemsChanged="@(new Action<IReadOnlyCollection<TreeItemData<DirectoryItem>>>(items => ViewModel?.HandleItemsLoaded(context, items)))"
+                             ItemsChanged="@(new Action<IReadOnlyCollection<TreeItemData<DirectoryItem?>>?>(items => ViewModel?.HandleItemsLoaded(context, items)))"
                              CanExpand="@context.Expandable"
                              @bind-Expanded="@context.Expanded"
                              Items="@context.Children"
@@ -79,39 +78,16 @@
     [Parameter]
     public bool Required { get; set; } = false;
 
-    [Parameter]
-    public string RootDirectory
-    {
-        get => ViewModel?.RootDirectory ?? Path.GetPathRoot(Path.GetFullPath("."))!;
-        set => ViewModel!.RootDirectory = value;
-    }
+    [Parameter][EditorRequired] public required string RootDirectory { get; set; }
 
-    [Parameter]
-    public string? SelectedPath
-    {
-        get => ViewModel?.SelectedPath;
-        set
-        {
-            ViewModel.SelectedPath = value;
-        }
-    }
+    [Parameter] public string? SelectedPath { get; set; }
 
     [Parameter]
     public EventCallback<string> SelectedPathChanged { get; set; }
 
-    [Parameter]
-    public string Title
-    {
-        get => ViewModel?.Title ?? "";
-        set => ViewModel!.Title = value;
-    }
+    [Parameter][EditorRequired] public required string Title { get; set; }
 
-    [Parameter]
-    public bool Disabled
-    {
-        get => ViewModel?.Disabled ?? false;
-        set => ViewModel!.Disabled = value;
-    }
+    [Parameter] public bool Disabled { get; set; }
 
     protected override void OnInitialized()
     {

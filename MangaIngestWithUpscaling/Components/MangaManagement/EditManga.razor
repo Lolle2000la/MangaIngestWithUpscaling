@@ -10,113 +10,124 @@
 @inject ISnackbar Snackbar
 @inject ILogger<EditManga> Logger
 
-<PageTitle>Edit "@manga.PrimaryTitle"</PageTitle>
+@if (manga is not null)
+{
+    <PageTitle>Edit "@manga.PrimaryTitle"</PageTitle>
 
-<MudStack>
-    <MudForm @ref="form" @bind-IsValid="isValid" @bind-IsTouched="isTouched">
-        <MudCard Elevation="2">
+    <MudStack>
+        <MudForm @ref="form" @bind-IsValid="isValid" @bind-IsTouched="isTouched">
+            <MudCard Elevation="2">
+                <MudCardHeader>
+                    <MudStack Row="true" AlignItems="AlignItems.Center">
+                        <a href="mangas">
+                            <MudIconButton Icon="@Icons.Material.Filled.ArrowBack"/>
+                        </a>
+                        <MudText Typo="Typo.h4">Edit "@manga.PrimaryTitle"</MudText>
+                    </MudStack>
+                </MudCardHeader>
+                <MudCardContent>
+                    <MudGrid Spacing="4">
+                        <MudItem xs="12">
+                            <MudText Typo="Typo.h5">General Information</MudText>
+                        </MudItem>
+                        <MudItem xs="12">
+                            <MudStack Spacing="0">
+                                <MudTextField Label="Primary Title"
+                                              @bind-Value="manga.PrimaryTitle"
+                                              Immediate="true"
+                                              Variant="Variant.Outlined"
+                                              HelperText="The primary title you want this manga to go by."
+                                              Required/>
+                                <MudCheckBox T="bool" Label="Add old title to other titles automatically when changed."
+                                             @bind-Value="addOldTitleToOtherTitles"
+                                             Size="Size.Small"/>
+                            </MudStack>
+                        </MudItem>
+                        <MudItem xs="12">
+                            <MudStack>
+                                <MudText Typo="Typo.h6">Other Titles</MudText>
+                                <MudText Typo="Typo.body1">
+                                    Other titles this manga is known by.
+                                    Mangas in ingest will be sorted into the folders using these.
+                                </MudText>
+                                <MudStack>
+                                    <MudStack Row="true" Spacing="1">
+                                        <MudTextField Label="New Title" @bind-Value="newTitle"
+                                                      Immediate="true"
+                                                      Class="flex-grow-1"
+                                                      @ref="newTitleField"/>
+                                        <MudIconButton Icon="@Icons.Material.Filled.AddCircle"
+                                                       Size="Size.Medium" Class="flex-shrink-0"
+                                                       Disabled="string.IsNullOrWhiteSpace(newTitle)"
+                                                       OnClick="_ => AddAlternativeTitle()" Color="Color.Success"/>
+                                    </MudStack>
+                                    <MudList T="MangaAlternativeTitle"
+                                             @ref="titlesList" @bind-SelectedValues="selectedTitles">
+                                        @foreach (var title in manga.OtherTitles.OrderBy(t => t.Title))
+                                        {
+                                            <MudListItem Value="@title">
+                                                <MudStack Row="true" AlignItems="AlignItems.Center">
+                                                    <MudText>@title.Title</MudText>
+                                                    <MudSpacer/>
+                                                    <MudIconButton Icon="@Icons.Material.Filled.RemoveCircle"
+                                                                   Color="Color.Error"
+                                                                   Size="Size.Small"
+                                                                   OnClick="() => manga.OtherTitles.Remove(title)"/>
+                                                </MudStack>
+                                            </MudListItem>
+                                        }
+                                    </MudList>
+                                </MudStack>
+                            </MudStack>
+                        </MudItem>
+                    </MudGrid>
+                </MudCardContent>
+                <MudCardActions>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save"
+                               Disabled="@(!isTouched || !isValid)">Save
+                    </MudButton>
+                </MudCardActions>
+            </MudCard>
+        </MudForm>
+
+        <MudCard>
             <MudCardHeader>
-                <MudStack Row="true" AlignItems="AlignItems.Center">
-                    <a href="mangas"><MudIconButton Icon="@Icons.Material.Filled.ArrowBack" /></a>
-                    <MudText Typo="Typo.h4">Edit "@manga.PrimaryTitle"</MudText>
+                <MudStack>
+                    <MudText Typo="Typo.h5">Chapters</MudText>
+                    <MudText>
+                        Manage the chapters of this manga.
+                    </MudText>
+                    <MudText Color="Color.Error">
+                        Deleting a chapter will remove it from the library and the filesystem.
+                    </MudText>
                 </MudStack>
             </MudCardHeader>
             <MudCardContent>
-                <MudGrid Spacing="4">
-                    <MudItem xs="12">
-                        <MudText Typo="Typo.h5">General Information</MudText>
-                    </MudItem>
-                    <MudItem xs="12">
-                        <MudStack Spacing="0">
-                            <MudTextField Label="Primary Title"
-                            @bind-Value="manga.PrimaryTitle"
-                            Immediate="true"
-                            Variant="Variant.Outlined"
-                            HelperText="The primary title you want this manga to go by."
-                            Required />
-                            <MudCheckBox T="bool" Label="Add old title to other titles automatically when changed."
-                            @bind-Value="addOldTitleToOtherTitles"
-                            Size="Size.Small" />
-                        </MudStack>
-                    </MudItem>
-                    <MudItem xs="12">
-                        <MudStack>
-                            <MudText Typo="Typo.h6">Other Titles</MudText>
-                            <MudText Typo="Typo.body1">
-                                Other titles this manga is known by.
-                                Mangas in ingest will be sorted into the folders using these.
-                            </MudText>
-                            <MudStack>
-                                <MudStack Row="true" Spacing="1">
-                                    <MudTextField Label="New Title" @bind-Value="newTitle"
-                                    Immediate="true"
-                                    Class="flex-grow-1"
-                                    @ref="newTitleField" />
-                                    <MudIconButton Icon="@Icons.Material.Filled.AddCircle"
-                                    Size="Size.Medium" Class="flex-shrink-0"
-                                    Disabled="string.IsNullOrWhiteSpace(newTitle)"
-                                    OnClick="_ => AddAlternativeTitle()" Color="Color.Success" />
-                                </MudStack>
-                                <MudList T="MangaAlternativeTitle"
-                                @ref="titlesList" @bind-SelectedValues="selectedTitles">
-                                    @foreach (var title in manga.OtherTitles.OrderBy(t => t.Title))
-                                    {
-                                        <MudListItem Value="@title">
-                                            <MudStack Row="true" AlignItems="AlignItems.Center">
-                                                <MudText>@title.Title</MudText>
-                                                <MudSpacer />
-                                                <MudIconButton Icon="@Icons.Material.Filled.RemoveCircle"
-                                                Color="Color.Error"
-                                                Size="Size.Small"
-                                                OnClick="() => manga.OtherTitles.Remove(title)" />
-                                            </MudStack>
-                                        </MudListItem>
-                                    }
-                                </MudList>
-                            </MudStack>
-                        </MudStack>
-                    </MudItem>
-                </MudGrid>
+                <ChapterList Manga="manga"/>
             </MudCardContent>
-            <MudCardActions>
-                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Save" Disabled="@(!isTouched || !isValid)">Save</MudButton>
-            </MudCardActions>
         </MudCard>
-    </MudForm>
-
-    <MudCard>
-        <MudCardHeader>
-            <MudStack>
-                <MudText Typo="Typo.h5">Chapters</MudText>
-                <MudText>
-                    Manage the chapters of this manga.
-                </MudText>
-                <MudText Color="Color.Error">
-                    Deleting a chapter will remove it from the library and the filesystem.
-                </MudText>
-            </MudStack>
-        </MudCardHeader>
-        <MudCardContent>
-            <ChapterList Manga="@manga" />
-        </MudCardContent>
-    </MudCard>
-</MudStack>
+    </MudStack>
+}
+else
+{
+    <MudText Typo="Typo.h4">Loading...</MudText>
+}
 
 @code {
-    [Parameter] public int MangaId { get; set; }
+    [Parameter] public required int MangaId { get; set; }
 
-    private Manga manga;
+    private Manga? manga;
     private bool isValid;
     private bool isTouched;
-    private string originalTitle;
-    private string newTitle;
+    private string originalTitle = string.Empty;
+    private string newTitle = string.Empty;
     private bool addOldTitleToOtherTitles = true;
 
-    private IReadOnlyCollection<MangaAlternativeTitle> selectedTitles;
+    private IReadOnlyCollection<MangaAlternativeTitle>? selectedTitles;
 
-    private MudForm form;
-    private MudList<MangaAlternativeTitle> titlesList;
-    private MudTextField<string> newTitleField;
+    private MudForm form = default!;
+    private MudList<MangaAlternativeTitle> titlesList = default!;
+    private MudTextField<string> newTitleField = default!;
 
     protected override async Task OnInitializedAsync()
     {
@@ -129,51 +140,67 @@
         if (manga == null)
         {
             NavigationManager.NavigateTo("/mangas");
+            return;
         }
+
         originalTitle = manga.PrimaryTitle;
     }
 
     private void AddAlternativeTitle()
     {
-        if (!string.IsNullOrEmpty(newTitle))
+        if (!string.IsNullOrEmpty(newTitle) && manga is not null)
+        {
             manga.OtherTitles.Add(new MangaAlternativeTitle
-                {
-                    Title = newTitle,
-                    MangaId = manga.Id,
-                    Manga = manga
-                });
+            {
+                Title = newTitle,
+                MangaId = manga.Id,
+                Manga = manga
+            });
+        }
     }
+
 
     private async Task Save()
     {
-        if (isTouched && isValid)
+        if (manga is null)
         {
-            if (originalTitle != manga.PrimaryTitle)
+            return;
+        }
+
+        await form.Validate();
+        if (!isValid)
+        {
+            Snackbar.Add("Please fix the errors in the form.", Severity.Error);
+            return;
+        }
+
+        try
+        {
+            if (manga.PrimaryTitle != originalTitle)
             {
-                var newTitle = manga.PrimaryTitle.Trim();
+                var newTitle = manga.PrimaryTitle;
                 manga.PrimaryTitle = originalTitle;
-                originalTitle = newTitle;
-                try
+                var result = await MetadataChanger.ChangeMangaTitle(manga, newTitle, addOldTitleToOtherTitles);
+                if (result is not RenameResult.Ok)
                 {
-                    await MetadataChanger.ChangeMangaTitle(manga, newTitle, addOldTitleToOtherTitles);
-                }
-                catch (Exception e)
-                {
-                    Snackbar.Add($"Failed to change title: {e.Message}", Severity.Error);
-                    Logger.LogError(e, "Failed to change title of manga {MangaId} to {NewTitle}", manga.Id, newTitle);
+                    Snackbar.Add("Failed to change manga title.", Severity.Error);
+                    return;
                 }
             }
 
-            try
-            {
-                await DbContext.SaveChangesAsync();
-                NavigationManager.NavigateTo("/mangas");
-            }
-            catch (Exception e)
-            {
-                Snackbar.Add($"Failed to save changes: {e.Message}", Severity.Error);
-                Logger.LogError(e, "Failed to save changes to manga {MangaId}", manga.Id);
-            }
+            DbContext.Update(manga);
+            await DbContext.SaveChangesAsync();
+
+            Snackbar.Add("Manga updated successfully.", Severity.Success);
+            NavigationManager.NavigateTo("/mangas");
+        }
+        catch (Exception e)
+        {
+            Snackbar.Add($"Error: {e.Message}", Severity.Error);
+            Logger.LogError(e, "Error saving manga {MangaId}", manga.Id);
         }
     }
+
 }
+
+

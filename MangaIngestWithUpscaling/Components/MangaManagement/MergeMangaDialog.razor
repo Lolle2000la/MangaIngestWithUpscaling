@@ -1,7 +1,6 @@
 ﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.MangaManagement
-
 @inject ApplicationDbContext DbContext
 @inject IMangaMerger MangaMerger
 
@@ -28,16 +27,18 @@
 </MudDialog>
 
 @code {
-    [CascadingParameter]
-    private IMudDialogInstance MudDialog { get; set; }
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
 
-    [Parameter]
-    public List<Manga> Mangas { get; set; }
+    [Parameter] public required List<Manga> Mangas { get; set; }
 
-    private Manga primary;
+    private Manga? primary;
 
     async Task Submit()
     {
+        if (primary == null)
+        {
+            return;
+        }
         var toBeMerged = Mangas.Where(m => m != primary);
         await MangaMerger.MergeAsync(primary, toBeMerged);
         MudDialog.Close(DialogResult.Ok(true));

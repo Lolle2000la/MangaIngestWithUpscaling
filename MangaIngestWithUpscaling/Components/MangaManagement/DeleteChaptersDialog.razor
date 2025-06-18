@@ -1,7 +1,6 @@
 ﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.ChapterManagement
-
 @inject ApplicationDbContext DbContext
 @inject IChapterDeletion DeletionService
 
@@ -25,11 +24,9 @@
 
 
 @code {
-    [CascadingParameter]
-    private IMudDialogInstance MudDialog { get; set; }
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
 
-    [Parameter]
-    public IReadOnlyCollection<Chapter> Chapters { get; set; }
+    [Parameter] public required IReadOnlyCollection<Chapter> Chapters { get; set; }
 
     private bool DeleteOriginalFiles { get; set; }
     private bool DeleteUpscaledFiles { get; set; }

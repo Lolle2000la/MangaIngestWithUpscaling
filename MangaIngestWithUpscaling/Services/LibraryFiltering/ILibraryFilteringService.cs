@@ -5,5 +5,5 @@ namespace MangaIngestWithUpscaling.Services.LibraryFiltering;
 
 public interface ILibraryFilteringService
 {
-    List<FoundChapter> FilterChapters(List<FoundChapter> chapters, IEnumerable<LibraryFilterRule> libraryFilterRules);
+    bool FilterChapter(FoundChapter chapter, IEnumerable<LibraryFilterRule> libraryFilterRules);
 }

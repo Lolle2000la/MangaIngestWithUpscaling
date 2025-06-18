@@ -1,9 +1,7 @@
-﻿@using MangaIngestWithUpscaling.Data.BackqroundTaskQueue
+﻿@using System.Collections.ObjectModel
+@using MangaIngestWithUpscaling.Data.BackqroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
-@using MangaIngestWithUpscaling.Helpers
-@using Microsoft.EntityFrameworkCore
-
 @implements IDisposable
 
 @inject ApplicationDbContext DbContext
@@ -24,6 +22,7 @@
     <MudItem lg="6" xs="12">
         <TaskTable Tasks="@standardTasks" Title="Standard Tasks"
                    OnClearCompleted="OnClearCompletedStandardTasks"
+                   OnClearFailed="OnClearFailedStandardTasks"
                    OnRetryFailed="OnRetryFailed"
                    OnDelete="OnDelete"
                    OnCancel="OnCancelStandardTask"
@@ -32,6 +31,7 @@
     <MudItem lg="6" xs="12">
         <TaskTable Tasks="@upscaleTasks" Title="Upscaling Tasks"
                    OnClearCompleted="OnClearCompletedUpscaleTasks"
+                   OnClearFailed="OnClearFailedUpscaleTasks"
                    OnRetryFailed="OnRetryFailed"
                    OnDelete="OnDelete"
                    OnCancel="OnCancelUpscaleTask"
@@ -40,8 +40,8 @@
 </MudGrid>
 
 @code {
-    private List<PersistedTask> standardTasks { get; set; } = [];
-    private List<PersistedTask> upscaleTasks { get; set; } = [];
+    private ObservableCollection<PersistedTask> standardTasks { get; set; } = [];
+    private ObservableCollection<PersistedTask> upscaleTasks { get; set; } = [];
 
     private async Task OnClearCompletedStandardTasks()
     {
@@ -50,15 +50,35 @@
             var completedTasks = standardTasks.Where(x => x.Status == PersistedTaskStatus.Completed).ToList();
             foreach (var task in completedTasks)
             {
-                DbContext.PersistedTasks.Remove(task);
+                DbContext.Remove(task);
+                standardTasks.Remove(task);
             }
             await DbContext.SaveChangesAsync();
-            standardTasks = standardTasks.Where(x => x.Status != PersistedTaskStatus.Completed).ToList();
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Failed to clear completed tasks");
             Snackbar.Add("Failed to clear completed tasks: " + ex.Message, Severity.Error);
+            await LoadTasks();
+        }
+    }
+
+    private async Task OnClearFailedStandardTasks()
+    {
+        try
+        {
+            var failedTasks = standardTasks.Where(x => x.Status == PersistedTaskStatus.Failed).ToList();
+            foreach (var task in failedTasks)
+            {
+                DbContext.Remove(task);
+                standardTasks.Remove(task);
+            }
+            await DbContext.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to clear failed tasks");
+            Snackbar.Add("Failed to clear failed tasks: " + ex.Message, Severity.Error);
             await LoadTasks();
         }
     }
@@ -70,15 +90,35 @@
             var completedTasks = upscaleTasks.Where(x => x.Status == PersistedTaskStatus.Completed).ToList();
             foreach (var task in completedTasks)
             {
-                DbContext.PersistedTasks.Remove(task);
+                DbContext.Remove(task);
+                upscaleTasks.Remove(task);
             }
             await DbContext.SaveChangesAsync();
-            upscaleTasks = upscaleTasks.Where(x => x.Status != PersistedTaskStatus.Completed).ToList();
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Failed to clear completed tasks");
             Snackbar.Add("Failed to clear completed tasks: " + ex.Message, Severity.Error);
+            await LoadTasks();
+        }
+    }
+
+    private async Task OnClearFailedUpscaleTasks()
+    {
+        try
+        {
+            var failedTasks = upscaleTasks.Where(x => x.Status == PersistedTaskStatus.Failed).ToList();
+            foreach (var task in failedTasks)
+            {
+                DbContext.Remove(task);
+                upscaleTasks.Remove(task);
+            }
+            await DbContext.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to clear failed tasks");
+            Snackbar.Add("Failed to clear failed tasks: " + ex.Message, Severity.Error);
             await LoadTasks();
         }
     }
@@ -119,7 +159,7 @@
         }
     }
 
-    private void OnCancelStandardTask(PersistedTask task)
+    private async Task OnCancelStandardTask(PersistedTask task)
     {
         try
         {
@@ -129,11 +169,11 @@
         {
             Logger.LogError(ex, "Failed to cancel task {TaskId}", task.Id);
             Snackbar.Add("Failed to cancel task: " + ex.Message, Severity.Error);
-            LoadTasks();
+            await LoadTasks();
         }
     }
 
-    private void OnCancelUpscaleTask(PersistedTask task)
+    private async Task OnCancelUpscaleTask(PersistedTask task)
     {
         try
         {
@@ -143,7 +183,7 @@
         {
             Logger.LogError(ex, "Failed to cancel task {TaskId}", task.Id);
             Snackbar.Add("Failed to cancel task: " + ex.Message, Severity.Error);
-            LoadTasks();
+            await LoadTasks();
         }
     }
 
@@ -164,8 +204,8 @@
     private async Task LoadTasks()
     {
         var allTasks = await DbContext.PersistedTasks.ToListAsync();
-        standardTasks = allTasks.Where(x => x.Data is not UpscaleTask and not RenameUpscaledChaptersSeriesTask).ToList();
-        upscaleTasks = allTasks.Where(x => x.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask).ToList();
+        standardTasks = new ObservableCollection<PersistedTask>(allTasks.Where(x => x.Data is not UpscaleTask and not RenameUpscaledChaptersSeriesTask).ToList());
+        upscaleTasks = new ObservableCollection<PersistedTask>(allTasks.Where(x => x.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask).ToList());
     }
 
     public void Dispose()
@@ -223,7 +263,7 @@
         return to;
     }
 
-    private async Task AddOrAssignTask(List<PersistedTask> tasks, PersistedTask task)
+    private async Task AddOrAssignTask(ObservableCollection<PersistedTask> tasks, PersistedTask task)
     {
         var existingTask = tasks.FirstOrDefault(x => x.Id == task.Id);
         if (existingTask != null)
@@ -232,7 +272,16 @@
         }
         else
         {
-            tasks.Add(AssingPersistedTask(await DbContext.PersistedTasks.FindAsync(task.Id), task));
+            var taskFromDb = await DbContext.PersistedTasks.FindAsync(task.Id);
+            if (taskFromDb != null)
+            {
+                tasks.Add(AssingPersistedTask(taskFromDb, task));
+            }
+            else
+            {
+                Snackbar.Add("Some task has been received, but no matching task was found.", Severity.Warning);
+                Logger.LogWarning("Some task has been received, but no matching task was found. (ID: {TaskId})", task.Id);
+            }
         }
     }
 }

@@ -30,6 +30,7 @@ public class MangaLibraryMover(
         {
             await dbContext.Entry(manga).Collection(m => m.Chapters).LoadAsync(cancellationToken);
         }
+
         if (!dbContext.Entry(manga).Reference(m => m.Library).IsLoaded)
         {
             await dbContext.Entry(manga).Reference(m => m.Library).LoadAsync(cancellationToken);
@@ -47,15 +48,17 @@ public class MangaLibraryMover(
         // Let's get all the target paths we need and ensure they exist.
         // This is where we will move the chapters to.
         var targetNotUpscaledLibraryPath = Path.Combine(
-            targetLibrary.NotUpscaledLibraryPath, 
+            targetLibrary.NotUpscaledLibraryPath,
             PathEscaper.EscapeFileName(manga.PrimaryTitle));
         if (!Directory.Exists(targetNotUpscaledLibraryPath))
         {
             fileSystem.CreateDirectory(targetNotUpscaledLibraryPath);
         }
+
         var targetUpscaledLibraryPath = targetLibrary.UpscaledLibraryPath == null
-            ? null : Path.Combine(targetLibrary.UpscaledLibraryPath, manga.PrimaryTitle);
-        if (!Directory.Exists(targetUpscaledLibraryPath))
+            ? null
+            : Path.Combine(targetLibrary.UpscaledLibraryPath, PathEscaper.EscapeFileName(manga.PrimaryTitle));
+        if (targetUpscaledLibraryPath != null && !Directory.Exists(targetUpscaledLibraryPath))
         {
             fileSystem.CreateDirectory(targetUpscaledLibraryPath);
         }
@@ -94,11 +97,15 @@ public class MangaLibraryMover(
 
             if (oldLibrary.UpscaledLibraryPath == null)
             {
-                logger.LogWarning("Upscaled library path not set for library {LibraryId} even though chapter {ChapterId} is supposed to be upscaled within it.", oldLibrary.Id, chapter.Id);
+                logger.LogWarning(
+                    "Upscaled library path not set for library {LibraryId} even though chapter {ChapterId} is supposed to be upscaled within it.",
+                    oldLibrary.Id, chapter.Id);
                 continue;
             }
 
-            var sourceUpscaledPath = Path.Combine(oldLibrary.UpscaledLibraryPath, chapter.RelativePath); // this is again only a calculated property.
+            string sourceUpscaledPath =
+                Path.Combine(oldLibrary.UpscaledLibraryPath,
+                    chapter.RelativePath); // this is again only a calculated property.
 
             // Let's make sure we have all the paths we need. If not, we should log a warning and continue with the next chapter.
             if (sourceUpscaledPath == null)
@@ -109,7 +116,8 @@ public class MangaLibraryMover(
 
             if (targetUpscaledLibraryPath == null)
             {
-                logger.LogWarning("Target library {libraryId} does not have an upscaled library path. Skipping.", targetLibrary.Id);
+                logger.LogWarning("Target library {libraryId} does not have an upscaled library path. Skipping.",
+                    targetLibrary.Id);
                 continue;
             }
 

@@ -1,16 +1,13 @@
-﻿@using DynamicData
+﻿@using System.Collections.ObjectModel
+@using DynamicData
 @using MangaIngestWithUpscaling.Data.LibraryManagement
-@using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Helpers
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
-@using MangaIngestWithUpscaling.Shared.Services.FileSystem
+@using MangaIngestWithUpscaling.Services.FileSystem
 @using MangaIngestWithUpscaling.Services.Integrations
 @using MangaIngestWithUpscaling.Services.LibraryIntegrity
 @using MangaIngestWithUpscaling.Services.MetadataHandling
-@using System.Collections.ObjectModel
-@using MangaIngestWithUpscaling.Shared.Services.MetadataHandling
-
 @inject ApplicationDbContext DbContext
 @inject IMetadataHandlingService MetadataHandler
 @inject IMangaMetadataChanger MangaMetadataChanger
@@ -27,28 +24,28 @@
           Dense="true"
           MultiSelection="true"
           CanCancelEdit="true"
-          RowEditCommit="r => OnChapterMetadataCommit((ChapterItem)r)"
-          RowEditCancel="r => OnChapterMetadataDiscard((ChapterItem)r)">
+          RowEditCommit="r => _ = OnChapterMetadataCommit(r as ChapterItem)"
+          RowEditCancel="r => OnChapterMetadataDiscard(r as ChapterItem)">
     <ToolBarContent>
         <MudStack Row>
             <MudButton StartIcon="@Icons.Material.Filled.Delete"
                        Color="Color.Error"
                        Variant="Variant.Text"
-                       Disabled="selectedChapters == null || selectedChapters.Count == 0"
+                       Disabled="selectedChapters.Count == 0"
                        OnClick="@(async () => await DeleteSelected())">
                 Delete Selected
             </MudButton>
             <MudButton StartIcon="@Icons.Material.Filled.ArrowUpward"
                        Color="Color.Primary"
                        Variant="Variant.Text"
-                       Disabled="selectedChapters == null || selectedChapters.Count == 0 || !selectedChapters.Any(c => !c.Chapter.IsUpscaled)"
-                       OnClick="@(() => selectedChapters?.Where(c => !c.Chapter.IsUpscaled).ToList().ForEach(async c => await UpscaleChapter(c.Chapter)))">
+                       Disabled="selectedChapters.Count == 0 || selectedChapters.All(c => c.Chapter.IsUpscaled)"
+                       OnClick="@UpscaleSelectedChapters">
                 Upscale Selected
             </MudButton>
             <MudButton StartIcon="@Icons.Material.Filled.ArrowDownward"
                        Color="Color.Secondary"
                        Variant="Variant.Text"
-                       Disabled="selectedChapters == null || selectedChapters.Count == 0 || !selectedChapters.Any(c => c.Chapter.IsUpscaled)"
+                       Disabled="selectedChapters.Count == 0 || !selectedChapters.Any(c => c.Chapter.IsUpscaled)"
                        OnClick="@(async () => await DeleteSelectedUpscaled())">
                 Delete Upscaled Selected
             </MudButton>
@@ -62,7 +59,7 @@
         <MudTh>Actions</MudTh>
     </HeaderContent>
     <RowTemplate>
-        <MudTd DataLabel="Chapter Title">@context.ExtractedMetadata.ChapterTitle</MudTd>
+        <MudTd DataLabel="Chapter Title">@(context.ExtractedMetadata?.ChapterTitle ?? "N/A")</MudTd>
         <MudTd DataLabel="Chapter Path">@context.Chapter.RelativePath</MudTd>
         <MudTd DataLabel="Upscaled">
             @context.Chapter.IsUpscaled
@@ -121,12 +118,12 @@
 </MudTable>
 
 @code {
-    [Parameter] public Manga Manga { get; set; }
+    [Parameter] public required Manga Manga { get; set; }
 
-    private ReadOnlyObservableCollection<ChapterItem> chapterItems;
+    private ReadOnlyObservableCollection<ChapterItem> chapterItems = new([]);
     private SourceList<ChapterItem> chapters = new();
 
-    private HashSet<ChapterItem> selectedChapters;
+    private HashSet<ChapterItem> selectedChapters = new();
 
 
     private async Task DeleteSelected()
@@ -134,7 +131,33 @@
         var result = await DialogService.ShowMessageBox("Delete Selected Chapters", "Are you sure you want to delete the selected chapters?", yesText: "Yes", cancelText: "No");
         if (result == true)
         {
-            selectedChapters?.ToList().ForEach(async c => await DeleteChapter(c.Chapter));
+            var chaptersToDelete = selectedChapters.ToList();
+            foreach (var c in chaptersToDelete)
+            {
+                await DeleteChapter(c.Chapter);
+            }
+        }
+    }
+
+    private async Task UpscaleSelectedChapters()
+    {
+        var chaptersToUpscale = selectedChapters.Where(c => !c.Chapter.IsUpscaled).ToList();
+        foreach (var c in chaptersToUpscale)
+        {
+            await UpscaleChapter(c.Chapter);
+        }
+    }
+
+    private async Task DeleteSelectedUpscaled()
+    {
+        var result = await DialogService.ShowMessageBox("Delete Upscaled Selected Chapters", "Are you sure you want to delete the upscaled versions of the selected chapters?", "Yes", cancelText: "No");
+        if (result == true)
+        {
+            var chaptersToProcess = selectedChapters.ToList();
+            foreach (var c in chaptersToProcess)
+            {
+                await DeleteUpscaled(c.Chapter);
+            }
         }
     }
 
@@ -147,12 +170,17 @@
         }
     }
 
-    private async Task OnChapterMetadataCommit(ChapterItem chapter)
+    private async Task OnChapterMetadataCommit(ChapterItem? chapter)
     {
-        if (chapter.ExtractedMetadata.ChapterTitle != chapter.NewTitle)
+        if (chapter == null) return;
+
+        if (chapter.ExtractedMetadata?.ChapterTitle != chapter.NewTitle)
         {
             await MangaMetadataChanger.ChangeChapterTitle(chapter.Chapter, chapter.NewTitle);
-            chapter.ExtractedMetadata = chapter.ExtractedMetadata with { ChapterTitle = chapter.NewTitle };
+            if (chapter.ExtractedMetadata != null)
+            {
+                chapter.ExtractedMetadata = chapter.ExtractedMetadata with { ChapterTitle = chapter.NewTitle };
+            }
         }
 
         if (Path.GetFileNameWithoutExtension(chapter.Chapter.FileName) != chapter.NewFileName)
@@ -164,9 +192,11 @@
         }
     }
 
-    private void OnChapterMetadataDiscard(ChapterItem chapter)
+    private void OnChapterMetadataDiscard(ChapterItem? chapter)
     {
-        chapter.NewTitle = chapter.ExtractedMetadata.ChapterTitle;
+        if (chapter == null) return;
+
+        chapter.NewTitle = chapter.ExtractedMetadata?.ChapterTitle ?? string.Empty;
         chapter.NewFileName = Path.GetFileNameWithoutExtension(chapter.Chapter.FileName);
     }
 
@@ -209,17 +239,14 @@
             await DbContext.Entry(Manga.Library).Reference(l => l.UpscalerProfile).LoadAsync();
         }
 
+        if (Manga.Library.UpscalerProfile == null)
+        {
+            Snackbar.Add("Upscaler profile not set for this library.", Severity.Error);
+            return;
+        }
+
         await TaskQueue.EnqueueAsync(
             new UpscaleTask(chapter, Manga.Library.UpscalerProfile));
-    }
-
-    private async Task DeleteSelectedUpscaled()
-    {
-        var result = await DialogService.ShowMessageBox("Delete Upscaled Selected Chapters", "Are you sure you want to delete the upscaled versions of the selected chapters?", yesText: "Yes", cancelText: "No");
-        if (result == true)
-        {
-            selectedChapters?.ToList().ForEach(async c => await DeleteUpscaled(c.Chapter));
-        }
     }
 
     private async Task DeleteUpscaledConfirm(Chapter chapter)
@@ -235,6 +262,12 @@
     {
         if (!chapter.IsUpscaled)
         {
+            return;
+        }
+
+        if (string.IsNullOrEmpty(Manga.Library.UpscaledLibraryPath))
+        {
+            Snackbar.Add("Upscaled library path not set for this library.", Severity.Error);
             return;
         }
 
@@ -268,10 +301,27 @@
             return false;
         }
 
+        if (Manga?.Library == null) // Ensure Manga and Library are not null
+        {
+            Snackbar.Add("Manga or Library information is missing.", Severity.Error);
+            return false;
+        }
+
+        if (string.IsNullOrEmpty(Manga.Library.UpscaledLibraryPath) && chapter.IsUpscaled)
+        {
+            Snackbar.Add("Upscaled library path not set for this library, but chapter is upscaled.", Severity.Error);
+            return false;
+        }
+
+        var mangaTitle = Manga.PrimaryTitle ?? "Unknown_Series";
         string oldPath = Path.Combine(chapter.Manga.Library.NotUpscaledLibraryPath, chapter.RelativePath);
-        string targetRelativePath = Path.Combine(PathEscaper.EscapeFileName(Manga.PrimaryTitle), newFileName);
+        var targetRelativePath = Path.Combine(PathEscaper.EscapeFileName(mangaTitle), newFileName);
         string newPath = Path.Combine(chapter.Manga.Library.NotUpscaledLibraryPath, targetRelativePath);
         bool success = true;
+
+        string? oldUpscaledPath = null;
+        string? newUpscaledPath = null;
+
         try
         {
             FileSystem.Move(oldPath, newPath);
@@ -282,21 +332,25 @@
             Snackbar.Add($"Failed to rename {chapter.FileName}. Check the logs for more information.", Severity.Error);
             success = false;
         }
-        string oldUpscaledPath = Path.Combine(chapter.Manga.Library.UpscaledLibraryPath, chapter.RelativePath);
-        string newUpscaledPath = Path.Combine(chapter.Manga.Library.UpscaledLibraryPath, targetRelativePath);
-        if (success && chapter.IsUpscaled)
+
+        if (chapter.IsUpscaled && Manga?.Library?.UpscaledLibraryPath != null)
         {
-            try
+            oldUpscaledPath = Path.Combine(Manga.Library.UpscaledLibraryPath, chapter.RelativePath);
+            newUpscaledPath = Path.Combine(Manga.Library.UpscaledLibraryPath, targetRelativePath);
+            if (success)
             {
-                FileSystem.Move(oldUpscaledPath, newUpscaledPath);
-            }
-            catch (Exception e)
-            {
-                Logger.LogError(e, "Failed to rename upscaled file of Chapter {ChapterId}", chapter.Id);
-                Snackbar.Add($"Failed to rename upscaled {chapter.FileName}. Check the logs for more information.", Severity.Error);
-                success = false;
-                // Try to revert the rename of the not upscaled file
-                FileSystem.Move(newPath, oldPath);
+                try
+                {
+                    FileSystem.Move(oldUpscaledPath, newUpscaledPath);
+                }
+                catch (Exception e)
+                {
+                    Logger.LogError(e, "Failed to rename upscaled file of Chapter {ChapterId}", chapter.Id);
+                    Snackbar.Add($"Failed to rename upscaled {chapter.FileName}. Check the logs for more information.", Severity.Error);
+                    success = false;
+                    // Try to revert the rename of the not upscaled file
+                    FileSystem.Move(newPath, oldPath);
+                }
             }
         }
         if (success)
@@ -311,7 +365,7 @@
                 _ = ChapterChangedNotifier.Notify(chapter, true);
             }
         }
-        else 
+        else
         {
             if (File.Exists(newPath))
             {
@@ -325,7 +379,8 @@
                     Snackbar.Add($"Failed to revert rename of {chapter.FileName}. Check the logs for more information.", Severity.Error);
                 }
             }
-            if (File.Exists(newUpscaledPath))
+
+            if (File.Exists(newUpscaledPath) && newUpscaledPath != null && oldUpscaledPath != null)
             {
                 try
                 {
@@ -353,26 +408,42 @@
         }
 
         await LoadChapters();
-        _ = LibraryIntegrityChecker.CheckIntegrity(Manga).ContinueWith(async resultedInChanges =>
+
+        _ = Task.Run(async () => { return await LibraryIntegrityChecker.CheckIntegrity(Manga); }).ContinueWith(async t =>
         {
-            if (resultedInChanges.Result)
+            if (t.IsFaulted)
             {
-                await InvokeAsync(async () => await LoadChapters());
+                Logger.LogError(t.Exception, "Error checking library integrity for Manga ID {MangaId}", Manga?.Id);
+                return;
             }
-        });
+
+            if (t.Result) // t.Result is the boolean from CheckIntegrity
+            {
+                await InvokeAsync(async () =>
+                {
+                    await LoadChapters();
+                    StateHasChanged();
+                });
+            }
+        }, TaskScheduler.FromCurrentSynchronizationContext());
 
         chapters.Connect()
-            .Sort(new NaturalSortComparer<ChapterItem>(ci => ci.ExtractedMetadata.ChapterTitle))
+            .Sort(new NaturalSortComparer<ChapterItem>(ci => ci.ExtractedMetadata?.ChapterTitle ?? string.Empty))
             .Bind(out chapterItems)
-                .Subscribe();
+            .Subscribe();
     }
 
     private async Task<bool> LoadChapters()
     {
         bool loadingFailed = false;
         chapters.Clear();
+        if (Manga.Chapters == null)
+        {
+            Logger.LogWarning("Chapters is null in LoadChapters for Manga ID {MangaId}.", Manga.Id);
+            return true;
+        }
 
-        foreach (var chapter in Manga.Chapters)
+        foreach (var chapter in Manga.Chapters.ToList()) // ToList() を追加して、コレクションの変更を許可します
         {
             Task<UpscalerProfile?> loadProfile = Task.FromResult<UpscalerProfile?>(null);
             if (chapter.UpscalerProfileId.HasValue && !DbContext.Entry(chapter).Reference(c => c.UpscalerProfile).IsLoaded)
@@ -382,13 +453,25 @@
             }
             try
             {
+                if (Manga.Library?.NotUpscaledLibraryPath == null)
+                {
+                    loadingFailed = true;
+                    continue;
+                }
+
+                if (string.IsNullOrEmpty(chapter.RelativePath))
+                {
+                    Logger.LogWarning("Chapter {ChapterId} has null or empty RelativePath.", chapter.Id);
+                    loadingFailed = true;
+                    continue;
+                }
                 var extractedMetadata = MetadataHandler.GetSeriesAndTitleFromComicInfo(Path.Combine(Manga.Library.NotUpscaledLibraryPath, chapter.RelativePath));
                 chapter.UpscalerProfile = await loadProfile;
                 chapters.Add(new ChapterItem
                     {
                         Chapter = chapter,
                         ExtractedMetadata = extractedMetadata,
-                        NewTitle = extractedMetadata.ChapterTitle,
+                        NewTitle = extractedMetadata?.ChapterTitle ?? string.Empty,
                         NewFileName = Path.GetFileNameWithoutExtension(chapter.FileName)
                     });
             }
@@ -407,7 +490,7 @@
     private record ChapterItem
     {
         public required Chapter Chapter { get; set; }
-        public required ExtractedMetadata ExtractedMetadata { get; set; }
+        public ExtractedMetadata? ExtractedMetadata { get; set; }
         public required string NewTitle { get; set; }
         public required string NewFileName { get; set; }
     }

@@ -11,14 +11,14 @@ public class Chapter
 {
     public int Id { get; set; }
     public int MangaId { get; set; }
-    public Manga Manga { get; set; }
+    public required Manga Manga { get; set; }
 
-    public string FileName { get; set; }
-    public string RelativePath { get; set; }
+    public string FileName { get; set; } = string.Empty;
+    public string RelativePath { get; set; } = string.Empty;
 
     public bool IsUpscaled { get; set; }
     public int? UpscalerProfileId { get; set; }
-    public UpscalerProfile UpscalerProfile { get; set; }
+    public UpscalerProfile? UpscalerProfile { get; set; }
 
     [NotMapped]
     public string NotUpscaledFullPath => Path.Combine(Manga.Library.NotUpscaledLibraryPath, RelativePath);

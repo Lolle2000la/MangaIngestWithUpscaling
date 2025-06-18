@@ -21,7 +21,7 @@ jobs:
     - name: Restore dependencies
       run: dotnet restore MangaIngestWithUpscaling.sln
     - name: Build
-      run: dotnet build --no-restore MangaIngestWithUpscaling.sln
+      run: dotnet build --no-restore MangaIngestWithUpscaling.sln /p:TreatWarningsAsErrors=true
     # no tests to run
     #- name: Test
     #  run: dotnet test --no-build --verbosity normal MangaIngestWithUpscaling.sln

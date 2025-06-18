@@ -1,0 +1,51 @@
+@using MangaIngestWithUpscaling.Data.LibraryManagement
+@using MangaIngestWithUpscaling.Components.Libraries.Filters
+@using MangaIngestWithUpscaling.Components.Libraries
+@using Microsoft.EntityFrameworkCore.Query
+@inject ApplicationDbContext DbContext
+
+<MudDialog>
+    <TitleContent>Edit & Preview Rename Rules</TitleContent>
+    <DialogContent>
+        <MudGrid Spacing="3">
+            <MudItem xs="12" lg="6">
+                <EditLibraryRenames Library="@Library" RulesChanged="OnRulesChanged" />
+            </MudItem>
+            <MudItem xs="12" lg="6">
+                <PreviewLibraryRenames @ref="_previewLibraryRenamesComponent" Library="@Library" />
+            </MudItem>
+        </MudGrid>
+    </DialogContent>
+    <DialogActions>
+        <MudButton Color="Color.Primary" OnClick="Close">Close</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter, EditorRequired] public required Library Library { get; set; }
+    
+    private PreviewLibraryRenames? _previewLibraryRenamesComponent;
+    private bool _chaptersLoaded = false;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !_chaptersLoaded)
+        {
+            _chaptersLoaded = true;
+            // Ensure preview is updated after chapters are loaded
+            await OnRulesChanged(); 
+        }
+    }
+
+    private async Task OnRulesChanged()
+    {
+        if (_previewLibraryRenamesComponent != null)
+        {
+            // If chapters haven't been loaded yet, load them first.
+            // This might happen if rules are changed very quickly before initial chapter load completes.
+            await _previewLibraryRenamesComponent.RefreshPreviewsAsync();
+        }
+    }
+    void Close() => MudDialog.Close();
+}

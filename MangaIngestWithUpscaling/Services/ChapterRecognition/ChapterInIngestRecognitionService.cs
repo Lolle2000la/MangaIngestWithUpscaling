@@ -1,57 +1,83 @@
-﻿using MangaIngestWithUpscaling.Data.LibraryManagement;
+﻿using DynamicData.Kernel;
+using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.LibraryFiltering;
-using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
-using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Services.MetadataHandling;
+using System.IO.Compression;
+using System.Xml.Linq;
+using System.Threading.Channels;
+using System.Runtime.CompilerServices;
 
 namespace MangaIngestWithUpscaling.Services.ChapterRecognition;
 
-/// <summary>
-/// Provides services for recognizing chapters in the ingest path.
-/// Not everything in the ingest path is a chapter, so this service
-/// identifies what is and what isn't.
-/// </summary>
+/// <inheritdoc />
 [RegisterScoped]
 public class ChapterInIngestRecognitionService(
     IMetadataHandlingService metadataExtractionService,
     ILibraryFilteringService filteringService,
     ILogger<ChapterInIngestRecognitionService> logger) : IChapterInIngestRecognitionService
 {
-    /// <summary>
-    /// Finds all chapters in the ingest path.
-    /// </summary>
-    /// <param name="ingestPath"></param>
-    /// <returns></returns>
-    public List<FoundChapter> FindAllChaptersAt(string ingestPath, IReadOnlyList<LibraryFilterRule>? libraryFilterRules = null)
+    /// <inheritdoc />
+    public async IAsyncEnumerable<FoundChapter> FindAllChaptersAt(string ingestPath,
+        IReadOnlyList<LibraryFilterRule>? libraryFilterRules = null,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        var foundChapters = new List<FoundChapter>();
-        // get either all cbz files or all ComicInfo.xml files
-        var files = Directory.EnumerateFiles(ingestPath, "*.*", SearchOption.AllDirectories)
-                             .Where(f => f.EndsWith(".cbz") || f == "ComicInfo.xml")
-                             .ToList();
+        var channel = Channel.CreateUnbounded<FoundChapter>();
 
-        foreach (var file in files)
+        _ = Task.Run(async () =>
         {
-            var relativePath = Path.GetRelativePath(ingestPath, file);
-            var storageType = file.EndsWith(".cbz") ? ChapterStorageType.Cbz : ChapterStorageType.Folder;
             try
             {
-                var metadata = metadataExtractionService.GetSeriesAndTitleFromComicInfo(file);
+                var files = Directory.EnumerateFiles(ingestPath, "*.*", SearchOption.AllDirectories)
+                    .Where(f => f.EndsWith(".cbz") || f.EndsWith("ComicInfo.xml"));
 
-                foundChapters.Add(new FoundChapter(Path.GetFileName(file), relativePath, storageType,
-                    metadata));
+                var parallelOptions = new ParallelOptions { CancellationToken = cancellationToken };
+
+                await Parallel.ForEachAsync(files, parallelOptions, async (file, ct) =>
+                {
+                    FoundChapter? foundChapter = null;
+                    try
+                    {
+                        var relativePath = Path.GetRelativePath(ingestPath, file);
+                        var storageType = file.EndsWith(".cbz") ? ChapterStorageType.Cbz : ChapterStorageType.Folder;
+
+                        var metadata = metadataExtractionService.GetSeriesAndTitleFromComicInfo(file);
+                        foundChapter = new FoundChapter(Path.GetFileName(file), relativePath, storageType, metadata);
+
+                        if (libraryFilterRules is { Count: > 0 } && filteringService.FilterChapter(foundChapter, libraryFilterRules))
+                        {
+                            foundChapter = null;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // Don't let one bad file stop the whole process.
+                        logger.LogError(ex, "Failed to process file {File}", file);
+                    }
+
+                    if (foundChapter != null)
+                    {
+                        await channel.Writer.WriteAsync(foundChapter, ct);
+                    }
+                });
+            }
+            catch (OperationCanceledException)
+            {
+                // The operation was cancelled, we can just exit gracefully.
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Failed to extract metadata from {file}", file);
+                logger.LogError(ex, "An error occurred during the chapter discovery background task.");
+                channel.Writer.Complete(ex);
             }
-        }
+            finally
+            {
+                channel.Writer.TryComplete();
+            }
+        }, cancellationToken);
 
-        if (libraryFilterRules != null && libraryFilterRules.Count > 0)
+        await foreach (var chapter in channel.Reader.ReadAllAsync(cancellationToken))
         {
-            foundChapters = filteringService.FilterChapters(foundChapters, libraryFilterRules);
+            yield return chapter;
         }
-
-        return foundChapters;
     }
-
 }

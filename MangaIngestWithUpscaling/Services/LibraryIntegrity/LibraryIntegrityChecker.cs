@@ -9,20 +9,20 @@ namespace MangaIngestWithUpscaling.Services.LibraryIntegrity;
 
 [RegisterScoped]
 public class LibraryIntegrityChecker(
-        ApplicationDbContext dbContext,
-        IMetadataHandlingService metadataHandling,
-        ILogger<LibraryIntegrityChecker> logger) : ILibraryIntegrityChecker
+    ApplicationDbContext dbContext,
+    IMetadataHandlingService metadataHandling,
+    ILogger<LibraryIntegrityChecker> logger) : ILibraryIntegrityChecker
 {
     /// <inheritdoc/>
     public async Task<bool> CheckIntegrity(CancellationToken? cancellationToken = null)
     {
         var libraries = await dbContext.Libraries
             .Include(l => l.UpscalerProfile)
-                .Include(l => l.MangaSeries)
-                    .ThenInclude(m => m.Chapters)
+            .Include(l => l.MangaSeries)
+            .ThenInclude(m => m.Chapters)
             .ThenInclude(c => c.UpscalerProfile)
-                .Include(l => l.MangaSeries)
-                    .ThenInclude(m => m.OtherTitles)
+            .Include(l => l.MangaSeries)
+            .ThenInclude(m => m.OtherTitles)
             .ToListAsync(cancellationToken ?? CancellationToken.None);
 
         bool changesHappened = false;
@@ -66,25 +66,19 @@ public class LibraryIntegrityChecker(
     {
         var origIntegrity = await CheckOriginalIntegrity(chapter, cancellationToken);
         var upscaledIntegrity = IntegrityCheckResult.Ok;
-        if (origIntegrity != IntegrityCheckResult.Missing && origIntegrity != IntegrityCheckResult.Invalid)
+        if (origIntegrity != IntegrityCheckResult.Missing && origIntegrity != IntegrityCheckResult.Invalid &&
+            origIntegrity != IntegrityCheckResult.MaybeInProgress)
             upscaledIntegrity = await CheckUpscaledIntegrity(chapter, cancellationToken);
 
         if (origIntegrity != IntegrityCheckResult.Ok || upscaledIntegrity != IntegrityCheckResult.Ok)
         {
-            logger.LogWarning("Chapter {chapterFileName} ({chapterId}) of {seriesTitle} has integrity issues. Original: {origIntegrity}, Upscaled: {upscaledIntegrity}. Check the other log messages for more information on the cause of this.\n\nNote that this doesn't have to be a problem as many problems can and probably were corrected.",
+            logger.LogWarning(
+                "Chapter {chapterFileName} ({chapterId}) of {seriesTitle} has integrity issues. Original: {origIntegrity}, Upscaled: {upscaledIntegrity}. Check the other log messages for more information on the cause of this.\n\nNote that this doesn't have to be a problem as many problems can and probably were corrected.",
                 chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle, origIntegrity, upscaledIntegrity);
             return true;
         }
 
         return false;
-    }
-
-    private enum IntegrityCheckResult
-    {
-        Ok,
-        Missing,
-        Invalid,
-        Corrected
     }
 
     /// <summary>
@@ -101,11 +95,13 @@ public class LibraryIntegrityChecker(
             corrected = correctedMetadata;
             return false;
         }
+
         corrected = metadata;
         return true;
     }
 
-    private async Task<IntegrityCheckResult> CheckOriginalIntegrity(Chapter chapter, CancellationToken? cancellationToken = null)
+    private async Task<IntegrityCheckResult> CheckOriginalIntegrity(Chapter chapter,
+        CancellationToken? cancellationToken = null)
     {
         if (!File.Exists(chapter.NotUpscaledFullPath))
         {
@@ -121,7 +117,8 @@ public class LibraryIntegrityChecker(
                 }
                 catch (Exception ex)
                 {
-                    logger.LogError(ex, "Failed to delete upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle}.",
+                    logger.LogError(ex,
+                        "Failed to delete upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle}.",
                         chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
                 }
             }
@@ -135,7 +132,8 @@ public class LibraryIntegrityChecker(
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Failed to remove chapter {chapterFileName} ({chapterId}) of {seriesTitle} from database.",
+                logger.LogError(ex,
+                    "Failed to remove chapter {chapterFileName} ({chapterId}) of {seriesTitle} from database.",
                     chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
 
                 return IntegrityCheckResult.Invalid;
@@ -145,7 +143,8 @@ public class LibraryIntegrityChecker(
         var metadata = metadataHandling.GetSeriesAndTitleFromComicInfo(chapter.NotUpscaledFullPath);
         if (!CheckMetadata(metadata, out var correctedMetadata))
         {
-            logger.LogWarning("Metadata of chapter {chapterFileName} ({chapterId}) of {seriesTitle} is incorrect. Correcting.",
+            logger.LogWarning(
+                "Metadata of chapter {chapterFileName} ({chapterId}) of {seriesTitle} is incorrect. Correcting.",
                 chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
             metadataHandling.WriteComicInfo(chapter.NotUpscaledFullPath, correctedMetadata);
             return IntegrityCheckResult.Corrected;
@@ -154,40 +153,35 @@ public class LibraryIntegrityChecker(
         return IntegrityCheckResult.Ok;
     }
 
-    private async Task<IntegrityCheckResult> CheckUpscaledIntegrity(Chapter chapter, CancellationToken? cancellationToken = null)
+    private async Task<IntegrityCheckResult> CheckUpscaledIntegrity(Chapter chapter,
+        CancellationToken? cancellationToken = null)
     {
         if (!chapter.IsUpscaled)
         {
-            if (File.Exists(chapter.UpscaledFullPath))
+            if (!File.Exists(chapter.UpscaledFullPath))
             {
-                var taskQuery = dbContext.PersistedTasks
-                    .FromSql($"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(UpscaleTask)} AND Data->>'$.ChapterId' = {chapter.Id}");
-                var tasks = await taskQuery.ToListAsync(cancellationToken ?? CancellationToken.None);
-
-                // ensure we find out whether one of the tasks is still pending or processing, otherwise we might find past tasks that superseeded.
-                var task = tasks.FirstOrDefault(t =>
-                    t.Status == PersistedTaskStatus.Pending
-                    || t.Status == PersistedTaskStatus.Processing);
-
-                if (task != null)
-                {
-                    tasks.FirstOrDefault();
-                }
-
-                // don't accidentally interfere with a running upscale.
-                if (task?.Status != PersistedTaskStatus.Processing && task?.Status != PersistedTaskStatus.Pending)
-                {
-                    return await CheckUpscaledArchiveValidity(chapter, cancellationToken);
-                }
+                return IntegrityCheckResult.Ok;
             }
 
-            return IntegrityCheckResult.Ok;
+            IQueryable<PersistedTask> taskQuery = dbContext.PersistedTasks
+                .FromSql(
+                    $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(UpscaleTask)} AND Data->>'$.ChapterId' = {chapter.Id}");
+            PersistedTask? task = await taskQuery.FirstOrDefaultAsync();
+
+            // Do not modify the chapter from under the processing task.
+            if (task != null)
+            {
+                return IntegrityCheckResult.MaybeInProgress;
+            }
+
+            return await CheckUpscaledArchiveValidity(chapter, cancellationToken);
         }
         else
         {
             if (!File.Exists(chapter.UpscaledFullPath))
             {
-                logger.LogWarning("Upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle} is missing. Marking as not upscaled.",
+                logger.LogWarning(
+                    "Upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle} is missing. Marking as not upscaled.",
                     chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
                 chapter.IsUpscaled = false;
                 dbContext.Update(chapter);
@@ -201,16 +195,29 @@ public class LibraryIntegrityChecker(
         }
     }
 
-    private async Task<IntegrityCheckResult> CheckUpscaledArchiveValidity(Chapter chapter, CancellationToken? cancellationToken = null)
+    private async Task<IntegrityCheckResult> CheckUpscaledArchiveValidity(Chapter chapter,
+        CancellationToken? cancellationToken = null)
     {
         try
         {
+            if (chapter.UpscaledFullPath == null)
+            {
+                logger.LogWarning(
+                    "Chapter {chapterFileName} ({chapterId}) of {seriesTitle} is missing a path. Marking as not upscaled.",
+                    chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
+                chapter.IsUpscaled = false;
+                dbContext.Update(chapter);
+                await dbContext.SaveChangesAsync(cancellationToken ?? CancellationToken.None);
+                return IntegrityCheckResult.Missing;
+            }
+
             if (metadataHandling.PagesEqual(chapter.NotUpscaledFullPath, chapter.UpscaledFullPath))
             {
                 var metadata = metadataHandling.GetSeriesAndTitleFromComicInfo(chapter.UpscaledFullPath);
                 if (!CheckMetadata(metadata, out var correctedMetadata))
                 {
-                    logger.LogWarning("Metadata of upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle} is incorrect. Correcting.",
+                    logger.LogWarning(
+                        "Metadata of upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle} is incorrect. Correcting.",
                         chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
                     metadataHandling.WriteComicInfo(chapter.UpscaledFullPath, correctedMetadata);
                 }
@@ -219,7 +226,9 @@ public class LibraryIntegrityChecker(
                 {
                     return IntegrityCheckResult.Ok;
                 }
-                logger.LogInformation("A seemingly valid upscale was found for {chapterFileName}({chapterId}) of {seriesTitle}. Marking chapter as upscaled.",
+
+                logger.LogInformation(
+                    "A seemingly valid upscale was found for {chapterFileName}({chapterId}) of {seriesTitle}. Marking chapter as upscaled.",
                     chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
                 chapter.IsUpscaled = true;
                 dbContext.Update(chapter);
@@ -228,16 +237,18 @@ public class LibraryIntegrityChecker(
             }
             else
             {
-                throw new InvalidDataException("The upscaled chapter does not match the outward number of pages to the original chapter.");
+                throw new InvalidDataException(
+                    "The upscaled chapter does not match the outward number of pages to the original chapter.");
             }
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "An invalid upscale was found for {chapterFileName} ({chapterId}) of {seriesTitle}, but no associated task to upscale was found. Deleting.",
+            logger.LogWarning(ex,
+                "An invalid upscale was found for {chapterFileName} ({chapterId}) of {seriesTitle}, but no associated task to upscale was found. Deleting.",
                 chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
             try
             {
-                if (File.Exists(chapter.UpscaledFullPath))
+                if (chapter.UpscaledFullPath != null && File.Exists(chapter.UpscaledFullPath))
                     File.Delete(chapter.UpscaledFullPath);
                 if (chapter.IsUpscaled)
                 {
@@ -245,14 +256,25 @@ public class LibraryIntegrityChecker(
                     dbContext.Update(chapter);
                     await dbContext.SaveChangesAsync(cancellationToken ?? CancellationToken.None);
                 }
+
                 return IntegrityCheckResult.Invalid;
             }
             catch (Exception ex2)
             {
-                logger.LogError(ex2, "Failed to delete invalid upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle}.",
+                logger.LogError(ex2,
+                    "Failed to delete invalid upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle}.",
                     chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
                 return IntegrityCheckResult.Invalid;
             }
         }
+    }
+
+    private enum IntegrityCheckResult
+    {
+        Ok,
+        Missing,
+        Invalid,
+        Corrected,
+        MaybeInProgress
     }
 }

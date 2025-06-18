@@ -3,7 +3,6 @@
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Helpers
-@using Microsoft.EntityFrameworkCore
 
 @inject ApplicationDbContext DbContext
 @inject IDialogService DialogService
@@ -46,7 +45,7 @@
 </MudTable>
 
 @code {
-    private IReadOnlyCollection<UpscalerProfile> Profiles { get; set; }
+    private IReadOnlyCollection<UpscalerProfile> Profiles { get; set; } = new List<UpscalerProfile>();
 
     protected override async Task OnInitializedAsync()
     {
