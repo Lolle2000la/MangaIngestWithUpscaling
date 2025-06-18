@@ -8,13 +8,30 @@ namespace MangaIngestWithUpscaling.Components.FileSystem;
 
 public class FolderPickerViewModel : ViewModelBase
 {
-    private string _rootDirectory = Directory.GetCurrentDirectory();
-    private string _title = "Select Folder";
-    private string? _errorMessage;
-    private bool _loading;
-    private string? _selectedPath;
     private readonly ObservableAsPropertyHelper<bool> _canGoToParent;
     private bool _disabled;
+    private string? _errorMessage;
+    private bool _loading;
+    private string _rootDirectory = Directory.GetCurrentDirectory();
+    private string? _selectedPath;
+    private string _title = "Select Folder";
+
+    public FolderPickerViewModel()
+    {
+        LoadDirectoryItemsCommand = ReactiveCommand.CreateFromTask(LoadDirectoryItemsAsync);
+        GoToParentCommand = ReactiveCommand.Create(GoToParent);
+
+        this.WhenAnyValue(x => x.RootDirectory)
+            .Throttle(TimeSpan.FromMilliseconds(300))
+            .Select(_ => Unit.Default)
+            .InvokeCommand(LoadDirectoryItemsCommand);
+
+        _canGoToParent = this.WhenAnyValue(x => x.RootDirectory)
+            .Select(path => !string.IsNullOrWhiteSpace(path) && Directory.GetParent(path) != null)
+            .ToProperty(this, x => x.CanGoToParent);
+
+        WhenPathSelected = this.WhenAnyValue(x => x.SelectedPath);
+    }
 
     public string RootDirectory
     {
@@ -61,23 +78,6 @@ public class FolderPickerViewModel : ViewModelBase
     public ReactiveCommand<Unit, Unit> GoToParentCommand { get; }
     public IObservable<string?> WhenPathSelected { get; }
 
-    public FolderPickerViewModel()
-    {
-        LoadDirectoryItemsCommand = ReactiveCommand.CreateFromTask(LoadDirectoryItemsAsync);
-        GoToParentCommand = ReactiveCommand.Create(GoToParent);
-
-        this.WhenAnyValue(x => x.RootDirectory)
-            .Throttle(TimeSpan.FromMilliseconds(300))
-            .Select(_ => Unit.Default)
-            .InvokeCommand(LoadDirectoryItemsCommand);
-
-        _canGoToParent = this.WhenAnyValue(x => x.RootDirectory)
-            .Select(path => Directory.GetParent(path) != null)
-            .ToProperty(this, x => x.CanGoToParent);
-
-        WhenPathSelected = this.WhenAnyValue(x => x.SelectedPath);
-    }
-
     private async Task LoadDirectoryItemsAsync()
     {
         try
@@ -112,17 +112,12 @@ public class FolderPickerViewModel : ViewModelBase
 
     private DirectoryItem CreateDirectoryItem(string path) => new()
     {
-        Path = path,
-        Name = Path.GetFileName(path),
-        HasChildren = DirectoryHasSubdirectories(path)
+        Path = path, Name = Path.GetFileName(path), HasChildren = DirectoryHasSubdirectories(path)
     };
 
     private TreeItemData<DirectoryItem> CreateTreeItemData(DirectoryItem item) => new()
     {
-        Value = item,
-        Text = item.Name,
-        Expandable = item.HasChildren,
-        Selected = item.Path == SelectedPath
+        Value = item, Text = item.Name, Expandable = item.HasChildren, Selected = item.Path == SelectedPath
     };
 
     public async Task<IReadOnlyCollection<TreeItemData<DirectoryItem>>> HandleExpand(DirectoryItem item)
@@ -146,7 +141,8 @@ public class FolderPickerViewModel : ViewModelBase
         }
     }
 
-    public void HandleItemsLoaded(TreeItemData<DirectoryItem> parent, IReadOnlyCollection<TreeItemData<DirectoryItem>> children)
+    public void HandleItemsLoaded(TreeItemData<DirectoryItem> parent,
+        IReadOnlyCollection<TreeItemData<DirectoryItem>> children)
     {
         parent.Children = children?.ToList();
     }
