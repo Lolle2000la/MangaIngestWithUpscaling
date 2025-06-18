@@ -1,6 +1,4 @@
 ﻿@inherits ReactiveInjectableComponentBase<FolderPickerViewModel>
-@using System.IO
-@using MudBlazor
 
 @inject FolderPickerViewModel viewModel
 
@@ -30,7 +28,7 @@
     <MudPaper Elevation="2">
         <MudStack Row="true" AlignItems="AlignItems.Center">
             <MudButton Variant="Variant.Outlined"
-                       OnClick="async (e) => await ViewModel?.GoToParentCommand.Execute()"
+                       OnClick="async e => await ViewModel!.GoToParentCommand.Execute()"
                        Disabled="@(ViewModel?.Disabled == true || (ViewModel?.Loading ?? false))">
                 Go to Parent
             </MudButton>
@@ -39,7 +37,7 @@
                        Color="Color.Primary"
                        StartIcon="@Icons.Material.Filled.Refresh"
                        Disabled="@(ViewModel?.Disabled == true || (ViewModel?.Loading ?? false))"
-                       OnClick="async (e) => await ViewModel?.LoadDirectoryItemsCommand.Execute()">
+                       OnClick="async e => await ViewModel!.LoadDirectoryItemsCommand.Execute()">
                 Refresh
             </MudButton>
         </MudStack>
@@ -76,6 +74,8 @@
 </MudPaper>
 
 @code {
+#pragma
+
     [Parameter]
     public bool Required { get; set; } = false;
 
@@ -92,7 +92,8 @@
         get => ViewModel?.SelectedPath;
         set
         {
-            ViewModel.SelectedPath = value;
+            if (ViewModel != null)
+                ViewModel.SelectedPath = value;
         }
     }
 
@@ -123,4 +124,6 @@
         });
         base.OnInitialized();
     }
+
+#pragma warning restore BL0007
 }
