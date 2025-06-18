@@ -1,6 +1,5 @@
-﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
-
-@page "/upscaling/profiles/edit/{ProfileId:int}"
+﻿@page "/upscaling/profiles/edit/{ProfileId:int}"
+@using MangaIngestWithUpscaling.Data.LibraryManagement
 
 @inject ApplicationDbContext DbContext
 @inject NavigationManager NavigationManager
@@ -37,7 +36,7 @@
             Quality = 80
         };
 
-    private UpscalerProfile existingProfile;
+    private UpscalerProfile? existingProfile;
 
     public bool IsValid { get; set; } = false;
 
@@ -70,6 +69,11 @@
 
     private async Task OnSaveProfile()
     {
+        if (existingProfile is null)
+        {
+            return;
+        }
+
         DbContext.UpscalerProfiles.Add(Profile);
         existingProfile.Deleted = true;
         await DbContext.SaveChangesAsync();
