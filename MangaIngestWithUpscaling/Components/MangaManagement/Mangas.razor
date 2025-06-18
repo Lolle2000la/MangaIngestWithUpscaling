@@ -4,7 +4,6 @@
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
 @using MangaIngestWithUpscaling.Services.MetadataHandling
-
 @implements IDisposable
 
 @inject ApplicationDbContext DbContext
@@ -17,12 +16,12 @@
 
 <PageTitle>Browse and Manage Mangas</PageTitle>
 
-<MudTable T="Manga" ServerData="GetMangas"
+<MudTable T="Manga" ServerData="@GetMangas"
           Hover="true" MultiSelection="true"
           SelectOnRowClick="false"
           CanCancelEdit="true"
-          RowEditPreview="BackupBeforeEdit"
-          RowEditCancel="RestoreOnCancel"
+          RowEditPreview="@BackupBeforeEdit"
+          RowEditCancel="@RestoreOnCancel"
           RowEditCommit="async o => await OnCommitEdit(o)"
           @bind-SelectedItems="selectedMangas"
           @ref="table">
@@ -141,9 +140,9 @@
     [SupplyParameterFromQuery(Name = "search")]
     public string SearchString { get; set; } = "";
 
-    private HashSet<Manga>? selectedMangas;
+    private HashSet<Manga> selectedMangas = new();
 
-    private MudTable<Manga> table;
+    private MudTable<Manga> table = default!;
 
     private Manga? mangaBeforeEdit;
 
@@ -202,6 +201,7 @@
 
     private async Task OnMergeSelected()
     {
+        if (selectedMangas == null || !selectedMangas.Any()) return;
         var parameters = new DialogParameters<MergeMangaDialog>
         {
             { x => x.Mangas, selectedMangas.ToList() }
@@ -227,6 +227,7 @@
 
     private async Task OnMoveSelectedToNewLibrary()
     {
+        if (!selectedMangas.Any()) return;
         var parameters = new DialogParameters<MoveMangasToLibraryDialog>
         {
             { x => x.Mangas, selectedMangas.ToList() }
@@ -235,7 +236,7 @@
         {
             var dialog = await DialogService.ShowAsync<MoveMangasToLibraryDialog>("Move Mangas", parameters);
             var result = await dialog.Result;
-            if (!result.Canceled)
+            if (result is { Canceled: false })
             {
                 await table.ReloadServerData();
             }
@@ -250,6 +251,7 @@
 
     private async Task OnDeleteSelected()
     {
+        if (!selectedMangas.Any()) return;
         var parameters = new DialogParameters<DeleteMangasDialog>
         {
             { x => x.Mangas, selectedMangas }
@@ -260,7 +262,7 @@
             var dialog = await DialogService.ShowAsync<DeleteMangasDialog>("Delete Mangas", parameters);
             var result = await dialog.Result;
 
-            if (!result.Canceled)
+            if (result is { Canceled: false })
             {
                 await table.ReloadServerData();
             }
@@ -282,7 +284,7 @@
                 { x => x.Mangas, new List<Manga> { manga } }
             });
             var result = await dialog.Result;
-            if (!result.Canceled)
+            if (result is { Canceled: false })
             {
                 await table.ReloadServerData();
             }
@@ -297,14 +299,11 @@
 
     private async Task OnUpscaleSpecific(Manga manga)
     {
-        foreach (var chapter in manga.Chapters)
+        if (manga.Library.UpscalerProfile == null) return;
+        foreach (var chapter in manga.Chapters
+                     .Where(chapter => !chapter.IsUpscaled || (chapter.IsUpscaled && chapter.UpscalerProfileId != manga.Library.UpscalerProfileId)))
         {
-            // Upscale if not yet upscaled or if the upscaler profile is different.
-            // The tasks themselves check for this as well, but this will prevent them from piling up in the queue.
-            if (!chapter.IsUpscaled || (chapter.IsUpscaled && chapter.UpscalerProfileId != manga.Library.UpscalerProfileId))
-            {
-                await TaskQueue.EnqueueAsync(new UpscaleTask(chapter, manga.Library.UpscalerProfile));
-            }
+            await TaskQueue.EnqueueAsync(new UpscaleTask(chapter, manga.Library.UpscalerProfile));
         }
     }
 
@@ -315,16 +314,17 @@
 
     private void RestoreOnCancel(object manga)
     {
+        if (mangaBeforeEdit == null) return;
         var mangaToRestore = (Manga)manga;
         mangaToRestore.PrimaryTitle = mangaBeforeEdit.PrimaryTitle;
         mangaToRestore.LibraryId = mangaBeforeEdit.LibraryId;
-        mangaToRestore.Library = mangaBeforeEdit.Library;
         mangaToRestore.ShouldUpscale = mangaBeforeEdit.ShouldUpscale;
     }
 
     private async Task OnCommitEdit(object m)
     {
         Manga manga = (Manga)m;
+        if (mangaBeforeEdit == null) return;
         // if the primary title was changed, change it back and then use the metadata changer.
         if (manga.PrimaryTitle != mangaBeforeEdit.PrimaryTitle)
         {
