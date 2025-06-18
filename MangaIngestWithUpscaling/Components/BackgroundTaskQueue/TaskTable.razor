@@ -1,5 +1,4 @@
 ﻿@using MangaIngestWithUpscaling.Data.BackqroundTaskQueue
-
 <MudTable T="PersistedTask" Items="@Tasks" RowsPerPage="10" Elevation="3"
           Dense="true"
           @ref="Table">
@@ -17,7 +16,10 @@
         <MudTh><MudTableSortLabel InitialDirection="SortDirection.Descending" SortBy="new Func<PersistedTask, object>(x=>x.Order)">Order</MudTableSortLabel></MudTh>
         <MudTh><MudTableSortLabel SortBy="new Func<PersistedTask, object>(x=>x.Data.TaskFriendlyName)">Name</MudTableSortLabel></MudTh>
         <MudTh><MudTableSortLabel SortBy="new Func<PersistedTask, object>(x=>x.CreatedAt)">Queued At</MudTableSortLabel></MudTh>
-        <MudTh><MudTableSortLabel SortBy="new Func<PersistedTask, object>(x=>x.ProcessedAt)">Finished At</MudTableSortLabel></MudTh>
+        <MudTh>
+            <MudTableSortLabel SortBy="new Func<PersistedTask, object?>(x=>x.ProcessedAt)">Finished At
+            </MudTableSortLabel>
+        </MudTh>
         <MudTh><MudTableSortLabel SortBy="new Func<PersistedTask, object>(x=>x.Status)">Status</MudTableSortLabel></MudTh>
         <MudTh>Actions</MudTh>
     </HeaderContent>
