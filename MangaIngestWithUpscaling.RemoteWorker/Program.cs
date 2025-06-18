@@ -20,6 +20,18 @@ builder.WebHost.ConfigureKestrel(serverOptions =>
     else
     {
         var socketPath = Path.Combine(Path.GetTempPath(), "miwu-remote.tmp");
+        if (File.Exists(socketPath))
+        {
+            try
+            {
+                File.Delete(socketPath);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException($"Failed to delete existing socket file at {socketPath}.", ex);
+            }
+        }
+
         serverOptions.ListenUnixSocket(socketPath);
     }
 
