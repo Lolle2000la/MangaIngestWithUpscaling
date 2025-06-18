@@ -1,26 +1,39 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
-  <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
-    <Nullable>enable</Nullable>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <InvariantGlobalization>true</InvariantGlobalization>
-    <PublishAot>true</PublishAot>
-  </PropertyGroup>
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <InvariantGlobalization>true</InvariantGlobalization>
+        <PublishAot>true</PublishAot>
+    </PropertyGroup>
 
-  <ItemGroup>
-    <Protobuf Include="../MangaIngestWithUpscaling/protos/upscaling-dist.proto" GrpcServices="Client">
-      <Link>Protos\upscaling-dist.proto</Link>
-    </Protobuf>
-  </ItemGroup>
+    <ItemGroup>
+        <Protobuf Include="../MangaIngestWithUpscaling/protos/upscaling-dist.proto" GrpcServices="Client">
+            <Link>Protos\upscaling-dist.proto</Link>
+        </Protobuf>
+    </ItemGroup>
 
-  <ItemGroup>
-		<PackageReference Include="AutoRegisterInject" Version="1.4.1" />
-    <PackageReference Include="Grpc.AspNetCore" Version="2.70.0" />
-  </ItemGroup>
+    <ItemGroup>
+        <PackageReference Include="AutoRegisterInject" Version="1.4.1"/>
+        <PackageReference Include="Grpc.AspNetCore" Version="2.70.0"/>
+    </ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\MangaIngestWithUpscaling.Shared\MangaIngestWithUpscaling.Shared.csproj" />
-  </ItemGroup>
+    <ItemGroup>
+        <None Include="../MangaJaNaiConverterGui/MangaJaNaiConverterGui/backend/**">
+            <Link>backend\%(RecursiveDir)%(Filename)%(Extension)</Link>
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="../MangaIngestWithUpscaling/appstate2.json">
+            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\MangaIngestWithUpscaling.Shared\MangaIngestWithUpscaling.Shared.csproj"/>
+    </ItemGroup>
 
 </Project>
