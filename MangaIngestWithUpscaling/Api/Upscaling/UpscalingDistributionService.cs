@@ -15,7 +15,6 @@ namespace MangaIngestWithUpscaling.Api.Upscaling;
 
 [Authorize(AuthenticationSchemes = "ApiKey")]
 public partial class UpscalingDistributionService(
-    TaskQueue taskQueue,
     DistributedUpscaleTaskProcessor taskProcessor,
     ApplicationDbContext dbContext,
     IFileSystem fileSystem,
@@ -82,16 +81,16 @@ public partial class UpscalingDistributionService(
         }
     }
 
-    public override async Task<KeepAliveResponse> KeepAlive(KeepAliveRequest request, ServerCallContext context)
+    public override Task<KeepAliveResponse> KeepAlive(KeepAliveRequest request, ServerCallContext context)
     {
         if (taskProcessor.KeepAlive(request.TaskId))
         {
-            return new KeepAliveResponse { IsAlive = true };
+            return Task.FromResult(new KeepAliveResponse { IsAlive = true });
         }
         else
         {
-            context.Status = new Status(StatusCode.NotFound, "Task not found");
-            return new KeepAliveResponse { IsAlive = false };
+            context.Status = new Status(StatusCode.NotFound, "Task not found or cancelled");
+            return Task.FromResult(new KeepAliveResponse { IsAlive = false });
         }
     }
 

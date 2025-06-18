@@ -1,6 +1,6 @@
-﻿using System.Threading.Channels;
-using MangaIngestWithUpscaling.Data;
+﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
+using System.Threading.Channels;
 
 namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 
@@ -9,11 +9,11 @@ public class UpscaleTaskProcessor(
     IServiceScopeFactory scopeFactory,
     ILogger<UpscaleTaskProcessor> logger) : BackgroundService
 {
-    private readonly ChannelReader<PersistedTask> _reader = taskQueue.UpscaleReader;
     private readonly Lock _lock = new();
-    private CancellationToken serviceStoppingToken;
+    private readonly ChannelReader<PersistedTask> _reader = taskQueue.UpscaleReader;
     private CancellationTokenSource? currentStoppingToken;
     private PersistedTask? currentTask;
+    private CancellationToken serviceStoppingToken;
 
     public event Func<PersistedTask, Task>? StatusChanged;
 
@@ -45,6 +45,7 @@ public class UpscaleTaskProcessor(
                 currentStoppingToken = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
                 currentTask = task;
             }
+
             await ProcessTaskAsync(task, currentStoppingToken.Token);
         }
     }
@@ -75,7 +76,8 @@ public class UpscaleTaskProcessor(
             logger.LogInformation("Task {TaskId} was canceled", task.Id);
             // only set to canceled if the cancellation was user requested
             task.Status = serviceStoppingToken.IsCancellationRequested
-                ? PersistedTaskStatus.Pending : PersistedTaskStatus.Canceled;
+                ? PersistedTaskStatus.Pending
+                : PersistedTaskStatus.Canceled;
             dbContext.Update(task);
             try
             {

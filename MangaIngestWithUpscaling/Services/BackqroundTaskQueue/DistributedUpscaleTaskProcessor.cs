@@ -7,8 +7,7 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 
 public class DistributedUpscaleTaskProcessor(
     TaskQueue taskQueue,
-    IServiceScopeFactory scopeFactory,
-    ILogger<UpscaleTaskProcessor> logger) : BackgroundService
+    IServiceScopeFactory scopeFactory) : BackgroundService
 {
     private readonly Lock _lock = new();
     private readonly ChannelReader<PersistedTask> _reader = taskQueue.UpscaleReader;
