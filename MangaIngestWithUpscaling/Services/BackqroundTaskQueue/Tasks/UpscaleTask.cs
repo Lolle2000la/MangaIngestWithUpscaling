@@ -100,7 +100,6 @@ public class UpscaleTask : BaseTask
         chapter.IsUpscaled = true;
         chapter.UpscalerProfile = upscalerProfile;
         chapter.UpscalerProfileId = upscalerProfile.Id;
-        dbContext.Update(chapter);
         await dbContext.SaveChangesAsync();
 
         // make sure that the new chapter is applied
