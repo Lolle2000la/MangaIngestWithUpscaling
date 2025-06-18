@@ -13,14 +13,14 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MangaIngestWithUpscaling.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20250323200821_AddApiKeys")]
-    partial class AddApiKeys
+    [Migration("20250618214731_ReconcileMigrations")]
+    partial class ReconcileMigrations
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "9.0.3");
+            modelBuilder.HasAnnotation("ProductVersion", "9.0.6");
 
             modelBuilder.Entity("MangaIngestWithUpscaling.Data.ApiKey", b =>
                 {
@@ -263,6 +263,38 @@ namespace MangaIngestWithUpscaling.Migrations
                     b.ToTable("LibraryFilterRules");
                 });
 
+            modelBuilder.Entity("MangaIngestWithUpscaling.Data.LibraryManagement.LibraryRenameRule", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("LibraryId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Pattern")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PatternType")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Replacement")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("TargetField")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LibraryId");
+
+                    b.ToTable("LibraryRenameRules");
+                });
+
             modelBuilder.Entity("MangaIngestWithUpscaling.Data.LibraryManagement.Manga", b =>
                 {
                     b.Property<int>("Id")
@@ -308,7 +340,7 @@ namespace MangaIngestWithUpscaling.Migrations
                     b.ToTable("MangaAlternativeTitles");
                 });
 
-            modelBuilder.Entity("MangaIngestWithUpscaling.Data.LibraryManagement.UpscalerProfile", b =>
+            modelBuilder.Entity("MangaIngestWithUpscaling.Shared.Data.LibraryManagement.UpscalerProfile", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -505,7 +537,7 @@ namespace MangaIngestWithUpscaling.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("MangaIngestWithUpscaling.Data.LibraryManagement.UpscalerProfile", "UpscalerProfile")
+                    b.HasOne("MangaIngestWithUpscaling.Shared.Data.LibraryManagement.UpscalerProfile", "UpscalerProfile")
                         .WithMany()
                         .HasForeignKey("UpscalerProfileId");
 
@@ -516,7 +548,7 @@ namespace MangaIngestWithUpscaling.Migrations
 
             modelBuilder.Entity("MangaIngestWithUpscaling.Data.LibraryManagement.Library", b =>
                 {
-                    b.HasOne("MangaIngestWithUpscaling.Data.LibraryManagement.UpscalerProfile", "UpscalerProfile")
+                    b.HasOne("MangaIngestWithUpscaling.Shared.Data.LibraryManagement.UpscalerProfile", "UpscalerProfile")
                         .WithMany()
                         .HasForeignKey("UpscalerProfileId");
 
@@ -527,6 +559,17 @@ namespace MangaIngestWithUpscaling.Migrations
                 {
                     b.HasOne("MangaIngestWithUpscaling.Data.LibraryManagement.Library", "Library")
                         .WithMany("FilterRules")
+                        .HasForeignKey("LibraryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Library");
+                });
+
+            modelBuilder.Entity("MangaIngestWithUpscaling.Data.LibraryManagement.LibraryRenameRule", b =>
+                {
+                    b.HasOne("MangaIngestWithUpscaling.Data.LibraryManagement.Library", "Library")
+                        .WithMany("RenameRules")
                         .HasForeignKey("LibraryId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
@@ -612,6 +655,8 @@ namespace MangaIngestWithUpscaling.Migrations
                     b.Navigation("FilterRules");
 
                     b.Navigation("MangaSeries");
+
+                    b.Navigation("RenameRules");
                 });
 
             modelBuilder.Entity("MangaIngestWithUpscaling.Data.LibraryManagement.Manga", b =>
