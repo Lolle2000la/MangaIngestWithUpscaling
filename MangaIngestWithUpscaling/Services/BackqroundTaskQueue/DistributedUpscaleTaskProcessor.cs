@@ -1,5 +1,6 @@
 ﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
+using Microsoft.EntityFrameworkCore;
 using System.Threading.Channels;
 
 namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
@@ -127,11 +128,34 @@ public class DistributedUpscaleTaskProcessor(
         return false;
     }
 
-    public void TaskCompleted(int taskId)
+    public async Task TaskCompleted(int taskId)
     {
+        DateTime time = DateTime.UtcNow;
         using (_lock.EnterScope())
         {
+            PersistedTask? task = runningTasks.GetValueOrDefault(taskId);
+            if (task == null)
+            {
+                return; // Task not found, nothing to do
+            }
+
+            task.ProcessedAt = time;
+            task.Status = PersistedTaskStatus.Completed;
+            _ = StatusChanged?.Invoke(task);
             runningTasks.Remove(taskId);
         }
+
+        using IServiceScope scope = scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        PersistedTask? localTask = await dbContext.PersistedTasks.FirstOrDefaultAsync(t => t.Id == taskId);
+        if (localTask == null)
+        {
+            return; // Task not found in the database, nothing to do
+        }
+
+        localTask.ProcessedAt = time;
+        localTask.Status = PersistedTaskStatus.Completed;
+        dbContext.Update(localTask);
+        await dbContext.SaveChangesAsync();
     }
 }
