@@ -59,16 +59,16 @@ public class UpscaleTaskProcessor(
             task.Status = PersistedTaskStatus.Processing;
             dbContext.Update(task);
             await dbContext.SaveChangesAsync(stoppingToken);
-            StatusChanged?.Invoke(task);
+            _ = StatusChanged?.Invoke(task);
 
             await task.Data.ProcessAsync(scope.ServiceProvider, stoppingToken);
-            StatusChanged?.Invoke(task);
+            _ = StatusChanged?.Invoke(task);
 
             task.Status = PersistedTaskStatus.Completed;
             task.ProcessedAt = DateTime.UtcNow;
             dbContext.Update(task);
             await dbContext.SaveChangesAsync(stoppingToken);
-            StatusChanged?.Invoke(task);
+            _ = StatusChanged?.Invoke(task);
         }
         catch (OperationCanceledException)
         {
