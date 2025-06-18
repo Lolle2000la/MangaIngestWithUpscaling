@@ -19,6 +19,8 @@ public partial class UpscalingDistributionService(
     IFileSystem fileSystem,
     IChapterChangedNotifier chapterChangedNotifier) : UpscalingService.UpscalingServiceBase
 {
+    private static readonly string tempDir = Path.Combine(Path.GetTempPath(), "mangaingestwithupscaling");
+
     public override Task<CheckConnectionResponse> CheckConnection(Empty request, ServerCallContext context)
     {
         context.Status = new Status(StatusCode.OK, "Connection established");
@@ -272,6 +274,12 @@ public partial class UpscalingDistributionService(
 
             try
             {
+                string? destinationDirectory = Path.GetDirectoryName(chapter.UpscaledFullPath);
+                if (destinationDirectory != null)
+                {
+                    fileSystem.CreateDirectory(destinationDirectory);
+                }
+
                 fileSystem.Move(PrepareTempFile(taskId), chapter.UpscaledFullPath);
                 chapter.IsUpscaled = true;
                 chapter.UpscalerProfileId = upscaleTask.UpscalerProfileId;
@@ -303,16 +311,14 @@ public partial class UpscalingDistributionService(
 
     private string PrepareTempChunkFile(int taskId, int chunk)
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), "mangaingestwithupscaling");
         fileSystem.CreateDirectory(tempDir);
-        return Path.Combine(Path.GetTempPath(), $"upscaled_{taskId}_{chunk}.cbz");
+        return Path.Combine(tempDir, $"upscaled_{taskId}_{chunk}.cbz");
     }
 
     private string PrepareTempFile(int taskId)
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), "mangaingestwithupscaling");
         fileSystem.CreateDirectory(tempDir);
-        return Path.Combine(Path.GetTempPath(), $"upscaled_{taskId}.cbz");
+        return Path.Combine(tempDir, $"upscaled_{taskId}.cbz");
     }
 
     private void MergeChunks(Dictionary<int, List<int>> taskChunksDict)
