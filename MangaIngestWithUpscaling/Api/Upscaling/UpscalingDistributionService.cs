@@ -2,6 +2,8 @@
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
+using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.Integrations;
@@ -186,106 +188,87 @@ public partial class UpscalingDistributionService(
     public override async Task UploadUpscaledCbzFile(IAsyncStreamReader<CbzFileChunk> requestStream,
         IServerStreamWriter<UploadUpscaledCbzResponse> responseStream, ServerCallContext context)
     {
-        List<(int, int)> taskChunkPairs = new();
+        var taskChunks = new Dictionary<int, Dictionary<int, byte[]>>();
 
         await foreach (var request in requestStream.ReadAllAsync())
         {
-            var task = await dbContext.PersistedTasks.FindAsync(request.TaskId);
-            if (task == null)
+            if (!taskChunks.ContainsKey(request.TaskId))
             {
-                await responseStream.WriteAsync(new UploadUpscaledCbzResponse
-                {
-                    Success = false, Message = "Task not found", TaskId = request.TaskId
-                });
+                taskChunks[request.TaskId] = new Dictionary<int, byte[]>();
             }
 
-            if (task == null || task.Data is not UpscaleTask cbzTask)
-            {
-                await responseStream.WriteAsync(new UploadUpscaledCbzResponse
-                {
-                    Success = false, Message = "Invalid task data", TaskId = request.TaskId
-                });
-                continue;
-            }
-
-            var chapter = await dbContext.Chapters
-                .Include(chapter => chapter.Manga)
-                .ThenInclude(manga => manga.Library)
-                .FirstOrDefaultAsync(c => c.Id == cbzTask.ChapterId);
-            if (chapter == null)
-            {
-                await responseStream.WriteAsync(new UploadUpscaledCbzResponse
-                {
-                    Success = false, Message = "Chapter not found", TaskId = request.TaskId
-                });
-            }
-
-            var tempFile = PrepareTempChunkFile(task.Id, request.ChunkNumber);
-            using var fileStream = File.OpenWrite(tempFile);
-            await fileStream.WriteAsync(request.Chunk.ToByteArray().AsMemory(0, request.Chunk.Length));
-            if (request.ChunkNumber == 0)
-            {
-                // First chunk, create the file
-                fileStream.SetLength(0);
-            }
-
-            taskChunkPairs.Add((task.Id, request.ChunkNumber));
+            taskChunks[request.TaskId][request.ChunkNumber] = request.Chunk.ToByteArray();
         }
 
-        var taskChunksDict = taskChunkPairs
-            .GroupBy(x => x.Item1)
-            .ToDictionary(x => x.Key, x => x.Select(y => y.Item2).ToList());
-
-        MergeChunks(taskChunksDict);
-
-        foreach (int taskId in taskChunksDict.Keys)
+        foreach (var (taskId, chunks) in taskChunks)
         {
-            var task = await dbContext.PersistedTasks.FindAsync(taskId);
-            var upscaleTask = (UpscaleTask)task!.Data;
-            var chapter = await dbContext.Chapters
-                .Include(chapter => chapter.Manga)
-                .ThenInclude(manga => manga.Library)
-                .FirstOrDefaultAsync(c => c.Id == upscaleTask.ChapterId);
-
-            if (chapter == null)
-            {
-                File.Delete(PrepareTempFile(taskId));
-                await responseStream.WriteAsync(new UploadUpscaledCbzResponse
-                {
-                    Success = false, Message = "Chapter not found", TaskId = taskId
-                });
-                continue;
-            }
-
-            if (chapter.UpscaledFullPath == null)
-            {
-                File.Delete(PrepareTempFile(taskId));
-                await responseStream.WriteAsync(new UploadUpscaledCbzResponse
-                {
-                    Success = false, Message = "Suitable location to save the chapter not found.", TaskId = taskId
-                });
-                continue;
-            }
-
-            if (File.Exists(chapter.UpscaledFullPath))
-            {
-                File.Delete(chapter.UpscaledFullPath);
-            }
-
+            string tempFile = PrepareTempFile(taskId);
             try
             {
+                await using (FileStream fileStream = File.OpenWrite(tempFile))
+                {
+                    foreach (KeyValuePair<int, byte[]> chunk in chunks.OrderBy(c => c.Key))
+                    {
+                        await fileStream.WriteAsync(chunk.Value);
+                    }
+                }
+
+                PersistedTask? task = await dbContext.PersistedTasks.FindAsync(taskId);
+                if (task == null)
+                {
+                    File.Delete(tempFile);
+                    await responseStream.WriteAsync(new UploadUpscaledCbzResponse
+                    {
+                        Success = false, Message = "Task not found", TaskId = taskId
+                    });
+                    continue;
+                }
+
+                var upscaleTask = (UpscaleTask)task.Data;
+                Chapter? chapter = await dbContext.Chapters
+                    .Include(chapter => chapter.Manga)
+                    .ThenInclude(manga => manga.Library)
+                    .FirstOrDefaultAsync(c => c.Id == upscaleTask.ChapterId);
+
+                if (chapter == null)
+                {
+                    File.Delete(tempFile);
+                    await responseStream.WriteAsync(new UploadUpscaledCbzResponse
+                    {
+                        Success = false, Message = "Chapter not found", TaskId = taskId
+                    });
+                    continue;
+                }
+
+                if (chapter.UpscaledFullPath == null)
+                {
+                    File.Delete(tempFile);
+                    await responseStream.WriteAsync(new UploadUpscaledCbzResponse
+                    {
+                        Success = false,
+                        Message = "Suitable location to save the chapter not found.",
+                        TaskId = taskId
+                    });
+                    continue;
+                }
+
+                if (File.Exists(chapter.UpscaledFullPath))
+                {
+                    File.Delete(chapter.UpscaledFullPath);
+                }
+
                 string? destinationDirectory = Path.GetDirectoryName(chapter.UpscaledFullPath);
                 if (destinationDirectory != null)
                 {
                     fileSystem.CreateDirectory(destinationDirectory);
                 }
 
-                fileSystem.Move(PrepareTempFile(taskId), chapter.UpscaledFullPath);
+                fileSystem.Move(tempFile, chapter.UpscaledFullPath);
                 chapter.IsUpscaled = true;
                 chapter.UpscalerProfileId = upscaleTask.UpscalerProfileId;
                 dbContext.Update(chapter);
                 await dbContext.SaveChangesAsync();
-                taskProcessor.TaskCompleted(taskId);
+                await taskProcessor.TaskCompleted(taskId);
                 await responseStream.WriteAsync(new UploadUpscaledCbzResponse
                 {
                     Success = true, Message = "Chapter upscaled", TaskId = taskId
@@ -299,9 +282,9 @@ public partial class UpscalingDistributionService(
                 {
                     Success = false, Message = ex.Message, TaskId = taskId
                 });
-                if (File.Exists(PrepareTempFile(taskId)))
+                if (File.Exists(tempFile))
                 {
-                    File.Delete(PrepareTempFile(taskId));
+                    File.Delete(tempFile);
                 }
             }
         }
@@ -309,34 +292,9 @@ public partial class UpscalingDistributionService(
         context.Status = new Status(StatusCode.OK, "File(s) uploaded");
     }
 
-    private string PrepareTempChunkFile(int taskId, int chunk)
-    {
-        fileSystem.CreateDirectory(tempDir);
-        return Path.Combine(tempDir, $"upscaled_{taskId}_{chunk}.cbz");
-    }
-
     private string PrepareTempFile(int taskId)
     {
         fileSystem.CreateDirectory(tempDir);
         return Path.Combine(tempDir, $"upscaled_{taskId}.cbz");
-    }
-
-    private void MergeChunks(Dictionary<int, List<int>> taskChunksDict)
-    {
-        foreach (var (taskId, chunks) in taskChunksDict)
-        {
-            var tempFile = PrepareTempFile(taskId);
-            using var fileStream = File.OpenWrite(tempFile);
-            foreach (int chunk in chunks.OrderBy(c => c))
-            {
-                var chunkFile = PrepareTempChunkFile(taskId, chunk);
-                using (var chunkFileStream = File.OpenRead(chunkFile))
-                {
-                    chunkFileStream.CopyTo(fileStream);
-                }
-
-                File.Delete(chunkFile);
-            }
-        }
     }
 }
