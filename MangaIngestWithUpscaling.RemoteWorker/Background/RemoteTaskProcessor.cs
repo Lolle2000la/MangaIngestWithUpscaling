@@ -55,16 +55,14 @@ public class RemoteTaskProcessor(
         var profile = GetProfileFromResponse(taskResponse.UpscalerProfile);
 
         var keepAliveCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-        Task keepAliveTask = Task.Run(async () =>
+        var keepAliveTask = Task.Run(async () =>
         {
             var keepAliveTimer = new PeriodicTimer(TimeSpan.FromSeconds(30));
-            while (await keepAliveTimer.WaitForNextTickAsync(keepAliveCts.Token) &&
-                   !keepAliveCts.IsCancellationRequested)
+            while (!keepAliveCts.IsCancellationRequested)
             {
                 try
                 {
-                    KeepAliveResponse? response = await client.KeepAliveAsync(
-                        new KeepAliveRequest { TaskId = taskResponse.TaskId },
+                    var response = await client.KeepAliveAsync(new KeepAliveRequest { TaskId = taskResponse.TaskId },
                         cancellationToken: keepAliveCts.Token);
                     if (!response.IsAlive)
                     {
@@ -78,8 +76,22 @@ public class RemoteTaskProcessor(
                 {
                     logger.LogError(ex, "Failed to send keep-alive for task {taskId}", taskResponse.TaskId);
                 }
+
+                if (keepAliveCts.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                try
+                {
+                    await keepAliveTimer.WaitForNextTickAsync(keepAliveCts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
             }
-        }, stoppingToken);
+        }, keepAliveCts.Token);
 
         string? downloadedFile = null;
         string? upscaledFile = null;
