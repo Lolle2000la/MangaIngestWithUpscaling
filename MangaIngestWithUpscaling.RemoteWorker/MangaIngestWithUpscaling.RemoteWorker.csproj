@@ -9,10 +9,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Protobuf Include="..\MangaIngestWithUpscaling\protos\upscaling-dist.proto" GrpcServices="Client">
+    <Protobuf Include="../MangaIngestWithUpscaling/protos/upscaling-dist.proto" GrpcServices="Client">
       <Link>Protos\upscaling-dist.proto</Link>
     </Protobuf>
-    <Protobuf Include="Protos\greet.proto" GrpcServices="Server" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,4 +1,5 @@
 using Google.Protobuf.WellKnownTypes;
+using Grpc.Core;
 using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.RemoteWorker.Configuration;
 using MangaIngestWithUpscaling.RemoteWorker.Services;
@@ -7,7 +8,6 @@ using MangaIngestWithUpscaling.Shared.Services.Python;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.Options;
-using System.Reflection.PortableExecutable;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -38,7 +38,7 @@ builder.Services.AddGrpcClient<UpscalingService.UpscalingServiceClient>(o =>
     o.CallOptionsActions.Add(context =>
     {
         var config = context.ServiceProvider.GetRequiredService<IOptions<WorkerConfig>>().Value;
-        var metadata = context.CallOptions.Headers ?? new Grpc.Core.Metadata();
+        Metadata metadata = context.CallOptions.Headers ?? new Metadata();
         metadata.Add("Authorization", $"ApiKey {config.ApiKey}");
         context.CallOptions = context.CallOptions.WithHeaders(metadata);
     });
@@ -51,8 +51,9 @@ builder.Services.RegisterRemoteWorkerServices();
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
-app.MapGrpcService<GreeterService>();
-app.MapGet("/", () => "Communication with gRPC endpoints must be made through a gRPC client. To learn how to create a client, visit: https://go.microsoft.com/fwlink/?linkid=2086909");
+app.MapGet("/",
+    () =>
+        "Communication with gRPC endpoints must be made through a gRPC client. To learn how to create a client, visit: https://go.microsoft.com/fwlink/?linkid=2086909");
 
 using (var scope = app.Services.CreateScope())
 {
@@ -66,7 +67,8 @@ using (var scope = app.Services.CreateScope())
     var upscalerConfig = scope.ServiceProvider.GetRequiredService<IOptions<UpscalerConfig>>();
     if (!pythonService.IsPythonInstalled())
     {
-        logger.LogError("Python is not installed on the system. Please install Python 3.6 or newer and ensure it is available on the system PATH.");
+        logger.LogError(
+            "Python is not installed on the system. Please install Python 3.6 or newer and ensure it is available on the system PATH.");
     }
     else
     {

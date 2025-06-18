@@ -19,7 +19,7 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<Protobuf Include="Protos\upscaling-dist.proto" GrpcServices="Server" />
+		<Protobuf Include="protos\upscaling-dist.proto" GrpcServices="Server"/>
 	</ItemGroup>
 
 	<ItemGroup>

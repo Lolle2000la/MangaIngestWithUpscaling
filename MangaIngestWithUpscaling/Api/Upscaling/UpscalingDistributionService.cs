@@ -5,9 +5,9 @@ using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.Integrations;
+using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
-using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 
 namespace MangaIngestWithUpscaling.Api.Upscaling;
 
@@ -22,24 +22,17 @@ public partial class UpscalingDistributionService(
     public override Task<CheckConnectionResponse> CheckConnection(Empty request, ServerCallContext context)
     {
         context.Status = new Status(StatusCode.OK, "Connection established");
-        return Task.FromResult(new CheckConnectionResponse()
-        {
-            Message = "Connection established",
-            Success = true
-        });
+        return Task.FromResult(new CheckConnectionResponse { Message = "Connection established", Success = true });
     }
 
-    public override async Task<UpscaleTaskDelegationResponse> RequestUpscaleTask(Empty request, ServerCallContext context)
+    public override async Task<UpscaleTaskDelegationResponse> RequestUpscaleTask(Empty request,
+        ServerCallContext context)
     {
         var task = await taskProcessor.GetTask(context.CancellationToken);
         if (task == null)
         {
             context.Status = new Status(StatusCode.NotFound, "No tasks available");
-            return new UpscaleTaskDelegationResponse()
-            {
-                TaskId = -1,
-                UpscalerProfile = null
-            };
+            return new UpscaleTaskDelegationResponse { TaskId = -1, UpscalerProfile = null };
         }
         else
         {
@@ -49,11 +42,7 @@ public partial class UpscalingDistributionService(
             if (upscalerProfile == null)
             {
                 context.Status = new Status(StatusCode.NotFound, "Upscaler profile not found");
-                return new UpscaleTaskDelegationResponse()
-                {
-                    TaskId = -1,
-                    UpscalerProfile = null
-                };
+                return new UpscaleTaskDelegationResponse { TaskId = -1, UpscalerProfile = null };
             }
 
             return new UpscaleTaskDelegationResponse()
@@ -64,24 +53,24 @@ public partial class UpscalingDistributionService(
                     Name = upscalerProfile.Name,
                     UpscalerMethod = upscalerProfile.UpscalerMethod switch
                     {
-                        MangaIngestWithUpscaling.Shared.Data.LibraryManagement.UpscalerMethod.MangaJaNai => UpscalerMethod.MangaJaNai,
+                        Shared.Data.LibraryManagement.UpscalerMethod.MangaJaNai => UpscalerMethod.MangaJaNai,
                         _ => UpscalerMethod.Unspecified
                     },
                     CompressionFormat = upscalerProfile.CompressionFormat switch
                     {
-                        MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat.Avif => CompressionFormat.Avif,
-                        MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat.Jpg => CompressionFormat.Jpg,
-                        MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat.Png => CompressionFormat.Png,
-                        MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat.Webp => CompressionFormat.Webp,
+                        Shared.Data.LibraryManagement.CompressionFormat.Avif => CompressionFormat.Avif,
+                        Shared.Data.LibraryManagement.CompressionFormat.Jpg => CompressionFormat.Jpg,
+                        Shared.Data.LibraryManagement.CompressionFormat.Png => CompressionFormat.Png,
+                        Shared.Data.LibraryManagement.CompressionFormat.Webp => CompressionFormat.Webp,
                         _ => CompressionFormat.Unspecified
                     },
                     Quality = upscalerProfile.Quality,
                     ScalingFactor = upscalerProfile.ScalingFactor switch
                     {
-                        MangaIngestWithUpscaling.Shared.Data.LibraryManagement.ScaleFactor.OneX => ScaleFactor.OneX,
-                        MangaIngestWithUpscaling.Shared.Data.LibraryManagement.ScaleFactor.TwoX => ScaleFactor.TwoX,
-                        MangaIngestWithUpscaling.Shared.Data.LibraryManagement.ScaleFactor.ThreeX => ScaleFactor.ThreeX,
-                        MangaIngestWithUpscaling.Shared.Data.LibraryManagement.ScaleFactor.FourX => ScaleFactor.FourX,
+                        Shared.Data.LibraryManagement.ScaleFactor.OneX => ScaleFactor.OneX,
+                        Shared.Data.LibraryManagement.ScaleFactor.TwoX => ScaleFactor.TwoX,
+                        Shared.Data.LibraryManagement.ScaleFactor.ThreeX => ScaleFactor.ThreeX,
+                        Shared.Data.LibraryManagement.ScaleFactor.FourX => ScaleFactor.FourX,
                         _ => ScaleFactor.Unspecified
                     }
                 },
@@ -102,7 +91,8 @@ public partial class UpscalingDistributionService(
         }
     }
 
-    public override async Task GetCbzFile(CbzToUpscaleRequest request, IServerStreamWriter<CbzFileChunk> responseStream, ServerCallContext context)
+    public override async Task GetCbzFile(CbzToUpscaleRequest request, IServerStreamWriter<CbzFileChunk> responseStream,
+        ServerCallContext context)
     {
         var task = await dbContext.PersistedTasks.FindAsync(request.TaskId);
         if (task == null)
@@ -114,13 +104,14 @@ public partial class UpscalingDistributionService(
         var cbzTask = (UpscaleTask)task.Data;
         var chapter = await dbContext.Chapters
             .Include(chapter => chapter.Manga)
-                .ThenInclude(manga => manga.Library)
+            .ThenInclude(manga => manga.Library)
             .FirstOrDefaultAsync(c => c.Id == cbzTask.ChapterId);
         if (chapter == null)
         {
             context.Status = new Status(StatusCode.NotFound, "Chapter not found");
             return;
         }
+
         if (!File.Exists(chapter.NotUpscaledFullPath))
         {
             context.Status = new Status(StatusCode.NotFound, "Chapter not found");
@@ -136,9 +127,7 @@ public partial class UpscalingDistributionService(
         {
             await responseStream.WriteAsync(new CbzFileChunk
             {
-                Chunk = ByteString.CopyFrom(buffer, 0, bytesRead),
-                ChunkNumber = chunkNumber++,
-                TaskId = task.Id
+                Chunk = ByteString.CopyFrom(buffer, 0, bytesRead), ChunkNumber = chunkNumber++, TaskId = task.Id
             });
         }
 
@@ -158,13 +147,14 @@ public partial class UpscalingDistributionService(
         var cbzTask = (UpscaleTask)task.Data;
         var chapter = await dbContext.Chapters
             .Include(chapter => chapter.Manga)
-                .ThenInclude(manga => manga.Library)
+            .ThenInclude(manga => manga.Library)
             .FirstOrDefaultAsync(c => c.Id == cbzTask.ChapterId);
         if (chapter == null)
         {
             context.Status = new Status(StatusCode.NotFound, "Chapter not found");
             return new CbzFileChunk();
         }
+
         if (!File.Exists(chapter.NotUpscaledFullPath))
         {
             context.Status = new Status(StatusCode.NotFound, "Chapter not found");
@@ -183,9 +173,7 @@ public partial class UpscalingDistributionService(
             context.Status = new Status(StatusCode.OK, "Chunk sent");
             return new CbzFileChunk
             {
-                Chunk = ByteString.CopyFrom(buffer, 0, bytesRead),
-                ChunkNumber = chunkNumber++,
-                TaskId = task.Id
+                Chunk = ByteString.CopyFrom(buffer, 0, bytesRead), ChunkNumber = chunkNumber++, TaskId = task.Id
             };
         }
 
@@ -193,7 +181,8 @@ public partial class UpscalingDistributionService(
         return new CbzFileChunk();
     }
 
-    public override async Task UploadUpscaledCbzFile(IAsyncStreamReader<CbzFileChunk> requestStream, IServerStreamWriter<UploadUpscaledCbzResponse> responseStream, ServerCallContext context)
+    public override async Task UploadUpscaledCbzFile(IAsyncStreamReader<CbzFileChunk> requestStream,
+        IServerStreamWriter<UploadUpscaledCbzResponse> responseStream, ServerCallContext context)
     {
         List<(int, int)> taskChunkPairs = new();
 
@@ -204,25 +193,31 @@ public partial class UpscalingDistributionService(
             {
                 await responseStream.WriteAsync(new UploadUpscaledCbzResponse
                 {
-                    Success = false,
-                    Message = "Task not found",
-                    TaskId = request.TaskId
+                    Success = false, Message = "Task not found", TaskId = request.TaskId
                 });
             }
-            var cbzTask = (UpscaleTask)task.Data;
+
+            if (task == null || task.Data is not UpscaleTask cbzTask)
+            {
+                await responseStream.WriteAsync(new UploadUpscaledCbzResponse
+                {
+                    Success = false, Message = "Invalid task data", TaskId = request.TaskId
+                });
+                continue;
+            }
+
             var chapter = await dbContext.Chapters
                 .Include(chapter => chapter.Manga)
-                    .ThenInclude(manga => manga.Library)
+                .ThenInclude(manga => manga.Library)
                 .FirstOrDefaultAsync(c => c.Id == cbzTask.ChapterId);
             if (chapter == null)
             {
                 await responseStream.WriteAsync(new UploadUpscaledCbzResponse
                 {
-                    Success = false,
-                    Message = "Chapter not found",
-                    TaskId = request.TaskId
+                    Success = false, Message = "Chapter not found", TaskId = request.TaskId
                 });
             }
+
             var tempFile = PrepareTempChunkFile(task.Id, request.ChunkNumber);
             using var fileStream = File.OpenWrite(tempFile);
             await fileStream.WriteAsync(request.Chunk.ToByteArray().AsMemory(0, request.Chunk.Length));
@@ -231,6 +226,7 @@ public partial class UpscalingDistributionService(
                 // First chunk, create the file
                 fileStream.SetLength(0);
             }
+
             taskChunkPairs.Add((task.Id, request.ChunkNumber));
         }
 
@@ -246,7 +242,7 @@ public partial class UpscalingDistributionService(
             var upscaleTask = (UpscaleTask)task!.Data;
             var chapter = await dbContext.Chapters
                 .Include(chapter => chapter.Manga)
-                    .ThenInclude(manga => manga.Library)
+                .ThenInclude(manga => manga.Library)
                 .FirstOrDefaultAsync(c => c.Id == upscaleTask.ChapterId);
 
             if (chapter == null)
@@ -254,20 +250,17 @@ public partial class UpscalingDistributionService(
                 File.Delete(PrepareTempFile(taskId));
                 await responseStream.WriteAsync(new UploadUpscaledCbzResponse
                 {
-                    Success = false,
-                    Message = "Chapter not found",
-                    TaskId = taskId
+                    Success = false, Message = "Chapter not found", TaskId = taskId
                 });
                 continue;
             }
+
             if (chapter.UpscaledFullPath == null)
             {
                 File.Delete(PrepareTempFile(taskId));
                 await responseStream.WriteAsync(new UploadUpscaledCbzResponse
                 {
-                    Success = false,
-                    Message = "Suitable location to save the chapter not found.",
-                    TaskId = taskId
+                    Success = false, Message = "Suitable location to save the chapter not found.", TaskId = taskId
                 });
                 continue;
             }
@@ -286,9 +279,7 @@ public partial class UpscalingDistributionService(
                 await dbContext.SaveChangesAsync();
                 await responseStream.WriteAsync(new UploadUpscaledCbzResponse
                 {
-                    Success = true,
-                    Message = "Chapter upscaled",
-                    TaskId = taskId
+                    Success = true, Message = "Chapter upscaled", TaskId = taskId
                 });
                 _ = chapterChangedNotifier.Notify(chapter, true);
             }
@@ -297,9 +288,7 @@ public partial class UpscalingDistributionService(
                 context.Status = new Status(StatusCode.Internal, ex.Message);
                 await responseStream.WriteAsync(new UploadUpscaledCbzResponse
                 {
-                    Success = false,
-                    Message = ex.Message,
-                    TaskId = taskId
+                    Success = false, Message = ex.Message, TaskId = taskId
                 });
                 if (File.Exists(PrepareTempFile(taskId)))
                 {
@@ -338,6 +327,7 @@ public partial class UpscalingDistributionService(
                 {
                     chunkFileStream.CopyTo(fileStream);
                 }
+
                 File.Delete(chunkFile);
             }
         }

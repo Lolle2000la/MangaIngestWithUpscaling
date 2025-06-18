@@ -1,10 +1,8 @@
 ﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
-@using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
-
 <MudTd DataLabel="Pattern to match">
     <MudTextField Immediate="true"
                   Required="true"
-                  @bind-Value="FilterRule.Pattern" />
+                  @bind-Value="FilterRule.Pattern"/>
 </MudTd>
 <MudTd DataLabel="Pattern Type">
     <MudSelect Immediate="true"
@@ -19,7 +17,8 @@
                T="LibraryFilterTargetField"
                @bind-Value="FilterRule.TargetField">
         <MudSelectItem Value="LibraryFilterTargetField.MangaTitle">Manga Title</MudSelectItem>
-        <MudSelectItem Value="LibraryFilterTargetField.ChapterTitle">Chapter Title (i.e. Chapter 1, 第1話, ...)</MudSelectItem>
+        <MudSelectItem Value="LibraryFilterTargetField.ChapterTitle">Chapter Title (i.e. Chapter 1, 第1話, ...)
+        </MudSelectItem>
         <MudSelectItem Value="LibraryFilterTargetField.FilePath">File Path (relative to ingest root)</MudSelectItem>
     </MudSelect>
 </MudTd>
@@ -33,5 +32,5 @@
 </MudTd>
 
 @code {
-    [Parameter] public LibraryFilterRule FilterRule { get; set; }
-    }
+    [Parameter] public required LibraryFilterRule FilterRule { get; set; }
+}

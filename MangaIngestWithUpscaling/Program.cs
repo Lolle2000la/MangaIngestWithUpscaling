@@ -1,30 +1,29 @@
 using MangaIngestWithUpscaling.Api;
 using MangaIngestWithUpscaling.Api.Auth;
-using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.Components;
 using MangaIngestWithUpscaling.Components.Account;
 using MangaIngestWithUpscaling.Configuration;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Services;
-using MangaIngestWithUpscaling.Shared.Services.Python;
 using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Services.Python;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using MudBlazor.Services;
 using MudBlazor.Translations;
 using Serilog;
 using System.Data.SQLite;
-
-using System.Text.Json;
-using Microsoft.AspNetCore.Authentication.OpenIdConnect;
-using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using System.Security.Claims;
-using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.HttpOverrides; // Required for Forwarded Headers
+
+// Required for Forwarded Headers
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -32,7 +31,8 @@ builder.Configuration.AddEnvironmentVariables("Ingest_");
 
 builder.RegisterConfig(); // Register the configuration classes
 
-var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+string connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ??
+                          throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
 
 SQLiteConnectionStringBuilder sqliteConnectionStringBuilder = new(connectionString);
 
@@ -60,7 +60,7 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
     // If the proxy isn't on localhost from the app container's perspective
-    options.KnownProxies.Clear(); 
+    options.KnownProxies.Clear();
     options.KnownNetworks.Clear();
 });
 
@@ -84,14 +84,14 @@ builder.Services.AddScoped<AuthenticationStateProvider, IdentityRevalidatingAuth
 
 // Configure Authentication
 var authBuilder = builder.Services.AddAuthentication(options =>
+{
+    options.DefaultScheme = IdentityConstants.ApplicationScheme;
+    options.DefaultSignInScheme = IdentityConstants.ExternalScheme;
+    if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
     {
-        options.DefaultScheme = IdentityConstants.ApplicationScheme;
-        options.DefaultSignInScheme = IdentityConstants.ExternalScheme;
-        if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
-        {
-            options.DefaultChallengeScheme = OpenIdConnectDefaults.AuthenticationScheme; // "OIDC"
-        }
-    });
+        options.DefaultChallengeScheme = OpenIdConnectDefaults.AuthenticationScheme; // "OIDC"
+    }
+});
 
 authBuilder.AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>("ApiKey", null);
 authBuilder.AddIdentityCookies();
@@ -99,68 +99,80 @@ authBuilder.AddIdentityCookies();
 // Conditionally add OIDC authentication
 if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
 {
-    authBuilder.AddOpenIdConnect(OpenIdConnectDefaults.AuthenticationScheme, options => // Use the constant for scheme name, "OIDC"
-    {
-        builder.Configuration.GetSection("OIDC").Bind(options);
-        options.ResponseType = OpenIdConnectResponseType.Code;
-        options.SaveTokens = true;
-        options.GetClaimsFromUserInfoEndpoint = true;
-        options.UseTokenLifetime = false;
-        options.Scope.Add("openid");
-        options.Scope.Add("profile");
-        options.Scope.Add("email");
-
-        options.Events = new OpenIdConnectEvents
+    authBuilder.AddOpenIdConnect(OpenIdConnectDefaults.AuthenticationScheme,
+        options => // Use the constant for scheme name, "OIDC"
         {
-            OnTokenValidated = async ctx =>
+            builder.Configuration.GetSection("OIDC").Bind(options);
+            options.ResponseType = OpenIdConnectResponseType.Code;
+            options.SaveTokens = true;
+            options.GetClaimsFromUserInfoEndpoint = true;
+            options.UseTokenLifetime = false;
+            options.Scope.Add("openid");
+            options.Scope.Add("profile");
+            options.Scope.Add("email");
+
+            options.Events = new OpenIdConnectEvents
             {
-                var signInManager = ctx.HttpContext.RequestServices.GetRequiredService<SignInManager<ApplicationUser>>();
-                var userManager = ctx.HttpContext.RequestServices.GetRequiredService<UserManager<ApplicationUser>>();
-
-                if (ctx.Principal == null)
+                OnTokenValidated = async ctx =>
                 {
-                    ctx.Fail("Principal is null.");
-                    return;
-                }
+                    var signInManager = ctx.HttpContext.RequestServices
+                        .GetRequiredService<SignInManager<ApplicationUser>>();
+                    var userManager =
+                        ctx.HttpContext.RequestServices.GetRequiredService<UserManager<ApplicationUser>>();
 
-                var emailClaim = ctx.Principal.FindFirstValue(ClaimTypes.Email) ?? ctx.Principal.FindFirstValue("email");
-                var nameIdentifier = ctx.Principal.FindFirstValue(ClaimTypes.NameIdentifier);
-
-                if (emailClaim != null && nameIdentifier != null)
-                {
-                    var user = await userManager.FindByEmailAsync(emailClaim);
-                    if (user == null)
+                    if (ctx.Principal == null)
                     {
-                        user = new ApplicationUser { UserName = emailClaim, Email = emailClaim, EmailConfirmed = true };
-                        var createUserResult = await userManager.CreateAsync(user);
-                        if (!createUserResult.Succeeded)
-                        {
-                            ctx.Fail($"Failed to create user: {string.Join(", ", createUserResult.Errors.Select(e => e.Description))}");
-                            return;
-                        }
+                        ctx.Fail("Principal is null.");
+                        return;
                     }
-                    
-                    var externalLoginInfo = new UserLoginInfo(ctx.Scheme.Name, nameIdentifier, ctx.Scheme.Name);
-                    var logins = await userManager.GetLoginsAsync(user);
-                    if (!logins.Any(l => l.LoginProvider == externalLoginInfo.LoginProvider && l.ProviderKey == externalLoginInfo.ProviderKey))
+
+                    string? emailClaim = ctx.Principal.FindFirstValue(ClaimTypes.Email) ??
+                                         ctx.Principal.FindFirstValue("email");
+                    string? nameIdentifier = ctx.Principal.FindFirstValue(ClaimTypes.NameIdentifier);
+
+                    if (emailClaim != null && nameIdentifier != null)
                     {
-                        var addLoginResult = await userManager.AddLoginAsync(user, externalLoginInfo);
-                        if (!addLoginResult.Succeeded)
+                        ApplicationUser? user = await userManager.FindByEmailAsync(emailClaim);
+                        if (user == null)
                         {
-                            ctx.Fail($"Failed to add OIDC login to user: {string.Join(", ", addLoginResult.Errors.Select(e => e.Description))}");
-                            return;
+                            user = new ApplicationUser
+                            {
+                                UserName = emailClaim, Email = emailClaim, EmailConfirmed = true
+                            };
+                            IdentityResult createUserResult = await userManager.CreateAsync(user);
+                            if (!createUserResult.Succeeded)
+                            {
+                                ctx.Fail(
+                                    $"Failed to create user: {string.Join(", ", createUserResult.Errors.Select(e => e.Description))}");
+                                return;
+                            }
                         }
+
+                        var externalLoginInfo = new UserLoginInfo(ctx.Scheme.Name, nameIdentifier, ctx.Scheme.Name);
+                        IList<UserLoginInfo> logins = await userManager.GetLoginsAsync(user);
+                        if (!logins.Any(l =>
+                                l.LoginProvider == externalLoginInfo.LoginProvider &&
+                                l.ProviderKey == externalLoginInfo.ProviderKey))
+                        {
+                            IdentityResult addLoginResult = await userManager.AddLoginAsync(user, externalLoginInfo);
+                            if (!addLoginResult.Succeeded)
+                            {
+                                ctx.Fail(
+                                    $"Failed to add OIDC login to user: {string.Join(", ", addLoginResult.Errors.Select(e => e.Description))}");
+                                return;
+                            }
+                        }
+
+                        await signInManager.SignInAsync(user, false);
                     }
-                    await signInManager.SignInAsync(user, isPersistent: false);
+                    else
+                    {
+                        ctx.Fail("Email or NameIdentifier claim not found.");
+                        return;
+                    }
                 }
-                else
-                {
-                    ctx.Fail("Email or NameIdentifier claim not found.");
-                    return;
-                }
-            }
-        };
-    });
+            };
+        });
 }
 
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
@@ -176,11 +188,11 @@ builder.Services.AddDbContext<LoggingDbContext>(options =>
 builder.Services.AddDatabaseDeveloperPageExceptionFilter();
 
 builder.Services.AddIdentityCore<ApplicationUser>(options =>
-{
-    options.SignIn.RequireConfirmedAccount = false;
-    options.SignIn.RequireConfirmedEmail = false;
-    options.SignIn.RequireConfirmedPhoneNumber = false;
-})
+    {
+        options.SignIn.RequireConfirmedAccount = false;
+        options.SignIn.RequireConfirmedEmail = false;
+        options.SignIn.RequireConfirmedPhoneNumber = false;
+    })
     .AddEntityFrameworkStores<ApplicationDbContext>()
     .AddSignInManager()
     .AddDefaultTokenProviders();
@@ -195,7 +207,7 @@ builder.Services.AddAuthorization(options =>
 {
     if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
     {
-        options.FallbackPolicy = new Microsoft.AspNetCore.Authorization.AuthorizationPolicyBuilder()
+        options.FallbackPolicy = new AuthorizationPolicyBuilder()
             .RequireAuthenticatedUser()
             .Build();
     }
@@ -233,7 +245,8 @@ using (var scope = app.Services.CreateScope())
     var upscalerConfig = scope.ServiceProvider.GetRequiredService<IOptions<UpscalerConfig>>();
     if (!pythonService.IsPythonInstalled())
     {
-        logger.LogError("Python is not installed on the system. Please install Python 3.6 or newer and ensure it is available on the system PATH.");
+        logger.LogError(
+            "Python is not installed on the system. Please install Python 3.6 or newer and ensure it is available on the system PATH.");
     }
     else
     {
@@ -289,12 +302,13 @@ if (!app.Configuration.GetValue<bool>("OIDC:Enabled"))
 // Add OIDC Logout Endpoint if OIDC is enabled
 if (app.Configuration.GetValue<bool>("OIDC:Enabled"))
 {
-    app.MapPost("/Account/LogoutOidc", async (HttpContext context, SignInManager<ApplicationUser> signInManager, string? returnUrl) =>
-    {
-        await signInManager.SignOutAsync();
-        await context.SignOutAsync(OpenIdConnectDefaults.AuthenticationScheme, 
-            new AuthenticationProperties { RedirectUri = returnUrl ?? "/" });
-    }).RequireAuthorization(); 
+    app.MapPost("/Account/LogoutOidc",
+        async (HttpContext context, SignInManager<ApplicationUser> signInManager, string? returnUrl) =>
+        {
+            await signInManager.SignOutAsync();
+            await context.SignOutAsync(OpenIdConnectDefaults.AuthenticationScheme,
+                new AuthenticationProperties { RedirectUri = returnUrl ?? "/" });
+        }).RequireAuthorization();
 }
 
 app.Run();

@@ -1,9 +1,7 @@
 ﻿@page "/Account/Manage/ApiKeys"
-
 @using System.ComponentModel.DataAnnotations
 @using MangaIngestWithUpscaling.Services.Auth
 @using Microsoft.AspNetCore.Identity
-@using MangaIngestWithUpscaling.Data
 
 @inject UserManager<ApplicationUser> UserManager
 @inject SignInManager<ApplicationUser> SignInManager
@@ -21,7 +19,8 @@
     <div class="col-xl-6">
         <EditForm Model="Input" FormName="apiKey" OnValidSubmit="OnValidSubmitAsync" method="post">
             <div class="form-floating mb-3">
-                <input type="text" value="@apiKey.Key" id="apiKey" class="form-control" placeholder="API Key." readonly />
+                <input type="text" value="@apiKey?.Key" id="apiKey" class="form-control" placeholder="API Key."
+                       readonly/>
                 <label for="apiKey" class="form-label">API Key (Click to copy)</label>
             </div>
             <button type="submit" class="w-100 btn btn-lg btn-primary">Regenerate API Key</button>
@@ -70,6 +69,11 @@
 
     private async Task OnValidSubmitAsync()
     {
+        if (apiKey == null)
+        {
+            return;
+        }
+
         apiKey.IsActive = false;
         DbContext.ApiKeys.Update(apiKey);
         await DbContext.SaveChangesAsync();
