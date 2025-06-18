@@ -196,7 +196,7 @@ public class RemoteTaskProcessor(
 
     private string PrepareTempFile(int taskId, string? suffix = null)
     {
-        var tempDir = Path.Combine(Path.GetTempPath(), "mangaingestwithupscaling");
+        string tempDir = Path.Combine(Path.GetTempPath(), "mangaingestwithupscaling", "remoteworker");
         Directory.CreateDirectory(tempDir);
         return Path.Combine(tempDir, $"task_{taskId}{suffix ?? ""}.cbz");
     }
