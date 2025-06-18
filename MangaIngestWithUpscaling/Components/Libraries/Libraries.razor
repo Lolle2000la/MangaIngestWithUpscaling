@@ -2,7 +2,6 @@
 @using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
-@using Microsoft.EntityFrameworkCore
 
 
 @inject ApplicationDbContext DbContext
@@ -61,7 +60,7 @@
 </MudTable>
 
 @code {
-    private IReadOnlyCollection<Library> LoadedLibraries { get; set; }
+    private IReadOnlyCollection<Library> LoadedLibraries { get; set; } = new List<Library>();
 
     protected override async Task OnInitializedAsync()
     {
@@ -110,7 +109,7 @@
 
     protected async Task OnUpscaleLibrary(Library library)
     {
-        if (!library.UpscalerProfileId.HasValue || string.IsNullOrEmpty(library.UpscaledLibraryPath))
+        if (!library.UpscalerProfileId.HasValue || library.UpscalerProfile == null || string.IsNullOrEmpty(library.UpscaledLibraryPath))
         {
             return;
         }

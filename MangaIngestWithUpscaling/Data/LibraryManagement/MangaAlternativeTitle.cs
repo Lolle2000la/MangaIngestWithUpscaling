@@ -5,8 +5,8 @@
 /// </summary>
 public class MangaAlternativeTitle
 {
-    public string Title { get; set; }
+    public string Title { get; set; } = string.Empty;
 
     public int MangaId { get; set; }
-    public Manga Manga { get; set; }
+    public Manga Manga { get; set; } = default!;
 }

@@ -7,6 +7,9 @@
 		<UserSecretsId>aspnet-manga-ingest-with-upscaling-5fab364d-e1fd-422f-aae1-1a2afc91f4cf</UserSecretsId>
 		<RootNamespace>MangaIngestWithUpscaling</RootNamespace>
 		<AssemblyName>$(AssemblyName.Replace(' ', '_'))</AssemblyName>
+		<!-- Disable nullable attribute warnings on generated code due to tooling bugs -->
+        <!-- see https://github.com/dotnet/razor/issues/7286 for more details -->
+		<NoWarn>$(NoWarn);NETSDK1206;CS8669</NoWarn>
 	</PropertyGroup>
 
 	<PropertyGroup>

@@ -1,6 +1,5 @@
 ﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
-using MangaIngestWithUpscaling.Services.FileSystem;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Services.Upscaling;
@@ -10,6 +9,15 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 
 public class UpscaleTask : BaseTask
 {
+    public UpscaleTask() { }
+
+    public UpscaleTask(Chapter chapter, UpscalerProfile profile)
+    {
+        ChapterId = chapter.Id;
+        UpscalerProfileId = profile.Id;
+        FriendlyEntryName = $"Upscaling {chapter.FileName} of {chapter.Manga.PrimaryTitle} with {profile.Name}";
+    }
+
     public override string TaskFriendlyName => FriendlyEntryName;
 
     public int UpscalerProfileId { get; set; }
@@ -19,13 +27,7 @@ public class UpscaleTask : BaseTask
 
     public bool UpdateIfProfileNew { get; set; } = false;
 
-    public UpscaleTask() { }
-    public UpscaleTask(Chapter chapter, UpscalerProfile profile)
-    {
-        ChapterId = chapter.Id;
-        UpscalerProfileId = profile.Id;
-        FriendlyEntryName = $"Upscaling {chapter.FileName} of {chapter.Manga.PrimaryTitle} with {profile.Name}";
-    }
+    public override int RetryFor { get; set; } = 1;
 
     public override async Task ProcessAsync(IServiceProvider services, CancellationToken cancellationToken)
     {
@@ -35,24 +37,26 @@ public class UpscaleTask : BaseTask
         var metadataHandling = services.GetRequiredService<IMetadataHandlingService>();
         var chapterChangedNotifier = services.GetRequiredService<IChapterChangedNotifier>();
 
-        var chapter = await dbContext.Chapters
+        Chapter? chapter = await dbContext.Chapters
             .Include(c => c.Manga)
             .ThenInclude(m => m.Library)
             .ThenInclude(l => l.UpscalerProfile)
             .Include(c => c.UpscalerProfile)
             .FirstOrDefaultAsync(
-            c => c.Id == ChapterId, cancellationToken: cancellationToken);
-        var upscalerProfile = await dbContext.UpscalerProfiles.FirstOrDefaultAsync(
-            c => c.Id == UpscalerProfileId, cancellationToken: cancellationToken);
+                c => c.Id == ChapterId, cancellationToken);
+        UpscalerProfile? upscalerProfile = await dbContext.UpscalerProfiles.FirstOrDefaultAsync(
+            c => c.Id == UpscalerProfileId, cancellationToken);
 
         if (chapter == null || upscalerProfile == null)
         {
-            throw new InvalidOperationException($"Chapter ({chapter?.RelativePath ?? "Not found"}) or upscaler profile ({upscalerProfile?.Name ?? "Not found"}, id: {upscalerProfile.Id}) not found.");
+            throw new InvalidOperationException(
+                $"Chapter ({chapter?.RelativePath ?? "Not found"}) or upscaler profile ({upscalerProfile?.Name ?? "Not found"}, id: {UpscalerProfileId}) not found.");
         }
 
-        if (chapter.Manga.Library.UpscaledLibraryPath == null)
+        if (chapter.Manga?.Library?.UpscaledLibraryPath == null)
         {
-            throw new InvalidOperationException($"Upscaled library path of library {chapter.Manga.Library.Name} ({chapter.Manga.Library.Id}) not set.");
+            throw new InvalidOperationException(
+                $"Upscaled library path of library {chapter.Manga?.Library?.Name ?? "Unknown"} ({chapter.Manga?.Library?.Id}) not set.");
         }
 
         string upscaleTargetPath = Path.Combine(chapter.Manga.Library.UpscaledLibraryPath, chapter.RelativePath);
@@ -62,7 +66,8 @@ public class UpscaleTask : BaseTask
         {
             if (metadataHandling.PagesEqual(currentStoragePath, upscaleTargetPath))
             {
-                logger.LogInformation("Chapter \"{chapterFileName}\" of {seriesTitle} is already upscaled with {upscalerProfileName}",
+                logger.LogInformation(
+                    "Chapter \"{chapterFileName}\" of {seriesTitle} is already upscaled with {upscalerProfileName}",
                     chapter.FileName, chapter.Manga.PrimaryTitle, upscalerProfile.Name);
                 return;
             }
@@ -80,6 +85,7 @@ public class UpscaleTask : BaseTask
             {
                 File.Delete(upscaleTargetPath);
             }
+
             throw;
         }
 
@@ -94,7 +100,6 @@ public class UpscaleTask : BaseTask
         chapter.IsUpscaled = true;
         chapter.UpscalerProfile = upscalerProfile;
         chapter.UpscalerProfileId = upscalerProfile.Id;
-        dbContext.Update(chapter);
         await dbContext.SaveChangesAsync();
 
         // make sure that the new chapter is applied
@@ -103,6 +108,4 @@ public class UpscaleTask : BaseTask
             metadataChanger.ApplyMangaTitleToUpscaled(chapter, chapter.Manga.PrimaryTitle, upscaleTargetPath);
         }
     }
-
-    public override int RetryFor { get; set; } = 1;
 }

@@ -1,11 +1,11 @@
+@using System.Collections.ObjectModel
+@using System.Net
+@using DynamicData
+@using DynamicData.Binding
 @using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.ChapterRecognition
 @using MangaIngestWithUpscaling.Services.LibraryFiltering
 @using MangaIngestWithUpscaling.Services.MetadataHandling
-@using DynamicData
-@using System.Collections.ObjectModel
-@using DynamicData.Binding
-
 @inject ApplicationDbContext DbContext
 @inject ILibraryRenamingService RenamingService
 @inject IChapterInIngestRecognitionService ChapterRecognition
@@ -109,17 +109,17 @@
     private CancellationTokenSource? lastPreviewGeneration;
 
     private SourceList<SeriesPreview> _seriesPreviewSource = new();
-    private ReadOnlyObservableCollection<SeriesPreview> seriesPreviews;
+    private ReadOnlyObservableCollection<SeriesPreview> seriesPreviews = default!;
     private SourceList<ChapterFilePathPreview> _existingChapterFilePreviewsSource = new();
-    private ReadOnlyObservableCollection<ChapterFilePathPreview> existingChapterFilePreviews;
+    private ReadOnlyObservableCollection<ChapterFilePathPreview> existingChapterFilePreviews = default!;
     private SourceList<ChapterTitlePreview> _existingChapterTitlePreviewsSource = new();
-    private ReadOnlyObservableCollection<ChapterTitlePreview> existingChapterTitlePreviews;
+    private ReadOnlyObservableCollection<ChapterTitlePreview> existingChapterTitlePreviews = default!;
     private SourceList<IngestSeriesTitlePreview> _ingestSeriesTitlePreviewsSource = new();
-    private ReadOnlyObservableCollection<IngestSeriesTitlePreview> ingestSeriesTitlePreviews;
+    private ReadOnlyObservableCollection<IngestSeriesTitlePreview> ingestSeriesTitlePreviews = default!;
     private SourceList<IngestChapterTitlePreview> _ingestChapterTitlePreviewsSource = new();
-    private ReadOnlyObservableCollection<IngestChapterTitlePreview> ingestChapterTitlePreviews;
+    private ReadOnlyObservableCollection<IngestChapterTitlePreview> ingestChapterTitlePreviews = default!;
     private SourceList<IngestFileNamePreview> _ingestFileNamePreviewsSource = new();
-    private ReadOnlyObservableCollection<IngestFileNamePreview> ingestFileNamePreviews;
+    private ReadOnlyObservableCollection<IngestFileNamePreview> ingestFileNamePreviews = default!;
 
     private enum DiffHighlightType
     {
@@ -408,7 +408,7 @@
 
         if (baseString == displayString)
         {
-            return (MarkupString)System.Net.WebUtility.HtmlEncode(displayString);
+            return (MarkupString)WebUtility.HtmlEncode(displayString);
         }
 
         int minLength = Math.Min(baseString.Length, displayString.Length);
@@ -429,9 +429,9 @@
         var suffix = displayString.Substring(displayString.Length - end, end);
         var changed = displayString.Substring(start, displayString.Length - start - end);
 
-        var encodedPrefix = System.Net.WebUtility.HtmlEncode(prefix);
-        var encodedSuffix = System.Net.WebUtility.HtmlEncode(suffix);
-        var encodedChanged = System.Net.WebUtility.HtmlEncode(changed);
+        var encodedPrefix = WebUtility.HtmlEncode(prefix);
+        var encodedSuffix = WebUtility.HtmlEncode(suffix);
+        var encodedChanged = WebUtility.HtmlEncode(changed);
 
         string style;
         if (highlightType == DiffHighlightType.Addition)
@@ -450,7 +450,7 @@
 
         // If changed is empty but strings are not identical, it means one is a pure prefix/suffix of the other.
         // The displayString itself is what's shown, without internal highlighting.
-        return (MarkupString)System.Net.WebUtility.HtmlEncode(displayString);
+        return (MarkupString)WebUtility.HtmlEncode(displayString);
     }
 
 }

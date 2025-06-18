@@ -1,9 +1,8 @@
 ﻿@using MangaIngestWithUpscaling.Components.FileSystem
 @using MangaIngestWithUpscaling.Components.Libraries.Filters
-@using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Configuration
+@using MangaIngestWithUpscaling.Data.LibraryManagement
 @using Microsoft.Extensions.Options
-
 @inject ApplicationDbContext DbContext
 @inject IOptions<KavitaConfiguration> KavitaConfig
 @inject IDialogService DialogService
@@ -36,9 +35,11 @@
             </MudStack>
         </MudItem>
         <MudItem xs="12" lg="4">
-            <FolderPicker SelectedPath="@Library.IngestPath"
+            <FolderPicker RootDirectory="@Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)"
+                          SelectedPath="@Library.IngestPath"
                           SelectedPathChanged="@OnIngestPathChanged"
-                          Title="Ingest Folder" Required="true"/>
+                          Title="Ingest Folder"
+                          Required="true"/>
         </MudItem>
         <MudItem xs="12" lg="8">
             <EditLibraryFilters Library="@Library"/>
@@ -69,13 +70,16 @@
             </MudItem>
         }
         <MudItem md="6" xs="12">
-            <FolderPicker SelectedPath="@Library.NotUpscaledLibraryPath"
+            <FolderPicker RootDirectory="@Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)"
+                          SelectedPath="@Library.NotUpscaledLibraryPath"
                           SelectedPathChanged="@OnNotUpscaledPathChanged"
                           Disabled="Library.MangaSeries.Count > 0"
-                          Title="Storage Path as-is" Required="true"/>
+                          Title="Storage Path as-is"
+                          Required="true"/>
         </MudItem>
         <MudItem md="6" xs="12">
-            <FolderPicker SelectedPath="@Library.UpscaledLibraryPath"
+            <FolderPicker RootDirectory="@Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)"
+                          SelectedPath="@Library.UpscaledLibraryPath"
                           Disabled="Library.MangaSeries.Count > 0 && Library.UpscaledLibraryPath != null"
                           SelectedPathChanged="@OnUpscaledPathChanged"
                           Title="Upscaled location"/>

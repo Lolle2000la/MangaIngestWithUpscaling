@@ -1,8 +1,5 @@
 ﻿@page "/logs"
 @using MangaIngestWithUpscaling.Data.LogModel
-@using Microsoft.EntityFrameworkCore
-@using System.Linq
-@using MangaIngestWithUpscaling.Components.Pages
 @inject LoggingDbContext DbContext
 @inject IDialogService DialogService
 
@@ -70,7 +67,7 @@
     private List<Log> _logs = new();
     private LogLevel _selectedLevel = LogLevel.Warning;
 
-    private MudTable<Log> table;
+    private MudTable<Log> table = null!;
 
     private async Task<TableData<Log>> ServerData(TableState state, CancellationToken cancellationToken)
     {
@@ -85,9 +82,9 @@
         query = state.SortLabel switch
         {
             "Timestamp" => (state.SortDirection == SortDirection.Ascending)
-                ? System.Linq.Queryable.OrderBy(query, log => log.Timestamp)
-                : System.Linq.Queryable.OrderByDescending(query, log => log.Timestamp),
-            _ => System.Linq.Queryable.OrderByDescending(query, log => log.Timestamp)
+                ? query.OrderBy(log => log.Timestamp)
+                : query.OrderByDescending(log => log.Timestamp),
+            _ => query.OrderByDescending(log => log.Timestamp)
         };
 
         var totalItems = await query.CountAsync(cancellationToken);
@@ -113,7 +110,10 @@
 
     private async Task OnRowClick(TableRowClickEventArgs<Log> args)
     {
-        await ShowLogDialog(args.Item);
+        if (args.Item != null)
+        {
+            await ShowLogDialog(args.Item);
+        }
     }
 
     private async Task ShowLogDialog(Log log)

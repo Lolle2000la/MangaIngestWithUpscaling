@@ -5,7 +5,8 @@
         Edit Ingest Filters
     </MudText>
     <MudText Typo="Typo.body1">
-        Define filters to apply to the files in the ingest folder. Files that do not match the filters will not be ingested.
+        Define filters to apply to the files in the ingest folder. Files that do not match the filters will not be
+        ingested.
     </MudText>
 
     <MudTable T="LibraryFilterRule" Items="@Library.FilterRules"
@@ -15,8 +16,10 @@
             <MudTh>Pattern Type</MudTh>
             <MudTh>Target Field</MudTh>
             <MudTh>Action</MudTh>
-            <MudTh><MudIconButton Icon="@Icons.Material.Filled.Add"
-                                  OnClick="() => Library.FilterRules.Add(new())"/></MudTh>
+            <MudTh>
+                <MudIconButton Icon="@Icons.Material.Filled.Add"
+                               OnClick="() => Library.FilterRules.Add(new LibraryFilterRule { Library = Library})"/>
+            </MudTh>
         </HeaderContent>
         <RowTemplate>
             <MudTd DataLabel="Pattern to match">@context.Pattern</MudTd>
@@ -24,17 +27,17 @@
             <MudTd DataLabel="Target Field">@context.TargetField.GetDisplayName()</MudTd>
             <MudTd DataLabel="Action">@context.Action.GetDisplayName()</MudTd>
             <MudTd>
-                <MudIconButton Icon="@Icons.Material.Filled.Delete" 
+                <MudIconButton Icon="@Icons.Material.Filled.Delete"
                                Color="Color.Error"
-                               OnClick="() => Library.FilterRules.Remove(context)" />
+                               OnClick="() => Library.FilterRules.Remove(context)"/>
             </MudTd>
         </RowTemplate>
         <RowEditingTemplate>
-            <EditLibraryFilterForm FilterRule="@context" />
+            <EditLibraryFilterForm FilterRule="@context"/>
         </RowEditingTemplate>
     </MudTable>
 </MudStack>
 
 @code {
-    [Parameter] public Library Library { get; set; }
+    [Parameter] public required Library Library { get; set; }
 }

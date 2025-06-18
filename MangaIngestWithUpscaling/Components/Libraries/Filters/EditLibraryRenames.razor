@@ -31,6 +31,6 @@
 </MudStack>
 
 @code {
-    [Parameter] public Library Library { get; set; }
+    [Parameter] public required Library Library { get; set; }
     [Parameter] public EventCallback RulesChanged { get; set; }
 }

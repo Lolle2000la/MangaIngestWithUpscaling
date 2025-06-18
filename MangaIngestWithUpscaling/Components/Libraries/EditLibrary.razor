@@ -1,17 +1,16 @@
-﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
-
-@page "/libraries/edit/{LibraryId:int}"
+﻿@page "/libraries/edit/{LibraryId:int}"
+@using MangaIngestWithUpscaling.Data.LibraryManagement
 
 @inject ApplicationDbContext DbContext
 @inject NavigationManager NavigationManager
 
-<PageTitle>Edit Library "@Library.Name"</PageTitle>
+<PageTitle>Edit Library "@(Library?.Name ?? "Unknown")"</PageTitle>
 
 <MudCard>
     <MudCardHeader>
         <MudStack Row="true" AlignItems="AlignItems.Center">
             <a href="libraries"><MudIconButton Icon="@Icons.Material.Filled.ArrowBack" /></a>
-            <MudText Typo="Typo.h5">Edit Library: @Library.Name</MudText>
+            <MudText Typo="Typo.h5">Edit Library: @(Library?.Name ?? "Unknown")</MudText>
         </MudStack>
     </MudCardHeader>
     <MudCardContent>
@@ -33,8 +32,8 @@
     [Parameter]
     public int? LibraryId { get; set; }
 
-    public Library Library { get; set; } = new Library()
-        {
+    public Library? Library { get; set; } = new Library
+    {
             Name = "",
             UpscalerProfileId = null,
         };
@@ -50,6 +49,10 @@
                 .Include(l => l.FilterRules)
                 .Include(l => l.RenameRules)
                 .FirstOrDefaultAsync(l => l.Id == LibraryId);
+            if (Library == null)
+            {
+                NavigationManager.NavigateTo("/libraries");
+            }
         }
         else
         {
@@ -59,6 +62,8 @@
 
     private async Task OnSaveLibrary()
     {
+        if (Library == null) return;
+
         DbContext.Libraries.Update(Library);
         await DbContext.SaveChangesAsync();
         NavigationManager.NavigateTo("/libraries");

@@ -1,6 +1,4 @@
 @using MangaIngestWithUpscaling.Data.LogModel
-@using Microsoft.AspNetCore.Components
-@using MudBlazor
 @namespace MangaIngestWithUpscaling.Components.Pages
 
 <MudDialog Style="max-height:90vh; max-width: 100%; display:flex; flex-direction:column;">
@@ -31,8 +29,8 @@
 </MudDialog>
 
 @code {
-    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; }
-    [Parameter] public Log Log { get; set; }
+    [CascadingParameter] private IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public required Log Log { get; set; }
 
     private void Close() => MudDialog.Close();
 }

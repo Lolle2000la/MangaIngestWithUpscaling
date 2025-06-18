@@ -1,8 +1,6 @@
 ﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
-using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
-using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.FileSystem;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
@@ -15,15 +13,23 @@ public class MangaMerger(
     IMetadataHandlingService metadataHandling,
     IMangaMetadataChanger metadataChanger,
     ILogger<MangaMerger> logger,
-    ITaskQueue taskQueue,
     IFileSystem fileSystem,
     IChapterChangedNotifier chapterChangedNotifier) : IMangaMerger
 {
     /// <inheritdoc/>
-    public async Task MergeAsync(Manga primary, IEnumerable<Manga> mergedInto, CancellationToken cancellationToken = default)
+    public async Task MergeAsync(Manga primary, IEnumerable<Manga> mergedInto,
+        CancellationToken cancellationToken = default)
     {
         if (!dbContext.Entry(primary).Reference(m => m.Library).IsLoaded)
             await dbContext.Entry(primary).Reference(m => m.Library).LoadAsync(cancellationToken);
+
+        if (primary.Library == null)
+        {
+            logger.LogError(
+                "Primary manga {MangaId} (Title: {PrimaryTitle}) must have an associated library to be a merge target. Aborting merge.",
+                primary.Id, primary.PrimaryTitle);
+            return;
+        }
 
         foreach (var manga in mergedInto)
         {
@@ -40,10 +46,19 @@ public class MangaMerger(
             foreach (var chapter in manga.Chapters)
             {
                 // change title in metadata to the primary title of the series
+                if (manga.Library == null)
+                {
+                    logger.LogWarning(
+                        "Manga {MangaId} does not have a library associated. Skipping chapter {ChapterFileName}.",
+                        manga.Id, chapter.FileName);
+                    continue;
+                }
+
                 var chapterPath = Path.Combine(manga.Library.NotUpscaledLibraryPath, chapter.RelativePath);
                 if (!File.Exists(chapterPath))
                 {
-                    logger.LogWarning("Chapter {fileName} does not exist in {LibraryId} for {MangaId}. Therefore skipping.",
+                    logger.LogWarning(
+                        "Chapter {fileName} does not exist in {LibraryId} for {MangaId}. Therefore skipping.",
                         chapter.FileName, manga.LibraryId, manga.Id);
                     continue;
                 }
@@ -60,11 +75,12 @@ public class MangaMerger(
                         chapterPath);
                     continue;
                 }
+
                 metadataHandling.WriteComicInfo(chapterPath, existingMetadata with { Series = primary.PrimaryTitle });
 
                 // move chapter into the primary mangas library and folder
                 var targetPath = Path.Combine(
-                    primary.Library.NotUpscaledLibraryPath,
+                    primary.Library!.NotUpscaledLibraryPath,
                     PathEscaper.EscapeFileName(primary.PrimaryTitle!),
                     PathEscaper.EscapeFileName(chapter.FileName));
                 if (File.Exists(targetPath))
@@ -73,6 +89,7 @@ public class MangaMerger(
                         chapter.FileName, targetPath);
                     continue;
                 }
+
                 try
                 {
                     fileSystem.Move(chapterPath, targetPath);
@@ -84,12 +101,14 @@ public class MangaMerger(
                         chapter.FileName, chapterPath, targetPath);
                     continue;
                 }
-                if (chapter.IsUpscaled && !string.IsNullOrEmpty(manga.Library.UpscaledLibraryPath))
+
+                if (chapter.IsUpscaled && manga.Library?.UpscaledLibraryPath != null &&
+                    !string.IsNullOrEmpty(manga.Library.UpscaledLibraryPath))
                 {
                     var upscaledPath = Path.Combine(manga.Library.UpscaledLibraryPath, chapter.RelativePath);
                     if (File.Exists(upscaledPath))
                     {
-                        if (primary.Library.UpscaledLibraryPath != null)
+                        if (primary.Library?.UpscaledLibraryPath != null)
                         {
                             try
                             {
@@ -97,18 +116,21 @@ public class MangaMerger(
                             }
                             catch (Exception ex)
                             {
-                                logger.LogError(ex, "Failed to update metadata of upscaled chapter {fileName} in {MangaId}.",
+                                logger.LogError(ex,
+                                    "Failed to update metadata of upscaled chapter {fileName} in {MangaId}.",
                                     chapter.FileName, manga.Id);
                             }
                         }
                         else
                         {
-                            logger.LogWarning("Chapter {fileName} in {MangaId} is upscaled but the primary manga does not have an upscaled library path. Skipping.",
+                            logger.LogWarning(
+                                "Chapter {fileName} in {MangaId} is upscaled but the primary manga does not have an upscaled library path. Skipping.",
                                 chapter.FileName, manga.Id);
                         }
                     }
                 }
-                chapter.RelativePath = Path.GetRelativePath(primary.Library.NotUpscaledLibraryPath, targetPath);
+
+                chapter.RelativePath = Path.GetRelativePath(primary.Library!.NotUpscaledLibraryPath, targetPath);
                 chapter.Manga = primary;
                 chapter.MangaId = primary.Id;
                 chaptersToMove.Add(chapter);
@@ -129,15 +151,23 @@ public class MangaMerger(
             {
                 dbContext.MangaSeries.Remove(manga);
 
-                // remove the folder if it is empty
-                var notUpscaledMangaDir = Path.Combine(manga.Library.NotUpscaledLibraryPath, manga.PrimaryTitle);
-                if (!FileSystemHelpers.DeleteIfEmpty(notUpscaledMangaDir, logger))
+                if (manga.Library != null)
                 {
-                    logger.LogWarning("Manga {MangaId} was removed but the folder {notUpscaledMangaDir} was not empty.",
-                        manga.Id, notUpscaledMangaDir);
+                    // remove the folder if it is empty
+                    string notUpscaledMangaDir = Path.Combine(manga.Library.NotUpscaledLibraryPath, manga.PrimaryTitle);
+                    if (!FileSystemHelpers.DeleteIfEmpty(notUpscaledMangaDir, logger))
+                    {
+                        logger.LogWarning(
+                            "Manga {MangaId} was removed but the folder {notUpscaledMangaDir} was not empty.",
+                            manga.Id, notUpscaledMangaDir);
+                    }
+
+                    if (manga.Library.UpscaledLibraryPath != null)
+                    {
+                        string upscaledMangaDir = Path.Combine(manga.Library.UpscaledLibraryPath, manga.PrimaryTitle);
+                        FileSystemHelpers.DeleteIfEmpty(upscaledMangaDir, logger);
+                    }
                 }
-                var upscaledMangaDir = Path.Combine(manga.Library.UpscaledLibraryPath, manga.PrimaryTitle);
-                FileSystemHelpers.DeleteIfEmpty(upscaledMangaDir, logger);
 
                 try
                 {
@@ -146,14 +176,13 @@ public class MangaMerger(
                     {
                         primary.OtherTitles.Add(new MangaAlternativeTitle
                         {
-                            Title = manga.PrimaryTitle,
-                            Manga = primary,
-                            MangaId = primary.Id
+                            Title = manga.PrimaryTitle, Manga = primary, MangaId = primary.Id
                         });
                     }
+
                     foreach (var title in manga.OtherTitles
-                        .Where(title => !primary.OtherTitles.Any(t => t.Title == title.Title))
-                        .ToList())
+                                 .Where(title => !primary.OtherTitles.Any(t => t.Title == title.Title))
+                                 .ToList())
                     {
                         title.Manga = primary;
                         title.MangaId = primary.Id;
@@ -173,9 +202,10 @@ public class MangaMerger(
             _ = Task.Run(() =>
             {
                 foreach (var uniqueLibraryPath in mergedInto
-                    .SelectMany(m => new[] { m.Library.NotUpscaledLibraryPath, m.Library.UpscaledLibraryPath })
-                    .Where(path => path is not null)
-                    .Distinct())
+                             .SelectMany(m =>
+                                 new[] { m.Library?.NotUpscaledLibraryPath, m.Library?.UpscaledLibraryPath })
+                             .Where(path => path is not null)
+                             .Distinct())
                 {
                     // remove the folder if it is empty
                     FileSystemHelpers.DeleteEmptySubfolders(uniqueLibraryPath!, logger);
