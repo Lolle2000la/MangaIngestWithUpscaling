@@ -1,6 +1,6 @@
-﻿using System.Threading.Channels;
-using MangaIngestWithUpscaling.Data;
+﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
+using System.Threading.Channels;
 
 namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 
@@ -9,13 +9,15 @@ public class DistributedUpscaleTaskProcessor(
     IServiceScopeFactory scopeFactory,
     ILogger<UpscaleTaskProcessor> logger) : BackgroundService
 {
-    private readonly ChannelReader<PersistedTask> _reader = taskQueue.UpscaleReader;
     private readonly Lock _lock = new();
-    private CancellationToken serviceStoppingToken;
-    private readonly Dictionary<int, PersistedTask> runningTasks = new();
+    private readonly ChannelReader<PersistedTask> _reader = taskQueue.UpscaleReader;
     private readonly SemaphoreSlim _taskRequested = new(0, 16);
+
     private readonly Channel<PersistedTask> _tasksDistributionChannel = Channel.CreateUnbounded<PersistedTask>(
         new UnboundedChannelOptions { SingleWriter = true, SingleReader = false });
+
+    private readonly Dictionary<int, PersistedTask> runningTasks = new();
+    private CancellationToken serviceStoppingToken;
 
     public event Func<PersistedTask, Task>? StatusChanged;
 
@@ -59,9 +61,10 @@ public class DistributedUpscaleTaskProcessor(
 
                 using (_lock.EnterScope())
                 {
-                    var deadTasks = runningTasks.Where(
-                        x => x.Value.Status == PersistedTaskStatus.Processing 
-                            && x.Value.CreatedAt.AddMinutes(1) < DateTime.UtcNow).ToList();
+                    List<KeyValuePair<int, PersistedTask>> deadTasks = runningTasks.Where(x =>
+                            x.Value.Status == PersistedTaskStatus.Processing
+                            && x.Value.LastKeepAlive.AddMinutes(1) < DateTime.UtcNow)
+                        .ToList();
                     foreach (var (taskId, task) in deadTasks)
                     {
                         task.Status = PersistedTaskStatus.Failed;
@@ -83,6 +86,7 @@ public class DistributedUpscaleTaskProcessor(
             {
                 runningTasks[task.Id] = task;
             }
+
             await _tasksDistributionChannel.Writer.WriteAsync(task);
         }
     }
@@ -100,8 +104,8 @@ public class DistributedUpscaleTaskProcessor(
             task.Status = PersistedTaskStatus.Processing;
             task.LastKeepAlive = DateTime.UtcNow.AddSeconds(5); // Bridge network latency
             dbContext.Update(task);
-            await dbContext.SaveChangesAsync();
-            return await _tasksDistributionChannel.Reader.ReadAsync(stoppingToken);
+            await dbContext.SaveChangesAsync(cancelToken.Token);
+            return task;
         }
         catch (OperationCanceledException)
         {
@@ -121,5 +125,13 @@ public class DistributedUpscaleTaskProcessor(
         }
 
         return false;
+    }
+
+    public void TaskCompleted(int taskId)
+    {
+        using (_lock.EnterScope())
+        {
+            runningTasks.Remove(taskId);
+        }
     }
 }

@@ -236,7 +236,7 @@ public partial class UpscalingDistributionService(
 
         MergeChunks(taskChunksDict);
 
-        foreach (var (taskId, _) in taskChunkPairs)
+        foreach (int taskId in taskChunksDict.Keys)
         {
             var task = await dbContext.PersistedTasks.FindAsync(taskId);
             var upscaleTask = (UpscaleTask)task!.Data;
@@ -277,6 +277,7 @@ public partial class UpscalingDistributionService(
                 chapter.UpscalerProfileId = upscaleTask.UpscalerProfileId;
                 dbContext.Update(chapter);
                 await dbContext.SaveChangesAsync();
+                taskProcessor.TaskCompleted(taskId);
                 await responseStream.WriteAsync(new UploadUpscaledCbzResponse
                 {
                     Success = true, Message = "Chapter upscaled", TaskId = taskId
@@ -320,7 +321,7 @@ public partial class UpscalingDistributionService(
         {
             var tempFile = PrepareTempFile(taskId);
             using var fileStream = File.OpenWrite(tempFile);
-            foreach (var chunk in chunks)
+            foreach (int chunk in chunks.OrderBy(c => c))
             {
                 var chunkFile = PrepareTempChunkFile(taskId, chunk);
                 using (var chunkFileStream = File.OpenRead(chunkFile))
