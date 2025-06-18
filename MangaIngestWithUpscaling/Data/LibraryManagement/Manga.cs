@@ -7,12 +7,12 @@
 public class Manga
 {
     public int Id { get; set; }
-    public string PrimaryTitle { get; set; }
+    public string PrimaryTitle { get; set; } = string.Empty;
     public string? Author { get; set; }
     public bool? ShouldUpscale { get; set; } = null;
 
     public int LibraryId { get; set; }
-    public Library Library { get; set; }
+    public Library Library { get; set; } = default!;
 
     public List<MangaAlternativeTitle> OtherTitles { get; set; }
         = [];
@@ -24,18 +24,17 @@ public class Manga
         if (addOldToAlternative
             && !OtherTitles.Any(t => t.Title == PrimaryTitle))
         {
-            OtherTitles.Add(new MangaAlternativeTitle
-            {
-                Title = PrimaryTitle,
-                Manga = this,
-                MangaId = Id
-            });
+            OtherTitles.Add(new MangaAlternativeTitle { Title = PrimaryTitle, Manga = this, MangaId = Id });
         }
+
         PrimaryTitle = newTitle;
 
         var titleToRemove = OtherTitles
             .FirstOrDefault(t => t.Title == newTitle);
-        OtherTitles.Remove(titleToRemove);
+        if (titleToRemove != null)
+        {
+            OtherTitles.Remove(titleToRemove);
+        }
     }
 
     public Manga Clone()
