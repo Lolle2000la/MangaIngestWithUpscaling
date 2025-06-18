@@ -187,16 +187,19 @@ public partial class UpscalingDistributionService(
     public override async Task UploadUpscaledCbzFile(IAsyncStreamReader<CbzFileChunk> requestStream,
         IServerStreamWriter<UploadUpscaledCbzResponse> responseStream, ServerCallContext context)
     {
-        var taskChunks = new Dictionary<int, Dictionary<int, byte[]>>();
+        var taskChunks = new Dictionary<int, List<int>>();
 
-        await foreach (var request in requestStream.ReadAllAsync())
+        await foreach (CbzFileChunk request in requestStream.ReadAllAsync(context.CancellationToken))
         {
             if (!taskChunks.ContainsKey(request.TaskId))
             {
-                taskChunks[request.TaskId] = new Dictionary<int, byte[]>();
+                taskChunks[request.TaskId] = new List<int>();
             }
 
-            taskChunks[request.TaskId][request.ChunkNumber] = request.Chunk.ToByteArray();
+            string chunkFileName = PrepareTempChunkFile(request.TaskId, request.ChunkNumber);
+            await File.WriteAllBytesAsync(chunkFileName, request.Chunk.ToByteArray(), context.CancellationToken);
+
+            taskChunks[request.TaskId].Add(request.ChunkNumber);
         }
 
         foreach (var (taskId, chunks) in taskChunks)
@@ -206,9 +209,15 @@ public partial class UpscalingDistributionService(
             {
                 await using (FileStream fileStream = File.OpenWrite(tempFile))
                 {
-                    foreach (KeyValuePair<int, byte[]> chunk in chunks.OrderBy(c => c.Key))
+                    foreach (int chunkNumber in chunks.OrderBy(c => c))
                     {
-                        await fileStream.WriteAsync(chunk.Value);
+                        string chunkFile = PrepareTempChunkFile(taskId, chunkNumber);
+                        await using (FileStream chunkStream = File.OpenRead(chunkFile))
+                        {
+                            await chunkStream.CopyToAsync(fileStream, context.CancellationToken);
+                        }
+
+                        File.Delete(chunkFile);
                     }
                 }
 
@@ -295,5 +304,11 @@ public partial class UpscalingDistributionService(
     {
         fileSystem.CreateDirectory(tempDir);
         return Path.Combine(tempDir, $"upscaled_{taskId}.cbz");
+    }
+
+    private string PrepareTempChunkFile(int taskId, int chunkNumber)
+    {
+        fileSystem.CreateDirectory(tempDir);
+        return Path.Combine(tempDir, $"upscaled_{taskId}_{chunkNumber}.chunk");
     }
 }
