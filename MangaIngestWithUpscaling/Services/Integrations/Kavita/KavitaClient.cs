@@ -1,5 +1,4 @@
-﻿
-using MangaIngestWithUpscaling.Configuration;
+﻿using MangaIngestWithUpscaling.Configuration;
 using Microsoft.Extensions.Options;
 
 namespace MangaIngestWithUpscaling.Services.Integrations.Kavita;
@@ -17,16 +16,12 @@ public class KavitaClient(
         }
 
         await client.PostAsJsonAsync("/api/Library/scan-folder",
-            new ScanFolderRequest
-            {
-                ApiKey = configuration.Value.ApiKey,
-                FolderPath = folderPath
-            });
+            new ScanFolderRequest { ApiKey = configuration.Value.ApiKey, FolderPath = folderPath });
     }
 }
 
 public record ScanFolderRequest
 {
-    public string ApiKey { get; set; }
-    public string FolderPath { get; set; }
+    public required string ApiKey { get; set; }
+    public required string FolderPath { get; set; }
 }
