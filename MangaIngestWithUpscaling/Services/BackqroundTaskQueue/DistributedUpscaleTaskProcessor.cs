@@ -11,12 +11,12 @@ public class DistributedUpscaleTaskProcessor(
 {
     private readonly Lock _lock = new();
     private readonly ChannelReader<PersistedTask> _reader = taskQueue.UpscaleReader;
-    private readonly SemaphoreSlim _taskRequested = new(0, 16);
 
-    private readonly Channel<PersistedTask> _tasksDistributionChannel = Channel.CreateUnbounded<PersistedTask>(
-        new UnboundedChannelOptions { SingleWriter = true, SingleReader = false });
+    private readonly Channel<TaskCompletionSource<PersistedTask>> _taskRequests =
+        Channel.CreateUnbounded<TaskCompletionSource<PersistedTask>>();
 
     private readonly Dictionary<int, PersistedTask> runningTasks = new();
+    private PersistedTask? _orphanedTask;
     private CancellationToken serviceStoppingToken;
 
     public event Func<PersistedTask, Task>? StatusChanged;
@@ -92,31 +92,73 @@ public class DistributedUpscaleTaskProcessor(
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            await _taskRequested.WaitAsync(stoppingToken);
-            var task = await _reader.ReadAsync(stoppingToken);
-            using (_lock.EnterScope())
+            TaskCompletionSource<PersistedTask> tcs = await _taskRequests.Reader.ReadAsync(stoppingToken);
+            if (tcs.Task.IsCanceled)
             {
-                runningTasks[task.Id] = task;
+                continue;
             }
 
-            await _tasksDistributionChannel.Writer.WriteAsync(task);
+            if (_orphanedTask != null)
+            {
+                PersistedTask? taskToGive = _orphanedTask;
+                _orphanedTask = null;
+                if (tcs.TrySetResult(taskToGive))
+                {
+                    continue;
+                }
+                else
+                {
+                    _orphanedTask = taskToGive;
+                }
+            }
+
+            try
+            {
+                PersistedTask task = await _reader.ReadAsync(stoppingToken);
+
+                if (!tcs.TrySetResult(task))
+                {
+                    _orphanedTask = task;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                tcs.TrySetCanceled(stoppingToken);
+                break;
+            }
+            catch (Exception ex)
+            {
+                tcs.TrySetException(ex);
+            }
         }
     }
 
     public async Task<PersistedTask?> GetTask(CancellationToken stoppingToken)
     {
-        using var scope = scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        _taskRequested.Release(1);
-        var cancelToken = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-        cancelToken.CancelAfter(TimeSpan.FromSeconds(10));
+        var tcs = new TaskCompletionSource<PersistedTask>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await _taskRequests.Writer.WriteAsync(tcs, stoppingToken);
+
+        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, timeoutCts.Token);
+        using CancellationTokenRegistration registration = linkedCts.Token.Register(() => tcs.TrySetCanceled());
+
         try
         {
-            var task = await _tasksDistributionChannel.Reader.ReadAsync(cancelToken.Token);
+            PersistedTask task = await tcs.Task;
+
+            using IServiceScope scope = scopeFactory.CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
             task.Status = PersistedTaskStatus.Processing;
             task.LastKeepAlive = DateTime.UtcNow.AddSeconds(5); // Bridge network latency
+
+            using (_lock.EnterScope())
+            {
+                runningTasks[task.Id] = task;
+            }
+
             dbContext.Update(task);
-            await dbContext.SaveChangesAsync(cancelToken.Token);
+            await dbContext.SaveChangesAsync(stoppingToken);
             return task;
         }
         catch (OperationCanceledException)
