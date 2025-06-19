@@ -6,6 +6,11 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <InvariantGlobalization>true</InvariantGlobalization>
         <PublishAot>true</PublishAot>
+        <IncludeUpdater>false</IncludeUpdater>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(IncludeUpdater)'=='true'">
+        <DefineConstants>$(DefineConstants);INCLUDE_UPDATER</DefineConstants>
     </PropertyGroup>
 
     <ItemGroup>
@@ -17,6 +22,7 @@
     <ItemGroup>
         <PackageReference Include="AutoRegisterInject" Version="1.4.1"/>
         <PackageReference Include="Grpc.AspNetCore" Version="2.70.0"/>
+        <PackageReference Include="Velopack" Version="0.0.1298"/>
     </ItemGroup>
 
     <ItemGroup>

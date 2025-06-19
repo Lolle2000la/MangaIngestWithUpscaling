@@ -8,6 +8,10 @@ using MangaIngestWithUpscaling.Shared.Services.Python;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.Options;
+#if INCLUDE_UPDATER
+using Velopack;
+using Velopack.Sources;
+#endif
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -40,6 +44,28 @@ builder.WebHost.ConfigureKestrel(serverOptions =>
         listenOptions.Protocols = HttpProtocols.Http2;
     });
 });
+
+#if INCLUDE_UPDATER
+VelopackApp.Build().Run();
+var githubSource = new GithubSource("https://github.com/Lolle2000la/MangaIngestWithUpscaling", null, false);
+var updateManager = new UpdateManager(githubSource);
+var newVersion = await updateManager.CheckForUpdatesAsync();
+
+if (newVersion != null)
+{
+    Console.WriteLine($"New version available: {newVersion.TargetFullRelease.Version}");
+    Console.WriteLine($"Release notes: {newVersion.TargetFullRelease.NotesMarkdown}");
+    
+    await updateManager.DownloadUpdatesAsync(newVersion);
+
+    // install new version and restart app
+    updateManager.ApplyUpdatesAndRestart(newVersion);
+}
+else
+{
+    Console.WriteLine("No updates available.");
+}
+#endif
 
 builder.Services.Configure<WorkerConfig>(builder.Configuration.GetSection(WorkerConfig.SectionName));
 
