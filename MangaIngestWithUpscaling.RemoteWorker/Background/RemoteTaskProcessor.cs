@@ -22,11 +22,25 @@ public class RemoteTaskProcessor(
             {
                 await RunCycle(stoppingToken);
             }
-            catch (RpcException ex) when (ex.StatusCode == StatusCode.Unavailable)
+            catch (RpcException ex)
             {
-                // The server is unavailable, wait for a bit before trying again
-                logger.LogWarning("Server unavailable, retrying in 5 seconds.");
-                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                switch (ex.StatusCode)
+                {
+                    case StatusCode.Unavailable:
+                        // The server is unavailable, wait for a bit before trying again
+                        logger.LogWarning("Server unavailable, retrying in 5 seconds.");
+                        await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                        continue;
+                    case StatusCode.NotFound:
+                        // No task was received, which is to be expected
+                        logger.LogDebug("No task received: {message}", ex.Status.Detail);
+                        await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                        continue;
+                    default:
+                        // Log other RPC exceptions
+                        logger.LogError(ex, "RPC error occurred: {message}", ex.Status.Detail);
+                        break;
+                }
             }
             catch (Exception ex)
             {
