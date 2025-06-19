@@ -6,33 +6,35 @@ using MangaIngestWithUpscaling.Shared.Services.Python;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.IO.Compression;
-using System.Reflection;
 using System.Security.Cryptography;
 
 namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 
 [RegisterScoped]
-public class MangaJaNaiUpscaler(IPythonService pythonService,
+public class MangaJaNaiUpscaler(
+    IPythonService pythonService,
     ILogger<MangaJaNaiUpscaler> logger,
     IOptions<UpscalerConfig> sharedConfig,
     IFileSystem fileSystem,
     IMetadataHandlingService metadataHandling) : IUpscaler
 {
+    private readonly (string, string)[] zipsToDownload =
+    [
+        ("https://github.com/the-database/MangaJaNai/releases/download/1.0.0/IllustrationJaNai_V1_ModelsOnly.zip",
+            "6f5496f5ded597474290403de73d7a46c3f8ed328261db2e6ff830a415a6f60b"),
+        ("https://github.com/the-database/MangaJaNai/releases/download/1.0.0/MangaJaNai_V1_ModelsOnly.zip",
+            "5156f4167875bba51a8ed52bd1c794b0d7277f7103f99b397518066e4dda7e55")
+    ];
+
     private string RunScriptPath => Path.Combine(
-        new FileInfo(Assembly.GetExecutingAssembly().Location).Directory!.FullName,
+        AppContext.BaseDirectory,
         "backend", "src", "run_upscale.py");
 
     private string ConfigPath => Path.Combine(
-        new FileInfo(Assembly.GetExecutingAssembly().Location).Directory!.FullName,
+        AppContext.BaseDirectory,
         "appstate2.json");
 
     private string ModelPath => sharedConfig.Value.ModelsDirectory;
-
-    private readonly (string, string)[] zipsToDownload =
-    [
-        ("https://github.com/the-database/MangaJaNai/releases/download/1.0.0/IllustrationJaNai_V1_ModelsOnly.zip", "6f5496f5ded597474290403de73d7a46c3f8ed328261db2e6ff830a415a6f60b"),
-        ("https://github.com/the-database/MangaJaNai/releases/download/1.0.0/MangaJaNai_V1_ModelsOnly.zip", "5156f4167875bba51a8ed52bd1c794b0d7277f7103f99b397518066e4dda7e55"),
-    ];
 
     public async Task DownloadModelsIfNecessary(CancellationToken cancellationToken)
     {
@@ -68,22 +70,24 @@ public class MangaJaNaiUpscaler(IPythonService pythonService,
 
                 // extract the zip file
                 ZipFile.ExtractToDirectory(await response.Content.ReadAsStreamAsync(), ModelPath);
-
             }
         }
-
     }
-    public async Task Upscale(string inputPath, string outputPath, UpscalerProfile profile, CancellationToken cancellationToken)
+
+    public async Task Upscale(string inputPath, string outputPath, UpscalerProfile profile,
+        CancellationToken cancellationToken)
     {
         if (!File.Exists(inputPath))
         {
             throw new FileNotFoundException("Input file not found", inputPath);
         }
+
         var outputDirectory = Path.GetDirectoryName(outputPath)!;
         if (!Directory.Exists(outputDirectory))
         {
             fileSystem.CreateDirectory(outputDirectory);
         }
+
         await DownloadModelsIfNecessary(cancellationToken);
 
         var outputFilename = Path.GetFileNameWithoutExtension(outputPath);
@@ -97,7 +101,8 @@ public class MangaJaNaiUpscaler(IPythonService pythonService,
         {
             if (metadataHandling.PagesEqual(inputPath, outputPath))
             {
-                logger.LogInformation("The target to upscale is seemingly already upscaled, so we will accept this as is.\n\n" +
+                logger.LogInformation(
+                    "The target to upscale is seemingly already upscaled, so we will accept this as is.\n\n" +
                     "Tried to upscale \"{inputPath}\" with the target location {outputPath}.", inputPath, outputPath);
                 return;
             }
@@ -116,17 +121,20 @@ public class MangaJaNaiUpscaler(IPythonService pythonService,
         config.ModelsDirectory = ModelPath;
         var configPath = JsonWorkflowModifier.ModifyWorkflowConfig(ConfigPath, config);
 
-        logger.LogInformation("Upscaling {inputPath} to {outputPath} with {profile.Name}", inputPath, outputPath, profile.Name);
+        logger.LogInformation("Upscaling {inputPath} to {outputPath} with {profile.Name}", inputPath, outputPath,
+            profile.Name);
 
         string arguments = $"--settings \"{configPath}\"";
         try
         {
-            var output = await pythonService.RunPythonScript(RunScriptPath, arguments, cancellationToken, sharedConfig.Value.UpscaleTimeout);
+            string output = await pythonService.RunPythonScript(RunScriptPath, arguments, cancellationToken,
+                sharedConfig.Value.UpscaleTimeout);
             fileSystem.ApplyPermissions(outputPath);
 
             logger.LogDebug("Upscaling Output {inputPath}: {output}", inputPath, output);
 
-            logger.LogInformation("Upscaling {inputPath} to {outputPath} with {profile.Name} completed", inputPath, outputPath, profile.Name);
+            logger.LogInformation("Upscaling {inputPath} to {outputPath} with {profile.Name} completed", inputPath,
+                outputPath, profile.Name);
         }
         catch (Exception)
         {

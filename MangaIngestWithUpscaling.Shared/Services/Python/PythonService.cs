@@ -1,7 +1,5 @@
-﻿using MangaIngestWithUpscaling.Shared.Services.Python;
-using Microsoft.Extensions.Logging;
+﻿using Microsoft.Extensions.Logging;
 using System.Diagnostics;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -50,7 +48,7 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
             false => "python3.12"
         };
 
-        string assemblyDir = new FileInfo(Assembly.GetExecutingAssembly().Location).Directory!.FullName;
+        string assemblyDir = AppContext.BaseDirectory;
         string backendSrcDirectory = Path.Combine(assemblyDir, "backend", "src");
         if (!File.Exists(relPythonPath))
         {
