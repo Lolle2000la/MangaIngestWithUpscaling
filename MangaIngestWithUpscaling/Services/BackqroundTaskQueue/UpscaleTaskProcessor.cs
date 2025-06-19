@@ -1,5 +1,7 @@
 ﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
+using MangaIngestWithUpscaling.Shared.Configuration;
+using Microsoft.Extensions.Options;
 using System.Threading.Channels;
 
 namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
@@ -7,6 +9,7 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 public class UpscaleTaskProcessor(
     TaskQueue taskQueue,
     IServiceScopeFactory scopeFactory,
+    IOptions<UpscalerConfig> upscalerConfig,
     ILogger<UpscaleTaskProcessor> logger) : BackgroundService
 {
     private readonly Lock _lock = new();
@@ -36,6 +39,12 @@ public class UpscaleTaskProcessor(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (upscalerConfig.Value.RemoteOnly)
+        {
+            // If the upscaler is configured to run only on the remote worker, we do not start the processor.
+            return;
+        }
+
         serviceStoppingToken = stoppingToken;
         while (!stoppingToken.IsCancellationRequested)
         {
