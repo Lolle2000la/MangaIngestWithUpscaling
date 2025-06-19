@@ -28,12 +28,12 @@ public class RemoteTaskProcessor(
                 {
                     case StatusCode.Unavailable:
                         // The server is unavailable, wait for a bit before trying again
-                        logger.LogWarning("Server unavailable, retrying in 5 seconds.");
+                        logger.LogWarning(ex, "Server unavailable, retrying in 5 seconds.");
                         await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
                         continue;
                     case StatusCode.NotFound:
                         // No task was received, which is to be expected
-                        logger.LogDebug("No task received: {message}", ex.Status.Detail);
+                        logger.LogDebug(ex, "No task received: {message}", ex.Status.Detail);
                         await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
                         continue;
                     default:
