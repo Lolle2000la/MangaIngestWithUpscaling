@@ -4,6 +4,9 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: write # needed to write releases
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -71,14 +74,22 @@ jobs:
         with:
           name: windows-release
           path: release/win
+
       - name: Download linux artifacts
         uses: actions/download-artifact@v4
         with:
           name: linux-release
           path: release/linux
+
+      - name: Install Velopack
+        run: dotnet tool install -g vpk
+
+      - name: Add .dotnet/tools to PATH
+        run: echo "/root/.dotnet/tools" >> $GITHUB_PATH
+
       - name: Upload to Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            release/win/*
-            release/linux/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          vpk upload github --repoUrl https://github.com/${{ github.repository }} --releaseDir release/win
+          vpk upload github --repoUrl https://github.com/${{ github.repository }} --releaseDir release/linux
