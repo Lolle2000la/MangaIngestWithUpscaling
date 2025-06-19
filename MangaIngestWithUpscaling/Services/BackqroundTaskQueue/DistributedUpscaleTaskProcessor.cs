@@ -186,16 +186,19 @@ public class DistributedUpscaleTaskProcessor(
         DateTime time = DateTime.UtcNow;
         using (_lock.EnterScope())
         {
-            PersistedTask? task = runningTasks.GetValueOrDefault(taskId);
-            if (task == null)
+            // Clear orphaned task if it matches the completed task
+            if (_orphanedTask != null && _orphanedTask.Id == taskId)
             {
-                return; // Task not found, nothing to do
+                _orphanedTask = null;
             }
 
-            task.ProcessedAt = time;
-            task.Status = PersistedTaskStatus.Completed;
-            _ = StatusChanged?.Invoke(task);
-            runningTasks.Remove(taskId);
+            if (runningTasks.TryGetValue(taskId, out PersistedTask? task))
+            {
+                task.ProcessedAt = time;
+                task.Status = PersistedTaskStatus.Completed;
+                _ = StatusChanged?.Invoke(task);
+                runningTasks.Remove(taskId);
+            }
         }
 
         using IServiceScope scope = scopeFactory.CreateScope();
