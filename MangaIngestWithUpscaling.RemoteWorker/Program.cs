@@ -15,6 +15,10 @@ using Velopack.Sources;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Configuration.AddEnvironmentVariables("Ingest_");
+
+builder.RegisterConfig();
+
 builder.WebHost.ConfigureKestrel(serverOptions =>
 {
     if (OperatingSystem.IsWindows())
