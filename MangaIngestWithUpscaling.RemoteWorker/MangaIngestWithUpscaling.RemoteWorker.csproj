@@ -6,11 +6,11 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <InvariantGlobalization>true</InvariantGlobalization>
         <PublishAot>true</PublishAot>
-        <IncludeUpdater>false</IncludeUpdater>
+        <VelopackRelease>false</VelopackRelease>
     </PropertyGroup>
 
-    <PropertyGroup Condition="'$(IncludeUpdater)'=='true'">
-        <DefineConstants>$(DefineConstants);INCLUDE_UPDATER</DefineConstants>
+    <PropertyGroup Condition="'$(VelopackRelease)'=='true'">
+        <DefineConstants>$(DefineConstants);VELOPACK_RELEASE</DefineConstants>
     </PropertyGroup>
 
     <ItemGroup>

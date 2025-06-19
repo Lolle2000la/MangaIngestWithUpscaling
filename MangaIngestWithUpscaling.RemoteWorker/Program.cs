@@ -8,7 +8,7 @@ using MangaIngestWithUpscaling.Shared.Services.Python;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.Options;
-#if INCLUDE_UPDATER
+#if VELOPACK_RELEASE
 using Velopack;
 using Velopack.Sources;
 #endif
@@ -49,7 +49,7 @@ builder.WebHost.ConfigureKestrel(serverOptions =>
     });
 });
 
-#if INCLUDE_UPDATER
+#if VELOPACK_RELEASE
 VelopackApp.Build().Run();
 var githubSource = new GithubSource("https://github.com/Lolle2000la/MangaIngestWithUpscaling", null, false);
 var updateManager = new UpdateManager(githubSource);
