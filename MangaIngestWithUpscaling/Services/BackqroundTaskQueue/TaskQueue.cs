@@ -1,8 +1,8 @@
-﻿using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
-using System.Threading.Channels;
-using MangaIngestWithUpscaling.Data;
-using Microsoft.EntityFrameworkCore;
+﻿using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
+using Microsoft.EntityFrameworkCore;
+using System.Threading.Channels;
 
 namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 
@@ -17,20 +17,15 @@ public interface ITaskQueue
 
 public class TaskQueue : ITaskQueue, IHostedService
 {
-    private readonly Channel<PersistedTask> _standardChannel;
-    private readonly Channel<PersistedTask> _upscaleChannel;
-    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<TaskQueue> _logger;
+    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly Channel<PersistedTask> _standardChannel;
 
     private readonly SortedSet<PersistedTask> _standardTasks;
-    private readonly SortedSet<PersistedTask> _upscaleTasks;
     private readonly object _standardTasksLock = new();
+    private readonly Channel<PersistedTask> _upscaleChannel;
+    private readonly SortedSet<PersistedTask> _upscaleTasks;
     private readonly object _upscaleTasksLock = new();
-
-    public ChannelReader<PersistedTask> StandardReader => _standardChannel.Reader;
-    public ChannelReader<PersistedTask> UpscaleReader => _upscaleChannel.Reader;
-
-    public event Func<PersistedTask, Task>? TaskEnqueuedOrChanged;
 
     public TaskQueue(IServiceScopeFactory scopeFactory, ILogger<TaskQueue> logger)
     {
@@ -38,22 +33,33 @@ public class TaskQueue : ITaskQueue, IHostedService
         _logger = logger;
 
         // Create bounded channels to control concurrency
-        var channelOptions = new BoundedChannelOptions(1)
-        {
-            FullMode = BoundedChannelFullMode.Wait
-        };
+        var channelOptions = new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.Wait };
         _standardChannel = Channel.CreateBounded<PersistedTask>(channelOptions);
         _upscaleChannel = Channel.CreateBounded<PersistedTask>(channelOptions);
 
         // Initialize sorted sets with order comparer
-        var comparer = Comparer<PersistedTask>.Create((a, b) => a.Order.CompareTo(b.Order));
+        Comparer<PersistedTask> comparer = Comparer<PersistedTask>.Create((a, b) => a.Order.CompareTo(b.Order));
         _standardTasks = new SortedSet<PersistedTask>(comparer);
         _upscaleTasks = new SortedSet<PersistedTask>(comparer);
     }
 
+    public ChannelReader<PersistedTask> StandardReader => _standardChannel.Reader;
+    public ChannelReader<PersistedTask> UpscaleReader => _upscaleChannel.Reader;
+
+    public async Task StartAsync(CancellationToken cancellationToken)
+    {
+        await ReplayPendingOrFailed(cancellationToken);
+
+        // Start background processing
+        _ = ProcessChannelAsync(_standardChannel, _standardTasks, _standardTasksLock, cancellationToken);
+        _ = ProcessChannelAsync(_upscaleChannel, _upscaleTasks, _upscaleTasksLock, cancellationToken);
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
     public async Task EnqueueAsync<T>(T taskData) where T : BaseTask
     {
-        using var scope = _scopeFactory.CreateScope();
+        using IServiceScope scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         // Determine the next order value
@@ -67,12 +73,16 @@ public class TaskQueue : ITaskQueue, IHostedService
         if (taskData is UpscaleTask or RenameUpscaledChaptersSeriesTask)
         {
             lock (_upscaleTasksLock)
+            {
                 _upscaleTasks.Add(taskItem);
+            }
         }
         else
         {
             lock (_standardTasksLock)
+            {
                 _standardTasks.Add(taskItem);
+            }
         }
 
         TaskEnqueuedOrChanged?.Invoke(taskItem);
@@ -80,47 +90,6 @@ public class TaskQueue : ITaskQueue, IHostedService
         var queueCleanup = scope.ServiceProvider.GetRequiredService<IQueueCleanup>();
         await queueCleanup.CleanupAsync();
     }
-
-    public async Task StartAsync(CancellationToken cancellationToken)
-    {
-        await ReplayPendingOrFailed(cancellationToken);
-
-        // Start background processing
-        _ = ProcessChannelAsync(_standardChannel, _standardTasks, _standardTasksLock, cancellationToken);
-        _ = ProcessChannelAsync(_upscaleChannel, _upscaleTasks, _upscaleTasksLock, cancellationToken);
-    }
-
-    private async Task ProcessChannelAsync(
-        Channel<PersistedTask> channel,
-        SortedSet<PersistedTask> tasks,
-        object lockObj,
-        CancellationToken cancellationToken)
-    {
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            PersistedTask? task = null;
-            lock (lockObj)
-            {
-                if (tasks.Count > 0)
-                    task = tasks.Min;
-            }
-
-            if (task != null)
-            {
-                await channel.Writer.WriteAsync(task, cancellationToken);
-                lock (lockObj)
-                {
-                    tasks.Remove(task);
-                }
-            }
-            else
-            {
-                await Task.Delay(100, cancellationToken);
-            }
-        }
-    }
-
-    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     public async Task ReorderTaskAsync(PersistedTask task, int newOrder)
     {
@@ -208,7 +177,8 @@ public class TaskQueue : ITaskQueue, IHostedService
             .OrderBy(t => t.Order)
             .AsAsyncEnumerable()
             .Where(t => t.Status == PersistedTaskStatus.Pending || t.Status == PersistedTaskStatus.Processing
-                || (t.Status == PersistedTaskStatus.Failed && t.RetryCount < t.Data.RetryFor))
+                                                                || (t.Status == PersistedTaskStatus.Failed &&
+                                                                    t.RetryCount < t.Data.RetryFor))
             .ToListAsync(cancellationToken);
 
         // Reset processing tasks to pending
@@ -220,6 +190,7 @@ public class TaskQueue : ITaskQueue, IHostedService
                 dbContext.Update(task);
             }
         }
+
         await dbContext.SaveChangesAsync(cancellationToken);
 
         // Load tasks into sorted sets
@@ -234,6 +205,37 @@ public class TaskQueue : ITaskQueue, IHostedService
             {
                 lock (_standardTasksLock)
                     _standardTasks.Add(task);
+            }
+        }
+    }
+
+    public event Func<PersistedTask, Task>? TaskEnqueuedOrChanged;
+
+    private async Task ProcessChannelAsync(
+        Channel<PersistedTask> channel,
+        SortedSet<PersistedTask> tasks,
+        object lockObj,
+        CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            PersistedTask? task = null;
+            lock (lockObj)
+            {
+                if (tasks.Count > 0)
+                {
+                    task = tasks.Min;
+                    tasks.Remove(task!);
+                }
+            }
+
+            if (task != null)
+            {
+                await channel.Writer.WriteAsync(task, cancellationToken);
+            }
+            else
+            {
+                await Task.Delay(100, cancellationToken);
             }
         }
     }
