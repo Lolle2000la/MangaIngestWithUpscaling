@@ -42,7 +42,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          vpk upload github  --merge --repoUrl https://github.com/${{ github.repository }} --releaseDir ./publish
+          vpk upload github --tag ${{ github.event.release.tag_name }} --merge --repoUrl https://github.com/${{ github.repository }} --outputDir ./publish
 
   build-linux:
     runs-on: ubuntu-latest
@@ -77,7 +77,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          vpk upload github  --merge --repoUrl https://github.com/${{ github.repository }} --releaseDir ./publish
+          vpk upload github --tag ${{ github.event.release.tag_name }} --merge --repoUrl https://github.com/${{ github.repository }} --releaseDir ./publish
 
   # upload-release-assets:
   #   runs-on: ubuntu-latest
