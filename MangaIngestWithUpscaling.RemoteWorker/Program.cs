@@ -6,7 +6,6 @@ using MangaIngestWithUpscaling.RemoteWorker.Services;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.Python;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
-using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.Options;
 #if VELOPACK_RELEASE
 using Velopack;
@@ -19,35 +18,36 @@ builder.Configuration.AddEnvironmentVariables("Ingest_");
 
 builder.RegisterConfig();
 
-builder.WebHost.ConfigureKestrel(serverOptions =>
-{
-    if (OperatingSystem.IsWindows())
-    {
-        serverOptions.ListenNamedPipe("MIWURemoteWorker");
-    }
-    else
-    {
-        var socketPath = Path.Combine(Path.GetTempPath(), "miwu-remote.tmp");
-        if (File.Exists(socketPath))
-        {
-            try
-            {
-                File.Delete(socketPath);
-            }
-            catch (Exception ex)
-            {
-                throw new InvalidOperationException($"Failed to delete existing socket file at {socketPath}.", ex);
-            }
-        }
-
-        serverOptions.ListenUnixSocket(socketPath);
-    }
-
-    serverOptions.ConfigureEndpointDefaults(listenOptions =>
-    {
-        listenOptions.Protocols = HttpProtocols.Http2;
-    });
-});
+// Currently, no API is configured for the remote worker, so configuring Kestrel to listen on a named pipe or Unix socket is not necessary.
+// builder.WebHost.ConfigureKestrel(serverOptions =>
+// {
+//     if (OperatingSystem.IsWindows())
+//     {
+//         serverOptions.ListenNamedPipe("MIWURemoteWorker");
+//     }
+//     else
+//     {
+//         var socketPath = Path.Combine(Path.GetTempPath(), "miwu-remote.tmp");
+//         if (File.Exists(socketPath))
+//         {
+//             try
+//             {
+//                 File.Delete(socketPath);
+//             }
+//             catch (Exception ex)
+//             {
+//                 throw new InvalidOperationException($"Failed to delete existing socket file at {socketPath}.", ex);
+//             }
+//         }
+//
+//         serverOptions.ListenUnixSocket(socketPath);
+//     }
+//
+//     serverOptions.ConfigureEndpointDefaults(listenOptions =>
+//     {
+//         listenOptions.Protocols = HttpProtocols.Http2;
+//     });
+// });
 
 #if VELOPACK_RELEASE
 VelopackApp.Build().Run();
@@ -92,10 +92,11 @@ builder.Services.RegisterRemoteWorkerServices();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
-app.MapGet("/",
-    () =>
-        "Communication with gRPC endpoints must be made through a gRPC client. To learn how to create a client, visit: https://go.microsoft.com/fwlink/?linkid=2086909");
+// Uncomment if the remote worker should at some point expose an API for configuration or status.
+// // Configure the HTTP request pipeline.
+// app.MapGet("/",
+//     () =>
+//         "Communication with gRPC endpoints must be made through a gRPC client. To learn how to create a client, visit: https://go.microsoft.com/fwlink/?linkid=2086909");
 
 using (var scope = app.Services.CreateScope())
 {
