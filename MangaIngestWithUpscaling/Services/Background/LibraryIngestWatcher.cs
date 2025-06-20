@@ -1,5 +1,4 @@
-﻿
-using MangaIngestWithUpscaling.Data;
+﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -50,8 +49,8 @@ public class LibraryIngestWatcher : BackgroundService
                     compositeDisposable.Add(watcher);
 
                     Observable.FromEventPattern<FileSystemEventHandler, FileSystemEventArgs>(
-                        h => watcher.Created += h,
-                        h => watcher.Created -= h)
+                            h => watcher.Created += h,
+                            h => watcher.Created -= h)
                         .Throttle(TimeSpan.FromSeconds(5))
                         .Subscribe(async e =>
                         {
@@ -66,7 +65,7 @@ public class LibraryIngestWatcher : BackgroundService
                         .DisposeWith(compositeDisposable);
 
                     fileSystemWatchers.Add(compositeDisposable);
-                } 
+                }
             }
         }
     }
@@ -85,11 +84,8 @@ public class LibraryIngestWatcher : BackgroundService
             {
                 watcher.Dispose();
             }
+
             fileSystemWatchers.Clear();
-        }
-        foreach (var watcher in fileSystemWatchers)
-        {
-            watcher.Dispose();
         }
     }
 }
