@@ -33,6 +33,8 @@ VOLUME /models
 ENV Ingest_ConnectionStrings__DefaultConnection="Data Source=/data/data.db;Pooling=false"
 ENV Ingest_ConnectionStrings__LoggingConnection="Data Source=/data/logs.db;Pooling=false"
 ENV ASPNETCORE_ENVIRONMENT=Production
+EXPOSE 8080
+EXPOSE 8081
 VOLUME [ "/data" ]
 LABEL org.opencontainers.image.source="https://github.com/Lolle2000la/MangaIngestWithUpscaling"
 ENTRYPOINT ["dotnet", "MangaIngestWithUpscaling.dll"]
