@@ -101,6 +101,7 @@ services:
       - /path/to/target:/target
     ports:
       - 8080:8080 # the web interface will be available on this port
+      - 8081:8081 # the gRPC interface will be available on this port (necessary for the remote worker)
     #user: '1000:1000' # change the user/group for improved security. Note: The user must be part of the 'video' group and have the correct permissions for its mount points.
     # The following lines are necessary to run the container with a ROCm-compatible AMD GPU.
     # See https://rocm.docs.amd.com/projects/install-on-linux/en/latest/how-to/docker.html for more information.
@@ -157,6 +158,23 @@ proxy_buffer_size          128k;
 proxy_buffers              4 256k;
 
 proxy_busy_buffers_size    256k;
+
+# The following lines are necessary for the remote worker to work correctly with gRPC.
+location / {
+    # Detect gRPC traffic
+    if ($http_content_type = "application/grpc") {
+        # Use grpcs:// if your backend gRPC server has TLS enabled
+        # Use grpc:// if your backend gRPC server does not have TLS enabled
+        grpc_pass grpc://<your host>:<your grpc port, e.g., 8081>;
+    }
+
+    # Fallback for regular HTTP traffic
+    proxy_pass http://<your host>:<your regular port, e.g., 8080>;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
 ```
 
 Without this, after being redirected back to the application, you might be faced with a 502 Bad Gateway error or a blank page.
