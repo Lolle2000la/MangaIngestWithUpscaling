@@ -96,6 +96,14 @@
             ViewModel!.WhenPathSelected
                 .Subscribe(path => SelectedPathChanged.InvokeAsync(path))
                 .DisposeWith(disposables);
+
+            this.Bind(ViewModel, vm => vm.RootDirectory, view => RootDirectory);
+
+            this.Bind(ViewModel, vm => vm.SelectedPath, view => SelectedPath);
+
+            this.Bind(ViewModel, vm => vm.Title, view => Title);
+
+            this.Bind(ViewModel, vm => vm.Disabled, view => Disabled);
         });
         base.OnInitialized();
     }
