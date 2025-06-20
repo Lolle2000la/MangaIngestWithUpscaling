@@ -24,7 +24,9 @@ using Serilog;
 using System.Data.SQLite;
 using System.Security.Claims;
 
-// Required for Forwarded Headers
+// Configure the HTTP client factory to use HTTP/2 for unencrypted connections
+AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
+
 
 var builder = WebApplication.CreateBuilder(args);
 

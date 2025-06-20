@@ -12,6 +12,9 @@ using Velopack;
 using Velopack.Sources;
 #endif
 
+// Configure the HTTP client factory to use HTTP/2 for unencrypted connections
+AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Configuration.AddEnvironmentVariables("Ingest_");
@@ -89,6 +92,7 @@ builder.Services.AddGrpcClient<UpscalingService.UpscalingServiceClient>(o =>
 });
 
 builder.Services.RegisterRemoteWorkerServices();
+
 
 var app = builder.Build();
 
