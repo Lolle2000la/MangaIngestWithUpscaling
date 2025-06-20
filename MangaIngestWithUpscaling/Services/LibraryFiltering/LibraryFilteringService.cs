@@ -13,7 +13,7 @@ public class LibraryFilteringService : ILibraryFilteringService
             {
                 string? targetFieldData = rule.TargetField switch
                 {
-                    LibraryFilterTargetField.MangaTitle => chapter.Metadata.ChapterTitle,
+                    LibraryFilterTargetField.MangaTitle => chapter.Metadata.Series,
                     LibraryFilterTargetField.ChapterTitle => chapter.Metadata.ChapterTitle,
                     LibraryFilterTargetField.FilePath => chapter.RelativePath,
                     _ => throw new NotImplementedException()
