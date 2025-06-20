@@ -81,50 +81,50 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-rocm-amd64
           platforms: linux/amd64
 
-  build-and-push-cuda-arm64:
-    permissions: 
-      contents: read
-      packages: write 
-    runs-on: ubuntu-24.04-arm
-    env:
-      IMAGE_NAME: manga-ingest-with-upscaling-remote-worker
-      REGISTRY: ghcr.io
-      OWNER: ${{ github.repository_owner }}
-      TAG: ${{ github.event.release.tag_name }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4 
-        with:
-          submodules: 'true'
+  # build-and-push-cuda-arm64:
+  #   permissions: 
+  #     contents: read
+  #     packages: write 
+  #   runs-on: ubuntu-24.04-arm
+  #   env:
+  #     IMAGE_NAME: manga-ingest-with-upscaling-remote-worker
+  #     REGISTRY: ghcr.io
+  #     OWNER: ${{ github.repository_owner }}
+  #     TAG: ${{ github.event.release.tag_name }}
+  #   steps:
+  #     - name: Checkout code
+  #       uses: actions/checkout@v4 
+  #       with:
+  #         submodules: 'true'
 
-      - name: Set owner to lowercase
-        run: echo "OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+  #     - name: Set owner to lowercase
+  #       run: echo "OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+  #     - name: Set up Docker Buildx
+  #       uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+  #     - name: Log in to GitHub Container Registry
+  #       uses: docker/login-action@v3
+  #       with:
+  #         registry: ${{ env.REGISTRY }}
+  #         username: ${{ github.actor }}
+  #         password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Cuda Docker image (ARM64)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: MangaIngestWithUpscaling.RemoteWorker/cuda.Dockerfile
-          push: true
-          tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-cuda-arm64
-          platforms: linux/arm64
+  #     - name: Build and push Cuda Docker image (ARM64)
+  #       uses: docker/build-push-action@v6
+  #       with:
+  #         context: .
+  #         file: MangaIngestWithUpscaling.RemoteWorker/cuda.Dockerfile
+  #         push: true
+  #         tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-cuda-arm64
+  #         platforms: linux/arm64
 
   create-manifest:
     permissions:
       contents: read
       packages: write
     runs-on: ubuntu-latest
-    needs: [build-and-push-cuda-x86, build-and-push-rocm-x86, build-and-push-cuda-arm64]
+    needs: [build-and-push-cuda-x86, build-and-push-rocm-x86]
     env:
       IMAGE_NAME: manga-ingest-with-upscaling-remote-worker
       REGISTRY: ghcr.io
@@ -145,8 +145,7 @@ jobs:
         run: |
           IMAGE="${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}"
           docker buildx imagetools create -t "$IMAGE:${{ env.TAG }}-cuda" -t "$IMAGE:latest-cuda" \
-            "$IMAGE:${{ env.TAG }}-cuda-amd64" \
-            "$IMAGE:${{ env.TAG }}-cuda-arm64"
+            "$IMAGE:${{ env.TAG }}-cuda-amd64"
 
       - name: Create and push multi-arch manifest for rocm image
         run: |
