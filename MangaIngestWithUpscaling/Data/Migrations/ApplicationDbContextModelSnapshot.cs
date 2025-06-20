@@ -19,6 +19,33 @@ namespace MangaIngestWithUpscaling.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.6");
 
+            modelBuilder.Entity("MangaIngestWithUpscaling.Data.ApiKey", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("Expiration")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("ApiKeys");
+                });
+
             modelBuilder.Entity("MangaIngestWithUpscaling.Data.ApplicationUser", b =>
                 {
                     b.Property<string>("Id")
@@ -310,7 +337,7 @@ namespace MangaIngestWithUpscaling.Migrations
                     b.ToTable("MangaAlternativeTitles");
                 });
 
-            modelBuilder.Entity("MangaIngestWithUpscaling.Data.LibraryManagement.UpscalerProfile", b =>
+            modelBuilder.Entity("MangaIngestWithUpscaling.Shared.Data.LibraryManagement.UpscalerProfile", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
@@ -488,6 +515,17 @@ namespace MangaIngestWithUpscaling.Migrations
                     b.ToTable("AspNetUserTokens", (string)null);
                 });
 
+            modelBuilder.Entity("MangaIngestWithUpscaling.Data.ApiKey", b =>
+                {
+                    b.HasOne("MangaIngestWithUpscaling.Data.ApplicationUser", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("MangaIngestWithUpscaling.Data.LibraryManagement.Chapter", b =>
                 {
                     b.HasOne("MangaIngestWithUpscaling.Data.LibraryManagement.Manga", "Manga")
@@ -496,7 +534,7 @@ namespace MangaIngestWithUpscaling.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("MangaIngestWithUpscaling.Data.LibraryManagement.UpscalerProfile", "UpscalerProfile")
+                    b.HasOne("MangaIngestWithUpscaling.Shared.Data.LibraryManagement.UpscalerProfile", "UpscalerProfile")
                         .WithMany()
                         .HasForeignKey("UpscalerProfileId");
 
@@ -507,7 +545,7 @@ namespace MangaIngestWithUpscaling.Migrations
 
             modelBuilder.Entity("MangaIngestWithUpscaling.Data.LibraryManagement.Library", b =>
                 {
-                    b.HasOne("MangaIngestWithUpscaling.Data.LibraryManagement.UpscalerProfile", "UpscalerProfile")
+                    b.HasOne("MangaIngestWithUpscaling.Shared.Data.LibraryManagement.UpscalerProfile", "UpscalerProfile")
                         .WithMany()
                         .HasForeignKey("UpscalerProfileId");
 

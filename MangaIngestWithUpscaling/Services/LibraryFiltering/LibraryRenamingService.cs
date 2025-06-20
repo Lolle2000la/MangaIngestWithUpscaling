@@ -1,9 +1,6 @@
-using System.Text.RegularExpressions;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
-using MangaIngestWithUpscaling.Services.ChapterRecognition;
-using MangaIngestWithUpscaling.Services.LibraryFiltering;
-using System.IO;
-using Microsoft.Extensions.Logging;
+using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
+using System.Text.RegularExpressions;
 
 namespace MangaIngestWithUpscaling.Services.LibraryFiltering;
 
@@ -48,18 +45,22 @@ public class LibraryRenamingService : ILibraryRenamingService
             {
                 result = rule.PatternType switch
                 {
-                    LibraryRenamePatternType.Regex => Regex.Replace(currentInput, rule.Pattern, rule.Replacement ?? string.Empty),
-                    LibraryRenamePatternType.Contains => currentInput.Replace(rule.Pattern, rule.Replacement ?? string.Empty),
+                    LibraryRenamePatternType.Regex => Regex.Replace(currentInput, rule.Pattern,
+                        rule.Replacement ?? string.Empty),
+                    LibraryRenamePatternType.Contains => currentInput.Replace(rule.Pattern,
+                        rule.Replacement ?? string.Empty),
                     _ => currentInput
                 };
             }
             catch (ArgumentException ex)
             {
                 // Log the error and skip applying this problematic rule for the preview
-                _logger.LogWarning(ex, "Invalid pattern or argument in rename rule. Pattern: '{Pattern}', Replacement: '{Replacement}'", rule.Pattern, rule.Replacement);
+                _logger.LogWarning(ex,
+                    "Invalid pattern or argument in rename rule. Pattern: '{Pattern}', Replacement: '{Replacement}'",
+                    rule.Pattern, rule.Replacement);
                 // result remains currentInput, effectively skipping the rule
             }
-            
+
             result = result.Trim();
 
             if (result != currentInput)

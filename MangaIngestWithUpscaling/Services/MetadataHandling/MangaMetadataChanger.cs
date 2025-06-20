@@ -1,16 +1,13 @@
 ﻿using MangaIngestWithUpscaling.Data;
-using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
-using MangaIngestWithUpscaling.Services.FileSystem;
+using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Services.Integrations;
-using MangaIngestWithUpscaling.Services.MangaManagement;
-using MangaIngestWithUpscaling.Services.MetadataHandling;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Identity.Client;
 using MudBlazor;
+using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using System.Xml;
 
 namespace MangaIngestWithUpscaling.Services.MetadataHandling;

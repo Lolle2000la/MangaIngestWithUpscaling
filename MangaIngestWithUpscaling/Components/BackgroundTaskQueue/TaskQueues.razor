@@ -11,6 +11,7 @@
 @inject TaskQueue TaskQueue
 @inject StandardTaskProcessor StandardTaskProcessor
 @inject UpscaleTaskProcessor UpscaleTaskProcessor
+@inject DistributedUpscaleTaskProcessor DistributedUpscaleTaskProcessor
 
 @page "/tasks"
 
@@ -178,6 +179,7 @@
         try
         {
             UpscaleTaskProcessor.CancelCurrent(task);
+            await DistributedUpscaleTaskProcessor.CancelCurrent(task);
         }
         catch (Exception ex)
         {
@@ -199,6 +201,7 @@
         TaskQueue.TaskEnqueuedOrChanged += OnTaskUpdate;
         StandardTaskProcessor.StatusChanged += OnStandardTaskChanged;
         UpscaleTaskProcessor.StatusChanged += OnUpscaleTaskChanged;
+        DistributedUpscaleTaskProcessor.StatusChanged += OnUpscaleTaskChanged;
     }
 
     private async Task LoadTasks()
@@ -213,6 +216,7 @@
         TaskQueue.TaskEnqueuedOrChanged -= OnTaskUpdate;
         StandardTaskProcessor.StatusChanged -= OnStandardTaskChanged;
         UpscaleTaskProcessor.StatusChanged -= OnUpscaleTaskChanged;
+        DistributedUpscaleTaskProcessor.StatusChanged -= OnUpscaleTaskChanged;
     }
 
     private async Task OnTaskUpdate(PersistedTask task)

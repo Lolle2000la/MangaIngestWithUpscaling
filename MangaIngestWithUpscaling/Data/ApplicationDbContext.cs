@@ -4,8 +4,8 @@ using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
 using System.Text.Json;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
-using MangaIngestWithUpscaling.Data.LogModel;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
+using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 
 namespace MangaIngestWithUpscaling.Data;
 
@@ -19,6 +19,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<Chapter> Chapters { get; set; }
     public DbSet<UpscalerProfile> UpscalerProfiles { get; set; }
     public DbSet<PersistedTask> PersistedTasks { get; set; }
+    public DbSet<ApiKey> ApiKeys { get; set; }
 
     public DbSet<DataProtectionKey> DataProtectionKeys { get; set; } = null!;
 

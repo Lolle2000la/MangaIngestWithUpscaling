@@ -11,6 +11,10 @@ MangaIngestWithUpscaling is a **Blazor-based web application** designed to **ing
   - Change the title of a manga. This may sound simple, but going back and changing the ComicInfo.xml file of a lot of chapters is quite a hassle.
 - **Image upscaling**: Enhance image resolution with [MangaJaNai](https://github.com/the-database/mangajanai) upscaling models. 
 
+## Remote Worker
+
+For information on how to set up and use a remote worker for upscaling, please see the [Remote Worker Documentation](./docs/REMOTE_WORKER.md).
+
 ## Usage
 
 1. **Set up a library** through the UI.

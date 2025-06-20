@@ -1,11 +1,9 @@
-﻿using DynamicData.Kernel;
-using MangaIngestWithUpscaling.Data.LibraryManagement;
+﻿using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.LibraryFiltering;
-using MangaIngestWithUpscaling.Services.MetadataHandling;
-using System.IO.Compression;
-using System.Xml.Linq;
-using System.Threading.Channels;
+using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
+using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using System.Runtime.CompilerServices;
+using System.Threading.Channels;
 
 namespace MangaIngestWithUpscaling.Services.ChapterRecognition;
 
@@ -43,7 +41,8 @@ public class ChapterInIngestRecognitionService(
                         var metadata = metadataExtractionService.GetSeriesAndTitleFromComicInfo(file);
                         foundChapter = new FoundChapter(Path.GetFileName(file), relativePath, storageType, metadata);
 
-                        if (libraryFilterRules is { Count: > 0 } && filteringService.FilterChapter(foundChapter, libraryFilterRules))
+                        if (libraryFilterRules is { Count: > 0 } &&
+                            filteringService.FilterChapter(foundChapter, libraryFilterRules))
                         {
                             foundChapter = null;
                         }

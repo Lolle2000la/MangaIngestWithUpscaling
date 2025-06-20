@@ -1,6 +1,4 @@
-﻿using MangaIngestWithUpscaling.Services.ChapterManagement;
-
-namespace MangaIngestWithUpscaling.Helpers;
+﻿namespace MangaIngestWithUpscaling.Helpers;
 
 public class FileSystemHelpers
 {

@@ -1,19 +1,22 @@
-﻿using System.Threading.Channels;
-using MangaIngestWithUpscaling.Data;
+﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
+using MangaIngestWithUpscaling.Shared.Configuration;
+using Microsoft.Extensions.Options;
+using System.Threading.Channels;
 
 namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 
 public class UpscaleTaskProcessor(
     TaskQueue taskQueue,
     IServiceScopeFactory scopeFactory,
+    IOptions<UpscalerConfig> upscalerConfig,
     ILogger<UpscaleTaskProcessor> logger) : BackgroundService
 {
-    private readonly ChannelReader<PersistedTask> _reader = taskQueue.UpscaleReader;
     private readonly Lock _lock = new();
-    private CancellationToken serviceStoppingToken;
+    private readonly ChannelReader<PersistedTask> _reader = taskQueue.UpscaleReader;
     private CancellationTokenSource? currentStoppingToken;
     private PersistedTask? currentTask;
+    private CancellationToken serviceStoppingToken;
 
     public event Func<PersistedTask, Task>? StatusChanged;
 
@@ -36,6 +39,12 @@ public class UpscaleTaskProcessor(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (upscalerConfig.Value.RemoteOnly)
+        {
+            // If the upscaler is configured to run only on the remote worker, we do not start the processor.
+            return;
+        }
+
         serviceStoppingToken = stoppingToken;
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -45,6 +54,7 @@ public class UpscaleTaskProcessor(
                 currentStoppingToken = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
                 currentTask = task;
             }
+
             await ProcessTaskAsync(task, currentStoppingToken.Token);
         }
     }
@@ -59,23 +69,24 @@ public class UpscaleTaskProcessor(
             task.Status = PersistedTaskStatus.Processing;
             dbContext.Update(task);
             await dbContext.SaveChangesAsync(stoppingToken);
-            StatusChanged?.Invoke(task);
+            _ = StatusChanged?.Invoke(task);
 
             await task.Data.ProcessAsync(scope.ServiceProvider, stoppingToken);
-            StatusChanged?.Invoke(task);
+            _ = StatusChanged?.Invoke(task);
 
             task.Status = PersistedTaskStatus.Completed;
             task.ProcessedAt = DateTime.UtcNow;
             dbContext.Update(task);
             await dbContext.SaveChangesAsync(stoppingToken);
-            StatusChanged?.Invoke(task);
+            _ = StatusChanged?.Invoke(task);
         }
         catch (OperationCanceledException)
         {
             logger.LogInformation("Task {TaskId} was canceled", task.Id);
             // only set to canceled if the cancellation was user requested
             task.Status = serviceStoppingToken.IsCancellationRequested
-                ? PersistedTaskStatus.Pending : PersistedTaskStatus.Canceled;
+                ? PersistedTaskStatus.Pending
+                : PersistedTaskStatus.Canceled;
             dbContext.Update(task);
             try
             {

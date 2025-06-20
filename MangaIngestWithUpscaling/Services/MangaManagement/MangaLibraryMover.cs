@@ -3,7 +3,7 @@ using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
-using MangaIngestWithUpscaling.Services.FileSystem;
+using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 
 namespace MangaIngestWithUpscaling.Services.MangaManagement;
 

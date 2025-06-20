@@ -1,7 +1,7 @@
 ﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
-using MangaIngestWithUpscaling.Services.FileSystem;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;

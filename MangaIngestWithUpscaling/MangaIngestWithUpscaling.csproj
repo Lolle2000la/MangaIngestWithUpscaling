@@ -19,8 +19,13 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<Protobuf Include="protos\upscaling-dist.proto" GrpcServices="Server"/>
+	</ItemGroup>
+
+	<ItemGroup>
 		<PackageReference Include="AutoRegisterInject" Version="1.4.1" />
 		<PackageReference Include="DynamicData" Version="9.4.1" />
+        <PackageReference Include="Grpc.AspNetCore" Version="2.70.0" />
 		<PackageReference Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" Version="9.0.6" />
 		<PackageReference Include="Microsoft.AspNetCore.Diagnostics.EntityFrameworkCore" Version="9.0.6" />
 		<PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="9.0.6" />
@@ -55,6 +60,10 @@
 	  <None Include="appstate2.json">
 	    <CopyToOutputDirectory>Always</CopyToOutputDirectory>
 	  </None>
+	</ItemGroup>
+
+	<ItemGroup>
+	  <ProjectReference Include="..\MangaIngestWithUpscaling.Shared\MangaIngestWithUpscaling.Shared.csproj" />
 	</ItemGroup>
 
 </Project>

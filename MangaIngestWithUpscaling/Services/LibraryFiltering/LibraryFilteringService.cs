@@ -1,6 +1,5 @@
 ﻿using MangaIngestWithUpscaling.Data.LibraryManagement;
-using MangaIngestWithUpscaling.Services.ChapterRecognition;
-using Microsoft.IdentityModel.Tokens;
+using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using System.Text.RegularExpressions;
 
 namespace MangaIngestWithUpscaling.Services.LibraryFiltering;

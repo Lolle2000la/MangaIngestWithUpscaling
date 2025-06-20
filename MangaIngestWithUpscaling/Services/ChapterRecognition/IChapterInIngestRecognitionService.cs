@@ -1,4 +1,5 @@
 ﻿using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using System.Runtime.CompilerServices;
 
 namespace MangaIngestWithUpscaling.Services.ChapterRecognition;

@@ -1,9 +1,11 @@
 ﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
-using MangaIngestWithUpscaling.Services.FileSystem;
+using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
+using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 
 namespace MangaIngestWithUpscaling.Services.MangaManagement;
 
