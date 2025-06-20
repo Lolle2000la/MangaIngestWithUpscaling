@@ -31,18 +31,17 @@ jobs:
           dotnet publish MangaIngestWithUpscaling.RemoteWorker/MangaIngestWithUpscaling.RemoteWorker.csproj -c Release --self-contained -r win-x64 -p:Version=$VERSION -p:VelopackRelease=true -o ./publish
           vpk pack --packId MangaIngestWithUpscaling.RemoteWorker --packVersion $VERSION --packDir ./publish --mainExe MangaIngestWithUpscaling.RemoteWorker.exe
 
-
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-release
-          path: artifacts
+      # - name: Upload Artifacts
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: windows-release
+      #     path: artifacts
 
       - name: Upload to Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          vpk upload github --tag ${{ github.event.release.tag_name }} --merge --repoUrl https://github.com/${{ github.repository }} --outputDir ./publish
+          vpk upload github --tag ${{ github.event.release.tag_name }} --merge --repoUrl https://github.com/${{ github.repository }}
 
   build-linux:
     runs-on: ubuntu-latest
@@ -67,17 +66,17 @@ jobs:
           dotnet publish MangaIngestWithUpscaling.RemoteWorker/MangaIngestWithUpscaling.RemoteWorker.csproj -c Release --self-contained -r linux-x64 -p:Version=$VERSION -p:VelopackRelease=true -o ./publish
           vpk pack --packId MangaIngestWithUpscaling.RemoteWorker --packVersion $VERSION --packDir ./publish --mainExe MangaIngestWithUpscaling.RemoteWorker
 
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-release
-          path: artifacts
+      # - name: Upload Artifacts
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: linux-release
+      #     path: artifacts
 
       - name: Upload to Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          vpk upload github --tag ${{ github.event.release.tag_name }} --merge --repoUrl https://github.com/${{ github.repository }} --outputDir ./publish
+          vpk upload github --tag ${{ github.event.release.tag_name }} --merge --repoUrl https://github.com/${{ github.repository }}
 
   # upload-release-assets:
   #   runs-on: ubuntu-latest
