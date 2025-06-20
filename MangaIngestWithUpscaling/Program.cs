@@ -30,20 +30,25 @@ AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.WebHost.ConfigureKestrel(options =>
+if (!builder.Environment.IsDevelopment())
 {
-    options.ConfigureEndpointDefaults(o =>
+    // Enable detailed errors in development
+    builder.WebHost.ConfigureKestrel(options =>
     {
-        o.Protocols = HttpProtocols.Http1AndHttp2AndHttp3;
-    });
+        options.ConfigureEndpointDefaults(o =>
+        {
+            o.Protocols = HttpProtocols.Http1AndHttp2AndHttp3;
+        });
 
-    options.ListenAnyIP(8080);
-    options.ListenAnyIP(8081, listenOptions =>
-    {
-        // fallback to allow HTTP/2 only, necessary for gRPC
-        listenOptions.Protocols = HttpProtocols.Http2;
+        options.ListenAnyIP(8080);
+        options.ListenAnyIP(8081, listenOptions =>
+        {
+            // fallback to allow HTTP/2 only, necessary for gRPC
+            listenOptions.Protocols = HttpProtocols.Http2;
+        });
     });
-});
+}
+
 
 builder.Configuration.AddEnvironmentVariables("Ingest_");
 
