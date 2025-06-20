@@ -56,6 +56,7 @@ services:
       - /path/to/target:/target
     ports:
       - 8080:8080 # the web interface will be available on this port
+      - 8081:8081 # This one has https enabled. Use this between your reverse proxy and the container if you want to use the remote worker functionality.
     #user: '1000:1000' # change the user/group for improved security. Note: The user must be part of the 'video' group and have the correct permissions for its mount points.
     # Make sure you have the nvidia-container-toolkit installed on your host.
     deploy:
