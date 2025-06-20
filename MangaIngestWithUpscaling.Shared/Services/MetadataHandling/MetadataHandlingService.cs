@@ -26,16 +26,19 @@ public class MetadataHandlingService(
                 {
                     return new ExtractedMetadata(series, title, number);
                 }
+
                 var titleElement = document.Root.Element("Title");
                 if (titleElement != null)
                 {
                     title = titleElement.Value;
                 }
+
                 var seriesElement = document.Root.Element("Series");
                 if (seriesElement != null)
                 {
                     series = seriesElement.Value;
                 }
+
                 var numberElement = document.Root.Element("Number");
                 if (numberElement != null)
                 {
@@ -50,22 +53,26 @@ public class MetadataHandlingService(
             {
                 return new ExtractedMetadata(series, title, number);
             }
+
             var titleElement = document.Root.Element("Title");
             if (titleElement != null)
             {
                 title = titleElement.Value;
             }
+
             var seriesElement = document.Root.Element("Series");
             if (seriesElement != null)
             {
                 series = seriesElement.Value;
             }
+
             var numberElement = document.Root.Element("Number");
             if (numberElement != null)
             {
                 number = numberElement.Value;
             }
         }
+
         return new ExtractedMetadata(series, title, number);
     }
 
@@ -86,13 +93,15 @@ public class MetadataHandlingService(
             using var archive2 = ZipFile.OpenRead(file2);
 
             var files1 = archive1.Entries
-                .Where(e => e.FullName.EndsWithAny("png", "jpg", "jpeg", "avif", "webp", "bmp"))
+                .Where(e => e.FullName.ToLowerInvariant()
+                    .EndsWithAny(".png", ".jpg", ".jpeg", ".avif", ".webp", ".bmp"))
                 .Select(e => Path.GetFileNameWithoutExtension(e.FullName)) // upscaled images can have different formats
                 .OrderBy(e => e)
                 .ToList();
 
             var files2 = archive2.Entries
-                .Where(e => e.FullName.EndsWithAny("png", "jpg", "jpeg", "avif", "webp", "bmp"))
+                .Where(e => e.FullName.ToLowerInvariant()
+                    .EndsWithAny(".png", ".jpg", ".jpeg", ".avif", ".webp", ".bmp"))
                 .Select(e => Path.GetFileNameWithoutExtension(e.FullName))
                 .OrderBy(e => e)
                 .ToList();
@@ -107,84 +116,16 @@ public class MetadataHandlingService(
         catch (InvalidDataException ex)
         {
             logger.LogError(ex, "The format of one of the following two archives is invalid.\n" +
-                "Tried to compare \"{file1}\" to \"{file2}\"",
+                                "Tried to compare \"{file1}\" to \"{file2}\"",
                 file1, file2);
             return false;
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to compare cbz files.\n\n" +
-                "Tried to compare \"{file1}\" to \"{file2}\"",
+                                "Tried to compare \"{file1}\" to \"{file2}\"",
                 file1, file2);
             return false;
-        }
-    }
-
-    private void WriteMetadataToXmlDoc(XDocument document, ExtractedMetadata metadata)
-    {
-        if (document.Root == null)
-        {
-            return;
-        }
-        if (metadata.ChapterTitle != null)
-        {
-            var titleElement = document.Root.Element("Title");
-            if (titleElement != null && metadata.ChapterTitle != null)
-            {
-                titleElement.Value = metadata.ChapterTitle;
-            }
-            else if (metadata.ChapterTitle != null)
-            {
-                document.Root.Add(new XElement("Title", metadata.ChapterTitle));
-            }
-        }
-        else
-        {
-            var titleElement = document.Root.Element("Title");
-            if (titleElement != null)
-            {
-                titleElement.Remove();
-            }
-        }
-        if (metadata.Series != null)
-        {
-            var seriesElement = document.Root.Element("Series");
-            if (seriesElement != null && metadata.Series != null)
-            {
-                seriesElement.Value = metadata.Series;
-            }
-            else if (metadata.Series != null)
-            {
-                document.Root.Add(new XElement("Series", metadata.Series));
-            }
-        }
-        else
-        {
-            var seriesElement = document.Root.Element("Series");
-            if (seriesElement != null)
-            {
-                seriesElement.Remove();
-            }
-        }
-        if (metadata.Number != null)
-        {
-            var numberElement = document.Root.Element("Number");
-            if (numberElement != null)
-            {
-                numberElement.Value = metadata.Number;
-            }
-            else
-            {
-                document.Root.Add(new XElement("Number", metadata.Number));
-            }
-        }
-        else
-        {
-            var numberElement = document.Root.Element("Number");
-            if (numberElement != null)
-            {
-                numberElement.Remove();
-            }
         }
     }
 
@@ -226,6 +167,77 @@ public class MetadataHandlingService(
             var document = XDocument.Load(file);
             WriteMetadataToXmlDoc(document, metadata);
             document.Save(file);
+        }
+    }
+
+    private void WriteMetadataToXmlDoc(XDocument document, ExtractedMetadata metadata)
+    {
+        if (document.Root == null)
+        {
+            return;
+        }
+
+        if (metadata.ChapterTitle != null)
+        {
+            XElement? titleElement = document.Root.Element("Title");
+            if (titleElement != null && metadata.ChapterTitle != null)
+            {
+                titleElement.Value = metadata.ChapterTitle;
+            }
+            else if (metadata.ChapterTitle != null)
+            {
+                document.Root.Add(new XElement("Title", metadata.ChapterTitle));
+            }
+        }
+        else
+        {
+            XElement? titleElement = document.Root.Element("Title");
+            if (titleElement != null)
+            {
+                titleElement.Remove();
+            }
+        }
+
+        if (metadata.Series != null)
+        {
+            XElement? seriesElement = document.Root.Element("Series");
+            if (seriesElement != null && metadata.Series != null)
+            {
+                seriesElement.Value = metadata.Series;
+            }
+            else if (metadata.Series != null)
+            {
+                document.Root.Add(new XElement("Series", metadata.Series));
+            }
+        }
+        else
+        {
+            XElement? seriesElement = document.Root.Element("Series");
+            if (seriesElement != null)
+            {
+                seriesElement.Remove();
+            }
+        }
+
+        if (metadata.Number != null)
+        {
+            XElement? numberElement = document.Root.Element("Number");
+            if (numberElement != null)
+            {
+                numberElement.Value = metadata.Number;
+            }
+            else
+            {
+                document.Root.Add(new XElement("Number", metadata.Number));
+            }
+        }
+        else
+        {
+            XElement? numberElement = document.Root.Element("Number");
+            if (numberElement != null)
+            {
+                numberElement.Remove();
+            }
         }
     }
 }
