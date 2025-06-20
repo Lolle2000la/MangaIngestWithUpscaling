@@ -34,7 +34,7 @@ builder.WebHost.ConfigureKestrel(options =>
 {
     options.ConfigureEndpointDefaults(o =>
     {
-        o.Protocols = HttpProtocols.Http2;
+        o.Protocols = HttpProtocols.Http1AndHttp2AndHttp3;
     });
 });
 
