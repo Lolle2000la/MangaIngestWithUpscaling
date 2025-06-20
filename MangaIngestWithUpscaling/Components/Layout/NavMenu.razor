@@ -28,7 +28,7 @@
             @if (Configuration.GetValue<bool>("OIDC:Enabled"))
             {
                 // When OIDC is enabled, show user email and a logout button that redirects to OIDC logout
-                <MudNavLink Href="#" Icon="@Icons.Material.Filled.ManageAccounts" Disabled="true">
+                <MudNavLink Href="Account/Manage" Icon="@Icons.Material.Filled.ManageAccounts">
                     @context.User.Identity?.Name
                 </MudNavLink>
                 <form action="/Account/LogoutOidc" method="post"> @* Changed action for OIDC logout *@
