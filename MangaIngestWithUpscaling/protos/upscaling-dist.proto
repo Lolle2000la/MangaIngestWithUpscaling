@@ -44,6 +44,11 @@ message CheckConnectionResponse {
     string message = 2; // Message from the server
 }
 
+message ReportTaskFailedRequest {
+    int32 task_id = 1;
+    optional string error_message = 2;
+}
+
 service UpscalingService {
     // Request a task to be upscaled
     rpc RequestUpscaleTask(google.protobuf.Empty) returns (UpscaleTaskDelegationResponse);
@@ -52,6 +57,7 @@ service UpscalingService {
     rpc UploadUpscaledCbzFile(stream CbzFileChunk) returns (stream UploadUpscaledCbzResponse);
     rpc KeepAlive(KeepAliveRequest) returns (KeepAliveResponse);
     rpc CheckConnection(google.protobuf.Empty) returns (CheckConnectionResponse);
+    rpc ReportTaskFailed(ReportTaskFailedRequest) returns (google.protobuf.Empty);
 }
 
 // Represents a preconfigured upscaler setting that can be associated with chapters.

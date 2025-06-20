@@ -214,4 +214,40 @@ public class DistributedUpscaleTaskProcessor(
         dbContext.Update(localTask);
         await dbContext.SaveChangesAsync();
     }
+
+    public async Task TaskFailed(int taskId, string? errorMessage)
+    {
+        using (IServiceScope scope = scopeFactory.CreateScope())
+        {
+            var logger = scope.ServiceProvider.GetRequiredService<ILogger<DistributedUpscaleTaskProcessor>>();
+            if (!string.IsNullOrEmpty(errorMessage))
+            {
+                logger.LogWarning("Task {taskId} failed on remote worker: {errorMessage}", taskId, errorMessage);
+            }
+        }
+
+        using (_lock.EnterScope())
+        {
+            if (runningTasks.TryGetValue(taskId, out PersistedTask? task))
+            {
+                task.Status = PersistedTaskStatus.Failed;
+                runningTasks.Remove(taskId);
+                _ = StatusChanged?.Invoke(task);
+            }
+        }
+
+        using IServiceScope dbScope = scopeFactory.CreateScope();
+        var dbContext = dbScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        PersistedTask? localTask = await dbContext.PersistedTasks.FirstOrDefaultAsync(t => t.Id == taskId);
+        if (localTask == null)
+        {
+            return; // Task not found in the database, nothing to do
+        }
+
+        localTask.Status = PersistedTaskStatus.Failed;
+        localTask.RetryCount++;
+        dbContext.Update(localTask);
+        await dbContext.SaveChangesAsync();
+        _ = StatusChanged?.Invoke(localTask);
+    }
 }

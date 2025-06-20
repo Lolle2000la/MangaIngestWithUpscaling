@@ -300,6 +300,12 @@ public partial class UpscalingDistributionService(
         context.Status = new Status(StatusCode.OK, "File(s) uploaded");
     }
 
+    public override async Task<Empty> ReportTaskFailed(ReportTaskFailedRequest request, ServerCallContext context)
+    {
+        await taskProcessor.TaskFailed(request.TaskId, request.ErrorMessage);
+        return new Empty();
+    }
+
     private string PrepareTempFile(int taskId)
     {
         fileSystem.CreateDirectory(tempDir);
