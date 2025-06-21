@@ -12,7 +12,7 @@ public class LibraryFilteringService : ILibraryFilteringService
         List<LibraryFilterRule> rules = libraryFilterRules.ToList();
         if (!rules.Any())
         {
-            return true;
+            return false;
         }
 
         Func<LibraryFilterRule, bool> checkMatch = rule =>
@@ -40,15 +40,15 @@ public class LibraryFilteringService : ILibraryFilteringService
 
         if (rules.Where(r => r.Action == FilterAction.Exclude).Any(checkMatch))
         {
-            return false;
+            return true;
         }
 
         IEnumerable<LibraryFilterRule> includeRules = rules.Where(r => r.Action == FilterAction.Include);
         if (includeRules.Any() && !includeRules.Any(checkMatch))
         {
-            return false;
+            return true;
         }
 
-        return true;
+        return false;
     }
 }
