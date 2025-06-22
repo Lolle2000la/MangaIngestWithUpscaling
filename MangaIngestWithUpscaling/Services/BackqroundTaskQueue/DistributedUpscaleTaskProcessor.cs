@@ -55,7 +55,6 @@ public class DistributedUpscaleTaskProcessor(
         }
 
         task.Status = PersistedTaskStatus.Canceled;
-        dbContext.Update(task);
         await dbContext.SaveChangesAsync();
     }
 
@@ -81,7 +80,6 @@ public class DistributedUpscaleTaskProcessor(
                     {
                         task.Status = PersistedTaskStatus.Failed;
                         _ = StatusChanged?.Invoke(task);
-                        dbContext.Update(task);
                         runningTasks.Remove(taskId);
                     }
                 }
@@ -211,7 +209,6 @@ public class DistributedUpscaleTaskProcessor(
 
         localTask.ProcessedAt = time;
         localTask.Status = PersistedTaskStatus.Completed;
-        dbContext.Update(localTask);
         await dbContext.SaveChangesAsync();
     }
 
@@ -246,7 +243,6 @@ public class DistributedUpscaleTaskProcessor(
 
         localTask.Status = PersistedTaskStatus.Failed;
         localTask.RetryCount++;
-        dbContext.Update(localTask);
         await dbContext.SaveChangesAsync();
         _ = StatusChanged?.Invoke(localTask);
     }

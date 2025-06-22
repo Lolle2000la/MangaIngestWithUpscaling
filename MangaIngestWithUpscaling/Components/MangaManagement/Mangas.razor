@@ -1,7 +1,6 @@
 ﻿@page "/mangas"
 @using System.Web
 @using MangaIngestWithUpscaling.Data.LibraryManagement
-@using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
 @using MangaIngestWithUpscaling.Services.MetadataHandling
@@ -348,7 +347,6 @@
             }
         }
 
-        DbContext.Update((Manga)manga);
         try
         {
             await DbContext.SaveChangesAsync();

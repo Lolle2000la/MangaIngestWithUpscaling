@@ -76,7 +76,6 @@ public class UpscaleTaskProcessor(
 
             task.Status = PersistedTaskStatus.Completed;
             task.ProcessedAt = DateTime.UtcNow;
-            dbContext.Update(task);
             await dbContext.SaveChangesAsync(stoppingToken);
             _ = StatusChanged?.Invoke(task);
         }
@@ -87,7 +86,6 @@ public class UpscaleTaskProcessor(
             task.Status = serviceStoppingToken.IsCancellationRequested
                 ? PersistedTaskStatus.Pending
                 : PersistedTaskStatus.Canceled;
-            dbContext.Update(task);
             try
             {
                 await dbContext.SaveChangesAsync();
@@ -103,7 +101,6 @@ public class UpscaleTaskProcessor(
             logger.LogError(ex, "Upscale task {TaskId} failed", task.Id);
             task.Status = PersistedTaskStatus.Failed;
             task.RetryCount++;
-            dbContext.Update(task);
             try
             {
                 await dbContext.SaveChangesAsync();

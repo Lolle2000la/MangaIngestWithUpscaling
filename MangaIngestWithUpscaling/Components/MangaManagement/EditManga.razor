@@ -1,7 +1,6 @@
 ﻿@page "/mangas/{MangaId:int}"
 @using MangaIngestWithUpscaling.Components.MangaManagement.Chapters
 @using MangaIngestWithUpscaling.Data.LibraryManagement
-@using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.MetadataHandling
 
 @inject ApplicationDbContext DbContext
@@ -189,7 +188,6 @@ else
                 }
             }
 
-            DbContext.Update(manga);
             await DbContext.SaveChangesAsync();
 
             Snackbar.Add("Manga updated successfully.", Severity.Success);

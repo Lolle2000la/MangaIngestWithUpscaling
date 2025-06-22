@@ -42,7 +42,6 @@ public class MangaLibraryMover(
         manga.Library = targetLibrary;
         manga.LibraryId = targetLibrary.Id;
 
-        dbContext.Update(manga);
         await dbContext.SaveChangesAsync(cancellationToken);
 
         // Let's get all the target paths we need and ensure they exist.

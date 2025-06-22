@@ -1,6 +1,6 @@
-﻿using System.Threading.Channels;
-using MangaIngestWithUpscaling.Data;
+﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
+using System.Threading.Channels;
 
 namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 
@@ -9,11 +9,11 @@ public class StandardTaskProcessor(
     IServiceScopeFactory scopeFactory,
     ILogger<StandardTaskProcessor> logger) : BackgroundService
 {
-    private readonly ChannelReader<PersistedTask> _reader = taskQueue.StandardReader;
     private readonly Lock _lock = new();
-    private CancellationToken serviceStoppingToken;
+    private readonly ChannelReader<PersistedTask> _reader = taskQueue.StandardReader;
     private CancellationTokenSource? currentStoppingToken;
     private PersistedTask? currentTask;
+    private CancellationToken serviceStoppingToken;
 
     public event Func<PersistedTask, Task>? StatusChanged;
 
@@ -45,13 +45,13 @@ public class StandardTaskProcessor(
                 currentStoppingToken = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
                 currentTask = task;
             }
+
             await ProcessTaskAsync(task, currentStoppingToken.Token);
         }
     }
 
     protected async Task ProcessTaskAsync(PersistedTask task, CancellationToken stoppingToken)
     {
-
         using var scope = scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
@@ -68,7 +68,6 @@ public class StandardTaskProcessor(
 
             task.Status = PersistedTaskStatus.Completed;
             task.ProcessedAt = DateTime.UtcNow;
-            dbContext.Update(task);
             await dbContext.SaveChangesAsync(stoppingToken);
             StatusChanged?.Invoke(task);
         }
@@ -77,8 +76,8 @@ public class StandardTaskProcessor(
             logger.LogInformation("Task {TaskId} was canceled", task.Id);
             // only set to canceled if the cancellation was user requested
             task.Status = serviceStoppingToken.IsCancellationRequested
-                ? PersistedTaskStatus.Pending : PersistedTaskStatus.Canceled; 
-            dbContext.Update(task);
+                ? PersistedTaskStatus.Pending
+                : PersistedTaskStatus.Canceled;
             try
             {
                 await dbContext.SaveChangesAsync();
@@ -94,7 +93,6 @@ public class StandardTaskProcessor(
             logger.LogError(ex, "Error processing task {TaskId}", task.Id);
             task.Status = PersistedTaskStatus.Failed;
             task.RetryCount++;
-            dbContext.Update(task);
             try
             {
                 await dbContext.SaveChangesAsync();

@@ -274,7 +274,6 @@ public partial class UpscalingDistributionService(
                 fileSystem.Move(tempFile, chapter.UpscaledFullPath);
                 chapter.IsUpscaled = true;
                 chapter.UpscalerProfileId = upscaleTask.UpscalerProfileId;
-                dbContext.Update(chapter);
                 await dbContext.SaveChangesAsync();
                 await taskProcessor.TaskCompleted(taskId);
                 await responseStream.WriteAsync(new UploadUpscaledCbzResponse

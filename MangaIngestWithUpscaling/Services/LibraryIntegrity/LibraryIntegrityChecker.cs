@@ -184,7 +184,6 @@ public class LibraryIntegrityChecker(
                     "Upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle} is missing. Marking as not upscaled.",
                     chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
                 chapter.IsUpscaled = false;
-                dbContext.Update(chapter);
                 await dbContext.SaveChangesAsync(cancellationToken ?? CancellationToken.None);
                 return IntegrityCheckResult.Missing;
             }
@@ -206,7 +205,6 @@ public class LibraryIntegrityChecker(
                     "Chapter {chapterFileName} ({chapterId}) of {seriesTitle} is missing a path. Marking as not upscaled.",
                     chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
                 chapter.IsUpscaled = false;
-                dbContext.Update(chapter);
                 await dbContext.SaveChangesAsync(cancellationToken ?? CancellationToken.None);
                 return IntegrityCheckResult.Missing;
             }
@@ -231,7 +229,6 @@ public class LibraryIntegrityChecker(
                     "A seemingly valid upscale was found for {chapterFileName}({chapterId}) of {seriesTitle}. Marking chapter as upscaled.",
                     chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
                 chapter.IsUpscaled = true;
-                dbContext.Update(chapter);
                 await dbContext.SaveChangesAsync(cancellationToken ?? CancellationToken.None);
                 return IntegrityCheckResult.Corrected;
             }
@@ -253,7 +250,6 @@ public class LibraryIntegrityChecker(
                 if (chapter.IsUpscaled)
                 {
                     chapter.IsUpscaled = false;
-                    dbContext.Update(chapter);
                     await dbContext.SaveChangesAsync(cancellationToken ?? CancellationToken.None);
                 }
 

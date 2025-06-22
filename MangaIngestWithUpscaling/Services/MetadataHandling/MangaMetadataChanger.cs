@@ -3,11 +3,11 @@ using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
-using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Services.Integrations;
+using MangaIngestWithUpscaling.Shared.Services.FileSystem;
+using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.EntityFrameworkCore;
 using MudBlazor;
-using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using System.Xml;
 
 namespace MangaIngestWithUpscaling.Services.MetadataHandling;
@@ -53,7 +53,7 @@ public class MangaMetadataChanger(
     {
         var possibleCurrent = await dbContext.MangaSeries.FirstOrDefaultAsync(m =>
                 m.Id != manga.Id && // prevent accidental self-merge
-            (m.PrimaryTitle == newTitle || m.OtherTitles.Any(t => t.Title == newTitle)),
+                (m.PrimaryTitle == newTitle || m.OtherTitles.Any(t => t.Title == newTitle)),
             cancellationToken: cancellationToken);
 
         if (possibleCurrent != null)
@@ -123,42 +123,7 @@ public class MangaMetadataChanger(
         return RenameResult.Ok;
     }
 
-    private void RelocateChapterToNewTitleDirectory(Chapter chapter, string origChapterPath, string libraryBasePath,
-        string newTitle)
-    {
-        // move chapter to the correct directory with the new title
-        var newChapterPath = Path.Combine(
-            libraryBasePath,
-            PathEscaper.EscapeFileName(newTitle),
-            PathEscaper.EscapeFileName(chapter.FileName));
-        var newRelativePath = Path.GetRelativePath(libraryBasePath, newChapterPath);
-        if (File.Exists(newChapterPath))
-        {
-            logger.LogWarning("Chapter file already exists: {ChapterPath}", newChapterPath);
-            return;
-        }
-
-        fileSystem.CreateDirectory(Path.GetDirectoryName(newChapterPath)!);
-        fileSystem.Move(origChapterPath, newChapterPath);
-        FileSystemHelpers.DeleteIfEmpty(Path.GetDirectoryName(origChapterPath)!, logger);
-        chapter.RelativePath = newRelativePath;
-        dbContext.Update(chapter);
-    }
-
-    private void UpdateChapterTitle(string newTitle, string origChapterPath)
-    {
-        if (!File.Exists(origChapterPath))
-        {
-            logger.LogWarning("Chapter file not found: {ChapterPath}", origChapterPath);
-            return;
-        }
-
-        var metadata = metadataHandling.GetSeriesAndTitleFromComicInfo(origChapterPath);
-        var newMetadata = metadata with { Series = newTitle };
-        metadataHandling.WriteComicInfo(origChapterPath, newMetadata);
-    }
-
-    /// <inheritdoc/>
+    /// <inheritdoc />
     public async Task ChangeChapterTitle(Chapter chapter, string newTitle)
     {
         await dbContext.Entry(chapter).Reference(c => c.Manga).LoadAsync();
@@ -197,5 +162,39 @@ public class MangaMetadataChanger(
             logger.LogError(ex, "Error updating metadata for chapter {ChapterId} ({ChapterPath})", chapter.Id,
                 chapter.RelativePath);
         }
+    }
+
+    private void RelocateChapterToNewTitleDirectory(Chapter chapter, string origChapterPath, string libraryBasePath,
+        string newTitle)
+    {
+        // move chapter to the correct directory with the new title
+        var newChapterPath = Path.Combine(
+            libraryBasePath,
+            PathEscaper.EscapeFileName(newTitle),
+            PathEscaper.EscapeFileName(chapter.FileName));
+        var newRelativePath = Path.GetRelativePath(libraryBasePath, newChapterPath);
+        if (File.Exists(newChapterPath))
+        {
+            logger.LogWarning("Chapter file already exists: {ChapterPath}", newChapterPath);
+            return;
+        }
+
+        fileSystem.CreateDirectory(Path.GetDirectoryName(newChapterPath)!);
+        fileSystem.Move(origChapterPath, newChapterPath);
+        FileSystemHelpers.DeleteIfEmpty(Path.GetDirectoryName(origChapterPath)!, logger);
+        chapter.RelativePath = newRelativePath;
+    }
+
+    private void UpdateChapterTitle(string newTitle, string origChapterPath)
+    {
+        if (!File.Exists(origChapterPath))
+        {
+            logger.LogWarning("Chapter file not found: {ChapterPath}", origChapterPath);
+            return;
+        }
+
+        var metadata = metadataHandling.GetSeriesAndTitleFromComicInfo(origChapterPath);
+        var newMetadata = metadata with { Series = newTitle };
+        metadataHandling.WriteComicInfo(origChapterPath, newMetadata);
     }
 }

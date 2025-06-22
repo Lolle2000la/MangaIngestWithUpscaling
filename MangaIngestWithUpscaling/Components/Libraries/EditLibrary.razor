@@ -64,7 +64,6 @@
     {
         if (Library == null) return;
 
-        DbContext.Libraries.Update(Library);
         await DbContext.SaveChangesAsync();
         NavigationManager.NavigateTo("/libraries");
     }

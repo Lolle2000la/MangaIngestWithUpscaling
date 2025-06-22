@@ -3,17 +3,16 @@ using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
-using MangaIngestWithUpscaling.Shared.Services.CbzConversion;
 using MangaIngestWithUpscaling.Services.ChapterRecognition;
-using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.LibraryFiltering;
-using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Shared.Services.CbzConversion;
+using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
+using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.EntityFrameworkCore;
 using System.Text.RegularExpressions;
-using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 
 namespace MangaIngestWithUpscaling.Services.ChapterManagement;
 
@@ -352,7 +351,6 @@ public partial class IngestProcessor(
         }
 
         nonUpscaledChapter.IsUpscaled = true;
-        dbContext.Update(nonUpscaledChapter);
 
         return nonUpscaledChapter;
     }

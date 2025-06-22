@@ -104,7 +104,6 @@ public class TaskQueue : ITaskQueue, IHostedService
 
         // Update the order and persist changes
         existingTask.Order = newOrder;
-        dbContext.PersistedTasks.Update(existingTask);
         await dbContext.SaveChangesAsync();
 
         // Determine which set to modify
@@ -187,7 +186,6 @@ public class TaskQueue : ITaskQueue, IHostedService
             if (task.Status == PersistedTaskStatus.Processing)
             {
                 task.Status = PersistedTaskStatus.Pending;
-                dbContext.Update(task);
             }
         }
 

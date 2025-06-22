@@ -359,7 +359,6 @@
         {
             chapter.RelativePath = targetRelativePath;
             chapter.FileName = newFileName;
-            DbContext.Update(chapter);
             await DbContext.SaveChangesAsync();
             _ = ChapterChangedNotifier.Notify(chapter, false);
             if (chapter.IsUpscaled)

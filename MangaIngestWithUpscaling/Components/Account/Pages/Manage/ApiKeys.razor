@@ -75,7 +75,6 @@
         }
 
         apiKey.IsActive = false;
-        DbContext.ApiKeys.Update(apiKey);
         await DbContext.SaveChangesAsync();
         apiKey = await ApiKeyService.CreateApiKeyAsync(user.Id);
 
