@@ -1,6 +1,5 @@
 ﻿@page "/libraries"
 @using MangaIngestWithUpscaling.Data.LibraryManagement
-@using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
 
@@ -38,24 +37,29 @@
         <MudTd>@context.MangaSeries?.SelectMany(m => m.Chapters)?.Count()</MudTd>
         <MudTd>
             <a href="libraries/edit/@context.Id">
-                <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Filled" Color="Color.Primary"
-                               title="Edit this library" />
+                <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Text"
+                               Size="Size.Small"
+                               title="Edit this library"/>
             </a>
-            <MudIconButton Icon="@Icons.Material.Filled.Delete" Variant="Variant.Filled" Color="Color.Error"
-                           title="Delete this library"
-                           OnClick="e => OnDeleteLibraryEntry(context)" />
-            <MudIconButton Icon="@Icons.Material.Filled.Search" Variant="Variant.Filled" Color="Color.Tertiary"
+            <MudIconButton Icon="@Icons.Material.Filled.Search" Variant="Variant.Text"
+                           Size="Size.Small"
                            title="Schedule a scan of this library"
-                           OnClick="e => OnScanLibrary(context)" />
+                           OnClick="e => OnScanLibrary(context)"/>
             @if (context.UpscalerProfileId.HasValue && !string.IsNullOrEmpty(context.UpscaledLibraryPath))
             {
-                <MudIconButton Icon="@Icons.Material.Filled.ImageAspectRatio" Variant="Variant.Filled" Color="Color.Secondary"
+                <MudIconButton Icon="@Icons.Material.Filled.ImageAspectRatio" Variant="Variant.Text"
+                               Size="Size.Small"
                                title="Upscale the entries not yet upscaled"
-                               OnClick="e => OnUpscaleLibrary(context)" />
+                               OnClick="e => OnUpscaleLibrary(context)"/>
             }
-            <MudIconButton Icon="@Icons.Material.Filled.Checklist" Variant="Variant.Filled" Color="Color.Info"
+            <MudIconButton Icon="@Icons.Material.Filled.Checklist" Variant="Variant.Text"
+                           Size="Size.Small"
                            title="Check integrity of this library"
-                           OnClick="e => OnCheckIntegrity(context)" />
+                           OnClick="e => OnCheckIntegrity(context)"/>
+            <MudIconButton Icon="@Icons.Material.Filled.Delete" Variant="Variant.Text" Color="Color.Error"
+                           Size="Size.Small"
+                           title="Delete this library"
+                           OnClick="e => OnDeleteLibraryEntry(context)"/>
         </MudTd>
     </RowTemplate>
 </MudTable>

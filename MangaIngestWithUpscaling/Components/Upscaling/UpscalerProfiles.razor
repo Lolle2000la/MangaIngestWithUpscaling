@@ -32,12 +32,14 @@
         <MudTd>@context.Quality</MudTd>
         <MudTd>
             <a href="upscaling/profiles/edit/@context.Id">
-                <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Filled" Color="Color.Primary"
-                               title="Edit this profile" />
+                <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Text"
+                               Size="Size.Small"
+                               title="Edit this profile"/>
             </a>
-            <MudIconButton Icon="@Icons.Material.Filled.Delete" Variant="Variant.Filled" Color="Color.Secondary"
+            <MudIconButton Icon="@Icons.Material.Filled.Delete" Variant="Variant.Text" Color="Color.Error"
+                           Size="Size.Small"
                            title="Delete this profile"
-                           OnClick="e => OnDeleteProfile(context)" />
+                           OnClick="e => OnDeleteProfile(context)"/>
         </MudTd>
     </RowTemplate>
 </MudTable>
