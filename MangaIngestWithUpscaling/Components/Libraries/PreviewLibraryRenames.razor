@@ -7,10 +7,7 @@
 @using MangaIngestWithUpscaling.Services.LibraryFiltering
 @using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition
 @using MangaIngestWithUpscaling.Shared.Services.MetadataHandling
-@inject ApplicationDbContext DbContext
-@inject ILibraryRenamingService RenamingService
-@inject IChapterInIngestRecognitionService ChapterRecognition
-@inject IMetadataHandlingService MetadataHandlingService
+@inject IServiceProvider ServiceProvider
 @inject ISnackbar Snackbar
 @inject ILogger<PreviewLibraryRenames> Logger
 
@@ -259,6 +256,12 @@
     {
         await Task.Run(async () =>
         {
+            await using var scope = ServiceProvider.CreateAsyncScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var renamingService = scope.ServiceProvider.GetRequiredService<ILibraryRenamingService>();
+            var chapterRecognition = scope.ServiceProvider.GetRequiredService<IChapterInIngestRecognitionService>();
+            var metadataHandlingService = scope.ServiceProvider.GetRequiredService<IMetadataHandlingService>();
+
             // Clear previous previews
             await InvokeAsync(() =>
             {
@@ -277,7 +280,7 @@
                     cancellationToken.ThrowIfCancellationRequested();
                     var dummy = new FoundChapter("", "", ChapterStorageType.Cbz,
                         new ExtractedMetadata(m.PrimaryTitle, null, null));
-                    var renamed = RenamingService.ApplyRenameRules(dummy, Library.RenameRules);
+                    var renamed = renamingService.ApplyRenameRules(dummy, Library.RenameRules);
                     if (renamed.Metadata.Series != m.PrimaryTitle)
                     {
                         var preview = new SeriesPreview
@@ -297,13 +300,14 @@
                 foreach (var series in Library.MangaSeries)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    await foreach (var chapter in DbContext.Chapters.Where(c => c.MangaId == series.Id)
+                    await foreach (var chapter in dbContext.Chapters.Include(c => c.Manga).ThenInclude(m => m.Library)
+                                       .Where(c => c.MangaId == series.Id)
                                        .AsAsyncEnumerable().WithCancellation(cancellationToken))
                     {
                         cancellationToken.ThrowIfCancellationRequested();
-                        var meta = MetadataHandlingService.GetSeriesAndTitleFromComicInfo(chapter.NotUpscaledFullPath);
+                        var meta = metadataHandlingService.GetSeriesAndTitleFromComicInfo(chapter.NotUpscaledFullPath);
                         var original = new FoundChapter(chapter.FileName, chapter.RelativePath, ChapterStorageType.Cbz, meta);
-                        var renamed = RenamingService.ApplyRenameRules(original, Library.RenameRules);
+                        var renamed = renamingService.ApplyRenameRules(original, Library.RenameRules);
                         if (renamed.FileName != chapter.FileName)
                         {
                             var preview = new ChapterFilePathPreview
@@ -342,11 +346,11 @@
             // Stream ingest previews
             if (Library.IngestPath != null && Library.FilterRules != null && Library.RenameRules != null)
             {
-                var found = ChapterRecognition.FindAllChaptersAt(Library.IngestPath, Library.FilterRules, cancellationToken);
+                var found = chapterRecognition.FindAllChaptersAt(Library.IngestPath, Library.FilterRules, cancellationToken);
                 await foreach (var origChap in found)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    var renamed = RenamingService.ApplyRenameRules(origChap, Library.RenameRules);
+                    var renamed = renamingService.ApplyRenameRules(origChap, Library.RenameRules);
                     if (origChap.Metadata.Series != renamed.Metadata.Series)
                     {
                         var preview = new IngestSeriesTitlePreview
@@ -393,12 +397,8 @@
                             StateHasChanged();
                         });
                     }
-                    
-                    
                 }
             }
-
-            // Completed streaming
         }, cancellationToken);
     }
 
