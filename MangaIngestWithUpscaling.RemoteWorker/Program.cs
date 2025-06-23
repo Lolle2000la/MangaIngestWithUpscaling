@@ -108,7 +108,7 @@ using (var scope = app.Services.CreateScope())
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
 
     var testResponse = client.CheckConnection(new Empty());
-    logger.LogInformation("Connection test response: {Response}", testResponse);
+    logger.LogDebug("Connection test response: {Response}", testResponse);
 
     var pythonService = scope.ServiceProvider.GetRequiredService<IPythonService>();
     var upscalerConfig = scope.ServiceProvider.GetRequiredService<IOptions<UpscalerConfig>>();

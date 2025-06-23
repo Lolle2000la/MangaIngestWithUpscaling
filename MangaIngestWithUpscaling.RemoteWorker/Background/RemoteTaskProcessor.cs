@@ -16,6 +16,8 @@ public class RemoteTaskProcessor(
         using var scope = serviceScopeFactory.CreateScope();
         var logger = scope.ServiceProvider.GetRequiredService<ILogger<RemoteTaskProcessor>>();
 
+        logger.LogInformation("Successfully connected to server and waiting for work.");
+
         while (!stoppingToken.IsCancellationRequested && await timer.WaitForNextTickAsync(stoppingToken))
         {
             try
