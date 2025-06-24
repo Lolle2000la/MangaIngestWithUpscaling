@@ -6,8 +6,12 @@ name: .NET Build Main
 on:
   push:
     branches: [ "main" ]
-    paths-ignore:
-      - "MangaIngestWithUpscaling.RemoteWorker/**"
+    paths:
+      - "MangaIngestWithUpscaling/**"
+      - "MangaIngestWithUpscaling.Shared/**"
+      - "MangaIngestWithUpscaling.sln"
+      - "Dockerfile"
+      - "rocm.Dockerfile"
 
 jobs:
   build:

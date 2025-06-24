@@ -9,6 +9,7 @@ on:
     paths:
       - "MangaIngestWithUpscaling.RemoteWorker/**"
       - "MangaIngestWithUpscaling.Shared/**"
+      - "MangaIngestWithUpscaling.sln"
 
 jobs:
   build:
