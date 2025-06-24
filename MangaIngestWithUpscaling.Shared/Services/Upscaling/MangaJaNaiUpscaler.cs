@@ -26,11 +26,11 @@ public class MangaJaNaiUpscaler(
             "5156f4167875bba51a8ed52bd1c794b0d7277f7103f99b397518066e4dda7e55")
     ];
 
-    private string RunScriptPath => Path.Combine(
+    private static string RunScriptPath => Path.Combine(
         AppContext.BaseDirectory,
         "backend", "src", "run_upscale.py");
 
-    private string ConfigPath => Path.Combine(
+    private static string ConfigPath => Path.Combine(
         AppContext.BaseDirectory,
         "appstate2.json");
 
@@ -54,22 +54,23 @@ public class MangaJaNaiUpscaler(
         // download the zip contents into the models directory. Do not create subdirectories.
         foreach (var (zipUrl, sha256Hash) in zipsToDownload)
         {
-            var zipPath = Path.Combine(ModelPath, Path.GetFileName(zipUrl));
+            string zipPath = Path.Combine(ModelPath, Path.GetFileName(zipUrl));
             if (!File.Exists(zipPath))
             {
                 using var response = await httpClient.GetAsync(zipUrl, cancellationToken);
                 response.EnsureSuccessStatusCode();
 
                 // verify the hash
-                var hash = sha256.ComputeHash(await response.Content.ReadAsStreamAsync());
-                var hashString = Convert.ToHexStringLower(hash);
+                byte[] hash = await sha256.ComputeHashAsync(await response.Content.ReadAsStreamAsync(cancellationToken),
+                    cancellationToken);
+                string hashString = Convert.ToHexStringLower(hash);
                 if (hashString != sha256Hash)
                 {
                     throw new Exception($"Hash mismatch for {zipUrl}");
                 }
 
                 // extract the zip file
-                ZipFile.ExtractToDirectory(await response.Content.ReadAsStreamAsync(), ModelPath);
+                ZipFile.ExtractToDirectory(await response.Content.ReadAsStreamAsync(cancellationToken), ModelPath);
             }
         }
     }
@@ -82,7 +83,7 @@ public class MangaJaNaiUpscaler(
             throw new FileNotFoundException("Input file not found", inputPath);
         }
 
-        var outputDirectory = Path.GetDirectoryName(outputPath)!;
+        string outputDirectory = Path.GetDirectoryName(outputPath)!;
         if (!Directory.Exists(outputDirectory))
         {
             fileSystem.CreateDirectory(outputDirectory);
@@ -90,7 +91,7 @@ public class MangaJaNaiUpscaler(
 
         await DownloadModelsIfNecessary(cancellationToken);
 
-        var outputFilename = Path.GetFileNameWithoutExtension(outputPath);
+        string outputFilename = Path.GetFileNameWithoutExtension(outputPath);
 
         if (!outputPath.EndsWith(".cbz"))
         {
@@ -119,7 +120,7 @@ public class MangaJaNaiUpscaler(
         config.OutputFolderPath = outputDirectory;
         config.OutputFilename = outputFilename;
         config.ModelsDirectory = ModelPath;
-        var configPath = JsonWorkflowModifier.ModifyWorkflowConfig(ConfigPath, config);
+        string configPath = JsonWorkflowModifier.ModifyWorkflowConfig(ConfigPath, config);
 
         logger.LogInformation("Upscaling {inputPath} to {outputPath} with {profile.Name}", inputPath, outputPath,
             profile.Name);
@@ -136,8 +137,10 @@ public class MangaJaNaiUpscaler(
             logger.LogInformation("Upscaling {inputPath} to {outputPath} with {profile.Name} completed", inputPath,
                 outputPath, profile.Name);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            logger.LogError(ex, "Upscaling {inputPath} to {outputPath} with {profile.Name} failed", inputPath,
+                outputPath, profile.Name);
             throw;
         }
         finally
