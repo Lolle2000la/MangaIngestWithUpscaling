@@ -6,6 +6,8 @@ name: .NET Build Main
 on:
   push:
     branches: [ "main" ]
+    paths-ignore:
+      - "MangaIngestWithUpscaling.RemoteWorker/**"
 
 jobs:
   build:
