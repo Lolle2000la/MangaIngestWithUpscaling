@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.IO.Compression;
 using System.Security.Cryptography;
+using System.Text.Json;
 
 namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 
@@ -133,6 +134,31 @@ public class MangaJaNaiUpscaler(
             fileSystem.ApplyPermissions(outputPath);
 
             logger.LogDebug("Upscaling Output {inputPath}: {output}", inputPath, output);
+
+            var upscalerJson = new UpscalerProfileJsonDto
+            {
+                Name = profile.Name,
+                UpscalerMethod = profile.UpscalerMethod,
+                ScalingFactor = (int)profile.ScalingFactor,
+                CompressionFormat = profile.CompressionFormat,
+                Quality = profile.Quality
+            };
+
+            var options = new JsonSerializerOptions { WriteIndented = true };
+            string jsonString = JsonSerializer.Serialize(upscalerJson, options);
+
+            using (ZipArchive archive = ZipFile.Open(outputPath, ZipArchiveMode.Update))
+            {
+                ZipArchiveEntry? existingEntry = archive.GetEntry("upscaler.json");
+                existingEntry?.Delete();
+
+                ZipArchiveEntry entry = archive.CreateEntry("upscaler.json");
+                await using (Stream stream = entry.Open())
+                await using (var writer = new StreamWriter(stream))
+                {
+                    await writer.WriteAsync(jsonString);
+                }
+            }
 
             logger.LogInformation("Upscaling {inputPath} to {outputPath} with {profile.Name} completed", inputPath,
                 outputPath, profile.Name);
