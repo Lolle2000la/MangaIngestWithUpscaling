@@ -132,8 +132,7 @@ public class RemoteTaskProcessor(
         {
             logger.LogError(ex, "Failed to process task {taskId}.", taskResponse.TaskId);
             await client.ReportTaskFailedAsync(
-                new ReportTaskFailedRequest { TaskId = taskResponse.TaskId, ErrorMessage = ex.Message },
-                cancellationToken: stoppingToken);
+                new ReportTaskFailedRequest { TaskId = taskResponse.TaskId, ErrorMessage = ex.Message });
         }
         finally
         {
