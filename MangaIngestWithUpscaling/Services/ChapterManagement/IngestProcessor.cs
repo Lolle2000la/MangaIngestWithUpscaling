@@ -12,6 +12,8 @@ using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.EntityFrameworkCore;
+using System.IO.Compression;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace MangaIngestWithUpscaling.Services.ChapterManagement;
@@ -83,9 +85,35 @@ public partial class IngestProcessor(
                 var originalChapter = pci.Original;
                 var renamedChapter = pci.Renamed;
 
+                UpscalerProfileJsonDto? upscalerProfileDto = null;
+                bool isUpscaledByMarker = IsUpscaledChapter().IsMatch(originalChapter.RelativePath);
+                bool isUpscaled = isUpscaledByMarker;
+
+                if (!isUpscaled &&
+                    originalChapter.RelativePath.EndsWith(".cbz", StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        using ZipArchive archive = ZipFile.OpenRead(
+                            Path.Combine(library.IngestPath, originalChapter.RelativePath));
+                        ZipArchiveEntry? upscalerJsonEntry = archive.GetEntry("upscaler.json");
+                        if (upscalerJsonEntry != null)
+                        {
+                            isUpscaled = true;
+                            await using Stream stream = upscalerJsonEntry.Open();
+                            upscalerProfileDto = await JsonSerializer.DeserializeAsync<UpscalerProfileJsonDto>(stream,
+                                cancellationToken: cancellationToken);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex, "Error checking for upscaler.json in {Path}",
+                            originalChapter.RelativePath);
+                    }
+                }
+
                 // if this is an already upscaled chapter, go a different route
-                if (IsUpscaledChapter()
-                    .IsMatch(originalChapter.RelativePath)) // Check original path for _upscaled marker
+                if (isUpscaled) // Check original path for _upscaled marker
                 {
                     if (!originalChapter.RelativePath.EndsWith(".cbz")) // Check original path for .cbz
                     {
@@ -97,7 +125,8 @@ public partial class IngestProcessor(
 
                     // Pass both original and renamed info
                     Chapter? foundMatch =
-                        IngestUpscaledChapterIfMatchFound(originalChapter, renamedChapter, seriesEntity, library);
+                        await IngestUpscaledChapterIfMatchFound(originalChapter, renamedChapter, seriesEntity, library,
+                            upscalerProfileDto, cancellationToken);
                     if (foundMatch != null)
                     {
                         var chapterIndex = chaptersToUpscale.FindIndex(c => c.Item1.Id == foundMatch.Id);
@@ -236,8 +265,10 @@ public partial class IngestProcessor(
         return seriesEntity;
     }
 
-    private Chapter? IngestUpscaledChapterIfMatchFound(FoundChapter originalUpscaled, FoundChapter renamedUpscaled,
-        Manga seriesEntity, Library library)
+    private async Task<Chapter?> IngestUpscaledChapterIfMatchFound(FoundChapter originalUpscaled,
+        FoundChapter renamedUpscaled,
+        Manga seriesEntity, Library library, UpscalerProfileJsonDto? upscalerProfileDto,
+        CancellationToken cancellationToken)
     {
         // Path to the upscaled CBZ file in the ingest directory (using original path info)
         var cbzPath = Path.Combine(library.IngestPath, originalUpscaled.RelativePath);
@@ -289,6 +320,34 @@ public partial class IngestProcessor(
                 "Upscaled chapter {FoundFileName} (Original: {OriginalIngestPath}) does not have a matching non-upscaled chapter in series {MangaTitle} ({MangaId}). Skipping.",
                 renamedUpscaled.FileName, originalUpscaled.RelativePath, seriesEntity.PrimaryTitle, seriesEntity.Id);
             return null;
+        }
+
+        UpscalerProfile? profileToUse = null;
+        if (upscalerProfileDto != null)
+        {
+            var scaleFactor = (ScaleFactor)upscalerProfileDto.ScalingFactor;
+            profileToUse = await dbContext.UpscalerProfiles.FirstOrDefaultAsync(p =>
+                    p.Name == upscalerProfileDto.Name &&
+                    p.UpscalerMethod == upscalerProfileDto.UpscalerMethod &&
+                    p.ScalingFactor == scaleFactor &&
+                    p.CompressionFormat == upscalerProfileDto.CompressionFormat &&
+                    p.Quality == upscalerProfileDto.Quality &&
+                    !p.Deleted,
+                cancellationToken
+            );
+
+            if (profileToUse == null)
+            {
+                profileToUse = new UpscalerProfile
+                {
+                    Name = upscalerProfileDto.Name,
+                    UpscalerMethod = upscalerProfileDto.UpscalerMethod,
+                    ScalingFactor = scaleFactor,
+                    CompressionFormat = upscalerProfileDto.CompressionFormat,
+                    Quality = upscalerProfileDto.Quality
+                };
+                dbContext.UpscalerProfiles.Add(profileToUse);
+            }
         }
 
         try
@@ -351,6 +410,10 @@ public partial class IngestProcessor(
         }
 
         nonUpscaledChapter.IsUpscaled = true;
+        if (profileToUse != null)
+        {
+            nonUpscaledChapter.UpscalerProfile = profileToUse;
+        }
 
         return nonUpscaledChapter;
     }
