@@ -21,7 +21,7 @@ namespace MangaIngestWithUpscaling.Services.ChapterManagement;
 public partial class IngestProcessor(
     ApplicationDbContext dbContext,
     IChapterInIngestRecognitionService chapterRecognitionService,
-    ILibraryRenamingService renamingService, // add renaming service
+    ILibraryRenamingService renamingService,
     ICbzConverter cbzConverter,
     ILogger<IngestProcessor> logger,
     ITaskQueue taskQueue,
