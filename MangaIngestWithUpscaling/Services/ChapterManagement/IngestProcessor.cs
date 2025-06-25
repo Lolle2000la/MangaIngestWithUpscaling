@@ -11,9 +11,8 @@ using MangaIngestWithUpscaling.Shared.Services.CbzConversion;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
-using System.IO.Compression;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace MangaIngestWithUpscaling.Services.ChapterManagement;
@@ -28,7 +27,8 @@ public partial class IngestProcessor(
     ITaskQueue taskQueue,
     IMetadataHandlingService metadataHandling,
     IFileSystem fileSystem,
-    IChapterChangedNotifier chapterChangedNotifier
+    IChapterChangedNotifier chapterChangedNotifier,
+    IUpscalerJsonHandlingService upscalerJsonHandlingService
 ) : IIngestProcessor
 {
     public async Task ProcessAsync(Library library, CancellationToken cancellationToken)
@@ -66,8 +66,10 @@ public partial class IngestProcessor(
 
             if (!isUpscaled)
             {
-                (isUpscaled, upscalerProfileDto) =
-                    await CheckForUpscalerJsonAsync(originalChapter, library.IngestPath, cancellationToken);
+                string fullPath = Path.Combine(library.IngestPath, originalChapter.RelativePath);
+                upscalerProfileDto =
+                    await upscalerJsonHandlingService.ReadUpscalerJsonAsync(fullPath, cancellationToken);
+                isUpscaled = upscalerProfileDto != null;
             }
 
             processedChapters.Add(new ProcessedChapterInfo(originalChapter, renamedChapter, isUpscaled,
@@ -248,35 +250,6 @@ public partial class IngestProcessor(
         }
 
         return seriesEntity;
-    }
-
-    private async Task<(bool isUpscaled, UpscalerProfileJsonDto? profile)> CheckForUpscalerJsonAsync(
-        FoundChapter chapter, string ingestPath, CancellationToken cancellationToken)
-    {
-        if (!chapter.RelativePath.EndsWith(".cbz", StringComparison.OrdinalIgnoreCase))
-        {
-            return (false, null);
-        }
-
-        try
-        {
-            string fullPath = Path.Combine(ingestPath, chapter.RelativePath);
-            using ZipArchive archive = ZipFile.OpenRead(fullPath);
-            ZipArchiveEntry? upscalerJsonEntry = archive.GetEntry("upscaler.json");
-            if (upscalerJsonEntry != null)
-            {
-                await using Stream stream = upscalerJsonEntry.Open();
-                var upscalerProfileDto = await JsonSerializer.DeserializeAsync<UpscalerProfileJsonDto>(stream,
-                    cancellationToken: cancellationToken);
-                return (true, upscalerProfileDto);
-            }
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error checking for upscaler.json in {Path}", chapter.RelativePath);
-        }
-
-        return (false, null);
     }
 
     private async Task<Chapter?> IngestUpscaledChapterIfMatchFound(FoundChapter originalUpscaled,
