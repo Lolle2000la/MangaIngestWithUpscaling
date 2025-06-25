@@ -411,6 +411,7 @@ public partial class IngestProcessor(
         nonUpscaledChapter.IsUpscaled = true;
         if (profileToUse != null)
         {
+            nonUpscaledChapter.UpscalerProfileId = profileToUse.Id;
             nonUpscaledChapter.UpscalerProfile = profileToUse;
         }
 
