@@ -80,6 +80,9 @@ public partial class IngestProcessor(
         var chaptersBySeries = processedChapters
             .GroupBy(pci => pci.Renamed.Metadata.Series)
             .ToDictionary(g => g.Key,
+                // Sort chapters so that non-upscaled chapters come before upscaled ones
+                // By processing the non-upscaled chapters first, we ensure that if we also encounter a matching upscaled
+                // chapter, we can associate it with the correct non-upscaled chapter.
                 g => g.OrderBy(pci => pci.IsUpscaled).ToList());
 
         List<(Chapter, UpscalerProfile)> chaptersToUpscale = new();
