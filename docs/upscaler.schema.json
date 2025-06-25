@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Upscaler Profile",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "An identifier for this specific config."
+    },
+    "upscalerMethod": {
+      "type": "string",
+      "enum": ["MangaJaNai"],
+      "description": "The upscaler method used."
+    },
+    "scalingFactor": {
+      "type": "integer",
+      "enum": [1, 2, 3, 4],
+      "description": "The scaling factor used for upscaling."
+    },
+    "compressionFormat": {
+      "type": "string",
+      "enum": ["Avif", "Png", "Webp", "Jpg"],
+      "description": "The compression format for the output."
+    },
+    "quality": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "description": "The quality of the compression."
+    }
+  },
+  "required": [
+    "name",
+    "upscalerMethod",
+    "scalingFactor",
+    "compressionFormat",
+    "quality"
+  ]
+}
+

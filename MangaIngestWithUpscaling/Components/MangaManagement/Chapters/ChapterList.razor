@@ -70,14 +70,14 @@
                 <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward"
                                Color="Color.Primary" Variant="Variant.Text"
                                OnClick="@(() => UpscaleChapter(context.Chapter))"
-                               title="Upscale this chapter." />
+                               title="Upscale this chapter."/>
             }
             else
             {
                 <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward"
                                Color="Color.Secondary" Variant="Variant.Text"
                                OnClick="@(() => DeleteUpscaledConfirm(context.Chapter))"
-                               title="Delete upscaled version of this chapter." />
+                               title="Delete upscaled version of this chapter."/>
             }
         </MudTd>
         <MudTd DataLabel="Upscaler Profile">
@@ -87,12 +87,17 @@
             <MudIconButton Icon="@Icons.Material.Filled.Delete"
                            Color="Color.Error" Variant="Variant.Text"
                            OnClick="@(() => DeleteChapterConfirm(context.Chapter))"
-                           title="Delete this chapter" />
+                           title="Delete this chapter"/>
         </MudTd>
     </RowTemplate>
     <RowEditingTemplate>
-        <MudTd DataLabel="Chapter Title"><MudInput @bind-Value="context.NewTitle" /></MudTd>
-        <MudTd DataLabel="Chapter Path"><MudInput @bind-Value="context.NewFileName" Label="Filename" HelperText="Filename" />.cbz</MudTd>
+        <MudTd DataLabel="Chapter Title">
+            <MudInput @bind-Value="context.NewTitle"/>
+        </MudTd>
+        <MudTd DataLabel="Chapter Path">
+            <MudInput @bind-Value="context.NewFileName" Label="Filename" HelperText="Filename"/>
+            .cbz
+        </MudTd>
         <MudTd DataLabel="Upscaled">
             @context.Chapter.IsUpscaled
             @if (!context.Chapter.IsUpscaled)
@@ -100,14 +105,14 @@
                 <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward"
                                Color="Color.Primary" Variant="Variant.Text"
                                OnClick="@(() => UpscaleChapter(context.Chapter))"
-                               title="Upscale this chapter." />
+                               title="Upscale this chapter."/>
             }
             else
             {
                 <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward"
                                Color="Color.Secondary" Variant="Variant.Text"
                                OnClick="@(() => DeleteUpscaledConfirm(context.Chapter))"
-                               title="Delete upscaled version of this chapter." />
+                               title="Delete upscaled version of this chapter."/>
             }
         </MudTd>
         <MudTd DataLabel="Upscaler Profile">
@@ -115,7 +120,7 @@
         </MudTd>
     </RowEditingTemplate>
     <PagerContent>
-        <MudTablePager />
+        <MudTablePager/>
     </PagerContent>
 </MudTable>
 
@@ -236,6 +241,7 @@
         {
             return;
         }
+
         if (!DbContext.Entry(Manga.Library).Reference(l => l.UpscalerProfile).IsLoaded)
         {
             await DbContext.Entry(Manga.Library).Reference(l => l.UpscalerProfile).LoadAsync();
@@ -355,6 +361,7 @@
                 }
             }
         }
+
         if (success)
         {
             chapter.RelativePath = targetRelativePath;
@@ -394,6 +401,7 @@
                 }
             }
         }
+
         return success;
     }
 
@@ -403,6 +411,7 @@
         {
             await DbContext.Entry(Manga).Collection(m => m.Chapters).LoadAsync();
         }
+
         if (!DbContext.Entry(Manga).Reference(m => m.Library).IsLoaded)
         {
             await DbContext.Entry(Manga).Reference(m => m.Library).LoadAsync();
@@ -447,11 +456,13 @@
         foreach (var chapter in Manga.Chapters.ToList()) // ToList() を追加して、コレクションの変更を許可します
         {
             Task<UpscalerProfile?> loadProfile = Task.FromResult<UpscalerProfile?>(null);
-            if (chapter.UpscalerProfileId.HasValue && !DbContext.Entry(chapter).Reference(c => c.UpscalerProfile).IsLoaded)
+            if (chapter.UpscalerProfileId is not null && !DbContext.Entry(chapter).Reference(c => c.UpscalerProfile).IsLoaded)
             {
                 // The following is used to ignore soft deleted profiles
-                loadProfile = DbContext.UpscalerProfiles.IgnoreQueryFilters().FirstOrDefaultAsync(p => p.Id == chapter.UpscalerProfileId);
+                loadProfile = DbContext.UpscalerProfiles.IgnoreQueryFilters()
+                    .FirstOrDefaultAsync(p => p.Id == chapter.UpscalerProfileId);
             }
+
             try
             {
                 if (Manga.Library?.NotUpscaledLibraryPath == null)
@@ -466,15 +477,16 @@
                     loadingFailed = true;
                     continue;
                 }
+
                 var extractedMetadata = MetadataHandler.GetSeriesAndTitleFromComicInfo(Path.Combine(Manga.Library.NotUpscaledLibraryPath, chapter.RelativePath));
                 chapter.UpscalerProfile = await loadProfile;
                 chapters.Add(new ChapterItem
-                    {
-                        Chapter = chapter,
-                        ExtractedMetadata = extractedMetadata,
-                        NewTitle = extractedMetadata?.ChapterTitle ?? string.Empty,
-                        NewFileName = Path.GetFileNameWithoutExtension(chapter.FileName)
-                    });
+                {
+                    Chapter = chapter,
+                    ExtractedMetadata = extractedMetadata,
+                    NewTitle = extractedMetadata?.ChapterTitle ?? string.Empty,
+                    NewFileName = Path.GetFileNameWithoutExtension(chapter.FileName)
+                });
             }
             catch (Exception e)
             {
@@ -495,4 +507,5 @@
         public required string NewTitle { get; set; }
         public required string NewFileName { get; set; }
     }
+
 }

@@ -16,7 +16,8 @@ public class MangaJaNaiUpscaler(
     ILogger<MangaJaNaiUpscaler> logger,
     IOptions<UpscalerConfig> sharedConfig,
     IFileSystem fileSystem,
-    IMetadataHandlingService metadataHandling) : IUpscaler
+    IMetadataHandlingService metadataHandling,
+    IUpscalerJsonHandlingService upscalerJsonHandlingService) : IUpscaler
 {
     private readonly (string, string)[] zipsToDownload =
     [
@@ -133,6 +134,8 @@ public class MangaJaNaiUpscaler(
             fileSystem.ApplyPermissions(outputPath);
 
             logger.LogDebug("Upscaling Output {inputPath}: {output}", inputPath, output);
+
+            await upscalerJsonHandlingService.WriteUpscalerJsonAsync(outputPath, profile, cancellationToken);
 
             logger.LogInformation("Upscaling {inputPath} to {outputPath} with {profile.Name} completed", inputPath,
                 outputPath, profile.Name);
