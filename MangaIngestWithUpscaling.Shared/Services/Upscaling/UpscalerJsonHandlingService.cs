@@ -48,7 +48,11 @@ public class UpscalerJsonHandlingService(ILogger<UpscalerJsonHandlingService> lo
             Quality = profile.Quality
         };
 
-        var options = new JsonSerializerOptions { WriteIndented = true };
+        var options = new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        };
         string jsonString = JsonSerializer.Serialize(upscalerJson, options);
 
         using (ZipArchive archive = ZipFile.Open(cbzFilePath, ZipArchiveMode.Update))
