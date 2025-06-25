@@ -1,10 +1,8 @@
 ﻿@using MangaIngestWithUpscaling.Components.FileSystem
 @using MangaIngestWithUpscaling.Components.Libraries.Filters
-@using MangaIngestWithUpscaling.Data.LibraryManagement
-@using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Configuration
+@using MangaIngestWithUpscaling.Data.LibraryManagement
 @using Microsoft.Extensions.Options
-
 @inject ApplicationDbContext DbContext
 @inject IOptions<KavitaConfiguration> KavitaConfig
 @inject IDialogService DialogService
@@ -188,7 +186,7 @@
                           (Library.UpscaledLibraryPath == null || Directory.Exists(Library.UpscaledLibraryPath));
 
         bool upscalingIsFullyConfiguredOrOff = !Library.UpscaleOnIngest ||
-                                               (Library.UpscaleOnIngest && Library.UpscalerProfileId.HasValue && !string.IsNullOrEmpty(Library.UpscaledLibraryPath));
+                                               (Library is { UpscaleOnIngest: true, UpscalerProfileId: not null } && !string.IsNullOrEmpty(Library.UpscaledLibraryPath));
 
         return requiredElementsValid && pathsAreDifferent && pathsExist && upscalingIsFullyConfiguredOrOff;
     }

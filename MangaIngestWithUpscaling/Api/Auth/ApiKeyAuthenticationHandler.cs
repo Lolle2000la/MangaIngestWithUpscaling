@@ -53,7 +53,7 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationS
         if (apiKey == null || !apiKey.IsActive)
             return AuthenticateResult.Fail("Invalid API Key");
 
-        if (apiKey.Expiration.HasValue && apiKey.Expiration < currentUtc)
+        if (apiKey.Expiration is not null && apiKey.Expiration < currentUtc)
             return AuthenticateResult.Fail("Expired API Key");
 
         var claims = new List<Claim>
