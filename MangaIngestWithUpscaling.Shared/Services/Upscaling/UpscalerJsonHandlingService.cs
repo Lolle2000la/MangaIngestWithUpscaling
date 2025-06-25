@@ -23,8 +23,9 @@ public class UpscalerJsonHandlingService(ILogger<UpscalerJsonHandlingService> lo
             if (upscalerJsonEntry != null)
             {
                 await using Stream stream = upscalerJsonEntry.Open();
+                var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
                 var upscalerProfileDto = await JsonSerializer.DeserializeAsync<UpscalerProfileJsonDto>(stream,
-                    cancellationToken: cancellationToken);
+                    options, cancellationToken: cancellationToken);
                 return upscalerProfileDto;
             }
         }
