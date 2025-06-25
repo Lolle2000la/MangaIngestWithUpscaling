@@ -327,8 +327,7 @@ public partial class IngestProcessor(
                         p.UpscalerMethod == upscalerProfileDto.UpscalerMethod &&
                         p.ScalingFactor == scaleFactor &&
                         p.CompressionFormat == upscalerProfileDto.CompressionFormat &&
-                        p.Quality == upscalerProfileDto.Quality &&
-                        !p.Deleted,
+                        p.Quality == upscalerProfileDto.Quality,
                     cancellationToken
                 );
 
