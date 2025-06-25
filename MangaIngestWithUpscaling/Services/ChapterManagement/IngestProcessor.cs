@@ -323,7 +323,7 @@ public partial class IngestProcessor(
             {
                 var scaleFactor = (ScaleFactor)upscalerProfileDto.ScalingFactor;
                 profileToUse = await dbContext.UpscalerProfiles.FirstOrDefaultAsync(p =>
-                        p.Name == upscalerProfileDto.Name &&
+                        p.Name.ToLower() == upscalerProfileDto.Name.ToLower() &&
                         p.UpscalerMethod == upscalerProfileDto.UpscalerMethod &&
                         p.ScalingFactor == scaleFactor &&
                         p.CompressionFormat == upscalerProfileDto.CompressionFormat &&
