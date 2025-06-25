@@ -64,12 +64,12 @@ public partial class IngestProcessor(
             bool isUpscaled = IsUpscaledChapter().IsMatch(originalChapter.RelativePath);
             UpscalerProfileJsonDto? upscalerProfileDto = null;
 
-            if (!isUpscaled)
+            string fullPath = Path.Combine(library.IngestPath, originalChapter.RelativePath);
+            upscalerProfileDto =
+                await upscalerJsonHandlingService.ReadUpscalerJsonAsync(fullPath, cancellationToken);
+            if (upscalerProfileDto != null)
             {
-                string fullPath = Path.Combine(library.IngestPath, originalChapter.RelativePath);
-                upscalerProfileDto =
-                    await upscalerJsonHandlingService.ReadUpscalerJsonAsync(fullPath, cancellationToken);
-                isUpscaled = upscalerProfileDto != null;
+                isUpscaled = true;
             }
 
             processedChapters.Add(new ProcessedChapterInfo(originalChapter, renamedChapter, isUpscaled,
