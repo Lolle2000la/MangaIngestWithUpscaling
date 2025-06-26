@@ -187,7 +187,7 @@ public partial class IngestProcessor(
                 scans.Add(chapterChangedNotifier.Notify(chapterEntity, false));
 
                 if (library.UpscaleOnIngest && seriesEntity.ShouldUpscale != false &&
-                    library.UpscalerProfileId is not null)
+                    library.UpscalerProfileId.HasValue)
                 {
                     dbContext.Entry(chapterEntity).Reference(c => c.UpscalerProfile).Load();
                     chaptersToUpscale.Add((chapterEntity, library.UpscalerProfile!));

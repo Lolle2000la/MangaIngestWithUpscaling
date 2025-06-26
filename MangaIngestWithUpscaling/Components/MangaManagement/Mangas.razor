@@ -98,7 +98,7 @@
             DataLabel="Chapter count">@context.Chapters.Count() (@context.Chapters.Count(c => c.IsUpscaled) upscaled)
         </MudTd>
         <MudTd
-            DataLabel="Should upscale">@(context.ShouldUpscale is not null ? context.ShouldUpscale.Value : "Use Library settings")</MudTd>
+            DataLabel="Should upscale">@(context.ShouldUpscale.HasValue ? context.ShouldUpscale.Value : "Use Library settings")</MudTd>
         <MudTd>
             <a href="mangas/@context.Id" title="Edit this Manga.">
                 <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Text"

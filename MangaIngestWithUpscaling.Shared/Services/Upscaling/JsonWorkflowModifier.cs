@@ -43,7 +43,7 @@ public static class JsonWorkflowModifier
             throw new Exception("Workflow 'Upscale Manga (Default)' not found.");
 
         // Update only the keys provided in the config.
-        if (config.SelectedTabIndex is not null)
+        if (config.SelectedTabIndex.HasValue)
             workflow["SelectedTabIndex"] = config.SelectedTabIndex.Value;
         if (!string.IsNullOrEmpty(config.InputFilePath))
             workflow["InputFilePath"] = config.InputFilePath;
@@ -53,27 +53,27 @@ public static class JsonWorkflowModifier
             workflow["OutputFilename"] = config.OutputFilename;
         if (!string.IsNullOrEmpty(config.OutputFolderPath))
             workflow["OutputFolderPath"] = config.OutputFolderPath;
-        if (config.OverwriteExistingFiles is not null)
+        if (config.OverwriteExistingFiles.HasValue)
             workflow["OverwriteExistingFiles"] = config.OverwriteExistingFiles.Value;
-        if (config.UpscaleImages is not null)
+        if (config.UpscaleImages.HasValue)
             workflow["UpscaleImages"] = config.UpscaleImages.Value;
-        if (config.WebpSelected is not null)
+        if (config.WebpSelected.HasValue)
             workflow["WebpSelected"] = config.WebpSelected.Value;
-        if (config.AvifSelected is not null)
+        if (config.AvifSelected.HasValue)
             workflow["AvifSelected"] = config.AvifSelected.Value;
-        if (config.PngSelected is not null)
+        if (config.PngSelected.HasValue)
             workflow["PngSelected"] = config.PngSelected.Value;
-        if (config.JpegSelected is not null)
+        if (config.JpegSelected.HasValue)
             workflow["JpegSelected"] = config.JpegSelected.Value;
-        if (config.UpscaleScaleFactor is not null)
+        if (config.UpscaleScaleFactor.HasValue)
             workflow["UpscaleScaleFactor"] = config.UpscaleScaleFactor.Value;
         if (!string.IsNullOrEmpty(config.ModelsDirectory))
             rootNode["ModelsDirectory"] = config.ModelsDirectory;
-        if (config.UseFp16 is not null)
+        if (config.UseFp16.HasValue)
             rootNode["UseFp16"] = config.UseFp16;
-        if (config.UseCPU is not null)
+        if (config.UseCPU.HasValue)
             rootNode["UseCPU"] = config.UseCPU;
-        if (config.SelectedDeviceIndex is not null)
+        if (config.SelectedDeviceIndex.HasValue)
             rootNode["SelectedDeviceIndex"] = config.SelectedDeviceIndex;
 
         // Write the modified JSON to a temporary file.

@@ -29,8 +29,7 @@
         </MudTd>
         <MudTd DataLabel="Name">@context.Data.TaskFriendlyName</MudTd>
         <MudTd>@context.CreatedAt.ToLocalTime()</MudTd>
-        <MudTd
-            DataLabel="Queued At">@(context.ProcessedAt is not null ? context.ProcessedAt.Value.ToLocalTime() : "")</MudTd>
+        <MudTd DataLabel="Queued At">@(context.ProcessedAt.HasValue ? context.ProcessedAt.Value.ToLocalTime() : "")</MudTd>
         <MudTd DataLabel="Finished At">@context.Status</MudTd>
         <MudTd DataLabel="Status"
                Style="white-space: nowrap">
