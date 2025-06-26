@@ -2,10 +2,10 @@
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
-using Microsoft.EntityFrameworkCore;
-using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
+using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 
@@ -100,7 +100,6 @@ public class UpscaleTask : BaseTask
         await dbContext.Entry(chapter.Manga).ReloadAsync();
 
         chapter.IsUpscaled = true;
-        chapter.UpscalerProfile = upscalerProfile;
         chapter.UpscalerProfileId = upscalerProfile.Id;
         await dbContext.SaveChangesAsync();
 
