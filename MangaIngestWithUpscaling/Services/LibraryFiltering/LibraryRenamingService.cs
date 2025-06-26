@@ -16,11 +16,11 @@ public class LibraryRenamingService : ILibraryRenamingService
 
     public FoundChapter ApplyRenameRules(FoundChapter chapter, IReadOnlyList<LibraryRenameRule> rules)
     {
-        var fileName = chapter.FileName;
-        var relativePath = chapter.RelativePath;
+        string fileName = chapter.FileName;
+        string relativePath = chapter.RelativePath;
         var meta = chapter.Metadata;
-        var series = meta.Series;
-        var chapterTitle = meta.ChapterTitle;
+        string series = meta.Series;
+        string? chapterTitle = meta.ChapterTitle;
 
         foreach (var rule in rules)
         {
@@ -33,7 +33,7 @@ public class LibraryRenamingService : ILibraryRenamingService
             {
                 LibraryRenameTargetField.SeriesTitle => series,
                 LibraryRenameTargetField.ChapterTitle => chapterTitle,
-                LibraryRenameTargetField.FileName => fileName,
+                LibraryRenameTargetField.FileName => Path.GetFileNameWithoutExtension(fileName),
                 _ => null
             };
 
@@ -74,8 +74,9 @@ public class LibraryRenamingService : ILibraryRenamingService
                         chapterTitle = result;
                         break;
                     case LibraryRenameTargetField.FileName:
-                        fileName = result;
-                        var dir = Path.GetDirectoryName(relativePath) ?? string.Empty;
+                        string extension = Path.GetExtension(chapter.FileName);
+                        fileName = result + extension;
+                        string dir = Path.GetDirectoryName(relativePath) ?? string.Empty;
                         relativePath = string.IsNullOrEmpty(dir) ? fileName : Path.Combine(dir, fileName);
                         break;
                 }
