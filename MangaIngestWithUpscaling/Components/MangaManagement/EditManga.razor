@@ -134,6 +134,7 @@ else
         manga = await DbContext.MangaSeries
             .Include(m => m.Library)
             .Include(m => m.Chapters)
+            .ThenInclude(c => c.UpscalerProfile)
             .Include(m => m.OtherTitles)
             .FirstOrDefaultAsync(m => m.Id == MangaId);
 

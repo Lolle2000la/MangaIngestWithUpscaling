@@ -455,7 +455,7 @@
         foreach (var chapter in Manga.Chapters.ToList()) // ToList() を追加して、コレクションの変更を許可します
         {
             var loadProfile = Task.FromResult(chapter.UpscalerProfile);
-            if (chapter.UpscalerProfileId is not null && !DbContext.Entry(chapter).Reference(c => c.UpscalerProfile).IsLoaded)
+            if (chapter.UpscalerProfileId is not null && chapter.UpscalerProfile is null)
             {
                 // The following is used to ignore soft deleted profiles
                 loadProfile = DbContext.UpscalerProfiles.IgnoreQueryFilters()
