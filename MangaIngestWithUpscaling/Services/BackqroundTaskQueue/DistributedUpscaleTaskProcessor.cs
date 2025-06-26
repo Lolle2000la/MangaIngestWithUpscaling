@@ -65,26 +65,41 @@ public class DistributedUpscaleTaskProcessor(
         _ = Task.Run(async () =>
         {
             var cleanDeadTasksTimer = new PeriodicTimer(TimeSpan.FromSeconds(10));
-            while (!stoppingToken.IsCancellationRequested && await cleanDeadTasksTimer.WaitForNextTickAsync())
+            while (!stoppingToken.IsCancellationRequested &&
+                   await cleanDeadTasksTimer.WaitForNextTickAsync(stoppingToken))
             {
-                using var scope = scopeFactory.CreateScope();
-                var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-
+                List<PersistedTask> deadTasksToRequeue;
                 using (_lock.EnterScope())
                 {
-                    List<KeyValuePair<int, PersistedTask>> deadTasks = runningTasks.Where(x =>
+                    var deadTasks = runningTasks.Where(x =>
                             x.Value.Status == PersistedTaskStatus.Processing
                             && x.Value.LastKeepAlive.AddMinutes(1) < DateTime.UtcNow)
                         .ToList();
+
+                    if (deadTasks.Count == 0)
+                    {
+                        continue;
+                    }
+
+                    deadTasksToRequeue = new List<PersistedTask>(deadTasks.Count);
                     foreach (var (taskId, task) in deadTasks)
                     {
-                        task.Status = PersistedTaskStatus.Failed;
-                        _ = StatusChanged?.Invoke(task);
+                        deadTasksToRequeue.Add(task);
                         runningTasks.Remove(taskId);
                     }
                 }
 
-                await dbContext.SaveChangesAsync();
+                using (IServiceScope scope = scopeFactory.CreateScope())
+                {
+                    var logger = scope.ServiceProvider.GetRequiredService<ILogger<DistributedUpscaleTaskProcessor>>();
+                    logger.LogInformation("Re-enqueuing {count} dead tasks.", deadTasksToRequeue.Count);
+                }
+
+                foreach (PersistedTask task in deadTasksToRequeue)
+                {
+                    await taskQueue.RetryAsync(task);
+                    _ = StatusChanged?.Invoke(task);
+                }
             }
         }, stoppingToken);
 
