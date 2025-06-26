@@ -74,7 +74,7 @@ public class LibraryRenamingService : ILibraryRenamingService
                         chapterTitle = result;
                         break;
                     case LibraryRenameTargetField.FileName:
-                        string extension = Path.GetExtension(chapter.FileName);
+                        string extension = Path.GetExtension(chapter.RelativePath);
                         fileName = result + extension;
                         string dir = Path.GetDirectoryName(relativePath) ?? string.Empty;
                         relativePath = string.IsNullOrEmpty(dir) ? fileName : Path.Combine(dir, fileName);
