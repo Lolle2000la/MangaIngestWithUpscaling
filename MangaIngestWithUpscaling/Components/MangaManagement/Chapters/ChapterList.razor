@@ -7,7 +7,6 @@
 @using MangaIngestWithUpscaling.Services.Integrations
 @using MangaIngestWithUpscaling.Services.LibraryIntegrity
 @using MangaIngestWithUpscaling.Services.MetadataHandling
-@using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Shared.Services.FileSystem
 @using MangaIngestWithUpscaling.Shared.Services.MetadataHandling
 @inject ApplicationDbContext DbContext
@@ -455,8 +454,8 @@
 
         foreach (var chapter in Manga.Chapters.ToList()) // ToList() を追加して、コレクションの変更を許可します
         {
-            Task<UpscalerProfile?> loadProfile = Task.FromResult<UpscalerProfile?>(null);
-            if (chapter.UpscalerProfileId is not null && !DbContext.Entry(chapter).Reference(c => c.UpscalerProfile).IsLoaded)
+            var loadProfile = Task.FromResult(chapter.UpscalerProfile);
+            if (chapter.UpscalerProfileId is null && !DbContext.Entry(chapter).Reference(c => c.UpscalerProfile).IsLoaded)
             {
                 // The following is used to ignore soft deleted profiles
                 loadProfile = DbContext.UpscalerProfiles.IgnoreQueryFilters()

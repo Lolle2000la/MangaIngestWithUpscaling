@@ -14,7 +14,8 @@ public class UnixFileSystem(
     public void ApplyPermissions(string path)
     {
         path = Path.GetFullPath(path);
-        string? parentDirectory = Path.GetDirectoryName(path) ?? throw new InvalidOperationException($"Unable to get parent directory for {path}");
+        string? parentDirectory = Path.GetDirectoryName(path) ??
+                                  throw new InvalidOperationException($"Unable to get parent directory for {path}");
 
         // Retrieve parent's permissions
         if (Syscall.stat(parentDirectory, out Stat parentStat) != 0)
@@ -24,14 +25,14 @@ public class UnixFileSystem(
 
         UnixPermissionsConfig unixPermissionsConfig = permissionsConfig.Value with { };
 
-        if (!unixPermissionsConfig.UserId.HasValue || !unixPermissionsConfig.GroupId.HasValue)
+        if (unixPermissionsConfig.UserId is null || unixPermissionsConfig.GroupId is null)
         {
-            if (unixPermissionsConfig.UserId.HasValue)
+            if (unixPermissionsConfig.UserId is not null)
             {
                 Logger.LogDebug("Group ID not set for {path}, using parent's group ID", path);
                 unixPermissionsConfig.GroupId = parentStat.st_gid;
             }
-            else if (unixPermissionsConfig.GroupId.HasValue)
+            else if (unixPermissionsConfig.GroupId is not null)
             {
                 Logger.LogDebug("User ID not set for {path}, using parent's user ID", path);
                 unixPermissionsConfig.UserId = parentStat.st_uid;
@@ -59,6 +60,7 @@ public class UnixFileSystem(
         {
             return;
         }
+
         var pathSegments = path.Split(Path.DirectorySeparatorChar);
         var dirsInPath = Enumerable.Range(1, pathSegments.Length)
             .Select(i => Path.Combine(pathSegments.Take(i).ToArray()));
@@ -90,14 +92,14 @@ public class UnixFileSystem(
 
         UnixPermissionsConfig usedPermissions = permissionsConfig.Value with { };
 
-        if (!usedPermissions.UserId.HasValue || !usedPermissions.GroupId.HasValue)
+        if (usedPermissions.UserId is null || usedPermissions.GroupId is null)
         {
-            if (usedPermissions.UserId.HasValue)
+            if (usedPermissions.UserId is not null)
             {
                 Logger.LogDebug("Group ID not set for {path}, using parent's group ID", path);
                 usedPermissions.GroupId = parentStat.st_gid;
             }
-            else if (usedPermissions.GroupId.HasValue)
+            else if (usedPermissions.GroupId is not null)
             {
                 Logger.LogDebug("User ID not set for {path}, using parent's user ID", path);
                 usedPermissions.UserId = parentStat.st_uid;
@@ -138,21 +140,22 @@ public class UnixFileSystem(
         UnixPermissionsConfig usedPermissions = permissionsConfig.Value with { };
 
         // Apply configured permissions to the new file if set
-        if (!usedPermissions.UserId.HasValue || !usedPermissions.GroupId.HasValue)
+        if (usedPermissions.UserId is null || usedPermissions.GroupId is null)
         {
-            if (usedPermissions.UserId.HasValue)
+            if (usedPermissions.UserId is not null)
             {
                 Logger.LogDebug("Group ID not set for {destFileName}, using source's group ID", destFileName);
                 usedPermissions.GroupId = sourceStat.st_gid;
             }
-            else if (usedPermissions.GroupId.HasValue)
+            else if (usedPermissions.GroupId is not null)
             {
                 Logger.LogDebug("User ID not set for {destFileName}, using source's user ID", destFileName);
                 usedPermissions.UserId = sourceStat.st_uid;
             }
             else
             {
-                Logger.LogDebug("User ID and Group ID not set for {destFileName}, using source's user ID and group ID", destFileName);
+                Logger.LogDebug("User ID and Group ID not set for {destFileName}, using source's user ID and group ID",
+                    destFileName);
                 usedPermissions.UserId = sourceStat.st_uid;
                 usedPermissions.GroupId = sourceStat.st_gid;
             }

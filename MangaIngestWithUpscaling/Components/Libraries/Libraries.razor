@@ -45,7 +45,7 @@
                            Size="Size.Small"
                            title="Schedule a scan of this library"
                            OnClick="e => OnScanLibrary(context)"/>
-            @if (context.UpscalerProfileId.HasValue && !string.IsNullOrEmpty(context.UpscaledLibraryPath))
+            @if (context.UpscalerProfileId is not null && !string.IsNullOrEmpty(context.UpscaledLibraryPath))
             {
                 <MudIconButton Icon="@Icons.Material.Filled.ImageAspectRatio" Variant="Variant.Text"
                                Size="Size.Small"
@@ -114,7 +114,7 @@
 
     protected async Task OnUpscaleLibrary(Library library)
     {
-        if (!library.UpscalerProfileId.HasValue || library.UpscalerProfile == null || string.IsNullOrEmpty(library.UpscaledLibraryPath))
+        if (library.UpscalerProfileId is null || library.UpscalerProfile == null || string.IsNullOrEmpty(library.UpscaledLibraryPath))
         {
             return;
         }
