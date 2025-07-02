@@ -96,25 +96,15 @@ public class TaskQueue : ITaskQueue, IHostedService
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        // Fetch the task from the database to ensure we have the latest version
-        var existingTask = await dbContext.PersistedTasks
-            .FirstOrDefaultAsync(t => t.Id == task.Id);
-
-        if (existingTask == null) return;
-
-        // Update the order and persist changes
-        existingTask.Order = newOrder;
-        await dbContext.SaveChangesAsync();
-
         // Determine which set to modify
-        var (tasks, lockObj) = existingTask.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask
+        var (tasks, lockObj) = task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask
             ? (_upscaleTasks, _upscaleTasksLock)
             : (_standardTasks, _standardTasksLock);
 
         lock (lockObj)
         {
-            // Find the task in the set by ID (works across different instances)
-            var taskInSet = tasks.FirstOrDefault(t => t.Id == existingTask.Id);
+            // Find the task in the set by ID
+            PersistedTask? taskInSet = tasks.FirstOrDefault(t => t.Id == task.Id);
 
             if (taskInSet != null)
             {
@@ -124,6 +114,19 @@ public class TaskQueue : ITaskQueue, IHostedService
                 tasks.Add(taskInSet);
             }
         }
+
+        // Fetch the task from the database to ensure we have the latest version
+        PersistedTask? existingTask = await dbContext.PersistedTasks
+            .FirstOrDefaultAsync(t => t.Id == task.Id);
+
+        if (existingTask == null)
+        {
+            return;
+        }
+
+        // Update the order and persist changes
+        existingTask.Order = newOrder;
+        await dbContext.SaveChangesAsync();
     }
 
     public async Task RemoveTaskAsync(PersistedTask task)
