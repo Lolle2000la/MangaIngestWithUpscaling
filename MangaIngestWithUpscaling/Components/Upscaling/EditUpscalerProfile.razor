@@ -1,7 +1,5 @@
-﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
+﻿@page "/upscaling/profiles/edit/{ProfileId:int}"
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
-
-@page "/upscaling/profiles/edit/{ProfileId:int}"
 
 @inject ApplicationDbContext DbContext
 @inject NavigationManager NavigationManager
@@ -14,29 +12,29 @@
     </MudCardHeader>
     <MudCardContent>
         <UpscalerProfileForm @bind-Profile="Profile"
-                             @bind-IsValid="IsValid" />
+                             @bind-IsValid="IsValid"/>
     </MudCardContent>
     <MudCardActions>
-        <MudSpacer />
+        <MudSpacer/>
         <MudButton StartIcon="@Icons.Material.Filled.Save"
                    Variant="Variant.Filled"
                    Color="Color.Primary"
                    Disabled="!IsValid"
-                   OnClick="OnSaveProfile">Save</MudButton>
+                   OnClick="OnSaveProfile">Save
+        </MudButton>
     </MudCardActions>
 </MudCard>
 
 @code {
-    [Parameter]
-    public int? ProfileId { get; set; }
+    [Parameter] public int? ProfileId { get; set; }
 
     public UpscalerProfile Profile { get; set; } = new UpscalerProfile()
-        {
-            Name = "",
-            ScalingFactor = ScaleFactor.TwoX,
-            CompressionFormat = CompressionFormat.Webp,
-            Quality = 80
-        };
+    {
+        Name = "",
+        ScalingFactor = ScaleFactor.TwoX,
+        CompressionFormat = CompressionFormat.Webp,
+        Quality = 80
+    };
 
     private UpscalerProfile? existingProfile;
 
@@ -50,13 +48,13 @@
             if (existingProfile != null)
             {
                 Profile = new UpscalerProfile
-                    {
-                        Name = existingProfile.Name,
-                        ScalingFactor = existingProfile.ScalingFactor,
-                        CompressionFormat = existingProfile.CompressionFormat,
-                        Quality = existingProfile.Quality,
-                        UpscalerMethod = existingProfile.UpscalerMethod,
-                    };
+                {
+                    Name = existingProfile.Name,
+                    ScalingFactor = existingProfile.ScalingFactor,
+                    CompressionFormat = existingProfile.CompressionFormat,
+                    Quality = existingProfile.Quality,
+                    UpscalerMethod = existingProfile.UpscalerMethod
+                };
             }
             else
             {
@@ -81,15 +79,16 @@
         await DbContext.SaveChangesAsync();
         // change all references to existingProfile to Profile, except for concrete chapters
         // (right now this is only the upscaler profile id in the library))
-        await foreach (var library in DbContext.Libraries.AsAsyncEnumerable())
-        {
-            if (library.UpscalerProfileId == existingProfile.Id)
-            {
-                library.UpscalerProfileId = Profile.Id;
-                library.UpscalerProfile = Profile;
-            }
-        }
+        await DbContext.Libraries
+            .Where(l => l.UpscalerProfileId == existingProfile.Id)
+            .ExecuteUpdateAsync(s => s.SetProperty(l => l.UpscalerProfileId, Profile.Id));
+
+        await DbContext.MangaSeries
+            .Where(m => m.UpscalerProfilePreferenceId == existingProfile.Id)
+            .ExecuteUpdateAsync(s => s.SetProperty(m => m.UpscalerProfilePreferenceId, Profile.Id));
+
         await DbContext.SaveChangesAsync();
         NavigationManager.NavigateTo("/upscaling/profiles");
     }
+
 }

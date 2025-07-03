@@ -1,4 +1,7 @@
-﻿namespace MangaIngestWithUpscaling.Data.LibraryManagement;
+﻿using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using System.ComponentModel.DataAnnotations.Schema;
+
+namespace MangaIngestWithUpscaling.Data.LibraryManagement;
 
 /// <summary>
 /// Represents a manga series, including its primary title,
@@ -18,6 +21,26 @@ public class Manga
         = [];
 
     public List<Chapter> Chapters { get; set; } = [];
+
+    public int? UpscalerProfilePreferenceId { get; set; }
+
+    public UpscalerProfile? UpscalerProfilePreference { get; set; }
+
+    [NotMapped]
+    public UpscalerProfile? EffectiveUpscalerProfile
+    {
+        get
+        {
+            // If the manga has a specific upscaler profile, return it
+            if (UpscalerProfilePreference != null)
+            {
+                return UpscalerProfilePreference;
+            }
+
+            // Otherwise, return the library's default upscaler profile
+            return Library.UpscalerProfile;
+        }
+    }
 
     public void ChangePrimaryTitle(string newTitle, bool addOldToAlternative)
     {

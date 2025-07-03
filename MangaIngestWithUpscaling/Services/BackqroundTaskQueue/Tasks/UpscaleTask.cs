@@ -13,6 +13,25 @@ public class UpscaleTask : BaseTask
 {
     public UpscaleTask() { }
 
+    public UpscaleTask(Chapter chapter)
+    {
+        if (chapter.Manga == null)
+        {
+            throw new InvalidOperationException($"Chapter {chapter.FileName} has no associated manga.");
+        }
+
+        if (chapter.Manga.EffectiveUpscalerProfile == null)
+        {
+            throw new InvalidOperationException(
+                $"Chapter {chapter.FileName} of {chapter.Manga?.PrimaryTitle ?? "Unknown"} has no effective upscaler profile set.");
+        }
+
+        ChapterId = chapter.Id;
+        UpscalerProfileId = chapter.Manga.EffectiveUpscalerProfile.Id;
+        FriendlyEntryName =
+            $"Upscaling {chapter.FileName} of {chapter.Manga.PrimaryTitle} with {chapter.Manga.EffectiveUpscalerProfile.Name}";
+    }
+
     public UpscaleTask(Chapter chapter, UpscalerProfile profile)
     {
         ChapterId = chapter.Id;

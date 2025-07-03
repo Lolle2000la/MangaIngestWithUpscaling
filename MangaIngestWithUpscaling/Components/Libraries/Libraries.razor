@@ -72,6 +72,8 @@
         LoadedLibraries = await DbContext.Libraries
             .Include(x => x.UpscalerProfile)
             .Include(x => x.MangaSeries)
+            .ThenInclude(x => x.UpscalerProfilePreference)
+            .Include(x => x.MangaSeries)
             .ThenInclude(x => x.Chapters)
             .ToListAsync();
     }
@@ -127,7 +129,8 @@
                 {
                     continue;
                 }
-                await TaskQueue.EnqueueAsync(new UpscaleTask(chapter, library.UpscalerProfile));
+
+                await TaskQueue.EnqueueAsync(new UpscaleTask(chapter));
             }
         }
     }

@@ -85,7 +85,7 @@ public partial class IngestProcessor(
                 // chapter, we can associate it with the correct non-upscaled chapter.
                 g => g.OrderBy(pci => pci.IsUpscaled).ToList());
 
-        List<(Chapter, UpscalerProfile)> chaptersToUpscale = new();
+        List<Chapter> chaptersToUpscale = new();
         List<Task> scans = new();
         var upscalerProfileCache = new Dictionary<UpscalerProfileJsonDto, UpscalerProfile>();
 
@@ -119,7 +119,7 @@ public partial class IngestProcessor(
                             pci.UpscalerProfile, upscalerProfileCache, cancellationToken);
                     if (foundMatch != null)
                     {
-                        var chapterIndex = chaptersToUpscale.FindIndex(c => c.Item1.Id == foundMatch.Id);
+                        int chapterIndex = chaptersToUpscale.FindIndex(c => c.Id == foundMatch.Id);
                         if (chapterIndex != -1)
                             chaptersToUpscale.RemoveAt(chapterIndex);
                     }
@@ -190,7 +190,7 @@ public partial class IngestProcessor(
                     library.UpscalerProfileId is not null)
                 {
                     dbContext.Entry(chapterEntity).Reference(c => c.UpscalerProfile).Load();
-                    chaptersToUpscale.Add((chapterEntity, library.UpscalerProfile!));
+                    chaptersToUpscale.Add(chapterEntity);
                 }
             }
 
@@ -200,9 +200,7 @@ public partial class IngestProcessor(
         foreach (var chapterTuple in chaptersToUpscale)
         {
             var upscaleTask =
-                new UpscaleTask(chapterTuple.Item1,
-                    chapterTuple
-                        .Item2); // if I use destructuring here, the value becomes 0. I checked with the debugger and I have no idea why this happens.
+                new UpscaleTask(chapterTuple);
             await taskQueue.EnqueueAsync(upscaleTask);
         }
 
@@ -222,6 +220,7 @@ public partial class IngestProcessor(
         var seriesEntity = await dbContext.MangaSeries
             .Include(s => s.OtherTitles)
             .Include(s => s.Chapters)
+            .Include(s => s.UpscalerProfilePreference)
             .FirstOrDefaultAsync(s => s.PrimaryTitle == newSeries || s.OtherTitles.Any(an => an.Title == newSeries),
                 cancellationToken: cancellationToken);
 
