@@ -154,6 +154,7 @@
             .Include(x => x.Library)
             .ThenInclude(x => x.UpscalerProfile)
             .Include(x => x.Chapters)
+            .Include(x => x.UpscalerProfilePreference)
             .AsQueryable();
 
         if (selectedLibrary != null)
@@ -299,11 +300,11 @@
 
     private async Task OnUpscaleSpecific(Manga manga)
     {
-        if (manga.Library.UpscalerProfile == null) return;
+        if (manga.EffectiveUpscalerProfile == null) return;
         foreach (var chapter in manga.Chapters
                      .Where(chapter => !chapter.IsUpscaled || (chapter.IsUpscaled && chapter.UpscalerProfileId != manga.Library.UpscalerProfileId)))
         {
-            await TaskQueue.EnqueueAsync(new UpscaleTask(chapter, manga.Library.UpscalerProfile));
+            await TaskQueue.EnqueueAsync(new UpscaleTask(chapter));
         }
     }
 
