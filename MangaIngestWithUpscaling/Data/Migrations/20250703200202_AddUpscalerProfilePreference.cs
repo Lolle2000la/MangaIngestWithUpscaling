@@ -14,8 +14,7 @@ namespace MangaIngestWithUpscaling.Migrations
                 name: "UpscalerProfilePreferenceId",
                 table: "MangaSeries",
                 type: "INTEGER",
-                nullable: false,
-                defaultValue: 0);
+                nullable: true);
 
             migrationBuilder.CreateIndex(
                 name: "IX_MangaSeries_UpscalerProfilePreferenceId",
@@ -27,8 +26,7 @@ namespace MangaIngestWithUpscaling.Migrations
                 table: "MangaSeries",
                 column: "UpscalerProfilePreferenceId",
                 principalTable: "UpscalerProfiles",
-                principalColumn: "Id",
-                onDelete: ReferentialAction.Cascade);
+                principalColumn: "Id");
         }
 
         /// <inheritdoc />

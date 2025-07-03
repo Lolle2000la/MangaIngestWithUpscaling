@@ -13,7 +13,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MangaIngestWithUpscaling.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20250703193230_AddUpscalerProfilePreference")]
+    [Migration("20250703200202_AddUpscalerProfilePreference")]
     partial class AddUpscalerProfilePreference
     {
         /// <inheritdoc />
@@ -314,7 +314,7 @@ namespace MangaIngestWithUpscaling.Migrations
                     b.Property<bool?>("ShouldUpscale")
                         .HasColumnType("INTEGER");
 
-                    b.Property<int>("UpscalerProfilePreferenceId")
+                    b.Property<int?>("UpscalerProfilePreferenceId")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
@@ -592,9 +592,7 @@ namespace MangaIngestWithUpscaling.Migrations
 
                     b.HasOne("MangaIngestWithUpscaling.Shared.Data.LibraryManagement.UpscalerProfile", "UpscalerProfilePreference")
                         .WithMany()
-                        .HasForeignKey("UpscalerProfilePreferenceId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
+                        .HasForeignKey("UpscalerProfilePreferenceId");
 
                     b.Navigation("Library");
 

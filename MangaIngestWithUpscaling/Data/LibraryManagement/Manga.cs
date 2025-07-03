@@ -22,7 +22,7 @@ public class Manga
 
     public List<Chapter> Chapters { get; set; } = [];
 
-    public int UpscalerProfilePreferenceId { get; set; }
+    public int? UpscalerProfilePreferenceId { get; set; }
 
     public UpscalerProfile? UpscalerProfilePreference { get; set; }
 
