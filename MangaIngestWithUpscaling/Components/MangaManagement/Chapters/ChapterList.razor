@@ -246,14 +246,19 @@
             await DbContext.Entry(Manga.Library).Reference(l => l.UpscalerProfile).LoadAsync();
         }
 
-        if (Manga.Library.UpscalerProfile == null)
+        if (!DbContext.Entry(Manga).Reference(m => m.UpscalerProfilePreference).IsLoaded)
         {
-            Snackbar.Add("Upscaler profile not set for this library.", Severity.Error);
+            await DbContext.Entry(Manga).Reference(m => m.UpscalerProfilePreference).LoadAsync();
+        }
+
+        if (Manga.EffectiveUpscalerProfile == null)
+        {
+            Snackbar.Add("Upscaler profile not set for this library/manga.", Severity.Error);
             return;
         }
 
         await TaskQueue.EnqueueAsync(
-            new UpscaleTask(chapter, Manga.Library.UpscalerProfile));
+            new UpscaleTask(chapter));
     }
 
     private async Task DeleteUpscaledConfirm(Chapter chapter)
