@@ -67,7 +67,7 @@
 
         if (result.HasValue && result.Value)
         {
-            DbContext.UpscalerProfiles.Remove(profile);
+            profile.Deleted = true;
             await DbContext.SaveChangesAsync();
         }
 
