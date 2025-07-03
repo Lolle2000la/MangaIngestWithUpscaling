@@ -2,6 +2,7 @@
 @using MangaIngestWithUpscaling.Components.MangaManagement.Chapters
 @using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.MetadataHandling
+@using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 
 @inject ApplicationDbContext DbContext
 @inject IMangaMetadataChanger MetadataChanger
@@ -41,6 +42,17 @@
                                              @bind-Value="addOldTitleToOtherTitles"
                                              Size="Size.Small"/>
                             </MudStack>
+                        </MudItem>
+                        <MudItem xs="12">
+                            <MudSelect T="int?" Label="Upscaler Profile Preference"
+                                       @bind-Value="manga.UpscalerProfilePreferenceId"
+                                       HelperText="Overrides the library's default upscaler profile for this manga.">
+                                <MudSelectItem T="int?" Value="@((int?)null)">None (use library default)</MudSelectItem>
+                                @foreach (var profile in upscalerProfiles)
+                                {
+                                    <MudSelectItem T="int?" Value="@profile.Id">@profile.Name</MudSelectItem>
+                                }
+                            </MudSelect>
                         </MudItem>
                         <MudItem xs="12">
                             <MudStack>
@@ -122,6 +134,7 @@ else
     private string originalTitle = string.Empty;
     private string newTitle = string.Empty;
     private bool addOldTitleToOtherTitles = true;
+    private List<UpscalerProfile> upscalerProfiles = [];
 
     private IReadOnlyCollection<MangaAlternativeTitle>? selectedTitles;
 
@@ -136,6 +149,7 @@ else
             .Include(m => m.Chapters)
             .ThenInclude(c => c.UpscalerProfile)
             .Include(m => m.OtherTitles)
+            .Include(m => m.UpscalerProfilePreference)
             .FirstOrDefaultAsync(m => m.Id == MangaId);
 
         if (manga == null)
@@ -145,6 +159,7 @@ else
         }
 
         originalTitle = manga.PrimaryTitle;
+        upscalerProfiles = await DbContext.UpscalerProfiles.ToListAsync();
     }
 
     private void AddAlternativeTitle()
