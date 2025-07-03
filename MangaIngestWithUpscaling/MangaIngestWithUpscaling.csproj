@@ -33,7 +33,7 @@
 		<PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="9.0.6" />
 		<PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="9.0.6" />
 		<PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="9.6.0" />
-		<PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.22.0" />
+		<PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.22.1" />
 		<PackageReference Include="Mono.Posix.NETStandard" Version="1.0.0" />
 		<PackageReference Include="MudBlazor" Version="8.9.0" />
 		<PackageReference Include="MudBlazor.Translations" Version="2.5.0" />
