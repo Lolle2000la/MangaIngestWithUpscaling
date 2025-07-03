@@ -79,21 +79,13 @@
         await DbContext.SaveChangesAsync();
         // change all references to existingProfile to Profile, except for concrete chapters
         // (right now this is only the upscaler profile id in the library))
-        await foreach (var library in DbContext.Libraries
-                           .Where(l => l.UpscalerProfileId == existingProfile.Id)
-                           .AsAsyncEnumerable())
-        {
-            library.UpscalerProfileId = Profile.Id;
-            library.UpscalerProfile = Profile;
-        }
+        await DbContext.Libraries
+            .Where(l => l.UpscalerProfileId == existingProfile.Id)
+            .ExecuteUpdateAsync(s => s.SetProperty(l => l.UpscalerProfileId, Profile.Id));
 
-        await foreach (var series in DbContext.MangaSeries
-                           .Where(m => m.UpscalerProfilePreferenceId == existingProfile.Id)
-                           .AsAsyncEnumerable())
-        {
-            series.UpscalerProfilePreferenceId = Profile.Id;
-            series.UpscalerProfilePreference = Profile;
-        }
+        await DbContext.MangaSeries
+            .Where(m => m.UpscalerProfilePreferenceId == existingProfile.Id)
+            .ExecuteUpdateAsync(s => s.SetProperty(m => m.UpscalerProfilePreferenceId, Profile.Id));
 
         await DbContext.SaveChangesAsync();
         NavigationManager.NavigateTo("/upscaling/profiles");
