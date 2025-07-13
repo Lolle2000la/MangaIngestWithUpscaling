@@ -141,7 +141,7 @@ public partial class IngestProcessor(
                     // Make sure we use the primary title from the database entity
                     if (desiredMeta.Series != seriesEntity.PrimaryTitle)
                     {
-                        desiredMeta = desiredMeta with { Series = seriesEntity.PrimaryTitle!; }
+                        desiredMeta = desiredMeta with { Series = seriesEntity.PrimaryTitle! };
                     }
 
                     if (!currentMeta.Equals(desiredMeta))
