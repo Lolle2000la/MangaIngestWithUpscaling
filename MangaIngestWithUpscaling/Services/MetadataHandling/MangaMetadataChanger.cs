@@ -20,7 +20,8 @@ public class MangaMetadataChanger(
     ILogger<MangaMetadataChanger> logger,
     ITaskQueue taskQueue,
     IFileSystem fileSystem,
-    IChapterChangedNotifier chapterChangedNotifier) : IMangaMetadataChanger
+    IChapterChangedNotifier chapterChangedNotifier,
+    ITitleChangedNotifier titleChangedNotifier) : IMangaMetadataChanger
 {
     /// <inheritdoc/>
     public void ApplyMangaTitleToUpscaled(Chapter chapter, string newTitle, string origChapterPath)
@@ -71,6 +72,9 @@ public class MangaMetadataChanger(
             return RenameResult.Cancelled;
         }
 
+        // Store the old title for Kavita integration
+        var oldTitle = manga.PrimaryTitle;
+        
         manga.ChangePrimaryTitle(newTitle, addOldToAlternative);
 
         // load library and chapters if not already loaded
@@ -82,6 +86,27 @@ public class MangaMetadataChanger(
         if (!dbContext.Entry(manga).Collection(m => m.Chapters).IsLoaded)
         {
             await dbContext.Entry(manga).Collection(m => m.Chapters).LoadAsync();
+        }
+
+        // Notify integrations about the title change before processing chapters
+        // Use the first chapter as a sample for context
+        var firstChapter = manga.Chapters.FirstOrDefault();
+        if (firstChapter != null)
+        {
+            try
+            {
+                var titleChangeSuccess = await titleChangedNotifier.NotifyTitleChanged(oldTitle, newTitle, firstChapter);
+                if (!titleChangeSuccess)
+                {
+                    logger.LogWarning("Failed to notify integrations about title change from '{OldTitle}' to '{NewTitle}'", 
+                        oldTitle, newTitle);
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error notifying integrations about title change from '{OldTitle}' to '{NewTitle}'", 
+                    oldTitle, newTitle);
+            }
         }
 
         foreach (var chapter in manga.Chapters)
