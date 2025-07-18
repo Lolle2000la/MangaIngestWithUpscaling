@@ -64,8 +64,17 @@ The system now tracks the installed backend in each Python virtual environment u
 - **CreatedAt**: When the environment was created
 - **PythonVersion**: Version of Python used
 - **InstalledPackages**: List of installed packages
+- **EnvironmentVersion**: Version of the environment configuration
 
-If the desired backend changes, the system will automatically recreate the environment with the correct PyTorch installation.
+If the desired backend changes or the environment version is updated (indicating dependency changes), the system will automatically recreate the environment with the correct PyTorch installation.
+
+### Automatic Environment Recreation
+
+The environment will be automatically recreated when:
+1. **Backend change**: The preferred GPU backend has changed
+2. **Version update**: The environment version has been incremented (indicating dependency updates)
+3. **Missing files**: Python executable or state file is missing
+4. **State corruption**: Environment state file is corrupted or unreadable
 
 ## PyTorch Installation Details
 

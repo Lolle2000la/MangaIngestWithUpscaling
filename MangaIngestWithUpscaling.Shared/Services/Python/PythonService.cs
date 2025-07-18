@@ -1,10 +1,10 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Services.GPU;
+using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
-using MangaIngestWithUpscaling.Shared.Configuration;
-using MangaIngestWithUpscaling.Shared.Services.GPU;
 
 namespace MangaIngestWithUpscaling.Shared.Services.Python;
 
@@ -12,12 +12,24 @@ public record EnvironmentState(
     GpuBackend InstalledBackend,
     DateTime CreatedAt,
     string PythonVersion,
-    string[] InstalledPackages
+    string[] InstalledPackages,
+    int EnvironmentVersion
 );
 
 [RegisterScoped]
 public class PythonService(ILogger<PythonService> logger, IGpuDetectionService gpuDetectionService) : IPythonService
 {
+    /// <summary>
+    ///     Environment version - increment this when Python dependencies change to force environment recreation.
+    ///     Version History:
+    ///     v1: Initial implementation with torch==2.7.0, torchvision==0.22.0, and base packages
+    ///     When updating dependencies:
+    ///     1. Update the package versions in InstallPythonPackages method
+    ///     2. Increment this ENVIRONMENT_VERSION constant
+    ///     3. Add a comment above describing the changes
+    /// </summary>
+    private const int ENVIRONMENT_VERSION = 1;
+
     public static PythonEnvironment? Environment { get; set; }
 
     public string? GetPythonExecutablePath()
@@ -42,15 +54,16 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
                PathHelpers.ExistsOnPath($"python3{executableExtension}");
     }
 
-    public async Task<PythonEnvironment> PreparePythonEnvironment(string desiredDirectory, GpuBackend preferredBackend = GpuBackend.Auto)
+    public async Task<PythonEnvironment> PreparePythonEnvironment(string desiredDirectory,
+        GpuBackend preferredBackend = GpuBackend.Auto)
     {
         // Determine the actual backend to use
         var targetBackend = await DetermineTargetBackend(preferredBackend);
-        
+
         // create a virtual environment in a writable but permanent location
         var environmentPath = Path.GetFullPath(desiredDirectory);
         var environmentStatePath = Path.Combine(environmentPath, "environment_state.json");
-        
+
         var relPythonPath = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) switch
         {
             true => Path.Combine(environmentPath, "Scripts", "python3.12.exe"),
@@ -65,20 +78,20 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
 
         string assemblyDir = AppContext.BaseDirectory;
         string backendSrcDirectory = Path.Combine(assemblyDir, "backend", "src");
-        
+
         // Check if environment needs to be created or recreated
         bool needsRecreation = await ShouldRecreateEnvironment(environmentStatePath, targetBackend, relPythonPath);
-        
+
         if (needsRecreation)
         {
             logger.LogInformation("Creating/recreating Python environment with {Backend} backend", targetBackend);
-            
+
             // Remove existing environment if it exists
             if (Directory.Exists(environmentPath))
             {
                 Directory.Delete(environmentPath, true);
             }
-            
+
             await CreateVirtualEnvironment(relPythonBin, environmentPath);
             await InstallPythonPackages(relPythonPath, backendSrcDirectory, targetBackend, environmentPath);
             await SaveEnvironmentState(environmentStatePath, targetBackend, relPythonPath);
@@ -91,6 +104,90 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         return new PythonEnvironment(relPythonPath, backendSrcDirectory, targetBackend);
     }
 
+    public Task<string> RunPythonScript(string script, string arguments, CancellationToken? cancellationToken = null,
+        TimeSpan? timout = null)
+    {
+        if (Environment == null)
+        {
+            throw new InvalidOperationException("Python environment is not initialized.");
+        }
+
+        return RunPythonScript(Environment, script, arguments, cancellationToken, timout);
+    }
+
+    public async Task<string> RunPythonScript(
+        PythonEnvironment environment,
+        string script,
+        string arguments,
+        CancellationToken? cancellationToken = null,
+        TimeSpan? timeout = null)
+    {
+        using var process = new Process();
+        process.StartInfo.FileName = environment.PythonExecutablePath;
+        process.StartInfo.Arguments = $"{script} {arguments}";
+        process.StartInfo.RedirectStandardOutput = true;
+        process.StartInfo.RedirectStandardError = true;
+        process.StartInfo.UseShellExecute = false;
+        process.StartInfo.CreateNoWindow = true;
+        process.StartInfo.StandardOutputEncoding = Encoding.UTF8;
+        process.StartInfo.StandardErrorEncoding = Encoding.UTF8;
+        process.StartInfo.WorkingDirectory = environment.DesiredWorkindDirectory;
+
+        var outputBuilder = new StringBuilder();
+        var errorBuilder = new StringBuilder();
+        TimeSpan _timeout = timeout ?? TimeSpan.FromSeconds(60);
+        DateTime lastActivity = DateTime.UtcNow;
+
+        process.Start();
+
+        // Start reading output streams
+        Task readOutput = ReadStreamAsync(process.StandardOutput, outputBuilder, () => lastActivity = DateTime.UtcNow);
+        Task readError = ReadStreamAsync(process.StandardError, errorBuilder, () => lastActivity = DateTime.UtcNow);
+
+        try
+        {
+            while (true)
+            {
+                cancellationToken?.ThrowIfCancellationRequested();
+
+                // Check timeout every second
+                if (DateTime.UtcNow - lastActivity > _timeout)
+                {
+                    process.Kill(true);
+                    throw new TimeoutException(
+                        $"Process timed out after {_timeout.TotalSeconds} seconds of inactivity.\n" +
+                        $"Partial error output:\n{errorBuilder}\n\nPartial standard output{outputBuilder}");
+                }
+
+                if (process.HasExited)
+                {
+                    await Task.WhenAll(readOutput, readError);
+                    break;
+                }
+
+                await Task.Delay(1000, cancellationToken ?? CancellationToken.None);
+            }
+
+            if (process.ExitCode != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Python process failed with code {process.ExitCode}\n" +
+                    $"Error output:\n{errorBuilder}\n\nPartial standard output{outputBuilder}");
+            }
+
+            return outputBuilder.ToString();
+        }
+        catch (Exception)
+        {
+            process.Kill(true);
+            throw;
+        }
+        finally
+        {
+            process.Kill(true);
+        }
+    }
+
     private async Task<GpuBackend> DetermineTargetBackend(GpuBackend preferredBackend)
     {
         if (preferredBackend != GpuBackend.Auto)
@@ -101,7 +198,7 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
 
         // Auto-detect the best available backend using OpenGL
         logger.LogInformation("Auto-detecting GPU backend using OpenGL...");
-        
+
         try
         {
             var detectedBackend = await gpuDetectionService.DetectOptimalBackendAsync();
@@ -115,38 +212,48 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         }
     }
 
-    private async Task<bool> ShouldRecreateEnvironment(string environmentStatePath, GpuBackend targetBackend, string pythonPath)
+    private async Task<bool> ShouldRecreateEnvironment(string environmentStatePath, GpuBackend targetBackend,
+        string pythonPath)
     {
         // If Python executable doesn't exist, we need to create the environment
         if (!File.Exists(pythonPath))
         {
             return true;
         }
-        
+
         // If state file doesn't exist, we need to recreate to track the backend
         if (!File.Exists(environmentStatePath))
         {
             return true;
         }
-        
+
         try
         {
             var stateJson = await File.ReadAllTextAsync(environmentStatePath);
             var state = JsonSerializer.Deserialize<EnvironmentState>(stateJson);
-            
+
             if (state == null)
             {
                 return true;
             }
-            
+
             // If the backend has changed, we need to recreate
             if (state.InstalledBackend != targetBackend)
             {
-                logger.LogInformation("Backend changed from {OldBackend} to {NewBackend}, recreating environment", 
+                logger.LogInformation("Backend changed from {OldBackend} to {NewBackend}, recreating environment",
                     state.InstalledBackend, targetBackend);
                 return true;
             }
-            
+
+            // If the environment version has changed, we need to recreate
+            if (state.EnvironmentVersion != ENVIRONMENT_VERSION)
+            {
+                logger.LogInformation(
+                    "Environment version changed from {OldVersion} to {NewVersion}, recreating environment",
+                    state.EnvironmentVersion, ENVIRONMENT_VERSION);
+                return true;
+            }
+
             return false;
         }
         catch (Exception ex)
@@ -185,32 +292,37 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         }
     }
 
-    private async Task InstallPythonPackages(string pythonPath, string backendSrcDirectory, GpuBackend targetBackend, string environmentPath)
+    private async Task InstallPythonPackages(string pythonPath, string backendSrcDirectory, GpuBackend targetBackend,
+        string environmentPath)
     {
         // First, upgrade pip and install wheel
         await RunPipCommand(pythonPath, "install -U pip wheel --no-warn-script-location", environmentPath);
-        
+
         // Install base packages
         var basePackages = "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
-                          "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
-                          "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1";
-        
+                           "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
+                           "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1";
+
         await RunPipCommand(pythonPath, $"install {basePackages} --no-warn-script-location", environmentPath);
-        
+
         // Install PyTorch with appropriate backend
         string torchCommand = targetBackend switch
         {
-            GpuBackend.CUDA => "install torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cu118 --no-warn-script-location",
-            GpuBackend.ROCm => "install torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/rocm6.3 --no-warn-script-location",
-            GpuBackend.CPU => "install torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cpu --no-warn-script-location",
+            GpuBackend.CUDA =>
+                "install torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cu118 --no-warn-script-location",
+            GpuBackend.ROCm =>
+                "install torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/rocm6.3 --no-warn-script-location",
+            GpuBackend.CPU =>
+                "install torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cpu --no-warn-script-location",
             _ => "install torch==2.7.0 torchvision==0.22.0 --no-warn-script-location"
         };
-        
+
         logger.LogInformation("Installing PyTorch with {Backend} backend", targetBackend);
         await RunPipCommand(pythonPath, torchCommand, environmentPath);
-        
+
         // Install backend source
-        await RunPipCommand(pythonPath, $"install \"{backendSrcDirectory}\" --no-warn-script-location", environmentPath);
+        await RunPipCommand(pythonPath, $"install \"{backendSrcDirectory}\" --no-warn-script-location",
+            environmentPath);
     }
 
     private async Task RunPipCommand(string pythonPath, string pipArgs, string environmentPath)
@@ -263,21 +375,23 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         {
             // Get installed packages list
             var installedPackages = await GetInstalledPackages(pythonPath);
-            
+
             // Get Python version
             var pythonVersion = await GetPythonVersion(pythonPath);
-            
+
             var state = new EnvironmentState(
                 installedBackend,
                 DateTime.UtcNow,
                 pythonVersion,
-                installedPackages
+                installedPackages,
+                ENVIRONMENT_VERSION
             );
-            
+
             var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
             await File.WriteAllTextAsync(environmentStatePath, json);
-            
-            logger.LogInformation("Saved environment state with {Backend} backend", installedBackend);
+
+            logger.LogInformation("Saved environment state with {Backend} backend, version {Version}", installedBackend,
+                ENVIRONMENT_VERSION);
         }
         catch (Exception ex)
         {
@@ -310,7 +424,7 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         {
             logger.LogWarning(ex, "Failed to get installed packages list");
         }
-        
+
         return Array.Empty<string>();
     }
 
@@ -339,92 +453,8 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         {
             logger.LogWarning(ex, "Failed to get Python version");
         }
-        
+
         return "Unknown";
-    }
-
-    public Task<string> RunPythonScript(string script, string arguments, CancellationToken? cancellationToken = null,
-        TimeSpan? timout = null)
-    {
-        if (Environment == null)
-        {
-            throw new InvalidOperationException("Python environment is not initialized.");
-        }
-
-        return RunPythonScript(Environment, script, arguments, cancellationToken, timout);
-    }
-
-    public async Task<string> RunPythonScript(
-        PythonEnvironment environment,
-        string script,
-        string arguments,
-        CancellationToken? cancellationToken = null,
-        TimeSpan? timeout = null)
-    {
-        using var process = new Process();
-        process.StartInfo.FileName = environment.PythonExecutablePath;
-        process.StartInfo.Arguments = $"{script} {arguments}";
-        process.StartInfo.RedirectStandardOutput = true;
-        process.StartInfo.RedirectStandardError = true;
-        process.StartInfo.UseShellExecute = false;
-        process.StartInfo.CreateNoWindow = true;
-        process.StartInfo.StandardOutputEncoding = Encoding.UTF8;
-        process.StartInfo.StandardErrorEncoding = Encoding.UTF8;
-        process.StartInfo.WorkingDirectory = environment.DesiredWorkindDirectory;
-
-        var outputBuilder = new StringBuilder();
-        var errorBuilder = new StringBuilder();
-        var _timeout = timeout ?? TimeSpan.FromSeconds(60);
-        var lastActivity = DateTime.UtcNow;
-
-        process.Start();
-
-        // Start reading output streams
-        var readOutput = ReadStreamAsync(process.StandardOutput, outputBuilder, () => lastActivity = DateTime.UtcNow);
-        var readError = ReadStreamAsync(process.StandardError, errorBuilder, () => lastActivity = DateTime.UtcNow);
-
-        try
-        {
-            while (true)
-            {
-                cancellationToken?.ThrowIfCancellationRequested();
-
-                // Check timeout every second
-                if (DateTime.UtcNow - lastActivity > _timeout)
-                {
-                    process.Kill(true);
-                    throw new TimeoutException(
-                        $"Process timed out after {_timeout.TotalSeconds} seconds of inactivity.\n" +
-                        $"Partial error output:\n{errorBuilder}\n\nPartial standard output{outputBuilder}");
-                }
-
-                if (process.HasExited)
-                {
-                    await Task.WhenAll(readOutput, readError);
-                    break;
-                }
-
-                await Task.Delay(1000, cancellationToken ?? CancellationToken.None);
-            }
-
-            if (process.ExitCode != 0)
-            {
-                throw new InvalidOperationException(
-                    $"Python process failed with code {process.ExitCode}\n" +
-                    $"Error output:\n{errorBuilder}\n\nPartial standard output{outputBuilder}");
-            }
-
-            return outputBuilder.ToString();
-        }
-        catch (Exception)
-        {
-            process.Kill(true);
-            throw;
-        }
-        finally
-        {
-            process.Kill(true);
-        }
     }
 
     private async Task ReadStreamAsync(
