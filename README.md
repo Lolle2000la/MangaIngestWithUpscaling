@@ -15,6 +15,8 @@ MangaIngestWithUpscaling is a **Blazor-based web application** designed to **ing
 
 For information on how to set up and use a remote worker for upscaling, please see the [Remote Worker Documentation](./docs/REMOTE_WORKER.md).
 
+For information about the remote-only server variant without ML dependencies, see the [Remote-Only Variant Documentation](./docs/REMOTE_ONLY_VARIANT.md).
+
 ## Usage
 
 1. **Set up a library** through the UI.
@@ -113,6 +115,49 @@ services:
 ```
 
 I do not have an AMD GPU, so I cannot test this. If you have any issues, please open an issue.
+
+### Remote-Only Variant
+
+For users who want to run the server component without any machine learning dependencies and handle upscaling exclusively through remote workers, a special "remote-only" variant is available:
+
+```yaml
+version: '3.9'
+
+services:
+  mangaingestwithupscaling:
+    image: ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest-remote-only
+    restart: unless-stopped
+    environment:
+      TZ: #your timezone here
+      Ingest_Upscaler__RemoteOnly: true # This is set automatically in the remote-only image
+      # Kavita integration
+      #Ingest_Kavita__BaseUrl: http://kavita:5000 # the base URL of your Kavita instance
+      #Ingest_Kavita__ApiKey: #Your API key here
+      #Ingest_Kavita__Enabled: True # defaults to false
+      # OIDC Authentication (v0.12.0+)
+      #Ingest_OIDC__Enabled: false # Set to true to enable OIDC authentication
+      #Ingest_OIDC__Authority: # Your OIDC provider's authority URL (e.g., https://authentik.yourdomain.com/application/o/your-app/)
+      #Ingest_OIDC__ClientId: # Your OIDC client ID
+      #Ingest_OIDC__ClientSecret: # Your OIDC client secret
+      #Ingest_OIDC__MetadataAddress: # Optional: Full URL to the OIDC discovery document
+    volumes:
+      - /path/to/store/appdata:/data # for storing the database and logs
+      # ... other folders you want to be able to access from the container
+      - /path/to/ingest:/ingest
+      - /path/to/target:/target
+    ports:
+      - 8080:8080 # the web interface will be available on this port
+      - 8081:8081 # the gRPC interface will be available on this port (necessary for the remote worker)
+    #user: '1000:1000' # change the user/group for improved security
+```
+
+**Benefits of the Remote-Only Variant:**
+- **Smaller image size**: No PyTorch or ML dependencies included
+- **Lower resource requirements**: Perfect for running on resource-constrained servers
+- **Cleaner separation**: All upscaling is handled by dedicated remote worker machines
+- **Automatic configuration**: `RemoteOnly` is pre-configured to `true`
+
+This variant requires you to set up one or more [remote workers](./docs/REMOTE_WORKER.md) on separate machines with GPU capabilities to handle the actual upscaling tasks.
 
 ### OIDC Configuration (v0.12.0+)
 

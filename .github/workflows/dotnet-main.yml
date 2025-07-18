@@ -12,6 +12,7 @@ on:
       - "MangaIngestWithUpscaling.sln"
       - "Dockerfile"
       - "rocm.Dockerfile"
+      - "remoteonly.Dockerfile"
 
 jobs:
   build:

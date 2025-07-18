@@ -24,6 +24,27 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+  
+  # Remote-only variant without ML dependencies
+  mangaingestwithupscaling-remote-only:
+    image: ${DOCKER_REGISTRY-}mangaingestwithupscaling-remote-only
+    build:
+      context: .
+      dockerfile: remoteonly.Dockerfile
+    environment:
+      - TZ=Etc/UTC
+      - Ingest_Kavita__BaseUrl=http://kavita:5000
+      - Ingest_Kavita__ApiKey=8d5f292a-a1ef-4557-8986-6319ccc80eb9 # Generate your own for your local testing
+      - Ingest_Kavita__Enabled=True # Generate your own for your local testing 
+      - Ingest_Upscaler__RemoteOnly=true
+    ports:
+      - 8082:8080  # Different port to avoid conflicts
+      - 8083:8081  # Different port to avoid conflicts
+    volumes:
+      - ./test_data:/data
+    profiles:
+      - remote-only  # Use docker-compose --profile remote-only to run this variant
+  
   kavita:
     image: jvmilazz0/kavita:latest
     container_name: kavita
