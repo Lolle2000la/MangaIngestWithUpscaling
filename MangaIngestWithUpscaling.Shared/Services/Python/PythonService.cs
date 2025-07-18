@@ -55,7 +55,7 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
     }
 
     public async Task<PythonEnvironment> PreparePythonEnvironment(string desiredDirectory,
-        GpuBackend preferredBackend = GpuBackend.Auto)
+        GpuBackend preferredBackend = GpuBackend.Auto, bool forceAcceptExisting = false)
     {
         // Determine the actual backend to use
         var targetBackend = await DetermineTargetBackend(preferredBackend);
@@ -80,7 +80,9 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         string backendSrcDirectory = Path.Combine(assemblyDir, "backend", "src");
 
         // Check if environment needs to be created or recreated
-        bool needsRecreation = await ShouldRecreateEnvironment(environmentStatePath, targetBackend, relPythonPath);
+        bool needsRecreation = await ShouldRecreateEnvironment(environmentStatePath, targetBackend, relPythonPath, forceAcceptExisting);
+
+        GpuBackend actualBackend = targetBackend;
 
         if (needsRecreation)
         {
@@ -98,10 +100,19 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         }
         else
         {
-            logger.LogInformation("Using existing Python environment with {Backend} backend", targetBackend);
+            if (forceAcceptExisting)
+            {
+                logger.LogInformation("Force accepting existing Python environment (backend detection bypassed)");
+                // When forcing acceptance, use the preferred backend or fall back to a reasonable default
+                actualBackend = preferredBackend != GpuBackend.Auto ? preferredBackend : GpuBackend.CUDA;
+            }
+            else
+            {
+                logger.LogInformation("Using existing Python environment with {Backend} backend", targetBackend);
+            }
         }
 
-        return new PythonEnvironment(relPythonPath, backendSrcDirectory, targetBackend);
+        return new PythonEnvironment(relPythonPath, backendSrcDirectory, actualBackend);
     }
 
     public Task<string> RunPythonScript(string script, string arguments, CancellationToken? cancellationToken = null,
@@ -213,8 +224,15 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
     }
 
     private async Task<bool> ShouldRecreateEnvironment(string environmentStatePath, GpuBackend targetBackend,
-        string pythonPath)
+        string pythonPath, bool forceAcceptExisting = false)
     {
+        // If force accept is enabled and Python executable exists, accept the environment as-is
+        if (forceAcceptExisting && File.Exists(pythonPath))
+        {
+            logger.LogInformation("Force accepting existing Python environment at {PythonPath}", pythonPath);
+            return false;
+        }
+
         // If Python executable doesn't exist, we need to create the environment
         if (!File.Exists(pythonPath))
         {

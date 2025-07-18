@@ -56,6 +56,22 @@ The system will automatically detect available hardware using **Silk.NET.OpenGL*
 }
 ```
 
+#### Force Accept Existing Environment (Docker/Pre-built)
+```json
+{
+  "Upscaler": {
+    "ForceAcceptExistingEnvironment": true
+  }
+}
+```
+
+This option forces the system to accept any existing Python environment without version or backend checks. This is useful for:
+- **Docker containers** with pre-built Python environments
+- **Pre-configured systems** where dependencies should not be modified
+- **Offline environments** where package downloads are not possible
+
+Note that even if the environment is broken, no a attempt at fixing it will be made. The system will continue to use the existing environment as-is. Use with caution.
+
 ## Environment Tracking
 
 The system now tracks the installed backend in each Python virtual environment using a `environment_state.json` file. This includes:

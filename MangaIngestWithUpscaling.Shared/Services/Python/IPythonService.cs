@@ -6,7 +6,7 @@ public interface IPythonService
 {
     bool IsPythonInstalled();
     string? GetPythonExecutablePath();
-    Task<PythonEnvironment> PreparePythonEnvironment(string desiredDirectory, GpuBackend preferredBackend = GpuBackend.Auto);
+    Task<PythonEnvironment> PreparePythonEnvironment(string desiredDirectory, GpuBackend preferredBackend = GpuBackend.Auto, bool forceAcceptExisting = false);
     /// <summary>
     /// Runs a python script in the global environment with the given arguments
     /// </summary>

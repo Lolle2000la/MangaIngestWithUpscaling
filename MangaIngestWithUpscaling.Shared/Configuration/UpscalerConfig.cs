@@ -24,6 +24,12 @@ public record UpscalerConfig
     /// </summary>
     public GpuBackend PreferredGpuBackend { get; set; } = GpuBackend.Auto;
 
+    /// <summary>
+    ///     When enabled, forces acceptance of existing Python environments without version or backend checks.
+    ///     This is useful for Docker containers with pre-built environments that should not be recreated.
+    /// </summary>
+    public bool ForceAcceptExistingEnvironment { get; set; } = false;
+
     public bool UseFp16 { get; set; } = true;
     public bool UseCPU { get; set; } = false;
 

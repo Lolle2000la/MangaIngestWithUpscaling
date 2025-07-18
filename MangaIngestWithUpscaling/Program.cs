@@ -285,7 +285,7 @@ using (var scope = app.Services.CreateScope())
             Directory.CreateDirectory(upscalerConfig.Value.PythonEnvironmentDirectory);
 
             PythonEnvironment environment =
-                await pythonService.PreparePythonEnvironment(upscalerConfig.Value.PythonEnvironmentDirectory, upscalerConfig.Value.PreferredGpuBackend);
+                await pythonService.PreparePythonEnvironment(upscalerConfig.Value.PythonEnvironmentDirectory, upscalerConfig.Value.PreferredGpuBackend, upscalerConfig.Value.ForceAcceptExistingEnvironment);
             PythonService.Environment = environment;
 
             logger.LogInformation($"Python environment prepared at {environment.PythonExecutablePath} with {environment.InstalledBackend} backend");
