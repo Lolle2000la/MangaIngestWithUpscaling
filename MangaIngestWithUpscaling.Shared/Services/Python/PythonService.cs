@@ -80,7 +80,8 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         string backendSrcDirectory = Path.Combine(assemblyDir, "backend", "src");
 
         // Check if environment needs to be created or recreated
-        bool needsRecreation = await ShouldRecreateEnvironment(environmentStatePath, targetBackend, relPythonPath, forceAcceptExisting);
+        bool needsRecreation =
+            await ShouldRecreateEnvironment(environmentStatePath, targetBackend, relPythonPath, forceAcceptExisting);
 
         GpuBackend actualBackend = targetBackend;
 
@@ -323,16 +324,19 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
 
         await RunPipCommand(pythonPath, $"install {basePackages} --no-warn-script-location", environmentPath);
 
+        // uninstall existing torch packages if they exist (to avoid conflicts)
+        await RunPipCommand(pythonPath, "uninstall -y torch torchvision torchaudio", environmentPath);
+
         // Install PyTorch with appropriate backend
         string torchCommand = targetBackend switch
         {
             GpuBackend.CUDA =>
-                "install torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cu118 --no-warn-script-location",
+                "install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu118 --no-warn-script-location",
             GpuBackend.ROCm =>
-                "install torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/rocm6.3 --no-warn-script-location",
+                "install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/rocm6.3 --no-warn-script-location",
             GpuBackend.CPU =>
-                "install torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cpu --no-warn-script-location",
-            _ => "install torch==2.7.0 torchvision==0.22.0 --no-warn-script-location"
+                "install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cpu --no-warn-script-location",
+            _ => "install torch==2.7.1 torchvision==0.22.1 --no-warn-script-location"
         };
 
         logger.LogInformation("Installing PyTorch with {Backend} backend", targetBackend);
