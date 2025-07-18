@@ -15,3 +15,4 @@ RUN python3 -m venv ./pyenv && \
     ./pyenv/bin/python -m pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu118
 ENV Ingest_Upscaler__PythonEnvironmentDirectory=/app/pyenv
 ENV Ingest_Upscaler__SelectedDeviceIndex=0
+ENV Ingest_Upscaler__ForceAcceptExistingEnvironment=true

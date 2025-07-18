@@ -1,6 +1,9 @@
-﻿namespace MangaIngestWithUpscaling.Shared.Services.Python;
+﻿using MangaIngestWithUpscaling.Shared.Configuration;
+
+namespace MangaIngestWithUpscaling.Shared.Services.Python;
 
 public record PythonEnvironment(
     string PythonExecutablePath,
-    string DesiredWorkindDirectory
+    string DesiredWorkindDirectory,
+    GpuBackend InstalledBackend
     );
