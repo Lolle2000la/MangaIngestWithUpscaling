@@ -1,6 +1,6 @@
 # GPU Backend Configuration Examples
 
-The enhanced Python environment management system now supports automatic detection and manual configuration of GPU backends for PyTorch.
+The enhanced Python environment management system now supports automatic detection and manual configuration of GPU backends for PyTorch using OpenGL-based GPU detection.
 
 ## Configuration Options
 
@@ -13,10 +13,19 @@ The enhanced Python environment management system now supports automatic detecti
 }
 ```
 
-The system will automatically detect available hardware:
-- If NVIDIA GPU is detected (via `nvidia-smi`), CUDA backend will be used
-- If AMD GPU is detected (via `rocm-smi` or `lspci`), ROCm backend will be used  
+The system will automatically detect available hardware using **Silk.NET.OpenGL**:
+- If NVIDIA GPU is detected (via OpenGL vendor/renderer strings), CUDA backend will be used
+- If AMD GPU is detected (via OpenGL vendor/renderer strings), ROCm backend will be used  
+- If Intel GPU is detected, CPU backend will be used (Intel GPUs not optimally supported for ML)
 - If no compatible GPU is found, CPU backend will be used
+
+**GPU Detection Method:**
+- Creates an offscreen OpenGL context using Silk.NET.Windowing
+- Queries GPU vendor and renderer information via OpenGL
+- Matches vendor/renderer strings against known patterns:
+  - **NVIDIA**: `nvidia`, `geforce`, `quadro`, `tesla`
+  - **AMD**: `amd`, `ati`, `radeon` 
+  - **Intel**: `intel`
 
 ### Manual Configuration
 
@@ -79,9 +88,19 @@ You can also set the backend via environment variables:
 export Ingest_Upscaler__PreferredGpuBackend=CUDA
 ```
 
-## Testing GPU Detection
+## Advantages of OpenGL-based Detection
 
-Use the included test script to verify GPU detection:
-```bash
-python3 test_gpu_backend.py
-```
+1. **Cross-platform**: Works on Windows, Linux, and macOS
+2. **No external dependencies**: Doesn't require command-line tools like `nvidia-smi` or `rocm-smi`
+3. **Reliable**: Uses established OpenGL APIs to query GPU information
+4. **Lightweight**: Creates minimal overhead with offscreen context
+5. **Comprehensive**: Can detect GPU information even on headless systems
+
+## Troubleshooting
+
+If GPU detection fails, the system will:
+1. Log a warning with the error details
+2. Fall back to CPU backend automatically
+3. Continue operation without interruption
+
+You can always override automatic detection by setting a specific backend in configuration.

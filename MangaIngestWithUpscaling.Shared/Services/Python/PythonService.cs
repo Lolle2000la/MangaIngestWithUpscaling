@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Services.GPU;
 
 namespace MangaIngestWithUpscaling.Shared.Services.Python;
 
@@ -15,7 +16,7 @@ public record EnvironmentState(
 );
 
 [RegisterScoped]
-public class PythonService(ILogger<PythonService> logger) : IPythonService
+public class PythonService(ILogger<PythonService> logger, IGpuDetectionService gpuDetectionService) : IPythonService
 {
     public static PythonEnvironment? Environment { get; set; }
 
@@ -94,104 +95,23 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
     {
         if (preferredBackend != GpuBackend.Auto)
         {
+            logger.LogInformation("Using manually configured backend: {Backend}", preferredBackend);
             return preferredBackend;
         }
 
-        // Auto-detect the best available backend
-        logger.LogInformation("Auto-detecting GPU backend...");
+        // Auto-detect the best available backend using OpenGL
+        logger.LogInformation("Auto-detecting GPU backend using OpenGL...");
         
         try
         {
-            // Check for NVIDIA GPU
-            if (await IsNvidiaGpuAvailable())
-            {
-                logger.LogInformation("NVIDIA GPU detected, using CUDA backend");
-                return GpuBackend.CUDA;
-            }
-            
-            // Check for AMD GPU
-            if (await IsAmdGpuAvailable())
-            {
-                logger.LogInformation("AMD GPU detected, using ROCm backend");
-                return GpuBackend.ROCm;
-            }
-            
-            logger.LogInformation("No compatible GPU detected, falling back to CPU");
-            return GpuBackend.CPU;
+            var detectedBackend = await gpuDetectionService.DetectOptimalBackendAsync();
+            logger.LogInformation("GPU detection completed, selected backend: {Backend}", detectedBackend);
+            return detectedBackend;
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Error during GPU detection, falling back to CPU");
             return GpuBackend.CPU;
-        }
-    }
-
-    private async Task<bool> IsNvidiaGpuAvailable()
-    {
-        try
-        {
-            using var process = new Process();
-            process.StartInfo.FileName = "nvidia-smi";
-            process.StartInfo.Arguments = "--query-gpu=name --format=csv,noheader,nounits";
-            process.StartInfo.RedirectStandardOutput = true;
-            process.StartInfo.RedirectStandardError = true;
-            process.StartInfo.UseShellExecute = false;
-            process.StartInfo.CreateNoWindow = true;
-
-            process.Start();
-            await process.WaitForExitAsync();
-            
-            return process.ExitCode == 0;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private async Task<bool> IsAmdGpuAvailable()
-    {
-        try
-        {
-            using var process = new Process();
-            process.StartInfo.FileName = "rocm-smi";
-            process.StartInfo.Arguments = "--showproductname";
-            process.StartInfo.RedirectStandardOutput = true;
-            process.StartInfo.RedirectStandardError = true;
-            process.StartInfo.UseShellExecute = false;
-            process.StartInfo.CreateNoWindow = true;
-
-            process.Start();
-            await process.WaitForExitAsync();
-            
-            return process.ExitCode == 0;
-        }
-        catch
-        {
-            // Alternative check using lspci on Linux
-            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-                return false;
-                
-            try
-            {
-                using var process = new Process();
-                process.StartInfo.FileName = "lspci";
-                process.StartInfo.Arguments = "-nn";
-                process.StartInfo.RedirectStandardOutput = true;
-                process.StartInfo.RedirectStandardError = true;
-                process.StartInfo.UseShellExecute = false;
-                process.StartInfo.CreateNoWindow = true;
-
-                process.Start();
-                var output = await process.StandardOutput.ReadToEndAsync();
-                await process.WaitForExitAsync();
-                
-                return process.ExitCode == 0 && output.Contains("AMD", StringComparison.OrdinalIgnoreCase);
-            }
-            catch
-            {
-                return false;
-            }
         }
     }
 
