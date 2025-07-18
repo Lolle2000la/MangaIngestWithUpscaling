@@ -128,6 +128,12 @@ public class RemoteTaskProcessor(
 
             await UploadFile(client, logger, taskResponse.TaskId, upscaledFile, stoppingToken);
         }
+        catch (OperationCanceledException)
+        {
+            logger.LogInformation("Task {taskId} was cancelled.", taskResponse.TaskId);
+            // Do not report failure, just exit gracefully
+            // Would otherwise mark the task as failed on the server
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to process task {taskId}.", taskResponse.TaskId);
