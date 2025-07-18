@@ -2,8 +2,17 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
+using MangaIngestWithUpscaling.Shared.Configuration;
 
 namespace MangaIngestWithUpscaling.Shared.Services.Python;
+
+public record EnvironmentState(
+    GpuBackend InstalledBackend,
+    DateTime CreatedAt,
+    string PythonVersion,
+    string[] InstalledPackages
+);
 
 [RegisterScoped]
 public class PythonService(ILogger<PythonService> logger) : IPythonService
@@ -32,10 +41,15 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
                PathHelpers.ExistsOnPath($"python3{executableExtension}");
     }
 
-    public async Task<PythonEnvironment> PreparePythonEnvironment(string desiredDirectory)
+    public async Task<PythonEnvironment> PreparePythonEnvironment(string desiredDirectory, GpuBackend preferredBackend = GpuBackend.Auto)
     {
+        // Determine the actual backend to use
+        var targetBackend = await DetermineTargetBackend(preferredBackend);
+        
         // create a virtual environment in a writable but permanent location
         var environmentPath = Path.GetFullPath(desiredDirectory);
+        var environmentStatePath = Path.Combine(environmentPath, "environment_state.json");
+        
         var relPythonPath = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) switch
         {
             true => Path.Combine(environmentPath, "Scripts", "python3.12.exe"),
@@ -50,80 +64,363 @@ public class PythonService(ILogger<PythonService> logger) : IPythonService
 
         string assemblyDir = AppContext.BaseDirectory;
         string backendSrcDirectory = Path.Combine(assemblyDir, "backend", "src");
-        if (!File.Exists(relPythonPath))
+        
+        // Check if environment needs to be created or recreated
+        bool needsRecreation = await ShouldRecreateEnvironment(environmentStatePath, targetBackend, relPythonPath);
+        
+        if (needsRecreation)
         {
-            // run the command to create the virtual environment
-            using (var process = new Process())
+            logger.LogInformation("Creating/recreating Python environment with {Backend} backend", targetBackend);
+            
+            // Remove existing environment if it exists
+            if (Directory.Exists(environmentPath))
             {
-                process.StartInfo.FileName = relPythonBin;
-                process.StartInfo.Arguments = $"-m venv {Path.GetFullPath(environmentPath)}";
-                process.StartInfo.RedirectStandardOutput = true;
-                process.StartInfo.RedirectStandardError = true;
-                process.StartInfo.UseShellExecute = false;
-                process.StartInfo.CreateNoWindow = true;
-                process.StartInfo.StandardOutputEncoding = Encoding.UTF8;
-                process.StartInfo.StandardErrorEncoding = Encoding.UTF8;
-                process.StartInfo.WorkingDirectory = Directory.GetParent(environmentPath)!.FullName;
-
-                process.Start();
-
-                while (process.HasExited && !process.StandardOutput.EndOfStream)
-                {
-                    logger.LogInformation(await process.StandardOutput.ReadLineAsync() ?? "<No output>");
-                }
-
-                await process.WaitForExitAsync();
-
-                if (process.ExitCode != 0)
-                {
-                    throw new InvalidOperationException(
-                        $"Failed to create virtual environment:\n\n {await process.StandardError.ReadToEndAsync()}");
-                }
+                Directory.Delete(environmentPath, true);
             }
+            
+            await CreateVirtualEnvironment(relPythonBin, environmentPath);
+            await InstallPythonPackages(relPythonPath, backendSrcDirectory, targetBackend, environmentPath);
+            await SaveEnvironmentState(environmentStatePath, targetBackend, relPythonPath);
+        }
+        else
+        {
+            logger.LogInformation("Using existing Python environment with {Backend} backend", targetBackend);
+        }
 
+        return new PythonEnvironment(relPythonPath, backendSrcDirectory, targetBackend);
+    }
 
-            // install the required modules
-            string moduleInstallCommand =
-                $@"{relPythonPath} -m pip install -U pip wheel --no-warn-script-location && {relPythonPath} -m pip install ""{backendSrcDirectory}"" --no-warn-script-location";
+    private async Task<GpuBackend> DetermineTargetBackend(GpuBackend preferredBackend)
+    {
+        if (preferredBackend != GpuBackend.Auto)
+        {
+            return preferredBackend;
+        }
 
-            using (var process = new Process())
+        // Auto-detect the best available backend
+        logger.LogInformation("Auto-detecting GPU backend...");
+        
+        try
+        {
+            // Check for NVIDIA GPU
+            if (await IsNvidiaGpuAvailable())
             {
-                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                {
-                    process.StartInfo.FileName = "cmd";
-                    process.StartInfo.Arguments = $"/c {moduleInstallCommand}";
-                }
-                else
-                {
-                    process.StartInfo.FileName = "sh";
-                    process.StartInfo.Arguments = $"-c \"{moduleInstallCommand}\"";
-                }
+                logger.LogInformation("NVIDIA GPU detected, using CUDA backend");
+                return GpuBackend.CUDA;
+            }
+            
+            // Check for AMD GPU
+            if (await IsAmdGpuAvailable())
+            {
+                logger.LogInformation("AMD GPU detected, using ROCm backend");
+                return GpuBackend.ROCm;
+            }
+            
+            logger.LogInformation("No compatible GPU detected, falling back to CPU");
+            return GpuBackend.CPU;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Error during GPU detection, falling back to CPU");
+            return GpuBackend.CPU;
+        }
+    }
 
+    private async Task<bool> IsNvidiaGpuAvailable()
+    {
+        try
+        {
+            using var process = new Process();
+            process.StartInfo.FileName = "nvidia-smi";
+            process.StartInfo.Arguments = "--query-gpu=name --format=csv,noheader,nounits";
+            process.StartInfo.RedirectStandardOutput = true;
+            process.StartInfo.RedirectStandardError = true;
+            process.StartInfo.UseShellExecute = false;
+            process.StartInfo.CreateNoWindow = true;
+
+            process.Start();
+            await process.WaitForExitAsync();
+            
+            return process.ExitCode == 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private async Task<bool> IsAmdGpuAvailable()
+    {
+        try
+        {
+            using var process = new Process();
+            process.StartInfo.FileName = "rocm-smi";
+            process.StartInfo.Arguments = "--showproductname";
+            process.StartInfo.RedirectStandardOutput = true;
+            process.StartInfo.RedirectStandardError = true;
+            process.StartInfo.UseShellExecute = false;
+            process.StartInfo.CreateNoWindow = true;
+
+            process.Start();
+            await process.WaitForExitAsync();
+            
+            return process.ExitCode == 0;
+        }
+        catch
+        {
+            // Alternative check using lspci on Linux
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                return false;
+                
+            try
+            {
+                using var process = new Process();
+                process.StartInfo.FileName = "lspci";
+                process.StartInfo.Arguments = "-nn";
                 process.StartInfo.RedirectStandardOutput = true;
                 process.StartInfo.RedirectStandardError = true;
                 process.StartInfo.UseShellExecute = false;
                 process.StartInfo.CreateNoWindow = true;
-                process.StartInfo.StandardOutputEncoding = Encoding.UTF8;
-                process.StartInfo.StandardErrorEncoding = Encoding.UTF8;
-                process.StartInfo.WorkingDirectory = Directory.GetParent(environmentPath)!.FullName;
 
                 process.Start();
-                while (!process.HasExited && !process.StandardOutput.EndOfStream)
-                {
-                    logger.LogInformation(await process.StandardOutput.ReadLineAsync() ?? "<No output>");
-                }
-
+                var output = await process.StandardOutput.ReadToEndAsync();
                 await process.WaitForExitAsync();
+                
+                return process.ExitCode == 0 && output.Contains("AMD", StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+    }
 
-                if (process.ExitCode != 0)
-                {
-                    throw new InvalidOperationException(
-                        $"Failed to install required modules:\n\n {await process.StandardError.ReadToEndAsync()}");
-                }
+    private async Task<bool> ShouldRecreateEnvironment(string environmentStatePath, GpuBackend targetBackend, string pythonPath)
+    {
+        // If Python executable doesn't exist, we need to create the environment
+        if (!File.Exists(pythonPath))
+        {
+            return true;
+        }
+        
+        // If state file doesn't exist, we need to recreate to track the backend
+        if (!File.Exists(environmentStatePath))
+        {
+            return true;
+        }
+        
+        try
+        {
+            var stateJson = await File.ReadAllTextAsync(environmentStatePath);
+            var state = JsonSerializer.Deserialize<EnvironmentState>(stateJson);
+            
+            if (state == null)
+            {
+                return true;
+            }
+            
+            // If the backend has changed, we need to recreate
+            if (state.InstalledBackend != targetBackend)
+            {
+                logger.LogInformation("Backend changed from {OldBackend} to {NewBackend}, recreating environment", 
+                    state.InstalledBackend, targetBackend);
+                return true;
+            }
+            
+            return false;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Error reading environment state, recreating environment");
+            return true;
+        }
+    }
+
+    private async Task CreateVirtualEnvironment(string pythonBin, string environmentPath)
+    {
+        using var process = new Process();
+        process.StartInfo.FileName = pythonBin;
+        process.StartInfo.Arguments = $"-m venv {Path.GetFullPath(environmentPath)}";
+        process.StartInfo.RedirectStandardOutput = true;
+        process.StartInfo.RedirectStandardError = true;
+        process.StartInfo.UseShellExecute = false;
+        process.StartInfo.CreateNoWindow = true;
+        process.StartInfo.StandardOutputEncoding = Encoding.UTF8;
+        process.StartInfo.StandardErrorEncoding = Encoding.UTF8;
+        process.StartInfo.WorkingDirectory = Directory.GetParent(environmentPath)!.FullName;
+
+        process.Start();
+
+        while (!process.HasExited && !process.StandardOutput.EndOfStream)
+        {
+            logger.LogInformation(await process.StandardOutput.ReadLineAsync() ?? "<No output>");
+        }
+
+        await process.WaitForExitAsync();
+
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"Failed to create virtual environment:\n\n {await process.StandardError.ReadToEndAsync()}");
+        }
+    }
+
+    private async Task InstallPythonPackages(string pythonPath, string backendSrcDirectory, GpuBackend targetBackend, string environmentPath)
+    {
+        // First, upgrade pip and install wheel
+        await RunPipCommand(pythonPath, "install -U pip wheel --no-warn-script-location", environmentPath);
+        
+        // Install base packages
+        var basePackages = "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
+                          "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
+                          "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1";
+        
+        await RunPipCommand(pythonPath, $"install {basePackages} --no-warn-script-location", environmentPath);
+        
+        // Install PyTorch with appropriate backend
+        string torchCommand = targetBackend switch
+        {
+            GpuBackend.CUDA => "install torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cu118 --no-warn-script-location",
+            GpuBackend.ROCm => "install torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/rocm6.3 --no-warn-script-location",
+            GpuBackend.CPU => "install torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cpu --no-warn-script-location",
+            _ => "install torch==2.7.0 torchvision==0.22.0 --no-warn-script-location"
+        };
+        
+        logger.LogInformation("Installing PyTorch with {Backend} backend", targetBackend);
+        await RunPipCommand(pythonPath, torchCommand, environmentPath);
+        
+        // Install backend source
+        await RunPipCommand(pythonPath, $"install \"{backendSrcDirectory}\" --no-warn-script-location", environmentPath);
+    }
+
+    private async Task RunPipCommand(string pythonPath, string pipArgs, string environmentPath)
+    {
+        string moduleInstallCommand = $"{pythonPath} -m pip {pipArgs}";
+
+        using var process = new Process();
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            process.StartInfo.FileName = "cmd";
+            process.StartInfo.Arguments = $"/c {moduleInstallCommand}";
+        }
+        else
+        {
+            process.StartInfo.FileName = "sh";
+            process.StartInfo.Arguments = $"-c \"{moduleInstallCommand}\"";
+        }
+
+        process.StartInfo.RedirectStandardOutput = true;
+        process.StartInfo.RedirectStandardError = true;
+        process.StartInfo.UseShellExecute = false;
+        process.StartInfo.CreateNoWindow = true;
+        process.StartInfo.StandardOutputEncoding = Encoding.UTF8;
+        process.StartInfo.StandardErrorEncoding = Encoding.UTF8;
+        process.StartInfo.WorkingDirectory = Directory.GetParent(environmentPath)!.FullName;
+
+        process.Start();
+        while (!process.HasExited && !process.StandardOutput.EndOfStream)
+        {
+            var line = await process.StandardOutput.ReadLineAsync();
+            if (!string.IsNullOrEmpty(line))
+            {
+                logger.LogDebug("Pip: {Line}", line);
             }
         }
 
-        return new PythonEnvironment(relPythonPath, backendSrcDirectory);
+        await process.WaitForExitAsync();
+
+        if (process.ExitCode != 0)
+        {
+            var errorOutput = await process.StandardError.ReadToEndAsync();
+            throw new InvalidOperationException(
+                $"Failed to run pip command '{pipArgs}':\n\n {errorOutput}");
+        }
+    }
+
+    private async Task SaveEnvironmentState(string environmentStatePath, GpuBackend installedBackend, string pythonPath)
+    {
+        try
+        {
+            // Get installed packages list
+            var installedPackages = await GetInstalledPackages(pythonPath);
+            
+            // Get Python version
+            var pythonVersion = await GetPythonVersion(pythonPath);
+            
+            var state = new EnvironmentState(
+                installedBackend,
+                DateTime.UtcNow,
+                pythonVersion,
+                installedPackages
+            );
+            
+            var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
+            await File.WriteAllTextAsync(environmentStatePath, json);
+            
+            logger.LogInformation("Saved environment state with {Backend} backend", installedBackend);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to save environment state");
+        }
+    }
+
+    private async Task<string[]> GetInstalledPackages(string pythonPath)
+    {
+        try
+        {
+            using var process = new Process();
+            process.StartInfo.FileName = pythonPath;
+            process.StartInfo.Arguments = "-m pip list --format=freeze";
+            process.StartInfo.RedirectStandardOutput = true;
+            process.StartInfo.RedirectStandardError = true;
+            process.StartInfo.UseShellExecute = false;
+            process.StartInfo.CreateNoWindow = true;
+
+            process.Start();
+            var output = await process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            if (process.ExitCode == 0)
+            {
+                return output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to get installed packages list");
+        }
+        
+        return Array.Empty<string>();
+    }
+
+    private async Task<string> GetPythonVersion(string pythonPath)
+    {
+        try
+        {
+            using var process = new Process();
+            process.StartInfo.FileName = pythonPath;
+            process.StartInfo.Arguments = "--version";
+            process.StartInfo.RedirectStandardOutput = true;
+            process.StartInfo.RedirectStandardError = true;
+            process.StartInfo.UseShellExecute = false;
+            process.StartInfo.CreateNoWindow = true;
+
+            process.Start();
+            var output = await process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            if (process.ExitCode == 0)
+            {
+                return output.Trim();
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to get Python version");
+        }
+        
+        return "Unknown";
     }
 
     public Task<string> RunPythonScript(string script, string arguments, CancellationToken? cancellationToken = null,

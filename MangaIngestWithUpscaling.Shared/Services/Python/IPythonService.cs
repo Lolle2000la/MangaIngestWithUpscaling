@@ -1,10 +1,12 @@
-﻿namespace MangaIngestWithUpscaling.Shared.Services.Python;
+﻿using MangaIngestWithUpscaling.Shared.Configuration;
+
+namespace MangaIngestWithUpscaling.Shared.Services.Python;
 
 public interface IPythonService
 {
     bool IsPythonInstalled();
     string? GetPythonExecutablePath();
-    Task<PythonEnvironment> PreparePythonEnvironment(string desiredDirectory);
+    Task<PythonEnvironment> PreparePythonEnvironment(string desiredDirectory, GpuBackend preferredBackend = GpuBackend.Auto);
     /// <summary>
     /// Runs a python script in the global environment with the given arguments
     /// </summary>
