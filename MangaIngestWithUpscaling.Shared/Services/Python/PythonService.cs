@@ -23,12 +23,13 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
     ///     Environment version - increment this when Python dependencies change to force environment recreation.
     ///     Version History:
     ///     v1: Initial implementation with torch==2.7.0, torchvision==0.22.0, and base packages
+    ///     v2: Updated to torch==2.7.1, torchvision==0.22.1, unified installation approach
     ///     When updating dependencies:
     ///     1. Update the package versions in InstallPythonPackages method
     ///     2. Increment this ENVIRONMENT_VERSION constant
     ///     3. Add a comment above describing the changes
     /// </summary>
-    private const int ENVIRONMENT_VERSION = 1;
+    private const int ENVIRONMENT_VERSION = 2;
 
     public static PythonEnvironment? Environment { get; set; }
 
@@ -317,30 +318,32 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         // First, upgrade pip and install wheel
         await RunPipCommand(pythonPath, "install -U pip wheel --no-warn-script-location", environmentPath);
 
-        // Install base packages
-        var basePackages = "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
-                           "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
-                           "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1";
-
-        await RunPipCommand(pythonPath, $"install {basePackages} --no-warn-script-location", environmentPath);
-
-        // uninstall existing torch packages if they exist (to avoid conflicts)
-        await RunPipCommand(pythonPath, "uninstall -y torch torchvision torchaudio", environmentPath);
-
-        // Install PyTorch with appropriate backend
-        string torchCommand = targetBackend switch
+        // Install PyTorch and all other packages in a single command with appropriate backend
+        string packagesCommand = targetBackend switch
         {
             GpuBackend.CUDA =>
-                "install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu118 --no-warn-script-location",
+                "install torch==2.7.1 torchvision==0.22.1 --extra-index-url https://download.pytorch.org/whl/cu118 " +
+                "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
+                "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
+                "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 --no-warn-script-location",
             GpuBackend.ROCm =>
-                "install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/rocm6.3 --no-warn-script-location",
+                "install torch==2.7.1 torchvision==0.22.1 --extra-index-url https://download.pytorch.org/whl/rocm6.3 " +
+                "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
+                "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
+                "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 --no-warn-script-location",
             GpuBackend.CPU =>
-                "install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cpu --no-warn-script-location",
-            _ => "install torch==2.7.1 torchvision==0.22.1 --no-warn-script-location"
+                "install torch==2.7.1 torchvision==0.22.1 --extra-index-url https://download.pytorch.org/whl/cpu " +
+                "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
+                "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
+                "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 --no-warn-script-location",
+            _ => "install torch==2.7.1 torchvision==0.22.1 " +
+                 "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
+                 "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
+                 "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 --no-warn-script-location"
         };
 
-        logger.LogInformation("Installing PyTorch with {Backend} backend", targetBackend);
-        await RunPipCommand(pythonPath, torchCommand, environmentPath);
+        logger.LogInformation("Installing PyTorch and dependencies with {Backend} backend", targetBackend);
+        await RunPipCommand(pythonPath, packagesCommand, environmentPath);
 
         // Install backend source
         await RunPipCommand(pythonPath, $"install \"{backendSrcDirectory}\" --no-warn-script-location",
