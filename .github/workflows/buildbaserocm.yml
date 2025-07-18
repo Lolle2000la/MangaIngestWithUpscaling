@@ -19,12 +19,6 @@ jobs:
         packages: write 
     runs-on: ubuntu-latest
     steps:
-      # Checkout the repository
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          submodules: 'true'
-
       - name: Maximize build space
         uses: easimon/maximize-build-space@v10
         with:
@@ -33,6 +27,12 @@ jobs:
           remove-haskell: 'true'
           remove-codeql: 'true'
           remove-docker-images: 'true'
+
+      # Checkout the repository
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: 'true'
 
       # Set up Docker Buildx for multi-arch builds
       - name: Set up Docker Buildx
