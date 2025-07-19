@@ -35,7 +35,7 @@
 		<PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="9.7.0" />
 		<PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.22.1" />
 		<PackageReference Include="Mono.Posix.NETStandard" Version="1.0.0" />
-		<PackageReference Include="MudBlazor" Version="8.9.0" />
+		<PackageReference Include="MudBlazor" Version="8.10.0" />
 		<PackageReference Include="MudBlazor.Translations" Version="2.5.0" />
 		<PackageReference Include="PinguApps.Blazor.QRCode" Version="1.1.4" />
 		<PackageReference Include="ReactiveUI" Version="20.4.1" />
