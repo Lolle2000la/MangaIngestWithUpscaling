@@ -24,12 +24,13 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
     ///     Version History:
     ///     v1: Initial implementation with torch==2.7.0, torchvision==0.22.0, and base packages
     ///     v2: Updated to torch==2.7.1, torchvision==0.22.1, unified installation approach
+    ///     v3: Added Intel XPU support with PyTorch XPU backend from Intel's repository
     ///     When updating dependencies:
     ///     1. Update the package versions in InstallPythonPackages method
     ///     2. Increment this ENVIRONMENT_VERSION constant
     ///     3. Add a comment above describing the changes
     /// </summary>
-    private const int ENVIRONMENT_VERSION = 2;
+    private const int ENVIRONMENT_VERSION = 3;
 
     public static PythonEnvironment? Environment { get; set; }
 
@@ -105,8 +106,8 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
             if (forceAcceptExisting)
             {
                 logger.LogInformation("Force accepting existing Python environment (backend detection bypassed)");
-                // When forcing acceptance, use the preferred backend or fall back to a reasonable default
-                actualBackend = preferredBackend != GpuBackend.Auto ? preferredBackend : GpuBackend.CUDA;
+                // When forcing acceptance, use the preferred backend or fall back to CPU as the safest default
+                actualBackend = preferredBackend != GpuBackend.Auto ? preferredBackend : GpuBackend.CPU;
             }
             else
             {
@@ -328,6 +329,11 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
                 "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 --no-warn-script-location",
             GpuBackend.ROCm =>
                 "install torch==2.7.1 torchvision==0.22.1 --extra-index-url https://download.pytorch.org/whl/rocm6.3 " +
+                "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
+                "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
+                "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 --no-warn-script-location",
+            GpuBackend.XPU =>
+                "install torch==2.7.1 torchvision==0.22.1 --extra-index-url https://download.pytorch.org/whl/xpu " +
                 "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
                 "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
                 "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 --no-warn-script-location",

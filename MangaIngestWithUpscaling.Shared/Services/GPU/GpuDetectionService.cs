@@ -1,7 +1,8 @@
+using MangaIngestWithUpscaling.Shared.Configuration;
+using Microsoft.Extensions.Logging;
+using Silk.NET.Maths;
 using Silk.NET.OpenGL;
 using Silk.NET.Windowing;
-using Microsoft.Extensions.Logging;
-using MangaIngestWithUpscaling.Shared.Configuration;
 using System.Runtime.InteropServices;
 
 namespace MangaIngestWithUpscaling.Shared.Services.GPU;
@@ -27,7 +28,7 @@ public class GpuDetectionService(ILogger<GpuDetectionService> logger) : IGpuDete
         try
         {
             var gpuInfo = await GetGpuInfoAsync();
-            logger.LogInformation("Detected GPU: {Vendor} - {Renderer}, recommended backend: {Backend}", 
+            logger.LogInformation("Detected GPU: {Vendor} - {Renderer}, recommended backend: {Backend}",
                 gpuInfo.Vendor, gpuInfo.Renderer, gpuInfo.RecommendedBackend);
             return gpuInfo.RecommendedBackend;
         }
@@ -47,14 +48,14 @@ public class GpuDetectionService(ILogger<GpuDetectionService> logger) : IGpuDete
                 // Create an offscreen window for OpenGL context
                 var options = WindowOptions.Default;
                 options.IsVisible = false;
-                options.Size = new Silk.NET.Maths.Vector2D<int>(1, 1);
+                options.Size = new Vector2D<int>(1, 1);
                 options.Title = "GPU Detection";
-                
+
                 using var window = Window.Create(options);
                 window.Initialize();
 
                 var gl = GL.GetApi(window);
-                
+
                 // Get OpenGL strings and convert from unsafe pointers to managed strings
                 var vendor = GetOpenGLString(gl, StringName.Vendor);
                 var renderer = GetOpenGLString(gl, StringName.Renderer);
@@ -65,7 +66,7 @@ public class GpuDetectionService(ILogger<GpuDetectionService> logger) : IGpuDete
                 logger.LogDebug("OpenGL Version: {Version}", version);
 
                 var recommendedBackend = DetermineBackendFromVendor(vendor, renderer);
-                
+
                 return new GpuInfo(vendor, renderer, version, recommendedBackend);
             }
             catch (Exception ex)
@@ -95,8 +96,8 @@ public class GpuDetectionService(ILogger<GpuDetectionService> logger) : IGpuDete
         var rendererLower = renderer?.ToLowerInvariant() ?? "";
 
         // Check for NVIDIA
-        if (vendorLower.Contains("nvidia") || 
-            rendererLower.Contains("nvidia") || 
+        if (vendorLower.Contains("nvidia") ||
+            rendererLower.Contains("nvidia") ||
             rendererLower.Contains("geforce") ||
             rendererLower.Contains("quadro") ||
             rendererLower.Contains("tesla"))
@@ -106,7 +107,7 @@ public class GpuDetectionService(ILogger<GpuDetectionService> logger) : IGpuDete
         }
 
         // Check for AMD
-        if (vendorLower.Contains("amd") || 
+        if (vendorLower.Contains("amd") ||
             vendorLower.Contains("ati") ||
             rendererLower.Contains("radeon") ||
             rendererLower.Contains("amd") ||
@@ -116,11 +117,24 @@ public class GpuDetectionService(ILogger<GpuDetectionService> logger) : IGpuDete
             return GpuBackend.ROCm;
         }
 
-        // Check for Intel (typically CPU-only for ML workloads)
+        // Check for Intel (use XPU backend for discrete Intel GPUs)
         if (vendorLower.Contains("intel"))
         {
-            logger.LogInformation("Intel GPU detected via OpenGL, using CPU backend for ML");
-            return GpuBackend.CPU;
+            // Check if it's a discrete Intel GPU (Arc series) that supports XPU
+            if (rendererLower.Contains("arc") ||
+                rendererLower.Contains("xe") ||
+                rendererLower.Contains("dg") ||
+                rendererLower.Contains("xe-hpg") ||
+                rendererLower.Contains("xe-lpg"))
+            {
+                logger.LogInformation("Intel discrete GPU detected via OpenGL, using XPU backend");
+                return GpuBackend.XPU;
+            }
+            else
+            {
+                logger.LogInformation("Intel integrated GPU detected via OpenGL, using CPU backend for ML");
+                return GpuBackend.CPU;
+            }
         }
 
         logger.LogInformation("Unknown GPU vendor '{Vendor}', falling back to CPU backend", vendor);
