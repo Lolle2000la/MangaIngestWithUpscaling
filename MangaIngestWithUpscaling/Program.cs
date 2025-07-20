@@ -7,6 +7,7 @@ using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Services;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.Python;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Authorization;
@@ -97,6 +98,7 @@ builder.Services.AddGrpc();
 builder.Services.AddMudServices();
 builder.Services.AddMudTranslations();
 builder.Services.RegisterViewModels();
+builder.Services.AddScoped<MangaJaNaiUpscaler>();
 
 builder.Services.AddLocalization();
 
@@ -285,11 +287,17 @@ using (var scope = app.Services.CreateScope())
             Directory.CreateDirectory(upscalerConfig.Value.PythonEnvironmentDirectory);
 
             PythonEnvironment environment =
-                await pythonService.PreparePythonEnvironment(upscalerConfig.Value.PythonEnvironmentDirectory, upscalerConfig.Value.PreferredGpuBackend, upscalerConfig.Value.ForceAcceptExistingEnvironment);
+                await pythonService.PreparePythonEnvironment(upscalerConfig.Value.PythonEnvironmentDirectory,
+                    upscalerConfig.Value.PreferredGpuBackend, upscalerConfig.Value.ForceAcceptExistingEnvironment);
             PythonService.Environment = environment;
 
-            logger.LogInformation($"Python environment prepared at {environment.PythonExecutablePath} with {environment.InstalledBackend} backend");
+            logger.LogInformation(
+                $"Python environment prepared at {environment.PythonExecutablePath} with {environment.InstalledBackend} backend");
         }
+
+        // Download the models once at startup instead of on every usage
+        var mangaJaNaiUpscaler = scope.ServiceProvider.GetRequiredService<IUpscaler>();
+        await mangaJaNaiUpscaler.DownloadModelsIfNecessary(CancellationToken.None);
     }
 }
 
