@@ -132,11 +132,6 @@ jobs:
           remove-haskell: 'true'
           remove-codeql: 'true'
           remove-docker-images: 'true'
-
-      - name: Maximize build space
-        uses: easimon/maximize-build-space@v10
-        with:
-          remove-docker-images: 'true'
       - name: Checkout code
         uses: actions/checkout@v4 
         with:
