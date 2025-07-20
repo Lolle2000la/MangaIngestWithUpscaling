@@ -22,6 +22,10 @@ public class MangaJaNaiUpscaler(
     private static readonly IReadOnlyDictionary<string, string> expectedModelHashes = new Dictionary<string, string>
     {
         {
+            "2x_IllustrationJaNai_V1_ESRGAN_120k.pth",
+            "5f49a71d3cd0000a51ed0e3adfe5c11824740f1c58f7cb520d8d2d1e924c2b88"
+        },
+        {
             "4x_IllustrationJaNai_V2standard_DAT2_27k.safetensors",
             "60d94aeada1ce3d767e543abcc5ae5d3eba6a910aba5d72149c2c8c14e30b4ab"
         },
@@ -40,6 +44,11 @@ public class MangaJaNaiUpscaler(
             "4x_IllustrationJaNai_V2standard_FDAT_XL_18k.safetensors",
             "f7f0d5fd522fca8733c534c305265f670bd08f972cc7050d5ac608d7bfd13d4d"
         },
+        { "4x_IllustrationJaNai_V1_DAT2_190k.pth", "a82f3a2d8d1c676171b86a00048b7a624e3c62c87ec701012f106a171c309fbe" },
+        {
+            "4x_IllustrationJaNai_V1_ESRGAN_135k.pth",
+            "c67e76c4b5f0474d5116e5f3885202d1bee68187e1389f82bb90baace24152f8"
+        },
         { "4x_MangaJaNai_1200p_V1_ESRGAN_70k.pth", "6e3a8d21533b731eb3d8eaac1a09cf56290fa08faf8473cbe3debded9ab1ebe1" },
         { "4x_MangaJaNai_1300p_V1_ESRGAN_75k.pth", "eacf8210543446f3573d4ea1625f6fc11a3b2a5e18b38978873944be146417a8" },
         {
@@ -57,6 +66,8 @@ public class MangaJaNaiUpscaler(
 
     private readonly (string, string)[] zipsToDownload =
     [
+        ("https://github.com/the-database/MangaJaNai/releases/download/1.0.0/IllustrationJaNai_V1_ModelsOnly.zip",
+            "6f5496f5ded597474290403de73d7a46c3f8ed328261db2e6ff830a415a6f60b"),
         ("https://github.com/the-database/MangaJaNai/releases/download/2.0.0/4x_IllustrationJaNai_V2standard_ModelsOnly.zip",
             "f01a7117c297bdbac3697b08936ccd8064f538bda6618329a1dc61023166f096"),
         ("https://github.com/the-database/MangaJaNai/releases/download/1.0.0/MangaJaNai_V1_ModelsOnly.zip",
