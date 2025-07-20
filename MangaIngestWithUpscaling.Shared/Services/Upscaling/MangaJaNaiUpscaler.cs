@@ -19,6 +19,39 @@ public class MangaJaNaiUpscaler(
     IMetadataHandlingService metadataHandling,
     IUpscalerJsonHandlingService upscalerJsonHandlingService) : IUpscaler
 {
+    private static readonly IReadOnlyDictionary<string, string> expectedModelHashes = new Dictionary<string, string>
+    {
+        {
+            "2x_IllustrationJaNai_V1_ESRGAN_120k.pth",
+            "5f49a71d3cd0000a51ed0e3adfe5c11824740f1c58f7cb520d8d2d1e924c2b88"
+        },
+        { "2x_MangaJaNai_1200p_V1_ESRGAN_70k.pth", "43b784f674bdbf89886a62a64cd5f8d8df92caf4d861bdf4d47dad249ede0267" },
+        { "2x_MangaJaNai_1300p_V1_ESRGAN_75k.pth", "15ca3c0f75f97f7bf52065bf7c9b8d602de94ce9e3b078ac58793855eed18589" },
+        { "2x_MangaJaNai_1400p_V1_ESRGAN_70k.pth", "a940ad8ebcf6bea5580f2f59df67deb009f054c9b87dbbc58c2e452722f34858" },
+        { "2x_MangaJaNai_1500p_V1_ESRGAN_90k.pth", "d91f2d247fa61144c1634a2ba46926acd3956ae90d281a5bed6655f8364a5b2c" },
+        { "2x_MangaJaNai_1600p_V1_ESRGAN_90k.pth", "6f5923f812dbc5d6aeed727635a21e74cacddce595afe6135cbd95078f6eee44" },
+        { "2x_MangaJaNai_1920p_V1_ESRGAN_70k.pth", "1ad4aa6f64684baa430da1bb472489bff2a02473b14859015884a3852339c005" },
+        { "2x_MangaJaNai_2048p_V1_ESRGAN_95k.pth", "146cd009b9589203a8444fe0aa7195709bb5b9fdeaca3808b7fbbd5538f94c41" },
+        { "4x_IllustrationJaNai_V1_DAT2_190k.pth", "a82f3a2d8d1c676171b86a00048b7a624e3c62c87ec701012f106a171c309fbe" },
+        {
+            "4x_IllustrationJaNai_V1_ESRGAN_135k.pth",
+            "c67e76c4b5f0474d5116e5f3885202d1bee68187e1389f82bb90baace24152f8"
+        },
+        { "4x_MangaJaNai_1200p_V1_ESRGAN_70k.pth", "6e3a8d21533b731eb3d8eaac1a09cf56290fa08faf8473cbe3debded9ab1ebe1" },
+        { "4x_MangaJaNai_1300p_V1_ESRGAN_75k.pth", "eacf8210543446f3573d4ea1625f6fc11a3b2a5e18b38978873944be146417a8" },
+        {
+            "4x_MangaJaNai_1400p_V1_ESRGAN_105k.pth", "d77f977a6c6c4bf855dae55f0e9fad6ac2823fa8b2ef883b50e525369fde6a74"
+        },
+        {
+            "4x_MangaJaNai_1500p_V1_ESRGAN_105k.pth", "5e5174b60316e9abb7875e6d2db208fec4ffc34f3d09fa7f0e0f6476f9d31687"
+        },
+        { "4x_MangaJaNai_1600p_V1_ESRGAN_70k.pth", "c126ec8d4b7434d8f6a43d24bec1f56d343104ab8a86b5e01d5d25be6b5244c0" },
+        {
+            "4x_MangaJaNai_1920p_V1_ESRGAN_105k.pth", "d469e96e590a25a86037760b26d51405c77759a55b0966b15dc76b609f72f20b"
+        },
+        { "4x_MangaJaNai_2048p_V1_ESRGAN_70k.pth", "f70e08c60da372b7207e7348486ea6b498ea8dea6246bb717530a4d45c955b9b" }
+    };
+
     private readonly (string, string)[] zipsToDownload =
     [
         ("https://github.com/the-database/MangaJaNai/releases/download/1.0.0/IllustrationJaNai_V1_ModelsOnly.zip",
@@ -43,37 +76,17 @@ public class MangaJaNaiUpscaler(
         {
             fileSystem.CreateDirectory(ModelPath);
         }
-        else
+
+        // Check if all required models exist with correct hashes
+        bool needsDownload = await ShouldDownloadModels(cancellationToken);
+
+        if (needsDownload)
         {
-            return;
+            await DownloadAndExtractModels(cancellationToken);
         }
 
-        var httpClient = new HttpClient();
-
-        using var sha256 = SHA256.Create();
-
-        // download the zip contents into the models directory. Do not create subdirectories.
-        foreach (var (zipUrl, sha256Hash) in zipsToDownload)
-        {
-            string zipPath = Path.Combine(ModelPath, Path.GetFileName(zipUrl));
-            if (!File.Exists(zipPath))
-            {
-                using var response = await httpClient.GetAsync(zipUrl, cancellationToken);
-                response.EnsureSuccessStatusCode();
-
-                // verify the hash
-                byte[] hash = await sha256.ComputeHashAsync(await response.Content.ReadAsStreamAsync(cancellationToken),
-                    cancellationToken);
-                string hashString = Convert.ToHexStringLower(hash);
-                if (hashString != sha256Hash)
-                {
-                    throw new Exception($"Hash mismatch for {zipUrl}");
-                }
-
-                // extract the zip file
-                ZipFile.ExtractToDirectory(await response.Content.ReadAsStreamAsync(cancellationToken), ModelPath);
-            }
-        }
+        // Verify all model file hashes after download/extraction
+        await VerifyModelHashes(cancellationToken);
     }
 
     public async Task Upscale(string inputPath, string outputPath, UpscalerProfile profile,
@@ -108,13 +121,11 @@ public class MangaJaNaiUpscaler(
                     "Tried to upscale \"{inputPath}\" with the target location {outputPath}.", inputPath, outputPath);
                 return;
             }
-            else
-            {
-                File.Delete(outputPath);
-            }
+
+            File.Delete(outputPath);
         }
 
-        var config = MangaJaNaiUpscalerConfig.FromUpscalerProfile(profile);
+        MangaJaNaiUpscalerConfig config = MangaJaNaiUpscalerConfig.FromUpscalerProfile(profile);
         config.ApplyUpscalerConfig(sharedConfig.Value);
         config.SelectedTabIndex = 0;
         config.InputFilePath = inputPath;
@@ -150,5 +161,98 @@ public class MangaJaNaiUpscaler(
         {
             File.Delete(configPath);
         }
+    }
+
+    private async Task<bool> ShouldDownloadModels(CancellationToken cancellationToken)
+    {
+        using var sha256 = SHA256.Create();
+
+        foreach (var (fileName, expectedHash) in expectedModelHashes)
+        {
+            string filePath = Path.Combine(ModelPath, fileName);
+            if (!File.Exists(filePath))
+            {
+                logger.LogInformation("Model file {fileName} not found, download required", fileName);
+                return true;
+            }
+
+            using FileStream stream = File.OpenRead(filePath);
+            byte[] hash = await sha256.ComputeHashAsync(stream, cancellationToken);
+            string hashString = Convert.ToHexStringLower(hash);
+            if (hashString != expectedHash)
+            {
+                logger.LogWarning(
+                    "Model file {fileName} has incorrect hash, download required. Expected: {expectedHash}, Actual: {hashString}",
+                    fileName, expectedHash, hashString);
+                return true;
+            }
+        }
+
+        logger.LogInformation("All model files are present with correct hashes");
+        return false;
+    }
+
+    private async Task DownloadAndExtractModels(CancellationToken cancellationToken)
+    {
+        var httpClient = new HttpClient();
+        using var sha256 = SHA256.Create();
+
+        // Clear the models directory before downloading to ensure clean state
+        if (Directory.Exists(ModelPath))
+        {
+            logger.LogInformation("Clearing existing models directory for fresh download");
+            Directory.Delete(ModelPath, true);
+        }
+
+        fileSystem.CreateDirectory(ModelPath);
+
+        // download the zip contents into the models directory. Do not create subdirectories.
+        foreach (var (zipUrl, sha256Hash) in zipsToDownload)
+        {
+            logger.LogInformation("Downloading {zipUrl}", zipUrl);
+            using HttpResponseMessage response = await httpClient.GetAsync(zipUrl, cancellationToken);
+            response.EnsureSuccessStatusCode();
+
+            byte[] zipContent = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+
+            // verify the zip hash
+            byte[] hash = sha256.ComputeHash(zipContent);
+            string hashString = Convert.ToHexStringLower(hash);
+            if (hashString != sha256Hash)
+            {
+                throw new Exception($"Hash mismatch for {zipUrl}. Expected: {sha256Hash}, Actual: {hashString}");
+            }
+
+            // extract the zip file
+            using var zipStream = new MemoryStream(zipContent);
+            ZipFile.ExtractToDirectory(zipStream, ModelPath);
+
+            logger.LogInformation("Successfully downloaded and extracted {zipUrl}", zipUrl);
+        }
+    }
+
+    private async Task VerifyModelHashes(CancellationToken cancellationToken)
+    {
+        using var sha256 = SHA256.Create();
+
+        foreach (var (fileName, expectedHash) in expectedModelHashes)
+        {
+            string filePath = Path.Combine(ModelPath, fileName);
+            if (!File.Exists(filePath))
+            {
+                throw new FileNotFoundException($"Model file not found after download: {fileName}", filePath);
+            }
+
+            using FileStream stream = File.OpenRead(filePath);
+            byte[] hash = await sha256.ComputeHashAsync(stream, cancellationToken);
+            string hashString = Convert.ToHexStringLower(hash);
+            if (hashString != expectedHash)
+            {
+                throw new Exception(
+                    $"Hash verification failed for model file {fileName}. Expected: {expectedHash}, Actual: {hashString}");
+            }
+        }
+
+        logger.LogInformation("All model files verified successfully");
     }
 }
