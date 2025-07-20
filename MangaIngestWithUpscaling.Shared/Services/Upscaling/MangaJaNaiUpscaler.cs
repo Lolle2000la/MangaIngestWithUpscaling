@@ -103,8 +103,6 @@ public class MangaJaNaiUpscaler(
             fileSystem.CreateDirectory(outputDirectory);
         }
 
-        await DownloadModelsIfNecessary(cancellationToken);
-
         string outputFilename = Path.GetFileNameWithoutExtension(outputPath);
 
         if (!outputPath.EndsWith(".cbz"))
