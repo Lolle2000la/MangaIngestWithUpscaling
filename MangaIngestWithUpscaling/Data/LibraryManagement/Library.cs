@@ -21,6 +21,8 @@ public class Library
     public int? UpscalerProfileId { get; set; }
     public UpscalerProfile? UpscalerProfile { get; set; }
 
+    public bool MergeChapterParts { get; set; }
+
     public List<Manga> MangaSeries { get; set; } = [];
     public List<LibraryFilterRule> FilterRules { get; set; } = [];
 
@@ -42,13 +44,14 @@ public class Library
                UpscaledLibraryPath == other.UpscaledLibraryPath &&
                KavitaConfig == other.KavitaConfig &&
                UpscaleOnIngest == other.UpscaleOnIngest &&
+               MergeChapterParts == other.MergeChapterParts &&
                UpscalerProfileId == other.UpscalerProfileId;
     }
 
     public override int GetHashCode()
     {
         return HashCode.Combine(Id, Name, IngestPath, NotUpscaledLibraryPath, UpscaledLibraryPath, KavitaConfig,
-            UpscaleOnIngest, UpscalerProfile);
+            UpscaleOnIngest, HashCode.Combine(MergeChapterParts, UpscalerProfile));
     }
 }
 

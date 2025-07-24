@@ -1,16 +1,23 @@
+using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
+using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
-using MangaIngestWithUpscaling.Data.LibraryManagement;
-using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using System.Text.Json;
-using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
-using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
-using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 
 namespace MangaIngestWithUpscaling.Data;
 
-public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : IdentityDbContext<ApplicationUser>(options), IDataProtectionKeyContext
+public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
+    : IdentityDbContext<ApplicationUser>(options), IDataProtectionKeyContext
 {
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = false, AllowTrailingCommas = true
+    };
+
     public DbSet<Library> Libraries { get; set; }
     public DbSet<LibraryFilterRule> LibraryFilterRules { get; set; }
     public DbSet<LibraryRenameRule> LibraryRenameRules { get; set; }
@@ -20,6 +27,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<UpscalerProfile> UpscalerProfiles { get; set; }
     public DbSet<PersistedTask> PersistedTasks { get; set; }
     public DbSet<ApiKey> ApiKeys { get; set; }
+    public DbSet<MergedChapterInfo> MergedChapterInfos { get; set; }
 
     public DbSet<DataProtectionKey> DataProtectionKeys { get; set; } = null!;
 
@@ -29,7 +37,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 
         builder.Entity<Manga>(entity =>
         {
-            entity.HasIndex(e => new {e.PrimaryTitle})
+            entity.HasIndex(e => new { e.PrimaryTitle })
                 .IsUnique();
         });
 
@@ -96,11 +104,29 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 .HasConversion<string>();
             entity.HasQueryFilter(e => !e.Deleted);
         });
-    }
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = false,
-        AllowTrailingCommas = true
-    };
+        builder.Entity<MergedChapterInfo>(entity =>
+        {
+            var comparer = new ValueComparer<List<OriginalChapterPart>>(
+                (a, b) => a.SequenceEqual(b),
+                a => a.Aggregate(0, (h, v) => HashCode.Combine(h, v.GetHashCode())),
+                a => a.ToList());
+
+            builder.Entity<MergedChapterInfo>()
+                .Property(m => m.OriginalParts)
+                .HasConversion(
+                    v => JsonSerializer.Serialize(v, JsonOptions),
+                    v => JsonSerializer.Deserialize<List<OriginalChapterPart>>(v, JsonOptions)!)
+                .HasColumnType("jsonb") // Use 'json' for SQL Server
+                .Metadata.SetValueComparer(comparer);
+
+            entity.HasOne(e => e.Chapter)
+                .WithOne()
+                .HasForeignKey<MergedChapterInfo>(e => e.ChapterId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(e => e.ChapterId)
+                .IsUnique();
+        });
+    }
 }

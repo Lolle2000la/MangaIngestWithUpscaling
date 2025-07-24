@@ -13,6 +13,7 @@ public class Manga
     public string PrimaryTitle { get; set; } = string.Empty;
     public string? Author { get; set; }
     public bool? ShouldUpscale { get; set; } = null;
+    public bool? MergeChapterParts { get; set; } = null;
 
     public int LibraryId { get; set; }
     public Library Library { get; set; } = default!;
