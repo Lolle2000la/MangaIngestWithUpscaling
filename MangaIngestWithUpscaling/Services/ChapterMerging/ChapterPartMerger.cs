@@ -456,7 +456,35 @@ public partial class ChapterPartMerger(
     }
 
     [GeneratedRegex(
-        @"(?:Chapter\s*(?<num>\d+)(?:\.(?<subnum>\d+))?|Ch\.?\s*(?<num>\d+)(?:\.(?<subnum>\d+))?|第(?<num>\d+)(?:\.(?<subnum>\d+))?(?:話|章)|Kapitel\s*(?<num>\d+)(?:\.(?<subnum>\d+))?)")]
+        @"
+               # Group 1: Latin, Cyrillic & similar alphabets
+               (?:
+                 # Core English, German, Russian
+                 ch(?:apter)?\.? | kapitel | glava | file | ep(?:isode|\.)?
+
+                 # Romance Languages
+                 | cap(?:[íi]tulo|itol|\.)? | chap(?:itre|\.)?
+
+                 # Eastern European Languages
+                 | rozdział | kapitola | fejezet | poglavlje | розділ
+
+                 # South-East Asian Languages (Latin script)
+                 | chương | bab | kabanata
+               )
+               \s*(?<num>\d+)(?:[.-](?<subnum>\d+))?
+
+
+               # Group 2: CJK (Chinese, Japanese, Korean)
+               | (?:第|제)
+               \s*(?<num>\d+)(?:[.-](?<subnum>\d+))?
+               \s*(?:話|章|话|화|장)?
+
+
+               # Group 3: Other SEA Scripts (Thai, Burmese)
+               | (?:บทที่|အခန်း)
+               \s*(?<num>\d+)(?:[.-](?<subnum>\d+))?
+               ",
+        RegexOptions.IgnoreCase | RegexOptions.IgnorePatternWhitespace)]
     private static partial Regex ChapterNumberRegex();
 }
 
