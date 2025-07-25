@@ -105,12 +105,117 @@ public partial class IngestProcessor(
                                            (seriesEntity.MergeChapterParts ?? true);
 
             List<ProcessedChapterInfo> finalProcessedItems = processedItems;
+            ChapterMergeResult? mergeResult = null;
 
             // Apply chapter part merging if enabled
-            if (shouldMergeChapterParts)
+            if (shouldMergeChapterParts && chapterPartMerger != null)
             {
-                finalProcessedItems =
-                    await ApplyChapterPartMerging(processedItems, library, seriesEntity, cancellationToken);
+                // Get all chapter numbers including existing ones and new ones
+                HashSet<string> existingChapterNumbers = seriesEntity.Chapters
+                    .Select(c => ExtractChapterNumber(c.FileName))
+                    .Where(n => n != null)
+                    .Cast<string>()
+                    .ToHashSet();
+
+                HashSet<string> newChapterNumbers = processedItems
+                    .Where(p => !p.IsUpscaled)
+                    .Select(p => ExtractChapterNumber(p.Renamed.FileName))
+                    .Where(n => n != null)
+                    .Cast<string>()
+                    .ToHashSet();
+
+                HashSet<string> allChapterNumbers = existingChapterNumbers.Union(newChapterNumbers).ToHashSet();
+
+                // Create a mapping function to get original file paths for renamed chapters
+                Dictionary<string, string> originalPathLookup = processedItems
+                    .Where(p => !p.IsUpscaled)
+                    .ToDictionary(p => p.Renamed.RelativePath,
+                        p => Path.Combine(library.IngestPath, p.Original.RelativePath));
+
+                Func<FoundChapter, string> getActualFilePath = renamedChapter =>
+                    originalPathLookup.TryGetValue(renamedChapter.RelativePath, out string? originalPath)
+                        ? originalPath
+                        : Path.Combine(library.IngestPath, renamedChapter.RelativePath);
+
+                // Process chapter merging using the new simplified approach
+                mergeResult = await chapterPartMerger.ProcessChapterMergingAsync(
+                    processedItems.Where(p => !p.IsUpscaled).Select(p => p.Renamed).ToList(),
+                    library.IngestPath,
+                    library.IngestPath,
+                    seriesEntity.PrimaryTitle!,
+                    allChapterNumbers,
+                    getActualFilePath,
+                    cancellationToken);
+
+                // Convert merged chapters back to ProcessedChapterInfo format and add merge info
+                var mergedProcessedItems = new List<ProcessedChapterInfo>();
+
+                // Create a set of all original chapter parts that were successfully merged
+                var mergedOriginalPartPaths = new HashSet<string>();
+                foreach (MergeInfo mergeInfo in mergeResult.MergeInformation)
+                {
+                    foreach (OriginalChapterPart originalPart in mergeInfo.OriginalParts)
+                    {
+                        mergedOriginalPartPaths.Add(originalPart.FileName);
+                    }
+                }
+
+                logger.LogInformation(
+                    "Merge completed: {MergedCount} merged chapters created, {OriginalPartsCount} original parts should be excluded from processing",
+                    mergeResult.MergeInformation.Count, mergedOriginalPartPaths.Count);
+
+                // Add only chapters that were NOT merged into new files
+                foreach (FoundChapter processedChapter in mergeResult.ProcessedChapters)
+                {
+                    // Check if this chapter is one of the merged chapters (newly created)
+                    bool isMergedChapter = mergeResult.MergeInformation
+                        .Any(mi => mi.MergedChapter.RelativePath == processedChapter.RelativePath);
+
+                    if (!isMergedChapter)
+                    {
+                        // This is either a non-merged chapter or an original part that wasn't successfully merged
+                        // Check if it's an original part that was supposed to be merged
+                        bool wasSupposedToBeMerged = mergedOriginalPartPaths.Contains(processedChapter.FileName);
+
+                        if (!wasSupposedToBeMerged)
+                        {
+                            // This is a regular chapter that wasn't involved in merging, add it for normal processing
+                            ProcessedChapterInfo? originalProcessedItem = processedItems
+                                .FirstOrDefault(p => p.Renamed.RelativePath == processedChapter.RelativePath);
+
+                            if (originalProcessedItem != null)
+                            {
+                                mergedProcessedItems.Add(originalProcessedItem);
+                            }
+                        }
+                        else
+                        {
+                            // This is an original part that was supposed to be merged but somehow is still here
+                            // This should not happen if merging was successful, log a warning
+                            logger.LogWarning(
+                                "Chapter part {ChapterFile} was supposed to be merged but is still in processed chapters. " +
+                                "This may indicate a merge operation that partially failed.",
+                                processedChapter.FileName);
+                        }
+                    }
+                    // Note: We don't add merged chapters (isMergedChapter == true) here as they are already 
+                    // in their final location and don't need further file processing
+                }
+
+                // Add upscaled chapters back (they weren't processed for merging)
+                mergedProcessedItems.AddRange(processedItems.Where(p => p.IsUpscaled));
+
+                // Store merge information for later database operations
+                foreach (MergeInfo mergeInfo in mergeResult.MergeInformation)
+                {
+                    // We'll handle database operations later in the processing pipeline
+                    // For now, just log the successful merge
+                    logger.LogInformation(
+                        "Prepared merge info for chapter {MergedFileName} from {PartCount} parts",
+                        mergeInfo.MergedChapter.FileName, mergeInfo.OriginalParts.Count);
+                }
+
+                finalProcessedItems = mergedProcessedItems;
             }
 
             // Move chapters to the target path in file system as specified by the libraries NotUpscaledLibraryPath property.
@@ -248,6 +353,75 @@ public partial class IngestProcessor(
                 {
                     dbContext.Entry(chapterEntity).Reference(c => c.UpscalerProfile).Load();
                     chaptersToUpscale.Add(chapterEntity);
+                }
+            }
+
+            // Process merged chapters - add them to the database
+            if (mergeResult != null)
+            {
+                foreach (MergeInfo mergeInfo in mergeResult.MergeInformation)
+                {
+                    try
+                    {
+                        // Create chapter entity for the merged chapter
+                        FoundChapter mergedChapter = mergeInfo.MergedChapter;
+                        string mergedTargetPath = Path.Combine(library.NotUpscaledLibraryPath,
+                            Path.GetRelativePath(library.IngestPath,
+                                Path.Combine(library.IngestPath, mergedChapter.RelativePath)));
+                        string mergedRelativeDbPath =
+                            Path.GetRelativePath(library.NotUpscaledLibraryPath, mergedTargetPath);
+
+                        var mergedChapterEntity = new Chapter
+                        {
+                            FileName = mergedChapter.FileName,
+                            Manga = seriesEntity,
+                            MangaId = seriesEntity.Id,
+                            RelativePath = mergedRelativeDbPath,
+                            IsUpscaled = false
+                        };
+
+                        // The merged chapter is already in the library.IngestPath, move it to the final location
+                        string mergedSourcePath = Path.Combine(library.IngestPath, mergedChapter.RelativePath);
+                        if (File.Exists(mergedSourcePath))
+                        {
+                            fileSystem.Move(mergedSourcePath, mergedTargetPath);
+                        }
+
+                        seriesEntity.Chapters.Add(mergedChapterEntity);
+
+                        // Create and save merge info to database
+                        var mergedChapterInfo = new MergedChapterInfo
+                        {
+                            ChapterId = mergedChapterEntity.Id,
+                            Chapter = mergedChapterEntity,
+                            OriginalParts = mergeInfo.OriginalParts,
+                            MergedChapterNumber = mergeInfo.BaseChapterNumber,
+                            CreatedAt = DateTime.UtcNow
+                        };
+
+                        dbContext.MergedChapterInfos.Add(mergedChapterInfo);
+
+                        // Notify about the new merged chapter
+                        scans.Add(chapterChangedNotifier.Notify(mergedChapterEntity, false));
+
+                        // Add to upscale queue if needed
+                        if (library.UpscaleOnIngest && seriesEntity.ShouldUpscale != false &&
+                            library.UpscalerProfileId is not null)
+                        {
+                            dbContext.Entry(mergedChapterEntity).Reference(c => c.UpscalerProfile).Load();
+                            chaptersToUpscale.Add(mergedChapterEntity);
+                        }
+
+                        logger.LogInformation(
+                            "Added merged chapter {MergedFileName} to database from {PartCount} original parts",
+                            mergedChapter.FileName, mergeInfo.OriginalParts.Count);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex,
+                            "Failed to add merged chapter {MergedFileName} to database",
+                            mergeInfo.MergedChapter.FileName);
+                    }
                 }
             }
 
@@ -482,187 +656,6 @@ public partial class IngestProcessor(
     [GeneratedRegex(@"(?:^|[\\/])_upscaled(?=[\\/])")]
     private static partial Regex IsUpscaledChapter();
 
-    private async Task<List<ProcessedChapterInfo>> ApplyChapterPartMerging(
-        List<ProcessedChapterInfo> processedItems,
-        Library library,
-        Manga seriesEntity,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            // Separate upscaled and non-upscaled chapters
-            List<FoundChapter> nonUpscaledChapters =
-                processedItems.Where(p => !p.IsUpscaled).Select(p => p.Renamed).ToList();
-            List<ProcessedChapterInfo> upscaledChapters = processedItems.Where(p => p.IsUpscaled).ToList();
-
-            if (!nonUpscaledChapters.Any())
-            {
-                return processedItems; // No chapters to merge
-            }
-
-            // Load existing chapters to determine latest chapter numbers
-            if (!dbContext.Entry(seriesEntity).Collection(s => s.Chapters).IsLoaded)
-            {
-                await dbContext.Entry(seriesEntity).Collection(s => s.Chapters).LoadAsync(cancellationToken);
-            }
-
-            // Find the latest chapter numbers from existing chapters and new chapters
-            HashSet<string> existingChapterNumbers = seriesEntity.Chapters
-                .Select(c => ExtractChapterNumber(c.FileName))
-                .Where(n => n != null)
-                .Cast<string>()
-                .ToHashSet();
-
-            HashSet<string> newChapterNumbers = nonUpscaledChapters
-                .Select(c => ExtractChapterNumber(c.FileName))
-                .Where(n => n != null)
-                .Cast<string>()
-                .ToHashSet();
-
-            HashSet<string> allChapterNumbers = existingChapterNumbers.Union(newChapterNumbers).ToHashSet();
-
-            // Identify chapter parts that should be merged from the newly processed chapters
-            Dictionary<string, List<FoundChapter>> chaptersToMerge = chapterPartMerger.GroupChapterPartsForMerging(
-                nonUpscaledChapters,
-                baseNumber => IsLatestChapter(baseNumber, allChapterNumbers));
-
-            if (!chaptersToMerge.Any())
-            {
-                return processedItems; // No chapter parts to merge
-            }
-
-            var mergedProcessedItems = new List<ProcessedChapterInfo>();
-            var processedChapterPaths = new HashSet<string>();
-
-            // Process chapter merging
-            foreach (var (baseNumber, chapterParts) in chaptersToMerge)
-            {
-                try
-                {
-                    logger.LogInformation(
-                        "Merging {PartCount} chapter parts for base number {BaseNumber} in series {SeriesTitle}",
-                        chapterParts.Count, baseNumber, seriesEntity.PrimaryTitle);
-
-                    // Find the original chapters that correspond to the renamed chapter parts
-                    // since the files on disk are still at their original locations
-                    List<FoundChapter> originalChapterParts = chapterParts
-                        .Select(renamedPart => processedItems
-                            .FirstOrDefault(p => p.Renamed.RelativePath == renamedPart.RelativePath)?.Original)
-                        .Where(original => original != null)
-                        .Cast<FoundChapter>()
-                        .ToList();
-
-                    if (originalChapterParts.Count != chapterParts.Count)
-                    {
-                        logger.LogWarning(
-                            "Could not find all original chapters for merging. Expected {Expected}, found {Found}",
-                            chapterParts.Count, originalChapterParts.Count);
-                        throw new InvalidOperationException("Cannot find all original chapters for merging");
-                    }
-
-                    // Merge the chapters using original file paths
-                    var (mergedChapter, originalParts) = await chapterPartMerger.MergeChapterPartsAsync(
-                        originalChapterParts,
-                        library.IngestPath,
-                        library.IngestPath,
-                        baseNumber,
-                        cancellationToken);
-
-                    // Update the merged chapter to use the renamed series name
-                    FoundChapter firstRenamedPart = chapterParts.First();
-                    mergedChapter = mergedChapter with
-                    {
-                        Metadata = mergedChapter.Metadata with { Series = firstRenamedPart.Metadata.Series }
-                    };
-
-                    // Find the original ProcessedChapterInfo for metadata
-                    ProcessedChapterInfo? originalProcessedItem = processedItems.FirstOrDefault(p =>
-                        chapterParts.Any(cp => cp.RelativePath == p.Renamed.RelativePath));
-
-                    if (originalProcessedItem != null)
-                    {
-                        // Create new ProcessedChapterInfo for the merged chapter
-                        var mergedProcessedItem = new ProcessedChapterInfo(
-                            mergedChapter, // Use merged chapter as both original and renamed
-                            mergedChapter,
-                            false, // Merged chapters are not upscaled initially
-                            null);
-
-                        mergedProcessedItems.Add(mergedProcessedItem);
-
-                        // Store merge information for potential reversion
-                        // This will be saved to the database after the chapter entity is created
-                        var mergeInfo = new MergedChapterInfo
-                        {
-                            OriginalParts = originalParts,
-                            MergedChapterNumber = baseNumber,
-                            CreatedAt = DateTime.UtcNow
-                        };
-
-                        // We'll need to associate this with the chapter entity later
-                        // For now, store it in a way we can access it later
-                        mergedChapter = mergedChapter with
-                        {
-                            Metadata = mergedChapter.Metadata with
-                            {
-                                ChapterTitle = mergedChapter.Metadata.ChapterTitle +
-                                               $"__MERGE_INFO__{JsonSerializer.Serialize(mergeInfo)}"
-                            }
-                        };
-                        mergedProcessedItems[^1] = mergedProcessedItem with { Renamed = mergedChapter };
-                    }
-
-                    // Mark these chapter parts as processed
-                    foreach (FoundChapter part in chapterParts)
-                    {
-                        processedChapterPaths.Add(part.RelativePath);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex,
-                        "Failed to merge chapter parts for base number {BaseNumber} in series {SeriesTitle}",
-                        baseNumber, seriesEntity.PrimaryTitle);
-
-                    // If merging fails, add the original chapters individually
-                    foreach (FoundChapter part in chapterParts)
-                    {
-                        ProcessedChapterInfo? originalProcessedItem =
-                            processedItems.FirstOrDefault(p => p.Renamed.RelativePath == part.RelativePath);
-                        if (originalProcessedItem != null)
-                        {
-                            mergedProcessedItems.Add(originalProcessedItem);
-                        }
-
-                        processedChapterPaths.Add(part.RelativePath);
-                    }
-                }
-            }
-
-            // Add non-merged chapters to the result
-            foreach (ProcessedChapterInfo processedItem in processedItems)
-            {
-                if (!processedChapterPaths.Contains(processedItem.Renamed.RelativePath))
-                {
-                    mergedProcessedItems.Add(processedItem);
-                }
-            }
-
-            logger.LogInformation(
-                "Chapter part merging completed. Processed {OriginalCount} chapters, resulted in {FinalCount} chapters",
-                processedItems.Count, mergedProcessedItems.Count);
-
-            return mergedProcessedItems;
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex,
-                "Error during chapter part merging for series {SeriesTitle}. Falling back to original chapters.",
-                seriesEntity.PrimaryTitle);
-            return processedItems;
-        }
-    }
-
     /// <summary>
     ///     Checks for existing chapter parts that can now be merged because they're no longer the latest
     ///     This should be called after new chapters are ingested
@@ -689,127 +682,79 @@ public partial class IngestProcessor(
                 .ToHashSet();
 
             // Get IDs of chapters that are already merged to exclude them
+            List<int> seriesChapterIds = seriesEntity.Chapters.Select(c => c.Id).ToList();
             HashSet<int> mergedChapterIds = await dbContext.MergedChapterInfos
-                .Where(m => seriesEntity.Chapters.Any(c => c.Id == m.ChapterId))
+                .Where(m => seriesChapterIds.Contains(m.ChapterId))
                 .Select(m => m.ChapterId)
                 .ToHashSetAsync(cancellationToken);
 
-            // Get existing chapters that might need merging
-            List<FoundChapter> existingChaptersForMerging = seriesEntity.Chapters
-                .Where(c => !mergedChapterIds.Contains(c.Id)) // Not already merged
-                .Select(c => new FoundChapter(
-                    c.FileName,
-                    c.RelativePath,
-                    ChapterStorageType.Cbz,
-                    new ExtractedMetadata(c.FileName, null, null)))
-                .ToList();
+            // Process retroactive merging using the simplified approach
+            ChapterMergeResult mergeResult = await chapterPartMerger.ProcessRetroactiveMergingAsync(
+                seriesEntity.Chapters.ToList(),
+                library.NotUpscaledLibraryPath,
+                seriesEntity.PrimaryTitle!,
+                allChapterNumbers,
+                mergedChapterIds,
+                cancellationToken);
 
-            if (!existingChaptersForMerging.Any())
-            {
-                return;
-            }
-
-            // Find chapters that can be merged
-            Dictionary<string, List<FoundChapter>> chaptersToMerge = chapterPartMerger.GroupChapterPartsForMerging(
-                existingChaptersForMerging,
-                baseNumber => IsLatestChapter(baseNumber, allChapterNumbers));
-
-            if (!chaptersToMerge.Any())
+            if (!mergeResult.MergeInformation.Any())
             {
                 return;
             }
 
             logger.LogInformation(
-                "Found {GroupCount} groups of existing chapter parts that can now be merged retroactively for series {SeriesTitle}",
-                chaptersToMerge.Count, seriesEntity.PrimaryTitle);
+                "Found {GroupCount} groups of existing chapter parts that were merged retroactively for series {SeriesTitle}",
+                mergeResult.MergeInformation.Count, seriesEntity.PrimaryTitle);
 
-            // Process each group for merging
-            foreach (var (baseNumber, chapterParts) in chaptersToMerge)
+            // Update database with merge results
+            foreach (MergeInfo mergeInfo in mergeResult.MergeInformation)
             {
-                try
+                // Find the database chapters to update based on the original parts filenames
+                List<Chapter> dbChaptersToUpdate = seriesEntity.Chapters
+                    .Where(c => mergeInfo.OriginalParts.Any(p => p.FileName == c.FileName))
+                    .ToList();
+
+                if (dbChaptersToUpdate.Count == mergeInfo.OriginalParts.Count)
                 {
-                    logger.LogInformation(
-                        "Retroactively merging {PartCount} existing chapter parts for base number {BaseNumber} in series {SeriesTitle}",
-                        chapterParts.Count, baseNumber, seriesEntity.PrimaryTitle);
+                    // Keep the first chapter record and update it to represent the merged chapter
+                    Chapter primaryChapter = dbChaptersToUpdate.First();
+                    primaryChapter.FileName = mergeInfo.MergedChapter.FileName;
+                    primaryChapter.RelativePath = mergeInfo.MergedChapter.RelativePath;
 
-                    // Merge the chapters
-                    var (mergedChapter, originalParts) = await chapterPartMerger.MergeChapterPartsAsync(
-                        chapterParts,
-                        library.NotUpscaledLibraryPath,
-                        library.NotUpscaledLibraryPath,
-                        baseNumber,
-                        cancellationToken);
-
-                    // Find the existing database chapters to update
-                    List<Chapter> dbChaptersToUpdate = seriesEntity.Chapters
-                        .Where(c => chapterParts.Any(p => p.RelativePath == c.RelativePath))
-                        .ToList();
-
-                    if (dbChaptersToUpdate.Count == chapterParts.Count)
+                    // Create merge tracking record
+                    var mergedChapterInfo = new MergedChapterInfo
                     {
-                        // Keep the first chapter record and update it to represent the merged chapter
-                        Chapter primaryChapter = dbChaptersToUpdate.First();
-                        primaryChapter.FileName = mergedChapter.FileName;
-                        primaryChapter.RelativePath = mergedChapter.RelativePath;
+                        ChapterId = primaryChapter.Id,
+                        OriginalParts = mergeInfo.OriginalParts,
+                        MergedChapterNumber = mergeInfo.BaseChapterNumber,
+                        CreatedAt = DateTime.UtcNow
+                    };
 
-                        // Create merge tracking record
-                        var mergedChapterInfo = new MergedChapterInfo
-                        {
-                            ChapterId = primaryChapter.Id,
-                            OriginalParts = originalParts,
-                            MergedChapterNumber = baseNumber,
-                            CreatedAt = DateTime.UtcNow
-                        };
+                    dbContext.MergedChapterInfos.Add(mergedChapterInfo);
 
-                        dbContext.MergedChapterInfos.Add(mergedChapterInfo);
+                    // Remove the other chapter records
+                    List<Chapter> chaptersToRemove = dbChaptersToUpdate.Skip(1).ToList();
+                    dbContext.Chapters.RemoveRange(chaptersToRemove);
 
-                        // Remove the other chapter records
-                        List<Chapter> chaptersToRemove = dbChaptersToUpdate.Skip(1).ToList();
-                        dbContext.Chapters.RemoveRange(chaptersToRemove);
-
-                        await dbContext.SaveChangesAsync(cancellationToken);
-
-                        logger.LogInformation(
-                            "Successfully merged {PartCount} existing chapter parts into {MergedFileName} for series {SeriesTitle}",
-                            chapterParts.Count, mergedChapter.FileName, seriesEntity.PrimaryTitle);
-                    }
+                    logger.LogInformation(
+                        "Successfully merged {PartCount} existing chapter parts into {MergedFileName} for series {SeriesTitle}",
+                        mergeInfo.OriginalParts.Count, mergeInfo.MergedChapter.FileName, seriesEntity.PrimaryTitle);
                 }
-                catch (Exception ex)
+                else
                 {
-                    logger.LogError(ex,
-                        "Failed to retroactively merge existing chapter parts for base number {BaseNumber} in series {SeriesTitle}",
-                        baseNumber, seriesEntity.PrimaryTitle);
+                    logger.LogWarning(
+                        "Mismatch between expected chapters ({Expected}) and found chapters ({Found}) for merge {MergedFileName}",
+                        mergeInfo.OriginalParts.Count, dbChaptersToUpdate.Count, mergeInfo.MergedChapter.FileName);
                 }
             }
+
+            await dbContext.SaveChangesAsync(cancellationToken);
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Error during retroactive chapter part merging for series {SeriesTitle}",
                 seriesEntity.PrimaryTitle);
         }
-    }
-
-    private bool IsLatestChapter(string baseNumber, HashSet<string> allChapterNumbers)
-    {
-        if (!decimal.TryParse(baseNumber, out decimal baseNum))
-        {
-            return false;
-        }
-
-        // Check if there are any chapter numbers higher than this base number
-        foreach (string chapterNumber in allChapterNumbers)
-        {
-            if (decimal.TryParse(chapterNumber, out decimal num))
-            {
-                decimal chapterBaseNum = Math.Floor(num);
-                if (chapterBaseNum > baseNum)
-                {
-                    return false; // There's a higher chapter, so this isn't the latest
-                }
-            }
-        }
-
-        return true; // No higher chapters found, this is the latest
     }
 
     private string? ExtractChapterNumber(string fileName)
