@@ -456,7 +456,7 @@ public partial class ChapterPartMerger(
     }
 
     [GeneratedRegex(
-        @"(?:Chapter\s*(?<num>\d+)(?:\.(?<subnum>\d+))?|第(?<num>\d+)(?:\.(?<subnum>\d+))?(?:話|章)|Kapitel\s*(?<num>\d+)(?:\.(?<subnum>\d+))?)")]
+        @"(?:Chapter\s*(?<num>\d+)(?:\.(?<subnum>\d+))?|Ch\.?\s*(?<num>\d+)(?:\.(?<subnum>\d+))?|第(?<num>\d+)(?:\.(?<subnum>\d+))?(?:話|章)|Kapitel\s*(?<num>\d+)(?:\.(?<subnum>\d+))?)")]
     private static partial Regex ChapterNumberRegex();
 }
 
