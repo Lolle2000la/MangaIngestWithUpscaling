@@ -80,6 +80,12 @@ public partial class ChapterPartMerger(
         string mergedFileName = GenerateMergedFileName(sortedParts.First(), baseChapterNumber);
         string mergedFilePath = Path.Combine(outputPath, mergedFileName);
 
+        if (File.Exists(mergedFilePath))
+        {
+            logger.LogWarning("Merge-target file {MergedFile} already exists, skipping merge", mergedFileName);
+            throw new InvalidOperationException($"Merge-target file '{mergedFileName}' already exists.");
+        }
+
         // Create the merged CBZ file
         using (ZipArchive mergedArchive = ZipFile.Open(mergedFilePath, ZipArchiveMode.Create))
         {
