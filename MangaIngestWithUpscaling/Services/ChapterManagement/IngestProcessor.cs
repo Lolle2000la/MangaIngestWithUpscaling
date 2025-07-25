@@ -543,13 +543,37 @@ public partial class IngestProcessor(
                         "Merging {PartCount} chapter parts for base number {BaseNumber} in series {SeriesTitle}",
                         chapterParts.Count, baseNumber, seriesEntity.PrimaryTitle);
 
-                    // Merge the chapters
+                    // Find the original chapters that correspond to the renamed chapter parts
+                    // since the files on disk are still at their original locations
+                    List<FoundChapter> originalChapterParts = chapterParts
+                        .Select(renamedPart => processedItems
+                            .FirstOrDefault(p => p.Renamed.RelativePath == renamedPart.RelativePath)?.Original)
+                        .Where(original => original != null)
+                        .Cast<FoundChapter>()
+                        .ToList();
+
+                    if (originalChapterParts.Count != chapterParts.Count)
+                    {
+                        logger.LogWarning(
+                            "Could not find all original chapters for merging. Expected {Expected}, found {Found}",
+                            chapterParts.Count, originalChapterParts.Count);
+                        throw new InvalidOperationException("Cannot find all original chapters for merging");
+                    }
+
+                    // Merge the chapters using original file paths
                     var (mergedChapter, originalParts) = await chapterPartMerger.MergeChapterPartsAsync(
-                        chapterParts,
+                        originalChapterParts,
                         library.IngestPath,
                         library.IngestPath,
                         baseNumber,
                         cancellationToken);
+
+                    // Update the merged chapter to use the renamed series name
+                    FoundChapter firstRenamedPart = chapterParts.First();
+                    mergedChapter = mergedChapter with
+                    {
+                        Metadata = mergedChapter.Metadata with { Series = firstRenamedPart.Metadata.Series }
+                    };
 
                     // Find the original ProcessedChapterInfo for metadata
                     ProcessedChapterInfo? originalProcessedItem = processedItems.FirstOrDefault(p =>
