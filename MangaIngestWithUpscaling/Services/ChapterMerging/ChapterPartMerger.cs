@@ -209,7 +209,10 @@ public partial class ChapterPartMerger(
                 .Where(c => !excludeMergedChapterIds.Contains(c.Id))
                 .Select(c => new FoundChapter(
                     c.FileName,
-                    c.RelativePath,
+                    // For retroactive merging, we need just the filename since we're already in the series directory
+                    // The database RelativePath is from library root (e.g., "SeriesName/Ch 21.1.cbz")
+                    // But libraryPath is already the series directory, so we just need the filename
+                    Path.GetFileName(c.RelativePath),
                     ChapterStorageType.Cbz,
                     new ExtractedMetadata(seriesTitle, null, ExtractChapterNumber(c.FileName))))
                 .ToList();
@@ -251,6 +254,19 @@ public partial class ChapterPartMerger(
                             chapterParts.First().Metadata?.ChapterTitle ??
                             Path.GetFileNameWithoutExtension(chapterParts.First().RelativePath), baseNumber),
                         baseNumber);
+
+                    // Check if the merged file would already exist before attempting merge
+                    string potentialMergedFileName = GenerateMergedFileName(chapterParts.First(), baseNumber);
+                    string potentialMergedFilePath = Path.Combine(libraryPath, potentialMergedFileName);
+
+                    if (File.Exists(potentialMergedFilePath))
+                    {
+                        logger.LogWarning(
+                            "Skipping retroactive merge for base number {BaseNumber} because merged file {MergedFileName} already exists at {MergedFilePath}. " +
+                            "This likely means the merge was already completed in a previous operation.",
+                            baseNumber, potentialMergedFileName, potentialMergedFilePath);
+                        continue; // Skip this merge and continue with the next one
+                    }
 
                     // Merge the chapters
                     var (mergedChapter, originalParts) = await MergeChapterPartsAsync(
@@ -317,13 +333,22 @@ public partial class ChapterPartMerger(
         string mergedFileName = GenerateMergedFileName(chapterParts.First(), baseChapterNumber);
         string mergedFilePath = Path.Combine(outputPath, mergedFileName);
 
+        logger.LogInformation("Attempting to create merged file: {MergedFileName} at path: {MergedFilePath}",
+            mergedFileName, mergedFilePath);
+
         if (File.Exists(mergedFilePath))
         {
-            logger.LogWarning("Merge-target file {MergedFile} already exists, skipping merge", mergedFileName);
-            throw new InvalidOperationException($"Merge-target file '{mergedFileName}' already exists.");
-        }
+            logger.LogWarning("Merge-target file {MergedFile} already exists at {MergedFilePath}. " +
+                              "This may be from a previous merge operation. Skipping merge for safety.",
+                mergedFileName, mergedFilePath);
 
-        // Create the merged CBZ file
+            // Instead of throwing an exception, we should return an indication that this merge was skipped
+            // For now, we'll throw but with more context about where to find the file
+            throw new InvalidOperationException(
+                $"Merge-target file '{mergedFileName}' already exists at path: {mergedFilePath}. " +
+                $"This file likely exists from a previous merge operation. Check the library directory: {Path.GetDirectoryName(mergedFilePath)}");
+        } // Create the merged CBZ file
+
         using (ZipArchive mergedArchive = ZipFile.Open(mergedFilePath, ZipArchiveMode.Create))
         {
             int pageCounter = 0;

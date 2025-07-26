@@ -689,9 +689,13 @@ public partial class IngestProcessor(
                 .ToHashSetAsync(cancellationToken);
 
             // Process retroactive merging using the simplified approach
+            string seriesLibraryPath = Path.Combine(
+                library.NotUpscaledLibraryPath,
+                PathEscaper.EscapeFileName(seriesEntity.PrimaryTitle!));
+
             ChapterMergeResult mergeResult = await chapterPartMerger.ProcessRetroactiveMergingAsync(
                 seriesEntity.Chapters.ToList(),
-                library.NotUpscaledLibraryPath,
+                seriesLibraryPath,
                 seriesEntity.PrimaryTitle!,
                 allChapterNumbers,
                 mergedChapterIds,
@@ -719,7 +723,10 @@ public partial class IngestProcessor(
                     // Keep the first chapter record and update it to represent the merged chapter
                     Chapter primaryChapter = dbChaptersToUpdate.First();
                     primaryChapter.FileName = mergeInfo.MergedChapter.FileName;
-                    primaryChapter.RelativePath = mergeInfo.MergedChapter.RelativePath;
+
+                    // Calculate the correct relative path from the library root
+                    string mergedFilePath = Path.Combine(seriesLibraryPath, mergeInfo.MergedChapter.FileName);
+                    primaryChapter.RelativePath = Path.GetRelativePath(library.NotUpscaledLibraryPath, mergedFilePath);
 
                     // Create merge tracking record
                     var mergedChapterInfo = new MergedChapterInfo
