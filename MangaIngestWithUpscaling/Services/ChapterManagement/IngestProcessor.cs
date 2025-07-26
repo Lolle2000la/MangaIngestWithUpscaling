@@ -1,4 +1,5 @@
 ﻿using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
@@ -137,11 +138,19 @@ public partial class IngestProcessor(
                         ? originalPath
                         : Path.Combine(library.IngestPath, renamedChapter.RelativePath);
 
+                // Calculate the series directory path for merged chapter output
+                string seriesDirectoryPath = Path.Combine(
+                    library.NotUpscaledLibraryPath,
+                    PathEscaper.EscapeFileName(seriesEntity.PrimaryTitle!));
+
+                // Ensure the series directory exists
+                fileSystem.CreateDirectory(seriesDirectoryPath);
+
                 // Process chapter merging using the new simplified approach
                 mergeResult = await chapterPartMerger.ProcessChapterMergingAsync(
                     processedItems.Where(p => !p.IsUpscaled).Select(p => p.Renamed).ToList(),
                     library.IngestPath,
-                    library.IngestPath,
+                    seriesDirectoryPath, // Use series directory for merged chapter output
                     seriesEntity.PrimaryTitle!,
                     allChapterNumbers,
                     getActualFilePath,
@@ -365,18 +374,16 @@ public partial class IngestProcessor(
                     {
                         // Create chapter entity for the merged chapter
                         FoundChapter mergedChapter = mergeInfo.MergedChapter;
-                        string mergedTargetPath = Path.Combine(library.NotUpscaledLibraryPath,
-                            Path.GetRelativePath(library.IngestPath,
-                                Path.Combine(library.IngestPath, mergedChapter.RelativePath)));
-                        string mergedRelativeDbPath =
-                            Path.GetRelativePath(library.NotUpscaledLibraryPath, mergedTargetPath);
+                        string seriesDirectoryName = PathEscaper.EscapeFileName(series);
+                        string correctedRelativePath = Path.Combine(seriesDirectoryName, mergedChapter.FileName);
+                        string mergedTargetPath = Path.Combine(library.NotUpscaledLibraryPath, correctedRelativePath);
 
                         var mergedChapterEntity = new Chapter
                         {
                             FileName = mergedChapter.FileName,
                             Manga = seriesEntity,
                             MangaId = seriesEntity.Id,
-                            RelativePath = mergedRelativeDbPath,
+                            RelativePath = correctedRelativePath,
                             IsUpscaled = false
                         };
 
@@ -689,13 +696,9 @@ public partial class IngestProcessor(
                 .ToHashSetAsync(cancellationToken);
 
             // Process retroactive merging using the simplified approach
-            string seriesLibraryPath = Path.Combine(
-                library.NotUpscaledLibraryPath,
-                PathEscaper.EscapeFileName(seriesEntity.PrimaryTitle!));
-
             ChapterMergeResult mergeResult = await chapterPartMerger.ProcessRetroactiveMergingAsync(
                 seriesEntity.Chapters.ToList(),
-                seriesLibraryPath,
+                library.NotUpscaledLibraryPath,
                 seriesEntity.PrimaryTitle!,
                 allChapterNumbers,
                 mergedChapterIds,
@@ -710,6 +713,11 @@ public partial class IngestProcessor(
                 "Found {GroupCount} groups of existing chapter parts that were merged retroactively for series {SeriesTitle}",
                 mergeResult.MergeInformation.Count, seriesEntity.PrimaryTitle);
 
+            // Calculate series library path for upscaled handling
+            string seriesLibraryPath = Path.Combine(
+                library.NotUpscaledLibraryPath,
+                PathEscaper.EscapeFileName(seriesEntity.PrimaryTitle!));
+
             // Update database with merge results
             foreach (MergeInfo mergeInfo in mergeResult.MergeInformation)
             {
@@ -720,28 +728,28 @@ public partial class IngestProcessor(
 
                 if (dbChaptersToUpdate.Count == mergeInfo.OriginalParts.Count)
                 {
-                    // Keep the first chapter record and update it to represent the merged chapter
-                    Chapter primaryChapter = dbChaptersToUpdate.First();
-                    primaryChapter.FileName = mergeInfo.MergedChapter.FileName;
+                    // Check upscale compatibility before merging
+                    UpscaleCompatibilityResult compatibility = await CheckUpscaleCompatibilityForMerge(
+                        dbChaptersToUpdate, cancellationToken);
 
-                    // Calculate the correct relative path from the library root
-                    string mergedFilePath = Path.Combine(seriesLibraryPath, mergeInfo.MergedChapter.FileName);
-                    primaryChapter.RelativePath = Path.GetRelativePath(library.NotUpscaledLibraryPath, mergedFilePath);
-
-                    // Create merge tracking record
-                    var mergedChapterInfo = new MergedChapterInfo
+                    if (!compatibility.CanMerge)
                     {
-                        ChapterId = primaryChapter.Id,
-                        OriginalParts = mergeInfo.OriginalParts,
-                        MergedChapterNumber = mergeInfo.BaseChapterNumber,
-                        CreatedAt = DateTime.UtcNow
-                    };
+                        logger.LogInformation(
+                            "Skipping merge of chapter parts for {MergedFileName}: {Reason}",
+                            mergeInfo.MergedChapter.FileName, compatibility.Reason);
+                        continue;
+                    }
 
-                    dbContext.MergedChapterInfos.Add(mergedChapterInfo);
+                    // Handle upscaled chapter merging if applicable
+                    await HandleUpscaledChapterMerging(
+                        dbChaptersToUpdate, mergeInfo, library, seriesLibraryPath, cancellationToken);
 
-                    // Remove the other chapter records
-                    List<Chapter> chaptersToRemove = dbChaptersToUpdate.Skip(1).ToList();
-                    dbContext.Chapters.RemoveRange(chaptersToRemove);
+                    // Update database records
+                    UpdateDatabaseForRetroactiveMerge(dbChaptersToUpdate, mergeInfo, seriesLibraryPath, library);
+
+                    // Handle upscale task management
+                    await HandleUpscaleTaskManagement(
+                        dbChaptersToUpdate, mergeInfo, library, cancellationToken);
 
                     logger.LogInformation(
                         "Successfully merged {PartCount} existing chapter parts into {MergedFileName} for series {SeriesTitle}",
@@ -785,9 +793,207 @@ public partial class IngestProcessor(
         return null;
     }
 
+    /// <summary>
+    ///     Checks if chapters can be safely merged considering their upscale status by looking for pending/processing upscale
+    ///     tasks
+    /// </summary>
+    private async Task<UpscaleCompatibilityResult> CheckUpscaleCompatibilityForMerge(
+        List<Chapter> chapters,
+        CancellationToken cancellationToken)
+    {
+        // Check if any chapters have pending or in-progress upscale tasks
+        List<int> chapterIds = chapters.Select(c => c.Id).ToList();
+
+        var pendingTasks = await dbContext.PersistedTasks
+            .Where(pt => chapterIds.Contains(((UpscaleTask)pt.Data).ChapterId) &&
+                         pt.Data is UpscaleTask &&
+                         (pt.Status == PersistedTaskStatus.Pending || pt.Status == PersistedTaskStatus.Processing))
+            .Select(pt => new { ((UpscaleTask)pt.Data).ChapterId, pt.Status })
+            .ToListAsync(cancellationToken);
+
+        if (pendingTasks.Any())
+        {
+            List<Chapter> affectedChapters = chapters.Where(c => pendingTasks.Any(t => t.ChapterId == c.Id)).ToList();
+
+            return new UpscaleCompatibilityResult(
+                false,
+                $"Chapters have pending/processing upscale tasks: {string.Join(", ", affectedChapters.Select(c => c.FileName))}");
+        }
+
+        return new UpscaleCompatibilityResult(true);
+    }
+
+    /// <summary>
+    ///     Handles merging of upscaled counterparts if they exist and all parts are upscaled
+    /// </summary>
+    private async Task HandleUpscaledChapterMerging(
+        List<Chapter> originalChapters,
+        MergeInfo mergeInfo,
+        Library library,
+        string seriesLibraryPath,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrEmpty(library.UpscaledLibraryPath))
+        {
+            return; // No upscaled library configured
+        }
+
+        // Check if all original chapters have upscaled counterparts
+        string upscaledSeriesPath = Path.Combine(
+            library.UpscaledLibraryPath,
+            PathEscaper.EscapeFileName(mergeInfo.MergedChapter.Metadata.Series ?? "Unknown"));
+
+        var upscaledParts = new List<FoundChapter>();
+        bool allPartsHaveUpscaledVersions = true;
+
+        foreach (OriginalChapterPart originalPart in mergeInfo.OriginalParts)
+        {
+            string upscaledFilePath = Path.Combine(upscaledSeriesPath, originalPart.FileName);
+
+            if (File.Exists(upscaledFilePath))
+            {
+                upscaledParts.Add(new FoundChapter(
+                    originalPart.FileName,
+                    Path.GetRelativePath(library.UpscaledLibraryPath, upscaledFilePath),
+                    ChapterStorageType.Cbz,
+                    originalPart.Metadata));
+            }
+            else
+            {
+                allPartsHaveUpscaledVersions = false;
+                break;
+            }
+        }
+
+        if (!allPartsHaveUpscaledVersions)
+        {
+            logger.LogDebug(
+                "Not all chapter parts have upscaled versions for base number {BaseNumber}, skipping upscaled merge",
+                mergeInfo.BaseChapterNumber);
+            return;
+        }
+
+        // Perform the upscaled merge using the ChapterPartMerger directly
+        try
+        {
+            var (upscaledMergedChapter, upscaledOriginalParts) = await chapterPartMerger.MergeChapterPartsAsync(
+                upscaledParts,
+                upscaledSeriesPath,
+                upscaledSeriesPath,
+                mergeInfo.BaseChapterNumber,
+                mergeInfo.MergedChapter.Metadata,
+                null,
+                cancellationToken);
+
+            logger.LogInformation(
+                "Successfully merged {PartCount} upscaled chapter parts into {MergedFileName}",
+                upscaledParts.Count, upscaledMergedChapter.FileName);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex,
+                "Failed to merge upscaled chapter parts for base number {BaseNumber}",
+                mergeInfo.BaseChapterNumber);
+        }
+    }
+
+    /// <summary>
+    ///     Handles task queue management when chapters are merged
+    /// </summary>
+    private async Task HandleUpscaleTaskManagement(
+        List<Chapter> originalChapters,
+        MergeInfo mergeInfo,
+        Library library,
+        CancellationToken cancellationToken)
+    {
+        List<int> chapterIds = originalChapters.Select(c => c.Id).ToList();
+
+        // Remove any completed upscale tasks for the merged parts
+        List<PersistedTask> completedTasks = await dbContext.PersistedTasks
+            .Where(pt => chapterIds.Contains(((UpscaleTask)pt.Data).ChapterId) &&
+                         pt.Data is UpscaleTask &&
+                         pt.Status == PersistedTaskStatus.Completed)
+            .ToListAsync(cancellationToken);
+
+        if (completedTasks.Any())
+        {
+            dbContext.PersistedTasks.RemoveRange(completedTasks);
+            logger.LogDebug(
+                "Removed {TaskCount} completed upscale tasks for merged chapter parts",
+                completedTasks.Count);
+        }
+
+        // If library has upscaling enabled and merged chapter should be upscaled,
+        // queue an upscale task for the merged chapter
+        if (!string.IsNullOrEmpty(library.UpscaledLibraryPath) &&
+            originalChapters.Any(c => c.UpscalerProfile != null))
+        {
+            // Use the upscaler profile from the first chapter that has one
+            UpscalerProfile? profileToUse = originalChapters.First(c => c.UpscalerProfile != null).UpscalerProfile;
+            Chapter primaryChapter = originalChapters.First();
+
+            // Check if there's already an upscale task for the merged chapter
+            bool hasExistingTask = await dbContext.PersistedTasks
+                .AnyAsync(pt => ((UpscaleTask)pt.Data).ChapterId == primaryChapter.Id &&
+                                pt.Data is UpscaleTask &&
+                                pt.Status != PersistedTaskStatus.Failed, cancellationToken);
+
+            if (!hasExistingTask)
+            {
+                var upscaleTask = new UpscaleTask { ChapterId = primaryChapter.Id };
+
+                await taskQueue.EnqueueAsync(upscaleTask);
+
+                logger.LogDebug(
+                    "Queued upscale task for merged chapter {FileName}",
+                    mergeInfo.MergedChapter.FileName);
+            }
+        }
+    }
+
+    /// <summary>
+    ///     Updates the database records for a retroactive merge
+    /// </summary>
+    private void UpdateDatabaseForRetroactiveMerge(
+        List<Chapter> dbChaptersToUpdate,
+        MergeInfo mergeInfo,
+        string seriesLibraryPath,
+        Library library)
+    {
+        // Keep the first chapter record and update it to represent the merged chapter
+        Chapter primaryChapter = dbChaptersToUpdate.First();
+        primaryChapter.FileName = mergeInfo.MergedChapter.FileName;
+
+        // Calculate the correct relative path from the library root
+        string mergedFilePath = Path.Combine(seriesLibraryPath, mergeInfo.MergedChapter.FileName);
+        primaryChapter.RelativePath = Path.GetRelativePath(library.NotUpscaledLibraryPath, mergedFilePath);
+
+        // Create merge tracking record
+        var mergedChapterInfo = new MergedChapterInfo
+        {
+            ChapterId = primaryChapter.Id,
+            OriginalParts = mergeInfo.OriginalParts,
+            MergedChapterNumber = mergeInfo.BaseChapterNumber,
+            CreatedAt = DateTime.UtcNow
+        };
+
+        dbContext.MergedChapterInfos.Add(mergedChapterInfo);
+
+        // Remove the other chapter records
+        List<Chapter> chaptersToRemove = dbChaptersToUpdate.Skip(1).ToList();
+        dbContext.Chapters.RemoveRange(chaptersToRemove);
+    }
+
     private record ProcessedChapterInfo(
         FoundChapter Original,
         FoundChapter Renamed,
         bool IsUpscaled,
         UpscalerProfileJsonDto? UpscalerProfile);
+
+    /// <summary>
+    ///     Result of checking if chapters can be merged considering their upscale status
+    /// </summary>
+    private record UpscaleCompatibilityResult(
+        bool CanMerge,
+        string? Reason = null);
 }

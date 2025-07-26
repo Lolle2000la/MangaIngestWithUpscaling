@@ -1,4 +1,5 @@
 using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using System.IO.Compression;
@@ -204,14 +205,15 @@ public partial class ChapterPartMerger(
                 return new ChapterMergeResult(new List<FoundChapter>(), new List<MergeInfo>());
             }
 
+            // Calculate the series directory path within the library
+            string seriesDirectoryPath = Path.Combine(libraryPath, PathEscaper.EscapeFileName(seriesTitle));
+
             // Convert existing chapters to FoundChapter format for processing
             List<FoundChapter> chaptersForMerging = existingChapters
                 .Where(c => !excludeMergedChapterIds.Contains(c.Id))
                 .Select(c => new FoundChapter(
                     c.FileName,
-                    // For retroactive merging, we need just the filename since we're already in the series directory
-                    // The database RelativePath is from library root (e.g., "SeriesName/Ch 21.1.cbz")
-                    // But libraryPath is already the series directory, so we just need the filename
+                    // For retroactive merging, use just the filename since chapters are in the series directory
                     Path.GetFileName(c.RelativePath),
                     ChapterStorageType.Cbz,
                     new ExtractedMetadata(seriesTitle, null, ExtractChapterNumber(c.FileName))))
@@ -257,7 +259,7 @@ public partial class ChapterPartMerger(
 
                     // Check if the merged file would already exist before attempting merge
                     string potentialMergedFileName = GenerateMergedFileName(chapterParts.First(), baseNumber);
-                    string potentialMergedFilePath = Path.Combine(libraryPath, potentialMergedFileName);
+                    string potentialMergedFilePath = Path.Combine(seriesDirectoryPath, potentialMergedFileName);
 
                     if (File.Exists(potentialMergedFilePath))
                     {
@@ -268,17 +270,24 @@ public partial class ChapterPartMerger(
                         continue; // Skip this merge and continue with the next one
                     }
 
-                    // Merge the chapters
+                    // Merge the chapters - use seriesDirectoryPath for both reading and writing
                     var (mergedChapter, originalParts) = await MergeChapterPartsAsync(
                         chapterParts,
-                        libraryPath,
-                        libraryPath,
+                        seriesDirectoryPath,
+                        seriesDirectoryPath,
                         baseNumber,
                         targetMetadata,
                         null, // For retroactive merging, paths should be correct already
                         cancellationToken);
 
-                    mergeInformation.Add(new MergeInfo(mergedChapter, originalParts, baseNumber));
+                    // Fix the RelativePath to be relative to library root instead of series directory
+                    var correctedMergedChapter = new FoundChapter(
+                        mergedChapter.FileName,
+                        Path.Combine(PathEscaper.EscapeFileName(seriesTitle), mergedChapter.FileName),
+                        mergedChapter.StorageType,
+                        mergedChapter.Metadata);
+
+                    mergeInformation.Add(new MergeInfo(correctedMergedChapter, originalParts, baseNumber));
 
                     logger.LogInformation(
                         "Successfully merged {PartCount} existing chapter parts into {MergedFileName}",
