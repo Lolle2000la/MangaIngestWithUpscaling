@@ -3,8 +3,6 @@ using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
-using MangaIngestWithUpscaling.Shared.Services.FileSystem;
-using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Services.ChapterMerging;
@@ -13,8 +11,6 @@ namespace MangaIngestWithUpscaling.Services.ChapterMerging;
 public class ChapterMergeRevertService(
     ApplicationDbContext dbContext,
     IChapterPartMerger chapterPartMerger,
-    IMetadataHandlingService metadataHandling,
-    IFileSystem fileSystem,
     IChapterChangedNotifier chapterChangedNotifier,
     ILogger<ChapterMergeRevertService> logger) : IChapterMergeRevertService
 {

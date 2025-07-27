@@ -108,9 +108,9 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         builder.Entity<MergedChapterInfo>(entity =>
         {
             var comparer = new ValueComparer<List<OriginalChapterPart>>(
-                (a, b) => a.SequenceEqual(b),
-                a => a.Aggregate(0, (h, v) => HashCode.Combine(h, v.GetHashCode())),
-                a => a.ToList());
+                (a, b) => (a == null && b == null) || (a != null && b != null && a.SequenceEqual(b)),
+                a => a == null ? 0 : a.Aggregate(0, (h, v) => HashCode.Combine(h, v.GetHashCode())),
+                a => a == null ? new List<OriginalChapterPart>() : a.ToList());
 
             builder.Entity<MergedChapterInfo>()
                 .Property(m => m.OriginalParts)
