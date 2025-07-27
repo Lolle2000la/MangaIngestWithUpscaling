@@ -289,6 +289,34 @@ public partial class ChapterPartMerger(
 
                     mergeInformation.Add(new MergeInfo(correctedMergedChapter, originalParts, baseNumber));
 
+                    // Delete original chapter part files after successful merging
+                    foreach (FoundChapter part in chapterParts)
+                    {
+                        try
+                        {
+                            string partFilePath = Path.Combine(seriesDirectoryPath, part.RelativePath);
+                            if (File.Exists(partFilePath))
+                            {
+                                File.Delete(partFilePath);
+                                logger.LogInformation(
+                                    "Deleted original chapter part file during retroactive merge: {FilePath}",
+                                    partFilePath);
+                            }
+                            else
+                            {
+                                logger.LogWarning(
+                                    "Original chapter part file not found for deletion during retroactive merge: {FilePath}",
+                                    partFilePath);
+                            }
+                        }
+                        catch (Exception deleteEx)
+                        {
+                            logger.LogError(deleteEx,
+                                "Failed to delete original chapter part file during retroactive merge: {PartFileName}",
+                                part.FileName);
+                        }
+                    }
+
                     logger.LogInformation(
                         "Successfully merged {PartCount} existing chapter parts into {MergedFileName}",
                         chapterParts.Count, mergedChapter.FileName);

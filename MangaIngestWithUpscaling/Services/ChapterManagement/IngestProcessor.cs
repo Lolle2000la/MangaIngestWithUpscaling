@@ -887,6 +887,31 @@ public partial class IngestProcessor(
                 null,
                 cancellationToken);
 
+            // Delete original upscaled chapter part files after successful merging
+            foreach (OriginalChapterPart originalPart in mergeInfo.OriginalParts)
+            {
+                try
+                {
+                    string upscaledPartFilePath = Path.Combine(upscaledSeriesPath, originalPart.FileName);
+                    if (File.Exists(upscaledPartFilePath))
+                    {
+                        File.Delete(upscaledPartFilePath);
+                        logger.LogInformation("Deleted original upscaled chapter part file: {FilePath}",
+                            upscaledPartFilePath);
+                    }
+                    else
+                    {
+                        logger.LogWarning("Original upscaled chapter part file not found for deletion: {FilePath}",
+                            upscaledPartFilePath);
+                    }
+                }
+                catch (Exception deleteEx)
+                {
+                    logger.LogError(deleteEx, "Failed to delete original upscaled chapter part file: {PartFileName}",
+                        originalPart.FileName);
+                }
+            }
+
             logger.LogInformation(
                 "Successfully merged {PartCount} upscaled chapter parts into {MergedFileName}",
                 upscaledParts.Count, upscaledMergedChapter.FileName);
