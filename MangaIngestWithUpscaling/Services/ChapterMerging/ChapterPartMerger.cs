@@ -594,22 +594,7 @@ public partial class ChapterPartMerger(
 
     private string? ExtractChapterNumber(string fileName)
     {
-        // Try to extract chapter number from filename
-        Match match = ChapterNumberRegex().Match(fileName);
-
-        if (match.Success)
-        {
-            return match.Groups["num"].Value;
-        }
-
-        // Also try a simpler pattern that just looks for numbers
-        Match simpleMatch = Regex.Match(fileName, @"(\d+(?:\.\d+)?)");
-        if (simpleMatch.Success)
-        {
-            return simpleMatch.Groups[1].Value;
-        }
-
-        return null;
+        return ChapterNumberHelper.ExtractChapterNumber(fileName);
     }
 
     private string? ExtractChapterNumber(FoundChapter chapter)
@@ -623,7 +608,7 @@ public partial class ChapterPartMerger(
         // Try to extract from chapter title
         if (!string.IsNullOrEmpty(chapter.Metadata.ChapterTitle))
         {
-            Match match = ChapterNumberRegex().Match(chapter.Metadata.ChapterTitle);
+            Match match = ChapterNumberHelper.ChapterNumberRegex().Match(chapter.Metadata.ChapterTitle);
             if (match.Success)
             {
                 string num = match.Groups["num"].Value;
@@ -633,7 +618,7 @@ public partial class ChapterPartMerger(
         }
 
         // Try to extract from filename
-        Match fileMatch = ChapterNumberRegex().Match(chapter.FileName);
+        Match fileMatch = ChapterNumberHelper.ChapterNumberRegex().Match(chapter.FileName);
         if (fileMatch.Success)
         {
             string num = fileMatch.Groups["num"].Value;
@@ -682,7 +667,7 @@ public partial class ChapterPartMerger(
         string nameWithoutExtension = Path.GetFileNameWithoutExtension(firstPart.FileName);
 
         // Replace the chapter number in the filename with the base number
-        string baseFileName = ChapterNumberRegex().Replace(nameWithoutExtension,
+        string baseFileName = ChapterNumberHelper.ChapterNumberRegex().Replace(nameWithoutExtension,
             match => match.Value.Replace(match.Groups["num"].Value +
                                          (string.IsNullOrEmpty(match.Groups["subnum"].Value)
                                              ? ""
@@ -700,7 +685,7 @@ public partial class ChapterPartMerger(
         }
 
         // Replace the chapter number in the title with the base number
-        return ChapterNumberRegex().Replace(originalTitle,
+        return ChapterNumberHelper.ChapterNumberRegex().Replace(originalTitle,
             match => match.Value.Replace(match.Groups["num"].Value +
                                          (string.IsNullOrEmpty(match.Groups["subnum"].Value)
                                              ? ""
@@ -833,37 +818,6 @@ public partial class ChapterPartMerger(
         return extension is ".jpg" or ".jpeg" or ".png" or ".gif" or ".bmp" or ".webp" or ".avif";
     }
 
-    [GeneratedRegex(
-        @"
-               # Group 1: Latin, Cyrillic & similar alphabets
-               (?:
-                 # Core English, German, Russian
-                 ch(?:apter)?\.? | kapitel | glava | file | ep(?:isode|\.)?
-
-                 # Romance Languages
-                 | cap(?:[íi]tulo|itol|\.)? | chap(?:itre|\.)?
-
-                 # Eastern European Languages
-                 | rozdział | kapitola | fejezet | poglavlje | розділ
-
-                 # South-East Asian Languages (Latin script)
-                 | chương | bab | kabanata
-               )
-               \s*(?<num>\d+)(?:[.-](?<subnum>\d+))?
-
-
-               # Group 2: CJK (Chinese, Japanese, Korean)
-               | (?:第|제)
-               \s*(?<num>\d+)(?:[.-](?<subnum>\d+))?
-               \s*(?:話|章|话|화|장)?
-
-
-               # Group 3: Other SEA Scripts (Thai, Burmese)
-               | (?:บทที่|အခန်း)
-               \s*(?<num>\d+)(?:[.-](?<subnum>\d+))?
-               ",
-        RegexOptions.IgnoreCase | RegexOptions.IgnorePatternWhitespace)]
-    private static partial Regex ChapterNumberRegex();
 }
 
 /// <summary>

@@ -114,14 +114,14 @@ public partial class IngestProcessor(
             {
                 // Get all chapter numbers including existing ones and new ones
                 HashSet<string> existingChapterNumbers = seriesEntity.Chapters
-                    .Select(c => ExtractChapterNumber(c.FileName))
+                    .Select(c => ChapterNumberHelper.ExtractChapterNumber(c.FileName))
                     .Where(n => n != null)
                     .Cast<string>()
                     .ToHashSet();
 
                 HashSet<string> newChapterNumbers = processedItems
                     .Where(p => !p.IsUpscaled)
-                    .Select(p => ExtractChapterNumber(p.Renamed.FileName))
+                    .Select(p => ChapterNumberHelper.ExtractChapterNumber(p.Renamed.FileName))
                     .Where(n => n != null)
                     .Cast<string>()
                     .ToHashSet();
