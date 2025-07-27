@@ -387,12 +387,14 @@ public partial class IngestProcessor(
                             IsUpscaled = false
                         };
 
-                        // The merged chapter is already in the library.IngestPath, move it to the final location
-                        string mergedSourcePath = Path.Combine(library.IngestPath, mergedChapter.RelativePath);
-                        if (File.Exists(mergedSourcePath))
+                        // Verify that the merged chapter file exists at the target location
+                        if (!File.Exists(mergedTargetPath))
                         {
-                            fileSystem.Move(mergedSourcePath, mergedTargetPath);
+                            throw new InvalidOperationException(
+                                $"Merged chapter file {mergedChapter.FileName} was not found at expected location: {mergedTargetPath}");
                         }
+
+                        logger.LogDebug("Merged chapter file verified at: {MergedTargetPath}", mergedTargetPath);
 
                         seriesEntity.Chapters.Add(mergedChapterEntity);
 

@@ -340,101 +340,143 @@ public partial class ChapterPartMerger(
 
         var originalParts = new List<OriginalChapterPart>();
         string mergedFileName = GenerateMergedFileName(chapterParts.First(), baseChapterNumber);
-        string mergedFilePath = Path.Combine(outputPath, mergedFileName);
+        string finalMergedFilePath = Path.Combine(outputPath, mergedFileName);
 
         logger.LogInformation("Attempting to create merged file: {MergedFileName} at path: {MergedFilePath}",
-            mergedFileName, mergedFilePath);
+            mergedFileName, finalMergedFilePath);
 
-        if (File.Exists(mergedFilePath))
+        if (File.Exists(finalMergedFilePath))
         {
             logger.LogWarning("Merge-target file {MergedFile} already exists at {MergedFilePath}. " +
                               "This may be from a previous merge operation. Skipping merge for safety.",
-                mergedFileName, mergedFilePath);
+                mergedFileName, finalMergedFilePath);
 
             // Instead of throwing an exception, we should return an indication that this merge was skipped
             // For now, we'll throw but with more context about where to find the file
             throw new InvalidOperationException(
-                $"Merge-target file '{mergedFileName}' already exists at path: {mergedFilePath}. " +
-                $"This file likely exists from a previous merge operation. Check the library directory: {Path.GetDirectoryName(mergedFilePath)}");
-        } // Create the merged CBZ file
-
-        using (ZipArchive mergedArchive = ZipFile.Open(mergedFilePath, ZipArchiveMode.Create))
-        {
-            int pageCounter = 0;
-
-            foreach (FoundChapter part in sortedParts)
-            {
-                // Use the custom path function if provided, otherwise use the default path construction
-                string partPath = getActualFilePath?.Invoke(part) ?? Path.Combine(basePath, part.RelativePath);
-                var pageNames = new List<string>();
-                int startPageIndex = pageCounter;
-
-                // Read pages from the part's CBZ file
-                using (ZipArchive partArchive = ZipFile.OpenRead(partPath))
-                {
-                    // Get image entries, sorted by name for consistent ordering
-                    List<ZipArchiveEntry> imageEntries = partArchive.Entries
-                        .Where(e => IsImageFile(e.Name) && !e.FullName.EndsWith("/"))
-                        .OrderBy(e => e.Name, new NaturalStringComparer())
-                        .ToList();
-
-                    foreach (ZipArchiveEntry entry in imageEntries)
-                    {
-                        // Generate new page name with proper padding
-                        string newPageName = $"{pageCounter:D4}{Path.GetExtension(entry.Name)}";
-                        pageNames.Add(entry.Name); // Store original name
-
-                        // Copy the image to the merged archive
-                        ZipArchiveEntry newEntry = mergedArchive.CreateEntry(newPageName);
-                        using (Stream originalStream = entry.Open())
-                        using (Stream newStream = newEntry.Open())
-                        {
-                            await originalStream.CopyToAsync(newStream, cancellationToken);
-                        }
-
-                        pageCounter++;
-                    }
-
-                    // Copy ComicInfo.xml if it exists (we'll update it later)
-                    ZipArchiveEntry? comicInfoEntry = partArchive.GetEntry("ComicInfo.xml");
-                    if (comicInfoEntry != null && originalParts.Count == 0) // Only copy from first part
-                    {
-                        ZipArchiveEntry newComicInfo = mergedArchive.CreateEntry("ComicInfo.xml");
-                        using (Stream originalStream = comicInfoEntry.Open())
-                        using (Stream newStream = newComicInfo.Open())
-                        {
-                            await originalStream.CopyToAsync(newStream, cancellationToken);
-                        }
-                    }
-                }
-
-                // Store original part information
-                string chapterNumber = ExtractChapterNumber(part) ?? baseChapterNumber;
-                originalParts.Add(new OriginalChapterPart
-                {
-                    FileName = part.FileName,
-                    ChapterNumber = chapterNumber,
-                    Metadata = part.Metadata,
-                    PageNames = pageNames,
-                    StartPageIndex = startPageIndex,
-                    EndPageIndex = pageCounter - 1
-                });
-            }
+                $"Merge-target file '{mergedFileName}' already exists at path: {finalMergedFilePath}. " +
+                $"This file likely exists from a previous merge operation. Check the library directory: {Path.GetDirectoryName(finalMergedFilePath)}");
         }
 
-        // Update the merged CBZ's ComicInfo.xml with the target metadata
-        metadataHandling.WriteComicInfo(mergedFilePath, targetMetadata);
+        // Create temporary directory for merge operation
+        string tempDirectory = Path.Combine(Path.GetTempPath(), $"manga_merge_{Guid.NewGuid():N}");
+        string tempMergedFilePath = Path.Combine(tempDirectory, mergedFileName);
 
-        var mergedChapter = new FoundChapter(
-            mergedFileName,
-            Path.GetRelativePath(outputPath, mergedFilePath),
-            ChapterStorageType.Cbz,
-            targetMetadata);
+        try
+        {
+            Directory.CreateDirectory(tempDirectory);
+            logger.LogDebug("Created temporary merge directory: {TempDirectory}", tempDirectory);
 
-        logger.LogInformation("Merged {PartCount} chapter parts into {MergedFile}",
-            sortedParts.Count, mergedFileName);
+            // Create the merged CBZ file in temporary location
+            using (ZipArchive mergedArchive = ZipFile.Open(tempMergedFilePath, ZipArchiveMode.Create))
+            {
+                int pageCounter = 0;
 
-        return (mergedChapter, originalParts);
+                foreach (FoundChapter part in sortedParts)
+                {
+                    // Use the custom path function if provided, otherwise use the default path construction
+                    string partPath = getActualFilePath?.Invoke(part) ?? Path.Combine(basePath, part.RelativePath);
+                    var pageNames = new List<string>();
+                    int startPageIndex = pageCounter;
+
+                    // Read pages from the part's CBZ file
+                    using (ZipArchive partArchive = ZipFile.OpenRead(partPath))
+                    {
+                        // Get image entries, sorted by name for consistent ordering
+                        List<ZipArchiveEntry> imageEntries = partArchive.Entries
+                            .Where(e => IsImageFile(e.Name) && !e.FullName.EndsWith("/"))
+                            .OrderBy(e => e.Name, new NaturalStringComparer())
+                            .ToList();
+
+                        foreach (ZipArchiveEntry entry in imageEntries)
+                        {
+                            // Generate new page name with proper padding
+                            string newPageName = $"{pageCounter:D4}{Path.GetExtension(entry.Name)}";
+                            pageNames.Add(entry.Name); // Store original name
+
+                            // Copy the image to the merged archive
+                            ZipArchiveEntry newEntry = mergedArchive.CreateEntry(newPageName);
+                            using (Stream originalStream = entry.Open())
+                            using (Stream newStream = newEntry.Open())
+                            {
+                                await originalStream.CopyToAsync(newStream, cancellationToken);
+                            }
+
+                            pageCounter++;
+                        }
+
+                        // Copy ComicInfo.xml if it exists (we'll update it later)
+                        ZipArchiveEntry? comicInfoEntry = partArchive.GetEntry("ComicInfo.xml");
+                        if (comicInfoEntry != null && originalParts.Count == 0) // Only copy from first part
+                        {
+                            ZipArchiveEntry newComicInfo = mergedArchive.CreateEntry("ComicInfo.xml");
+                            using (Stream originalStream = comicInfoEntry.Open())
+                            using (Stream newStream = newComicInfo.Open())
+                            {
+                                await originalStream.CopyToAsync(newStream, cancellationToken);
+                            }
+                        }
+                    }
+
+                    // Store original part information
+                    string chapterNumber = ExtractChapterNumber(part) ?? baseChapterNumber;
+                    originalParts.Add(new OriginalChapterPart
+                    {
+                        FileName = part.FileName,
+                        ChapterNumber = chapterNumber,
+                        Metadata = part.Metadata,
+                        PageNames = pageNames,
+                        StartPageIndex = startPageIndex,
+                        EndPageIndex = pageCounter - 1
+                    });
+                }
+            }
+
+            // Update the merged CBZ's ComicInfo.xml with the target metadata
+            metadataHandling.WriteComicInfo(tempMergedFilePath, targetMetadata);
+
+            // Ensure the output directory exists
+            Directory.CreateDirectory(outputPath);
+
+            // Move the successfully created file from temp to final location
+            File.Move(tempMergedFilePath, finalMergedFilePath);
+            logger.LogDebug("Moved merged file from temporary location to final path: {FinalPath}",
+                finalMergedFilePath);
+
+            var mergedChapter = new FoundChapter(
+                mergedFileName,
+                Path.GetRelativePath(outputPath, finalMergedFilePath),
+                ChapterStorageType.Cbz,
+                targetMetadata);
+
+            logger.LogInformation("Merged {PartCount} chapter parts into {MergedFile}",
+                sortedParts.Count, mergedFileName);
+
+            return (mergedChapter, originalParts);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to merge chapter parts into {MergedFileName}. Cleaning up temporary files.",
+                mergedFileName);
+            throw;
+        }
+        finally
+        {
+            // Clean up temporary directory and any files that may have been created
+            try
+            {
+                if (Directory.Exists(tempDirectory))
+                {
+                    Directory.Delete(tempDirectory, true);
+                    logger.LogDebug("Cleaned up temporary merge directory: {TempDirectory}", tempDirectory);
+                }
+            }
+            catch (Exception cleanupEx)
+            {
+                logger.LogWarning(cleanupEx, "Failed to clean up temporary merge directory: {TempDirectory}",
+                    tempDirectory);
+            }
+        }
     }
 
     public async Task<List<FoundChapter>> RestoreChapterPartsAsync(
