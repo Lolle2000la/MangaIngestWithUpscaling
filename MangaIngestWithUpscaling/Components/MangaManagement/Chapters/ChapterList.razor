@@ -4,6 +4,7 @@
 @using MangaIngestWithUpscaling.Helpers
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
+@using MangaIngestWithUpscaling.Services.ChapterMerging
 @using MangaIngestWithUpscaling.Services.Integrations
 @using MangaIngestWithUpscaling.Services.LibraryIntegrity
 @using MangaIngestWithUpscaling.Services.MetadataHandling
@@ -19,6 +20,7 @@
 @inject ILibraryIntegrityChecker LibraryIntegrityChecker
 @inject IFileSystem FileSystem
 @inject IChapterChangedNotifier ChapterChangedNotifier
+@inject IChapterMergeRevertService ChapterMergeRevertService
 
 <MudTable T="ChapterItem" @bind-SelectedItems="selectedChapters"
           Items="@chapterItems"
@@ -47,8 +49,15 @@
                        Color="Color.Secondary"
                        Variant="Variant.Text"
                        Disabled="selectedChapters.Count == 0 || !selectedChapters.Any(c => c.Chapter.IsUpscaled)"
-                       OnClick="@(async () => await DeleteSelectedUpscaled())">
+                       OnClick="@DeleteSelectedUpscaled">
                 Delete Upscaled Selected
+            </MudButton>
+            <MudButton StartIcon="@Icons.Material.Filled.Undo"
+                       Color="Color.Warning"
+                       Variant="Variant.Text"
+                       Disabled="selectedChapters.Count == 0 || !selectedChapters.Any(c => c.IsMerged)"
+                       OnClick="@RevertSelectedMergedChapters">
+                Revert Selected Merged
             </MudButton>
         </MudStack>
     </ToolBarContent>
@@ -60,7 +69,18 @@
         <MudTh>Actions</MudTh>
     </HeaderContent>
     <RowTemplate>
-        <MudTd DataLabel="Chapter Title">@(context.ExtractedMetadata?.ChapterTitle ?? "N/A")</MudTd>
+        <MudTd DataLabel="Chapter Title">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                <MudText>@(context.ExtractedMetadata?.ChapterTitle ?? "N/A")</MudText>
+                @if (context.IsMerged)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Filled">
+                        <MudIcon Icon="@Icons.Material.Filled.CallMerge" Size="Size.Small"/>
+                        Merged
+                    </MudChip>
+                }
+            </MudStack>
+        </MudTd>
         <MudTd DataLabel="Chapter Path">@context.Chapter.RelativePath</MudTd>
         <MudTd DataLabel="Upscaled">
             @context.Chapter.IsUpscaled
@@ -83,15 +103,33 @@
             @(context.Chapter.UpscalerProfile?.Deleted == true ? $"{context.Chapter.UpscalerProfile.Name} (old)" : context.Chapter.UpscalerProfile?.Name)
         </MudTd>
         <MudTd DataLabel="Actions">
-            <MudIconButton Icon="@Icons.Material.Filled.Delete"
-                           Color="Color.Error" Variant="Variant.Text"
-                           OnClick="@(() => DeleteChapterConfirm(context.Chapter))"
-                           title="Delete this chapter"/>
+            <MudStack Row="true" Spacing="1">
+                @if (context.IsMerged)
+                {
+                    <MudIconButton Icon="@Icons.Material.Filled.Undo"
+                                   Color="Color.Warning" Variant="Variant.Text"
+                                   OnClick="@(() => RevertMergedChapterConfirm(context.Chapter))"
+                                   title="Revert this merged chapter back to individual parts"/>
+                }
+                <MudIconButton Icon="@Icons.Material.Filled.Delete"
+                               Color="Color.Error" Variant="Variant.Text"
+                               OnClick="@(() => DeleteChapterConfirm(context.Chapter))"
+                               title="Delete this chapter"/>
+            </MudStack>
         </MudTd>
     </RowTemplate>
     <RowEditingTemplate>
         <MudTd DataLabel="Chapter Title">
-            <MudInput @bind-Value="context.NewTitle"/>
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
+                <MudInput @bind-Value="context.NewTitle"/>
+                @if (context.IsMerged)
+                {
+                    <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Filled">
+                        <MudIcon Icon="@Icons.Material.Filled.CallMerge" Size="Size.Small"/>
+                        Merged
+                    </MudChip>
+                }
+            </MudStack>
         </MudTd>
         <MudTd DataLabel="Chapter Path">
             <MudInput @bind-Value="context.NewFileName" Label="Filename" HelperText="Filename"/>
@@ -167,12 +205,82 @@
         }
     }
 
+    private async Task RevertSelectedMergedChapters()
+    {
+        var mergedChapters = selectedChapters.Where(c => c.IsMerged).ToList();
+        var result = await DialogService.ShowMessageBox(
+            "Revert Selected Merged Chapters",
+            $"Are you sure you want to revert {mergedChapters.Count} merged chapters back to their original parts? This will delete the merged chapters and restore the individual parts.",
+            "Yes",
+            cancelText: "No");
+
+        if (result == true)
+        {
+            foreach (var chapterItem in mergedChapters)
+            {
+                await RevertMergedChapter(chapterItem.Chapter);
+            }
+        }
+    }
+
     private async Task DeleteChapterConfirm(Chapter chapter)
     {
         var result = await DialogService.ShowMessageBox("Delete Chapter", "Are you sure you want to delete this chapter?", yesText: "Yes", cancelText: "No");
         if (result == true)
         {
             await DeleteChapter(chapter);
+        }
+    }
+
+    private async Task RevertMergedChapterConfirm(Chapter chapter)
+    {
+        var result = await DialogService.ShowMessageBox(
+            "Revert Merged Chapter",
+            "Are you sure you want to revert this merged chapter back to its original parts? This will delete the merged chapter and restore the individual parts.",
+            "Yes",
+            cancelText: "No");
+
+        if (result == true)
+        {
+            await RevertMergedChapter(chapter);
+        }
+    }
+
+    private async Task RevertMergedChapter(Chapter chapter)
+    {
+        try
+        {
+            var restoredChapters = await ChapterMergeRevertService.RevertMergedChapterAsync(chapter);
+
+            // Remove the merged chapter from the UI
+            var chapterItem = chapterItems.FirstOrDefault(ci => ci.Chapter.Id == chapter.Id);
+            if (chapterItem != null)
+            {
+                chapters.Remove(chapterItem);
+            }
+
+            // Add the restored chapters to the UI
+            foreach (var restoredChapter in restoredChapters)
+            {
+                var extractedMetadata = MetadataHandler.GetSeriesAndTitleFromComicInfo(
+                    Path.Combine(Manga.Library.NotUpscaledLibraryPath, restoredChapter.RelativePath));
+
+                chapters.Add(new ChapterItem
+                {
+                    Chapter = restoredChapter,
+                    ExtractedMetadata = extractedMetadata,
+                    NewTitle = extractedMetadata?.ChapterTitle ?? string.Empty,
+                    NewFileName = Path.GetFileNameWithoutExtension(restoredChapter.FileName),
+                    IsMerged = false // Restored chapters are not merged
+                });
+            }
+
+            Snackbar.Add($"Successfully reverted merged chapter and restored {restoredChapters.Count} individual parts.", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to revert merged chapter {ChapterId}", chapter.Id);
+            Snackbar.Add("Failed to revert merged chapter. Check the logs for more information.", Severity.Error);
         }
     }
 
@@ -484,12 +592,17 @@
 
                 var extractedMetadata = MetadataHandler.GetSeriesAndTitleFromComicInfo(Path.Combine(Manga.Library.NotUpscaledLibraryPath, chapter.RelativePath));
                 chapter.UpscalerProfile = await loadProfile;
+
+                // Check if this chapter is a merged chapter
+                var isMerged = await ChapterMergeRevertService.CanRevertChapterAsync(chapter);
+
                 chapters.Add(new ChapterItem
                 {
                     Chapter = chapter,
                     ExtractedMetadata = extractedMetadata,
                     NewTitle = extractedMetadata?.ChapterTitle ?? string.Empty,
-                    NewFileName = Path.GetFileNameWithoutExtension(chapter.FileName)
+                    NewFileName = Path.GetFileNameWithoutExtension(chapter.FileName),
+                    IsMerged = isMerged
                 });
             }
             catch (Exception e)
@@ -510,6 +623,7 @@
         public ExtractedMetadata? ExtractedMetadata { get; set; }
         public required string NewTitle { get; set; }
         public required string NewFileName { get; set; }
+        public bool IsMerged { get; set; }
     }
 
 }

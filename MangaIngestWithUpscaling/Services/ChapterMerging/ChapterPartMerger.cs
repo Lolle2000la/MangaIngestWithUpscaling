@@ -547,12 +547,8 @@ public partial class ChapterPartMerger(
                         }
                     }
 
-                    // Create ComicInfo.xml with original metadata
-                    ZipArchiveEntry comicInfoEntry = partArchive.CreateEntry("ComicInfo.xml");
-                    using (Stream stream = comicInfoEntry.Open())
-                    {
-                        metadataHandling.WriteComicInfo(partPath, originalPart.Metadata);
-                    }
+                    // Create ComicInfo.xml with original metadata using the metadata service
+                    metadataHandling.WriteComicInfo(partArchive, originalPart.Metadata);
                 }
 
                 restoredChapters.Add(new FoundChapter(
