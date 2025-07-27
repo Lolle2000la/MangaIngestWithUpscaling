@@ -190,7 +190,7 @@ public partial class ChapterPartMerger(
         }
     }
 
-    public async Task<ChapterMergeResult> ProcessRetroactiveMergingAsync(
+    public async Task<ChapterMergeResult> ProcessExistingChapterPartsAsync(
         List<Chapter> existingChapters,
         string libraryPath,
         string seriesTitle,
@@ -213,7 +213,7 @@ public partial class ChapterPartMerger(
                 .Where(c => !excludeMergedChapterIds.Contains(c.Id))
                 .Select(c => new FoundChapter(
                     c.FileName,
-                    // For retroactive merging, use just the filename since chapters are in the series directory
+                    // For existing chapter merging, use just the filename since chapters are in the series directory
                     Path.GetFileName(c.RelativePath),
                     ChapterStorageType.Cbz,
                     new ExtractedMetadata(seriesTitle, null, ExtractChapterNumber(c.FileName))))
@@ -237,7 +237,7 @@ public partial class ChapterPartMerger(
             var mergeInformation = new List<MergeInfo>();
 
             logger.LogInformation(
-                "Found {GroupCount} groups of existing chapter parts for retroactive merging",
+                "Found {GroupCount} groups of existing chapter parts for merging",
                 chaptersToMerge.Count);
 
             // Process each group for merging
@@ -246,7 +246,7 @@ public partial class ChapterPartMerger(
                 try
                 {
                     logger.LogInformation(
-                        "Retroactively merging {PartCount} existing chapter parts for base number {BaseNumber}",
+                        "Merging {PartCount} existing chapter parts for base number {BaseNumber}",
                         chapterParts.Count, baseNumber);
 
                     // Create target metadata for merged chapter
@@ -264,7 +264,7 @@ public partial class ChapterPartMerger(
                     if (File.Exists(potentialMergedFilePath))
                     {
                         logger.LogWarning(
-                            "Skipping retroactive merge for base number {BaseNumber} because merged file {MergedFileName} already exists at {MergedFilePath}. " +
+                            "Skipping merge for base number {BaseNumber} because merged file {MergedFileName} already exists at {MergedFilePath}. " +
                             "This likely means the merge was already completed in a previous operation.",
                             baseNumber, potentialMergedFileName, potentialMergedFilePath);
                         continue; // Skip this merge and continue with the next one
@@ -277,7 +277,7 @@ public partial class ChapterPartMerger(
                         seriesDirectoryPath,
                         baseNumber,
                         targetMetadata,
-                        null, // For retroactive merging, paths should be correct already
+                        null, // For existing chapter merging, paths should be correct already
                         cancellationToken);
 
                     // Fix the RelativePath to be relative to library root instead of series directory
@@ -299,20 +299,20 @@ public partial class ChapterPartMerger(
                             {
                                 File.Delete(partFilePath);
                                 logger.LogInformation(
-                                    "Deleted original chapter part file during retroactive merge: {FilePath}",
+                                    "Deleted original chapter part file during merge: {FilePath}",
                                     partFilePath);
                             }
                             else
                             {
                                 logger.LogWarning(
-                                    "Original chapter part file not found for deletion during retroactive merge: {FilePath}",
+                                    "Original chapter part file not found for deletion during merge: {FilePath}",
                                     partFilePath);
                             }
                         }
                         catch (Exception deleteEx)
                         {
                             logger.LogError(deleteEx,
-                                "Failed to delete original chapter part file during retroactive merge: {PartFileName}",
+                                "Failed to delete original chapter part file during merge: {PartFileName}",
                                 part.FileName);
                         }
                     }
@@ -324,7 +324,7 @@ public partial class ChapterPartMerger(
                 catch (Exception ex)
                 {
                     logger.LogError(ex,
-                        "Failed to retroactively merge existing chapter parts for base number {BaseNumber}",
+                        "Failed to merge existing chapter parts for base number {BaseNumber}",
                         baseNumber);
                 }
             }
@@ -333,7 +333,7 @@ public partial class ChapterPartMerger(
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Error during retroactive chapter merging");
+            logger.LogError(ex, "Error during existing chapter merging");
             return new ChapterMergeResult(new List<FoundChapter>(), new List<MergeInfo>());
         }
     }
@@ -817,7 +817,6 @@ public partial class ChapterPartMerger(
         string extension = Path.GetExtension(fileName).ToLowerInvariant();
         return extension is ".jpg" or ".jpeg" or ".png" or ".gif" or ".bmp" or ".webp" or ".avif";
     }
-
 }
 
 /// <summary>

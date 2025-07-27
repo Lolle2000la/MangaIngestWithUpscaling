@@ -449,7 +449,7 @@ public partial class IngestProcessor(
         // Check for existing chapter parts that can now be merged retroactively
         foreach (Manga seriesEntity in processedSeriesEntities)
         {
-            await chapterMergeCoordinator.CheckAndMergeRetroactiveChapterPartsAsync(seriesEntity, cancellationToken);
+            await chapterMergeCoordinator.ProcessExistingChapterPartsForMergingAsync(seriesEntity, cancellationToken);
         }
 
         logger.LogInformation("Scanned {seriesCount} series in library {libraryName}. Cleaning.",

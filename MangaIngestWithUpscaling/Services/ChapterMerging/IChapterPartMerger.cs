@@ -50,16 +50,18 @@ public interface IChapterPartMerger
         CancellationToken cancellationToken = default);
 
     /// <summary>
-    ///     Processes existing chapters in a library for retroactive merging
+    /// Processes existing chapters from the database to identify and merge chapter parts.
+    /// This method analyzes chapters that are already stored in the library to find
+    /// groups of chapter parts that can be merged together (e.g., Chapter 5.1, 5.2, 5.3).
     /// </summary>
     /// <param name="existingChapters">List of existing chapters from database</param>
     /// <param name="libraryPath">Path to the library where chapters are stored</param>
     /// <param name="seriesTitle">The series title</param>
     /// <param name="existingChapterNumbers">Set of all existing chapter numbers</param>
-    /// <param name="excludeMergedChapterIds">Set of chapter IDs that are already merged</param>
+    /// <param name="excludeMergedChapterIds">Set of chapter IDs that are already merged and should be skipped</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Result containing merge information for database updates</returns>
-    Task<ChapterMergeResult> ProcessRetroactiveMergingAsync(
+    Task<ChapterMergeResult> ProcessExistingChapterPartsAsync(
         List<Chapter> existingChapters,
         string libraryPath,
         string seriesTitle,
