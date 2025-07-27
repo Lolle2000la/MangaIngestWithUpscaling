@@ -806,16 +806,28 @@ public partial class IngestProcessor(
         // Check if any chapters have pending or in-progress upscale tasks
         List<int> chapterIds = chapters.Select(c => c.Id).ToList();
 
-        var pendingTasks = await dbContext.PersistedTasks
-            .Where(pt => chapterIds.Contains(((UpscaleTask)pt.Data).ChapterId) &&
-                         pt.Data is UpscaleTask &&
-                         (pt.Status == PersistedTaskStatus.Pending || pt.Status == PersistedTaskStatus.Processing))
-            .Select(pt => new { ((UpscaleTask)pt.Data).ChapterId, pt.Status })
-            .ToListAsync(cancellationToken);
+        var pendingTasks = new List<PersistedTask>();
+
+        // Use raw SQL to query JSON data for each chapter ID
+        foreach (int chapterId in chapterIds)
+        {
+            List<PersistedTask> tasks = await dbContext.PersistedTasks
+                .FromSql(
+                    $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(UpscaleTask)} AND Data->>'$.ChapterId' = {chapterId} AND (Status = {(int)PersistedTaskStatus.Pending} OR Status = {(int)PersistedTaskStatus.Processing})")
+                .ToListAsync(cancellationToken);
+
+            pendingTasks.AddRange(tasks);
+        }
 
         if (pendingTasks.Any())
         {
-            List<Chapter> affectedChapters = chapters.Where(c => pendingTasks.Any(t => t.ChapterId == c.Id)).ToList();
+            // Extract chapter IDs from the task data for comparison
+            HashSet<int> taskChapterIds = pendingTasks
+                .Where(pt => pt.Data is UpscaleTask)
+                .Select(pt => ((UpscaleTask)pt.Data).ChapterId)
+                .ToHashSet();
+
+            List<Chapter> affectedChapters = chapters.Where(c => taskChapterIds.Contains(c.Id)).ToList();
 
             return new UpscaleCompatibilityResult(
                 false,
@@ -880,8 +892,8 @@ public partial class IngestProcessor(
         {
             var (upscaledMergedChapter, upscaledOriginalParts) = await chapterPartMerger.MergeChapterPartsAsync(
                 upscaledParts,
-                upscaledSeriesPath,
-                upscaledSeriesPath,
+                library.UpscaledLibraryPath, // Base path where the relative paths are relative to
+                upscaledSeriesPath, // Output path where the merged chapter should be created
                 mergeInfo.BaseChapterNumber,
                 mergeInfo.MergedChapter.Metadata,
                 null,
@@ -936,11 +948,18 @@ public partial class IngestProcessor(
         List<int> chapterIds = originalChapters.Select(c => c.Id).ToList();
 
         // Remove any completed upscale tasks for the merged parts
-        List<PersistedTask> completedTasks = await dbContext.PersistedTasks
-            .Where(pt => chapterIds.Contains(((UpscaleTask)pt.Data).ChapterId) &&
-                         pt.Data is UpscaleTask &&
-                         pt.Status == PersistedTaskStatus.Completed)
-            .ToListAsync(cancellationToken);
+        var completedTasks = new List<PersistedTask>();
+
+        // Use raw SQL to query JSON data for each chapter ID
+        foreach (int chapterId in chapterIds)
+        {
+            List<PersistedTask> tasks = await dbContext.PersistedTasks
+                .FromSql(
+                    $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(UpscaleTask)} AND Data->>'$.ChapterId' = {chapterId} AND Status = {(int)PersistedTaskStatus.Completed}")
+                .ToListAsync(cancellationToken);
+
+            completedTasks.AddRange(tasks);
+        }
 
         if (completedTasks.Any())
         {
@@ -960,10 +979,12 @@ public partial class IngestProcessor(
             Chapter primaryChapter = originalChapters.First();
 
             // Check if there's already an upscale task for the merged chapter
-            bool hasExistingTask = await dbContext.PersistedTasks
-                .AnyAsync(pt => ((UpscaleTask)pt.Data).ChapterId == primaryChapter.Id &&
-                                pt.Data is UpscaleTask &&
-                                pt.Status != PersistedTaskStatus.Failed, cancellationToken);
+            List<PersistedTask> existingTasks = await dbContext.PersistedTasks
+                .FromSql(
+                    $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(UpscaleTask)} AND Data->>'$.ChapterId' = {primaryChapter.Id} AND Status != {(int)PersistedTaskStatus.Failed}")
+                .ToListAsync(cancellationToken);
+
+            bool hasExistingTask = existingTasks.Any();
 
             if (!hasExistingTask)
             {
