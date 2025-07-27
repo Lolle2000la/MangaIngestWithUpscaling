@@ -1008,7 +1008,7 @@ public partial class IngestProcessor(
         }
 
         // Wait a moment for canceled tasks to be processed and update their status
-        if (tasksToCancel.Any())
+        if (tasksToCancel.Count != 0)
         {
             // Give the processor a moment to handle the cancellation
             await Task.Delay(100, cancellationToken);
@@ -1017,21 +1017,26 @@ public partial class IngestProcessor(
             foreach (PersistedTask canceledTask in tasksToCancel)
             {
                 await dbContext.Entry(canceledTask).ReloadAsync(cancellationToken);
-                if (canceledTask.Status == PersistedTaskStatus.Canceled)
+                if (canceledTask.Status != PersistedTaskStatus.Canceled)
                 {
-                    // Add to removal list since it was successfully canceled
-                    tasksToRemove.Add(canceledTask);
-                    logger.LogDebug("Successfully canceled and will remove task for chapter {ChapterId}",
-                        ((UpscaleTask)canceledTask.Data).ChapterId);
+                    upscaleTaskProcessor.CancelCurrent(canceledTask);
                 }
+
+                // Add to removal list since it was successfully canceled
+                tasksToRemove.Add(canceledTask);
+                logger.LogDebug("Successfully canceled and will remove task for chapter {ChapterId}",
+                    ((UpscaleTask)canceledTask.Data).ChapterId);
             }
         }
 
         // Remove all tasks that should be cleaned up (completed, failed, canceled, and successfully canceled)
-        if (tasksToRemove.Any())
+        if (tasksToRemove.Count != 0)
         {
-            dbContext.PersistedTasks.RemoveRange(tasksToRemove);
-            await dbContext.SaveChangesAsync(cancellationToken);
+            foreach (PersistedTask persistedTask in tasksToRemove)
+            {
+                await taskQueue.RemoveTaskAsync(persistedTask);
+            }
+
             logger.LogInformation("Removed {TaskCount} upscale tasks for chapter merging cleanup", tasksToRemove.Count);
         }
 
