@@ -67,7 +67,8 @@ public class ChapterMergeRevertService(
                 mergedChapterPath, originalParts, seriesDirectory, cancellationToken);
 
             // Clean up any existing chapters with the same filenames to avoid constraint violations
-            await CleanupExistingChaptersAsync(restoredChapters, chapter.MangaId, cancellationToken);
+            await CleanupExistingChaptersAsync(restoredChapters, chapter.MangaId, chapter.IsUpscaled,
+                cancellationToken);
 
             // Create Chapter entities for the restored parts
             var restoredChapterEntities = new List<Chapter>();
@@ -92,13 +93,6 @@ public class ChapterMergeRevertService(
 
                 // Notify about the new chapter
                 _ = chapterChangedNotifier.Notify(chapterEntity, false);
-
-                // If the original merged chapter was upscaled, also create upscaled versions
-                if (chapter.IsUpscaled && chapter.UpscalerProfile != null)
-                {
-                    await CreateUpscaledRestoredChapterAsync(restoredChapter, chapter, library,
-                        seriesDirectory, cancellationToken);
-                }
             }
 
             // Remove the merged chapter and its merge info
@@ -111,7 +105,21 @@ public class ChapterMergeRevertService(
             // Clean up empty directories
             FileSystemHelpers.DeleteIfEmpty(Path.GetDirectoryName(mergedChapterPath)!, logger);
 
+            // Save regular chapters first
             await dbContext.SaveChangesAsync(cancellationToken);
+
+            // Now create upscaled versions if needed
+            if (chapter.IsUpscaled && chapter.UpscalerProfile != null)
+            {
+                foreach (FoundChapter restoredChapter in restoredChapters)
+                {
+                    await CreateUpscaledRestoredChapterAsync(restoredChapter, chapter, library,
+                        seriesDirectory, cancellationToken);
+                }
+
+                // Save upscaled chapters
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
 
             logger.LogInformation("Successfully reverted merged chapter {ChapterFile} to {PartCount} original parts",
                 chapter.FileName, originalParts.Count);
@@ -178,7 +186,7 @@ public class ChapterMergeRevertService(
     }
 
     private async Task CleanupExistingChaptersAsync(List<FoundChapter> restoredChapters, int mangaId,
-        CancellationToken cancellationToken)
+        bool shouldCleanupUpscaledToo, CancellationToken cancellationToken)
     {
         // Get the filenames of the chapters we're about to restore
         HashSet<string> fileNamesToRestore = restoredChapters.Select(rc => rc.FileName).ToHashSet();
