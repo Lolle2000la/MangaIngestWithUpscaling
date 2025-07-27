@@ -40,6 +40,15 @@ public class UpscalerJsonHandlingService(ILogger<UpscalerJsonHandlingService> lo
     public async Task WriteUpscalerJsonAsync(string cbzFilePath, UpscalerProfile profile,
         CancellationToken cancellationToken)
     {
+        using (ZipArchive archive = ZipFile.Open(cbzFilePath, ZipArchiveMode.Update))
+        {
+            await WriteUpscalerJsonAsync(archive, profile, cancellationToken);
+        }
+    }
+
+    public async Task WriteUpscalerJsonAsync(ZipArchive archive, UpscalerProfile profile,
+        CancellationToken cancellationToken)
+    {
         var upscalerJson = new UpscalerProfileJsonDto
         {
             Name = profile.Name,
@@ -51,22 +60,20 @@ public class UpscalerJsonHandlingService(ILogger<UpscalerJsonHandlingService> lo
 
         var options = new JsonSerializerOptions
         {
-            WriteIndented = true,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase
         };
         string jsonString = JsonSerializer.Serialize(upscalerJson, options);
 
-        using (ZipArchive archive = ZipFile.Open(cbzFilePath, ZipArchiveMode.Update))
+        // For Update mode, delete existing entry first
+        if (archive.Mode != ZipArchiveMode.Create)
         {
             ZipArchiveEntry? existingEntry = archive.GetEntry("upscaler.json");
             existingEntry?.Delete();
-
-            ZipArchiveEntry entry = archive.CreateEntry("upscaler.json");
-            await using (Stream stream = entry.Open())
-            await using (var writer = new StreamWriter(stream))
-            {
-                await writer.WriteAsync(jsonString);
-            }
         }
+
+        ZipArchiveEntry entry = archive.CreateEntry("upscaler.json");
+        await using Stream stream = entry.Open();
+        await using var writer = new StreamWriter(stream);
+        await writer.WriteAsync(jsonString);
     }
 }

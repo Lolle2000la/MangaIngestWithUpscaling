@@ -3,7 +3,9 @@ using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
+using System.IO.Compression;
 
 namespace MangaIngestWithUpscaling.Services.ChapterMerging;
 
@@ -12,6 +14,7 @@ public class ChapterMergeRevertService(
     ApplicationDbContext dbContext,
     IChapterPartMerger chapterPartMerger,
     IChapterChangedNotifier chapterChangedNotifier,
+    IUpscalerJsonHandlingService upscalerJsonHandlingService,
     ILogger<ChapterMergeRevertService> logger) : IChapterMergeRevertService
 {
     public async Task<List<Chapter>> RevertMergedChapterAsync(Chapter chapter,
@@ -63,11 +66,15 @@ public class ChapterMergeRevertService(
             List<FoundChapter> restoredChapters = await chapterPartMerger.RestoreChapterPartsAsync(
                 mergedChapterPath, originalParts, seriesDirectory, cancellationToken);
 
+            // Clean up any existing chapters with the same filenames to avoid constraint violations
+            await CleanupExistingChaptersAsync(restoredChapters, chapter.MangaId, cancellationToken);
+
             // Create Chapter entities for the restored parts
             var restoredChapterEntities = new List<Chapter>();
 
             foreach (FoundChapter restoredChapter in restoredChapters)
             {
+                // Create non-upscaled chapter entity
                 var chapterEntity = new Chapter
                 {
                     FileName = restoredChapter.FileName,
@@ -85,6 +92,13 @@ public class ChapterMergeRevertService(
 
                 // Notify about the new chapter
                 _ = chapterChangedNotifier.Notify(chapterEntity, false);
+
+                // If the original merged chapter was upscaled, also create upscaled versions
+                if (chapter.IsUpscaled && chapter.UpscalerProfile != null)
+                {
+                    await CreateUpscaledRestoredChapterAsync(restoredChapter, chapter, library,
+                        seriesDirectory, cancellationToken);
+                }
             }
 
             // Remove the merged chapter and its merge info
@@ -122,5 +136,66 @@ public class ChapterMergeRevertService(
     {
         return await dbContext.MergedChapterInfos
             .FirstOrDefaultAsync(m => m.ChapterId == chapter.Id, cancellationToken);
+    }
+
+    private async Task CreateUpscaledRestoredChapterAsync(FoundChapter restoredChapter, Chapter originalChapter,
+        Library library, string seriesDirectory, CancellationToken cancellationToken)
+    {
+        // Create upscaled directory structure
+        string upscaledSeriesDirectory = Path.Combine(library.UpscaledLibraryPath!,
+            PathEscaper.EscapeFileName(originalChapter.Manga.PrimaryTitle!));
+        Directory.CreateDirectory(upscaledSeriesDirectory);
+
+        // Copy the chapter file to upscaled directory
+        string sourceChapterPath = Path.Combine(seriesDirectory, restoredChapter.FileName);
+        string upscaledChapterPath = Path.Combine(upscaledSeriesDirectory, restoredChapter.FileName);
+        File.Copy(sourceChapterPath, upscaledChapterPath, true);
+
+        // Add upscaler.json to the upscaled chapter
+        using ZipArchive archive = ZipFile.Open(upscaledChapterPath, ZipArchiveMode.Update);
+        await upscalerJsonHandlingService.WriteUpscalerJsonAsync(archive, originalChapter.UpscalerProfile!,
+            cancellationToken);
+
+        // Create upscaled chapter entity
+        var upscaledChapterEntity = new Chapter
+        {
+            FileName = restoredChapter.FileName,
+            Manga = originalChapter.Manga,
+            MangaId = originalChapter.MangaId,
+            RelativePath = Path.GetRelativePath(library.UpscaledLibraryPath!, upscaledChapterPath),
+            IsUpscaled = true,
+            UpscalerProfileId = originalChapter.UpscalerProfileId,
+            UpscalerProfile = originalChapter.UpscalerProfile
+        };
+
+        dbContext.Chapters.Add(upscaledChapterEntity);
+
+        // Notify about the new upscaled chapter
+        _ = chapterChangedNotifier.Notify(upscaledChapterEntity, false);
+
+        logger.LogInformation("Created upscaled restored chapter {ChapterFile} in upscaled library",
+            restoredChapter.FileName);
+    }
+
+    private async Task CleanupExistingChaptersAsync(List<FoundChapter> restoredChapters, int mangaId,
+        CancellationToken cancellationToken)
+    {
+        // Get the filenames of the chapters we're about to restore
+        HashSet<string> fileNamesToRestore = restoredChapters.Select(rc => rc.FileName).ToHashSet();
+
+        // Find any existing chapters with the same filenames for this manga
+        List<Chapter> existingChapters = await dbContext.Chapters
+            .Where(c => c.MangaId == mangaId && fileNamesToRestore.Contains(c.FileName))
+            .ToListAsync(cancellationToken);
+
+        if (existingChapters.Any())
+        {
+            logger.LogInformation("Removing {Count} existing chapters to avoid constraint violations: {FileNames}",
+                existingChapters.Count, string.Join(", ", existingChapters.Select(c => c.FileName)));
+
+            // Remove existing chapters
+            dbContext.Chapters.RemoveRange(existingChapters);
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
     }
 }
