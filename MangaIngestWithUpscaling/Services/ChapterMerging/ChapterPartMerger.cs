@@ -595,8 +595,7 @@ public partial class ChapterPartMerger(
     private string? ExtractChapterNumber(string fileName)
     {
         // Try to extract chapter number from filename
-        Match match = Regex.Match(fileName,
-            @"(?:Chapter\s*(?<num>\d+(?:\.\d+)?)|第(?<num>\d+(?:\.\d+)?)(?:話|章)|Kapitel\s*(?<num>\d+(?:\.\d+)?))");
+        Match match = ChapterNumberRegex().Match(fileName);
 
         if (match.Success)
         {
