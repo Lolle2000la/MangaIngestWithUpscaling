@@ -12,6 +12,7 @@ public class ChapterMergeCoordinator(
     ApplicationDbContext dbContext,
     IChapterPartMerger chapterPartMerger,
     IChapterMergeUpscaleTaskManager upscaleTaskManager,
+    IMetadataHandlingService metadataHandlingService,
     ILogger<ChapterMergeCoordinator> logger) : IChapterMergeCoordinator
 {
     public async Task ProcessExistingChapterPartsForMergingAsync(
@@ -245,6 +246,260 @@ public class ChapterMergeCoordinator(
             logger.LogInformation(
                 "Successfully merged {PartCount} chapter parts into {MergedFileName}",
                 chapters.Count, mergeInfo.MergedChapter.FileName);
+        }
+    }
+
+    public async Task<List<MergeInfo>> MergeSelectedChaptersAsync(List<Chapter> selectedChapters, bool includeLatestChapters = false, CancellationToken cancellationToken = default)
+    {
+        if (!selectedChapters.Any())
+        {
+            return new List<MergeInfo>();
+        }
+
+        // Load necessary references
+        foreach (Chapter chapter in selectedChapters)
+        {
+            if (!dbContext.Entry(chapter).Reference(c => c.Manga).IsLoaded)
+            {
+                await dbContext.Entry(chapter).Reference(c => c.Manga).LoadAsync(cancellationToken);
+            }
+        }
+
+        Manga manga = selectedChapters.First().Manga;
+
+        // Load library reference
+        if (!dbContext.Entry(manga).Reference(m => m.Library).IsLoaded)
+        {
+            await dbContext.Entry(manga).Reference(m => m.Library).LoadAsync(cancellationToken);
+        }
+
+        Library library = manga.Library;
+
+        // Get all existing chapter numbers for latest chapter detection
+        HashSet<string> allChapterNumbers = manga.Chapters
+            .Select(c => ChapterNumberHelper.ExtractChapterNumber(c.FileName))
+            .Where(n => n != null)
+            .Cast<string>()
+            .ToHashSet();
+
+        // Convert selected chapters to FoundChapter format for processing
+        List<FoundChapter> foundChapters = selectedChapters.Select(c => new FoundChapter(
+            c.FileName,
+            Path.GetFileName(c.RelativePath), // Use just filename, consistent with existing system
+            ChapterStorageType.Cbz,
+            GetChapterMetadata(c)
+        )).ToList();
+
+        // Group chapters for merging, respecting latest chapter inclusion setting
+        Dictionary<string, List<FoundChapter>> mergeGroups = chapterPartMerger.GroupChapterPartsForMerging(
+            foundChapters,
+            baseNumber => !includeLatestChapters && IsLatestChapter(baseNumber, allChapterNumbers));
+
+        if (!mergeGroups.Any())
+        {
+            return new List<MergeInfo>();
+        }
+
+        var completedMerges = new List<MergeInfo>();
+        string seriesLibraryPath = Path.Combine(
+            library.NotUpscaledLibraryPath,
+            PathEscaper.EscapeFileName(manga.PrimaryTitle!));
+
+        // Process each merge group
+        foreach (var (baseNumber, chapterParts) in mergeGroups)
+        {
+            try
+            {
+                // Get the original chapters for this group
+                List<Chapter> originalChapters = selectedChapters
+                    .Where(c => chapterParts.Any(fc => fc.FileName == c.FileName))
+                    .ToList();
+
+                // Get the original chapter title from the first part to preserve format
+                FoundChapter firstPart = chapterParts.First();
+                string? originalChapterTitle = firstPart.Metadata?.ChapterTitle;
+                string? mergedChapterTitle = GenerateMergedChapterTitle(originalChapterTitle, baseNumber);
+
+                // Create target metadata for merged chapter
+                var targetMetadata = new ExtractedMetadata(
+                    manga.PrimaryTitle!,
+                    mergedChapterTitle,
+                    baseNumber);
+
+                // Perform the merge
+                var (mergedChapter, originalParts) = await chapterPartMerger.MergeChapterPartsAsync(
+                    chapterParts,
+                    seriesLibraryPath,
+                    seriesLibraryPath,
+                    baseNumber,
+                    targetMetadata,
+                    null,
+                    cancellationToken);
+
+                // Create MergeInfo with corrected relative path
+                var correctedMergedChapter = new FoundChapter(
+                    mergedChapter.FileName,
+                    Path.Combine(PathEscaper.EscapeFileName(manga.PrimaryTitle!), mergedChapter.FileName),
+                    mergedChapter.StorageType,
+                    mergedChapter.Metadata);
+
+                var mergeInfo = new MergeInfo(correctedMergedChapter, originalParts, baseNumber);
+
+                // Check upscale compatibility
+                UpscaleCompatibilityResult compatibility = await upscaleTaskManager.CheckUpscaleCompatibilityForMergeAsync(
+                    originalChapters, cancellationToken);
+
+                if (!compatibility.CanMerge)
+                {
+                    logger.LogWarning("Upscale compatibility check failed for merge group {BaseNumber}: {Reason}",
+                        baseNumber, compatibility.Reason);
+                    continue;
+                }
+
+                // Update database for the merge
+                await UpdateDatabaseForMergeAsync(mergeInfo, originalChapters, cancellationToken);
+
+                // Handle upscale task management
+                await upscaleTaskManager.HandleUpscaleTaskManagementAsync(
+                    originalChapters, mergeInfo, library, cancellationToken);
+
+                // Handle merging of upscaled versions if they exist
+                await HandleUpscaledChapterMergingAsync(
+                    originalChapters, mergeInfo, library, seriesLibraryPath, cancellationToken);
+
+                completedMerges.Add(mergeInfo);
+
+                logger.LogInformation("Successfully completed manual merge for base number {BaseNumber} with {PartCount} parts",
+                    baseNumber, chapterParts.Count);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to merge chapter parts for base number {BaseNumber}", baseNumber);
+                // Continue with other merge groups
+            }
+        }
+
+        // Save all database changes
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return completedMerges;
+    }
+
+    public async Task<Dictionary<string, List<Chapter>>> GetValidMergeGroupsAsync(List<Chapter> selectedChapters, bool includeLatestChapters = false, CancellationToken cancellationToken = default)
+    {
+        if (!selectedChapters.Any())
+        {
+            return new Dictionary<string, List<Chapter>>();
+        }
+
+        // Load necessary references
+        foreach (Chapter chapter in selectedChapters)
+        {
+            if (!dbContext.Entry(chapter).Reference(c => c.Manga).IsLoaded)
+            {
+                await dbContext.Entry(chapter).Reference(c => c.Manga).LoadAsync(cancellationToken);
+            }
+        }
+
+        Manga manga = selectedChapters.First().Manga;
+
+        // Get all existing chapter numbers for latest chapter detection
+        HashSet<string> allChapterNumbers = manga.Chapters
+            .Select(c => ChapterNumberHelper.ExtractChapterNumber(c.FileName))
+            .Where(n => n != null)
+            .Cast<string>()
+            .ToHashSet();
+
+        // Convert selected chapters to FoundChapter format for validation
+        List<FoundChapter> foundChapters = selectedChapters.Select(c => new FoundChapter(
+            c.FileName,
+            Path.GetFileName(c.RelativePath),
+            ChapterStorageType.Cbz,
+            GetChapterMetadata(c)
+        )).ToList();
+
+        // Group chapters for merging
+        Dictionary<string, List<FoundChapter>> foundChapterGroups = chapterPartMerger.GroupChapterPartsForMerging(
+            foundChapters,
+            baseNumber => !includeLatestChapters && IsLatestChapter(baseNumber, allChapterNumbers));
+
+        // Convert back to Chapter groups
+        var result = new Dictionary<string, List<Chapter>>();
+        foreach (var (baseNumber, foundChapterList) in foundChapterGroups)
+        {
+            var chapterList = foundChapterList
+                .Select(fc => selectedChapters.First(c => c.FileName == fc.FileName))
+                .ToList();
+            result[baseNumber] = chapterList;
+        }
+
+        return result;
+    }
+
+    private bool IsLatestChapter(string baseNumber, HashSet<string> allChapterNumbers)
+    {
+        if (!decimal.TryParse(baseNumber, out decimal baseNum))
+            return false;
+
+        foreach (string chapterNumber in allChapterNumbers)
+        {
+            if (decimal.TryParse(chapterNumber, out decimal num))
+            {
+                decimal chapterBaseNum = Math.Floor(num);
+                if (chapterBaseNum > baseNum)
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    private string? GenerateMergedChapterTitle(string? originalTitle, string baseChapterNumber)
+    {
+        if (string.IsNullOrEmpty(originalTitle))
+        {
+            return null;
+        }
+
+        // Replace the chapter number in the title with the base number
+        return ChapterNumberHelper.ChapterNumberRegex().Replace(originalTitle,
+            match => match.Value.Replace(match.Groups["num"].Value +
+                                         (string.IsNullOrEmpty(match.Groups["subnum"].Value)
+                                             ? ""
+                                             : "." + match.Groups["subnum"].Value),
+                baseChapterNumber));
+    }
+
+    private ExtractedMetadata GetChapterMetadata(Chapter chapter)
+    {
+        try
+        {
+            // Construct the full path to the chapter file
+            string fullPath = chapter.NotUpscaledFullPath;
+
+            if (!File.Exists(fullPath))
+            {
+                // Fallback to filename-based metadata if file doesn't exist
+                return new ExtractedMetadata(
+                    chapter.Manga.PrimaryTitle!,
+                    Path.GetFileNameWithoutExtension(chapter.FileName),
+                    ChapterNumberHelper.ExtractChapterNumber(chapter.FileName) ?? "0");
+            }
+
+            // Use MetadataHandlingService to extract the actual metadata from ComicInfo.xml
+            ExtractedMetadata fileMetadata = metadataHandlingService.GetSeriesAndTitleFromComicInfo(fullPath);
+
+            // Use the file's metadata but override the series with the manga's primary title
+            return fileMetadata with { Series = chapter.Manga.PrimaryTitle! };
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to extract metadata from {FileName}, using fallback",
+                chapter.FileName);
+            return new ExtractedMetadata(
+                chapter.Manga.PrimaryTitle!,
+                Path.GetFileNameWithoutExtension(chapter.FileName),
+                ChapterNumberHelper.ExtractChapterNumber(chapter.FileName) ?? "0");
         }
     }
 
