@@ -636,7 +636,7 @@ public partial class ChapterPartMerger(
         int dotIndex = chapterNumber.IndexOf('.', StringComparison.Ordinal);
         if (dotIndex > 0)
         {
-            return chapterNumber.Substring(0, dotIndex);
+            return chapterNumber[..dotIndex];
         }
 
         return chapterNumber;
