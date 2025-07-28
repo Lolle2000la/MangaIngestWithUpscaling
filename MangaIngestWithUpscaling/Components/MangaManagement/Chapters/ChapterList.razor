@@ -319,6 +319,20 @@
                     NewFileName = Path.GetFileNameWithoutExtension(restoredChapter.FileName),
                     IsMerged = false // Restored chapters are not merged
                 });
+
+                try
+                {
+                    await ChapterChangedNotifier.Notify(restoredChapter, false);
+                    if (restoredChapter.IsUpscaled)
+                    {
+                        await ChapterChangedNotifier.Notify(restoredChapter, true);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError(ex, "Failed to notify connected service of chapter change for merged chapter {ChapterId}", restoredChapter.Id);
+                    Snackbar.Add($"Failed to notify connected service of chapter change for {restoredChapter.FileName}. Check the logs for more information.", Severity.Error);
+                }
             }
 
             Snackbar.Add($"Successfully reverted merged chapter and restored {restoredChapters.Count} individual parts.", Severity.Success);
@@ -866,6 +880,20 @@
                             NewFileName = Path.GetFileNameWithoutExtension(mergedChapter.FileName),
                             IsMerged = true
                         });
+
+                        try
+                        {
+                            await ChapterChangedNotifier.Notify(mergedChapter, false);
+                            if (mergedChapter.IsUpscaled)
+                            {
+                                await ChapterChangedNotifier.Notify(mergedChapter, true);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.LogError(ex, "Failed to notify connected service of chapter change for merged chapter {ChapterId}", mergedChapter.Id);
+                            Snackbar.Add($"Failed to notify connected service of chapter change for {mergedChapter.FileName}. Check the logs for more information.", Severity.Error);
+                        }
                     }
                 }
             }
