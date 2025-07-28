@@ -135,38 +135,54 @@ public class MetadataHandlingService(
         if (file.EndsWith(".cbz"))
         {
             using var archive = ZipFile.Open(file, ZipArchiveMode.Update);
-            var comicInfoEntry = archive.GetEntry("ComicInfo.xml");
-            if (comicInfoEntry != null)
-            {
-                using var stream = comicInfoEntry.Open();
-                var document = XDocument.Load(stream);
-                WriteMetadataToXmlDoc(document, metadata);
-                stream.Seek(0, SeekOrigin.Begin);
-                document.Save(stream);
-                stream.SetLength(stream.Position); // Truncate the file to the correct length
-            }
-            else
-            {
-                var entry = archive.CreateEntry("ComicInfo.xml");
-                using var stream = entry.Open();
-                var document = new XDocument(
-                    new XElement("ComicInfo",
-                        new XElement("Title", metadata.ChapterTitle),
-                        new XElement("Series", metadata.Series),
-                        new XElement("Number", metadata.Number),
-                        new XAttribute("xmlns", "http://www.w3.org/2001/XMLSchema"),
-                        new XAttribute("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance")
-                    )
-                );
-                document.Save(stream);
-                stream.SetLength(stream.Position); // Truncate the file to the correct length
-            }
+            WriteComicInfo(archive, metadata);
         }
         else if (file.EndsWith("ComicInfo.xml"))
         {
             var document = XDocument.Load(file);
             WriteMetadataToXmlDoc(document, metadata);
             document.Save(file);
+        }
+    }
+
+    /// <summary>
+    ///     Writes ComicInfo.xml metadata directly to an existing ZipArchive
+    /// </summary>
+    /// <param name="archive">The ZIP archive to write to</param>
+    /// <param name="metadata">The metadata to write</param>
+    public void WriteComicInfo(ZipArchive archive, ExtractedMetadata metadata)
+    {
+        metadata = metadata.CheckAndCorrect();
+
+        // Check if we can update existing entries (Update mode) or only create new ones (Create mode)
+        ZipArchiveEntry? comicInfoEntry = archive.Mode != ZipArchiveMode.Create
+            ? archive.GetEntry("ComicInfo.xml")
+            : null;
+
+        if (comicInfoEntry != null)
+        {
+            // Updating existing ComicInfo.xml in Update mode
+            using Stream stream = comicInfoEntry.Open();
+            XDocument document = XDocument.Load(stream);
+            WriteMetadataToXmlDoc(document, metadata);
+            stream.Seek(0, SeekOrigin.Begin);
+            document.Save(stream);
+            stream.SetLength(stream.Position); // Truncate - only works in Update mode
+        }
+        else
+        {
+            // Creating new ComicInfo.xml (works in both Create and Update modes)
+            ZipArchiveEntry entry = archive.CreateEntry("ComicInfo.xml");
+            using Stream stream = entry.Open();
+            var document = new XDocument(
+                new XElement("ComicInfo",
+                    new XElement("Title", metadata.ChapterTitle),
+                    new XElement("Series", metadata.Series),
+                    new XElement("Number", metadata.Number)
+                )
+            );
+            document.Save(stream);
+            // No SetLength needed when creating new entries
         }
     }
 
