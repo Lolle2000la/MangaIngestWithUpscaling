@@ -102,8 +102,7 @@ public partial class IngestProcessor(
             processedSeriesEntities.Add(seriesEntity); // Track this series
 
             // Check if chapter merging is enabled for this library/series
-            bool shouldMergeChapterParts = library.MergeChapterParts ||
-                                           (seriesEntity.MergeChapterParts == true);
+            bool shouldMergeChapterParts = seriesEntity.MergeChapterParts ?? library.MergeChapterParts;
 
             List<ProcessedChapterInfo> finalProcessedItems = processedItems;
             ChapterMergeResult? mergeResult = null;
