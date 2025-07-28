@@ -633,7 +633,7 @@ public partial class ChapterPartMerger(
         }
 
         // Handle cases like "22.1" -> "22"
-        int dotIndex = chapterNumber.IndexOf('.');
+        int dotIndex = chapterNumber.IndexOf('.', StringComparison.Ordinal);
         if (dotIndex > 0)
         {
             return chapterNumber.Substring(0, dotIndex);
