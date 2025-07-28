@@ -126,6 +126,13 @@ public partial class IngestProcessor(
 
                 HashSet<string> allChapterNumbers = existingChapterNumbers.Union(newChapterNumbers).ToHashSet();
 
+                // Get base chapter numbers that already have merged chapters to prevent conflicts
+                List<int> seriesChapterIds = seriesEntity.Chapters.Select(c => c.Id).ToList();
+                HashSet<string> existingMergedBaseNumbers = await dbContext.MergedChapterInfos
+                    .Where(m => seriesChapterIds.Contains(m.ChapterId))
+                    .Select(m => m.MergedChapterNumber)
+                    .ToHashSetAsync(cancellationToken);
+
                 // Create a mapping function to get original file paths for renamed chapters
                 Dictionary<string, string> originalPathLookup = processedItems
                     .Where(p => !p.IsUpscaled)
@@ -154,6 +161,53 @@ public partial class IngestProcessor(
                     allChapterNumbers,
                     getActualFilePath,
                     cancellationToken);
+
+                // Filter out merge results that would conflict with existing merged chapters
+                if (mergeResult.MergeInformation.Any())
+                {
+                    List<MergeInfo> validMergeInfos = mergeResult.MergeInformation
+                        .Where(mergeInfo => !existingMergedBaseNumbers.Contains(mergeInfo.BaseChapterNumber))
+                        .ToList();
+
+                    List<MergeInfo> conflictingMergeInfos = mergeResult.MergeInformation
+                        .Where(mergeInfo => existingMergedBaseNumbers.Contains(mergeInfo.BaseChapterNumber))
+                        .ToList();
+
+                    if (conflictingMergeInfos.Any())
+                    {
+                        logger.LogWarning(
+                            "Skipping {ConflictCount} merge operations for series {SeriesTitle} due to existing merged chapters with the same base numbers: {BaseNumbers}",
+                            conflictingMergeInfos.Count,
+                            seriesEntity.PrimaryTitle,
+                            string.Join(", ", conflictingMergeInfos.Select(m => m.BaseChapterNumber)));
+
+                        // Clean up any files that were created for the conflicting merges
+                        foreach (MergeInfo conflictingMerge in conflictingMergeInfos)
+                        {
+                            string conflictingMergedFile = Path.Combine(seriesDirectoryPath,
+                                conflictingMerge.MergedChapter.FileName);
+                            if (File.Exists(conflictingMergedFile))
+                            {
+                                try
+                                {
+                                    File.Delete(conflictingMergedFile);
+                                    logger.LogInformation("Deleted conflicting merged file: {FileName}",
+                                        conflictingMergedFile);
+                                }
+                                catch (Exception ex)
+                                {
+                                    logger.LogError(ex, "Failed to delete conflicting merged file: {FileName}",
+                                        conflictingMergedFile);
+                                }
+                            }
+                        }
+                    }
+
+                    // Update merge result to only include valid merges
+                    mergeResult = new ChapterMergeResult(
+                        mergeResult.ProcessedChapters,
+                        validMergeInfos);
+                }
 
                 // Convert merged chapters back to ProcessedChapterInfo format and add merge info
                 var mergedProcessedItems = new List<ProcessedChapterInfo>();

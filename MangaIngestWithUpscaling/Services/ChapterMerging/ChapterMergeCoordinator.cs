@@ -50,6 +50,12 @@ public class ChapterMergeCoordinator(
                 .Select(m => m.ChapterId)
                 .ToHashSetAsync(cancellationToken);
 
+            // Get base chapter numbers that already have merged chapters to prevent conflicts
+            HashSet<string> existingMergedBaseNumbers = await dbContext.MergedChapterInfos
+                .Where(m => seriesChapterIds.Contains(m.ChapterId))
+                .Select(m => m.MergedChapterNumber)
+                .ToHashSetAsync(cancellationToken);
+
             // Process existing chapters to identify and merge eligible chapter parts
             ChapterMergeResult mergeResult = await chapterPartMerger.ProcessExistingChapterPartsAsync(
                 manga.Chapters.ToList(),
@@ -64,9 +70,22 @@ public class ChapterMergeCoordinator(
                 return;
             }
 
-            logger.LogInformation(
-                "Found {GroupCount} groups of existing chapter parts that can be merged for series {SeriesTitle}",
-                mergeResult.MergeInformation.Count, manga.PrimaryTitle);
+            // Filter out merge groups that would conflict with existing merged chapters
+            List<MergeInfo> validMergeInfos = mergeResult.MergeInformation
+                .Where(mergeInfo => !existingMergedBaseNumbers.Contains(mergeInfo.BaseChapterNumber))
+                .ToList();
+
+            if (!validMergeInfos.Any())
+            {
+                logger.LogInformation(
+                    "All potential merge groups for series {SeriesTitle} conflict with existing merged chapters. Skipping automatic merging.",
+                    manga.PrimaryTitle);
+                return;
+            }
+
+            logger.LogDebug(
+                "Found {GroupCount} groups of existing chapter parts that can be merged for series {SeriesTitle} (filtered from {TotalGroups} to avoid conflicts)",
+                validMergeInfos.Count, manga.PrimaryTitle, mergeResult.MergeInformation.Count);
 
             // Calculate series library path for upscaled chapter handling
             string seriesLibraryPath = Path.Combine(
@@ -74,7 +93,7 @@ public class ChapterMergeCoordinator(
                 PathEscaper.EscapeFileName(manga.PrimaryTitle!));
 
             // Process each group of mergeable chapter parts
-            foreach (MergeInfo mergeInfo in mergeResult.MergeInformation)
+            foreach (MergeInfo mergeInfo in validMergeInfos)
             {
                 // Find the database chapters to update based on the original parts filenames
                 List<Chapter> dbChaptersToUpdate = manga.Chapters
