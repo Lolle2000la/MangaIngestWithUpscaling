@@ -20,7 +20,7 @@
                              @bind-Value="Library.UpscaleOnIngest" @bind-Value:after="OnInputChanged"/>
 
                 <MudCheckBox T="bool"
-                             Label="Merge chapter parts (e.g., Chapter 22.1, 22.2, 22.3 → Chapter 22). Only merges completed chapters, not the latest one."
+                             Label="Merge chapter parts (e.g., Chapter 22.1, 22.2, 22.3 → Chapter 22). Only merges completed chapters, not the latest one. (Experimental, expect data loss!)"
                              @bind-Value="Library.MergeChapterParts" @bind-Value:after="OnInputChanged"/>
 
                 <MudSelect T="int?" Label="Upscaler Config"

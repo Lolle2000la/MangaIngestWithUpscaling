@@ -59,14 +59,14 @@
                        Variant="Variant.Text"
                        Disabled="selectedChapters.Count == 0 || !selectedChapters.Any(c => c.IsMerged)"
                        OnClick="@RevertSelectedMergedChapters">
-                Revert Selected Merged
+                Revert Selected Merged (Experimental)
             </MudButton>
             <MudButton StartIcon="@Icons.Material.Filled.MergeType"
                        Color="Color.Info"
                        Variant="Variant.Text"
                        Disabled="selectedChapters.Count == 0 || !CanAnySelectedBeMerged"
                        OnClick="@MergeSelectedChapters">
-                Merge Selected
+                Merge Selected (Experimental)
             </MudButton>
         </MudStack>
     </ToolBarContent>
