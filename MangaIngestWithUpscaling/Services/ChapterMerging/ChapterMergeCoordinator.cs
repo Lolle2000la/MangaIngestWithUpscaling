@@ -249,7 +249,8 @@ public class ChapterMergeCoordinator(
         }
     }
 
-    public async Task<List<MergeInfo>> MergeSelectedChaptersAsync(List<Chapter> selectedChapters, bool includeLatestChapters = false, CancellationToken cancellationToken = default)
+    public async Task<List<MergeInfo>> MergeSelectedChaptersAsync(List<Chapter> selectedChapters,
+        bool includeLatestChapters = false, CancellationToken cancellationToken = default)
     {
         if (!selectedChapters.Any())
         {
@@ -346,8 +347,9 @@ public class ChapterMergeCoordinator(
                 var mergeInfo = new MergeInfo(correctedMergedChapter, originalParts, baseNumber);
 
                 // Check upscale compatibility
-                UpscaleCompatibilityResult compatibility = await upscaleTaskManager.CheckUpscaleCompatibilityForMergeAsync(
-                    originalChapters, cancellationToken);
+                UpscaleCompatibilityResult compatibility =
+                    await upscaleTaskManager.CheckUpscaleCompatibilityForMergeAsync(
+                        originalChapters, cancellationToken);
 
                 if (!compatibility.CanMerge)
                 {
@@ -359,6 +361,9 @@ public class ChapterMergeCoordinator(
                 // Update database for the merge
                 await UpdateDatabaseForMergeAsync(mergeInfo, originalChapters, cancellationToken);
 
+                // Delete original chapter part files after successful merging
+                DeleteOriginalChapterPartFiles(mergeInfo, library);
+
                 // Handle upscale task management
                 await upscaleTaskManager.HandleUpscaleTaskManagementAsync(
                     originalChapters, mergeInfo, library, cancellationToken);
@@ -369,7 +374,8 @@ public class ChapterMergeCoordinator(
 
                 completedMerges.Add(mergeInfo);
 
-                logger.LogInformation("Successfully completed manual merge for base number {BaseNumber} with {PartCount} parts",
+                logger.LogInformation(
+                    "Successfully completed manual merge for base number {BaseNumber} with {PartCount} parts",
                     baseNumber, chapterParts.Count);
             }
             catch (Exception ex)
@@ -385,7 +391,8 @@ public class ChapterMergeCoordinator(
         return completedMerges;
     }
 
-    public async Task<Dictionary<string, List<Chapter>>> GetValidMergeGroupsAsync(List<Chapter> selectedChapters, bool includeLatestChapters = false, CancellationToken cancellationToken = default)
+    public async Task<Dictionary<string, List<Chapter>>> GetValidMergeGroupsAsync(List<Chapter> selectedChapters,
+        bool includeLatestChapters = false, CancellationToken cancellationToken = default)
     {
         if (!selectedChapters.Any())
         {
@@ -597,6 +604,38 @@ public class ChapterMergeCoordinator(
             logger.LogWarning(ex,
                 "Failed to merge upscaled chapter parts for base number {BaseNumber}",
                 mergeInfo.BaseChapterNumber);
+        }
+    }
+
+    private void DeleteOriginalChapterPartFiles(
+        MergeInfo mergeInfo,
+        Library library)
+    {
+        string seriesLibraryPath = Path.Combine(
+            library.NotUpscaledLibraryPath,
+            PathEscaper.EscapeFileName(mergeInfo.MergedChapter.Metadata.Series ?? "Unknown"));
+
+        // Delete original chapter part files from filesystem
+        foreach (OriginalChapterPart originalPart in mergeInfo.OriginalParts)
+        {
+            try
+            {
+                string partFilePath = Path.Combine(seriesLibraryPath, originalPart.FileName);
+                if (File.Exists(partFilePath))
+                {
+                    File.Delete(partFilePath);
+                    logger.LogInformation("Deleted original chapter part file: {FilePath}", partFilePath);
+                }
+                else
+                {
+                    logger.LogWarning("Original chapter part file not found for deletion: {FilePath}", partFilePath);
+                }
+            }
+            catch (Exception deleteEx)
+            {
+                logger.LogError(deleteEx, "Failed to delete original chapter part file: {PartFileName}",
+                    originalPart.FileName);
+            }
         }
     }
 }
