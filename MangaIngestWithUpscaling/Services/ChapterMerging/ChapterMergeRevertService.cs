@@ -75,7 +75,7 @@ public class ChapterMergeRevertService(
 
             foreach (FoundChapter restoredChapter in restoredChapters)
             {
-                // Create non-upscaled chapter entity
+                // Create chapter entity
                 var chapterEntity = new Chapter
                 {
                     FileName = restoredChapter.FileName,
@@ -83,7 +83,7 @@ public class ChapterMergeRevertService(
                     MangaId = chapter.MangaId,
                     RelativePath = Path.GetRelativePath(library.NotUpscaledLibraryPath,
                         Path.Combine(seriesDirectory, restoredChapter.FileName)),
-                    IsUpscaled = false,
+                    IsUpscaled = chapter.IsUpscaled,
                     UpscalerProfileId = chapter.UpscalerProfileId,
                     UpscalerProfile = chapter.UpscalerProfile
                 };
@@ -95,8 +95,7 @@ public class ChapterMergeRevertService(
                 _ = chapterChangedNotifier.Notify(chapterEntity, false);
             }
 
-            // Remove the merged chapter and its merge info
-            dbContext.MergedChapterInfos.Remove(mergeInfo);
+            // Remove the merged chapter (but keep merge info for upscaled restoration)
             dbContext.Chapters.Remove(chapter);
 
             // Delete the merged chapter file
@@ -111,15 +110,12 @@ public class ChapterMergeRevertService(
             // Now create upscaled versions if needed
             if (chapter.IsUpscaled && chapter.UpscalerProfile != null)
             {
-                foreach (FoundChapter restoredChapter in restoredChapters)
-                {
-                    await CreateUpscaledRestoredChapterAsync(restoredChapter, chapter, library,
-                        seriesDirectory, cancellationToken);
-                }
-
-                // Save upscaled chapters
-                await dbContext.SaveChangesAsync(cancellationToken);
+                await CreateUpscaledRestoredChaptersAsync(chapter, library, mergeInfo, cancellationToken);
             }
+
+            // Remove the merged chapter info after upscaled chapters are processed
+            dbContext.MergedChapterInfos.Remove(mergeInfo);
+            await dbContext.SaveChangesAsync(cancellationToken);
 
             logger.LogInformation("Successfully reverted merged chapter {ChapterFile} to {PartCount} original parts",
                 chapter.FileName, originalParts.Count);
@@ -146,43 +142,51 @@ public class ChapterMergeRevertService(
             .FirstOrDefaultAsync(m => m.ChapterId == chapter.Id, cancellationToken);
     }
 
-    private async Task CreateUpscaledRestoredChapterAsync(FoundChapter restoredChapter, Chapter originalChapter,
-        Library library, string seriesDirectory, CancellationToken cancellationToken)
+    private async Task CreateUpscaledRestoredChaptersAsync(Chapter originalChapter,
+        Library library, MergedChapterInfo? mergeInfo, CancellationToken cancellationToken)
     {
-        // Create upscaled directory structure
+        // Get the path to the upscaled merged chapter file
+        string upscaledMergedChapterPath = Path.Combine(library.UpscaledLibraryPath!, originalChapter.RelativePath);
+
+        if (!File.Exists(upscaledMergedChapterPath))
+        {
+            logger.LogWarning("Upscaled merged chapter file not found: {UpscaledPath}, skipping upscaled restoration",
+                upscaledMergedChapterPath);
+            return;
+        }
+
+        // Create upscaled directory structure for restored parts
         string upscaledSeriesDirectory = Path.Combine(library.UpscaledLibraryPath!,
             PathEscaper.EscapeFileName(originalChapter.Manga.PrimaryTitle!));
         Directory.CreateDirectory(upscaledSeriesDirectory);
 
-        // Copy the chapter file to upscaled directory
-        string sourceChapterPath = Path.Combine(seriesDirectory, restoredChapter.FileName);
-        string upscaledChapterPath = Path.Combine(upscaledSeriesDirectory, restoredChapter.FileName);
-        File.Copy(sourceChapterPath, upscaledChapterPath, true);
-
-        // Add upscaler.json to the upscaled chapter
-        using ZipArchive archive = ZipFile.Open(upscaledChapterPath, ZipArchiveMode.Update);
-        await upscalerJsonHandlingService.WriteUpscalerJsonAsync(archive, originalChapter.UpscalerProfile!,
-            cancellationToken);
-
-        // Create upscaled chapter entity
-        var upscaledChapterEntity = new Chapter
+        // Get the merge info to know the original parts structure
+        if (mergeInfo?.OriginalParts == null)
         {
-            FileName = restoredChapter.FileName,
-            Manga = originalChapter.Manga,
-            MangaId = originalChapter.MangaId,
-            RelativePath = Path.GetRelativePath(library.UpscaledLibraryPath!, upscaledChapterPath),
-            IsUpscaled = true,
-            UpscalerProfileId = originalChapter.UpscalerProfileId,
-            UpscalerProfile = originalChapter.UpscalerProfile
-        };
+            logger.LogWarning("No merge info found for upscaled chapter restoration, skipping");
+            return;
+        }
 
-        dbContext.Chapters.Add(upscaledChapterEntity);
+        // Restore the upscaled chapter parts using the same logic as regular restoration
+        List<FoundChapter> upscaledRestoredChapters = await chapterPartMerger.RestoreChapterPartsAsync(
+            upscaledMergedChapterPath, mergeInfo.OriginalParts, upscaledSeriesDirectory, cancellationToken);
 
-        // Notify about the new upscaled chapter
-        _ = chapterChangedNotifier.Notify(upscaledChapterEntity, false);
+        // Add upscaler.json to each restored upscaled part
+        foreach (FoundChapter upscaledRestoredChapter in upscaledRestoredChapters)
+        {
+            string upscaledChapterPath = Path.Combine(upscaledSeriesDirectory, upscaledRestoredChapter.FileName);
 
-        logger.LogInformation("Created upscaled restored chapter {ChapterFile} in upscaled library",
-            restoredChapter.FileName);
+            // Add upscaler.json to the upscaled chapter
+            using ZipArchive archive = ZipFile.Open(upscaledChapterPath, ZipArchiveMode.Update);
+            await upscalerJsonHandlingService.WriteUpscalerJsonAsync(archive, originalChapter.UpscalerProfile!,
+                cancellationToken);
+        }
+
+        // Delete the upscaled merged chapter file
+        File.Delete(upscaledMergedChapterPath);
+
+        logger.LogInformation("Restored {Count} upscaled chapter parts from {MergedFile}",
+            upscaledRestoredChapters.Count, Path.GetFileName(upscaledMergedChapterPath));
     }
 
     private async Task CleanupExistingChaptersAsync(List<FoundChapter> restoredChapters, int mangaId,
