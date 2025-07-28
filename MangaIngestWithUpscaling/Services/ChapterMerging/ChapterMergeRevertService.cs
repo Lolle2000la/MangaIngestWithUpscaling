@@ -113,10 +113,6 @@ public class ChapterMergeRevertService(
                 await CreateUpscaledRestoredChaptersAsync(chapter, library, mergeInfo, cancellationToken);
             }
 
-            // Remove the merged chapter info after upscaled chapters are processed
-            dbContext.MergedChapterInfos.Remove(mergeInfo);
-            await dbContext.SaveChangesAsync(cancellationToken);
-
             logger.LogInformation("Successfully reverted merged chapter {ChapterFile} to {PartCount} original parts",
                 chapter.FileName, originalParts.Count);
 
