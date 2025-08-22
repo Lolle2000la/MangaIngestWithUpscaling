@@ -36,7 +36,7 @@ public static class CbzCleanupHelpers
                 .GroupBy(e => Path.GetExtension(e.FullName).ToLowerInvariant())
                 .ToDictionary(g => g.Key, g => g.ToList());
 
-            if (groups.Count < 2)
+            if (groups.Count != 2)
             {
                 return false; // only one type present
             }
@@ -52,6 +52,7 @@ public static class CbzCleanupHelpers
 
             // Identify the odd image (the only member of a non-majority group)
             var oddGroup = groups.Where(kv => kv.Key != majority.Key).First(kv => kv.Value.Count == 1);
+            
             var oddEntry = oddGroup.Value[0];
 
             logger?.LogInformation(
