@@ -22,6 +22,7 @@ public sealed class TempResizedCbz : IDisposable
         {
             _imageResizeService.CleanupTempFile(FilePath);
             _disposed = true;
+            GC.SuppressFinalize(this);
         }
     }
 }
