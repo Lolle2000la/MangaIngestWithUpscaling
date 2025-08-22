@@ -1,4 +1,4 @@
-using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+﻿using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using System.Collections.ObjectModel;
 using System.ComponentModel.DataAnnotations.Schema;
 
@@ -23,6 +23,12 @@ public class Library
 
     public bool MergeChapterParts { get; set; }
 
+    /// <summary>
+    /// When enabled, automatically delete a single odd-one-out image type within a chapter (e.g., one PNG among JPEGs).
+    /// Applies on ingest and integrity checks.
+    /// </summary>
+    public bool AutoDeleteOddOneOutImages { get; set; }
+
     public List<Manga> MangaSeries { get; set; } = [];
     public List<LibraryFilterRule> FilterRules { get; set; } = [];
 
@@ -45,13 +51,14 @@ public class Library
                KavitaConfig == other.KavitaConfig &&
                UpscaleOnIngest == other.UpscaleOnIngest &&
                MergeChapterParts == other.MergeChapterParts &&
+               AutoDeleteOddOneOutImages == other.AutoDeleteOddOneOutImages &&
                UpscalerProfileId == other.UpscalerProfileId;
     }
 
     public override int GetHashCode()
     {
         return HashCode.Combine(Id, Name, IngestPath, NotUpscaledLibraryPath, UpscaledLibraryPath, KavitaConfig,
-            UpscaleOnIngest, HashCode.Combine(MergeChapterParts, UpscalerProfile));
+            UpscaleOnIngest, HashCode.Combine(MergeChapterParts, AutoDeleteOddOneOutImages, UpscalerProfile));
     }
 }
 
