@@ -44,7 +44,7 @@ public class ImageResizeService : IImageResizeService
 
         try
         {
-            _fileSystem.CreateDirectory(tempDir);
+            Directory.CreateDirectory(tempDir);
             
             _logger.LogInformation("Resizing images in {InputPath} to max dimension {MaxDimension}", inputCbzPath, maxDimension);
 
