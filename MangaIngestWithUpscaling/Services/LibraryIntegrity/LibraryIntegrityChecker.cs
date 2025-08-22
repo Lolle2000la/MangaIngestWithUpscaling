@@ -242,20 +242,21 @@ public class LibraryIntegrityChecker(
             // If enabled, try to remove a single odd-one-out image from both original and upscaled archives
             if (chapter.Manga.Library.AutoDeleteOddOneOutImages)
             {
-                try
-                {
-                    if (CbzCleanupHelpers.TryRemoveOddOneOutImage(chapter.NotUpscaledFullPath, logger))
-                    {
-                        logger.LogInformation(
-                            "Odd-one-out image removed from original chapter during upscaled integrity check: {Path}",
-                            chapter.NotUpscaledFullPath);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, "Failed to cleanup odd-one-out image for original chapter {Path}",
-                        chapter.NotUpscaledFullPath);
-                }
+                // not enabled for original chapter, as it was already checked in CheckOriginalIntegrity
+                // try
+                // {
+                //     if (CbzCleanupHelpers.TryRemoveOddOneOutImage(chapter.NotUpscaledFullPath, logger))
+                //     {
+                //         logger.LogInformation(
+                //             "Odd-one-out image removed from original chapter during upscaled integrity check: {Path}",
+                //             chapter.NotUpscaledFullPath);
+                //     }
+                // }
+                // catch (Exception ex)
+                // {
+                //     logger.LogError(ex, "Failed to cleanup odd-one-out image for original chapter {Path}",
+                //         chapter.NotUpscaledFullPath);
+                // }
 
                 try
                 {
