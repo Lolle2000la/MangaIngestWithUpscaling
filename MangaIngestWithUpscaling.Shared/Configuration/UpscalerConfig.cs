@@ -47,4 +47,11 @@ public record UpscalerConfig
     );
 
     public TimeSpan UpscaleTimeout { get; set; } = TimeSpan.FromMinutes(1);
+
+    /// <summary>
+    ///     Maximum dimension (width or height) for images before upscaling. 
+    ///     Images larger than this will be resized to fit within this boundary while maintaining aspect ratio.
+    ///     Set to null or 0 to disable this feature.
+    /// </summary>
+    public int? MaxDimensionBeforeUpscaling { get; set; } = null;
 }
