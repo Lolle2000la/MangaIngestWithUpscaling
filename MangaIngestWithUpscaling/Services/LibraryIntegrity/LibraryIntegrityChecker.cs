@@ -298,8 +298,7 @@ public class LibraryIntegrityChecker(
             }
             else
             {
-                throw new InvalidDataException(
-                    "The upscaled chapter does not match the outward number of pages to the original chapter.");
+                return IntegrityCheckResult.Invalid;
             }
         }
         catch (Exception ex)
