@@ -23,7 +23,7 @@ public class ImageResizeService : IImageResizeService
         _fileSystem = fileSystem;
     }
 
-    public async Task<string> CreateResizedTempCbzAsync(string inputCbzPath, int maxDimension, CancellationToken cancellationToken)
+    public async Task<TempResizedCbz> CreateResizedTempCbzAsync(string inputCbzPath, int maxDimension, CancellationToken cancellationToken)
     {
         if (!File.Exists(inputCbzPath))
         {
@@ -56,7 +56,7 @@ public class ImageResizeService : IImageResizeService
             
             _logger.LogInformation("Created resized temporary CBZ at {TempPath}", tempCbzPath);
             
-            return tempCbzPath;
+            return new TempResizedCbz(tempCbzPath, this);
         }
         finally
         {

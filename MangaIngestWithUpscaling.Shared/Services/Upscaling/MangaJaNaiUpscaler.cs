@@ -140,67 +140,63 @@ public class MangaJaNaiUpscaler(
         }
 
         string actualInputPath = inputPath;
-        string? tempResizedPath = null;
+        
+        // Check if we need to resize images before upscaling
+        if (sharedConfig.Value.MaxDimensionBeforeUpscaling.HasValue && 
+            sharedConfig.Value.MaxDimensionBeforeUpscaling.Value > 0)
+        {
+            logger.LogInformation("Creating temporary resized CBZ with max dimension {MaxDimension} for {InputPath}", 
+                sharedConfig.Value.MaxDimensionBeforeUpscaling.Value, inputPath);
+            
+            using var tempResizedCbz = await imageResizeService.CreateResizedTempCbzAsync(
+                inputPath, 
+                sharedConfig.Value.MaxDimensionBeforeUpscaling.Value, 
+                cancellationToken);
+            
+            actualInputPath = tempResizedCbz.FilePath;
+            
+            logger.LogInformation("Using resized temporary file for upscaling: {TempPath}", actualInputPath);
 
+            await PerformUpscaling(actualInputPath, outputPath, outputDirectory, outputFilename, profile, cancellationToken);
+        }
+        else
+        {
+            await PerformUpscaling(actualInputPath, outputPath, outputDirectory, outputFilename, profile, cancellationToken);
+        }
+    }
+
+    private async Task PerformUpscaling(string inputPath, string outputPath, string outputDirectory, string outputFilename, UpscalerProfile profile, CancellationToken cancellationToken)
+    {
         try
         {
-            // Check if we need to resize images before upscaling
-            if (sharedConfig.Value.MaxDimensionBeforeUpscaling.HasValue && 
-                sharedConfig.Value.MaxDimensionBeforeUpscaling.Value > 0)
-            {
-                logger.LogInformation("Creating temporary resized CBZ with max dimension {MaxDimension} for {InputPath}", 
-                    sharedConfig.Value.MaxDimensionBeforeUpscaling.Value, inputPath);
-                
-                tempResizedPath = await imageResizeService.CreateResizedTempCbzAsync(
-                    inputPath, 
-                    sharedConfig.Value.MaxDimensionBeforeUpscaling.Value, 
-                    cancellationToken);
-                
-                actualInputPath = tempResizedPath;
-                
-                logger.LogInformation("Using resized temporary file for upscaling: {TempPath}", tempResizedPath);
-            }
-
             MangaJaNaiUpscalerConfig config = MangaJaNaiUpscalerConfig.FromUpscalerProfile(profile);
             config.ApplyUpscalerConfig(sharedConfig.Value);
             config.SelectedTabIndex = 0;
-            config.InputFilePath = actualInputPath;
+            config.InputFilePath = inputPath;
             config.OutputFolderPath = outputDirectory;
             config.OutputFilename = outputFilename;
             config.ModelsDirectory = ModelPath;
             string configPath = JsonWorkflowModifier.ModifyWorkflowConfig(ConfigPath, config);
 
-            logger.LogInformation("Upscaling {inputPath} to {outputPath} with {profile.Name}", actualInputPath, outputPath,
-                profile.Name);
+            logger.LogInformation("Upscaling {inputPath} to {outputPath} with {profile.Name}", inputPath, outputPath, profile.Name);
 
             string arguments = $"--settings \"{configPath}\"";
             string output = await pythonService.RunPythonScript(RunScriptPath, arguments, cancellationToken,
                 sharedConfig.Value.UpscaleTimeout);
             fileSystem.ApplyPermissions(outputPath);
 
-            logger.LogDebug("Upscaling Output {inputPath}: {output}", actualInputPath, output);
+            logger.LogDebug("Upscaling Output {inputPath}: {output}", inputPath, output);
 
             await upscalerJsonHandlingService.WriteUpscalerJsonAsync(outputPath, profile, cancellationToken);
 
-            logger.LogInformation("Upscaling {inputPath} to {outputPath} with {profile.Name} completed", actualInputPath,
-                outputPath, profile.Name);
+            logger.LogInformation("Upscaling {inputPath} to {outputPath} with {profile.Name} completed", inputPath, outputPath, profile.Name);
 
             File.Delete(configPath);
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Upscaling {inputPath} to {outputPath} with {profile.Name} failed", actualInputPath,
-                outputPath, profile.Name);
+            logger.LogError(ex, "Upscaling {inputPath} to {outputPath} with {profile.Name} failed", inputPath, outputPath, profile.Name);
             throw;
-        }
-        finally
-        {
-            // Clean up temporary resized file if it was created
-            if (!string.IsNullOrEmpty(tempResizedPath))
-            {
-                imageResizeService.CleanupTempFile(tempResizedPath);
-                logger.LogDebug("Cleaned up temporary resized file: {TempPath}", tempResizedPath);
-            }
         }
     }
 
