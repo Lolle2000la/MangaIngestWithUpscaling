@@ -61,7 +61,7 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         GpuBackend preferredBackend = GpuBackend.Auto, bool forceAcceptExisting = false)
     {
         // Determine the actual backend to use
-        var targetBackend = await DetermineTargetBackend(preferredBackend);
+        var targetBackend = forceAcceptExisting ? GpuBackend.CPU : await DetermineTargetBackend(preferredBackend);
 
         // create a virtual environment in a writable but permanent location
         var environmentPath = Path.GetFullPath(desiredDirectory);
