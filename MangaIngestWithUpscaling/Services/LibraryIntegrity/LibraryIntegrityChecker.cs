@@ -65,21 +65,31 @@ public class LibraryIntegrityChecker(
     /// <inheritdoc/>
     public async Task<bool> CheckIntegrity(Chapter chapter, CancellationToken? cancellationToken = null)
     {
-        var origIntegrity = await CheckOriginalIntegrity(chapter, cancellationToken);
-        var upscaledIntegrity = IntegrityCheckResult.Ok;
-        if (origIntegrity != IntegrityCheckResult.Missing && origIntegrity != IntegrityCheckResult.Invalid &&
-            origIntegrity != IntegrityCheckResult.MaybeInProgress)
-            upscaledIntegrity = await CheckUpscaledIntegrity(chapter, cancellationToken);
-
-        if (origIntegrity != IntegrityCheckResult.Ok || upscaledIntegrity != IntegrityCheckResult.Ok)
+        try
         {
-            logger.LogWarning(
-                "Chapter {chapterFileName} ({chapterId}) of {seriesTitle} has integrity issues. Original: {origIntegrity}, Upscaled: {upscaledIntegrity}. Check the other log messages for more information on the cause of this.\n\nNote that this doesn't have to be a problem as many problems can and probably were corrected.",
-                chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle, origIntegrity, upscaledIntegrity);
-            return true;
-        }
+            var origIntegrity = await CheckOriginalIntegrity(chapter, cancellationToken);
+            var upscaledIntegrity = IntegrityCheckResult.Ok;
+            if (origIntegrity != IntegrityCheckResult.Missing && origIntegrity != IntegrityCheckResult.Invalid &&
+                origIntegrity != IntegrityCheckResult.MaybeInProgress)
+                upscaledIntegrity = await CheckUpscaledIntegrity(chapter, cancellationToken);
 
-        return false;
+            if (origIntegrity != IntegrityCheckResult.Ok || upscaledIntegrity != IntegrityCheckResult.Ok)
+            {
+                logger.LogWarning(
+                    "Chapter {chapterFileName} ({chapterId}) of {seriesTitle} has integrity issues. Original: {origIntegrity}, Upscaled: {upscaledIntegrity}. Check the other log messages for more information on the cause of this.\n\nNote that this doesn't have to be a problem as many problems can and probably were corrected.",
+                    chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle, origIntegrity, upscaledIntegrity);
+                return true;
+            }
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex,
+                "An error occurred while checking integrity of chapter {chapterFileName} ({chapterId}) of {seriesTitle}.",
+                chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
+            return true; // An error indicates a problem that needs attention
+        }
     }
 
     /// <summary>
