@@ -1,6 +1,7 @@
 ﻿using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
+using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Python;
 using Microsoft.Extensions.Logging;
@@ -17,7 +18,8 @@ public class MangaJaNaiUpscaler(
     IOptions<UpscalerConfig> sharedConfig,
     IFileSystem fileSystem,
     IMetadataHandlingService metadataHandling,
-    IUpscalerJsonHandlingService upscalerJsonHandlingService) : IUpscaler
+    IUpscalerJsonHandlingService upscalerJsonHandlingService,
+    IImageResizeService imageResizeService) : IUpscaler
 {
     private static readonly IReadOnlyDictionary<string, string> expectedModelHashes = new Dictionary<string, string>
     {
@@ -137,21 +139,48 @@ public class MangaJaNaiUpscaler(
             File.Delete(outputPath);
         }
 
-        MangaJaNaiUpscalerConfig config = MangaJaNaiUpscalerConfig.FromUpscalerProfile(profile);
-        config.ApplyUpscalerConfig(sharedConfig.Value);
-        config.SelectedTabIndex = 0;
-        config.InputFilePath = inputPath;
-        config.OutputFolderPath = outputDirectory;
-        config.OutputFilename = outputFilename;
-        config.ModelsDirectory = ModelPath;
-        string configPath = JsonWorkflowModifier.ModifyWorkflowConfig(ConfigPath, config);
+        string actualInputPath = inputPath;
+        
+        // Check if we need to resize images before upscaling
+        if (sharedConfig.Value.MaxDimensionBeforeUpscaling.HasValue && 
+            sharedConfig.Value.MaxDimensionBeforeUpscaling.Value > 0)
+        {
+            logger.LogInformation("Creating temporary resized CBZ with max dimension {MaxDimension} for {InputPath}", 
+                sharedConfig.Value.MaxDimensionBeforeUpscaling.Value, inputPath);
+            
+            using var tempResizedCbz = await imageResizeService.CreateResizedTempCbzAsync(
+                inputPath, 
+                sharedConfig.Value.MaxDimensionBeforeUpscaling.Value, 
+                cancellationToken);
+            
+            actualInputPath = tempResizedCbz.FilePath;
+            
+            logger.LogInformation("Using resized temporary file for upscaling: {TempPath}", actualInputPath);
 
-        logger.LogInformation("Upscaling {inputPath} to {outputPath} with {profile.Name}", inputPath, outputPath,
-            profile.Name);
+            await PerformUpscaling(actualInputPath, outputPath, outputDirectory, outputFilename, profile, cancellationToken);
+        }
+        else
+        {
+            await PerformUpscaling(actualInputPath, outputPath, outputDirectory, outputFilename, profile, cancellationToken);
+        }
+    }
 
-        string arguments = $"--settings \"{configPath}\"";
+    private async Task PerformUpscaling(string inputPath, string outputPath, string outputDirectory, string outputFilename, UpscalerProfile profile, CancellationToken cancellationToken)
+    {
         try
         {
+            MangaJaNaiUpscalerConfig config = MangaJaNaiUpscalerConfig.FromUpscalerProfile(profile);
+            config.ApplyUpscalerConfig(sharedConfig.Value);
+            config.SelectedTabIndex = 0;
+            config.InputFilePath = inputPath;
+            config.OutputFolderPath = outputDirectory;
+            config.OutputFilename = outputFilename;
+            config.ModelsDirectory = ModelPath;
+            string configPath = JsonWorkflowModifier.ModifyWorkflowConfig(ConfigPath, config);
+
+            logger.LogInformation("Upscaling {inputPath} to {outputPath} with {profile.Name}", inputPath, outputPath, profile.Name);
+
+            string arguments = $"--settings \"{configPath}\"";
             string output = await pythonService.RunPythonScript(RunScriptPath, arguments, cancellationToken,
                 sharedConfig.Value.UpscaleTimeout);
             fileSystem.ApplyPermissions(outputPath);
@@ -160,18 +189,14 @@ public class MangaJaNaiUpscaler(
 
             await upscalerJsonHandlingService.WriteUpscalerJsonAsync(outputPath, profile, cancellationToken);
 
-            logger.LogInformation("Upscaling {inputPath} to {outputPath} with {profile.Name} completed", inputPath,
-                outputPath, profile.Name);
+            logger.LogInformation("Upscaling {inputPath} to {outputPath} with {profile.Name} completed", inputPath, outputPath, profile.Name);
+
+            File.Delete(configPath);
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Upscaling {inputPath} to {outputPath} with {profile.Name} failed", inputPath,
-                outputPath, profile.Name);
+            logger.LogError(ex, "Upscaling {inputPath} to {outputPath} with {profile.Name} failed", inputPath, outputPath, profile.Name);
             throw;
-        }
-        finally
-        {
-            File.Delete(configPath);
         }
     }
 
