@@ -37,7 +37,10 @@ public class ImageResizeService : IImageResizeService
 
         // Create temporary directory for processing
         string tempDir = Path.Combine(Path.GetTempPath(), $"manga_resize_{Guid.NewGuid()}");
-        string tempCbzPath = Path.Combine(Path.GetTempPath(), $"resized_{Path.GetFileName(inputCbzPath)}");
+        string tempCbzPath = Path.Combine(
+            Path.GetTempPath(),
+            $"resized_{Guid.NewGuid()}_{Path.GetFileName(inputCbzPath)}"
+        );
 
         try
         {
