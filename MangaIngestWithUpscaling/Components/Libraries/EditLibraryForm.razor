@@ -23,6 +23,11 @@
                              Label="Merge chapter parts (e.g., Chapter 22.1, 22.2, 22.3 → Chapter 22). Only merges completed chapters, not the latest one. (Experimental, expect data loss!)"
                              @bind-Value="Library.MergeChapterParts" @bind-Value:after="OnInputChanged"/>
 
+               <!-- New: auto delete odd-one-out images policy -->
+                <MudCheckBox T="bool"
+                             Label="Automatically delete odd-one-out images (1 file with a different extension) on ingest and during integrity checks (original and upscaled)."
+                             @bind-Value="Library.AutoDeleteOddOneOutImages" @bind-Value:after="OnInputChanged"/>
+
                 <MudSelect T="int?" Label="Upscaler Config"
                            HelperText="Select an upscaling profile to use for this library. Leave at 'none' if you do not want to upscale any images."
                            Immediate="true" @bind-Value="Library.UpscalerProfileId" @bind-Value:after="OnInputChanged"
@@ -198,4 +203,3 @@
     }
 
 }
-    

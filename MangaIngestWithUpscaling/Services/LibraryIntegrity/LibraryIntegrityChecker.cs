@@ -3,6 +3,7 @@ using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Shared.Helpers;
 using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Services.LibraryIntegrity;
@@ -140,6 +141,25 @@ public class LibraryIntegrityChecker(
             }
         }
 
+        // If enabled, try to remove a single odd-one-out image from the original archive before metadata checks
+        if (chapter.Manga.Library.AutoDeleteOddOneOutImages)
+        {
+            try
+            {
+                if (CbzCleanupHelpers.TryRemoveOddOneOutImage(chapter.NotUpscaledFullPath, logger))
+                {
+                    logger.LogInformation(
+                        "Odd-one-out image removed from original chapter during integrity check: {Path}",
+                        chapter.NotUpscaledFullPath);
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to cleanup odd-one-out image for original chapter {Path}",
+                    chapter.NotUpscaledFullPath);
+            }
+        }
+
         var metadata = metadataHandling.GetSeriesAndTitleFromComicInfo(chapter.NotUpscaledFullPath);
         if (!CheckMetadata(metadata, out var correctedMetadata))
         {
@@ -207,6 +227,40 @@ public class LibraryIntegrityChecker(
                 chapter.IsUpscaled = false;
                 await dbContext.SaveChangesAsync(cancellationToken ?? CancellationToken.None);
                 return IntegrityCheckResult.Missing;
+            }
+
+            // If enabled, try to remove a single odd-one-out image from both original and upscaled archives
+            if (chapter.Manga.Library.AutoDeleteOddOneOutImages)
+            {
+                try
+                {
+                    if (CbzCleanupHelpers.TryRemoveOddOneOutImage(chapter.NotUpscaledFullPath, logger))
+                    {
+                        logger.LogInformation(
+                            "Odd-one-out image removed from original chapter during upscaled integrity check: {Path}",
+                            chapter.NotUpscaledFullPath);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to cleanup odd-one-out image for original chapter {Path}",
+                        chapter.NotUpscaledFullPath);
+                }
+
+                try
+                {
+                    if (CbzCleanupHelpers.TryRemoveOddOneOutImage(chapter.UpscaledFullPath, logger))
+                    {
+                        logger.LogInformation(
+                            "Odd-one-out image removed from upscaled chapter during integrity check: {Path}",
+                            chapter.UpscaledFullPath);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to cleanup odd-one-out image for upscaled chapter {Path}",
+                        chapter.UpscaledFullPath);
+                }
             }
 
             if (metadataHandling.PagesEqual(chapter.NotUpscaledFullPath, chapter.UpscaledFullPath))
