@@ -154,16 +154,36 @@ public class LibraryIntegrityChecker(
             }
         }
 
-        // If enabled, try to remove a single odd-one-out image from the original archive before metadata checks
+        // If enabled, try to remove a single odd-one-out image from both original and upscaled archives
         if (chapter.Manga.Library.AutoDeleteOddOneOutImages)
         {
             try
             {
-                if (CbzCleanupHelpers.TryRemoveOddOneOutImage(chapter.NotUpscaledFullPath, logger))
+                var removedImageName = CbzCleanupHelpers.TryRemoveOddOneOutImageAndGetName(chapter.NotUpscaledFullPath, logger);
+                if (removedImageName != null)
                 {
                     logger.LogInformation(
-                        "Odd-one-out image removed from original chapter during integrity check: {Path}",
-                        chapter.NotUpscaledFullPath);
+                        "Odd-one-out image removed from original chapter during integrity check: {Path}, image: {ImageName}",
+                        chapter.NotUpscaledFullPath, removedImageName);
+
+                    // If an upscaled version exists, remove the same image from it as well
+                    if (File.Exists(chapter.UpscaledFullPath))
+                    {
+                        try
+                        {
+                            if (CbzCleanupHelpers.TryRemoveImageByName(chapter.UpscaledFullPath, removedImageName, logger))
+                            {
+                                logger.LogInformation(
+                                    "Matching image removed from upscaled chapter during original integrity check: {Path}, image: {ImageName}",
+                                    chapter.UpscaledFullPath, removedImageName);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogError(ex, "Failed to remove matching image {ImageName} from upscaled chapter {Path}",
+                                removedImageName, chapter.UpscaledFullPath);
+                        }
+                    }
                 }
             }
             catch (Exception ex)
@@ -242,40 +262,6 @@ public class LibraryIntegrityChecker(
                 return IntegrityCheckResult.Missing;
             }
 
-            // If enabled, try to remove a single odd-one-out image from both original and upscaled archives
-            if (chapter.Manga.Library.AutoDeleteOddOneOutImages)
-            {
-                // not enabled for original chapter, as it was already checked in CheckOriginalIntegrity
-                // try
-                // {
-                //     if (CbzCleanupHelpers.TryRemoveOddOneOutImage(chapter.NotUpscaledFullPath, logger))
-                //     {
-                //         logger.LogInformation(
-                //             "Odd-one-out image removed from original chapter during upscaled integrity check: {Path}",
-                //             chapter.NotUpscaledFullPath);
-                //     }
-                // }
-                // catch (Exception ex)
-                // {
-                //     logger.LogError(ex, "Failed to cleanup odd-one-out image for original chapter {Path}",
-                //         chapter.NotUpscaledFullPath);
-                // }
-
-                try
-                {
-                    if (CbzCleanupHelpers.TryRemoveOddOneOutImage(chapter.UpscaledFullPath, logger))
-                    {
-                        logger.LogInformation(
-                            "Odd-one-out image removed from upscaled chapter during integrity check: {Path}",
-                            chapter.UpscaledFullPath);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, "Failed to cleanup odd-one-out image for upscaled chapter {Path}",
-                        chapter.UpscaledFullPath);
-                }
-            }
 
             if (metadataHandling.PagesEqual(chapter.NotUpscaledFullPath, chapter.UpscaledFullPath))
             {
