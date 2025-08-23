@@ -7,7 +7,11 @@ public static class CbzCleanupHelpers
 {
     private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".jpg", ".jpeg", ".png", ".webp", ".avif"
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+        ".avif"
     };
 
     /// <summary>
@@ -52,7 +56,7 @@ public static class CbzCleanupHelpers
 
             // Identify the odd image (the only member of a non-majority group)
             var oddGroup = groups.Where(kv => kv.Key != majority.Key).First(kv => kv.Value.Count == 1);
-            
+
             var oddEntry = oddGroup.Value[0];
 
             logger?.LogInformation(
@@ -111,7 +115,7 @@ public static class CbzCleanupHelpers
 
             // Identify the odd image (the only member of a non-majority group)
             var oddGroup = groups.Where(kv => kv.Key != majority.Key).First(kv => kv.Value.Count == 1);
-            
+
             var oddEntry = oddGroup.Value[0];
             var removedImageName = oddEntry.FullName;
 
@@ -180,16 +184,16 @@ public static class CbzCleanupHelpers
             // Get the base name without extension from the original image
             var baseNameWithoutExt = Path.GetFileNameWithoutExtension(imageName);
             var directoryName = Path.GetDirectoryName(imageName);
-            
+
             // Find an image entry that matches the base name but potentially has a different extension
             var entry = archive.Entries
                 .Where(e => !string.IsNullOrEmpty(e.Name)) // skip directories
                 .Where(e => ImageExtensions.Contains(Path.GetExtension(e.FullName)))
-                .FirstOrDefault(e => 
+                .FirstOrDefault(e =>
                 {
                     var entryBaseName = Path.GetFileNameWithoutExtension(e.FullName);
                     var entryDirectory = Path.GetDirectoryName(e.FullName);
-                    
+
                     // Match both the base name and directory path
                     return string.Equals(entryBaseName, baseNameWithoutExt, StringComparison.OrdinalIgnoreCase) &&
                            string.Equals(entryDirectory, directoryName, StringComparison.OrdinalIgnoreCase);
@@ -201,26 +205,86 @@ public static class CbzCleanupHelpers
                 entry = archive.Entries
                     .Where(e => !string.IsNullOrEmpty(e.Name))
                     .Where(e => ImageExtensions.Contains(Path.GetExtension(e.FullName)))
-                    .FirstOrDefault(e => 
-                        string.Equals(Path.GetFileNameWithoutExtension(e.FullName), baseNameWithoutExt, StringComparison.OrdinalIgnoreCase));
+                    .FirstOrDefault(e =>
+                        string.Equals(Path.GetFileNameWithoutExtension(e.FullName), baseNameWithoutExt,
+                            StringComparison.OrdinalIgnoreCase));
             }
 
             if (entry == null)
             {
-                logger?.LogWarning("Image with base name {BaseImageName} not found in {Cbz}", baseNameWithoutExt, cbzPath);
+                logger?.LogWarning("Image with base name {BaseImageName} not found in {Cbz}", baseNameWithoutExt,
+                    cbzPath);
                 return false;
             }
 
-            logger?.LogInformation("Removing matching image by base name from {Cbz}: {EntryFullName} (original: {OriginalName})", 
+            logger?.LogInformation(
+                "Removing matching image by base name from {Cbz}: {EntryFullName} (original: {OriginalName})",
                 cbzPath, entry.FullName, imageName);
             entry.Delete();
             return true;
         }
         catch (Exception ex)
         {
-            logger?.LogError(ex, "Failed to remove image with base name {BaseImageName} from {Cbz}", 
+            logger?.LogError(ex, "Failed to remove image with base name {BaseImageName} from {Cbz}",
                 Path.GetFileNameWithoutExtension(imageName), cbzPath);
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Finds a single odd-one-out image type in a CBZ archive, when all other images share a different extension.
+    /// Returns the full name of the odd image, or null if no odd image was found.
+    /// </summary>
+    public static string? FindOddOneOutImage(string cbzPath, ILogger? logger = null)
+    {
+        try
+        {
+            if (!File.Exists(cbzPath)) return null;
+            using var archive = ZipFile.Open(cbzPath, ZipArchiveMode.Read);
+
+            // Collect image entries (files only)
+            var images = archive.Entries
+                .Where(e => !string.IsNullOrEmpty(e.Name)) // skip directories
+                .Where(e => ImageExtensions.Contains(Path.GetExtension(e.FullName)))
+                .ToList();
+
+            if (images.Count < 2)
+            {
+                return null; // nothing to do
+            }
+
+            var groups = images
+                .GroupBy(e => Path.GetExtension(e.FullName).ToLowerInvariant())
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+            if (groups.Count != 2)
+            {
+                return null; // only one type present
+            }
+
+            // Majority must be of a single type, and exactly one image must be of a different type.
+            // Determine the majority group and sum of all others.
+            var majority = groups.OrderByDescending(kv => kv.Value.Count).First();
+            int othersCount = images.Count - majority.Value.Count;
+            if (othersCount != 1)
+            {
+                return null; // not exactly one odd image
+            }
+
+            // Identify the odd image (the only member of a non-majority group)
+            var oddGroup = groups.Where(kv => kv.Key != majority.Key).First(kv => kv.Value.Count == 1);
+            var oddEntry = oddGroup.Value[0];
+
+            logger?.LogInformation(
+                "Found odd-one-out image in {Cbz}: {EntryFullName} (ext {Ext}), majority ext: {MajorityExt}",
+                cbzPath, oddEntry.FullName, Path.GetExtension(oddEntry.FullName), majority.Key);
+
+            return oddEntry.FullName;
+        }
+        catch (Exception ex)
+        {
+            logger?.LogError(ex, "Failed to find odd-one-out image in {Cbz}", cbzPath);
+            return null;
         }
     }
 }

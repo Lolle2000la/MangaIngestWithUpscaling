@@ -159,36 +159,66 @@ public class LibraryIntegrityChecker(
         {
             try
             {
-                var removedImageName = CbzCleanupHelpers.TryRemoveOddOneOutImageAndGetName(chapter.NotUpscaledFullPath, logger);
-                if (removedImageName != null)
+                // First, find if there's an odd image in the original
+                var oddImageName = CbzCleanupHelpers.FindOddOneOutImage(chapter.NotUpscaledFullPath, logger);
+                if (oddImageName != null)
                 {
                     logger.LogInformation(
-                        "Odd-one-out image removed from original chapter during integrity check: {Path}, image: {ImageName}",
-                        chapter.NotUpscaledFullPath, removedImageName);
+                        "Found odd-one-out image in original chapter: {Path}, image: {ImageName}",
+                        chapter.NotUpscaledFullPath, oddImageName);
 
-                    // If an upscaled version exists, remove the same image from it as well
+                    // If an upscaled version exists, try to remove the corresponding image from it first
+                    bool upscaledRemovalSucceeded = true;
                     if (File.Exists(chapter.UpscaledFullPath))
                     {
                         try
                         {
-                            if (CbzCleanupHelpers.TryRemoveImageByBaseName(chapter.UpscaledFullPath, removedImageName, logger))
+                            upscaledRemovalSucceeded =
+                                CbzCleanupHelpers.TryRemoveImageByBaseName(chapter.UpscaledFullPath, oddImageName,
+                                    logger);
+                            if (upscaledRemovalSucceeded)
                             {
                                 logger.LogInformation(
-                                    "Matching image removed from upscaled chapter during original integrity check: {Path}, image: {ImageName}",
-                                    chapter.UpscaledFullPath, removedImageName);
+                                    "Corresponding image removed from upscaled chapter: {Path}, image: {ImageName}",
+                                    chapter.UpscaledFullPath, oddImageName);
+                            }
+                            else
+                            {
+                                logger.LogWarning(
+                                    "Failed to remove corresponding image from upscaled chapter, skipping removal from original: {Path}, image: {ImageName}",
+                                    chapter.UpscaledFullPath, oddImageName);
                             }
                         }
                         catch (Exception ex)
                         {
-                            logger.LogError(ex, "Failed to remove matching image {ImageName} from upscaled chapter {Path}",
-                                removedImageName, chapter.UpscaledFullPath);
+                            logger.LogError(ex,
+                                "Failed to remove corresponding image {ImageName} from upscaled chapter {Path}",
+                                oddImageName, chapter.UpscaledFullPath);
+                            upscaledRemovalSucceeded = false;
+                        }
+                    }
+
+                    // Only remove from original if upscaled removal succeeded (or there's no upscaled file)
+                    if (upscaledRemovalSucceeded)
+                    {
+                        if (CbzCleanupHelpers.TryRemoveImageByName(chapter.NotUpscaledFullPath, oddImageName, logger))
+                        {
+                            logger.LogInformation(
+                                "Odd-one-out image removed from original chapter: {Path}, image: {ImageName}",
+                                chapter.NotUpscaledFullPath, oddImageName);
+                        }
+                        else
+                        {
+                            logger.LogError(
+                                "Failed to remove odd-one-out image from original chapter after successful upscaled removal: {Path}, image: {ImageName}",
+                                chapter.NotUpscaledFullPath, oddImageName);
                         }
                     }
                 }
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Failed to cleanup odd-one-out image for original chapter {Path}",
+                logger.LogError(ex, "Failed to cleanup odd-one-out image for chapter {Path}",
                     chapter.NotUpscaledFullPath);
             }
         }
