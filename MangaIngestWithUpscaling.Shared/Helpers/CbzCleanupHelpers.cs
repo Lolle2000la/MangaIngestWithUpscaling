@@ -164,4 +164,63 @@ public static class CbzCleanupHelpers
             return false;
         }
     }
+
+    /// <summary>
+    /// Removes a specific image by base name (without extension) from a CBZ archive.
+    /// This is useful when the file extension might have changed after processing (e.g., upscaling).
+    /// Returns true if the image was found and removed.
+    /// </summary>
+    public static bool TryRemoveImageByBaseName(string cbzPath, string imageName, ILogger? logger = null)
+    {
+        try
+        {
+            if (!File.Exists(cbzPath)) return false;
+            using var archive = ZipFile.Open(cbzPath, ZipArchiveMode.Update);
+
+            // Get the base name without extension from the original image
+            var baseNameWithoutExt = Path.GetFileNameWithoutExtension(imageName);
+            var directoryName = Path.GetDirectoryName(imageName);
+            
+            // Find an image entry that matches the base name but potentially has a different extension
+            var entry = archive.Entries
+                .Where(e => !string.IsNullOrEmpty(e.Name)) // skip directories
+                .Where(e => ImageExtensions.Contains(Path.GetExtension(e.FullName)))
+                .FirstOrDefault(e => 
+                {
+                    var entryBaseName = Path.GetFileNameWithoutExtension(e.FullName);
+                    var entryDirectory = Path.GetDirectoryName(e.FullName);
+                    
+                    // Match both the base name and directory path
+                    return string.Equals(entryBaseName, baseNameWithoutExt, StringComparison.OrdinalIgnoreCase) &&
+                           string.Equals(entryDirectory, directoryName, StringComparison.OrdinalIgnoreCase);
+                });
+
+            if (entry == null)
+            {
+                // Fallback: try to find by base name only (ignore directory structure)
+                entry = archive.Entries
+                    .Where(e => !string.IsNullOrEmpty(e.Name))
+                    .Where(e => ImageExtensions.Contains(Path.GetExtension(e.FullName)))
+                    .FirstOrDefault(e => 
+                        string.Equals(Path.GetFileNameWithoutExtension(e.FullName), baseNameWithoutExt, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (entry == null)
+            {
+                logger?.LogWarning("Image with base name {BaseImageName} not found in {Cbz}", baseNameWithoutExt, cbzPath);
+                return false;
+            }
+
+            logger?.LogInformation("Removing matching image by base name from {Cbz}: {EntryFullName} (original: {OriginalName})", 
+                cbzPath, entry.FullName, imageName);
+            entry.Delete();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            logger?.LogError(ex, "Failed to remove image with base name {BaseImageName} from {Cbz}", 
+                Path.GetFileNameWithoutExtension(imageName), cbzPath);
+            return false;
+        }
+    }
 }

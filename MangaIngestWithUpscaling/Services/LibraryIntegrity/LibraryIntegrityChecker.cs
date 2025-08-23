@@ -171,7 +171,7 @@ public class LibraryIntegrityChecker(
                     {
                         try
                         {
-                            if (CbzCleanupHelpers.TryRemoveImageByName(chapter.UpscaledFullPath, removedImageName, logger))
+                            if (CbzCleanupHelpers.TryRemoveImageByBaseName(chapter.UpscaledFullPath, removedImageName, logger))
                             {
                                 logger.LogInformation(
                                     "Matching image removed from upscaled chapter during original integrity check: {Path}, image: {ImageName}",
