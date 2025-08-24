@@ -1,0 +1,357 @@
+@using MangaIngestWithUpscaling.Data.LibraryManagement
+@using MangaIngestWithUpscaling.Services.ImageFiltering
+@using Microsoft.AspNetCore.Components.Forms
+@using System.IO.Compression
+@inject ApplicationDbContext DbContext
+@inject IImageFilterService ImageFilterService
+@inject ILogger<AddImageFilterDialog> Logger
+
+<MudDialog>
+    <TitleContent>Add Image Filter</TitleContent>
+    <DialogContent>
+        <MudStack Spacing="3">
+            <MudText Typo="Typo.body1">
+                Choose an image to filter out from future ingests and retroactive scans.
+            </MudText>
+            
+            <MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-6">
+                <MudTabPanel Text="Upload Image File">
+                    <MudStack Spacing="3">
+                        <MudFileUpload T="IBrowserFile" Accept=".jpg,.jpeg,.png,.webp,.bmp,.tiff,.tif,.avif"
+                                       FilesChanged="OnFileSelected" MaximumFileCount="1">
+                            <ActivatorContent>
+                                <MudButton Variant="Variant.Filled"
+                                           Color="Color.Primary"
+                                           StartIcon="@Icons.Material.Filled.CloudUpload">
+                                    Select Image File
+                                </MudButton>
+                            </ActivatorContent>
+                        </MudFileUpload>
+                        
+                        @if (selectedFile != null)
+                        {
+                            <MudCard Elevation="2">
+                                <MudCardContent>
+                                    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                                        <MudIcon Icon="@Icons.Material.Filled.Image" />
+                                        <MudText>@selectedFile.Name (@FormatFileSize(selectedFile.Size))</MudText>
+                                    </MudStack>
+                                </MudCardContent>
+                            </MudCard>
+                        }
+                    </MudStack>
+                </MudTabPanel>
+                
+                <MudTabPanel Text="Extract from CBZ">
+                    <MudStack Spacing="3">
+                        <MudTextField @bind-Value="cbzPath" 
+                                      Label="CBZ File Path" 
+                                      Placeholder="/path/to/chapter.cbz"
+                                      HelperText="Enter the full path to a CBZ file" />
+                        
+                        <MudButton Variant="Variant.Outlined" 
+                                   OnClick="LoadCbzImages" 
+                                   Disabled="string.IsNullOrEmpty(cbzPath)"
+                                   StartIcon="@Icons.Material.Filled.FolderOpen">
+                            Load CBZ Images
+                        </MudButton>
+                        
+                        @if (cbzImages.Any())
+                        {
+                            <MudText Typo="Typo.h6">Select image to filter:</MudText>
+                            <MudGrid>
+                                @foreach (var (imageName, thumbnail) in cbzImages)
+                                {
+                                    <MudItem xs="6" sm="4" md="3">
+                                        <MudCard Elevation="1" Class="@GetImageCardClass(imageName)" 
+                                                 @onclick="() => SelectCbzImage(imageName)">
+                                            <MudCardContent Class="pa-2">
+                                                <MudStack AlignItems="AlignItems.Center" Spacing="1">
+                                                    @if (!string.IsNullOrEmpty(thumbnail))
+                                                    {
+                                                        <MudImage Src="@($"data:image/jpeg;base64,{thumbnail}")" 
+                                                                  Width="80" Height="80" 
+                                                                  ObjectFit="ObjectFit.Cover"
+                                                                  Class="rounded" />
+                                                    }
+                                                    else
+                                                    {
+                                                        <MudIcon Icon="@Icons.Material.Filled.Image" Size="Size.Large" />
+                                                    }
+                                                    <MudText Typo="Typo.caption" Align="Align.Center" Class="text-truncate">
+                                                        @Path.GetFileName(imageName)
+                                                    </MudText>
+                                                </MudStack>
+                                            </MudCardContent>
+                                        </MudCard>
+                                    </MudItem>
+                                }
+                            </MudGrid>
+                        }
+                    </MudStack>
+                </MudTabPanel>
+            </MudTabs>
+            
+            <MudTextField @bind-Value="description" 
+                          Label="Description (Optional)" 
+                          Placeholder="Why is this image being filtered?"
+                          Lines="2" />
+            
+            @if (!string.IsNullOrEmpty(previewThumbnail))
+            {
+                <MudCard Elevation="2">
+                    <MudCardHeader>
+                        <MudText Typo="Typo.h6">Preview</MudText>
+                    </MudCardHeader>
+                    <MudCardContent>
+                        <MudStack AlignItems="AlignItems.Center" Spacing="2">
+                            <MudImage Src="@($"data:image/jpeg;base64,{previewThumbnail}")" 
+                                      Width="150" Height="150" 
+                                      ObjectFit="ObjectFit.Cover"
+                                      Class="rounded" />
+                            <MudText Typo="Typo.body2" Align="Align.Center">
+                                @(selectedFile?.Name ?? selectedCbzImageName ?? "")
+                            </MudText>
+                        </MudStack>
+                    </MudCardContent>
+                </MudCard>
+            }
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" 
+                   Variant="Variant.Filled" 
+                   OnClick="Submit" 
+                   Disabled="!CanSubmit()">
+            Add Filter
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance DialogReference { get; set; } = null!;
+    [Parameter] public Library Library { get; set; } = null!;
+
+    private static readonly HashSet<string> SupportedImageExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif", ".avif"
+    };
+
+    private IBrowserFile? selectedFile;
+    private string cbzPath = "";
+    private string description = "";
+    private string selectedCbzImageName = "";
+    private string previewThumbnail = "";
+    private List<(string imageName, string thumbnail)> cbzImages = new();
+
+    private async Task OnFileSelected(IBrowserFile file)
+    {
+        selectedFile = file;
+        selectedCbzImageName = "";
+        
+        Logger.LogInformation("File selected: {FileName} ({FileSize} bytes)", file.Name, file.Size);
+        
+        try
+        {
+            using var stream = file.OpenReadStream(maxAllowedSize: 50 * 1024 * 1024); // Increased to 50MB for larger images
+            using var memoryStream = new MemoryStream();
+            await stream.CopyToAsync(memoryStream);
+            var imageBytes = memoryStream.ToArray();
+                
+            previewThumbnail = await ImageFilterService.GenerateThumbnailBase64Async(imageBytes);
+            Logger.LogInformation("Generated thumbnail for selected file: {FileName}", file.Name);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error processing selected file: {FileName}", file.Name);
+            previewThumbnail = "";
+        }
+    }
+
+    private async Task LoadCbzImages()
+    {
+        cbzImages.Clear();
+        previewThumbnail = "";
+
+        if (string.IsNullOrEmpty(cbzPath) || !File.Exists(cbzPath))
+        {
+            Logger.LogWarning("CBZ file path is empty or file does not exist: {CbzPath}", cbzPath);
+            return;
+        }
+
+        try
+        {
+            Logger.LogInformation("Loading images from CBZ file: {CbzPath}", cbzPath);
+            using var archive = ZipFile.Open(cbzPath, ZipArchiveMode.Read);
+            var imageEntries = archive.Entries
+                .Where(e => !string.IsNullOrEmpty(e.Name))
+                .Where(e => SupportedImageExtensions.Contains(Path.GetExtension(e.FullName)))
+                .Take(20) // Limit for performance
+                .ToList();
+
+            Logger.LogInformation("Found {Count} images in CBZ file", imageEntries.Count);
+
+            foreach (var entry in imageEntries)
+            {
+                try
+                {
+                    using var entryStream = entry.Open();
+                    using var memoryStream = new MemoryStream();
+                    await entryStream.CopyToAsync(memoryStream);
+                    var imageBytes = memoryStream.ToArray();
+
+                    var thumbnail = await ImageFilterService.GenerateThumbnailBase64Async(imageBytes);
+                    cbzImages.Add((entry.FullName, thumbnail));
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogWarning(ex, "Failed to process image {ImageName} from CBZ", entry.FullName);
+                }
+            }
+
+            Logger.LogInformation("Successfully loaded {Count} image thumbnails from CBZ", cbzImages.Count);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading images from CBZ file: {CbzPath}", cbzPath);
+            cbzImages.Clear();
+            previewThumbnail = "";
+        }
+    }
+
+    private async Task SelectCbzImage(string imageName)
+    {
+        selectedCbzImageName = imageName;
+        selectedFile = null;
+        
+        Logger.LogInformation("Selected CBZ image: {ImageName}", imageName);
+        
+        // Generate preview
+        try
+        {
+            using var archive = System.IO.Compression.ZipFile.Open(cbzPath, System.IO.Compression.ZipArchiveMode.Read);
+            var entry = archive.GetEntry(imageName);
+            if (entry != null)
+            {
+                using var entryStream = entry.Open();
+                using var ms = new MemoryStream();
+                await entryStream.CopyToAsync(ms);
+                var imageBytes = ms.ToArray();
+                
+                previewThumbnail = await ImageFilterService.GenerateThumbnailBase64Async(imageBytes);
+                Logger.LogInformation("Generated preview thumbnail for CBZ image: {ImageName}", imageName);
+            }
+            else
+            {
+                Logger.LogWarning("CBZ entry not found: {ImageName}", imageName);
+                previewThumbnail = "";
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error generating preview for CBZ image: {ImageName}", imageName);
+            previewThumbnail = "";
+        }
+    }
+
+    private string GetImageCardClass(string imageName)
+    {
+        return selectedCbzImageName == imageName ? "mud-theme-primary cursor-pointer" : "cursor-pointer";
+    }
+
+    private bool CanSubmit()
+    {
+        return selectedFile != null || !string.IsNullOrEmpty(selectedCbzImageName);
+    }
+
+    private async Task Submit()
+    {
+        try
+        {
+            FilteredImage? filteredImage = null;
+            
+            Logger.LogInformation("Starting image filter submission");
+            
+            if (selectedFile != null)
+            {
+                Logger.LogInformation("Processing uploaded file: {FileName}", selectedFile.Name);
+                // Create filter from uploaded file
+                using var stream = selectedFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+                using var ms = new MemoryStream();
+                await stream.CopyToAsync(ms);
+                var imageBytes = ms.ToArray();
+                
+                // Log the content hash for debugging
+                var contentHash = ImageFilterService.CalculateContentHash(imageBytes);
+                Logger.LogInformation("Generated content hash for {FileName}: {ContentHash}", selectedFile.Name, contentHash);
+                
+                filteredImage = await ImageFilterService.CreateFilteredImageFromBytesAsync(
+                    imageBytes, selectedFile.Name, Library, description);
+            }
+            else if (!string.IsNullOrEmpty(selectedCbzImageName) && !string.IsNullOrEmpty(cbzPath))
+            {
+                Logger.LogInformation("Processing CBZ image: {ImageName} from {CbzPath}", selectedCbzImageName, cbzPath);
+                // Create filter from CBZ image
+                filteredImage = await ImageFilterService.CreateFilteredImageFromCbzAsync(
+                    cbzPath, selectedCbzImageName, Library, description);
+                    
+                // Log the content hash for debugging
+                if (filteredImage != null)
+                {
+                    Logger.LogInformation("Generated content hash for {ImageName}: {ContentHash}", selectedCbzImageName, filteredImage.ContentHash);
+                }
+            }
+            else
+            {
+                Logger.LogWarning("No valid input provided for image filter submission");
+                // No valid input
+                DialogReference?.Close(DialogResult.Cancel());
+                return;
+            }
+
+            if (filteredImage != null)
+            {
+                Logger.LogInformation("Saving filtered image to database - OriginalFileName: {OriginalFileName}, ContentHash: {ContentHash}", 
+                    filteredImage.OriginalFileName, filteredImage.ContentHash);
+                    
+                // Ensure the Library's FilteredImages collection is loaded
+                if (!DbContext.Entry(Library).Collection(l => l.FilteredImages).IsLoaded)
+                {
+                    await DbContext.Entry(Library).Collection(l => l.FilteredImages).LoadAsync();
+                }
+                
+                Library.FilteredImages.Add(filteredImage);
+                DbContext.FilteredImages.Add(filteredImage);
+                await DbContext.SaveChangesAsync();
+                Logger.LogInformation("Successfully saved filtered image to database");
+            }
+            
+            Logger.LogInformation("Closing dialog with success");
+            DialogReference?.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error occurred during image filter submission");
+            DialogReference?.Close(DialogResult.Cancel());
+        }
+    }
+
+    private void Cancel() 
+    {
+        DialogReference.Close(DialogResult.Cancel());
+    }
+    
+    private static string FormatFileSize(long bytes)
+    {
+        string[] suffixes = ["B", "KB", "MB", "GB"];
+        int counter = 0;
+        decimal number = bytes;
+        while (Math.Round(number / 1024) >= 1)
+        {
+            number /= 1024;
+            counter++;
+        }
+        return $"{number:n1} {suffixes[counter]}";
+    }
+}

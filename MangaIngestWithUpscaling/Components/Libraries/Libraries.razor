@@ -15,8 +15,11 @@
 <MudPaper Elevation="3" Class="mb-3">
     <MudStack Row>
         <a href="libraries/create">
-            <MudButton StartIcon="@Icons.Material.Filled.Add" Variant="Variant.Filled" Color="Color.Primary">Create</MudButton>
+            <MudButton StartIcon="@Icons.Material.Filled.Add" Variant="Variant.Filled" Color="Color.Primary">Create
+            </MudButton>
         </a>
+        <MudButton StartIcon="@Icons.Material.Filled.ImageAspectRatio" Variant="Variant.Filled" Color="Color.Secondary"
+            OnClick="OnUpscaleAll">Upscale All</MudButton>
     </MudStack>
 </MudPaper>
 
@@ -37,29 +40,24 @@
         <MudTd>@context.MangaSeries?.SelectMany(m => m.Chapters)?.Count()</MudTd>
         <MudTd>
             <a href="libraries/edit/@context.Id">
-                <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Text"
-                               Size="Size.Small"
-                               title="Edit this library"/>
+                <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Text" Size="Size.Small"
+                    title="Edit this library" />
             </a>
-            <MudIconButton Icon="@Icons.Material.Filled.Search" Variant="Variant.Text"
-                           Size="Size.Small"
-                           title="Schedule a scan of this library"
-                           OnClick="e => OnScanLibrary(context)"/>
+            <MudIconButton Icon="@Icons.Material.Filled.Search" Variant="Variant.Text" Size="Size.Small"
+                title="Schedule a scan of this library" OnClick="e => OnScanLibrary(context)" />
             @if (context.UpscalerProfileId is not null && !string.IsNullOrEmpty(context.UpscaledLibraryPath))
             {
-                <MudIconButton Icon="@Icons.Material.Filled.ImageAspectRatio" Variant="Variant.Text"
-                               Size="Size.Small"
-                               title="Upscale the entries not yet upscaled"
-                               OnClick="e => OnUpscaleLibrary(context)"/>
+                <MudIconButton Icon="@Icons.Material.Filled.ImageAspectRatio" Variant="Variant.Text" Size="Size.Small"
+                    title="Upscale the entries not yet upscaled" OnClick="e => OnUpscaleLibrary(context)" />
             }
-            <MudIconButton Icon="@Icons.Material.Filled.Checklist" Variant="Variant.Text"
-                           Size="Size.Small"
-                           title="Check integrity of this library"
-                           OnClick="e => OnCheckIntegrity(context)"/>
+            <MudIconButton Icon="@Icons.Material.Filled.Checklist" Variant="Variant.Text" Size="Size.Small"
+                title="Check integrity of this library" OnClick="e => OnCheckIntegrity(context)" />
+            <a href="@($"libraries/{context.Id}/filtered-images")">
+                <MudIconButton Icon="@Icons.Material.Filled.FilterAlt" Variant="Variant.Text" Size="Size.Small"
+                    title="Manage image filters for this library" />
+            </a>
             <MudIconButton Icon="@Icons.Material.Filled.Delete" Variant="Variant.Text" Color="Color.Error"
-                           Size="Size.Small"
-                           title="Delete this library"
-                           OnClick="e => OnDeleteLibraryEntry(context)"/>
+                Size="Size.Small" title="Delete this library" OnClick="e => OnDeleteLibraryEntry(context)" />
         </MudTd>
     </RowTemplate>
 </MudTable>
@@ -70,12 +68,12 @@
     protected override async Task OnInitializedAsync()
     {
         LoadedLibraries = await DbContext.Libraries
-            .Include(x => x.UpscalerProfile)
-            .Include(x => x.MangaSeries)
-            .ThenInclude(x => x.UpscalerProfilePreference)
-            .Include(x => x.MangaSeries)
-            .ThenInclude(x => x.Chapters)
-            .ToListAsync();
+        .Include(x => x.UpscalerProfile)
+        .Include(x => x.MangaSeries)
+        .ThenInclude(x => x.UpscalerProfilePreference)
+        .Include(x => x.MangaSeries)
+        .ThenInclude(x => x.Chapters)
+        .ToListAsync();
     }
 
     private async Task OnLibraryChanged()
@@ -86,24 +84,24 @@
     protected async Task OnScanLibrary(Library library)
     {
         await TaskQueue.EnqueueAsync(new ScanIngestTask
-            {
-                LibraryId = library.Id,
-                LibraryName = library.Name
-            });
+        {
+            LibraryId = library.Id,
+            LibraryName = library.Name
+        });
     }
 
     protected async Task OnDeleteLibraryEntry(Library library)
     {
         var result = await DialogService.ShowMessageBox(
-            "Delete Library",
-            "Do you really want to delete this library? Note: This does NOT delete any of the files created.",
-            "OK", cancelText: "Cancel",
-            options: new DialogOptions
-                {
-                    CloseButton = true,
-                    BackdropClick = true,
-                    CloseOnEscapeKey = true
-                });
+        "Delete Library",
+        "Do you really want to delete this library? Note: This does NOT delete any of the files created.",
+        "OK", cancelText: "Cancel",
+        options: new DialogOptions
+        {
+            CloseButton = true,
+            BackdropClick = true,
+            CloseOnEscapeKey = true
+        });
 
         if (result.HasValue && result.Value)
         {
@@ -116,7 +114,8 @@
 
     protected async Task OnUpscaleLibrary(Library library)
     {
-        if (library.UpscalerProfileId is null || library.UpscalerProfile == null || string.IsNullOrEmpty(library.UpscaledLibraryPath))
+        if (library.UpscalerProfileId is null || library.UpscalerProfile == null ||
+        string.IsNullOrEmpty(library.UpscaledLibraryPath))
         {
             return;
         }
@@ -132,6 +131,14 @@
 
                 await TaskQueue.EnqueueAsync(new UpscaleTask(chapter));
             }
+        }
+    }
+
+    protected async Task OnUpscaleAll()
+    {
+        foreach (var library in LoadedLibraries)
+        {
+            await OnUpscaleLibrary(library);
         }
     }
 

@@ -31,6 +31,7 @@ public class Library
 
     public List<Manga> MangaSeries { get; set; } = [];
     public List<LibraryFilterRule> FilterRules { get; set; } = [];
+    public List<FilteredImage> FilteredImages { get; set; } = [];
 
     public ObservableCollection<LibraryRenameRule> RenameRules { get; set; } = new();
 
