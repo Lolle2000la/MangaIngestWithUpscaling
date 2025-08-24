@@ -140,6 +140,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 
             entity.HasIndex(e => e.LibraryId);
             entity.HasIndex(e => e.ContentHash);
+            entity.HasIndex(e => e.PerceptualHash);
             entity.HasIndex(e => e.DateAdded);
             entity.HasIndex(e => e.OccurrenceCount);
             entity.HasIndex(e => new { e.LibraryId, e.OriginalFileName });

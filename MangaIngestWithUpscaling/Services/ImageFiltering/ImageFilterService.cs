@@ -6,6 +6,9 @@ using System.Text;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Processing;
 using SixLabors.ImageSharp.Formats.Jpeg;
+using SixLabors.ImageSharp.PixelFormats;
+using CoenM.ImageHash;
+using CoenM.ImageHash.HashAlgorithms;
 
 namespace MangaIngestWithUpscaling.Services.ImageFiltering;
 
@@ -13,6 +16,8 @@ namespace MangaIngestWithUpscaling.Services.ImageFiltering;
 public class ImageFilterService : IImageFilterService
 {
     private readonly ILogger<ImageFilterService> _logger;
+    private readonly IImageHash _imageHasher;
+    
     private static readonly HashSet<string> SupportedImageExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif", ".avif"
@@ -21,6 +26,8 @@ public class ImageFilterService : IImageFilterService
     public ImageFilterService(ILogger<ImageFilterService> logger)
     {
         _logger = logger;
+        // Use pHash algorithm which is excellent for perceptual similarity detection
+        _imageHasher = new PerceptualHash();
     }
 
     public async Task<ImageFilterResult> ApplyFiltersToChapterAsync(string cbzPath, IEnumerable<FilteredImage> filters, CancellationToken cancellationToken = default)
@@ -61,6 +68,9 @@ public class ImageFilterService : IImageFilterService
                     await entryStream.CopyToAsync(memoryStream, cancellationToken);
                     var imageBytes = memoryStream.ToArray();
 
+                    _logger.LogDebug("Processing image {ImageName} in {CbzPath} - size: {ImageSize} bytes", 
+                        entry.FullName, cbzPath, imageBytes.Length);
+
                     // Check if this image matches any filter
                     var matchingFilter = await FindMatchingFilterAsync(imageBytes, entry.FullName, filterList);
 
@@ -75,6 +85,10 @@ public class ImageFilterService : IImageFilterService
                         // Update occurrence count
                         matchingFilter.OccurrenceCount++;
                         matchingFilter.LastMatchedAt = DateTime.UtcNow;
+                    }
+                    else
+                    {
+                        _logger.LogDebug("No filter match found for image {ImageName} in {CbzPath}", entry.FullName, cbzPath);
                     }
                 }
                 catch (Exception ex)
@@ -188,9 +202,66 @@ public class ImageFilterService : IImageFilterService
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
+    /// <summary>
+    /// Calculates a perceptual hash using pHash algorithm. This hash is excellent for finding visually similar images
+    /// even when they've been resized, recompressed, or slightly modified.
+    /// </summary>
+    /// <param name="imageBytes">The image data</param>
+    /// <returns>Perceptual hash as ulong value</returns>
+    public ulong CalculatePerceptualHash(byte[] imageBytes)
+    {
+        try
+        {
+            using var image = Image.Load<Rgba32>(imageBytes);
+            var hash = _imageHasher.Hash(image);
+            return hash; // Returns ulong directly
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error calculating perceptual hash");
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Calculates the similarity between two perceptual hashes using CompareHash.
+    /// Returns a value between 0.0 and 100.0 where 100.0 means identical images.
+    /// </summary>
+    /// <param name="hash1">First perceptual hash</param>
+    /// <param name="hash2">Second perceptual hash</param>
+    /// <returns>Similarity percentage (0-100)</returns>
+    public double CalculateImageSimilarity(ulong hash1, ulong hash2)
+    {
+        try
+        {
+            return CompareHash.Similarity(hash1, hash2);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error comparing perceptual hashes: {Hash1} vs {Hash2}", hash1, hash2);
+            return 0.0;
+        }
+    }
+
+    /// <summary>
+    /// Legacy method for backward compatibility. 
+    /// Converts similarity percentage to Hamming distance approximation.
+    /// </summary>
+    /// <param name="hash1">First perceptual hash</param>
+    /// <param name="hash2">Second perceptual hash</param>
+    /// <returns>Approximate Hamming distance</returns>
+    public int CalculateHammingDistance(ulong hash1, ulong hash2)
+    {
+        var similarity = CalculateImageSimilarity(hash1, hash2);
+        // Convert similarity percentage to approximate hamming distance
+        // 100% similarity = 0 distance, 0% similarity = 64 distance (for 64-bit hash)
+        return (int)Math.Round((100.0 - similarity) * 64.0 / 100.0);
+    }
+
     private async Task<FilteredImage> CreateFilteredImageFromBytesInternalAsync(byte[] imageBytes, string fileName, Library library, string? mimeType, string? description)
     {
         var contentHash = CalculateContentHash(imageBytes);
+        var perceptualHash = CalculatePerceptualHash(imageBytes);
         var thumbnailBase64 = await GenerateThumbnailBase64Async(imageBytes);
 
         return new FilteredImage
@@ -203,6 +274,7 @@ public class ImageFilterService : IImageFilterService
             FileSizeBytes = imageBytes.Length,
             Description = description,
             ContentHash = contentHash,
+            PerceptualHash = perceptualHash,
             DateAdded = DateTime.UtcNow
         };
     }
@@ -219,11 +291,41 @@ public class ImageFilterService : IImageFilterService
 
     private Task<FilteredImage?> FindMatchingFilterAsync(byte[] imageBytes, string imageName, List<FilteredImage> filters)
     {
-        // Only match by content hash for exact content matching
+        // First try exact content hash matching (fastest)
         var contentHash = CalculateContentHash(imageBytes);
-        var hashMatch = filters.FirstOrDefault(f => f.ContentHash == contentHash);
+        var exactMatch = filters.FirstOrDefault(f => f.ContentHash == contentHash);
+        if (exactMatch != null)
+        {
+            _logger.LogDebug("Found exact content hash match for {ImageName}: {ContentHash}", imageName, contentHash);
+            return Task.FromResult<FilteredImage?>(exactMatch);
+        }
 
-        return Task.FromResult<FilteredImage?>(hashMatch);
+        // If no exact match, try perceptual hash matching for visually similar images
+        var perceptualHash = CalculatePerceptualHash(imageBytes);
+        
+        // For manga images, use a high similarity threshold
+        // 90% similarity means very similar images (perfect for manga pages with slight differences)
+        const double minSimilarityPercentage = 98.5;
+        
+        foreach (var filter in filters.Where(f => f.PerceptualHash.HasValue))
+        {
+            var similarity = CalculateImageSimilarity(perceptualHash, filter.PerceptualHash!.Value);
+            if (similarity >= minSimilarityPercentage)
+            {
+                _logger.LogInformation("Found perceptual hash match for {ImageName}: similarity={Similarity:F1}%, filter={FilterFileName}", 
+                    imageName, similarity, filter.OriginalFileName);
+                return Task.FromResult<FilteredImage?>(filter);
+            }
+            else if (similarity > 70.0) // Log near-matches for debugging
+            {
+                _logger.LogDebug("Near match for {ImageName}: similarity={Similarity:F1}%, filter={FilterFileName} (threshold: {Threshold}%)", 
+                    imageName, similarity, filter.OriginalFileName, minSimilarityPercentage);
+            }
+        }
+
+        _logger.LogDebug("No matching filter found for {ImageName} (content hash: {ContentHash}, perceptual hash: {PerceptualHash})", 
+            imageName, contentHash, perceptualHash);
+        return Task.FromResult<FilteredImage?>(null);
     }
 
     private static string? GetMimeTypeFromExtension(string extension)

@@ -72,4 +72,27 @@ public interface IImageFilterService
     /// <param name="imageBytes">Image bytes</param>
     /// <returns>MD5 hash string</returns>
     string CalculateContentHash(byte[] imageBytes);
+
+    /// <summary>
+    /// Calculates perceptual hash for finding visually similar images
+    /// </summary>
+    /// <param name="imageBytes">Image bytes</param>
+    /// <returns>Perceptual hash as ulong value</returns>
+    ulong CalculatePerceptualHash(byte[] imageBytes);
+
+    /// <summary>
+    /// Calculates similarity percentage between two perceptual hashes
+    /// </summary>
+    /// <param name="hash1">First hash</param>
+    /// <param name="hash2">Second hash</param>
+    /// <returns>Similarity percentage (0-100)</returns>
+    double CalculateImageSimilarity(ulong hash1, ulong hash2);
+
+    /// <summary>
+    /// Calculates Hamming distance between two perceptual hashes (legacy method)
+    /// </summary>
+    /// <param name="hash1">First hash</param>
+    /// <param name="hash2">Second hash</param>
+    /// <returns>Approximate Hamming distance</returns>
+    int CalculateHammingDistance(ulong hash1, ulong hash2);
 }

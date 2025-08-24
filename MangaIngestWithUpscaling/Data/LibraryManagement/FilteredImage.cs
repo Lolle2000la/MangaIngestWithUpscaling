@@ -52,6 +52,11 @@ public class FilteredImage
     public string? ContentHash { get; set; }
 
     /// <summary>
+    /// Perceptual hash for finding visually similar images (64-bit hash)
+    /// </summary>
+    public ulong? PerceptualHash { get; set; }
+
+    /// <summary>
     /// Number of times this filtered image has been found and removed
     /// </summary>
     public int OccurrenceCount { get; set; } = 0;
