@@ -181,9 +181,9 @@
         }
     }
 
-    private async Task<TableData<FilteredImage>> LoadFilteredImages(TableState state, CancellationToken cancellationToken)
+    private Task<TableData<FilteredImage>> LoadFilteredImages(TableState state, CancellationToken cancellationToken)
     {
-        if (Library == null) return new TableData<FilteredImage> { Items = [], TotalItems = 0 };
+        if (Library == null) return Task.FromResult(new TableData<FilteredImage> { Items = [], TotalItems = 0 });
 
         var query = Library.FilteredImages.AsQueryable();
 
@@ -210,7 +210,7 @@
         var totalItems = query.Count();
         var items = query.Skip(state.Page * state.PageSize).Take(state.PageSize).ToArray();
 
-        return new TableData<FilteredImage> { Items = items, TotalItems = totalItems };
+        return Task.FromResult(new TableData<FilteredImage> { Items = items, TotalItems = totalItems });
     }
 
     private async Task ShowAddFilterDialog()
@@ -226,7 +226,7 @@
         var dialog = await DialogService.ShowAsync<AddImageFilterDialog>("Add Image Filter", parameters, options);
         var result = await dialog.Result;
         
-        if (!result.Canceled)
+        if (result is not null && !result.Canceled)
         {
             await table.ReloadServerData();
             Snackbar.Add("Image filter added successfully", Severity.Success);
@@ -258,7 +258,7 @@
         var dialog = await DialogService.ShowAsync<EditImageFilterDialog>("Edit Image Filter", parameters, options);
         var result = await dialog.Result;
         
-        if (!result.Canceled)
+        if (result is not null && !result.Canceled)
         {
             await DbContext.SaveChangesAsync();
             await table.ReloadServerData();
