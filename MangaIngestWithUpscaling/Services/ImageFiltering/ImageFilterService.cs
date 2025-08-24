@@ -84,12 +84,12 @@ public class ImageFilterService : IImageFilterService
                 }
             }
 
-            // Now remove the marked images using the helper method
+            // Now remove the marked images using exact filename matching
             foreach (var imageToRemove in imagesToRemove)
             {
                 try
                 {
-                    if (CbzCleanupHelpers.TryRemoveImageByBaseName(cbzPath, imageToRemove, _logger))
+                    if (CbzCleanupHelpers.TryRemoveImageByName(cbzPath, imageToRemove, _logger))
                     {
                         result.FilteredCount++;
                     }
@@ -219,27 +219,11 @@ public class ImageFilterService : IImageFilterService
 
     private Task<FilteredImage?> FindMatchingFilterAsync(byte[] imageBytes, string imageName, List<FilteredImage> filters)
     {
-        // First, try to match by content hash (most accurate)
+        // Only match by content hash for exact content matching
         var contentHash = CalculateContentHash(imageBytes);
         var hashMatch = filters.FirstOrDefault(f => f.ContentHash == contentHash);
-        if (hashMatch != null)
-        {
-            return Task.FromResult<FilteredImage?>(hashMatch);
-        }
-
-        // If no hash match, try to match by filename
-        var fileName = Path.GetFileName(imageName);
-        var fileNameMatch = filters.FirstOrDefault(f =>
-            string.Equals(Path.GetFileName(f.OriginalFileName), fileName, StringComparison.OrdinalIgnoreCase));
-
-        if (fileNameMatch != null)
-        {
-            // Update the content hash for future matches
-            fileNameMatch.ContentHash = contentHash;
-            return Task.FromResult<FilteredImage?>(fileNameMatch);
-        }
-
-        return Task.FromResult<FilteredImage?>(null);
+        
+        return Task.FromResult<FilteredImage?>(hashMatch);
     }
 
     private static string? GetMimeTypeFromExtension(string extension)
