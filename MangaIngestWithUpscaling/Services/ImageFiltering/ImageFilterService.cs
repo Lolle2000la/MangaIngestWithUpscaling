@@ -20,7 +20,7 @@ public class ImageFilterService : IImageFilterService
 
     private static readonly HashSet<string> SupportedImageExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif", ".avif"
+        ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif", ".gif"
     };
 
     public ImageFilterService(ILogger<ImageFilterService> logger)
