@@ -222,7 +222,7 @@ public class ImageFilterService : IImageFilterService
         // Only match by content hash for exact content matching
         var contentHash = CalculateContentHash(imageBytes);
         var hashMatch = filters.FirstOrDefault(f => f.ContentHash == contentHash);
-        
+
         return Task.FromResult<FilteredImage?>(hashMatch);
     }
 

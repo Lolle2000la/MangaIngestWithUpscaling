@@ -146,7 +146,7 @@ public static class CbzCleanupHelpers
 
             // First try to find by exact path match
             var entry = archive.GetEntry(imageName);
-            
+
             if (entry == null)
             {
                 logger?.LogWarning("Image {ImageName} not found in {Cbz} - will not remove any files to prevent false positives", imageName, cbzPath);
