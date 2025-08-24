@@ -5,6 +5,7 @@ using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.ChapterMerging;
 using MangaIngestWithUpscaling.Services.ChapterRecognition;
+using MangaIngestWithUpscaling.Services.ImageFiltering;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.LibraryFiltering;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
@@ -33,7 +34,8 @@ public partial class IngestProcessor(
     IChapterChangedNotifier chapterChangedNotifier,
     IUpscalerJsonHandlingService upscalerJsonHandlingService,
     IChapterPartMerger chapterPartMerger,
-    IChapterMergeCoordinator chapterMergeCoordinator
+    IChapterMergeCoordinator chapterMergeCoordinator,
+    IImageFilterService imageFilterService
 ) : IIngestProcessor
 {
     public async Task ProcessAsync(Library library, CancellationToken cancellationToken)
@@ -51,6 +53,11 @@ public partial class IngestProcessor(
         if (!dbContext.Entry(library).Collection(l => l.RenameRules).IsLoaded)
         {
             await dbContext.Entry(library).Collection(l => l.RenameRules).LoadAsync(cancellationToken);
+        }
+
+        if (!dbContext.Entry(library).Collection(l => l.FilteredImages).IsLoaded)
+        {
+            await dbContext.Entry(library).Collection(l => l.FilteredImages).LoadAsync(cancellationToken);
         }
 
         var foundChapters = chapterRecognitionService.FindAllChaptersAt(
@@ -393,6 +400,24 @@ public partial class IngestProcessor(
                     }
                 }
 
+                // Apply image filters if configured
+                if (library.FilteredImages.Any())
+                {
+                    try
+                    {
+                        var filterResult = await imageFilterService.ApplyFiltersToChapterAsync(targetPath, library.FilteredImages, cancellationToken);
+                        if (filterResult.FilteredCount > 0)
+                        {
+                            logger.LogInformation("Filtered {Count} images from chapter {FileName} during ingest", 
+                                filterResult.FilteredCount, chapterEntity.FileName);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex, "Failed to apply image filters to {TargetPath}", targetPath);
+                    }
+                }
+
                 seriesEntity.Chapters.Add(chapterEntity);
 
                 // Check if this chapter has merge information
@@ -707,6 +732,25 @@ public partial class IngestProcessor(
                 catch (Exception ex)
                 {
                     logger.LogError(ex, "Failed to cleanup odd-one-out image for upscaled ingest {CbzPath}", cbzPath);
+                }
+            }
+
+            // Apply image filters to the upscaled chapter if configured
+            if (library.FilteredImages.Any())
+            {
+                try
+                {
+                    // For upscaled chapters, we need to match by base filename since extensions might change
+                    var filterResult = await imageFilterService.ApplyFiltersToChapterAsync(cbzPath, library.FilteredImages, cancellationToken);
+                    if (filterResult.FilteredCount > 0)
+                    {
+                        logger.LogInformation("Filtered {Count} images from upscaled chapter {FileName} during ingest", 
+                            filterResult.FilteredCount, originalUpscaled.FileName);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to apply image filters to upscaled chapter {CbzPath}", cbzPath);
                 }
             }
         }

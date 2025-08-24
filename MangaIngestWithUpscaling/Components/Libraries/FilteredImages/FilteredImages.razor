@@ -1,0 +1,318 @@
+@page "/libraries/{LibraryId:int}/filtered-images"
+@using MangaIngestWithUpscaling.Data.LibraryManagement
+@using MangaIngestWithUpscaling.Services.BackqroundTaskQueue
+@using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
+@using MangaIngestWithUpscaling.Services.ImageFiltering
+@using Microsoft.EntityFrameworkCore
+
+@inject ApplicationDbContext DbContext
+@inject IDialogService DialogService
+@inject ITaskQueue TaskQueue
+@inject IImageFilterService ImageFilterService
+@inject ISnackbar Snackbar
+@inject NavigationManager NavigationManager
+
+<PageTitle>Filtered Images - @(Library?.Name ?? "Loading...")</PageTitle>
+
+<MudCard>
+    <MudCardHeader>
+        <MudStack Row="true" AlignItems="AlignItems.Center">
+            <a href="libraries"><MudIconButton Icon="@Icons.Material.Filled.ArrowBack" /></a>
+            <MudText Typo="Typo.h5">Filtered Images: @(Library?.Name ?? "Loading...")</MudText>
+        </MudStack>
+    </MudCardHeader>
+    <MudCardContent>
+        @if (Library == null)
+        {
+            <MudSkeleton />
+        }
+        else
+        {
+            <MudStack Spacing="3">
+                <MudPaper Elevation="2" Class="pa-4">
+                    <MudStack Row="true" Spacing="2" AlignItems="AlignItems.Center">
+                        <MudButton StartIcon="@Icons.Material.Filled.Add" 
+                                   Variant="Variant.Filled" 
+                                   Color="Color.Primary"
+                                   OnClick="ShowAddFilterDialog">
+                            Add Image Filter
+                        </MudButton>
+                        <MudButton StartIcon="@Icons.Material.Filled.PlayArrow" 
+                                   Variant="Variant.Outlined" 
+                                   Color="Color.Secondary"
+                                   OnClick="ApplyFiltersRetroactively"
+                                   Disabled="@(!Library.FilteredImages.Any())">
+                            Apply Filters Retroactively
+                        </MudButton>
+                        <MudSpacer />
+                        <MudTextField @bind-Value="searchString" 
+                                      @bind-Value:after="@(() => table.ReloadServerData())"
+                                      Placeholder="Search..." 
+                                      Adornment="Adornment.Start" 
+                                      AdornmentIcon="@Icons.Material.Filled.Search" 
+                                      IconSize="Size.Medium" 
+                                      Immediate="true" 
+                                      Clearable="true" />
+                    </MudStack>
+                </MudPaper>
+
+                <MudTable @ref="table" T="FilteredImage" 
+                          ServerData="LoadFilteredImages" 
+                          Dense="true" 
+                          Hover="true" 
+                          FixedHeader="true"
+                          Height="600px">
+                    <ToolBarContent>
+                        <MudText Typo="Typo.h6">
+                            @if (Library.FilteredImages.Any())
+                            {
+                                <span>@Library.FilteredImages.Count filtered image(s)</span>
+                            }
+                            else
+                            {
+                                <span>No filtered images configured</span>
+                            }
+                        </MudText>
+                    </ToolBarContent>
+                    <HeaderContent>
+                        <MudTh><MudTableSortLabel T="FilteredImage" SortLabel="thumbnail">Preview</MudTableSortLabel></MudTh>
+                        <MudTh><MudTableSortLabel T="FilteredImage" SortLabel="filename">Filename</MudTableSortLabel></MudTh>
+                        <MudTh><MudTableSortLabel T="FilteredImage" SortLabel="description">Description</MudTableSortLabel></MudTh>
+                        <MudTh><MudTableSortLabel T="FilteredImage" SortLabel="date_added">Added</MudTableSortLabel></MudTh>
+                        <MudTh><MudTableSortLabel T="FilteredImage" SortLabel="occurrences">Occurrences</MudTableSortLabel></MudTh>
+                        <MudTh><MudTableSortLabel T="FilteredImage" SortLabel="last_matched">Last Matched</MudTableSortLabel></MudTh>
+                        <MudTh>Actions</MudTh>
+                    </HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Preview">
+                            @if (!string.IsNullOrEmpty(context.ThumbnailBase64))
+                            {
+                                <MudImage Src="@($"data:{context.MimeType};base64,{context.ThumbnailBase64}")" 
+                                          Width="64" Height="64" 
+                                          ObjectFit="ObjectFit.Cover"
+                                          Class="rounded cursor-pointer"
+                                          @onclick="() => ShowImagePreview(context)" />
+                            }
+                            else
+                            {
+                                <MudIcon Icon="@Icons.Material.Filled.Image" Size="Size.Large" />
+                            }
+                        </MudTd>
+                        <MudTd DataLabel="Filename">
+                            <MudText Typo="Typo.body2">@context.OriginalFileName</MudText>
+                            @if (context.FileSizeBytes.HasValue)
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">@FormatFileSize(context.FileSizeBytes.Value)</MudText>
+                            }
+                        </MudTd>
+                        <MudTd DataLabel="Description">
+                            @if (!string.IsNullOrEmpty(context.Description))
+                            {
+                                <MudText Typo="Typo.body2">@context.Description</MudText>
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">No description</MudText>
+                            }
+                        </MudTd>
+                        <MudTd DataLabel="Added">
+                            <MudText Typo="Typo.body2">@context.DateAdded.ToString("yyyy-MM-dd")</MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">@context.DateAdded.ToString("HH:mm")</MudText>
+                        </MudTd>
+                        <MudTd DataLabel="Occurrences">
+                            <MudChip T="string" Color="@(context.OccurrenceCount > 0 ? Color.Success : Color.Default)" Size="Size.Small">
+                                @context.OccurrenceCount
+                            </MudChip>
+                        </MudTd>
+                        <MudTd DataLabel="Last Matched">
+                            @if (context.LastMatchedAt.HasValue)
+                            {
+                                <MudText Typo="Typo.body2">@context.LastMatchedAt.Value.ToString("yyyy-MM-dd")</MudText>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">@context.LastMatchedAt.Value.ToString("HH:mm")</MudText>
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">Never</MudText>
+                            }
+                        </MudTd>
+                        <MudTd DataLabel="Actions">
+                            <MudIconButton Icon="@Icons.Material.Filled.Edit" 
+                                           Size="Size.Small" 
+                                           OnClick="() => EditFilter(context)" />
+                            <MudIconButton Icon="@Icons.Material.Filled.Delete" 
+                                           Size="Size.Small" 
+                                           Color="Color.Error"
+                                           OnClick="() => DeleteFilter(context)" />
+                        </MudTd>
+                    </RowTemplate>
+                    <NoRecordsContent>
+                        <MudText Align="Align.Center" Typo="Typo.h6" Color="Color.Secondary">
+                            No filtered images configured for this library
+                        </MudText>
+                        <MudText Align="Align.Center" Typo="Typo.body1" Color="Color.Secondary">
+                            Click "Add Image Filter" to start filtering unwanted images
+                        </MudText>
+                    </NoRecordsContent>
+                    <PagerContent>
+                        <MudTablePager PageSizeOptions="new int[]{10, 25, 50, 100}" />
+                    </PagerContent>
+                </MudTable>
+            </MudStack>
+        }
+    </MudCardContent>
+</MudCard>
+
+@code {
+    [Parameter] public int LibraryId { get; set; }
+
+    private Library? Library;
+    private MudTable<FilteredImage> table = null!;
+    private string searchString = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        Library = await DbContext.Libraries
+            .Include(l => l.FilteredImages)
+            .FirstOrDefaultAsync(l => l.Id == LibraryId);
+
+        if (Library == null)
+        {
+            NavigationManager.NavigateTo("/libraries");
+        }
+    }
+
+    private async Task<TableData<FilteredImage>> LoadFilteredImages(TableState state, CancellationToken cancellationToken)
+    {
+        if (Library == null) return new TableData<FilteredImage> { Items = [], TotalItems = 0 };
+
+        var query = Library.FilteredImages.AsQueryable();
+
+        // Apply search filter
+        if (!string.IsNullOrEmpty(searchString))
+        {
+            var search = searchString.Trim().ToLowerInvariant();
+            query = query.Where(f => 
+                f.OriginalFileName.ToLower().Contains(search) ||
+                (f.Description != null && f.Description.ToLower().Contains(search)));
+        }
+
+        // Apply sorting
+        query = state.SortLabel switch
+        {
+            "filename" => query.OrderByDirection(state.SortDirection, f => f.OriginalFileName),
+            "description" => query.OrderByDirection(state.SortDirection, f => f.Description ?? ""),
+            "date_added" => query.OrderByDirection(state.SortDirection, f => f.DateAdded),
+            "occurrences" => query.OrderByDirection(state.SortDirection, f => f.OccurrenceCount),
+            "last_matched" => query.OrderByDirection(state.SortDirection, f => f.LastMatchedAt ?? DateTime.MinValue),
+            _ => query.OrderByDescending(f => f.DateAdded)
+        };
+
+        var totalItems = query.Count();
+        var items = query.Skip(state.Page * state.PageSize).Take(state.PageSize).ToArray();
+
+        return new TableData<FilteredImage> { Items = items, TotalItems = totalItems };
+    }
+
+    private async Task ShowAddFilterDialog()
+    {
+        var parameters = new DialogParameters { ["Library"] = Library! };
+        var options = new DialogOptions 
+        { 
+            CloseButton = true, 
+            MaxWidth = MaxWidth.Medium,
+            FullWidth = true
+        };
+
+        var dialog = await DialogService.ShowAsync<AddImageFilterDialog>("Add Image Filter", parameters, options);
+        var result = await dialog.Result;
+        
+        if (!result.Canceled)
+        {
+            await table.ReloadServerData();
+            Snackbar.Add("Image filter added successfully", Severity.Success);
+        }
+    }
+
+    private async Task ShowImagePreview(FilteredImage filteredImage)
+    {
+        var parameters = new DialogParameters { ["FilteredImage"] = filteredImage };
+        var options = new DialogOptions 
+        { 
+            CloseButton = true, 
+            MaxWidth = MaxWidth.Large 
+        };
+
+        await DialogService.ShowAsync<ImagePreviewDialog>("Image Preview", parameters, options);
+    }
+
+    private async Task EditFilter(FilteredImage filteredImage)
+    {
+        var parameters = new DialogParameters { ["FilteredImage"] = filteredImage };
+        var options = new DialogOptions 
+        { 
+            CloseButton = true, 
+            MaxWidth = MaxWidth.Small,
+            FullWidth = true
+        };
+
+        var dialog = await DialogService.ShowAsync<EditImageFilterDialog>("Edit Image Filter", parameters, options);
+        var result = await dialog.Result;
+        
+        if (!result.Canceled)
+        {
+            await DbContext.SaveChangesAsync();
+            await table.ReloadServerData();
+            Snackbar.Add("Filter updated successfully", Severity.Success);
+        }
+    }
+
+    private async Task DeleteFilter(FilteredImage filteredImage)
+    {
+        var confirm = await DialogService.ShowMessageBox(
+            "Confirm Delete",
+            $"Are you sure you want to delete the filter for '{filteredImage.OriginalFileName}'?",
+            yesText: "Delete", cancelText: "Cancel");
+
+        if (confirm == true)
+        {
+            Library!.FilteredImages.Remove(filteredImage);
+            DbContext.FilteredImages.Remove(filteredImage);
+            await DbContext.SaveChangesAsync();
+            await table.ReloadServerData();
+            Snackbar.Add("Filter deleted successfully", Severity.Success);
+        }
+    }
+
+    private async Task ApplyFiltersRetroactively()
+    {
+        var confirm = await DialogService.ShowMessageBox(
+            "Apply Filters Retroactively",
+            $"This will scan all existing chapters in '{Library!.Name}' and remove any images matching the configured filters. This action cannot be undone. Continue?",
+            yesText: "Apply Filters", cancelText: "Cancel");
+
+        if (confirm == true)
+        {
+            var task = new ApplyImageFiltersTask
+            {
+                LibraryId = LibraryId,
+                OnlyUnprocessed = false
+            };
+
+            await TaskQueue.EnqueueAsync(task);
+            Snackbar.Add("Image filter task has been queued for background processing", Severity.Info);
+        }
+    }
+
+    private static string FormatFileSize(long bytes)
+    {
+        string[] suffixes = ["B", "KB", "MB", "GB"];
+        int counter = 0;
+        decimal number = bytes;
+        while (Math.Round(number / 1024) >= 1)
+        {
+            number /= 1024;
+            counter++;
+        }
+        return $"{number:n1} {suffixes[counter]}";
+    }
+}

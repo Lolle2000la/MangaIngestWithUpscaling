@@ -28,6 +28,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<PersistedTask> PersistedTasks { get; set; }
     public DbSet<ApiKey> ApiKeys { get; set; }
     public DbSet<MergedChapterInfo> MergedChapterInfos { get; set; }
+    public DbSet<FilteredImage> FilteredImages { get; set; }
 
     public DbSet<DataProtectionKey> DataProtectionKeys { get; set; } = null!;
 
@@ -127,6 +128,20 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 
             entity.HasIndex(e => e.ChapterId)
                 .IsUnique();
+        });
+
+        builder.Entity<FilteredImage>(entity =>
+        {
+            entity.HasOne(e => e.Library)
+                .WithMany(e => e.FilteredImages)
+                .HasForeignKey(e => e.LibraryId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(e => e.LibraryId);
+            entity.HasIndex(e => e.ContentHash);
+            entity.HasIndex(e => e.DateAdded);
+            entity.HasIndex(e => e.OccurrenceCount);
+            entity.HasIndex(e => new { e.LibraryId, e.OriginalFileName });
         });
     }
 }

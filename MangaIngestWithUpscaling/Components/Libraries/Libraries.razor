@@ -56,6 +56,11 @@
                            Size="Size.Small"
                            title="Check integrity of this library"
                            OnClick="e => OnCheckIntegrity(context)"/>
+            <a href="@($"libraries/{context.Id}/filtered-images")">
+                <MudIconButton Icon="@Icons.Material.Filled.FilterAlt" Variant="Variant.Text"
+                               Size="Size.Small"
+                               title="Manage image filters for this library"/>
+            </a>
             <MudIconButton Icon="@Icons.Material.Filled.Delete" Variant="Variant.Text" Color="Color.Error"
                            Size="Size.Small"
                            title="Delete this library"

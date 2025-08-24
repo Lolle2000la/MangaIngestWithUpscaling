@@ -1,0 +1,83 @@
+@using MangaIngestWithUpscaling.Data.LibraryManagement
+
+<MudDialog>
+    <TitleContent>Edit Image Filter</TitleContent>
+    <DialogContent>
+        <MudStack Spacing="3">
+            @if (!string.IsNullOrEmpty(FilteredImage.ThumbnailBase64))
+            {
+                <MudCard Elevation="2">
+                    <MudCardContent>
+                        <MudStack AlignItems="AlignItems.Center" Spacing="2">
+                            <MudImage Src="@($"data:{FilteredImage.MimeType};base64,{FilteredImage.ThumbnailBase64}")" 
+                                      Width="150" Height="150" 
+                                      ObjectFit="ObjectFit.Cover"
+                                      Class="rounded" />
+                            <MudText Typo="Typo.body2" Align="Align.Center">
+                                @FilteredImage.OriginalFileName
+                            </MudText>
+                        </MudStack>
+                    </MudCardContent>
+                </MudCard>
+            }
+            
+            <MudTextField @bind-Value="FilteredImage.Description" 
+                          Label="Description" 
+                          Placeholder="Why is this image being filtered?"
+                          Lines="3" />
+            
+            <MudStack Row="true" Spacing="4" AlignItems="AlignItems.Center">
+                @if (FilteredImage.FileSizeBytes.HasValue)
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">
+                        Size: @FormatFileSize(FilteredImage.FileSizeBytes.Value)
+                    </MudText>
+                }
+                
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    Added: @FilteredImage.DateAdded.ToString("yyyy-MM-dd")
+                </MudText>
+                
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    Occurrences: @FilteredImage.OccurrenceCount
+                </MudText>
+                
+                @if (FilteredImage.LastMatchedAt.HasValue)
+                {
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">
+                        Last Matched: @FilteredImage.LastMatchedAt.Value.ToString("yyyy-MM-dd")
+                    </MudText>
+                }
+            </MudStack>
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" 
+                   Variant="Variant.Filled" 
+                   OnClick="Submit">
+            Save Changes
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] private IDialogReference? DialogReference { get; set; }
+    [Parameter] public FilteredImage FilteredImage { get; set; } = null!;
+
+    private void Submit() => DialogReference?.Close(DialogResult.Ok(true));
+    private void Cancel() => DialogReference?.Close(DialogResult.Cancel());
+    
+    private static string FormatFileSize(long bytes)
+    {
+        string[] suffixes = ["B", "KB", "MB", "GB"];
+        int counter = 0;
+        decimal number = bytes;
+        while (Math.Round(number / 1024) >= 1)
+        {
+            number /= 1024;
+            counter++;
+        }
+        return $"{number:n1} {suffixes[counter]}";
+    }
+}
