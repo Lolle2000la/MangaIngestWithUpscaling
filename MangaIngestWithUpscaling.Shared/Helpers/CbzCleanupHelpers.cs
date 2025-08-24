@@ -134,7 +134,7 @@ public static class CbzCleanupHelpers
     }
 
     /// <summary>
-    /// Removes a specific image by exact name from a CBZ archive.
+    /// Removes a specific image by name from a CBZ archive.
     /// Returns true if the image was found and removed.
     /// </summary>
     public static bool TryRemoveImageByName(string cbzPath, string imageName, ILogger? logger = null)
@@ -144,12 +144,17 @@ public static class CbzCleanupHelpers
             if (!File.Exists(cbzPath)) return false;
             using var archive = ZipFile.Open(cbzPath, ZipArchiveMode.Update);
 
-            // First try to find by exact path match
             var entry = archive.GetEntry(imageName);
+            if (entry == null)
+            {
+                // Try to find by name without path
+                var nameOnly = Path.GetFileName(imageName);
+                entry = archive.Entries.FirstOrDefault(e => Path.GetFileName(e.FullName) == nameOnly);
+            }
 
             if (entry == null)
             {
-                logger?.LogWarning("Image {ImageName} not found in {Cbz} - will not remove any files to prevent false positives", imageName, cbzPath);
+                logger?.LogWarning("Image {ImageName} not found in {Cbz}", imageName, cbzPath);
                 return false;
             }
 

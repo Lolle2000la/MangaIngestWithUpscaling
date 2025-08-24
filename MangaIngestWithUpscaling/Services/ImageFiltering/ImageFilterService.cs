@@ -48,53 +48,56 @@ public class ImageFilterService : IImageFilterService
 
         try
         {
-            using var archive = ZipFile.Open(cbzPath, ZipArchiveMode.Read);
-            var imageEntries = archive.Entries
-                .Where(e => !string.IsNullOrEmpty(e.Name))
-                .Where(e => SupportedImageExtensions.Contains(Path.GetExtension(e.FullName)))
-                .ToList();
-
             var imagesToRemove = new List<string>();
 
-            foreach (var entry in imageEntries)
+            // First pass: scan for images to filter (read-only access)
+            using (var archive = ZipFile.Open(cbzPath, ZipArchiveMode.Read))
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                var imageEntries = archive.Entries
+                    .Where(e => !string.IsNullOrEmpty(e.Name))
+                    .Where(e => SupportedImageExtensions.Contains(Path.GetExtension(e.FullName)))
+                    .ToList();
 
-                try
+                foreach (var entry in imageEntries)
                 {
-                    // Read the image data
-                    using var entryStream = entry.Open();
-                    using var memoryStream = new MemoryStream();
-                    await entryStream.CopyToAsync(memoryStream, cancellationToken);
-                    var imageBytes = memoryStream.ToArray();
+                    cancellationToken.ThrowIfCancellationRequested();
 
-                    _logger.LogDebug("Processing image {ImageName} in {CbzPath} - size: {ImageSize} bytes", 
-                        entry.FullName, cbzPath, imageBytes.Length);
-
-                    // Check if this image matches any filter
-                    var matchingFilter = await FindMatchingFilterAsync(imageBytes, entry.FullName, filterList);
-
-                    if (matchingFilter != null)
+                    try
                     {
-                        _logger.LogInformation("Marking filtered image {ImageName} from {CbzPath} for removal (filter: {FilterDescription})",
-                            entry.FullName, cbzPath, matchingFilter.Description ?? matchingFilter.OriginalFileName);
+                        // Read the image data
+                        using var entryStream = entry.Open();
+                        using var memoryStream = new MemoryStream();
+                        await entryStream.CopyToAsync(memoryStream, cancellationToken);
+                        var imageBytes = memoryStream.ToArray();
 
-                        imagesToRemove.Add(entry.FullName);
-                        result.FilteredImageNames.Add(entry.FullName);
+                        _logger.LogDebug("Processing image {ImageName} in {CbzPath} - size: {ImageSize} bytes", 
+                            entry.FullName, cbzPath, imageBytes.Length);
 
-                        // Update occurrence count
-                        matchingFilter.OccurrenceCount++;
-                        matchingFilter.LastMatchedAt = DateTime.UtcNow;
+                        // Check if this image matches any filter
+                        var matchingFilter = await FindMatchingFilterAsync(imageBytes, entry.FullName, filterList);
+
+                        if (matchingFilter != null)
+                        {
+                            _logger.LogInformation("Marking filtered image {ImageName} from {CbzPath} for removal (filter: {FilterDescription})",
+                                entry.FullName, cbzPath, matchingFilter.Description ?? matchingFilter.OriginalFileName);
+
+                            imagesToRemove.Add(entry.FullName);
+                            result.FilteredImageNames.Add(entry.FullName);
+
+                            // Update occurrence count
+                            matchingFilter.OccurrenceCount++;
+                            matchingFilter.LastMatchedAt = DateTime.UtcNow;
+                        }
+                        else
+                        {
+                            _logger.LogDebug("No filter match found for image {ImageName} in {CbzPath}", entry.FullName, cbzPath);
+                        }
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        _logger.LogDebug("No filter match found for image {ImageName} in {CbzPath}", entry.FullName, cbzPath);
+                        _logger.LogError(ex, "Error processing image {ImageName} in {CbzPath}", entry.FullName, cbzPath);
+                        result.ErrorMessages.Add($"Error processing {entry.FullName}: {ex.Message}");
                     }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error processing image {ImageName} in {CbzPath}", entry.FullName, cbzPath);
-                    result.ErrorMessages.Add($"Error processing {entry.FullName}: {ex.Message}");
                 }
             }
 
