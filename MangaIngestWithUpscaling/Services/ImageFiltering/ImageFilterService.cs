@@ -17,7 +17,7 @@ public class ImageFilterService : IImageFilterService
 {
     private readonly ILogger<ImageFilterService> _logger;
     private readonly IImageHash _imageHasher;
-    
+
     private static readonly HashSet<string> SupportedImageExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif", ".avif"
@@ -70,7 +70,7 @@ public class ImageFilterService : IImageFilterService
                         await entryStream.CopyToAsync(memoryStream, cancellationToken);
                         var imageBytes = memoryStream.ToArray();
 
-                        _logger.LogDebug("Processing image {ImageName} in {CbzPath} - size: {ImageSize} bytes", 
+                        _logger.LogDebug("Processing image {ImageName} in {CbzPath} - size: {ImageSize} bytes",
                             entry.FullName, cbzPath, imageBytes.Length);
 
                         // Check if this image matches any filter
@@ -305,28 +305,28 @@ public class ImageFilterService : IImageFilterService
 
         // If no exact match, try perceptual hash matching for visually similar images
         var perceptualHash = CalculatePerceptualHash(imageBytes);
-        
+
         // For manga images, use a high similarity threshold
         // 90% similarity means very similar images (perfect for manga pages with slight differences)
         const double minSimilarityPercentage = 98.5;
-        
+
         foreach (var filter in filters.Where(f => f.PerceptualHash.HasValue))
         {
             var similarity = CalculateImageSimilarity(perceptualHash, filter.PerceptualHash!.Value);
             if (similarity >= minSimilarityPercentage)
             {
-                _logger.LogInformation("Found perceptual hash match for {ImageName}: similarity={Similarity:F1}%, filter={FilterFileName}", 
+                _logger.LogInformation("Found perceptual hash match for {ImageName}: similarity={Similarity:F1}%, filter={FilterFileName}",
                     imageName, similarity, filter.OriginalFileName);
                 return Task.FromResult<FilteredImage?>(filter);
             }
             else if (similarity > 70.0) // Log near-matches for debugging
             {
-                _logger.LogDebug("Near match for {ImageName}: similarity={Similarity:F1}%, filter={FilterFileName} (threshold: {Threshold}%)", 
+                _logger.LogDebug("Near match for {ImageName}: similarity={Similarity:F1}%, filter={FilterFileName} (threshold: {Threshold}%)",
                     imageName, similarity, filter.OriginalFileName, minSimilarityPercentage);
             }
         }
 
-        _logger.LogDebug("No matching filter found for {ImageName} (content hash: {ContentHash}, perceptual hash: {PerceptualHash})", 
+        _logger.LogDebug("No matching filter found for {ImageName} (content hash: {ContentHash}, perceptual hash: {PerceptualHash})",
             imageName, contentHash, perceptualHash);
         return Task.FromResult<FilteredImage?>(null);
     }

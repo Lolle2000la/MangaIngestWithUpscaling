@@ -46,20 +46,20 @@ public class PerceptualHashMigrationService
 
                 // Convert base64 thumbnail back to bytes
                 var thumbnailBytes = Convert.FromBase64String(filteredImage.ThumbnailBase64);
-                
+
                 // Calculate perceptual hash from thumbnail
                 // Note: This won't be as accurate as the original image, but it's better than nothing
                 var perceptualHash = _imageFilterService.CalculatePerceptualHash(thumbnailBytes);
-                
+
                 filteredImage.PerceptualHash = perceptualHash;
                 updated++;
 
-                _logger.LogDebug("Updated perceptual hash for {FileName}: {PerceptualHash}", 
+                _logger.LogDebug("Updated perceptual hash for {FileName}: {PerceptualHash}",
                     filteredImage.OriginalFileName, perceptualHash);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to calculate perceptual hash for {FileName}", 
+                _logger.LogWarning(ex, "Failed to calculate perceptual hash for {FileName}",
                     filteredImage.OriginalFileName);
             }
         }
