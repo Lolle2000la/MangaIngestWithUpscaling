@@ -254,7 +254,7 @@
     {
         try
         {
-            FilteredImage filteredImage;
+            FilteredImage? filteredImage = null;
             
             if (selectedFile != null)
             {
@@ -267,27 +267,50 @@
                 filteredImage = await ImageFilterService.CreateFilteredImageFromBytesAsync(
                     imageBytes, selectedFile.Name, Library, description);
             }
-            else
+            else if (!string.IsNullOrEmpty(selectedCbzImageName) && !string.IsNullOrEmpty(cbzPath))
             {
                 // Create filter from CBZ image
                 filteredImage = await ImageFilterService.CreateFilteredImageFromCbzAsync(
                     cbzPath, selectedCbzImageName, Library, description);
             }
+            else
+            {
+                // No valid input
+                if (DialogReference != null)
+                    DialogReference.Close(DialogResult.Cancel());
+                return;
+            }
 
-            Library.FilteredImages.Add(filteredImage);
-            DbContext.FilteredImages.Add(filteredImage);
-            await DbContext.SaveChangesAsync();
+            if (filteredImage != null)
+            {
+                // Ensure the Library's FilteredImages collection is loaded
+                if (!DbContext.Entry(Library).Collection(l => l.FilteredImages).IsLoaded)
+                {
+                    await DbContext.Entry(Library).Collection(l => l.FilteredImages).LoadAsync();
+                }
+                
+                Library.FilteredImages.Add(filteredImage);
+                DbContext.FilteredImages.Add(filteredImage);
+                await DbContext.SaveChangesAsync();
+            }
             
-            DialogReference.Close(DialogResult.Ok(true));
+            if (DialogReference != null)
+                DialogReference.Close(DialogResult.Ok(true));
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // Handle error
-            DialogReference.Close(DialogResult.Cancel());
+            // Handle error - log it for debugging
+            Console.WriteLine($"Error in Submit: {ex.Message}");
+            if (DialogReference != null)
+                DialogReference.Close(DialogResult.Cancel());
         }
     }
 
-    private void Cancel() => DialogReference.Close(DialogResult.Cancel());
+    private void Cancel() 
+    {
+        if (DialogReference != null)
+            DialogReference.Close(DialogResult.Cancel());
+    }
     
     private static string FormatFileSize(long bytes)
     {
