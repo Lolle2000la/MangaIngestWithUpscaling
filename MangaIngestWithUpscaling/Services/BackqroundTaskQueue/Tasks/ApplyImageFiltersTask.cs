@@ -64,35 +64,36 @@ public class ApplyImageFiltersTask : BaseTask
         {
             try
             {
-                // Process original chapter
-                var originalPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.Manga.PrimaryTitle!, chapter.FileName);
-                if (File.Exists(originalPath))
-                {
-                    var originalResult = await imageFilterService.ApplyFiltersToChapterAsync(originalPath, library.FilteredImages, cancellationToken);
-                    filteredImages += originalResult.FilteredCount;
+                // Build paths for original and upscaled chapters
+                var originalPath = chapter.NotUpscaledFullPath;
+                string? upscaledPath = null;
 
-                    if (originalResult.FilteredCount > 0)
+                if (chapter.IsUpscaled && !string.IsNullOrEmpty(library.UpscaledLibraryPath))
+                {
+                    upscaledPath = chapter.UpscaledFullPath;
+                    if (!File.Exists(upscaledPath))
                     {
-                        logger.LogInformation("Filtered {Count} images from original chapter {ChapterFile}",
-                            originalResult.FilteredCount, chapter.FileName);
+                        upscaledPath = null; // Don't pass invalid path
                     }
                 }
 
-                // Process upscaled chapter if it exists
-                if (chapter.IsUpscaled && !string.IsNullOrEmpty(library.UpscaledLibraryPath))
+                // Apply filters to both original and upscaled using the new optimized method
+                if (File.Exists(originalPath))
                 {
-                    var upscaledPath = Path.Combine(library.UpscaledLibraryPath, chapter.Manga.PrimaryTitle!, chapter.FileName);
-                    if (File.Exists(upscaledPath))
-                    {
-                        var upscaledResult = await imageFilterService.ApplyFiltersToChapterAsync(upscaledPath, library.FilteredImages, cancellationToken);
-                        filteredImages += upscaledResult.FilteredCount;
+                    var result = await imageFilterService.ApplyFiltersToChapterAsync(originalPath, upscaledPath, library.FilteredImages, cancellationToken);
+                    filteredImages += result.FilteredCount;
 
-                        if (upscaledResult.FilteredCount > 0)
-                        {
-                            logger.LogInformation("Filtered {Count} images from upscaled chapter {ChapterFile}",
-                                upscaledResult.FilteredCount, chapter.FileName);
-                        }
+                    if (result.FilteredCount > 0)
+                    {
+                        var message = upscaledPath != null
+                            ? $"Filtered {result.FilteredCount} images from chapter {chapter.FileName} (both original and upscaled)"
+                            : $"Filtered {result.FilteredCount} images from original chapter {chapter.FileName}";
+                        logger.LogInformation(message);
                     }
+                }
+                else
+                {
+                    logger.LogWarning("Original chapter file not found: {OriginalPath}", originalPath);
                 }
 
                 processedChapters++;

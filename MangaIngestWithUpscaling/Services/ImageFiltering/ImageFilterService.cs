@@ -20,7 +20,7 @@ public class ImageFilterService : IImageFilterService
 
     private static readonly HashSet<string> SupportedImageExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif", ".gif"
+        ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif", ".avif"
     };
 
     public ImageFilterService(ILogger<ImageFilterService> logger)
@@ -32,11 +32,23 @@ public class ImageFilterService : IImageFilterService
 
     public async Task<ImageFilterResult> ApplyFiltersToChapterAsync(string cbzPath, IEnumerable<FilteredImage> filters, CancellationToken cancellationToken = default)
     {
+        // Delegate to the overload with null upscaled path
+        return await ApplyFiltersToChapterAsync(cbzPath, null, filters, cancellationToken);
+    }
+
+    public async Task<ImageFilterResult> ApplyFiltersToChapterAsync(string originalCbzPath, string? upscaledCbzPath, IEnumerable<FilteredImage> filters, CancellationToken cancellationToken = default)
+    {
         var result = new ImageFilterResult();
 
-        if (!File.Exists(cbzPath))
+        if (!File.Exists(originalCbzPath))
         {
-            result.ErrorMessages.Add($"CBZ file not found: {cbzPath}");
+            result.ErrorMessages.Add($"Original CBZ file not found: {originalCbzPath}");
+            return result;
+        }
+
+        if (!string.IsNullOrEmpty(upscaledCbzPath) && !File.Exists(upscaledCbzPath))
+        {
+            result.ErrorMessages.Add($"Upscaled CBZ file not found: {upscaledCbzPath}");
             return result;
         }
 
@@ -50,8 +62,8 @@ public class ImageFilterService : IImageFilterService
         {
             var imagesToRemove = new List<string>();
 
-            // First pass: scan for images to filter (read-only access)
-            using (var archive = ZipFile.Open(cbzPath, ZipArchiveMode.Read))
+            // First pass: scan for images to filter using the original CBZ (read-only access)
+            using (var archive = ZipFile.Open(originalCbzPath, ZipArchiveMode.Read))
             {
                 var imageEntries = archive.Entries
                     .Where(e => !string.IsNullOrEmpty(e.Name))
@@ -71,7 +83,7 @@ public class ImageFilterService : IImageFilterService
                         var imageBytes = memoryStream.ToArray();
 
                         _logger.LogDebug("Processing image {ImageName} in {CbzPath} - size: {ImageSize} bytes",
-                            entry.FullName, cbzPath, imageBytes.Length);
+                            entry.FullName, originalCbzPath, imageBytes.Length);
 
                         // Check if this image matches any filter
                         var matchingFilter = await FindMatchingFilterAsync(imageBytes, entry.FullName, filterList);
@@ -79,7 +91,7 @@ public class ImageFilterService : IImageFilterService
                         if (matchingFilter != null)
                         {
                             _logger.LogInformation("Marking filtered image {ImageName} from {CbzPath} for removal (filter: {FilterDescription})",
-                                entry.FullName, cbzPath, matchingFilter.Description ?? matchingFilter.OriginalFileName);
+                                entry.FullName, originalCbzPath, matchingFilter.Description ?? matchingFilter.OriginalFileName);
 
                             imagesToRemove.Add(entry.FullName);
                             result.FilteredImageNames.Add(entry.FullName);
@@ -90,37 +102,61 @@ public class ImageFilterService : IImageFilterService
                         }
                         else
                         {
-                            _logger.LogDebug("No filter match found for image {ImageName} in {CbzPath}", entry.FullName, cbzPath);
+                            _logger.LogDebug("No filter match found for image {ImageName} in {CbzPath}", entry.FullName, originalCbzPath);
                         }
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Error processing image {ImageName} in {CbzPath}", entry.FullName, cbzPath);
+                        _logger.LogError(ex, "Error processing image {ImageName} in {CbzPath}", entry.FullName, originalCbzPath);
                         result.ErrorMessages.Add($"Error processing {entry.FullName}: {ex.Message}");
                     }
                 }
             }
 
-            // Now remove the marked images using exact filename matching
+            // Second pass: remove the marked images from both original and upscaled CBZ files
             foreach (var imageToRemove in imagesToRemove)
             {
+                // Remove from original CBZ
                 try
                 {
-                    if (CbzCleanupHelpers.TryRemoveImageByName(cbzPath, imageToRemove, _logger))
+                    if (CbzCleanupHelpers.TryRemoveImageByName(originalCbzPath, imageToRemove, _logger))
                     {
                         result.FilteredCount++;
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error removing filtered image {ImageName} from {CbzPath}", imageToRemove, cbzPath);
-                    result.ErrorMessages.Add($"Error removing {imageToRemove}: {ex.Message}");
+                    _logger.LogError(ex, "Error removing filtered image {ImageName} from original {CbzPath}", imageToRemove, originalCbzPath);
+                    result.ErrorMessages.Add($"Error removing {imageToRemove} from original: {ex.Message}");
+                }
+
+                // Remove from upscaled CBZ if provided (using base name to handle format changes)
+                if (!string.IsNullOrEmpty(upscaledCbzPath))
+                {
+                    try
+                    {
+                        if (CbzCleanupHelpers.TryRemoveImageByBaseName(upscaledCbzPath, imageToRemove, _logger))
+                        {
+                            _logger.LogInformation("Removed corresponding upscaled image for {ImageName} from {UpscaledCbzPath}",
+                                imageToRemove, upscaledCbzPath);
+                        }
+                        else
+                        {
+                            _logger.LogWarning("Could not find corresponding upscaled image for {ImageName} in {UpscaledCbzPath}",
+                                imageToRemove, upscaledCbzPath);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Error removing filtered image {ImageName} from upscaled {CbzPath}", imageToRemove, upscaledCbzPath);
+                        result.ErrorMessages.Add($"Error removing {imageToRemove} from upscaled: {ex.Message}");
+                    }
                 }
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error applying filters to {CbzPath}", cbzPath);
+            _logger.LogError(ex, "Error applying filters to {CbzPath}", originalCbzPath);
             result.ErrorMessages.Add($"Error accessing CBZ file: {ex.Message}");
         }
 

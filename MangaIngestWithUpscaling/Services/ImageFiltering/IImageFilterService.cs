@@ -27,6 +27,17 @@ public interface IImageFilterService
     Task<ImageFilterResult> ApplyFiltersToChapterAsync(string cbzPath, IEnumerable<FilteredImage> filters, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Applies the specified image filters to both original and upscaled CBZ chapter files.
+    /// The filtering logic runs on the original file, and matching images are removed from both files.
+    /// </summary>
+    /// <param name="originalCbzPath">Path to the original CBZ file</param>
+    /// <param name="upscaledCbzPath">Path to the upscaled CBZ file (optional)</param>
+    /// <param name="filters">List of filtered images to apply</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Result containing information about filtered images</returns>
+    Task<ImageFilterResult> ApplyFiltersToChapterAsync(string originalCbzPath, string? upscaledCbzPath, IEnumerable<FilteredImage> filters, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Creates a filtered image entry from an image file, including thumbnail generation
     /// </summary>
     /// <param name="imagePath">Path to the image file</param>
