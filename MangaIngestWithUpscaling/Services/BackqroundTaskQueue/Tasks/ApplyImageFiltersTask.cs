@@ -13,7 +13,7 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 public class ApplyImageFiltersTask : BaseTask
 {
     public int LibraryId { get; set; }
-    
+
     /// <summary>
     /// If true, only process chapters that haven't been processed by image filters yet.
     /// If false, process all chapters regardless.
@@ -46,7 +46,7 @@ public class ApplyImageFiltersTask : BaseTask
             return;
         }
 
-        logger.LogInformation("Starting image filter application for library {LibraryName} with {FilterCount} filters", 
+        logger.LogInformation("Starting image filter application for library {LibraryName} with {FilterCount} filters",
             library.Name, library.FilteredImages.Count);
 
         // Get all chapters in the library
@@ -70,10 +70,10 @@ public class ApplyImageFiltersTask : BaseTask
                 {
                     var originalResult = await imageFilterService.ApplyFiltersToChapterAsync(originalPath, library.FilteredImages, cancellationToken);
                     filteredImages += originalResult.FilteredCount;
-                    
+
                     if (originalResult.FilteredCount > 0)
                     {
-                        logger.LogInformation("Filtered {Count} images from original chapter {ChapterFile}", 
+                        logger.LogInformation("Filtered {Count} images from original chapter {ChapterFile}",
                             originalResult.FilteredCount, chapter.FileName);
                     }
                 }
@@ -86,20 +86,20 @@ public class ApplyImageFiltersTask : BaseTask
                     {
                         var upscaledResult = await imageFilterService.ApplyFiltersToChapterAsync(upscaledPath, library.FilteredImages, cancellationToken);
                         filteredImages += upscaledResult.FilteredCount;
-                        
+
                         if (upscaledResult.FilteredCount > 0)
                         {
-                            logger.LogInformation("Filtered {Count} images from upscaled chapter {ChapterFile}", 
+                            logger.LogInformation("Filtered {Count} images from upscaled chapter {ChapterFile}",
                                 upscaledResult.FilteredCount, chapter.FileName);
                         }
                     }
                 }
 
                 processedChapters++;
-                
+
                 if (processedChapters % 10 == 0)
                 {
-                    logger.LogInformation("Progress: {ProcessedChapters}/{TotalChapters} chapters processed, {FilteredImages} images filtered", 
+                    logger.LogInformation("Progress: {ProcessedChapters}/{TotalChapters} chapters processed, {FilteredImages} images filtered",
                         processedChapters, totalChapters, filteredImages);
                 }
             }
@@ -118,7 +118,7 @@ public class ApplyImageFiltersTask : BaseTask
         await dbContext.SaveChangesAsync(cancellationToken);
 
         logger.LogInformation("Completed image filter application for library {LibraryName}. " +
-                              "Processed {ProcessedChapters} chapters, filtered {FilteredImages} images total", 
+                              "Processed {ProcessedChapters} chapters, filtered {FilteredImages} images total",
             library.Name, processedChapters, filteredImages);
     }
 }

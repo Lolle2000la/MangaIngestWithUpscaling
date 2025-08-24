@@ -408,7 +408,7 @@ public partial class IngestProcessor(
                         var filterResult = await imageFilterService.ApplyFiltersToChapterAsync(targetPath, library.FilteredImages, cancellationToken);
                         if (filterResult.FilteredCount > 0)
                         {
-                            logger.LogInformation("Filtered {Count} images from chapter {FileName} during ingest", 
+                            logger.LogInformation("Filtered {Count} images from chapter {FileName} during ingest",
                                 filterResult.FilteredCount, chapterEntity.FileName);
                         }
                     }
@@ -597,7 +597,8 @@ public partial class IngestProcessor(
             {
                 seriesEntity.OtherTitles.Add(new MangaAlternativeTitle
                 {
-                    Manga = seriesEntity, Title = originalSeries
+                    Manga = seriesEntity,
+                    Title = originalSeries
                 });
             }
 
@@ -744,7 +745,7 @@ public partial class IngestProcessor(
                     var filterResult = await imageFilterService.ApplyFiltersToChapterAsync(cbzPath, library.FilteredImages, cancellationToken);
                     if (filterResult.FilteredCount > 0)
                     {
-                        logger.LogInformation("Filtered {Count} images from upscaled chapter {FileName} during ingest", 
+                        logger.LogInformation("Filtered {Count} images from upscaled chapter {FileName} during ingest",
                             filterResult.FilteredCount, originalUpscaled.FileName);
                     }
                 }

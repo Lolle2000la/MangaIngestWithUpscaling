@@ -26,7 +26,7 @@ public class ImageFilterService : IImageFilterService
     public async Task<ImageFilterResult> ApplyFiltersToChapterAsync(string cbzPath, IEnumerable<FilteredImage> filters, CancellationToken cancellationToken = default)
     {
         var result = new ImageFilterResult();
-        
+
         if (!File.Exists(cbzPath))
         {
             result.ErrorMessages.Add($"CBZ file not found: {cbzPath}");
@@ -63,15 +63,15 @@ public class ImageFilterService : IImageFilterService
 
                     // Check if this image matches any filter
                     var matchingFilter = await FindMatchingFilterAsync(imageBytes, entry.FullName, filterList);
-                    
+
                     if (matchingFilter != null)
                     {
-                        _logger.LogInformation("Marking filtered image {ImageName} from {CbzPath} for removal (filter: {FilterDescription})", 
+                        _logger.LogInformation("Marking filtered image {ImageName} from {CbzPath} for removal (filter: {FilterDescription})",
                             entry.FullName, cbzPath, matchingFilter.Description ?? matchingFilter.OriginalFileName);
-                        
+
                         imagesToRemove.Add(entry.FullName);
                         result.FilteredImageNames.Add(entry.FullName);
-                        
+
                         // Update occurrence count
                         matchingFilter.OccurrenceCount++;
                         matchingFilter.LastMatchedAt = DateTime.UtcNow;
@@ -133,7 +133,7 @@ public class ImageFilterService : IImageFilterService
 
         using var archive = ZipFile.Open(cbzPath, ZipArchiveMode.Read);
         var entry = archive.GetEntry(imageEntryName);
-        
+
         if (entry == null)
         {
             // Try to find by filename only
@@ -152,7 +152,7 @@ public class ImageFilterService : IImageFilterService
         var imageBytes = memoryStream.ToArray();
 
         var mimeType = GetMimeTypeFromExtension(Path.GetExtension(entry.FullName));
-        
+
         return await CreateFilteredImageFromBytesInternalAsync(imageBytes, entry.FullName, library, mimeType, description);
     }
 
@@ -161,7 +161,7 @@ public class ImageFilterService : IImageFilterService
         try
         {
             using var image = Image.Load(imageBytes);
-            
+
             // Calculate new dimensions while maintaining aspect ratio
             var ratio = Math.Min((double)maxSize / image.Width, (double)maxSize / image.Height);
             var newWidth = (int)(image.Width * ratio);
@@ -171,7 +171,7 @@ public class ImageFilterService : IImageFilterService
 
             using var outputStream = new MemoryStream();
             await image.SaveAsync(outputStream, new JpegEncoder { Quality = 80 });
-            
+
             return Convert.ToBase64String(outputStream.ToArray());
         }
         catch (Exception ex)
@@ -213,7 +213,7 @@ public class ImageFilterService : IImageFilterService
         {
             mimeType = GetMimeTypeFromExtension(Path.GetExtension(fileName));
         }
-        
+
         return await CreateFilteredImageFromBytesInternalAsync(imageBytes, fileName, library, mimeType, description);
     }
 
@@ -229,9 +229,9 @@ public class ImageFilterService : IImageFilterService
 
         // If no hash match, try to match by filename
         var fileName = Path.GetFileName(imageName);
-        var fileNameMatch = filters.FirstOrDefault(f => 
+        var fileNameMatch = filters.FirstOrDefault(f =>
             string.Equals(Path.GetFileName(f.OriginalFileName), fileName, StringComparison.OrdinalIgnoreCase));
-        
+
         if (fileNameMatch != null)
         {
             // Update the content hash for future matches

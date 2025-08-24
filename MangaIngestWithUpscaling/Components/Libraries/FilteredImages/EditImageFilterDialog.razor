@@ -9,10 +9,8 @@
                 <MudCard Elevation="2">
                     <MudCardContent>
                         <MudStack AlignItems="AlignItems.Center" Spacing="2">
-                            <MudImage Src="@($"data:{FilteredImage.MimeType};base64,{FilteredImage.ThumbnailBase64}")" 
-                                      Width="150" Height="150" 
-                                      ObjectFit="ObjectFit.Cover"
-                                      Class="rounded" />
+                            <MudImage Src="@($"data:{FilteredImage.MimeType};base64,{FilteredImage.ThumbnailBase64}")"
+                                Width="150" Height="150" ObjectFit="ObjectFit.Cover" Class="rounded" />
                             <MudText Typo="Typo.body2" Align="Align.Center">
                                 @FilteredImage.OriginalFileName
                             </MudText>
@@ -20,12 +18,10 @@
                     </MudCardContent>
                 </MudCard>
             }
-            
-            <MudTextField @bind-Value="FilteredImage.Description" 
-                          Label="Description" 
-                          Placeholder="Why is this image being filtered?"
-                          Lines="3" />
-            
+
+            <MudTextField @bind-Value="FilteredImage.Description" Label="Description"
+                Placeholder="Why is this image being filtered?" Lines="3" />
+
             <MudStack Row="true" Spacing="4" AlignItems="AlignItems.Center">
                 @if (FilteredImage.FileSizeBytes.HasValue)
                 {
@@ -33,15 +29,15 @@
                         Size: @FormatFileSize(FilteredImage.FileSizeBytes.Value)
                     </MudText>
                 }
-                
+
                 <MudText Typo="Typo.caption" Color="Color.Secondary">
                     Added: @FilteredImage.DateAdded.ToString("yyyy-MM-dd")
                 </MudText>
-                
+
                 <MudText Typo="Typo.caption" Color="Color.Secondary">
                     Occurrences: @FilteredImage.OccurrenceCount
                 </MudText>
-                
+
                 @if (FilteredImage.LastMatchedAt.HasValue)
                 {
                     <MudText Typo="Typo.caption" Color="Color.Secondary">
@@ -53,9 +49,7 @@
     </DialogContent>
     <DialogActions>
         <MudButton OnClick="Cancel">Cancel</MudButton>
-        <MudButton Color="Color.Primary" 
-                   Variant="Variant.Filled" 
-                   OnClick="Submit">
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit">
             Save Changes
         </MudButton>
     </DialogActions>
@@ -67,7 +61,7 @@
 
     private void Submit() => DialogReference?.Close(DialogResult.Ok(true));
     private void Cancel() => DialogReference?.Close(DialogResult.Cancel());
-    
+
     private static string FormatFileSize(long bytes)
     {
         string[] suffixes = ["B", "KB", "MB", "GB"];

@@ -15,7 +15,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
-        WriteIndented = false, AllowTrailingCommas = true
+        WriteIndented = false,
+        AllowTrailingCommas = true
     };
 
     public DbSet<Library> Libraries { get; set; }
