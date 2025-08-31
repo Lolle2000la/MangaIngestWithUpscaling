@@ -11,27 +11,22 @@
     <MudGrid Spacing="4">
         <MudItem xs="12">
             <MudTextField Required="true" Label="Library Name" HelperText="Name for display purposes only."
-                          Immediate="true" @bind-Value="Library.Name" @bind-Value:after="OnInputChanged"/>
+                Immediate="true" @bind-Value="Library.Name" @bind-Value:after="OnInputChanged" />
         </MudItem>
         <MudItem xs="12">
             <MudStack>
                 <MudText Typo="Typo.h6">Upscaler Config</MudText>
                 <MudCheckBox T="bool" Label="Automatically upscale all mangas ingest."
-                             @bind-Value="Library.UpscaleOnIngest" @bind-Value:after="OnInputChanged"/>
+                    @bind-Value="Library.UpscaleOnIngest" @bind-Value:after="OnInputChanged" />
 
                 <MudCheckBox T="bool"
-                             Label="Merge chapter parts (e.g., Chapter 22.1, 22.2, 22.3 → Chapter 22). Only merges completed chapters, not the latest one. (Experimental, expect data loss!)"
-                             @bind-Value="Library.MergeChapterParts" @bind-Value:after="OnInputChanged"/>
-
-               <!-- New: auto delete odd-one-out images policy -->
-                <MudCheckBox T="bool"
-                             Label="Automatically delete odd-one-out images (1 file with a different extension) on ingest and during integrity checks (original and upscaled)."
-                             @bind-Value="Library.AutoDeleteOddOneOutImages" @bind-Value:after="OnInputChanged"/>
+                    Label="Merge chapter parts (e.g., Chapter 22.1, 22.2, 22.3 → Chapter 22). Only merges completed chapters, not the latest one. (Experimental, expect data loss!)"
+                    @bind-Value="Library.MergeChapterParts" @bind-Value:after="OnInputChanged" />
 
                 <MudSelect T="int?" Label="Upscaler Config"
-                           HelperText="Select an upscaling profile to use for this library. Leave at 'none' if you do not want to upscale any images."
-                           Immediate="true" @bind-Value="Library.UpscalerProfileId" @bind-Value:after="OnInputChanged"
-                           Clearable="true">
+                    HelperText="Select an upscaling profile to use for this library. Leave at 'none' if you do not want to upscale any images."
+                    Immediate="true" @bind-Value="Library.UpscalerProfileId" @bind-Value:after="OnInputChanged"
+                    Clearable="true">
                     <MudSelectItem T="int?" Value="null">«None (Do Not Upscale)»</MudSelectItem>
                     @foreach (var upscalerConfig in DbContext.UpscalerProfiles)
                     {
@@ -42,12 +37,11 @@
         </MudItem>
         <MudItem xs="12" lg="4">
             <FolderPicker RootDirectory="@Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)"
-                          SelectedPath="@Library.IngestPath" SelectedPathChanged="@OnIngestPathChanged"
-                          Title="Ingest Folder"
-                          Required="true"/>
+                SelectedPath="@Library.IngestPath" SelectedPathChanged="@OnIngestPathChanged" Title="Ingest Folder"
+                Required="true" />
         </MudItem>
         <MudItem xs="12" lg="8">
-            <EditLibraryFilters Library="@Library"/>
+            <EditLibraryFilters Library="@Library" />
         </MudItem>
         <MudItem xs="12" lg="8">
             <MudButton Variant="Variant.Filled" StartIcon="@Icons.Material.Filled.Edit" OnClick="ShowRenameDialog">
@@ -75,14 +69,14 @@
         }
         <MudItem md="6" xs="12">
             <FolderPicker RootDirectory="@Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)"
-                          SelectedPath="@Library.NotUpscaledLibraryPath" SelectedPathChanged="@OnNotUpscaledPathChanged"
-                          Disabled="Library.MangaSeries.Count > 0" Title="Storage Path as-is" Required="true"/>
+                SelectedPath="@Library.NotUpscaledLibraryPath" SelectedPathChanged="@OnNotUpscaledPathChanged"
+                Disabled="Library.MangaSeries.Count > 0" Title="Storage Path as-is" Required="true" />
         </MudItem>
         <MudItem md="6" xs="12">
             <FolderPicker RootDirectory="@Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)"
-                          SelectedPath="@Library.UpscaledLibraryPath"
-                          Disabled="Library.MangaSeries.Count > 0 && Library.UpscaledLibraryPath != null"
-                          SelectedPathChanged="@OnUpscaledPathChanged" Title="Upscaled location"/>
+                SelectedPath="@Library.UpscaledLibraryPath"
+                Disabled="Library.MangaSeries.Count > 0 && Library.UpscaledLibraryPath != null"
+                SelectedPathChanged="@OnUpscaledPathChanged" Title="Upscaled location" />
         </MudItem>
         @if (KavitaConfig.Value.Enabled)
         {
@@ -112,14 +106,14 @@
                 </MudText>
 
                 <MudTextField Label="As-Is-Mount Point in Kavita"
-                              HelperText="The mount point within the Kavita environment that contains the chapters as-is."
-                              Immediate="true" @bind-Value="Library.KavitaConfig.NotUpscaledMountPoint"
-                              @bind-Value:after="OnInputChanged"/>
+                    HelperText="The mount point within the Kavita environment that contains the chapters as-is."
+                    Immediate="true" @bind-Value="Library.KavitaConfig.NotUpscaledMountPoint"
+                    @bind-Value:after="OnInputChanged" />
 
                 <MudTextField Label="Upscaled-Mount Point in Kavita"
-                              HelperText="The mount point within the Kavita environment that contains the chapters as-is."
-                              Immediate="true" @bind-Value="Library.KavitaConfig.UpscaledMountPoint"
-                              @bind-Value:after="OnInputChanged"/>
+                    HelperText="The mount point within the Kavita environment that contains the chapters as-is."
+                    Immediate="true" @bind-Value="Library.KavitaConfig.UpscaledMountPoint"
+                    @bind-Value:after="OnInputChanged" />
             </MudItem>
         }
     </MudGrid>
@@ -172,20 +166,20 @@
     private bool Validate()
     {
         bool requiredElementsValid = !string.IsNullOrWhiteSpace(Library.Name) &&
-                                     !string.IsNullOrWhiteSpace(Library.IngestPath) &&
-                                     !string.IsNullOrWhiteSpace(Library.NotUpscaledLibraryPath);
+        !string.IsNullOrWhiteSpace(Library.IngestPath) &&
+        !string.IsNullOrWhiteSpace(Library.NotUpscaledLibraryPath);
 
         bool pathsAreDifferent = Library.IngestPath != Library.NotUpscaledLibraryPath &&
-                                 Library.IngestPath != Library.UpscaledLibraryPath &&
-                                 Library.NotUpscaledLibraryPath != Library.UpscaledLibraryPath;
+        Library.IngestPath != Library.UpscaledLibraryPath &&
+        Library.NotUpscaledLibraryPath != Library.UpscaledLibraryPath;
 
         bool pathsExist = Directory.Exists(Library.IngestPath) &&
-                          Directory.Exists(Library.NotUpscaledLibraryPath) &&
-                          (Library.UpscaledLibraryPath == null || Directory.Exists(Library.UpscaledLibraryPath));
+        Directory.Exists(Library.NotUpscaledLibraryPath) &&
+        (Library.UpscaledLibraryPath == null || Directory.Exists(Library.UpscaledLibraryPath));
 
         bool upscalingIsFullyConfiguredOrOff = !Library.UpscaleOnIngest ||
-                                               (Library.UpscaleOnIngest && Library.UpscalerProfileId is not null &&
-                                                !string.IsNullOrEmpty(Library.UpscaledLibraryPath));
+        (Library.UpscaleOnIngest && Library.UpscalerProfileId is not null &&
+        !string.IsNullOrEmpty(Library.UpscaledLibraryPath));
 
         return requiredElementsValid && pathsAreDifferent && pathsExist && upscalingIsFullyConfiguredOrOff;
     }

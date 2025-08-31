@@ -384,22 +384,6 @@ public partial class IngestProcessor(
                 };
                 fileSystem.Move(convertedChapterPath, targetPath);
 
-                // Optional: remove odd-one-out image type if enabled
-                if (library.AutoDeleteOddOneOutImages)
-                {
-                    try
-                    {
-                        if (CbzCleanupHelpers.TryRemoveOddOneOutImage(targetPath, logger))
-                        {
-                            logger.LogInformation("Odd-one-out image removed from original chapter at ingest: {TargetPath}", targetPath);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.LogError(ex, "Failed to cleanup odd-one-out image for {TargetPath}", targetPath);
-                    }
-                }
-
                 // Apply image filters if configured
                 if (library.FilteredImages.Any())
                 {
@@ -491,22 +475,6 @@ public partial class IngestProcessor(
                         }
 
                         logger.LogDebug("Merged chapter file verified at: {MergedTargetPath}", mergedTargetPath);
-
-                        // Optional: remove odd-one-out image type if enabled for merged chapter file
-                        if (library.AutoDeleteOddOneOutImages)
-                        {
-                            try
-                            {
-                                if (CbzCleanupHelpers.TryRemoveOddOneOutImage(mergedTargetPath, logger))
-                                {
-                                    logger.LogInformation("Odd-one-out image removed from merged chapter: {MergedTargetPath}", mergedTargetPath);
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                logger.LogError(ex, "Failed to cleanup odd-one-out image for merged chapter {MergedTargetPath}", mergedTargetPath);
-                            }
-                        }
 
                         seriesEntity.Chapters.Add(mergedChapterEntity);
 
@@ -718,22 +686,6 @@ public partial class IngestProcessor(
                     "Metadata for upscaled chapter {ChapterPath} changed. Writing new metadata. Old: {OldMetadata}, New: {NewMetadata}",
                     cbzPath, metadataInFile, finalDesiredMetadata);
                 metadataHandling.WriteComicInfo(cbzPath, finalDesiredMetadata);
-            }
-
-            // Optional: remove odd-one-out image type if enabled for already upscaled ingest
-            if (library.AutoDeleteOddOneOutImages)
-            {
-                try
-                {
-                    if (CbzCleanupHelpers.TryRemoveOddOneOutImage(cbzPath, logger))
-                    {
-                        logger.LogInformation("Odd-one-out image removed from already-upscaled chapter during ingest: {CbzPath}", cbzPath);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, "Failed to cleanup odd-one-out image for upscaled ingest {CbzPath}", cbzPath);
-                }
             }
 
             // Apply image filters to the upscaled chapter if configured
