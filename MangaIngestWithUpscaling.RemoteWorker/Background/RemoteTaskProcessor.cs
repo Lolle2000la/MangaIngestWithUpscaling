@@ -24,15 +24,8 @@ public class RemoteTaskProcessor(
         {
             try
             {
-                // Wait for any pending upload from previous task before continuing
-                if (pendingUpload != null)
-                {
-                    await pendingUpload;
-                    pendingUpload = null;
-                }
-
-                // Try to get and process a task, returns the upload task if successful
-                pendingUpload = await RunCycle(stoppingToken);
+                // Try to get and process a task, passing the pending upload so it can wait before uploading
+                pendingUpload = await RunCycle(pendingUpload, stoppingToken);
             }
             catch (RpcException ex)
             {
@@ -75,7 +68,7 @@ public class RemoteTaskProcessor(
         }
     }
 
-    private async Task<Task?> RunCycle(CancellationToken stoppingToken)
+    private async Task<Task?> RunCycle(Task? pendingUpload, CancellationToken stoppingToken)
     {
         using var scope = serviceScopeFactory.CreateScope();
         var client = scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
@@ -148,6 +141,12 @@ public class RemoteTaskProcessor(
             await upscaler.Upscale(downloadedFile, upscaledFile, profile, stoppingToken);
 
             logger.LogInformation("Upscaled file {file} for task {taskId}.", upscaledFile, taskResponse.TaskId);
+
+            // Wait for any pending upload from previous task before starting our upload
+            if (pendingUpload != null)
+            {
+                await pendingUpload;
+            }
 
             // Start upload asynchronously and return the task so next cycle can overlap
             var uploadTask = UploadFileWithCleanup(client, logger, taskResponse.TaskId, upscaledFile, 
@@ -260,7 +259,16 @@ public class RemoteTaskProcessor(
             {
                 File.Delete(upscaledFileForCleanup);
             }
+
+            // Cancel and clean up keep-alive task
+            await keepAliveCts.CancelAsync();
+            try
+            {
+                await keepAliveTask;
+            }
+            catch (OperationCanceledException) { }
         }
+    }
 
     private async Task<string> FetchFile(int taskId, IAsyncEnumerable<CbzFileChunk> stream)
     {
