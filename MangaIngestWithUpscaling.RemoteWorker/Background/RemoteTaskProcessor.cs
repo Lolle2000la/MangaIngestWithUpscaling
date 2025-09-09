@@ -146,21 +146,25 @@ public class RemoteTaskProcessor(
                 await pendingUpload;
             }
 
-            return UploadFileAndCleanup(client, logger, taskResponse.TaskId, upscaledFile, downloadedFile, upscaledFile, stoppingToken);
+            return UploadFileAndCleanup(client, logger, taskResponse.TaskId, upscaledFile, downloadedFile, upscaledFile,
+                stoppingToken);
         }
         catch (OperationCanceledException)
         {
             logger.LogInformation("Task {taskId} was cancelled.", taskResponse.TaskId);
-            
+            // Do not report failure, just exit gracefully
+            // Would otherwise mark the task as failed on the server
+
             if (downloadedFile != null && File.Exists(downloadedFile))
             {
                 File.Delete(downloadedFile);
             }
+
             if (upscaledFile != null && File.Exists(upscaledFile))
             {
                 File.Delete(upscaledFile);
             }
-            
+
             return null;
         }
         catch (Exception ex)
@@ -168,16 +172,17 @@ public class RemoteTaskProcessor(
             logger.LogError(ex, "Failed to process task {taskId}.", taskResponse.TaskId);
             await client.ReportTaskFailedAsync(
                 new ReportTaskFailedRequest { TaskId = taskResponse.TaskId, ErrorMessage = ex.Message });
-            
+
             if (downloadedFile != null && File.Exists(downloadedFile))
             {
                 File.Delete(downloadedFile);
             }
+
             if (upscaledFile != null && File.Exists(upscaledFile))
             {
                 File.Delete(upscaledFile);
             }
-            
+
             return null;
         }
         finally
@@ -225,8 +230,10 @@ public class RemoteTaskProcessor(
         }
     }
 
-    private async Task UploadFileAndCleanup(UpscalingService.UpscalingServiceClient client, ILogger<RemoteTaskProcessor> logger,
-        int taskId, string upscaledFile, string? downloadedFile, string? upscaledFileForCleanup, CancellationToken stoppingToken)
+    private async Task UploadFileAndCleanup(UpscalingService.UpscalingServiceClient client,
+        ILogger<RemoteTaskProcessor> logger,
+        int taskId, string upscaledFile, string? downloadedFile, string? upscaledFileForCleanup,
+        CancellationToken stoppingToken)
     {
         try
         {
