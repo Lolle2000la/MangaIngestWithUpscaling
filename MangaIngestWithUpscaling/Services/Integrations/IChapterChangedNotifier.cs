@@ -12,4 +12,14 @@ public interface IChapterChangedNotifier
     /// <param name="upscaled">What variant to notify.</param>
     /// <returns></returns>
     Task Notify(Chapter chapter, bool upscaled);
+
+    /// <summary>
+    /// Notify the integration(s) that a manga's title has changed.
+    /// This allows integrations to update existing entries rather than creating new ones.
+    /// </summary>
+    /// <param name="manga">The manga whose title changed.</param>
+    /// <param name="oldTitle">The previous title of the manga.</param>
+    /// <param name="newTitle">The new title of the manga.</param>
+    /// <returns></returns>
+    Task NotifyMangaTitleChanged(Manga manga, string oldTitle, string newTitle);
 }
