@@ -24,7 +24,6 @@ public class RemoteTaskProcessor(
         {
             try
             {
-                // Try to get and process a task, passing the pending upload so it can wait before uploading
                 pendingUpload = await RunCycle(pendingUpload, stoppingToken);
             }
             catch (RpcException ex)
@@ -142,26 +141,17 @@ public class RemoteTaskProcessor(
 
             logger.LogInformation("Upscaled file {file} for task {taskId}.", upscaledFile, taskResponse.TaskId);
 
-            // Wait for any pending upload from previous task before starting our upload
             if (pendingUpload != null)
             {
                 await pendingUpload;
             }
 
-            // Start upload asynchronously and return the task so next cycle can overlap
-            var uploadTask = UploadFileWithCleanup(client, logger, taskResponse.TaskId, upscaledFile, 
-                downloadedFile, upscaledFile, keepAliveCts, keepAliveTask, stoppingToken);
-            
-            // Return the upload task so the main loop can await it before next iteration
-            return uploadTask;
+            return UploadFileAndCleanup(client, logger, taskResponse.TaskId, upscaledFile, downloadedFile, upscaledFile, stoppingToken);
         }
         catch (OperationCanceledException)
         {
             logger.LogInformation("Task {taskId} was cancelled.", taskResponse.TaskId);
-            // Do not report failure, just exit gracefully
-            // Would otherwise mark the task as failed on the server
             
-            // Clean up files since upload won't happen
             if (downloadedFile != null && File.Exists(downloadedFile))
             {
                 File.Delete(downloadedFile);
@@ -179,7 +169,6 @@ public class RemoteTaskProcessor(
             await client.ReportTaskFailedAsync(
                 new ReportTaskFailedRequest { TaskId = taskResponse.TaskId, ErrorMessage = ex.Message });
             
-            // Clean up files since upload won't happen
             if (downloadedFile != null && File.Exists(downloadedFile))
             {
                 File.Delete(downloadedFile);
@@ -193,8 +182,6 @@ public class RemoteTaskProcessor(
         }
         finally
         {
-            // For failure cases, we still need to clean up here since upload won't happen
-            // Keep-alive cleanup is always needed here for error cases
             await keepAliveCts.CancelAsync();
             try
             {
@@ -238,10 +225,8 @@ public class RemoteTaskProcessor(
         }
     }
 
-    private async Task UploadFileWithCleanup(UpscalingService.UpscalingServiceClient client, 
-        ILogger<RemoteTaskProcessor> logger, int taskId, string upscaledFile, 
-        string? downloadedFile, string? upscaledFileForCleanup, 
-        CancellationTokenSource keepAliveCts, Task keepAliveTask, CancellationToken stoppingToken)
+    private async Task UploadFileAndCleanup(UpscalingService.UpscalingServiceClient client, ILogger<RemoteTaskProcessor> logger,
+        int taskId, string upscaledFile, string? downloadedFile, string? upscaledFileForCleanup, CancellationToken stoppingToken)
     {
         try
         {
@@ -249,7 +234,6 @@ public class RemoteTaskProcessor(
         }
         finally
         {
-            // Clean up files after upload completes (successful or failed)
             if (downloadedFile != null && File.Exists(downloadedFile))
             {
                 File.Delete(downloadedFile);
@@ -259,14 +243,6 @@ public class RemoteTaskProcessor(
             {
                 File.Delete(upscaledFileForCleanup);
             }
-
-            // Cancel and clean up keep-alive task
-            await keepAliveCts.CancelAsync();
-            try
-            {
-                await keepAliveTask;
-            }
-            catch (OperationCanceledException) { }
         }
     }
 
