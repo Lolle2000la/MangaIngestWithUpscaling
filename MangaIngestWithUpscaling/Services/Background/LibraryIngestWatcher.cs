@@ -51,7 +51,7 @@ public class LibraryIngestWatcher : BackgroundService
                     Observable.FromEventPattern<FileSystemEventHandler, FileSystemEventArgs>(
                             h => watcher.Created += h,
                             h => watcher.Created -= h)
-                        .Throttle(TimeSpan.FromSeconds(5))
+                        .Throttle(TimeSpan.FromSeconds(15))
                         .Subscribe(async e =>
                         {
                             // process the new file
