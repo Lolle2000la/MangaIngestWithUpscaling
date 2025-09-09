@@ -39,6 +39,14 @@ public class KavitaChapterChangedNotifier(
     {
         if (!kavitaConfig.Value.Enabled) return;
 
+        // If series update is disabled, just scan the new folders
+        if (!kavitaConfig.Value.UseSeriesUpdate)
+        {
+            logger.LogInformation("Series update is disabled. Falling back to folder scanning for manga '{NewTitle}'", newTitle);
+            await ScanMangaFolders(manga);
+            return;
+        }
+
         try
         {
             // Try to find the existing series by the old title

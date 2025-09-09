@@ -36,21 +36,82 @@ public class KavitaClient(
 
         try
         {
-            // Use search endpoint to find series by name
-            var response = await client.GetAsync($"/api/Series/search?name={Uri.EscapeDataString(seriesName)}&apikey={configuration.Value.ApiKey}");
-            
-            if (!response.IsSuccessStatusCode)
+            // Try multiple potential search endpoints that Kavita might use
+            var searchEndpoints = new[]
             {
-                logger.LogWarning("Failed to search for series '{SeriesName}': {StatusCode}", seriesName, response.StatusCode);
-                return null;
-            }
-
-            var content = await response.Content.ReadAsStringAsync();
-            var series = JsonSerializer.Deserialize<KavitaSeries[]>(content, _jsonOptions);
+                $"/api/Series/search?name={Uri.EscapeDataString(seriesName)}&apikey={configuration.Value.ApiKey}",
+                $"/api/series/search?name={Uri.EscapeDataString(seriesName)}&apikey={configuration.Value.ApiKey}",
+                $"/api/Series?filter={Uri.EscapeDataString(seriesName)}&apikey={configuration.Value.ApiKey}",
+                $"/api/series?filter={Uri.EscapeDataString(seriesName)}&apikey={configuration.Value.ApiKey}"
+            };
             
-            // Return the first exact match or the first result if no exact match
-            return series?.FirstOrDefault(s => string.Equals(s.Name, seriesName, StringComparison.OrdinalIgnoreCase)) 
-                   ?? series?.FirstOrDefault();
+            foreach (var endpoint in searchEndpoints)
+            {
+                try
+                {
+                    var response = await client.GetAsync(endpoint);
+                    
+                    if (response.IsSuccessStatusCode)
+                    {
+                        var content = await response.Content.ReadAsStringAsync();
+                        
+                        // Try to parse as array first
+                        try
+                        {
+                            var seriesArray = JsonSerializer.Deserialize<KavitaSeries[]>(content, _jsonOptions);
+                            if (seriesArray != null && seriesArray.Length > 0)
+                            {
+                                // Return the first exact match (case insensitive) or the first result if no exact match
+                                return seriesArray.FirstOrDefault(s => string.Equals(s.Name, seriesName, StringComparison.OrdinalIgnoreCase))
+                                       ?? seriesArray.FirstOrDefault();
+                            }
+                        }
+                        catch (JsonException)
+                        {
+                            // Try parsing as a single object
+                            try
+                            {
+                                var singleSeries = JsonSerializer.Deserialize<KavitaSeries>(content, _jsonOptions);
+                                if (singleSeries != null && string.Equals(singleSeries.Name, seriesName, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    return singleSeries;
+                                }
+                            }
+                            catch (JsonException)
+                            {
+                                // Try parsing as a response wrapper object
+                                try
+                                {
+                                    var wrapper = JsonSerializer.Deserialize<JsonElement>(content, _jsonOptions);
+                                    if (wrapper.TryGetProperty("data", out var dataElement) ||
+                                        wrapper.TryGetProperty("series", out dataElement) ||
+                                        wrapper.TryGetProperty("results", out dataElement))
+                                    {
+                                        var seriesFromWrapper = JsonSerializer.Deserialize<KavitaSeries[]>(dataElement.GetRawText(), _jsonOptions);
+                                        if (seriesFromWrapper != null && seriesFromWrapper.Length > 0)
+                                        {
+                                            return seriesFromWrapper.FirstOrDefault(s => string.Equals(s.Name, seriesName, StringComparison.OrdinalIgnoreCase))
+                                                   ?? seriesFromWrapper.FirstOrDefault();
+                                        }
+                                    }
+                                }
+                                catch (JsonException)
+                                {
+                                    logger.LogWarning("Could not parse series search response from endpoint {Endpoint}", endpoint);
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (HttpRequestException)
+                {
+                    // Try next endpoint
+                    continue;
+                }
+            }
+            
+            logger.LogWarning("Could not find series '{SeriesName}' using any available search endpoint", seriesName);
+            return null;
         }
         catch (Exception ex)
         {
@@ -75,13 +136,36 @@ public class KavitaClient(
                 Name = newName
             };
 
-            var response = await client.PutAsJsonAsync($"/api/Series/{seriesId}/metadata", updateRequest);
-            
-            if (!response.IsSuccessStatusCode)
+            // Try multiple potential update endpoints
+            var updateEndpoints = new[]
             {
-                logger.LogWarning("Failed to update series metadata for ID {SeriesId}: {StatusCode}", seriesId, response.StatusCode);
-                throw new HttpRequestException($"Failed to update series metadata: {response.StatusCode}");
+                $"/api/Series/{seriesId}/metadata",
+                $"/api/series/{seriesId}/metadata", 
+                $"/api/Series/{seriesId}",
+                $"/api/series/{seriesId}"
+            };
+            
+            foreach (var endpoint in updateEndpoints)
+            {
+                try
+                {
+                    var response = await client.PutAsJsonAsync(endpoint, updateRequest);
+                    
+                    if (response.IsSuccessStatusCode)
+                    {
+                        logger.LogDebug("Successfully updated series metadata using endpoint {Endpoint}", endpoint);
+                        return;
+                    }
+                }
+                catch (HttpRequestException)
+                {
+                    // Try next endpoint
+                    continue;
+                }
             }
+            
+            logger.LogWarning("Failed to update series metadata for ID {SeriesId} using any available endpoint", seriesId);
+            throw new HttpRequestException($"Failed to update series metadata for ID {seriesId}");
         }
         catch (Exception ex)
         {
@@ -105,13 +189,47 @@ public class KavitaClient(
                 ApiKey = configuration.Value.ApiKey
             };
 
-            var response = await client.PostAsJsonAsync($"/api/Series/{seriesId}/refresh", refreshRequest);
-            
-            if (!response.IsSuccessStatusCode)
+            // Try multiple potential refresh endpoints
+            var refreshEndpoints = new[]
             {
-                logger.LogWarning("Failed to refresh series ID {SeriesId}: {StatusCode}", seriesId, response.StatusCode);
-                throw new HttpRequestException($"Failed to refresh series: {response.StatusCode}");
+                $"/api/Series/{seriesId}/refresh",
+                $"/api/series/{seriesId}/refresh",
+                $"/api/Series/{seriesId}/scan",
+                $"/api/series/{seriesId}/scan",
+                $"/api/Library/refresh-series?seriesId={seriesId}&apikey={configuration.Value.ApiKey}"
+            };
+            
+            foreach (var endpoint in refreshEndpoints)
+            {
+                try
+                {
+                    HttpResponseMessage response;
+                    
+                    if (endpoint.Contains("Library/refresh-series"))
+                    {
+                        // This endpoint might use GET instead of POST
+                        response = await client.GetAsync(endpoint);
+                    }
+                    else
+                    {
+                        response = await client.PostAsJsonAsync(endpoint, refreshRequest);
+                    }
+                    
+                    if (response.IsSuccessStatusCode)
+                    {
+                        logger.LogDebug("Successfully refreshed series using endpoint {Endpoint}", endpoint);
+                        return;
+                    }
+                }
+                catch (HttpRequestException)
+                {
+                    // Try next endpoint
+                    continue;
+                }
             }
+            
+            logger.LogWarning("Failed to refresh series ID {SeriesId} using any available endpoint", seriesId);
+            throw new HttpRequestException($"Failed to refresh series ID {seriesId}");
         }
         catch (Exception ex)
         {
