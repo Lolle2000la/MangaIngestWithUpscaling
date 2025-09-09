@@ -7,22 +7,58 @@ using UpscalerProfile = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.U
 
 namespace MangaIngestWithUpscaling.RemoteWorker.Background;
 
+public class TaskData
+{
+    public UpscaleTaskDelegationResponse TaskResponse { get; set; } = null!;
+    public string? DownloadedFile { get; set; }
+    public string? UpscaledFile { get; set; }
+    public UpscalerProfile Profile { get; set; } = null!;
+}
+
 public class RemoteTaskProcessor(
     IServiceScopeFactory serviceScopeFactory) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
         using var scope = serviceScopeFactory.CreateScope();
         var logger = scope.ServiceProvider.GetRequiredService<ILogger<RemoteTaskProcessor>>();
 
         logger.LogInformation("Successfully connected to server and waiting for work.");
 
-        while (!stoppingToken.IsCancellationRequested && await timer.WaitForNextTickAsync(stoppingToken))
+        TaskData? nextTask = null;
+
+        while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                await RunCycle(stoppingToken);
+                // Process the task we have ready (either from previous prefetch or newly fetched)
+                TaskData? currentTask = nextTask ?? await TryGetNextTask(stoppingToken);
+                nextTask = null;
+
+                if (currentTask == null)
+                {
+                    // No task available, wait a bit before trying again
+                    await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                    continue;
+                }
+
+                // Start prefetching the next task while we process the current one
+                var nextTaskFetch = TryGetNextTask(stoppingToken);
+
+                // Process the current task
+                await ProcessTask(currentTask, stoppingToken);
+
+                // Wait for the next task prefetch to complete (if it hasn't already)
+                try
+                {
+                    nextTask = await nextTaskFetch;
+                }
+                catch (Exception ex)
+                {
+                    // Log error but don't fail the main loop - we'll try again next iteration
+                    logger.LogWarning(ex, "Failed to prefetch next task, will retry on next iteration");
+                    nextTask = null;
+                }
             }
             catch (RpcException ex)
             {
@@ -48,27 +84,72 @@ public class RemoteTaskProcessor(
             {
                 // Log the exception and continue
                 logger.LogError(ex, "Failed to process remote task.");
+                await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
             }
         }
     }
 
-    private async Task RunCycle(CancellationToken stoppingToken)
+    private async Task<TaskData?> TryGetNextTask(CancellationToken stoppingToken)
     {
         using var scope = serviceScopeFactory.CreateScope();
         var client = scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
         var logger = scope.ServiceProvider.GetRequiredService<ILogger<RemoteTaskProcessor>>();
-        var upscaler = scope.ServiceProvider.GetRequiredService<IUpscaler>();
 
         var taskResponse = await client.RequestUpscaleTaskAsync(new Empty(), cancellationToken: stoppingToken);
 
         if (taskResponse.TaskId == -1)
         {
-            return;
+            return null;
         }
 
         logger.LogInformation("Received task {taskId}.", taskResponse.TaskId);
 
         var profile = GetProfileFromResponse(taskResponse.UpscalerProfile);
+
+        var taskData = new TaskData
+        {
+            TaskResponse = taskResponse,
+            Profile = profile
+        };
+
+        // Download the file immediately when we get a task
+        try
+        {
+            AsyncServerStreamingCall<CbzFileChunk>? stream = client.GetCbzFile(
+                new CbzToUpscaleRequest { TaskId = taskResponse.TaskId },
+                cancellationToken: stoppingToken);
+
+            taskData.DownloadedFile = await FetchFile(taskResponse.TaskId, stream.ResponseStream.ReadAllAsync(stoppingToken));
+            
+            logger.LogInformation("Downloaded file {file} for task {taskId}.", taskData.DownloadedFile, taskResponse.TaskId);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to download file for task {taskId}.", taskResponse.TaskId);
+            
+            // Report task failure to server
+            try
+            {
+                await client.ReportTaskFailedAsync(
+                    new ReportTaskFailedRequest { TaskId = taskResponse.TaskId, ErrorMessage = $"Failed to download file: {ex.Message}" });
+            }
+            catch (Exception reportEx)
+            {
+                logger.LogError(reportEx, "Failed to report task failure for task {taskId}.", taskResponse.TaskId);
+            }
+
+            return null;
+        }
+
+        return taskData;
+    }
+
+    private async Task ProcessTask(TaskData taskData, CancellationToken stoppingToken)
+    {
+        using var scope = serviceScopeFactory.CreateScope();
+        var client = scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
+        var logger = scope.ServiceProvider.GetRequiredService<ILogger<RemoteTaskProcessor>>();
+        var upscaler = scope.ServiceProvider.GetRequiredService<IUpscaler>();
 
         var keepAliveCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         var keepAliveTask = Task.Run(async () =>
@@ -78,19 +159,19 @@ public class RemoteTaskProcessor(
             {
                 try
                 {
-                    var response = await client.KeepAliveAsync(new KeepAliveRequest { TaskId = taskResponse.TaskId },
+                    var response = await client.KeepAliveAsync(new KeepAliveRequest { TaskId = taskData.TaskResponse.TaskId },
                         cancellationToken: keepAliveCts.Token);
                     if (!response.IsAlive)
                     {
                         logger.LogWarning(
                             "Keep-alive for task {taskId} failed. Server reports task is no longer alive. Aborting.",
-                            taskResponse.TaskId);
+                            taskData.TaskResponse.TaskId);
                         await keepAliveCts.CancelAsync();
                     }
                 }
                 catch (Exception ex)
                 {
-                    logger.LogError(ex, "Failed to send keep-alive for task {taskId}", taskResponse.TaskId);
+                    logger.LogError(ex, "Failed to send keep-alive for task {taskId}", taskData.TaskResponse.TaskId);
                 }
 
                 if (keepAliveCts.IsCancellationRequested)
@@ -109,36 +190,27 @@ public class RemoteTaskProcessor(
             }
         }, keepAliveCts.Token);
 
-        string? downloadedFile = null;
-        string? upscaledFile = null;
         try
         {
-            AsyncServerStreamingCall<CbzFileChunk>? stream = client.GetCbzFile(
-                new CbzToUpscaleRequest { TaskId = taskResponse.TaskId },
-                cancellationToken: stoppingToken);
+            // File is already downloaded, just process it
+            taskData.UpscaledFile = PrepareTempFile(taskData.TaskResponse.TaskId, "_upscaled");
+            await upscaler.Upscale(taskData.DownloadedFile!, taskData.UpscaledFile, taskData.Profile, stoppingToken);
 
-            downloadedFile = await FetchFile(taskResponse.TaskId, stream.ResponseStream.ReadAllAsync(stoppingToken));
+            logger.LogInformation("Upscaled file {file} for task {taskId}.", taskData.UpscaledFile, taskData.TaskResponse.TaskId);
 
-            logger.LogInformation("Downloaded file {file} for task {taskId}.", downloadedFile, taskResponse.TaskId);
-
-            upscaledFile = PrepareTempFile(taskResponse.TaskId, "_upscaled");
-            await upscaler.Upscale(downloadedFile, upscaledFile, profile, stoppingToken);
-
-            logger.LogInformation("Upscaled file {file} for task {taskId}.", upscaledFile, taskResponse.TaskId);
-
-            await UploadFile(client, logger, taskResponse.TaskId, upscaledFile, stoppingToken);
+            await UploadFile(client, logger, taskData.TaskResponse.TaskId, taskData.UpscaledFile, stoppingToken);
         }
         catch (OperationCanceledException)
         {
-            logger.LogInformation("Task {taskId} was cancelled.", taskResponse.TaskId);
+            logger.LogInformation("Task {taskId} was cancelled.", taskData.TaskResponse.TaskId);
             // Do not report failure, just exit gracefully
             // Would otherwise mark the task as failed on the server
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to process task {taskId}.", taskResponse.TaskId);
+            logger.LogError(ex, "Failed to process task {taskId}.", taskData.TaskResponse.TaskId);
             await client.ReportTaskFailedAsync(
-                new ReportTaskFailedRequest { TaskId = taskResponse.TaskId, ErrorMessage = ex.Message });
+                new ReportTaskFailedRequest { TaskId = taskData.TaskResponse.TaskId, ErrorMessage = ex.Message });
         }
         finally
         {
@@ -149,14 +221,15 @@ public class RemoteTaskProcessor(
             }
             catch (OperationCanceledException) { }
 
-            if (downloadedFile != null && File.Exists(downloadedFile))
+            // Clean up files
+            if (taskData.DownloadedFile != null && File.Exists(taskData.DownloadedFile))
             {
-                File.Delete(downloadedFile);
+                File.Delete(taskData.DownloadedFile);
             }
 
-            if (upscaledFile != null && File.Exists(upscaledFile))
+            if (taskData.UpscaledFile != null && File.Exists(taskData.UpscaledFile))
             {
-                File.Delete(upscaledFile);
+                File.Delete(taskData.UpscaledFile);
             }
         }
     }
