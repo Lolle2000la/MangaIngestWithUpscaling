@@ -702,6 +702,7 @@ public partial class ChapterPartMerger(
     ///     - 22.1, 22.3 ✗ (missing 22.2)
     ///     - 5, 5.5 ✗ (5.5 is special chapter, not part)
     ///     - 22, 22.3 ✗ (gap from base to .3)
+    ///     - 22.1, 22.1 ✗ (duplicate chapter numbers)
     /// </summary>
     private bool AreConsecutiveChapterParts(List<FoundChapter> chapters, string baseNumber)
     {
@@ -721,6 +722,12 @@ public partial class ChapterPartMerger(
             .ToList();
 
         if (chapterNumbers.Count != chapters.Count)
+        {
+            return false;
+        }
+
+        // Check for duplicate chapter numbers - don't allow merging of chapters with the same number
+        if (chapterNumbers.Distinct().Count() != chapterNumbers.Count)
         {
             return false;
         }
