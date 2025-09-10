@@ -728,7 +728,10 @@ public class ChapterMergeCoordinator(
                 newChapterParts, mergeInfo, library, seriesLibraryPath, existingMergedChapter, cancellationToken);
 
             // Update the merged chapter info to include the new parts
-            existingMergedInfo.OriginalParts.AddRange(mergeInfo.OriginalParts);
+            // Create a new list to ensure Entity Framework change tracking detects the modification
+            List<OriginalChapterPart> updatedParts = new(existingMergedInfo.OriginalParts);
+            updatedParts.AddRange(mergeInfo.OriginalParts);
+            existingMergedInfo.OriginalParts = updatedParts;
 
             // Remove the new chapter part records from the database
             dbContext.Chapters.RemoveRange(newChapterParts);
