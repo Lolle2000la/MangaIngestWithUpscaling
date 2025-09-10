@@ -1,4 +1,5 @@
 using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
@@ -1132,7 +1133,8 @@ public class ChapterMergeCoordinator(
             .LoadAsync(cancellationToken);
 
         // Check if the manga should be upscaled
-        bool shouldUpscale = (existingMergedChapter.Manga.ShouldUpscale ?? existingMergedChapter.Manga.Library.UpscaleOnIngest)
+        bool shouldUpscale = (existingMergedChapter.Manga.ShouldUpscale ??
+                              existingMergedChapter.Manga.Library.UpscaleOnIngest)
                              && existingMergedChapter.Manga.Library.UpscalerProfile != null;
 
         if (!shouldUpscale)
@@ -1164,7 +1166,7 @@ public class ChapterMergeCoordinator(
             library.UpscaledLibraryPath,
             PathEscaper.EscapeFileName(existingMergedChapter.Manga.PrimaryTitle!));
         string upscaledChapterPath = Path.Combine(upscaledSeriesPath, existingMergedChapter.FileName);
-        
+
         if (File.Exists(upscaledChapterPath))
         {
             try
