@@ -51,6 +51,64 @@ public partial class ChapterPartMerger(
             .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
     }
 
+    /// <summary>
+    /// Groups chapters that can be added to existing merged chapters.
+    /// This handles individual chapters (like 2.3) that can be added to existing merged chapters (like merged chapter 2).
+    /// </summary>
+    /// <param name="chapters">Chapters to analyze</param>
+    /// <param name="existingMergedBaseNumbers">Base numbers of existing merged chapters</param>
+    /// <param name="isLastChapter">Function to determine if a chapter group is the latest chapter</param>
+    /// <returns>Dictionary where key is base chapter number and value is list of chapters to add to existing merged chapter</returns>
+    public Dictionary<string, List<FoundChapter>> GroupChaptersForAdditionToExistingMerged(
+        IEnumerable<FoundChapter> chapters,
+        HashSet<string> existingMergedBaseNumbers,
+        Func<string, bool> isLastChapter)
+    {
+        var result = new Dictionary<string, List<FoundChapter>>();
+
+        foreach (FoundChapter chapter in chapters)
+        {
+            string? chapterNumber = ExtractChapterNumber(chapter);
+            if (chapterNumber == null)
+            {
+                continue;
+            }
+
+            string? baseNumber = ExtractBaseChapterNumber(chapterNumber);
+            if (baseNumber == null)
+            {
+                continue;
+            }
+
+            // Only consider chapters whose base number matches an existing merged chapter
+            if (!existingMergedBaseNumbers.Contains(baseNumber))
+            {
+                continue;
+            }
+
+            // Don't merge if this is the latest chapter
+            if (isLastChapter(baseNumber))
+            {
+                continue;
+            }
+
+            // Validate that this is a proper chapter part (has decimal part)
+            if (!IsChapterPart(chapterNumber, baseNumber))
+            {
+                continue;
+            }
+
+            if (!result.ContainsKey(baseNumber))
+            {
+                result[baseNumber] = new List<FoundChapter>();
+            }
+
+            result[baseNumber].Add(chapter);
+        }
+
+        return result;
+    }
+
     public async Task<ChapterMergeResult> ProcessChapterMergingAsync(
         List<FoundChapter> chapters,
         string basePath,
@@ -196,6 +254,7 @@ public partial class ChapterPartMerger(
         string seriesTitle,
         HashSet<string> existingChapterNumbers,
         HashSet<int> excludeMergedChapterIds,
+        HashSet<string> existingMergedBaseNumbers,
         CancellationToken cancellationToken = default)
     {
         try
@@ -224,12 +283,18 @@ public partial class ChapterPartMerger(
                 return new ChapterMergeResult(new List<FoundChapter>(), new List<MergeInfo>());
             }
 
-            // Find chapters that can be merged
+            // Find chapters that can be merged into new merge groups
             Dictionary<string, List<FoundChapter>> chaptersToMerge = GroupChapterPartsForMerging(
                 chaptersForMerging,
                 baseNumber => IsLatestChapter(baseNumber, existingChapterNumbers));
 
-            if (!chaptersToMerge.Any())
+            // Find individual chapters that can be added to existing merged chapters
+            Dictionary<string, List<FoundChapter>> chaptersToAddToExisting = GroupChaptersForAdditionToExistingMerged(
+                chaptersForMerging,
+                existingMergedBaseNumbers,
+                baseNumber => IsLatestChapter(baseNumber, existingChapterNumbers));
+
+            if (!chaptersToMerge.Any() && !chaptersToAddToExisting.Any())
             {
                 return new ChapterMergeResult(new List<FoundChapter>(), new List<MergeInfo>());
             }
@@ -237,8 +302,8 @@ public partial class ChapterPartMerger(
             var mergeInformation = new List<MergeInfo>();
 
             logger.LogInformation(
-                "Found {GroupCount} groups of existing chapter parts for merging",
-                chaptersToMerge.Count);
+                "Found {GroupCount} groups of existing chapter parts for merging and {AdditionCount} groups for addition to existing merged chapters",
+                chaptersToMerge.Count, chaptersToAddToExisting.Count);
 
             // Process each group for merging
             foreach (var (baseNumber, chapterParts) in chaptersToMerge)
@@ -325,6 +390,62 @@ public partial class ChapterPartMerger(
                 {
                     logger.LogError(ex,
                         "Failed to merge existing chapter parts for base number {BaseNumber}",
+                        baseNumber);
+                }
+            }
+
+            // Process chapters that can be added to existing merged chapters
+            foreach (var (baseNumber, chapterParts) in chaptersToAddToExisting)
+            {
+                try
+                {
+                    logger.LogInformation(
+                        "Preparing {PartCount} chapter parts for addition to existing merged chapter {BaseNumber}",
+                        chapterParts.Count, baseNumber);
+
+                    // Create target metadata for the chapters to be added
+                    var targetMetadata = new ExtractedMetadata(
+                        seriesTitle,
+                        GenerateMergedChapterTitle(
+                            chapterParts.First().Metadata?.ChapterTitle ??
+                            Path.GetFileNameWithoutExtension(chapterParts.First().RelativePath), baseNumber),
+                        baseNumber);
+
+                    // Create OriginalChapterPart objects for the chapters that will be added
+                    var originalParts = new List<OriginalChapterPart>();
+                    foreach (FoundChapter chapterPart in chapterParts)
+                    {
+                        string chapterNumber = ExtractChapterNumber(chapterPart) ?? baseNumber;
+                        originalParts.Add(new OriginalChapterPart
+                        {
+                            FileName = chapterPart.FileName,
+                            ChapterNumber = chapterNumber,
+                            Metadata = chapterPart.Metadata,
+                            PageNames = new List<string>(), // Will be populated when actually processing the file
+                            StartPageIndex = 0, // Will be set by the coordinator when actually adding to the merged file
+                            EndPageIndex = 0  // Will be set by the coordinator when actually adding to the merged file
+                        });
+                    }
+
+                    // Create a dummy merged chapter (the actual merged chapter already exists)
+                    // This is just for the MergeInfo structure - use the correct filename format
+                    string mergedFileName = GenerateMergedFileName(chapterParts.First(), baseNumber);
+                    var dummyMergedChapter = new FoundChapter(
+                        mergedFileName,
+                        Path.Combine(PathEscaper.EscapeFileName(seriesTitle), mergedFileName),
+                        ChapterStorageType.Cbz,
+                        targetMetadata);
+
+                    mergeInformation.Add(new MergeInfo(dummyMergedChapter, originalParts, baseNumber));
+
+                    logger.LogInformation(
+                        "Successfully prepared {PartCount} chapter parts for addition to existing merged chapter {BaseNumber}",
+                        chapterParts.Count, baseNumber);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex,
+                        "Failed to prepare chapter parts for addition to existing merged chapter {BaseNumber}",
                         baseNumber);
                 }
             }
@@ -813,6 +934,46 @@ public partial class ChapterPartMerger(
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Determines if a chapter number represents a chapter part that can be added to a merged chapter.
+    /// For example, "2.3" is a part of base chapter "2".
+    /// </summary>
+    /// <param name="chapterNumber">The full chapter number (e.g., "2.3")</param>
+    /// <param name="baseNumber">The base chapter number (e.g., "2")</param>
+    /// <returns>True if this is a valid chapter part for the base number</returns>
+    private bool IsChapterPart(string chapterNumber, string baseNumber)
+    {
+        if (!decimal.TryParse(chapterNumber, out decimal fullNumber))
+        {
+            return false;
+        }
+
+        if (!decimal.TryParse(baseNumber, out decimal baseNum))
+        {
+            return false;
+        }
+
+        // Check if the chapter number starts with the base number and has a decimal part
+        decimal decimalPart = fullNumber - baseNum;
+        
+        // Must have a positive decimal part less than 1
+        if (decimalPart <= 0 || decimalPart >= 1)
+        {
+            return false;
+        }
+
+        // Check the original string format to ensure it's a valid single decimal digit (e.g., .1, .2, not .10)
+        int dotIndex = chapterNumber.IndexOf('.', StringComparison.Ordinal);
+        if (dotIndex > 0 && dotIndex < chapterNumber.Length - 1)
+        {
+            string decimalPartStr = chapterNumber[(dotIndex + 1)..];
+            // Only allow single digit decimal parts (1-9)
+            return decimalPartStr.Length == 1 && char.IsDigit(decimalPartStr[0]) && decimalPartStr != "0";
+        }
+
+        return false;
     }
 
     private static bool IsImageFile(string fileName)

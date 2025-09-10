@@ -64,6 +64,7 @@ public class ChapterMergeCoordinator(
                 manga.PrimaryTitle!,
                 allChapterNumbers,
                 mergedChapterIds,
+                existingMergedBaseNumbers,
                 cancellationToken);
 
             if (!mergeResult.MergeInformation.Any())
@@ -242,6 +243,7 @@ public class ChapterMergeCoordinator(
             manga.PrimaryTitle!,
             allChapterNumbers,
             new HashSet<int>(), // No excluded chapters for explicit merges
+            new HashSet<string>(), // No existing merged chapters for explicit merges
             cancellationToken);
 
         if (mergeResult.MergeInformation.Any())
