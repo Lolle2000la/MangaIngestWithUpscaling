@@ -335,6 +335,9 @@
                 }
             }
 
+            // Invalidate merge possibilities cache since chapters changed
+            InvalidateMergePossibilitiesCache();
+
             Snackbar.Add($"Successfully reverted merged chapter and restored {restoredChapters.Count} individual parts.", Severity.Success);
         }
         catch (Exception ex)
@@ -400,6 +403,9 @@
         await DbContext.SaveChangesAsync();
 
         chapters.Remove(chapterItems.First(ci => ci.Chapter == chapter));
+        
+        // Invalidate merge possibilities cache since chapters changed
+        InvalidateMergePossibilitiesCache();
     }
 
     private async Task UpscaleChapter(Chapter chapter)
@@ -604,6 +610,8 @@
                 await InvokeAsync(async () =>
                 {
                     await LoadChapters();
+                    InvalidateMergePossibilitiesCache();
+                    await UpdateMergePossibilitiesAsync();
                     StateHasChanged();
                 });
             }
@@ -675,7 +683,10 @@
         }
 
         // Update merge possibilities cache after loading chapters
-        _ = Task.Run(async () => await UpdateMergePossibilitiesAsync());
+        _ = UpdateMergePossibilitiesAsync().ContinueWith(_ => 
+        {
+            InvokeAsync(StateHasChanged);
+        }, TaskScheduler.FromCurrentSynchronizationContext());
 
         return loadingFailed;
     }
@@ -712,7 +723,13 @@
     // Cache for merge possibilities to avoid repeated async calls during UI rendering
     private MergeActionInfo? _cachedMergePossibilities;
     private DateTime _lastMergePossibilitiesUpdate = DateTime.MinValue;
-    private readonly TimeSpan _mergePossibilitiesCacheTimeout = TimeSpan.FromSeconds(5);
+    private readonly TimeSpan _mergePossibilitiesCacheTimeout = TimeSpan.FromSeconds(2);
+
+    private void InvalidateMergePossibilitiesCache()
+    {
+        _cachedMergePossibilities = null;
+        _lastMergePossibilitiesUpdate = DateTime.MinValue;
+    }
 
     private async Task UpdateMergePossibilitiesAsync()
     {
@@ -725,10 +742,14 @@
             if (allChapters.Any())
             {
                 _cachedMergePossibilities = await ChapterMergeCoordinator.GetPossibleMergeActionsAsync(allChapters, includeLatestChapters: true);
+                
+                Logger.LogDebug("Updated merge possibilities cache: {NewMergeGroups} new merge groups, {AdditionsToExisting} additions to existing",
+                    _cachedMergePossibilities.NewMergeGroups.Count, _cachedMergePossibilities.AdditionsToExistingMerged.Count);
             }
             else
             {
                 _cachedMergePossibilities = new MergeActionInfo();
+                Logger.LogDebug("No non-merged chapters found, created empty merge possibilities cache");
             }
             _lastMergePossibilitiesUpdate = DateTime.UtcNow;
         }

@@ -1,6 +1,8 @@
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
+using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
+using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.EntityFrameworkCore;
@@ -13,6 +15,7 @@ public class ChapterMergeCoordinator(
     ApplicationDbContext dbContext,
     IChapterPartMerger chapterPartMerger,
     IChapterMergeUpscaleTaskManager upscaleTaskManager,
+    ITaskQueue taskQueue,
     IMetadataHandlingService metadataHandlingService,
     ILogger<ChapterMergeCoordinator> logger) : IChapterMergeCoordinator
 {
@@ -891,9 +894,13 @@ public class ChapterMergeCoordinator(
             // Remove the new chapter part records from the database
             dbContext.Chapters.RemoveRange(newChapterParts);
 
-            // Handle upscale task management for the new parts
+            // Handle upscale task management for the new parts (cancels any pending tasks)
             await upscaleTaskManager.HandleUpscaleTaskManagementAsync(
                 newChapterParts, mergeInfo, library, cancellationToken);
+
+            // Handle upscaling for the existing merged chapter that now has new parts
+            await HandleExistingMergedChapterUpscalingAsync(
+                existingMergedChapter, library, cancellationToken);
 
             logger.LogInformation(
                 "Successfully added {PartCount} new chapter parts to existing merged chapter {BaseNumber} for series {SeriesTitle}",
@@ -1102,6 +1109,86 @@ public class ChapterMergeCoordinator(
                 "Failed to add upscaled parts to existing upscaled merged chapter {BaseNumber}",
                 mergeInfo.BaseChapterNumber);
         }
+    }
+
+    /// <summary>
+    /// Handles upscaling for an existing merged chapter when new parts are added to it.
+    /// This marks the chapter as not upscaled and queues a new upscale task if needed.
+    /// </summary>
+    private async Task HandleExistingMergedChapterUpscalingAsync(
+        Chapter existingMergedChapter,
+        Library library,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrEmpty(library.UpscaledLibraryPath) || library.UpscalerProfile is null)
+        {
+            return;
+        }
+
+        // Load necessary references
+        await dbContext.Entry(existingMergedChapter).Reference(c => c.Manga).LoadAsync(cancellationToken);
+        await dbContext.Entry(existingMergedChapter.Manga).Reference(m => m.Library).LoadAsync(cancellationToken);
+        await dbContext.Entry(existingMergedChapter.Manga.Library).Reference(l => l.UpscalerProfile)
+            .LoadAsync(cancellationToken);
+
+        // Check if the manga should be upscaled
+        bool shouldUpscale = (existingMergedChapter.Manga.ShouldUpscale ?? existingMergedChapter.Manga.Library.UpscaleOnIngest)
+                             && existingMergedChapter.Manga.Library.UpscalerProfile != null;
+
+        if (!shouldUpscale)
+        {
+            logger.LogDebug(
+                "Upscaling not needed for existing merged chapter {FileName} - upscaling disabled",
+                existingMergedChapter.FileName);
+            return;
+        }
+
+        // Cancel any existing upscale tasks for this chapter
+        List<PersistedTask> existingTasks = await dbContext.PersistedTasks
+            .FromSql(
+                $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(UpscaleTask)} AND Data->>'$.ChapterId' = {existingMergedChapter.Id}")
+            .ToListAsync(cancellationToken);
+
+        foreach (PersistedTask task in existingTasks)
+        {
+            await taskQueue.RemoveTaskAsync(task);
+            logger.LogDebug("Canceled existing upscale task for merged chapter {ChapterId} due to new parts addition",
+                existingMergedChapter.Id);
+        }
+
+        // Mark the chapter as not upscaled since new parts were added
+        existingMergedChapter.IsUpscaled = false;
+
+        // Remove any existing upscaled version since it's now outdated
+        string upscaledSeriesPath = Path.Combine(
+            library.UpscaledLibraryPath,
+            PathEscaper.EscapeFileName(existingMergedChapter.Manga.PrimaryTitle!));
+        string upscaledChapterPath = Path.Combine(upscaledSeriesPath, existingMergedChapter.FileName);
+        
+        if (File.Exists(upscaledChapterPath))
+        {
+            try
+            {
+                File.Delete(upscaledChapterPath);
+                logger.LogInformation(
+                    "Removed outdated upscaled version of merged chapter {FileName} due to new parts addition",
+                    existingMergedChapter.FileName);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex,
+                    "Failed to remove outdated upscaled version of merged chapter {FileName}",
+                    existingMergedChapter.FileName);
+            }
+        }
+
+        // Queue a new upscale task for the updated merged chapter
+        var upscaleTask = new UpscaleTask(existingMergedChapter);
+        await taskQueue.EnqueueAsync(upscaleTask);
+
+        logger.LogInformation(
+            "Queued new upscale task for existing merged chapter {FileName} (Chapter ID: {ChapterId}) after adding new parts",
+            existingMergedChapter.FileName, existingMergedChapter.Id);
     }
 
     private static bool IsImageFile(string fileName)
