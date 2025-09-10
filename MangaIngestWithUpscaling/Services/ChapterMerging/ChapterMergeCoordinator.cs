@@ -811,7 +811,9 @@ public class ChapterMergeCoordinator(
                     {
                         List<ZipArchiveEntry> imageEntries = newPartArchive.Entries
                             .Where(e => IsImageFile(e.Name) && !e.FullName.EndsWith("/"))
-                            .OrderBy(e => e.Name, new NaturalSortComparer<ZipArchiveEntry>(e => e.Name))
+                            .Select(e => new { Entry = e, Name = e.Name })
+                            .OrderBy(x => x.Name, new NaturalSortComparer<string>(s => s))
+                            .Select(x => x.Entry)
                             .ToList();
 
                         foreach (ZipArchiveEntry entry in imageEntries)
