@@ -782,10 +782,24 @@
             
             if (allChapters.Any())
             {
+                Logger.LogDebug("UpdateMergePossibilitiesAsync: Calling GetPossibleMergeActionsAsync with {ChapterCount} chapters", allChapters.Count);
                 _cachedMergePossibilities = await ChapterMergeCoordinator.GetPossibleMergeActionsAsync(allChapters, includeLatestChapters: true);
                 
                 Logger.LogDebug("Updated merge possibilities cache: {NewMergeGroups} new merge groups, {AdditionsToExisting} additions to existing, HasAnyMergePossibilities: {HasAny}",
                     _cachedMergePossibilities.NewMergeGroups.Count, _cachedMergePossibilities.AdditionsToExistingMerged.Count, _cachedMergePossibilities.HasAnyMergePossibilities);
+                
+                // Log detailed merge group information
+                foreach (var (baseNumber, chapterList) in _cachedMergePossibilities.NewMergeGroups)
+                {
+                    Logger.LogDebug("New merge group {BaseNumber}: [{ChapterNames}]", 
+                        baseNumber, string.Join(", ", chapterList.Select(c => c.FileName)));
+                }
+                
+                foreach (var (baseNumber, chapterList) in _cachedMergePossibilities.AdditionsToExistingMerged)
+                {
+                    Logger.LogDebug("Addition to existing merged {BaseNumber}: [{ChapterNames}]", 
+                        baseNumber, string.Join(", ", chapterList.Select(c => c.FileName)));
+                }
             }
             else
             {
