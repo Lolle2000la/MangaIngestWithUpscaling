@@ -19,8 +19,7 @@ public class MangaJaNaiUpscaler(
     IFileSystem fileSystem,
     IMetadataHandlingService metadataHandling,
     IUpscalerJsonHandlingService upscalerJsonHandlingService,
-    IImageResizeService imageResizeService,
-    IImageFormatPreprocessingService imageFormatPreprocessingService) : IUpscaler
+    IImageResizeService imageResizeService) : IUpscaler
 {
     private static readonly IReadOnlyDictionary<string, string> expectedModelHashes = new Dictionary<string, string>
     {
@@ -142,24 +141,15 @@ public class MangaJaNaiUpscaler(
 
         string actualInputPath = inputPath;
 
-        // Step 1: Preprocess image formats to ensure all images are of the same type
-        logger.LogInformation("Preprocessing image formats in {InputPath}", inputPath);
-        using var tempPreprocessedCbz = await imageFormatPreprocessingService.CreatePreprocessedTempCbzAsync(
-            inputPath, 
-            cancellationToken);
-        
-        actualInputPath = tempPreprocessedCbz.FilePath;
-        logger.LogInformation("Using format-preprocessed temporary file: {TempPath}", actualInputPath);
-
-        // Step 2: Check if we need to resize images before upscaling
+        // Check if we need to resize images before upscaling
         if (sharedConfig.Value.MaxDimensionBeforeUpscaling.HasValue &&
             sharedConfig.Value.MaxDimensionBeforeUpscaling.Value > 0)
         {
             logger.LogInformation("Creating temporary resized CBZ with max dimension {MaxDimension} for {InputPath}",
-                sharedConfig.Value.MaxDimensionBeforeUpscaling.Value, actualInputPath);
+                sharedConfig.Value.MaxDimensionBeforeUpscaling.Value, inputPath);
 
             using var tempResizedCbz = await imageResizeService.CreateResizedTempCbzAsync(
-                actualInputPath,
+                inputPath,
                 sharedConfig.Value.MaxDimensionBeforeUpscaling.Value,
                 cancellationToken);
 
@@ -233,7 +223,7 @@ public class MangaJaNaiUpscaler(
 
             using FileStream stream = File.OpenRead(filePath);
             byte[] hash = await sha256.ComputeHashAsync(stream, cancellationToken);
-            string hashString = Convert.ToHexString(hash);
+            string hashString = Convert.ToHexStringLower(hash);
             if (hashString != expectedHash)
             {
                 logger.LogWarning(
@@ -272,7 +262,7 @@ public class MangaJaNaiUpscaler(
 
             // verify the zip hash
             byte[] hash = sha256.ComputeHash(zipContent);
-            string hashString = Convert.ToHexString(hash).ToLowerInvariant();
+            string hashString = Convert.ToHexStringLower(hash);
             if (hashString != sha256Hash)
             {
                 throw new Exception($"Hash mismatch for {zipUrl}. Expected: {sha256Hash}, Actual: {hashString}");
@@ -300,7 +290,7 @@ public class MangaJaNaiUpscaler(
 
             using FileStream stream = File.OpenRead(filePath);
             byte[] hash = await sha256.ComputeHashAsync(stream, cancellationToken);
-            string hashString = Convert.ToHexString(hash);
+            string hashString = Convert.ToHexStringLower(hash);
             if (hashString != expectedHash)
             {
                 throw new Exception(

@@ -2,7 +2,7 @@
 
 public static class StringHelpers
 {
-    public static bool EndsWithAny(this string str, params string[] values)
+    public static bool EndsWithAny(this string str, params IEnumerable<string> values)
     {
         foreach (var value in values)
         {
