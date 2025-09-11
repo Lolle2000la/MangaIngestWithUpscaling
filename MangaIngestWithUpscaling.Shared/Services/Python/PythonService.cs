@@ -328,6 +328,11 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
                 "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
                 "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
                 "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 --no-warn-script-location",
+            GpuBackend.CUDA_12_8 =>
+                "install torch==2.7.1 torchvision==0.22.1 --extra-index-url https://download.pytorch.org/whl/cu124 " +
+                "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
+                "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
+                "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 --no-warn-script-location",
             GpuBackend.ROCm =>
                 "install torch==2.7.1 torchvision==0.22.1 --extra-index-url https://download.pytorch.org/whl/rocm6.3 " +
                 "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
