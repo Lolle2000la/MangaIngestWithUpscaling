@@ -223,7 +223,7 @@ public class MangaJaNaiUpscaler(
 
             using FileStream stream = File.OpenRead(filePath);
             byte[] hash = await sha256.ComputeHashAsync(stream, cancellationToken);
-            string hashString = Convert.ToHexStringLower(hash);
+            string hashString = Convert.ToHexString(hash);
             if (hashString != expectedHash)
             {
                 logger.LogWarning(
@@ -262,7 +262,7 @@ public class MangaJaNaiUpscaler(
 
             // verify the zip hash
             byte[] hash = sha256.ComputeHash(zipContent);
-            string hashString = Convert.ToHexStringLower(hash);
+            string hashString = Convert.ToHexString(hash).ToLowerInvariant();
             if (hashString != sha256Hash)
             {
                 throw new Exception($"Hash mismatch for {zipUrl}. Expected: {sha256Hash}, Actual: {hashString}");
@@ -290,7 +290,7 @@ public class MangaJaNaiUpscaler(
 
             using FileStream stream = File.OpenRead(filePath);
             byte[] hash = await sha256.ComputeHashAsync(stream, cancellationToken);
-            string hashString = Convert.ToHexStringLower(hash);
+            string hashString = Convert.ToHexString(hash);
             if (hashString != expectedHash)
             {
                 throw new Exception(
