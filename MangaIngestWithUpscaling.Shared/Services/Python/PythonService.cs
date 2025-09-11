@@ -28,12 +28,13 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
     ///     v4: Added packaging==25.0 as an explicit dependency
     ///     v5: Added CUDA 12.8 support with cu128 PyTorch wheel index
     ///     v6: Updated to torch==2.8.0, torchvision==0.23.0 for latest PyTorch with proper CUDA 12.8 support
+    ///     v7: Did a partial rollback for the standard cuda version for compatibility reasons.
     ///     When updating dependencies:
     ///     1. Update the package versions in InstallPythonPackages method
     ///     2. Increment this ENVIRONMENT_VERSION constant
     ///     3. Add a comment above describing the changes
     /// </summary>
-    private const int ENVIRONMENT_VERSION = 6;
+    private const int ENVIRONMENT_VERSION = 7;
 
     public static PythonEnvironment? Environment { get; set; }
 
@@ -326,7 +327,7 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         string packagesCommand = targetBackend switch
         {
             GpuBackend.CUDA =>
-                "install torch==2.8.0 torchvision==0.23.0 --extra-index-url https://download.pytorch.org/whl/cu118 " +
+                "install torch==2.7.1 torchvision==0.22.1 --extra-index-url https://download.pytorch.org/whl/cu118 " +
                 "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
                 "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
                 "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 --no-warn-script-location",
