@@ -1142,13 +1142,21 @@ public class ChapterMergeCoordinator(
             }
         }
 
-        // Load library reference for the first chapter's manga (all chapters should be from same manga)
+        // Load library and chapters collection reference for the first chapter's manga (all chapters should be from same manga)
         if (chapters.Any())
         {
             Manga manga = chapters.First().Manga;
             if (!dbContext.Entry(manga).Reference(m => m.Library).IsLoaded)
             {
                 await dbContext.Entry(manga).Reference(m => m.Library).LoadAsync(cancellationToken);
+            }
+            
+            // **CRITICAL FIX**: Load the Manga.Chapters collection so we have access to all chapters
+            if (!dbContext.Entry(manga).Collection(m => m.Chapters).IsLoaded)
+            {
+                await dbContext.Entry(manga).Collection(m => m.Chapters).LoadAsync(cancellationToken);
+                logger.LogDebug("LoadChapterReferencesAsync: Loaded {ChapterCount} chapters for manga {MangaId}", 
+                    manga.Chapters.Count, manga.Id);
             }
         }
     }

@@ -68,7 +68,30 @@
                        OnClick="@MergeSelectedChapters">
                 Merge Selected / Add to Existing (Experimental)
             </MudButton>
+            <MudButton StartIcon="@Icons.Material.Filled.Refresh"
+                       Color="Color.Warning"
+                       Variant="Variant.Text"
+                       Size="Size.Small"
+                       OnClick="@ForceUpdateMergePossibilitiesAsync">
+                DEBUG: Refresh Merge Cache
+            </MudButton>
         </MudStack>
+        <MudText Typo="Typo.caption" Color="Color.Secondary" Style="margin-top: 8px;">
+            DEBUG: Merge Cache Status - 
+            @if (_cachedMergePossibilities == null)
+            {
+                <span style="color: red;">Not Loaded</span>
+            }
+            else
+            {
+                <span style="color: green;">
+                    Loaded (@((DateTime.UtcNow - _lastMergePossibilitiesUpdate).TotalSeconds:F1)s ago) - 
+                    New: @_cachedMergePossibilities.NewMergeGroups.Count, 
+                    Additions: @_cachedMergePossibilities.AdditionsToExistingMerged.Count,
+                    HasAny: @_cachedMergePossibilities.HasAnyMergePossibilities
+                </span>
+            }
+        </MudText>
     </ToolBarContent>
     <HeaderContent>
         <MudTh>Chapter Title</MudTh>
@@ -723,12 +746,21 @@
     // Cache for merge possibilities to avoid repeated async calls during UI rendering
     private MergeActionInfo? _cachedMergePossibilities;
     private DateTime _lastMergePossibilitiesUpdate = DateTime.MinValue;
-    private readonly TimeSpan _mergePossibilitiesCacheTimeout = TimeSpan.FromSeconds(2);
+    private readonly TimeSpan _mergePossibilitiesCacheTimeout = TimeSpan.FromSeconds(5); // Increased timeout for debugging
 
     private void InvalidateMergePossibilitiesCache()
     {
         _cachedMergePossibilities = null;
         _lastMergePossibilitiesUpdate = DateTime.MinValue;
+        Logger.LogDebug("InvalidateMergePossibilitiesCache: Cache invalidated for manga {MangaId}", Manga?.Id);
+    }
+
+    private async Task ForceUpdateMergePossibilitiesAsync()
+    {
+        Logger.LogDebug("ForceUpdateMergePossibilitiesAsync: Forcing cache update for manga {MangaId}", Manga?.Id);
+        InvalidateMergePossibilitiesCache();
+        await UpdateMergePossibilitiesAsync();
+        StateHasChanged();
     }
 
     private async Task UpdateMergePossibilitiesAsync()
