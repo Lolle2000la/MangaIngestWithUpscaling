@@ -19,7 +19,8 @@ public class MangaJaNaiUpscaler(
     IFileSystem fileSystem,
     IMetadataHandlingService metadataHandling,
     IUpscalerJsonHandlingService upscalerJsonHandlingService,
-    IImageResizeService imageResizeService) : IUpscaler
+    IImageResizeService imageResizeService,
+    IImageFormatPreprocessingService imageFormatPreprocessingService) : IUpscaler
 {
     private static readonly IReadOnlyDictionary<string, string> expectedModelHashes = new Dictionary<string, string>
     {
@@ -141,15 +142,24 @@ public class MangaJaNaiUpscaler(
 
         string actualInputPath = inputPath;
 
-        // Check if we need to resize images before upscaling
+        // Step 1: Preprocess image formats to ensure all images are of the same type
+        logger.LogInformation("Preprocessing image formats in {InputPath}", inputPath);
+        using var tempPreprocessedCbz = await imageFormatPreprocessingService.CreatePreprocessedTempCbzAsync(
+            inputPath, 
+            cancellationToken);
+        
+        actualInputPath = tempPreprocessedCbz.FilePath;
+        logger.LogInformation("Using format-preprocessed temporary file: {TempPath}", actualInputPath);
+
+        // Step 2: Check if we need to resize images before upscaling
         if (sharedConfig.Value.MaxDimensionBeforeUpscaling.HasValue &&
             sharedConfig.Value.MaxDimensionBeforeUpscaling.Value > 0)
         {
             logger.LogInformation("Creating temporary resized CBZ with max dimension {MaxDimension} for {InputPath}",
-                sharedConfig.Value.MaxDimensionBeforeUpscaling.Value, inputPath);
+                sharedConfig.Value.MaxDimensionBeforeUpscaling.Value, actualInputPath);
 
             using var tempResizedCbz = await imageResizeService.CreateResizedTempCbzAsync(
-                inputPath,
+                actualInputPath,
                 sharedConfig.Value.MaxDimensionBeforeUpscaling.Value,
                 cancellationToken);
 
