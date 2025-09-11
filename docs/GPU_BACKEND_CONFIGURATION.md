@@ -31,11 +31,20 @@ The system will automatically detect available hardware using **Silk.NET.OpenGL*
 
 ### Manual Configuration
 
-#### Force CUDA Backend
+#### Force CUDA Backend (11.8)
 ```json
 {
   "Upscaler": {
     "PreferredGpuBackend": "CUDA"
+  }
+}
+```
+
+#### Force CUDA 12.8 Backend
+```json
+{
+  "Upscaler": {
+    "PreferredGpuBackend": "CUDA_12_8"
   }
 }
 ```
@@ -105,20 +114,25 @@ The environment will be automatically recreated when:
 
 ## PyTorch Installation Details
 
-### CUDA Backend
-- Installs: `torch==2.7.1 torchvision==0.22.1` from CUDA 11.8 index
+### CUDA Backend (11.8)
+- Installs: `torch==2.8.0 torchvision==0.23.0` from CUDA 11.8 index
 - Compatible with NVIDIA GPUs
 
+### CUDA 12.8 Backend
+- Installs: `torch==2.8.0 torchvision==0.23.0` from CUDA 12.8 index  
+- Compatible with NVIDIA GPUs (requires CUDA 12.8+ drivers)
+- Must be manually configured (not auto-detected)
+
 ### ROCm Backend  
-- Installs: `torch==2.7.1 torchvision==0.22.1` from ROCm 6.3 index
+- Installs: `torch==2.8.0 torchvision==0.23.0` from ROCm 6.3 index
 - Compatible with AMD GPUs
 
 ### Intel XPU Backend
-- Installs: `torch==2.7.1 torchvision==0.22.1` from Intel XPU index
+- Installs: `torch==2.8.0 torchvision==0.23.0` from Intel XPU index
 - Compatible with Intel Arc discrete GPUs and Intel Xe GPUs
 
 ### CPU Backend
-- Installs: `torch==2.7.1 torchvision==0.22.1` from CPU-only index
+- Installs: `torch==2.8.0 torchvision==0.23.0` from CPU-only index
 - Compatible with any system
 
 ## Environment Variables
@@ -126,6 +140,7 @@ The environment will be automatically recreated when:
 You can also set the backend via environment variables:
 ```bash
 export Ingest_Upscaler__PreferredGpuBackend=CUDA
+export Ingest_Upscaler__PreferredGpuBackend=CUDA_12_8
 export Ingest_Upscaler__PreferredGpuBackend=ROCm
 export Ingest_Upscaler__PreferredGpuBackend=XPU
 export Ingest_Upscaler__PreferredGpuBackend=CPU
