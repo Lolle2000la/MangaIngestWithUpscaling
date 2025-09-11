@@ -26,12 +26,13 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
     ///     v2: Updated to torch==2.7.1, torchvision==0.22.1, unified installation approach
     ///     v3: Added Intel XPU support with PyTorch XPU backend from Intel's repository
     ///     v4: Added packaging==25.0 as an explicit dependency
+    ///     v5: Added CUDA 12.8 support with cu124 PyTorch wheel index
     ///     When updating dependencies:
     ///     1. Update the package versions in InstallPythonPackages method
     ///     2. Increment this ENVIRONMENT_VERSION constant
     ///     3. Add a comment above describing the changes
     /// </summary>
-    private const int ENVIRONMENT_VERSION = 4;
+    private const int ENVIRONMENT_VERSION = 5;
 
     public static PythonEnvironment? Environment { get; set; }
 
