@@ -15,6 +15,16 @@ public interface IImageResizeService
     Task<TempResizedCbz> CreateResizedTempCbzAsync(string inputCbzPath, int maxDimension, CancellationToken cancellationToken);
     
     /// <summary>
+    /// Creates a temporary resized CBZ file where all images are resized to fit within the specified maximum dimension
+    /// </summary>
+    /// <param name="inputCbzPath">Path to the input CBZ file</param>
+    /// <param name="maxDimension">Maximum width or height dimension</param>
+    /// <param name="standardizeFormats">Whether to also standardize image formats during resizing to avoid quality loss</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>A disposable wrapper that automatically cleans up the temporary file when disposed</returns>
+    Task<TempResizedCbz> CreateResizedTempCbzAsync(string inputCbzPath, int maxDimension, bool standardizeFormats, CancellationToken cancellationToken);
+    
+    /// <summary>
     /// Creates a temporary CBZ file where all images are standardized to the same format (determined by the dominant format in the original CBZ)
     /// </summary>
     /// <param name="inputCbzPath">Path to the input CBZ file</param>

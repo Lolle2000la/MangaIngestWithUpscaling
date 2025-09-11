@@ -144,35 +144,33 @@ public class MangaJaNaiUpscaler(
 
         try
         {
-            // Always standardize image formats first to prevent upscaling issues
-            logger.LogInformation("Standardizing image formats in CBZ before upscaling: {InputPath}", inputPath);
-            tempCbz = await imageResizeService.CreateStandardizedFormatTempCbzAsync(inputPath, cancellationToken);
-            actualInputPath = tempCbz.FilePath;
-
             // Check if we need to resize images before upscaling
             if (sharedConfig.Value.MaxDimensionBeforeUpscaling.HasValue &&
                 sharedConfig.Value.MaxDimensionBeforeUpscaling.Value > 0)
             {
-                logger.LogInformation("Creating temporary resized CBZ with max dimension {MaxDimension} for {InputPath}",
-                    sharedConfig.Value.MaxDimensionBeforeUpscaling.Value, actualInputPath);
+                // Combine resizing and format standardization in one operation to prevent quality loss
+                logger.LogInformation("Creating temporary resized and format-standardized CBZ with max dimension {MaxDimension} for {InputPath}",
+                    sharedConfig.Value.MaxDimensionBeforeUpscaling.Value, inputPath);
 
-                using var tempResizedCbz = await imageResizeService.CreateResizedTempCbzAsync(
-                    actualInputPath,
+                tempCbz = await imageResizeService.CreateResizedTempCbzAsync(
+                    inputPath,
                     sharedConfig.Value.MaxDimensionBeforeUpscaling.Value,
+                    true, // standardizeFormats = true to combine operations
                     cancellationToken);
 
-                actualInputPath = tempResizedCbz.FilePath;
-
-                logger.LogInformation("Using resized temporary file for upscaling: {TempPath}", actualInputPath);
-
-                await PerformUpscaling(actualInputPath, outputPath, outputDirectory, outputFilename, profile,
-                    cancellationToken);
+                actualInputPath = tempCbz.FilePath;
+                logger.LogInformation("Using resized and format-standardized temporary file for upscaling: {TempPath}", actualInputPath);
             }
             else
             {
-                await PerformUpscaling(actualInputPath, outputPath, outputDirectory, outputFilename, profile,
-                    cancellationToken);
+                // Only standardize image formats if no resizing is needed
+                logger.LogInformation("Standardizing image formats in CBZ before upscaling: {InputPath}", inputPath);
+                tempCbz = await imageResizeService.CreateStandardizedFormatTempCbzAsync(inputPath, cancellationToken);
+                actualInputPath = tempCbz.FilePath;
             }
+
+            await PerformUpscaling(actualInputPath, outputPath, outputDirectory, outputFilename, profile,
+                cancellationToken);
         }
         finally
         {
