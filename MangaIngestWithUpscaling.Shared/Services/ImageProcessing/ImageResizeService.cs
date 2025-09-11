@@ -175,9 +175,9 @@ public class ImageResizeService : IImageResizeService
         {
             if (!FormatMap.TryGetValue(targetFormat, out imageFormat))
             {
-                _logger.LogWarning("Unsupported target format {TargetFormat}, defaulting to JPEG", targetFormat);
-                imageFormat = JpegFormat.Instance;
-                targetFormat = ".jpg";
+                _logger.LogWarning("Unsupported target format {TargetFormat}, defaulting to PNG", targetFormat);
+                imageFormat = PngFormat.Instance;
+                targetFormat = ".png";
             }
 
             // Get the appropriate encoder for the target format
@@ -286,7 +286,7 @@ public class ImageResizeService : IImageResizeService
         }
         else
         {
-            return new JpegEncoder(); // Default to JPEG
+            return new PngEncoder(); // Default to PNG
         }
     }
 
@@ -324,7 +324,7 @@ public class ImageResizeService : IImageResizeService
         if (!imageFiles.Any())
         {
             _logger.LogWarning("No supported image files found in directory {Directory}", directory);
-            return ".jpg"; // Default to JPEG
+            return ".png"; // Default to PNG
         }
 
         // Count files by extension
@@ -340,8 +340,8 @@ public class ImageResizeService : IImageResizeService
         // Check if the dominant format is supported for encoding
         if (!FormatMap.ContainsKey(dominantFormat))
         {
-            _logger.LogWarning("Dominant format {DominantFormat} is not supported for encoding, falling back to JPEG", dominantFormat);
-            return ".jpg";
+            _logger.LogWarning("Dominant format {DominantFormat} is not supported for encoding, falling back to PNG", dominantFormat);
+            return ".png";
         }
         
         return dominantFormat;
@@ -364,9 +364,9 @@ public class ImageResizeService : IImageResizeService
 
         if (!FormatMap.TryGetValue(targetFormat, out var imageFormat))
         {
-            _logger.LogWarning("Unsupported target format {TargetFormat}, defaulting to JPEG", targetFormat);
-            imageFormat = JpegFormat.Instance;
-            targetFormat = ".jpg";
+            _logger.LogWarning("Unsupported target format {TargetFormat}, defaulting to PNG", targetFormat);
+            imageFormat = PngFormat.Instance;
+            targetFormat = ".png";
         }
 
         foreach (string imagePath in imageFiles)
