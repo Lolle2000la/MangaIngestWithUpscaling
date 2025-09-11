@@ -4,6 +4,7 @@ public enum GpuBackend
 {
     Auto,
     CUDA,
+    CUDA_12_8,
     ROCm,
     XPU,
     CPU
