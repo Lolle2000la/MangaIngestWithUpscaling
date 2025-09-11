@@ -734,17 +734,26 @@
     private async Task UpdateMergePossibilitiesAsync()
     {
         if (DateTime.UtcNow - _lastMergePossibilitiesUpdate < _mergePossibilitiesCacheTimeout)
+        {
+            Logger.LogDebug("UpdateMergePossibilitiesAsync: Skipping update, cache still valid (age: {Age}ms)", 
+                (DateTime.UtcNow - _lastMergePossibilitiesUpdate).TotalMilliseconds);
             return;
+        }
+
+        Logger.LogDebug("UpdateMergePossibilitiesAsync: Starting cache update for manga {MangaId}", Manga?.Id);
 
         try
         {
             var allChapters = chapterItems.Where(ci => !ci.IsMerged).Select(ci => ci.Chapter).ToList();
+            Logger.LogDebug("UpdateMergePossibilitiesAsync: Found {ChapterCount} non-merged chapters: [{ChapterNames}]", 
+                allChapters.Count, string.Join(", ", allChapters.Select(c => c.FileName)));
+            
             if (allChapters.Any())
             {
                 _cachedMergePossibilities = await ChapterMergeCoordinator.GetPossibleMergeActionsAsync(allChapters, includeLatestChapters: true);
                 
-                Logger.LogDebug("Updated merge possibilities cache: {NewMergeGroups} new merge groups, {AdditionsToExisting} additions to existing",
-                    _cachedMergePossibilities.NewMergeGroups.Count, _cachedMergePossibilities.AdditionsToExistingMerged.Count);
+                Logger.LogDebug("Updated merge possibilities cache: {NewMergeGroups} new merge groups, {AdditionsToExisting} additions to existing, HasAnyMergePossibilities: {HasAny}",
+                    _cachedMergePossibilities.NewMergeGroups.Count, _cachedMergePossibilities.AdditionsToExistingMerged.Count, _cachedMergePossibilities.HasAnyMergePossibilities);
             }
             else
             {

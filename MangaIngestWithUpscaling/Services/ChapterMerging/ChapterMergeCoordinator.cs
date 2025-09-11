@@ -456,8 +456,12 @@ public class ChapterMergeCoordinator(
 
         if (!chapters.Any())
         {
+            logger.LogDebug("GetPossibleMergeActionsAsync: No chapters provided, returning empty result");
             return result;
         }
+
+        logger.LogDebug("GetPossibleMergeActionsAsync: Analyzing {ChapterCount} chapters, includeLatestChapters={IncludeLatest}", 
+            chapters.Count, includeLatestChapters);
 
         // Load necessary references
         await LoadChapterReferencesAsync(chapters, cancellationToken);
@@ -471,6 +475,9 @@ public class ChapterMergeCoordinator(
             .Cast<string>()
             .ToHashSet();
 
+        logger.LogDebug("GetPossibleMergeActionsAsync: Found {AllChapterCount} total chapters in manga: [{ChapterNumbers}]", 
+            allChapterNumbers.Count, string.Join(", ", allChapterNumbers));
+
         // Get existing merged base numbers
         List<int> seriesChapterIds = manga.Chapters.Select(c => c.Id).ToList();
         HashSet<string> existingMergedBaseNumbers = await dbContext.MergedChapterInfos
@@ -478,8 +485,14 @@ public class ChapterMergeCoordinator(
             .Select(m => m.MergedChapterNumber)
             .ToHashSetAsync(cancellationToken);
 
+        logger.LogDebug("GetPossibleMergeActionsAsync: Found {MergedCount} existing merged base numbers: [{MergedNumbers}]", 
+            existingMergedBaseNumbers.Count, string.Join(", ", existingMergedBaseNumbers));
+
         // Convert chapters to FoundChapter format for processing
         List<FoundChapter> foundChapters = ConvertChaptersToFoundChapters(chapters);
+
+        logger.LogDebug("GetPossibleMergeActionsAsync: Converted to {FoundChapterCount} FoundChapters: [{FoundChapterNames}]", 
+            foundChapters.Count, string.Join(", ", foundChapters.Select(fc => fc.FileName)));
 
         var latestChapterChecker = CreateLatestChapterChecker(allChapterNumbers, includeLatestChapters);
 
@@ -488,10 +501,16 @@ public class ChapterMergeCoordinator(
             foundChapters,
             latestChapterChecker);
 
+        logger.LogDebug("GetPossibleMergeActionsAsync: GroupChapterPartsForMerging returned {NewMergeGroupCount} groups: [{NewMergeGroups}]", 
+            newMergeGroups.Count, string.Join(", ", newMergeGroups.Keys));
+
         // Filter out groups that would conflict with existing merged chapters
         Dictionary<string, List<FoundChapter>> validNewMergeGroups = newMergeGroups
             .Where(kvp => !existingMergedBaseNumbers.Contains(kvp.Key))
             .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+
+        logger.LogDebug("GetPossibleMergeActionsAsync: After filtering conflicts, {ValidNewMergeGroupCount} valid new merge groups: [{ValidNewMergeGroups}]", 
+            validNewMergeGroups.Count, string.Join(", ", validNewMergeGroups.Keys));
 
         // Convert back to Chapter groups for new merges
         foreach ((string baseNumber, List<FoundChapter> foundChapterList) in validNewMergeGroups)
@@ -509,6 +528,9 @@ public class ChapterMergeCoordinator(
                 existingMergedBaseNumbers,
                 latestChapterChecker);
 
+        logger.LogDebug("GetPossibleMergeActionsAsync: GroupChaptersForAdditionToExistingMerged returned {AdditionCount} groups: [{AdditionGroups}]", 
+            additionsToExisting.Count, string.Join(", ", additionsToExisting.Keys));
+
         // Convert back to Chapter groups for additions
         foreach ((string baseNumber, List<FoundChapter> foundChapterList) in additionsToExisting)
         {
@@ -517,6 +539,9 @@ public class ChapterMergeCoordinator(
                 .ToList();
             result.AdditionsToExistingMerged[baseNumber] = chapterList;
         }
+
+        logger.LogDebug("GetPossibleMergeActionsAsync: Final result - NewMergeGroups: {NewCount}, AdditionsToExistingMerged: {AdditionCount}, HasAnyMergePossibilities: {HasAny}", 
+            result.NewMergeGroups.Count, result.AdditionsToExistingMerged.Count, result.HasAnyMergePossibilities);
 
         return result;
     }

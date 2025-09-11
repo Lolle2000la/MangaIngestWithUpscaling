@@ -18,23 +18,30 @@ public partial class ChapterPartMerger(
     {
         var result = new Dictionary<string, List<FoundChapter>>();
 
+        logger.LogDebug("GroupChapterPartsForMerging: Processing {ChapterCount} chapters", chapters.Count());
+
         foreach (FoundChapter chapter in chapters)
         {
             string? chapterNumber = ExtractChapterNumber(chapter);
             if (chapterNumber == null)
             {
+                logger.LogDebug("GroupChapterPartsForMerging: Skipping {FileName} - no chapter number extracted", chapter.FileName);
                 continue;
             }
 
             string? baseNumber = ExtractBaseChapterNumber(chapterNumber);
             if (baseNumber == null)
             {
+                logger.LogDebug("GroupChapterPartsForMerging: Skipping {FileName} (chapter {ChapterNumber}) - no base number extracted", 
+                    chapter.FileName, chapterNumber);
                 continue;
             }
 
             // Don't merge if this is the latest chapter
             if (isLastChapter(baseNumber))
             {
+                logger.LogDebug("GroupChapterPartsForMerging: Skipping {FileName} (chapter {ChapterNumber}, base {BaseNumber}) - is latest chapter", 
+                    chapter.FileName, chapterNumber, baseNumber);
                 continue;
             }
 
@@ -44,11 +51,18 @@ public partial class ChapterPartMerger(
             }
 
             result[baseNumber].Add(chapter);
+            logger.LogDebug("GroupChapterPartsForMerging: Added {FileName} (chapter {ChapterNumber}) to base group {BaseNumber}", 
+                chapter.FileName, chapterNumber, baseNumber);
         }
 
         // Only return groups that have more than one part AND have consecutive decimal steps
-        return result.Where(kvp => kvp.Value.Count > 1 && AreConsecutiveChapterParts(kvp.Value, kvp.Key))
+        var filteredResult = result.Where(kvp => kvp.Value.Count > 1 && AreConsecutiveChapterParts(kvp.Value, kvp.Key))
             .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+
+        logger.LogDebug("GroupChapterPartsForMerging: Initial groups: {InitialCount}, After filtering: {FilteredCount}. Groups: [{Groups}]",
+            result.Count, filteredResult.Count, string.Join(", ", filteredResult.Keys));
+
+        return filteredResult;
     }
 
     /// <summary>
@@ -66,35 +80,47 @@ public partial class ChapterPartMerger(
     {
         var result = new Dictionary<string, List<FoundChapter>>();
 
+        logger.LogDebug("GroupChaptersForAdditionToExistingMerged: Processing {ChapterCount} chapters, {ExistingMergedCount} existing merged base numbers: [{ExistingMerged}]",
+            chapters.Count(), existingMergedBaseNumbers.Count, string.Join(", ", existingMergedBaseNumbers));
+
         foreach (FoundChapter chapter in chapters)
         {
             string? chapterNumber = ExtractChapterNumber(chapter);
             if (chapterNumber == null)
             {
+                logger.LogDebug("GroupChaptersForAdditionToExistingMerged: Skipping {FileName} - no chapter number extracted", chapter.FileName);
                 continue;
             }
 
             string? baseNumber = ExtractBaseChapterNumber(chapterNumber);
             if (baseNumber == null)
             {
+                logger.LogDebug("GroupChaptersForAdditionToExistingMerged: Skipping {FileName} (chapter {ChapterNumber}) - no base number extracted", 
+                    chapter.FileName, chapterNumber);
                 continue;
             }
 
             // Only consider chapters whose base number matches an existing merged chapter
             if (!existingMergedBaseNumbers.Contains(baseNumber))
             {
+                logger.LogDebug("GroupChaptersForAdditionToExistingMerged: Skipping {FileName} (chapter {ChapterNumber}, base {BaseNumber}) - base number not in existing merged chapters", 
+                    chapter.FileName, chapterNumber, baseNumber);
                 continue;
             }
 
             // Don't merge if this is the latest chapter
             if (isLastChapter(baseNumber))
             {
+                logger.LogDebug("GroupChaptersForAdditionToExistingMerged: Skipping {FileName} (chapter {ChapterNumber}, base {BaseNumber}) - is latest chapter", 
+                    chapter.FileName, chapterNumber, baseNumber);
                 continue;
             }
 
             // Validate that this is a proper chapter part (has decimal part)
             if (!IsChapterPart(chapterNumber, baseNumber))
             {
+                logger.LogDebug("GroupChaptersForAdditionToExistingMerged: Skipping {FileName} (chapter {ChapterNumber}, base {BaseNumber}) - not a valid chapter part", 
+                    chapter.FileName, chapterNumber, baseNumber);
                 continue;
             }
 
@@ -104,7 +130,12 @@ public partial class ChapterPartMerger(
             }
 
             result[baseNumber].Add(chapter);
+            logger.LogDebug("GroupChaptersForAdditionToExistingMerged: Added {FileName} (chapter {ChapterNumber}) to existing merged base group {BaseNumber}", 
+                chapter.FileName, chapterNumber, baseNumber);
         }
+
+        logger.LogDebug("GroupChaptersForAdditionToExistingMerged: Found {GroupCount} groups for addition to existing merged chapters: [{Groups}]",
+            result.Count, string.Join(", ", result.Keys));
 
         return result;
     }
