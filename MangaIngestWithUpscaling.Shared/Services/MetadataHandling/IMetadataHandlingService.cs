@@ -16,4 +16,13 @@ public interface IMetadataHandlingService
     /// <param name="file2"></param>
     /// <returns>True if for every image file in 1 there is a equally named on in 2.</returns>
     bool PagesEqual(string? file1, string? file2);
+
+    /// <summary>
+    /// Compares two CBZ files and returns detailed information about page differences.
+    /// Only cbz files are supported.
+    /// </summary>
+    /// <param name="file1">First CBZ file to compare</param>
+    /// <param name="file2">Second CBZ file to compare</param>
+    /// <returns>Detailed comparison result showing missing, extra, and common pages</returns>
+    PageComparisonResult ComparePages(string? file1, string? file2);
 }

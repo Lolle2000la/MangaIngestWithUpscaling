@@ -143,7 +143,7 @@
         try
         {
             await TaskQueue.RemoveTaskAsync(task);
-            if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask)
+            if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaledChapterTask)
             {
                 upscaleTasks.Remove(task);
             }
@@ -207,8 +207,8 @@
     private async Task LoadTasks()
     {
         var allTasks = await DbContext.PersistedTasks.ToListAsync();
-        standardTasks = new ObservableCollection<PersistedTask>(allTasks.Where(x => x.Data is not UpscaleTask and not RenameUpscaledChaptersSeriesTask).ToList());
-        upscaleTasks = new ObservableCollection<PersistedTask>(allTasks.Where(x => x.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask).ToList());
+        standardTasks = new ObservableCollection<PersistedTask>(allTasks.Where(x => x.Data is not UpscaleTask and not RenameUpscaledChaptersSeriesTask and not RepairUpscaledChapterTask).ToList());
+        upscaleTasks = new ObservableCollection<PersistedTask>(allTasks.Where(x => x.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaledChapterTask).ToList());
     }
 
     public void Dispose()
@@ -223,7 +223,7 @@
     {
         await InvokeAsync(async () =>
         {
-            if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask)
+            if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaledChapterTask)
             {
                 await AddOrAssignTask(upscaleTasks, task);
             }

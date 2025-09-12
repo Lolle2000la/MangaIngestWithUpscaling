@@ -9,6 +9,7 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 /// </summary>
 [JsonDerivedType(typeof(LoggingTask), nameof(LoggingTask))]
 [JsonDerivedType(typeof(UpscaleTask), nameof(UpscaleTask))]
+[JsonDerivedType(typeof(RepairUpscaledChapterTask), nameof(RepairUpscaledChapterTask))]
 [JsonDerivedType(typeof(ScanIngestTask), nameof(ScanIngestTask))]
 [JsonDerivedType(typeof(RenameUpscaledChaptersSeriesTask), nameof(RenameUpscaledChaptersSeriesTask))]
 [JsonDerivedType(typeof(LibraryIntegrityCheckTask), nameof(LibraryIntegrityCheckTask))]

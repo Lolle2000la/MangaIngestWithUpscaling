@@ -70,7 +70,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         await dbContext.SaveChangesAsync();
 
         // Add to the appropriate sorted set
-        if (taskData is UpscaleTask or RenameUpscaledChaptersSeriesTask)
+        if (taskData is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaledChapterTask)
         {
             lock (_upscaleTasksLock)
             {
@@ -97,7 +97,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         // Determine which set to modify
-        var (tasks, lockObj) = task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask
+        var (tasks, lockObj) = task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaledChapterTask
             ? (_upscaleTasks, _upscaleTasksLock)
             : (_standardTasks, _standardTasksLock);
 
@@ -137,7 +137,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         dbContext.PersistedTasks.Remove(task);
         await dbContext.SaveChangesAsync();
 
-        var (tasks, lockObj) = task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask
+        var (tasks, lockObj) = task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaledChapterTask
             ? (_upscaleTasks, _upscaleTasksLock)
             : (_standardTasks, _standardTasksLock);
 
@@ -158,7 +158,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         dbContext.Update(task);
         await dbContext.SaveChangesAsync();
 
-        var (tasks, lockObj) = task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask
+        var (tasks, lockObj) = task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaledChapterTask
             ? (_upscaleTasks, _upscaleTasksLock)
             : (_standardTasks, _standardTasksLock);
 
@@ -197,7 +197,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         // Load tasks into sorted sets
         foreach (var task in pendingTasks)
         {
-            if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask)
+            if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaledChapterTask)
             {
                 lock (_upscaleTasksLock)
                     _upscaleTasks.Add(task);

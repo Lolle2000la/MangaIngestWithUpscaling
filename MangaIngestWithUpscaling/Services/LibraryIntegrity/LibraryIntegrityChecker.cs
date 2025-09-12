@@ -1,6 +1,7 @@
 ﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Helpers;
@@ -12,6 +13,7 @@ namespace MangaIngestWithUpscaling.Services.LibraryIntegrity;
 public class LibraryIntegrityChecker(
     ApplicationDbContext dbContext,
     IMetadataHandlingService metadataHandling,
+    ITaskQueue taskQueue,
     ILogger<LibraryIntegrityChecker> logger) : ILibraryIntegrityChecker
 {
     /// <inheritdoc/>
@@ -223,8 +225,10 @@ public class LibraryIntegrityChecker(
                 return IntegrityCheckResult.Missing;
             }
 
+            // Use the new detailed comparison method
+            var comparisonResult = metadataHandling.ComparePages(chapter.NotUpscaledFullPath, chapter.UpscaledFullPath);
 
-            if (metadataHandling.PagesEqual(chapter.NotUpscaledFullPath, chapter.UpscaledFullPath))
+            if (comparisonResult.PagesEqual)
             {
                 var metadata = metadataHandling.GetSeriesAndTitleFromComicInfo(chapter.UpscaledFullPath);
                 if (!CheckMetadata(metadata, out var correctedMetadata))
@@ -249,15 +253,30 @@ public class LibraryIntegrityChecker(
             }
             else
             {
-                throw new InvalidDataException(
-                    "The upscaled chapter does not match the outward number of pages to the original chapter.");
+                // Instead of deleting the upscaled chapter, schedule a repair task
+                logger.LogInformation(
+                    "Upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle} has {missingCount} missing pages and {extraCount} extra pages. Scheduling repair task.",
+                    chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle, 
+                    comparisonResult.MissingFromSecond.Count, comparisonResult.ExtraInSecond.Count);
+
+                // Schedule a repair task
+                var repairTask = new RepairUpscaledChapterTask(chapter, comparisonResult.MissingFromSecond, comparisonResult.ExtraInSecond);
+                await taskQueue.EnqueueAsync(repairTask);
+
+                logger.LogInformation(
+                    "Repair task scheduled for {chapterFileName} ({chapterId}) of {seriesTitle}",
+                    chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
+
+                return IntegrityCheckResult.Corrected;
             }
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex,
-                "An invalid upscale was found for {chapterFileName} ({chapterId}) of {seriesTitle}, but no associated task to upscale was found. Deleting.",
+                "An error occurred while checking upscaled archive validity for {chapterFileName} ({chapterId}) of {seriesTitle}. Falling back to deletion.",
                 chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
+            
+            // If something goes wrong with the repair logic, fall back to the original behavior
             try
             {
                 if (chapter.UpscaledFullPath != null && File.Exists(chapter.UpscaledFullPath))
