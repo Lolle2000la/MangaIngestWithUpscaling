@@ -140,30 +140,41 @@ public class MangaJaNaiUpscaler(
         }
 
         string actualInputPath = inputPath;
+        TempResizedCbz? tempCbz = null;
 
-        // Check if we need to resize images before upscaling
-        if (sharedConfig.Value.MaxDimensionBeforeUpscaling.HasValue &&
-            sharedConfig.Value.MaxDimensionBeforeUpscaling.Value > 0)
+        try
         {
-            logger.LogInformation("Creating temporary resized CBZ with max dimension {MaxDimension} for {InputPath}",
-                sharedConfig.Value.MaxDimensionBeforeUpscaling.Value, inputPath);
+            // Check if we need to resize images before upscaling
+            if (sharedConfig.Value.MaxDimensionBeforeUpscaling.HasValue &&
+                sharedConfig.Value.MaxDimensionBeforeUpscaling.Value > 0)
+            {
+                // Combine resizing and format standardization in one operation to prevent quality loss
+                logger.LogInformation("Creating temporary resized and format-standardized CBZ with max dimension {MaxDimension} for {InputPath}",
+                    sharedConfig.Value.MaxDimensionBeforeUpscaling.Value, inputPath);
 
-            using var tempResizedCbz = await imageResizeService.CreateResizedTempCbzAsync(
-                inputPath,
-                sharedConfig.Value.MaxDimensionBeforeUpscaling.Value,
-                cancellationToken);
+                tempCbz = await imageResizeService.CreateResizedTempCbzAsync(
+                    inputPath,
+                    sharedConfig.Value.MaxDimensionBeforeUpscaling.Value,
+                    true, // standardizeFormats = true to combine operations
+                    cancellationToken);
 
-            actualInputPath = tempResizedCbz.FilePath;
-
-            logger.LogInformation("Using resized temporary file for upscaling: {TempPath}", actualInputPath);
+                actualInputPath = tempCbz.FilePath;
+                logger.LogInformation("Using resized and format-standardized temporary file for upscaling: {TempPath}", actualInputPath);
+            }
+            else
+            {
+                // Only standardize image formats if no resizing is needed
+                logger.LogInformation("Standardizing image formats in CBZ before upscaling: {InputPath}", inputPath);
+                tempCbz = await imageResizeService.CreateStandardizedFormatTempCbzAsync(inputPath, cancellationToken);
+                actualInputPath = tempCbz.FilePath;
+            }
 
             await PerformUpscaling(actualInputPath, outputPath, outputDirectory, outputFilename, profile,
                 cancellationToken);
         }
-        else
+        finally
         {
-            await PerformUpscaling(actualInputPath, outputPath, outputDirectory, outputFilename, profile,
-                cancellationToken);
+            tempCbz?.Dispose();
         }
     }
 
@@ -223,7 +234,7 @@ public class MangaJaNaiUpscaler(
 
             using FileStream stream = File.OpenRead(filePath);
             byte[] hash = await sha256.ComputeHashAsync(stream, cancellationToken);
-            string hashString = Convert.ToHexStringLower(hash);
+            string hashString = Convert.ToHexString(hash).ToLowerInvariant();
             if (hashString != expectedHash)
             {
                 logger.LogWarning(
@@ -262,7 +273,7 @@ public class MangaJaNaiUpscaler(
 
             // verify the zip hash
             byte[] hash = sha256.ComputeHash(zipContent);
-            string hashString = Convert.ToHexStringLower(hash);
+            string hashString = Convert.ToHexString(hash).ToLowerInvariant();
             if (hashString != sha256Hash)
             {
                 throw new Exception($"Hash mismatch for {zipUrl}. Expected: {sha256Hash}, Actual: {hashString}");
@@ -290,7 +301,7 @@ public class MangaJaNaiUpscaler(
 
             using FileStream stream = File.OpenRead(filePath);
             byte[] hash = await sha256.ComputeHashAsync(stream, cancellationToken);
-            string hashString = Convert.ToHexStringLower(hash);
+            string hashString = Convert.ToHexString(hash).ToLowerInvariant();
             if (hashString != expectedHash)
             {
                 throw new Exception(
