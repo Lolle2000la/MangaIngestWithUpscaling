@@ -13,6 +13,7 @@ public class UpscaleTaskProcessor(
     ILogger<UpscaleTaskProcessor> logger) : BackgroundService
 {
     private readonly Lock _lock = new();
+    private readonly TimeSpan _progressDebounce = TimeSpan.FromMilliseconds(250);
     private readonly ChannelReader<PersistedTask> _reader = taskQueue.UpscaleReader;
     private CancellationTokenSource? currentStoppingToken;
     private PersistedTask? currentTask;
@@ -69,7 +70,19 @@ public class UpscaleTaskProcessor(
             task.Status = PersistedTaskStatus.Processing;
             dbContext.Update(task);
             await dbContext.SaveChangesAsync(stoppingToken);
-            _ = StatusChanged?.Invoke(task);
+            var _discard1 = StatusChanged?.Invoke(task);
+
+            // Forward progress changes to UI by raising StatusChanged (debounced)
+            var last = DateTime.UtcNow;
+            using var progressSubscription = task.Data.Progress.Changed.Subscribe(e =>
+            {
+                var now = DateTime.UtcNow;
+                if (now - last >= _progressDebounce)
+                {
+                    last = now;
+                    _ = StatusChanged?.Invoke(task);
+                }
+            });
 
             await task.Data.ProcessAsync(scope.ServiceProvider, stoppingToken);
             _ = StatusChanged?.Invoke(task);

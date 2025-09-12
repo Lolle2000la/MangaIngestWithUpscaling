@@ -108,6 +108,13 @@ public class MangaJaNaiUpscaler(
     public async Task Upscale(string inputPath, string outputPath, UpscalerProfile profile,
         CancellationToken cancellationToken)
     {
+        // Delegate to the overload without emitting progress
+        await Upscale(inputPath, outputPath, profile, progress: null!, cancellationToken);
+    }
+
+    public async Task Upscale(string inputPath, string outputPath, UpscalerProfile profile,
+        IProgress<UpscaleProgress>? progress, CancellationToken cancellationToken)
+    {
         if (!File.Exists(inputPath))
         {
             throw new FileNotFoundException("Input file not found", inputPath);
@@ -158,17 +165,18 @@ public class MangaJaNaiUpscaler(
             logger.LogInformation("Using resized temporary file for upscaling: {TempPath}", actualInputPath);
 
             await PerformUpscaling(actualInputPath, outputPath, outputDirectory, outputFilename, profile,
-                cancellationToken);
+                progress, cancellationToken);
         }
         else
         {
             await PerformUpscaling(actualInputPath, outputPath, outputDirectory, outputFilename, profile,
-                cancellationToken);
+                progress, cancellationToken);
         }
     }
 
     private async Task PerformUpscaling(string inputPath, string outputPath, string outputDirectory,
-        string outputFilename, UpscalerProfile profile, CancellationToken cancellationToken)
+        string outputFilename, UpscalerProfile profile, IProgress<UpscaleProgress>? progress,
+        CancellationToken cancellationToken)
     {
         MangaJaNaiUpscalerConfig config = MangaJaNaiUpscalerConfig.FromUpscalerProfile(profile);
         config.ApplyUpscalerConfig(sharedConfig.Value);
@@ -185,11 +193,72 @@ public class MangaJaNaiUpscaler(
         string arguments = $"--settings \"{configPath}\"";
         try
         {
-            string output = await pythonService.RunPythonScript(RunScriptPath, arguments, cancellationToken,
-                sharedConfig.Value.UpscaleTimeout);
-            fileSystem.ApplyPermissions(outputPath);
+            // If caller provided a progress reporter, use streaming mode; otherwise run non-streaming
+            if (progress is null)
+            {
+                string output = await pythonService.RunPythonScript(RunScriptPath, arguments, cancellationToken,
+                    sharedConfig.Value.UpscaleTimeout);
+                fileSystem.ApplyPermissions(outputPath);
+                logger.LogDebug("Upscaling Output {inputPath}: {output}", inputPath, output);
+            }
+            else
+            {
+                int? total = null;
+                int current = 0;
+                string? lastPhase = null;
 
-            logger.LogDebug("Upscaling Output {inputPath}: {output}", inputPath, output);
+                await pythonService.RunPythonScriptStreaming(
+                    RunScriptPath,
+                    arguments,
+                    line =>
+                    {
+                        try
+                        {
+                            if (string.IsNullOrWhiteSpace(line)) return Task.CompletedTask;
+
+                            // Normalize line
+                            var l = line.Trim();
+                            if (l.StartsWith("TOTALZIP=", StringComparison.OrdinalIgnoreCase))
+                            {
+                                var value = l.Substring("TOTALZIP=".Length);
+                                if (int.TryParse(value, out var t))
+                                {
+                                    total = t;
+                                    progress.Report(new UpscaleProgress(total, current, lastPhase, "Reading archive"));
+                                }
+
+                                return Task.CompletedTask;
+                            }
+
+                            if (l.StartsWith("PROGRESS=", StringComparison.OrdinalIgnoreCase))
+                            {
+                                var phase = l.Substring("PROGRESS=".Length);
+                                lastPhase = phase;
+
+                                // Heuristics: increment when we see per-image progress events
+                                if (phase.Contains("postprocess_worker_zip_image", StringComparison.OrdinalIgnoreCase)
+                                    || phase.Contains("postprocess_worker_image", StringComparison.OrdinalIgnoreCase)
+                                    || phase.Contains("postprocess_worker_folder", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    current++;
+                                }
+
+                                progress.Report(new UpscaleProgress(total, current, lastPhase, null));
+                                return Task.CompletedTask;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogDebug(ex, "Ignoring progress parse error: {Line}", line);
+                        }
+
+                        return Task.CompletedTask;
+                    },
+                    cancellationToken,
+                    sharedConfig.Value.UpscaleTimeout);
+
+                fileSystem.ApplyPermissions(outputPath);
+            }
 
             await upscalerJsonHandlingService.WriteUpscalerJsonAsync(outputPath, profile, cancellationToken);
 

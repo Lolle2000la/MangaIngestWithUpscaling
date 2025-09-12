@@ -142,7 +142,7 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
     {
         using var process = new Process();
         process.StartInfo.FileName = environment.PythonExecutablePath;
-        process.StartInfo.Arguments = $"{script} {arguments}";
+        process.StartInfo.Arguments = $"\"{script}\" {arguments}";
         process.StartInfo.RedirectStandardOutput = true;
         process.StartInfo.RedirectStandardError = true;
         process.StartInfo.UseShellExecute = false;
@@ -203,6 +203,91 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         finally
         {
             process.Kill(true);
+        }
+    }
+
+    public Task RunPythonScriptStreaming(string script, string arguments, Func<string, Task> onStdout,
+        CancellationToken? cancellationToken = null, TimeSpan? timeout = null)
+    {
+        if (Environment == null)
+        {
+            throw new InvalidOperationException(
+                "Python environment is not prepared. Call PreparePythonEnvironment first.");
+        }
+
+        return RunPythonScriptStreaming(Environment, script, arguments, onStdout, cancellationToken, timeout);
+    }
+
+    public async Task RunPythonScriptStreaming(PythonEnvironment environment, string script, string arguments,
+        Func<string, Task> onStdout, CancellationToken? cancellationToken = null, TimeSpan? timeout = null)
+    {
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken ?? CancellationToken.None);
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = environment.PythonExecutablePath,
+            Arguments = $"\"{script}\" {arguments}",
+            WorkingDirectory = environment.DesiredWorkindDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8
+        };
+
+        using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+        var errorBuilder = new StringBuilder();
+        DateTime lastActivity = DateTime.UtcNow;
+
+        void updateActivity() => lastActivity = DateTime.UtcNow;
+
+        process.OutputDataReceived += async (_, e) =>
+        {
+            if (e.Data == null) return;
+            updateActivity();
+            try { await onStdout(e.Data); }
+            catch
+            {
+                /* swallow to avoid crashing reader */
+            }
+        };
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (e.Data == null) return;
+            updateActivity();
+            lock (errorBuilder) errorBuilder.AppendLine(e.Data);
+        };
+
+        if (!process.Start())
+        {
+            throw new InvalidOperationException("Failed to start python process");
+        }
+
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+
+        // Monitor for timeout based on activity
+        while (!process.HasExited)
+        {
+            await Task.Delay(200, cts.Token);
+            if (timeout.HasValue && DateTime.UtcNow - lastActivity > timeout.Value)
+            {
+                try { process.Kill(entireProcessTree: true); }
+                catch { }
+
+                throw new TimeoutException($"Python process timed out after {timeout.Value} of no output.");
+            }
+        }
+
+        // Ensure all output drained
+        await Task.Delay(50, cts.Token);
+
+        if (process.ExitCode != 0)
+        {
+            string err;
+            lock (errorBuilder) err = errorBuilder.ToString();
+            throw new InvalidOperationException($"Python process exited with code {process.ExitCode}: {err}");
         }
     }
 
