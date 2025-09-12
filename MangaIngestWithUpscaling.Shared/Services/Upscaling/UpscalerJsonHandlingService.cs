@@ -23,9 +23,10 @@ public class UpscalerJsonHandlingService(ILogger<UpscalerJsonHandlingService> lo
             if (upscalerJsonEntry != null)
             {
                 await using Stream stream = upscalerJsonEntry.Open();
-                var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                var upscalerProfileDto = await JsonSerializer.DeserializeAsync<UpscalerProfileJsonDto>(stream,
-                    options, cancellationToken: cancellationToken);
+                UpscalerProfileJsonDto? upscalerProfileDto = await JsonSerializer.DeserializeAsync(
+                    stream,
+                    UpscalerJsonContext.Default.UpscalerProfileJsonDto,
+                    cancellationToken);
                 return upscalerProfileDto;
             }
         }
@@ -58,11 +59,7 @@ public class UpscalerJsonHandlingService(ILogger<UpscalerJsonHandlingService> lo
             Quality = profile.Quality
         };
 
-        var options = new JsonSerializerOptions
-        {
-            WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        };
-        string jsonString = JsonSerializer.Serialize(upscalerJson, options);
+        string jsonString = JsonSerializer.Serialize(upscalerJson, UpscalerJsonContext.Default.UpscalerProfileJsonDto);
 
         // For Update mode, delete existing entry first
         if (archive.Mode != ZipArchiveMode.Create)

@@ -27,6 +27,11 @@ message CbzFileChunk {
 message KeepAliveRequest {
     // Keep alive request to keep the connection open, needs to be sent every minute
     int32 task_id = 1; // Task ID of the upscaling task
+  // Optional live progress info (backward compatible):
+  optional int32 total = 2;           // Total items to process
+  optional int32 current = 3;         // Items processed so far
+  optional string status_message = 4; // Short status text for UI
+  optional string phase = 5;          // Current phase name
 }
 
 message KeepAliveResponse {

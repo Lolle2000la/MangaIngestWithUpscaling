@@ -194,6 +194,42 @@ public class DistributedUpscaleTaskProcessor(
         return false;
     }
 
+    /// <summary>
+    ///     Applies progress updates coming from a remote worker to the running task, if any.
+    ///     Backward-compatible usage via optional fields: only provided values are applied.
+    /// </summary>
+    public void ApplyProgress(int taskId, int? total, int? current, string? statusMessage, string? phase)
+    {
+        using (_lock.EnterScope())
+        {
+            if (runningTasks.TryGetValue(taskId, out PersistedTask? task))
+            {
+                ProgressInfo p = task.Data.Progress;
+                if (total.HasValue)
+                {
+                    p.Total = total.Value;
+                }
+
+                if (current.HasValue)
+                {
+                    p.Current = current.Value;
+                }
+
+                if (!string.IsNullOrWhiteSpace(statusMessage))
+                {
+                    p.StatusMessage = statusMessage!;
+                }
+                else if (!string.IsNullOrWhiteSpace(phase))
+                {
+                    // Use phase as a fallback status message for visibility
+                    p.StatusMessage = phase!;
+                }
+
+                _ = StatusChanged?.Invoke(task);
+            }
+        }
+    }
+
     public async Task TaskCompleted(int taskId)
     {
         DateTime time = DateTime.UtcNow;

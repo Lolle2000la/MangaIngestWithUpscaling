@@ -339,7 +339,8 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         try
         {
             var stateJson = await File.ReadAllTextAsync(environmentStatePath);
-            var state = JsonSerializer.Deserialize<EnvironmentState>(stateJson);
+            EnvironmentState? state =
+                JsonSerializer.Deserialize(stateJson, PythonServiceJsonContext.Default.EnvironmentState);
 
             if (state == null)
             {
@@ -511,7 +512,7 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
                 ENVIRONMENT_VERSION
             );
 
-            var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
+            string json = JsonSerializer.Serialize(state, PythonServiceJsonContext.Default.EnvironmentState);
             await File.WriteAllTextAsync(environmentStatePath, json);
 
             logger.LogInformation("Saved environment state with {Backend} backend, version {Version}", installedBackend,
