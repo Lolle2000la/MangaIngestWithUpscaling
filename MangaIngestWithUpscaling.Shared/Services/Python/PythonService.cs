@@ -164,7 +164,7 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
     public async Task RunPythonScriptStreaming(PythonEnvironment environment, string script, string arguments,
         Func<string, Task> onStdout, CancellationToken? cancellationToken = null, TimeSpan? timeout = null)
     {
-        var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken ?? CancellationToken.None);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken ?? CancellationToken.None);
 
         var startInfo = new ProcessStartInfo
         {
@@ -185,52 +185,108 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
 
         void updateActivity() => lastActivity = DateTime.UtcNow;
 
-        process.OutputDataReceived += async (_, e) =>
-        {
-            if (e.Data == null) return;
-            updateActivity();
-            try { await onStdout(e.Data); }
-            catch
-            {
-                /* swallow to avoid crashing reader */
-            }
-        };
-        process.ErrorDataReceived += (_, e) =>
-        {
-            if (e.Data == null) return;
-            updateActivity();
-            lock (errorBuilder) errorBuilder.AppendLine(e.Data);
-        };
-
         if (!process.Start())
         {
             throw new InvalidOperationException("Failed to start python process");
         }
 
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
+        DataReceivedEventHandler? outputHandler = null;
+        DataReceivedEventHandler? errorHandler = null;
 
-        // Monitor for timeout based on activity
-        while (!process.HasExited)
+        try
         {
-            await Task.Delay(200, cts.Token);
-            if (timeout.HasValue && DateTime.UtcNow - lastActivity > timeout.Value)
+            outputHandler = async (_, e) =>
             {
-                try { process.Kill(entireProcessTree: true); }
-                catch { }
+                if (e.Data == null)
+                {
+                    return;
+                }
 
-                throw new TimeoutException($"Python process timed out after {timeout.Value} of no output.");
+                updateActivity();
+                try { await onStdout(e.Data); }
+                catch
+                {
+                    /* swallow to avoid crashing reader */
+                }
+            };
+            errorHandler = (_, e) =>
+            {
+                if (e.Data == null)
+                {
+                    return;
+                }
+
+                updateActivity();
+                lock (errorBuilder)
+                {
+                    errorBuilder.AppendLine(e.Data);
+                }
+            };
+
+            process.OutputDataReceived += outputHandler;
+            process.ErrorDataReceived += errorHandler;
+
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            // Monitor for timeout based on activity
+            while (!process.HasExited)
+            {
+                await Task.Delay(200, cts.Token);
+                if (timeout.HasValue && DateTime.UtcNow - lastActivity > timeout.Value)
+                {
+                    try { process.Kill(true); }
+                    catch { }
+
+                    throw new TimeoutException($"Python process timed out after {timeout.Value} of no output.");
+                }
+            }
+
+            // Ensure all output drained
+            await Task.Delay(50, cts.Token);
+
+            if (process.ExitCode != 0)
+            {
+                string err;
+                lock (errorBuilder)
+                {
+                    err = errorBuilder.ToString();
+                }
+
+                throw new InvalidOperationException($"Python process exited with code {process.ExitCode}: {err}");
             }
         }
-
-        // Ensure all output drained
-        await Task.Delay(50, cts.Token);
-
-        if (process.ExitCode != 0)
+        finally
         {
-            string err;
-            lock (errorBuilder) err = errorBuilder.ToString();
-            throw new InvalidOperationException($"Python process exited with code {process.ExitCode}: {err}");
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.CancelOutputRead();
+                }
+            }
+            catch { }
+
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.CancelErrorRead();
+                }
+            }
+            catch { }
+
+            if (outputHandler is not null)
+            {
+                try { process.OutputDataReceived -= outputHandler; }
+                catch { }
+            }
+
+            if (errorHandler is not null)
+            {
+                try { process.ErrorDataReceived -= errorHandler; }
+                catch { }
+            }
         }
     }
 
