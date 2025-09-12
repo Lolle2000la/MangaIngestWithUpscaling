@@ -97,7 +97,28 @@ public class UpscaleTask : BaseTask
         var upscaler = services.GetRequiredService<IUpscaler>();
         try
         {
-            await upscaler.Upscale(currentStoragePath, upscaleTargetPath, upscalerProfile, cancellationToken);
+            var reporter = new Progress<UpscaleProgress>(p =>
+            {
+                if (p.Total.HasValue)
+                {
+                    Progress.Total = p.Total.Value;
+                }
+
+                if (p.Current.HasValue)
+                {
+                    Progress.Current = p.Current.Value;
+                }
+
+                if (!string.IsNullOrWhiteSpace(p.StatusMessage))
+                {
+                    Progress.StatusMessage = p.StatusMessage!;
+                }
+
+                // Pages as a sensible unit for upscaling
+                Progress.ProgressUnit = "pages";
+            });
+
+            await upscaler.Upscale(currentStoragePath, upscaleTargetPath, upscalerProfile, reporter, cancellationToken);
             _ = chapterChangedNotifier.Notify(chapter, true);
         }
         catch (Exception)

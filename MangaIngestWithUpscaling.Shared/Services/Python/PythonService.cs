@@ -140,69 +140,153 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         CancellationToken? cancellationToken = null,
         TimeSpan? timeout = null)
     {
-        using var process = new Process();
-        process.StartInfo.FileName = environment.PythonExecutablePath;
-        process.StartInfo.Arguments = $"{script} {arguments}";
-        process.StartInfo.RedirectStandardOutput = true;
-        process.StartInfo.RedirectStandardError = true;
-        process.StartInfo.UseShellExecute = false;
-        process.StartInfo.CreateNoWindow = true;
-        process.StartInfo.StandardOutputEncoding = Encoding.UTF8;
-        process.StartInfo.StandardErrorEncoding = Encoding.UTF8;
-        process.StartInfo.WorkingDirectory = environment.DesiredWorkindDirectory;
+        var sb = new StringBuilder();
+        await RunPythonScriptStreaming(environment, script, arguments, line =>
+        {
+            sb.AppendLine(line);
+            return Task.CompletedTask;
+        }, cancellationToken, timeout);
+        return sb.ToString();
+    }
 
-        var outputBuilder = new StringBuilder();
+    public Task RunPythonScriptStreaming(string script, string arguments, Func<string, Task> onStdout,
+        CancellationToken? cancellationToken = null, TimeSpan? timeout = null)
+    {
+        if (Environment == null)
+        {
+            throw new InvalidOperationException(
+                "Python environment is not prepared. Call PreparePythonEnvironment first.");
+        }
+
+        return RunPythonScriptStreaming(Environment, script, arguments, onStdout, cancellationToken, timeout);
+    }
+
+    public async Task RunPythonScriptStreaming(PythonEnvironment environment, string script, string arguments,
+        Func<string, Task> onStdout, CancellationToken? cancellationToken = null, TimeSpan? timeout = null)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken ?? CancellationToken.None);
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = environment.PythonExecutablePath,
+            Arguments = $"\"{script}\" {arguments}",
+            WorkingDirectory = environment.DesiredWorkindDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8
+        };
+
+        using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         var errorBuilder = new StringBuilder();
-        TimeSpan _timeout = timeout ?? TimeSpan.FromSeconds(60);
         DateTime lastActivity = DateTime.UtcNow;
 
-        process.Start();
+        void updateActivity() => lastActivity = DateTime.UtcNow;
 
-        // Start reading output streams
-        Task readOutput = ReadStreamAsync(process.StandardOutput, outputBuilder, () => lastActivity = DateTime.UtcNow);
-        Task readError = ReadStreamAsync(process.StandardError, errorBuilder, () => lastActivity = DateTime.UtcNow);
+        if (!process.Start())
+        {
+            throw new InvalidOperationException("Failed to start python process");
+        }
+
+        DataReceivedEventHandler? outputHandler = null;
+        DataReceivedEventHandler? errorHandler = null;
 
         try
         {
-            while (true)
+            outputHandler = async (_, e) =>
             {
-                cancellationToken?.ThrowIfCancellationRequested();
-
-                // Check timeout every second
-                if (DateTime.UtcNow - lastActivity > _timeout)
+                if (e.Data == null)
                 {
-                    process.Kill(true);
-                    throw new TimeoutException(
-                        $"Process timed out after {_timeout.TotalSeconds} seconds of inactivity.\n" +
-                        $"Partial error output:\n{errorBuilder}\n\nPartial standard output{outputBuilder}");
+                    return;
                 }
 
-                if (process.HasExited)
+                updateActivity();
+                try { await onStdout(e.Data); }
+                catch
                 {
-                    await Task.WhenAll(readOutput, readError);
-                    break;
+                    /* swallow to avoid crashing reader */
+                }
+            };
+            errorHandler = (_, e) =>
+            {
+                if (e.Data == null)
+                {
+                    return;
                 }
 
-                await Task.Delay(1000, cancellationToken ?? CancellationToken.None);
+                updateActivity();
+                lock (errorBuilder)
+                {
+                    errorBuilder.AppendLine(e.Data);
+                }
+            };
+
+            process.OutputDataReceived += outputHandler;
+            process.ErrorDataReceived += errorHandler;
+
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            // Monitor for timeout based on activity
+            while (!process.HasExited)
+            {
+                await Task.Delay(200, cts.Token);
+                if (timeout.HasValue && DateTime.UtcNow - lastActivity > timeout.Value)
+                {
+                    try { process.Kill(true); }
+                    catch { }
+
+                    throw new TimeoutException($"Python process timed out after {timeout.Value} of no output.");
+                }
             }
+
+            // Ensure all output drained
+            await Task.Delay(50, cts.Token);
 
             if (process.ExitCode != 0)
             {
-                throw new InvalidOperationException(
-                    $"Python process failed with code {process.ExitCode}\n" +
-                    $"Error output:\n{errorBuilder}\n\nPartial standard output{outputBuilder}");
-            }
+                string err;
+                lock (errorBuilder)
+                {
+                    err = errorBuilder.ToString();
+                }
 
-            return outputBuilder.ToString();
-        }
-        catch (Exception)
-        {
-            process.Kill(true);
-            throw;
+                throw new InvalidOperationException($"Python process exited with code {process.ExitCode}: {err}");
+            }
         }
         finally
         {
-            process.Kill(true);
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.CancelOutputRead();
+                }
+            }
+            catch { }
+
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.CancelErrorRead();
+                }
+            }
+            catch { }
+
+            if (outputHandler is not null)
+            {
+                try { process.OutputDataReceived -= outputHandler; }
+                catch { }
+            }
+
+            if (errorHandler is not null)
+            {
+                try { process.ErrorDataReceived -= errorHandler; }
+                catch { }
+            }
         }
     }
 
@@ -255,7 +339,8 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         try
         {
             var stateJson = await File.ReadAllTextAsync(environmentStatePath);
-            var state = JsonSerializer.Deserialize<EnvironmentState>(stateJson);
+            EnvironmentState? state =
+                JsonSerializer.Deserialize(stateJson, PythonServiceJsonContext.Default.EnvironmentState);
 
             if (state == null)
             {
@@ -359,10 +444,6 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
 
         logger.LogInformation("Installing PyTorch and dependencies with {Backend} backend", targetBackend);
         await RunPipCommand(pythonPath, packagesCommand, environmentPath);
-
-        // Install backend source
-        await RunPipCommand(pythonPath, $"install \"{backendSrcDirectory}\" --no-warn-script-location",
-            environmentPath);
     }
 
     private async Task RunPipCommand(string pythonPath, string pipArgs, string environmentPath)
@@ -427,7 +508,7 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
                 ENVIRONMENT_VERSION
             );
 
-            var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
+            string json = JsonSerializer.Serialize(state, PythonServiceJsonContext.Default.EnvironmentState);
             await File.WriteAllTextAsync(environmentStatePath, json);
 
             logger.LogInformation("Saved environment state with {Backend} backend, version {Version}", installedBackend,
@@ -495,25 +576,5 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         }
 
         return "Unknown";
-    }
-
-    private async Task ReadStreamAsync(
-        StreamReader reader,
-        StringBuilder builder,
-        Action updateActivity)
-    {
-        try
-        {
-            while (true)
-            {
-                var line = await reader.ReadLineAsync();
-                if (line == null) break;
-
-                builder.AppendLine(line);
-                logger.LogDebug("Python Output: {line}", line);
-                updateActivity();
-            }
-        }
-        catch (ObjectDisposedException) { } // Handle process disposal
     }
 }

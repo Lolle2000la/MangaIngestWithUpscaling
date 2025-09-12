@@ -32,6 +32,8 @@ public static class ServiceRegistration
         services.AddHostedService(sp => sp.GetRequiredService<PeriodicIntegrityChecker>());
         services.AddSingleton<PeriodicTaskReplayer>();
         services.AddHostedService(sp => sp.GetRequiredService<PeriodicTaskReplayer>());
+        services.AddSingleton<TaskRegistry>();
+        services.AddHostedService(sp => sp.GetRequiredService<TaskRegistry>());
         services.AddScoped<ILibraryRenamingService, LibraryRenamingService>();
     }
 }

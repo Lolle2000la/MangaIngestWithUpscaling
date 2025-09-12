@@ -86,15 +86,24 @@ public class RemoteTaskProcessor(
         var profile = GetProfileFromResponse(taskResponse.UpscalerProfile);
 
         var keepAliveCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        // Progress reporting state
+        DateTime lastProgressSend = DateTime.UtcNow.AddSeconds(-10);
+        int? lastTotal = null;
+        int? lastCurrent = null;
+        string? lastStatus = null;
+        string? lastPhase = null;
+
         var keepAliveTask = Task.Run(async () =>
         {
-            var keepAliveTimer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+            var keepAliveTimer = new PeriodicTimer(TimeSpan.FromSeconds(15));
             while (!keepAliveCts.IsCancellationRequested)
             {
                 try
                 {
-                    var response = await client.KeepAliveAsync(new KeepAliveRequest { TaskId = taskResponse.TaskId },
-                        cancellationToken: keepAliveCts.Token);
+                    // If no progress info yet, send periodic keep-alives with no progress (indeterminate)
+                    var req = new KeepAliveRequest { TaskId = taskResponse.TaskId };
+                    KeepAliveResponse? response =
+                        await client.KeepAliveAsync(req, cancellationToken: keepAliveCts.Token);
                     if (!response.IsAlive)
                     {
                         logger.LogWarning(
@@ -137,7 +146,62 @@ public class RemoteTaskProcessor(
             logger.LogInformation("Downloaded file {file} for task {taskId}.", downloadedFile, taskResponse.TaskId);
 
             upscaledFile = PrepareTempFile(taskResponse.TaskId, "_upscaled");
-            await upscaler.Upscale(downloadedFile, upscaledFile, profile, stoppingToken);
+            // Try to stream progress if the upscaler supports it
+            var progress = new Progress<UpscaleProgress>(async p =>
+            {
+                // Debounce to ~2/sec to limit bandwidth
+                DateTime now = DateTime.UtcNow;
+                if (now - lastProgressSend < TimeSpan.FromMilliseconds(400))
+                {
+                    return;
+                }
+
+                lastProgressSend = now;
+
+                lastTotal = p.Total;
+                lastCurrent = p.Current;
+                lastStatus = p.StatusMessage;
+                lastPhase = p.Phase;
+                try
+                {
+                    var req = new KeepAliveRequest { TaskId = taskResponse.TaskId };
+                    if (p.Total.HasValue)
+                    {
+                        req.Total = p.Total.Value;
+                    }
+
+                    if (p.Current.HasValue)
+                    {
+                        req.Current = p.Current.Value;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(p.StatusMessage))
+                    {
+                        req.StatusMessage = p.StatusMessage;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(p.Phase))
+                    {
+                        req.Phase = p.Phase;
+                    }
+
+                    await client.KeepAliveAsync(req, cancellationToken: stoppingToken);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogDebug(ex, "KeepAlive progress send failed for task {taskId}", taskResponse.TaskId);
+                }
+            });
+
+            try
+            {
+                await upscaler.Upscale(downloadedFile, upscaledFile, profile, progress, stoppingToken);
+            }
+            catch (NotImplementedException)
+            {
+                // Fallback: no progress reporting
+                await upscaler.Upscale(downloadedFile, upscaledFile, profile, stoppingToken);
+            }
 
             logger.LogInformation("Upscaled file {file} for task {taskId}.", upscaledFile, taskResponse.TaskId);
 

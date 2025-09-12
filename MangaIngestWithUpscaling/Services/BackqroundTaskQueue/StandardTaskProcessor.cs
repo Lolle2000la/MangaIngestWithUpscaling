@@ -10,6 +10,7 @@ public class StandardTaskProcessor(
     ILogger<StandardTaskProcessor> logger) : BackgroundService
 {
     private readonly Lock _lock = new();
+    private readonly TimeSpan _progressDebounce = TimeSpan.FromMilliseconds(250);
     private readonly ChannelReader<PersistedTask> _reader = taskQueue.StandardReader;
     private CancellationTokenSource? currentStoppingToken;
     private PersistedTask? currentTask;
@@ -62,7 +63,18 @@ public class StandardTaskProcessor(
             await dbContext.SaveChangesAsync(stoppingToken);
             StatusChanged?.Invoke(task);
 
-            // Polymorphic processing based on concrete type
+            // Polymorphic processing based on concrete type, forward debounced progress to UI
+            var last = DateTime.UtcNow;
+            using var progressSubscription = task.Data.Progress.Changed.Subscribe(_ =>
+            {
+                var now = DateTime.UtcNow;
+                if (now - last >= _progressDebounce)
+                {
+                    last = now;
+                    var _discardTick = StatusChanged?.Invoke(task);
+                }
+            });
+
             await task.Data.ProcessAsync(scope.ServiceProvider, stoppingToken);
             StatusChanged?.Invoke(task);
 

@@ -85,6 +85,17 @@ public partial class UpscalingDistributionService(
     {
         if (taskProcessor.KeepAlive(request.TaskId))
         {
+            // Backward-compatible: update progress if fields are provided (proto3 optional)
+            bool hasAny = request.HasTotal || request.HasCurrent || request.HasStatusMessage || request.HasPhase;
+            if (hasAny)
+            {
+                taskProcessor.ApplyProgress(request.TaskId,
+                    request.HasTotal ? request.Total : null,
+                    request.HasCurrent ? request.Current : null,
+                    request.HasStatusMessage ? request.StatusMessage : null,
+                    request.HasPhase ? request.Phase : null);
+            }
+
             return Task.FromResult(new KeepAliveResponse { IsAlive = true });
         }
         else
