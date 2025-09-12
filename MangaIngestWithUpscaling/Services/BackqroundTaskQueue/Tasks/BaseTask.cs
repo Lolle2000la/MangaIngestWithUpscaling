@@ -1,4 +1,6 @@
-﻿using System.Text.Json.Serialization;
+﻿using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
+using System.ComponentModel.DataAnnotations.Schema;
+using System.Text.Json.Serialization;
 
 namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 
@@ -17,11 +19,18 @@ namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
 [JsonDerivedType(typeof(UpdatePerceptualHashesTask), nameof(UpdatePerceptualHashesTask))]
 public class BaseTask
 {
+    public virtual string TaskFriendlyName { get; } = "Unknown Task";
+
+    public virtual int RetryFor { get; set; } = 0;
+
+
+    [NotMapped]
+    [JsonIgnore]
+    [Newtonsoft.Json.JsonIgnore]
+    public ProgressInfo Progress { get; } = new();
+
     public virtual Task ProcessAsync(IServiceProvider services, CancellationToken cancellationToken)
     {
         throw new NotImplementedException();
     }
-    public virtual string TaskFriendlyName { get; } = "Unknown Task";
-
-    public virtual int RetryFor { get; set; } = 0;
 }
