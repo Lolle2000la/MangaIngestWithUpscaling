@@ -140,70 +140,13 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         CancellationToken? cancellationToken = null,
         TimeSpan? timeout = null)
     {
-        using var process = new Process();
-        process.StartInfo.FileName = environment.PythonExecutablePath;
-        process.StartInfo.Arguments = $"\"{script}\" {arguments}";
-        process.StartInfo.RedirectStandardOutput = true;
-        process.StartInfo.RedirectStandardError = true;
-        process.StartInfo.UseShellExecute = false;
-        process.StartInfo.CreateNoWindow = true;
-        process.StartInfo.StandardOutputEncoding = Encoding.UTF8;
-        process.StartInfo.StandardErrorEncoding = Encoding.UTF8;
-        process.StartInfo.WorkingDirectory = environment.DesiredWorkindDirectory;
-
-        var outputBuilder = new StringBuilder();
-        var errorBuilder = new StringBuilder();
-        TimeSpan _timeout = timeout ?? TimeSpan.FromSeconds(60);
-        DateTime lastActivity = DateTime.UtcNow;
-
-        process.Start();
-
-        // Start reading output streams
-        Task readOutput = ReadStreamAsync(process.StandardOutput, outputBuilder, () => lastActivity = DateTime.UtcNow);
-        Task readError = ReadStreamAsync(process.StandardError, errorBuilder, () => lastActivity = DateTime.UtcNow);
-
-        try
+        var sb = new StringBuilder();
+        await RunPythonScriptStreaming(environment, script, arguments, line =>
         {
-            while (true)
-            {
-                cancellationToken?.ThrowIfCancellationRequested();
-
-                // Check timeout every second
-                if (DateTime.UtcNow - lastActivity > _timeout)
-                {
-                    process.Kill(true);
-                    throw new TimeoutException(
-                        $"Process timed out after {_timeout.TotalSeconds} seconds of inactivity.\n" +
-                        $"Partial error output:\n{errorBuilder}\n\nPartial standard output{outputBuilder}");
-                }
-
-                if (process.HasExited)
-                {
-                    await Task.WhenAll(readOutput, readError);
-                    break;
-                }
-
-                await Task.Delay(1000, cancellationToken ?? CancellationToken.None);
-            }
-
-            if (process.ExitCode != 0)
-            {
-                throw new InvalidOperationException(
-                    $"Python process failed with code {process.ExitCode}\n" +
-                    $"Error output:\n{errorBuilder}\n\nPartial standard output{outputBuilder}");
-            }
-
-            return outputBuilder.ToString();
-        }
-        catch (Exception)
-        {
-            process.Kill(true);
-            throw;
-        }
-        finally
-        {
-            process.Kill(true);
-        }
+            sb.AppendLine(line);
+            return Task.CompletedTask;
+        }, cancellationToken, timeout);
+        return sb.ToString();
     }
 
     public Task RunPythonScriptStreaming(string script, string arguments, Func<string, Task> onStdout,
@@ -580,25 +523,5 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         }
 
         return "Unknown";
-    }
-
-    private async Task ReadStreamAsync(
-        StreamReader reader,
-        StringBuilder builder,
-        Action updateActivity)
-    {
-        try
-        {
-            while (true)
-            {
-                var line = await reader.ReadLineAsync();
-                if (line == null) break;
-
-                builder.AppendLine(line);
-                logger.LogDebug("Python Output: {line}", line);
-                updateActivity();
-            }
-        }
-        catch (ObjectDisposedException) { } // Handle process disposal
     }
 }
