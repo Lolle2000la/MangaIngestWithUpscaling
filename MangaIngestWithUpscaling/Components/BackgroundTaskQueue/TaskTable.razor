@@ -52,17 +52,6 @@
                         <span> — @p.StatusMessage</span>
                     }
                 </div>
-                <div style="margin-top: 6px;">
-                    @if (p.IsIndeterminate)
-                    {
-                        <MudProgressLinear Indeterminate="true" Color="Color.Primary" Style="height: 4px;"/>
-                    }
-                    else if (p.Total > 0)
-                    {
-                        <MudProgressLinear Value="@(Math.Clamp((double)p.Current / p.Total * 100.0, 0, 100))"
-                                           Color="Color.Primary" Style="height: 4px;"/>
-                    }
-                </div>
             }
         </MudTd>
         <MudTd DataLabel="Actions" Style="white-space: nowrap">
@@ -88,6 +77,25 @@
             }
         </MudTd>
     </RowTemplate>
+    <ChildRowContent>
+        @if (context.Status == PersistedTaskStatus.Processing)
+        {
+            var p = context.Data?.Progress;
+            <MudTd colspan="6" Class="pa-0">
+                <div style="width: 100%; height: 4px;">
+                    @if (p is null || p.IsIndeterminate || p.Total <= 0)
+                    {
+                        <MudProgressLinear Indeterminate="true" Color="Color.Primary" Style="height: 4px;"/>
+                    }
+                    else
+                    {
+                        <MudProgressLinear Value="@(Math.Clamp((double)p.Current / p.Total * 100.0, 0, 100))"
+                                           Color="Color.Primary" Style="height: 4px;"/>
+                    }
+                </div>
+            </MudTd>
+        }
+    </ChildRowContent>
     <PagerContent>
         <MudTablePager />
     </PagerContent>
