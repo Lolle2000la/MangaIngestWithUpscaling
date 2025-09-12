@@ -129,6 +129,63 @@ public class MetadataHandlingService(
         }
     }
 
+    /// <inheritdoc/>
+    public PageComparisonResult ComparePages(string? file1, string? file2)
+    {
+        var result = new PageComparisonResult();
+        
+        if (string.IsNullOrEmpty(file1) || string.IsNullOrEmpty(file2))
+        {
+            return result;
+        }
+
+        if (!file1.EndsWith(".cbz") || !file2.EndsWith(".cbz"))
+        {
+            return result;
+        }
+
+        try
+        {
+            using var archive1 = ZipFile.OpenRead(file1);
+            using var archive2 = ZipFile.OpenRead(file2);
+
+            var files1 = archive1.Entries
+                .Where(e => e.FullName.ToLowerInvariant()
+                    .EndsWithAny(".png", ".jpg", ".jpeg", ".avif", ".webp", ".bmp"))
+                .Select(e => Path.GetFileNameWithoutExtension(e.FullName)) // upscaled images can have different formats
+                .OrderBy(e => e)
+                .ToHashSet();
+
+            var files2 = archive2.Entries
+                .Where(e => e.FullName.ToLowerInvariant()
+                    .EndsWithAny(".png", ".jpg", ".jpeg", ".avif", ".webp", ".bmp"))
+                .Select(e => Path.GetFileNameWithoutExtension(e.FullName))
+                .OrderBy(e => e)
+                .ToHashSet();
+
+            result.CommonPages = files1.Intersect(files2).OrderBy(p => p).ToList();
+            result.MissingFromSecond = files1.Except(files2).OrderBy(p => p).ToList();
+            result.ExtraInSecond = files2.Except(files1).OrderBy(p => p).ToList();
+            result.PagesEqual = result.MissingFromSecond.Count == 0 && result.ExtraInSecond.Count == 0;
+
+            return result;
+        }
+        catch (InvalidDataException ex)
+        {
+            logger.LogError(ex, "The format of one of the following two archives is invalid.\n" +
+                                "Tried to compare \"{file1}\" to \"{file2}\"",
+                file1, file2);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to compare cbz files.\n\n" +
+                                "Tried to compare \"{file1}\" to \"{file2}\"",
+                file1, file2);
+            return result;
+        }
+    }
+
     public void WriteComicInfo(string file, ExtractedMetadata metadata)
     {
         metadata = metadata.CheckAndCorrect();
