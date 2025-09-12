@@ -12,7 +12,16 @@ public interface ITaskQueue
     Task RetryAsync(PersistedTask task);
     Task ReorderTaskAsync(PersistedTask task, int newOrder);
     Task RemoveTaskAsync(PersistedTask task);
+
     Task ReplayPendingOrFailed(CancellationToken cancellationToken = default);
+
+    // Provide live in-memory snapshots for UI without DB reads
+    IReadOnlyList<PersistedTask> GetStandardSnapshot();
+
+    IReadOnlyList<PersistedTask> GetUpscaleSnapshot();
+
+    // Convenience to move a task to the front of its queue safely
+    Task MoveToFrontAsync(PersistedTask task, CancellationToken cancellationToken = default);
 }
 
 public class TaskQueue : ITaskQueue, IHostedService
@@ -56,6 +65,23 @@ public class TaskQueue : ITaskQueue, IHostedService
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public IReadOnlyList<PersistedTask> GetStandardSnapshot()
+    {
+        lock (_standardTasksLock)
+        {
+            // return a shallow copy to avoid external mutation
+            return _standardTasks.ToList();
+        }
+    }
+
+    public IReadOnlyList<PersistedTask> GetUpscaleSnapshot()
+    {
+        lock (_upscaleTasksLock)
+        {
+            return _upscaleTasks.ToList();
+        }
+    }
 
     public async Task EnqueueAsync<T>(T taskData) where T : BaseTask
     {
@@ -127,6 +153,20 @@ public class TaskQueue : ITaskQueue, IHostedService
         // Update the order and persist changes
         existingTask.Order = newOrder;
         await dbContext.SaveChangesAsync();
+
+        // Notify listeners about the change
+        TaskEnqueuedOrChanged?.Invoke(existingTask);
+    }
+
+    public async Task MoveToFrontAsync(PersistedTask task, CancellationToken cancellationToken = default)
+    {
+        // Compute global minimum order from DB to ensure consistent ordering
+        using IServiceScope scope = _scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+        int minOrder = await dbContext.PersistedTasks.MinAsync(t => (int?)t.Order, cancellationToken) ?? 0;
+        int newOrder = minOrder - 1;
+        await ReorderTaskAsync(task, newOrder);
     }
 
     public async Task RemoveTaskAsync(PersistedTask task)
@@ -147,6 +187,9 @@ public class TaskQueue : ITaskQueue, IHostedService
             if (toRemove != null)
                 tasks.Remove(toRemove);
         }
+
+        // Notify listeners about the removal
+        TaskRemoved?.Invoke(task);
     }
 
     public async Task RetryAsync(PersistedTask task)
@@ -211,6 +254,7 @@ public class TaskQueue : ITaskQueue, IHostedService
     }
 
     public event Func<PersistedTask, Task>? TaskEnqueuedOrChanged;
+    public event Func<PersistedTask, Task>? TaskRemoved;
 
     private async Task ProcessChannelAsync(
         Channel<PersistedTask> channel,
