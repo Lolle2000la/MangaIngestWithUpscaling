@@ -172,6 +172,7 @@ public class DistributedUpscaleTaskProcessor(
 
             dbContext.Update(task);
             await dbContext.SaveChangesAsync(stoppingToken);
+            _ = StatusChanged?.Invoke(task);
             return task;
         }
         catch (OperationCanceledException)
