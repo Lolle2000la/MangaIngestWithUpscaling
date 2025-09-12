@@ -30,7 +30,6 @@
         <MudTh>
             <MudTableSortLabel SortBy="new Func<PersistedTask, object>(x => x.Status)">Status</MudTableSortLabel>
         </MudTh>
-        <MudTh>Progress</MudTh>
         <MudTh>Actions</MudTh>
     </HeaderContent>
     <RowTemplate>
@@ -41,16 +40,29 @@
         <MudTd DataLabel="Queued At">@context.CreatedAt.ToLocalTime()</MudTd>
         <MudTd DataLabel="Finished At">@(context.ProcessedAt is not null ? context.ProcessedAt.Value.ToLocalTime() : "")
         </MudTd>
-        <MudTd DataLabel="Status">@context.Status</MudTd>
-        <MudTd DataLabel="Progress">
+        <MudTd DataLabel="Status">
+            @context.Status
             @if (context.Status == PersistedTaskStatus.Processing && context.Data?.Progress is not null)
             {
                 var p = context.Data.Progress;
-                <span>@(p.IsIndeterminate ? "…" : $"{p.Current}/{p.Total} {p.ProgressUnit}")</span>
-                @if (!string.IsNullOrWhiteSpace(p.StatusMessage))
-                {
-                    <div style="font-size: 0.8em; color: var(--mud-palette-text-secondary);">@p.StatusMessage</div>
-                }
+                <div style="font-size: 0.85em; color: var(--mud-palette-text-secondary); margin-top: 2px;">
+                    @(p.IsIndeterminate ? "Working…" : $"{p.Current}/{p.Total} {p.ProgressUnit}")
+                    @if (!string.IsNullOrWhiteSpace(p.StatusMessage))
+                    {
+                        <span> — @p.StatusMessage</span>
+                    }
+                </div>
+                <div style="margin-top: 6px;">
+                    @if (p.IsIndeterminate)
+                    {
+                        <MudProgressLinear Indeterminate="true" Color="Color.Primary" Style="height: 4px;"/>
+                    }
+                    else if (p.Total > 0)
+                    {
+                        <MudProgressLinear Value="@(Math.Clamp((double)p.Current / p.Total * 100.0, 0, 100))"
+                                           Color="Color.Primary" Style="height: 4px;"/>
+                    }
+                </div>
             }
         </MudTd>
         <MudTd DataLabel="Actions" Style="white-space: nowrap">
