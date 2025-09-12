@@ -5,95 +5,104 @@ import "google/protobuf/empty.proto";
 package manga_ingest_with_upscaling.api.upscaling;
 
 message UpscaleTaskDelegationResponse {
-    int32 task_id = 1; // Task ID of the upscaling task, -1 if none available
-    optional UpscalerProfile upscaler_profile = 2; // JSON string of the upscaling configuration used by MangaJaNaiUpscalerGui-cli tool, needs editing.
+  int32 task_id = 1; // Task ID of the upscaling task, -1 if none available
+  optional UpscalerProfile upscaler_profile = 2; // JSON string of the upscaling configuration used by MangaJaNaiUpscalerGui-cli tool, needs editing.
+}
+
+// Backward-compatible request with optional hints
+message RequestTaskRequest {
+  optional bool prefetch = 1; // If true, this request is a prefetch reservation
 }
 
 message CbzToUpscaleRequest {
-    int32 task_id = 1; // Task ID of the upscaling task
+  int32 task_id = 1; // Task ID of the upscaling task
+  optional bool prefetch = 2; // If true, indicates this fetch is part of prefetch flow
 }
 
 message CbzFileChunkRequest {
-    int32 task_id = 1; // Task ID of the upscaling task
-    int32 chunk_number = 2; // Chunk number of the Cbz file
+  int32 task_id = 1; // Task ID of the upscaling task
+  int32 chunk_number = 2; // Chunk number of the Cbz file
 }
 
 message CbzFileChunk {
-    int32 task_id = 1; // Task ID of the upscaling task
-    int32 chunk_number = 2; // Chunk number of the Cbz file
-    bytes chunk = 3; // Chunk of the Cbz file
+  int32 task_id = 1; // Task ID of the upscaling task
+  int32 chunk_number = 2; // Chunk number of the Cbz file
+  bytes chunk = 3; // Chunk of the Cbz file
 }
 
 message KeepAliveRequest {
-    // Keep alive request to keep the connection open, needs to be sent every minute
-    int32 task_id = 1; // Task ID of the upscaling task
+  // Keep alive request to keep the connection open, needs to be sent every minute
+  int32 task_id = 1; // Task ID of the upscaling task
   // Optional live progress info (backward compatible):
   optional int32 total = 2;           // Total items to process
   optional int32 current = 3;         // Items processed so far
   optional string status_message = 4; // Short status text for UI
   optional string phase = 5;          // Current phase name
+  optional bool prefetch = 6;         // If true, keep-alive belongs to a prefetched reservation
 }
 
 message KeepAliveResponse {
-    bool is_alive = 1; // True if the connection is still alive
+  bool is_alive = 1; // True if the connection is still alive
 }
 
 message UploadUpscaledCbzResponse {
-    bool success = 1; // True if the upload was successful
-    string message = 2; // Message from the server
-    int32 taskId = 3; // Task ID of the upscaling task
+  bool success = 1; // True if the upload was successful
+  string message = 2; // Message from the server
+  int32 taskId = 3; // Task ID of the upscaling task
 }
 
 message CheckConnectionResponse {
-    bool success = 1; // True if the connection is successful
-    string message = 2; // Message from the server
+  bool success = 1; // True if the connection is successful
+  string message = 2; // Message from the server
 }
 
 message ReportTaskFailedRequest {
-    int32 task_id = 1;
-    optional string error_message = 2;
+  int32 task_id = 1;
+  optional string error_message = 2;
 }
 
 service UpscalingService {
-    // Request a task to be upscaled
-    rpc RequestUpscaleTask(google.protobuf.Empty) returns (UpscaleTaskDelegationResponse);
-    rpc GetCbzFile(CbzToUpscaleRequest) returns (stream CbzFileChunk);
-    rpc RequestCbzFileChunk(CbzFileChunkRequest) returns (CbzFileChunk);
-    rpc UploadUpscaledCbzFile(stream CbzFileChunk) returns (stream UploadUpscaledCbzResponse);
-    rpc KeepAlive(KeepAliveRequest) returns (KeepAliveResponse);
-    rpc CheckConnection(google.protobuf.Empty) returns (CheckConnectionResponse);
-    rpc ReportTaskFailed(ReportTaskFailedRequest) returns (google.protobuf.Empty);
+  // Request a task to be upscaled
+  rpc RequestUpscaleTask(google.protobuf.Empty) returns (UpscaleTaskDelegationResponse);
+  // New method accepting hints (e.g., prefetch). Older clients use RequestUpscaleTask.
+  rpc RequestUpscaleTaskWithHint(RequestTaskRequest) returns (UpscaleTaskDelegationResponse);
+  rpc GetCbzFile(CbzToUpscaleRequest) returns (stream CbzFileChunk);
+  rpc RequestCbzFileChunk(CbzFileChunkRequest) returns (CbzFileChunk);
+  rpc UploadUpscaledCbzFile(stream CbzFileChunk) returns (stream UploadUpscaledCbzResponse);
+  rpc KeepAlive(KeepAliveRequest) returns (KeepAliveResponse);
+  rpc CheckConnection(google.protobuf.Empty) returns (CheckConnectionResponse);
+  rpc ReportTaskFailed(ReportTaskFailedRequest) returns (google.protobuf.Empty);
 }
 
 // Represents a preconfigured upscaler setting that can be associated with chapters.
 message UpscalerProfile {
-    string name = 1;
-    UpscalerMethod upscaler_method = 2;
-    ScaleFactor scaling_factor = 3;
-    CompressionFormat compression_format = 4;
-    int32 quality = 5; // Must be between 1 and 100, validation should be handled in application logic.
+  string name = 1;
+  UpscalerMethod upscaler_method = 2;
+  ScaleFactor scaling_factor = 3;
+  CompressionFormat compression_format = 4;
+  int32 quality = 5; // Must be between 1 and 100, validation should be handled in application logic.
 }
 
 // Enum representing the upscaler method.
 enum UpscalerMethod {
-    UPSCALER_METHOD_UNSPECIFIED = 0;
-    MANGA_JA_NAI = 1;
+  UPSCALER_METHOD_UNSPECIFIED = 0;
+  MANGA_JA_NAI = 1;
 }
 
 // Possible upscaling factors for chapters.
 enum ScaleFactor {
-    SCALE_FACTOR_UNSPECIFIED = 0;
-    ONE_X = 1;
-    TWO_X = 2;
-    THREE_X = 3;
-    FOUR_X = 4;
+  SCALE_FACTOR_UNSPECIFIED = 0;
+  ONE_X = 1;
+  TWO_X = 2;
+  THREE_X = 3;
+  FOUR_X = 4;
 }
 
 // Possible compression formats when a chapter is upscaled.
 enum CompressionFormat {
-    COMPRESSION_FORMAT_UNSPECIFIED = 0;
-    AVIF = 1;
-    PNG = 2;
-    WEBP = 3;
-    JPG = 4;
+  COMPRESSION_FORMAT_UNSPECIFIED = 0;
+  AVIF = 1;
+  PNG = 2;
+  WEBP = 3;
+  JPG = 4;
 }
