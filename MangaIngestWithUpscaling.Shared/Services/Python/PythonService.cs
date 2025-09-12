@@ -444,10 +444,6 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
 
         logger.LogInformation("Installing PyTorch and dependencies with {Backend} backend", targetBackend);
         await RunPipCommand(pythonPath, packagesCommand, environmentPath);
-
-        // Install backend source
-        await RunPipCommand(pythonPath, $"install \"{backendSrcDirectory}\" --no-warn-script-location",
-            environmentPath);
     }
 
     private async Task RunPipCommand(string pythonPath, string pipArgs, string environmentPath)
