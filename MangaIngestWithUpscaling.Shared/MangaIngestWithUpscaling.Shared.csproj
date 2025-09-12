@@ -1,22 +1,23 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-  </PropertyGroup>
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <InterceptorsNamespaces>$(InterceptorsNamespaces);Microsoft.Extensions.Configuration.Binder.SourceGeneration</InterceptorsNamespaces>
+    </PropertyGroup>
 
-	<ItemGroup>
-		<PackageReference Include="AutoRegisterInject" Version="1.4.1" />
-		<PackageReference Include="Mono.Posix.NETStandard" Version="1.0.0" />
-		<PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.9" />
-		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version=" 9.0.9 " />
-		<PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version=" 9.0.9 " />
-		<PackageReference Include="Microsoft.Extensions.Options" Version="9.0.9" />
-		<PackageReference Include="Silk.NET.OpenGL" Version="2.22.0" />
-		<PackageReference Include="Silk.NET.Windowing" Version="2.22.0" />
-		<PackageReference Include="SixLabors.ImageSharp" Version="3.1.11" />
-	</ItemGroup>
+    <ItemGroup>
+        <PackageReference Include="AutoRegisterInject" Version="1.4.1"/>
+        <PackageReference Include="Mono.Posix.NETStandard" Version="1.0.0"/>
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.9"/>
+        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version=" 9.0.9 "/>
+        <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version=" 9.0.9 "/>
+        <PackageReference Include="Microsoft.Extensions.Options" Version="9.0.9"/>
+        <PackageReference Include="Silk.NET.OpenGL" Version="2.22.0"/>
+        <PackageReference Include="Silk.NET.Windowing" Version="2.22.0"/>
+        <PackageReference Include="SixLabors.ImageSharp" Version="3.1.11"/>
+    </ItemGroup>
 
 </Project>

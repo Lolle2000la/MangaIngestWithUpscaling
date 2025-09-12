@@ -3,11 +3,11 @@ using Grpc.Core;
 using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using System.Diagnostics;
+using System.Threading.Channels;
 using CompressionFormat = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat;
 using ScaleFactor = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.ScaleFactor;
 using UpscalerMethod = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.UpscalerMethod;
 using UpscalerProfile = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.UpscalerProfile;
-using System.Threading.Channels;
 
 namespace MangaIngestWithUpscaling.RemoteWorker.Background;
 
@@ -17,6 +17,11 @@ public class RemoteTaskProcessor(
     // Rolling stats across runs
     private readonly OnlineStats _downloadTimeStats = new();
     private readonly OnlineStats _perPageTimeStats = new();
+
+    // IDs to coordinate exclusions and lifecycle
+    private int? _currentTaskId; // Task currently being processed
+    private volatile bool _fetchInProgress;
+    private Channel<bool>? _fetchSignals;
     private string? _prefetchFilePath;
     private CancellationTokenSource? _prefetchKeepAliveCts;
     private Task? _prefetchKeepAliveTask;
@@ -27,21 +32,11 @@ public class RemoteTaskProcessor(
 
     // Prefetch state
     private int? _prefetchTaskId;
-
-    // IDs to coordinate exclusions and lifecycle
-    private int? _currentTaskId; // Task currently being processed
-    private int? _uploadInProgressTaskId; // Task whose upload is in progress
+    private Channel<ProcessedItem>? _toUpload;
 
     // Channel-based pipeline
     private Channel<FetchedItem>? _toUpscale;
-    private Channel<ProcessedItem>? _toUpload;
-    private Channel<bool>? _fetchSignals;
-    private volatile bool _fetchInProgress;
-
-    private sealed record FetchedItem(int TaskId, UpscalerProfile Profile, string DownloadedFile,
-        CancellationTokenSource? PrefetchKeepAliveCts);
-
-    private sealed record ProcessedItem(int TaskId, string DownloadedFile, string UpscaledFile);
+    private int? _uploadInProgressTaskId; // Task whose upload is in progress
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -124,13 +119,17 @@ public class RemoteTaskProcessor(
                         _fetchInProgress = false;
                         break;
                     }
+
                     if ((_currentTaskId.HasValue && resp.TaskId == _currentTaskId.Value) ||
                         (_uploadInProgressTaskId.HasValue && resp.TaskId == _uploadInProgressTaskId.Value))
                     {
                         logger.LogDebug("FetchLoop: got in-flight task {taskId}; retrying shortly", resp.TaskId);
-                        try { await Task.Delay(200, stoppingToken); } catch { }
+                        try { await Task.Delay(200, stoppingToken); }
+                        catch { }
+
                         continue;
                     }
+
                     break;
                 }
 
@@ -165,6 +164,7 @@ public class RemoteTaskProcessor(
                             }
                         }
                         catch { }
+
                         try { await timer.WaitForNextTickAsync(_prefetchKeepAliveCts.Token); }
                         catch { break; }
                     }
@@ -173,7 +173,8 @@ public class RemoteTaskProcessor(
                 // Download file
                 var sw = Stopwatch.StartNew();
                 AsyncServerStreamingCall<CbzFileChunk>? stream = client.GetCbzFile(
-                    new CbzToUpscaleRequest { TaskId = resp.TaskId, Prefetch = true }, cancellationToken: stoppingToken);
+                    new CbzToUpscaleRequest { TaskId = resp.TaskId, Prefetch = true },
+                    cancellationToken: stoppingToken);
                 string file = await FetchFile(resp.TaskId, stream.ResponseStream.ReadAllAsync(stoppingToken));
                 sw.Stop();
                 _downloadTimeStats.Add(sw.Elapsed.TotalSeconds);
@@ -197,7 +198,8 @@ public class RemoteTaskProcessor(
             {
                 _fetchInProgress = false;
                 // Soft failure; wait a bit before next signal consumption
-                try { await Task.Delay(500, stoppingToken); } catch { break; }
+                try { await Task.Delay(500, stoppingToken); }
+                catch { break; }
             }
         }
     }
@@ -244,23 +246,29 @@ public class RemoteTaskProcessor(
                     }
                     catch (RpcException ex) when (ex.StatusCode == StatusCode.NotFound)
                     {
-                        try { await keepAliveCts.CancelAsync(); } catch { }
+                        try { await keepAliveCts.CancelAsync(); }
+                        catch { }
                     }
                     catch (Exception ex)
                     {
                         logger.LogDebug(ex, "KeepAlive loop error for task {taskId}", item.TaskId);
                     }
 
-                    try { await timer.WaitForNextTickAsync(keepAliveCts.Token); } catch { break; }
+                    try { await timer.WaitForNextTickAsync(keepAliveCts.Token); }
+                    catch { break; }
                 }
             }, keepAliveCts.Token);
 
             // Now cancel prefetch keep-alive and clear prefetch state
             if (item.PrefetchKeepAliveCts is not null)
             {
-                try { await item.PrefetchKeepAliveCts.CancelAsync(); } catch { }
+                try { await item.PrefetchKeepAliveCts.CancelAsync(); }
+                catch { }
             }
-            _prefetchTaskId = null; _prefetchFilePath = null; _prefetchProfile = null;
+
+            _prefetchTaskId = null;
+            _prefetchFilePath = null;
+            _prefetchProfile = null;
 
             string upscaledFile = PrepareTempFile(item.TaskId, "_upscaled");
             var progress = new Progress<UpscaleProgress>(async p =>
@@ -281,6 +289,7 @@ public class RemoteTaskProcessor(
                             _perPageTimeStats.Add(deltaTime / deltaPages);
                         }
                     }
+
                     lastProgressCurrent = current;
                     lastProgressTime = now;
 
@@ -295,6 +304,7 @@ public class RemoteTaskProcessor(
                         double remaining95 = remaining * perPage95;
                         etaTrigger = remaining95 <= download95;
                     }
+
                     if (!signaledThisTask && (quarterLeft || fiveLeft || etaTrigger))
                     {
                         signaledThisTask = true;
@@ -320,7 +330,9 @@ public class RemoteTaskProcessor(
                 }
                 catch (RpcException ex) when (ex.StatusCode == StatusCode.NotFound)
                 {
-                    try { await keepAliveCts.CancelAsync(); } catch { }
+                    try { await keepAliveCts.CancelAsync(); }
+                    catch { }
+
                     return;
                 }
                 catch (Exception ex)
@@ -344,12 +356,48 @@ public class RemoteTaskProcessor(
                 if (File.Exists(upscaledFile)) File.Delete(upscaledFile);
                 _currentTaskId = null;
                 await keepAliveCts.CancelAsync();
-                try { await keepAliveTask; } catch { }
+                try { await keepAliveTask; }
+                catch { }
+
+                continue;
+            }
+            catch (Exception ex)
+            {
+                // Report failure, cleanup, and continue
+                try
+                {
+                    await client.ReportTaskFailedAsync(
+                        new ReportTaskFailedRequest { TaskId = item.TaskId, ErrorMessage = ex.Message },
+                        cancellationToken: stoppingToken);
+                }
+                catch (Exception rpcEx)
+                {
+                    logger.LogWarning(rpcEx, "Failed to report task failure for {taskId}", item.TaskId);
+                }
+
+                if (File.Exists(item.DownloadedFile))
+                {
+                    try { File.Delete(item.DownloadedFile); }
+                    catch { }
+                }
+
+                if (File.Exists(upscaledFile))
+                {
+                    try { File.Delete(upscaledFile); }
+                    catch { }
+                }
+
+                _currentTaskId = null;
+                await keepAliveCts.CancelAsync();
+                try { await keepAliveTask; }
+                catch { }
+
                 continue;
             }
 
             await keepAliveCts.CancelAsync();
-            try { await keepAliveTask; } catch { }
+            try { await keepAliveTask; }
+            catch { }
 
             // Send to upload
             await _toUpload.Writer.WriteAsync(new ProcessedItem(item.TaskId, item.DownloadedFile, upscaledFile),
@@ -379,6 +427,24 @@ public class RemoteTaskProcessor(
                 await UploadFileAndCleanup(client, logger, item.TaskId, item.UpscaledFile, item.DownloadedFile,
                     item.UpscaledFile, stoppingToken);
             }
+            catch (OperationCanceledException)
+            {
+                // Service shutting down; ignore
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Task {taskId} failed during upload.", item.TaskId);
+                try
+                {
+                    await client.ReportTaskFailedAsync(
+                        new ReportTaskFailedRequest { TaskId = item.TaskId, ErrorMessage = ex.Message },
+                        cancellationToken: stoppingToken);
+                }
+                catch (Exception rpcEx)
+                {
+                    logger.LogWarning(rpcEx, "Failed to report upload failure for {taskId}", item.TaskId);
+                }
+            }
             finally
             {
                 _uploadInProgressTaskId = null;
@@ -398,20 +464,22 @@ public class RemoteTaskProcessor(
         if (!prefetchReady)
         {
             // Nothing available to do; light backoff
-            try { await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken); } catch { }
+            try { await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken); }
+            catch { }
+
             return null;
         }
 
         // Use prefetched task if available, otherwise request a new one
         UpscaleTaskDelegationResponse taskResponse;
         bool usingPrefetch = _prefetchTaskId.HasValue && !string.IsNullOrEmpty(_prefetchFilePath) &&
-                     _prefetchProfile is not null;
+                             _prefetchProfile is not null;
         // Locals to hold consumed prefetch data so we can clear shared fields and allow another prefetch
         int? consumedPrefetchTaskId = null;
         UpscalerProfile? consumedPrefetchProfile = null;
         string? consumedPrefetchFilePath = null;
-    if (usingPrefetch)
-    {
+        if (usingPrefetch)
+        {
             // Capture and consume the prefetched state
             consumedPrefetchTaskId = _prefetchTaskId!.Value;
             consumedPrefetchProfile = _prefetchProfile!;
@@ -452,7 +520,9 @@ public class RemoteTaskProcessor(
         {
             // Prefetch should always be present here; if not, treat as no work.
             logger.LogDebug("Prefetch not ready despite EnsurePrefetchReady; backing off.");
-            try { await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken); } catch { }
+            try { await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken); }
+            catch { }
+
             return null;
         }
 
@@ -470,7 +540,7 @@ public class RemoteTaskProcessor(
         string? lastPhase = null;
         // Prefetch trigger gating is based on field state; no local sticky flag.
 
-    var keepAliveTask = Task.Run(async () =>
+        var keepAliveTask = Task.Run(async () =>
         {
             var keepAliveTimer = new PeriodicTimer(TimeSpan.FromSeconds(15));
             while (!keepAliveCts.IsCancellationRequested)
@@ -522,15 +592,20 @@ public class RemoteTaskProcessor(
             _prefetchProfile = null;
             if (_prefetchKeepAliveCts is not null)
             {
-                try { await _prefetchKeepAliveCts.CancelAsync(); } catch { }
+                try { await _prefetchKeepAliveCts.CancelAsync(); }
+                catch { }
+
                 _prefetchKeepAliveCts.Dispose();
                 _prefetchKeepAliveCts = null;
             }
+
             _prefetchKeepAliveTask = null;
         }
 
         // With pipeline-only prefetch, we always have a prefetched file to use
-        string downloadedFile = usingPrefetch ? consumedPrefetchFilePath! : throw new InvalidOperationException("Prefetch not ready");
+        string downloadedFile = usingPrefetch
+            ? consumedPrefetchFilePath!
+            : throw new InvalidOperationException("Prefetch not ready");
         string? upscaledFile = null;
         try
         {
@@ -714,8 +789,7 @@ public class RemoteTaskProcessor(
             logger.LogError(ex, "Failed to process task {taskId}.", taskResponse.TaskId);
             await client.ReportTaskFailedAsync(new ReportTaskFailedRequest
             {
-                TaskId = taskResponse.TaskId,
-                ErrorMessage = ex.Message
+                TaskId = taskResponse.TaskId, ErrorMessage = ex.Message
             });
             if (downloadedFile != null && File.Exists(downloadedFile))
             {
@@ -835,7 +909,9 @@ public class RemoteTaskProcessor(
                     (_uploadInProgressTaskId.HasValue && resp.TaskId == _uploadInProgressTaskId.Value))
                 {
                     logger.LogDebug("Prefetch received in-flight task {taskId}; retrying shortly", resp.TaskId);
-                    try { await Task.Delay(TimeSpan.FromMilliseconds(300), stoppingToken); } catch { }
+                    try { await Task.Delay(TimeSpan.FromMilliseconds(300), stoppingToken); }
+                    catch { }
+
                     continue;
                 }
 
@@ -971,7 +1047,8 @@ public class RemoteTaskProcessor(
             }
 
             // Wait a bit and re-check
-            try { await Task.Delay(TimeSpan.FromMilliseconds(200), stoppingToken); } catch { break; }
+            try { await Task.Delay(TimeSpan.FromMilliseconds(200), stoppingToken); }
+            catch { break; }
         }
 
         return false;
@@ -991,9 +1068,7 @@ public class RemoteTaskProcessor(
             await uploadStream.RequestStream.WriteAsync(
                 new CbzFileChunk
                 {
-                    TaskId = taskId,
-                    ChunkNumber = chunkNumber++,
-                    Chunk = ByteString.CopyFrom(buffer, 0, bytesRead)
+                    TaskId = taskId, ChunkNumber = chunkNumber++, Chunk = ByteString.CopyFrom(buffer, 0, bytesRead)
                 }, stoppingToken);
         }
 
@@ -1089,6 +1164,14 @@ public class RemoteTaskProcessor(
             }
         };
     }
+
+    private sealed record FetchedItem(
+        int TaskId,
+        UpscalerProfile Profile,
+        string DownloadedFile,
+        CancellationTokenSource? PrefetchKeepAliveCts);
+
+    private sealed record ProcessedItem(int TaskId, string DownloadedFile, string UpscaledFile);
 
     // Online statistics (Welford's method) to estimate download and per-page processing times
     private sealed class OnlineStats

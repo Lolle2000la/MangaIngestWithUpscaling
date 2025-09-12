@@ -7,6 +7,7 @@
         <InvariantGlobalization>true</InvariantGlobalization>
         <PublishAot>true</PublishAot>
         <VelopackRelease>false</VelopackRelease>
+        <InterceptorsNamespaces>$(InterceptorsNamespaces);Microsoft.Extensions.Configuration.Binder.SourceGeneration</InterceptorsNamespaces>
     </PropertyGroup>
 
     <PropertyGroup Condition="'$(VelopackRelease)'=='true'">

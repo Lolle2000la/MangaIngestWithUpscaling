@@ -218,24 +218,13 @@ public class TaskQueue : ITaskQueue, IHostedService
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
+        // Only consider Pending and retryable Failed tasks here; we will explicitly recover stranded Processing elsewhere
         var pendingTasks = await dbContext.PersistedTasks
             .OrderBy(t => t.Order)
             .AsAsyncEnumerable()
-            .Where(t => t.Status == PersistedTaskStatus.Pending || t.Status == PersistedTaskStatus.Processing
-                                                                || (t.Status == PersistedTaskStatus.Failed &&
-                                                                    t.RetryCount < t.Data.RetryFor))
+            .Where(t => t.Status == PersistedTaskStatus.Pending
+                        || (t.Status == PersistedTaskStatus.Failed && t.RetryCount < t.Data.RetryFor))
             .ToListAsync(cancellationToken);
-
-        // Reset processing tasks to pending
-        foreach (var task in pendingTasks)
-        {
-            if (task.Status == PersistedTaskStatus.Processing)
-            {
-                task.Status = PersistedTaskStatus.Pending;
-            }
-        }
-
-        await dbContext.SaveChangesAsync(cancellationToken);
 
         // Load tasks into sorted sets
         foreach (var task in pendingTasks)
