@@ -62,7 +62,7 @@ public class RemoteTaskProcessor(
     // Fetch: waits for signals, reserves next task (prefetch), downloads CBZ, keeps reservation alive until handed to upscaler
     private async Task FetchLoop(CancellationToken stoppingToken)
     {
-        var dispatchterTimer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+        var dispatcherTimer = new PeriodicTimer(TimeSpan.FromSeconds(5));
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -110,7 +110,7 @@ public class RemoteTaskProcessor(
                     catch (RpcException e) when (e.StatusCode == StatusCode.NotFound)
                     {
                         // Nothing to fetch at the moment
-                        await dispatchterTimer.WaitForNextTickAsync(stoppingToken);
+                        await dispatcherTimer.WaitForNextTickAsync(stoppingToken);
                         continue;
                     }
                     catch (Exception e)
