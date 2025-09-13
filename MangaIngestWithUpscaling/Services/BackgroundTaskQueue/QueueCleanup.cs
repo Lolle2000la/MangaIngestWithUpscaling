@@ -1,9 +1,8 @@
-﻿
-using MangaIngestWithUpscaling.Data;
-using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
+﻿using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using Microsoft.EntityFrameworkCore;
 
-namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
+namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 
 [RegisterScoped]
 public class QueueCleanup(

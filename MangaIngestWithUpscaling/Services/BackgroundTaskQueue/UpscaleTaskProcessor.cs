@@ -1,10 +1,10 @@
 ﻿using MangaIngestWithUpscaling.Data;
-using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
+using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using Microsoft.Extensions.Options;
 using System.Threading.Channels;
 
-namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
+namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 
 public class UpscaleTaskProcessor(
     TaskQueue taskQueue,

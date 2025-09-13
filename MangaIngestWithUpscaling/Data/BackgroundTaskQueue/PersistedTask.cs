@@ -1,7 +1,7 @@
-﻿using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
+﻿using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using System.ComponentModel.DataAnnotations.Schema;
 
-namespace MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
+namespace MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 
 public class PersistedTask
 {

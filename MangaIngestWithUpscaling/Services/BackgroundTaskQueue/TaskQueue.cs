@@ -1,10 +1,10 @@
 ﻿using MangaIngestWithUpscaling.Data;
-using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
-using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using Microsoft.EntityFrameworkCore;
 using System.Threading.Channels;
 
-namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
+namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 
 public interface ITaskQueue
 {

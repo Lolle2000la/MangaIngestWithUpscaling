@@ -1,13 +1,13 @@
 using DynamicData;
 using DynamicData.Binding;
 using MangaIngestWithUpscaling.Data;
-using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
-using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using Microsoft.EntityFrameworkCore;
 using System.Collections.ObjectModel;
 using System.Reactive.Disposables;
 
-namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
+namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 
 /// <summary>
 ///     Central registry of all background tasks with live, read-only filtered/sorted views.

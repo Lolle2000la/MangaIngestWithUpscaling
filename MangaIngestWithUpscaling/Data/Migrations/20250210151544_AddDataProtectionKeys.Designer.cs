@@ -85,7 +85,7 @@ namespace MangaIngestWithUpscaling.Migrations
                     b.ToTable("AspNetUsers", (string)null);
                 });
 
-            modelBuilder.Entity("MangaIngestWithUpscaling.Data.BackqroundTaskQueue.PersistedTask", b =>
+            modelBuilder.Entity("MangaIngestWithUpscaling.Data.BackgroundTaskQueue.PersistedTask", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()

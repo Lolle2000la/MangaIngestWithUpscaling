@@ -1,19 +1,12 @@
-﻿
-using MangaIngestWithUpscaling.Data;
+﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.LibraryIntegrity;
 using Microsoft.EntityFrameworkCore;
 
-namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
+namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 
 public class LibraryIntegrityCheckTask : BaseTask
 {
-    public override string TaskFriendlyName => $"Checking integrity for {LibraryName}";
-
-    public string LibraryName { get; set; } = string.Empty;
-
-    public int LibraryId { get; set; }
-
     public LibraryIntegrityCheckTask() { }
 
     public LibraryIntegrityCheckTask(Library library)
@@ -22,6 +15,12 @@ public class LibraryIntegrityCheckTask : BaseTask
         LibraryId = library.Id;
     }
 
+    public override string TaskFriendlyName => $"Checking integrity for {LibraryName}";
+
+    public string LibraryName { get; set; } = string.Empty;
+
+    public int LibraryId { get; set; }
+
     public override async Task ProcessAsync(IServiceProvider services, CancellationToken cancellationToken)
     {
         var integrityChecker = services.GetRequiredService<ILibraryIntegrityChecker>();
@@ -29,8 +28,8 @@ public class LibraryIntegrityCheckTask : BaseTask
 
         var library = await dbContext.Libraries
             .Include(l => l.MangaSeries)
-                .ThenInclude(m => m.Chapters)
-                    .ThenInclude(c => c.UpscalerProfile)
+            .ThenInclude(m => m.Chapters)
+            .ThenInclude(c => c.UpscalerProfile)
             .Include(l => l.UpscalerProfile)
             .FirstOrDefaultAsync(l => l.Id == LibraryId, cancellationToken);
 

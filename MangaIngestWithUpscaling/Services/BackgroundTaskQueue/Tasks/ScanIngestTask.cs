@@ -1,12 +1,16 @@
 ﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Services.ChapterManagement;
 
-namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
+namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 
 public class ScanIngestTask : BaseTask
 {
     public int LibraryId { get; set; }
     public string LibraryName { get; set; } = string.Empty;
+
+    public override string TaskFriendlyName => $"Scanning {LibraryName}";
+
+    public override int RetryFor { get; set; } = 3;
 
     public override async Task ProcessAsync(IServiceProvider services, CancellationToken cancellationToken)
     {
@@ -25,8 +29,4 @@ public class ScanIngestTask : BaseTask
             await ingestProcessor.ProcessAsync(library, cancellationToken);
         }
     }
-
-    public override string TaskFriendlyName => $"Scanning {LibraryName}";
-
-    public override int RetryFor { get; set; } = 3;
 }

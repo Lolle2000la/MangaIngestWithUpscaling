@@ -4,7 +4,7 @@ using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using Microsoft.EntityFrameworkCore;
 
-namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
+namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 
 public class RenameUpscaledChaptersSeriesTask : BaseTask
 {
