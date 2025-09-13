@@ -1,4 +1,5 @@
 ﻿using MangaIngestWithUpscaling.Shared.Configuration;
+using System.Diagnostics.CodeAnalysis;
 
 namespace MangaIngestWithUpscaling.RemoteWorker.Configuration;
 
