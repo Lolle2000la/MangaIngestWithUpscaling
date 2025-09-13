@@ -244,29 +244,7 @@ public class DistributedUpscaleTaskProcessor(
                         }
 
                         // Batch-replay the skipped tasks and move them to the front, preserving relative order
-                        if (toReplay.Count > 0)
-                        {
-                            using IServiceScope reorderScope = scopeFactory.CreateScope();
-                            var db = reorderScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-
-                            // First, ensure they are re-queued locally
-                            foreach (PersistedTask r in toReplay)
-                            {
-                                await taskQueue.RetryAsync(r);
-                            }
-
-                            // Compute a single min order and place all skipped tasks in front while keeping their order
-                            int minOrder = await db.PersistedTasks.MinAsync(t => (int?)t.Order, linkedCts.Token) ?? 0;
-                            int n = toReplay.Count;
-                            for (int i = 0; i < n; i++)
-                            {
-                                PersistedTask r = toReplay[i];
-                                int newOrder = minOrder - (n - i);
-                                await taskQueue.ReorderTaskAsync(r, newOrder);
-                            }
-
-                            toReplay.Clear();
-                        }
+                        await ReplayDeferredAsync(toReplay, linkedCts.Token);
 
                         completed = true; // Task has been successfully passed or re-enqueued.
                     }
@@ -274,24 +252,9 @@ public class DistributedUpscaleTaskProcessor(
                 finally
                 {
                     // If we exited without handing out any task, ensure deferred tasks are safely returned to the queue
-                    if (!completed && toReplay.Count > 0)
+                    if (!completed)
                     {
-                        using IServiceScope reorderScope = scopeFactory.CreateScope();
-                        var db = reorderScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-
-                        foreach (PersistedTask r in toReplay)
-                        {
-                            await taskQueue.RetryAsync(r);
-                        }
-
-                        int minOrder = await db.PersistedTasks.MinAsync(t => (int?)t.Order, linkedCts.Token) ?? 0;
-                        int n = toReplay.Count;
-                        for (int i = 0; i < n; i++)
-                        {
-                            PersistedTask r = toReplay[i];
-                            int newOrder = minOrder - (n - i);
-                            await taskQueue.ReorderTaskAsync(r, newOrder);
-                        }
+                        await ReplayDeferredAsync(toReplay, linkedCts.Token);
                     }
                 }
             }
@@ -469,5 +432,32 @@ public class DistributedUpscaleTaskProcessor(
         localTask.RetryCount++;
         await dbContext.SaveChangesAsync();
         _ = StatusChanged?.Invoke(localTask);
+    }
+
+    /// <summary>
+    ///     Replays deferred tasks back into the local queue and moves them to the front in their original relative order.
+    ///     No-ops if the list is empty. Clears the provided list upon completion.
+    /// </summary>
+    private async Task ReplayDeferredAsync(List<PersistedTask> toReplay, CancellationToken token)
+    {
+        if (toReplay.Count == 0)
+        {
+            return;
+        }
+
+        // Ensure all tasks are re-queued locally
+        foreach (PersistedTask r in toReplay)
+        {
+            await taskQueue.RetryAsync(r);
+        }
+
+        // Move them to the very front while preserving their original relative order:
+        // perform MoveToFrontAsync from last to first.
+        for (int i = toReplay.Count - 1; i >= 0; i--)
+        {
+            await taskQueue.MoveToFrontAsync(toReplay[i], token);
+        }
+
+        toReplay.Clear();
     }
 }
