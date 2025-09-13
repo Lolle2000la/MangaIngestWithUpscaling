@@ -136,95 +136,163 @@ public class DistributedUpscaleTaskProcessor(
             try
             {
                 bool completed = false;
-                while (!completed && !stoppingToken.IsCancellationRequested)
+                var toReplay = new List<PersistedTask>();
+                try
                 {
-                    PersistedTask task = await _reader.ReadAsync(linkedCts.Token);
-
-                    using (IServiceScope scope = scopeFactory.CreateScope())
+                    while (!completed && !stoppingToken.IsCancellationRequested)
                     {
-                        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-                        var logger =
-                            scope.ServiceProvider.GetRequiredService<ILogger<DistributedUpscaleTaskProcessor>>();
+                        PersistedTask task = await _reader.ReadAsync(linkedCts.Token);
 
-                        PersistedTask? taskFromDb = await dbContext.PersistedTasks.AsNoTracking()
-                            .FirstOrDefaultAsync(t => t.Id == task.Id, linkedCts.Token);
-
-                        // A task should only be processed if it's in the "Pending" state.
-                        // If it's anything else, another worker has claimed it or it's finalized.
-                        if (taskFromDb == null || taskFromDb.Status != PersistedTaskStatus.Pending)
+                        using (IServiceScope scope = scopeFactory.CreateScope())
                         {
-                            if (taskFromDb != null)
+                            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                            var logger =
+                                scope.ServiceProvider.GetRequiredService<ILogger<DistributedUpscaleTaskProcessor>>();
+
+                            PersistedTask? taskFromDb = await dbContext.PersistedTasks.AsNoTracking()
+                                .FirstOrDefaultAsync(t => t.Id == task.Id, linkedCts.Token);
+
+                            // A task should only be processed if it's in the "Pending" state.
+                            // If it's anything else, another worker has claimed it or it's finalized.
+                            if (taskFromDb == null || taskFromDb.Status != PersistedTaskStatus.Pending)
                             {
-                                logger.LogInformation(
-                                    "Skipping task {taskId} as it is no longer pending (current status: {status}).",
-                                    task.Id, taskFromDb.Status);
+                                if (taskFromDb != null)
+                                {
+                                    logger.LogInformation(
+                                        "Skipping task {taskId} as it is no longer pending (current status: {status}).",
+                                        task.Id, taskFromDb.Status);
+                                }
+
+                                continue; // Skip this task and try to get the next one from the channel.
+                            }
+                        }
+
+                        // If this is a RepairUpscaleTask or RenameUpscaledChaptersSeriesTask, do not send it to the remote worker.
+                        // Defer re-queue until after we successfully hand a task to the remote worker.
+                        if (task.Data is RepairUpscaleTask or RenameUpscaledChaptersSeriesTask)
+                        {
+                            using IServiceScope scope = scopeFactory.CreateScope();
+                            var logger = scope.ServiceProvider
+                                .GetRequiredService<ILogger<DistributedUpscaleTaskProcessor>>();
+                            logger.LogDebug(
+                                "Deferring RepairUpscaleTask or RenameUpscaledChaptersSeriesTask {taskId} for " +
+                                "local processing while searching for a remote-suitable task.",
+                                task.Id);
+                            toReplay.Add(task);
+                            continue;
+                        }
+
+                        if (task.Data is UpscaleTask upscaleData)
+                        {
+                            // Check if the target chapter file still exists before giving the task to the worker
+                            using IServiceScope scope = scopeFactory.CreateScope();
+                            var logger =
+                                scope.ServiceProvider.GetRequiredService<ILogger<DistributedUpscaleTaskProcessor>>();
+                            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                            Chapter? chapter = await dbContext.Chapters
+                                .Include(t => t.Manga)
+                                .ThenInclude(t => t.Library)
+                                .ThenInclude(t => t.UpscalerProfile)
+                                .Include(t => t.UpscalerProfile)
+                                .FirstOrDefaultAsync(c => c.Id == upscaleData.ChapterId, linkedCts.Token);
+                            if (chapter == null || !File.Exists(chapter.NotUpscaledFullPath))
+                            {
+                                // Chapter no longer exists, mark task as failed
+                                task.Status = PersistedTaskStatus.Failed;
+                                task.ProcessedAt = DateTime.UtcNow;
+                                _ = StatusChanged?.Invoke(task);
+
+                                logger.LogWarning("Skipping task {taskId} because chapter file is missing.", task.Id);
+                                continue;
                             }
 
-                            continue; // Skip this task and try to get the next one from the channel.
-                        }
-                    }
-
-                    if (task.Data is UpscaleTask upscaleData)
-                    {
-                        // Check if the target chapter file still exists before giving the task to the worker
-                        using IServiceScope scope = scopeFactory.CreateScope();
-                        var logger =
-                            scope.ServiceProvider.GetRequiredService<ILogger<DistributedUpscaleTaskProcessor>>();
-                        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-                        Chapter? chapter = await dbContext.Chapters
-                            .Include(t => t.Manga)
-                            .ThenInclude(t => t.Library)
-                            .ThenInclude(t => t.UpscalerProfile)
-                            .Include(t => t.UpscalerProfile)
-                            .FirstOrDefaultAsync(c => c.Id == upscaleData.ChapterId, linkedCts.Token);
-                        if (chapter == null || !File.Exists(chapter.NotUpscaledFullPath))
-                        {
-                            // Chapter no longer exists, mark task as failed
-                            task.Status = PersistedTaskStatus.Failed;
-                            task.ProcessedAt = DateTime.UtcNow;
-                            _ = StatusChanged?.Invoke(task);
-
-                            logger.LogWarning("Skipping task {taskId} because chapter file is missing.", task.Id);
-                            continue;
-                        }
-
-                        // check if it is already upscaled
-                        if (chapter.IsUpscaled)
-                        {
-                            task.Status = PersistedTaskStatus.Completed;
-                            task.ProcessedAt = DateTime.UtcNow;
-                            _ = StatusChanged?.Invoke(task);
-                            logger.LogInformation("Skipping task {taskId} because chapter is already upscaled.",
-                                task.Id);
-                            continue;
-                        }
-
-                        // check if the target file already exists and has equal pages
-                        if (File.Exists(chapter.UpscaledFullPath))
-                        {
-                            var metadataHandling = scope.ServiceProvider.GetRequiredService<IMetadataHandlingService>();
-                            if (metadataHandling.PagesEqual(chapter.NotUpscaledFullPath, chapter.UpscaledFullPath))
+                            // check if it is already upscaled
+                            if (chapter.IsUpscaled)
                             {
                                 task.Status = PersistedTaskStatus.Completed;
                                 task.ProcessedAt = DateTime.UtcNow;
-                                chapter.IsUpscaled = true;
                                 _ = StatusChanged?.Invoke(task);
-                                logger.LogInformation(
-                                    "Skipping task {taskId} because target file already exists and is equal.",
+                                logger.LogInformation("Skipping task {taskId} because chapter is already upscaled.",
                                     task.Id);
                                 continue;
                             }
+
+                            // check if the target file already exists and has equal pages
+                            if (File.Exists(chapter.UpscaledFullPath))
+                            {
+                                var metadataHandling =
+                                    scope.ServiceProvider.GetRequiredService<IMetadataHandlingService>();
+                                if (metadataHandling.PagesEqual(chapter.NotUpscaledFullPath, chapter.UpscaledFullPath))
+                                {
+                                    task.Status = PersistedTaskStatus.Completed;
+                                    task.ProcessedAt = DateTime.UtcNow;
+                                    chapter.IsUpscaled = true;
+                                    _ = StatusChanged?.Invoke(task);
+                                    logger.LogInformation(
+                                        "Skipping task {taskId} because target file already exists and is equal.",
+                                        task.Id);
+                                    continue;
+                                }
+                            }
+                        }
+
+                        if (!tcs.TrySetResult(task))
+                        {
+                            // Requester couldn't accept the task (likely cancelled) — re-enqueue immediately
+                            await taskQueue.RetryAsync(task);
+                            _ = StatusChanged?.Invoke(task);
+                        }
+
+                        // Batch-replay the skipped tasks and move them to the front, preserving relative order
+                        if (toReplay.Count > 0)
+                        {
+                            using IServiceScope reorderScope = scopeFactory.CreateScope();
+                            var db = reorderScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+                            // First, ensure they are re-queued locally
+                            foreach (PersistedTask r in toReplay)
+                            {
+                                await taskQueue.RetryAsync(r);
+                            }
+
+                            // Compute a single min order and place all skipped tasks in front while keeping their order
+                            int minOrder = await db.PersistedTasks.MinAsync(t => (int?)t.Order, linkedCts.Token) ?? 0;
+                            int n = toReplay.Count;
+                            for (int i = 0; i < n; i++)
+                            {
+                                PersistedTask r = toReplay[i];
+                                int newOrder = minOrder - (n - i);
+                                await taskQueue.ReorderTaskAsync(r, newOrder);
+                            }
+
+                            toReplay.Clear();
+                        }
+
+                        completed = true; // Task has been successfully passed or re-enqueued.
+                    }
+                }
+                finally
+                {
+                    // If we exited without handing out any task, ensure deferred tasks are safely returned to the queue
+                    if (!completed && toReplay.Count > 0)
+                    {
+                        using IServiceScope reorderScope = scopeFactory.CreateScope();
+                        var db = reorderScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+                        foreach (PersistedTask r in toReplay)
+                        {
+                            await taskQueue.RetryAsync(r);
+                        }
+
+                        int minOrder = await db.PersistedTasks.MinAsync(t => (int?)t.Order, linkedCts.Token) ?? 0;
+                        int n = toReplay.Count;
+                        for (int i = 0; i < n; i++)
+                        {
+                            PersistedTask r = toReplay[i];
+                            int newOrder = minOrder - (n - i);
+                            await taskQueue.ReorderTaskAsync(r, newOrder);
                         }
                     }
-
-                    if (!tcs.TrySetResult(task))
-                    {
-                        // Requester couldn't accept the task (likely cancelled) — re-enqueue immediately
-                        await taskQueue.RetryAsync(task);
-                        _ = StatusChanged?.Invoke(task);
-                    }
-
-                    completed = true; // Task has been successfully passed or re-enqueued.
                 }
             }
             catch (OperationCanceledException)
