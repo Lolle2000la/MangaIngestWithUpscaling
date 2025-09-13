@@ -327,7 +327,7 @@ public class RemoteTaskProcessor(
                 try
                 {
                     await client.ReportTaskFailedAsync(
-                        new ReportTaskFailedRequest { TaskId = item.TaskId, ErrorMessage = ex.Message },
+                        new ReportTaskFailedRequest { TaskId = item.TaskId, ErrorMessage = ex.ToString() },
                         cancellationToken: stoppingToken);
                 }
                 catch (Exception rpcEx)
@@ -390,7 +390,7 @@ public class RemoteTaskProcessor(
                 try
                 {
                     await client.ReportTaskFailedAsync(
-                        new ReportTaskFailedRequest { TaskId = item.TaskId, ErrorMessage = ex.Message },
+                        new ReportTaskFailedRequest { TaskId = item.TaskId, ErrorMessage = ex.ToString() },
                         cancellationToken: stoppingToken);
                 }
                 catch (Exception rpcEx)
