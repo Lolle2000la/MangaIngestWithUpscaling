@@ -459,6 +459,13 @@ public class RemoteTaskProcessor(
             catch (OperationCanceledException) { break; }
 
             _uploadInProgressTaskId = item.TaskId;
+            
+            // Start keep-alive loop for upload
+            var uploadKeepAliveCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            Task uploadKeepAliveTask = RunKeepAliveLoop(uploadKeepAliveCts,
+                () => _uploadInProgressTaskId,
+                id => new KeepAliveRequest { TaskId = id });
+            
             try
             {
                 await UploadFileAndCleanup(client, logger, item.TaskId, item.UpscaledFile, item.DownloadedFile,
@@ -466,7 +473,10 @@ public class RemoteTaskProcessor(
             }
             catch (OperationCanceledException)
             {
-                // Service shutting down; ignore
+                // Service shutting down; cancel keep-alive and ignore
+                await uploadKeepAliveCts.CancelAsync();
+                try { await uploadKeepAliveTask; }
+                catch { }
             }
             catch (Exception ex)
             {
@@ -484,6 +494,11 @@ public class RemoteTaskProcessor(
             }
             finally
             {
+                // Cancel and wait for keep-alive task
+                await uploadKeepAliveCts.CancelAsync();
+                try { await uploadKeepAliveTask; }
+                catch { }
+                
                 _uploadInProgressTaskId = null;
             }
         }
