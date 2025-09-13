@@ -38,15 +38,20 @@ public class RemoteTaskProcessor(
         // Initialize channels
         _toUpscale = Channel.CreateBounded<FetchedItem>(new BoundedChannelOptions(1)
         {
-            SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.Wait
+            SingleReader = true,
+            SingleWriter = true,
+            FullMode = BoundedChannelFullMode.Wait
         });
         _toUpload = Channel.CreateBounded<ProcessedItem>(new BoundedChannelOptions(1)
         {
-            SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.Wait
+            SingleReader = true,
+            SingleWriter = true,
+            FullMode = BoundedChannelFullMode.Wait
         });
         _fetchSignals = Channel.CreateUnbounded<bool>(new UnboundedChannelOptions
         {
-            SingleReader = true, SingleWriter = false
+            SingleReader = true,
+            SingleWriter = false
         });
 
         // Kick off an initial fetch
@@ -423,7 +428,9 @@ public class RemoteTaskProcessor(
             await uploadStream.RequestStream.WriteAsync(
                 new CbzFileChunk
                 {
-                    TaskId = taskId, ChunkNumber = chunkNumber++, Chunk = ByteString.CopyFrom(buffer, 0, bytesRead)
+                    TaskId = taskId,
+                    ChunkNumber = chunkNumber++,
+                    Chunk = ByteString.CopyFrom(buffer, 0, bytesRead)
                 }, stoppingToken);
         }
 
@@ -548,7 +555,7 @@ public class RemoteTaskProcessor(
         errorBuilder.AppendLine($"Input file: {inputFile}");
         errorBuilder.AppendLine($"Profile: {profile.Name} ({profile.UpscalerMethod}, {profile.ScalingFactor}, {profile.CompressionFormat})");
         errorBuilder.AppendLine($"Quality: {profile.Quality}");
-        
+
         // Check if input file exists and get its size for diagnostics
         if (File.Exists(inputFile))
         {
@@ -578,7 +585,7 @@ public class RemoteTaskProcessor(
         var errorBuilder = new StringBuilder();
         errorBuilder.AppendLine($"Upload task {taskId} failed:");
         errorBuilder.AppendLine($"Upscaled file: {upscaledFile}");
-        
+
         // Check if upscaled file exists and get its size for diagnostics
         if (File.Exists(upscaledFile))
         {
