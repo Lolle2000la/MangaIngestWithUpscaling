@@ -43,9 +43,10 @@ public class RemoteTaskProcessor(
         {
             SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.Wait
         });
-        _fetchSignals = Channel.CreateUnbounded<bool>(new UnboundedChannelOptions
+        // Coalesce fetch triggers: capacity 1, keep latest
+        _fetchSignals = Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
         {
-            SingleReader = true, SingleWriter = false
+            SingleReader = true, SingleWriter = false, FullMode = BoundedChannelFullMode.DropOldest
         });
 
         // Kick off an initial fetch
@@ -135,6 +136,7 @@ public class RemoteTaskProcessor(
 
                 if (resp is null || resp.TaskId == -1)
                 {
+                    _fetchInProgress = false;
                     continue;
                 }
 
@@ -199,7 +201,7 @@ public class RemoteTaskProcessor(
             var keepAliveCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
             DateTime lastProgressSend = DateTime.UtcNow.AddSeconds(-10);
             int? lastProgressCurrent = null;
-            bool signaledThisTask = false;
+            int prefetchSignaled = 0; // 0 = not signaled, 1 = signaled (atomic)
             DateTime lastProgressTime = DateTime.UtcNow;
 
             // Start processing keep-alive loop first
@@ -288,9 +290,8 @@ public class RemoteTaskProcessor(
 
                                 int remaining = Math.Max(0, total - current);
                                 bool shouldPrefetch = _predictor.ShouldPrefetch(remaining, total);
-                                if (!signaledThisTask && shouldPrefetch)
+                                if (shouldPrefetch && Interlocked.CompareExchange(ref prefetchSignaled, 1, 0) == 0)
                                 {
-                                    signaledThisTask = true;
                                     _fetchSignals?.Writer.TryWrite(true);
                                 }
                             }
@@ -377,6 +378,12 @@ public class RemoteTaskProcessor(
                 try { await keepAliveTask; }
                 catch { }
 
+                // Ensure the pipeline keeps moving if no prefetch was signaled yet
+                if (Interlocked.CompareExchange(ref prefetchSignaled, 1, 0) == 0)
+                {
+                    _fetchSignals?.Writer.TryWrite(true);
+                }
+
                 continue;
             }
             catch (Exception ex)
@@ -401,11 +408,13 @@ public class RemoteTaskProcessor(
                 try { await keepAliveTask; }
                 catch { }
 
+                // Ensure the pipeline keeps moving after a failure
+                if (Interlocked.CompareExchange(ref prefetchSignaled, 1, 0) == 0)
+                {
+                    _fetchSignals?.Writer.TryWrite(true);
+                }
+
                 continue;
-            }
-            finally
-            {
-                await _fetchSignals!.Writer.WriteAsync(true, stoppingToken);
             }
 
             await keepAliveCts.CancelAsync();
@@ -417,6 +426,12 @@ public class RemoteTaskProcessor(
 
             try { await progressSenderTask; }
             catch { }
+
+            // If predictor never signaled during this task, trigger a single coalesced fetch now
+            if (Interlocked.CompareExchange(ref prefetchSignaled, 1, 0) == 0)
+            {
+                _fetchSignals?.Writer.TryWrite(true);
+            }
 
             // Send to upload
             await _toUpload.Writer.WriteAsync(new ProcessedItem(item.TaskId, item.DownloadedFile, upscaledFile),
