@@ -145,7 +145,8 @@ public class RemoteTaskProcessor(
 
                 // Start prefetch keep-alive
                 var prefetchKeepAliveCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-                Task prefetchKeepAliveTask = RunKeepAliveLoop(prefetchKeepAliveCts, () => prefetchTaskId,
+                Task prefetchKeepAliveTask = RunKeepAliveLoop(prefetchKeepAliveCts,
+                    () => prefetchTaskId,
                     id => new KeepAliveRequest { TaskId = id, Prefetch = true });
 
                 // Download file
@@ -199,6 +200,7 @@ public class RemoteTaskProcessor(
             var profile = item.Profile;
 
             var keepAliveCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            var upscalesCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
             DateTime lastProgressSend = DateTime.UtcNow.AddSeconds(-10);
             int? lastProgressCurrent = null;
             int prefetchSignaled = 0; // 0 = not signaled, 1 = signaled (atomic)
@@ -216,12 +218,13 @@ public class RemoteTaskProcessor(
                             cancellationToken: keepAliveCts.Token);
                         if (!resp.IsAlive)
                         {
-                            await keepAliveCts.CancelAsync();
+                            await Task.WhenAll(upscalesCts.CancelAsync(), keepAliveCts.CancelAsync());
+                            break;
                         }
                     }
                     catch (RpcException ex) when (ex.StatusCode == StatusCode.NotFound)
                     {
-                        try { await keepAliveCts.CancelAsync(); }
+                        try { await Task.WhenAll(upscalesCts.CancelAsync(), keepAliveCts.CancelAsync()); }
                         catch { }
                     }
                     catch (Exception ex)
@@ -329,7 +332,7 @@ public class RemoteTaskProcessor(
                                     await client.KeepAliveAsync(req, cancellationToken: keepAliveCts.Token);
                                 if (!resp.IsAlive)
                                 {
-                                    await keepAliveCts.CancelAsync();
+                                    await Task.WhenAll(upscalesCts.CancelAsync(), keepAliveCts.CancelAsync());
                                     break;
                                 }
                             }
@@ -362,11 +365,11 @@ public class RemoteTaskProcessor(
 
             try
             {
-                await upscaler.Upscale(item.DownloadedFile, upscaledFile, profile, progress, stoppingToken);
+                await upscaler.Upscale(item.DownloadedFile, upscaledFile, profile, progress, upscalesCts.Token);
             }
             catch (NotImplementedException)
             {
-                await upscaler.Upscale(item.DownloadedFile, upscaledFile, profile, stoppingToken);
+                await upscaler.Upscale(item.DownloadedFile, upscaledFile, profile, upscalesCts.Token);
             }
             catch (OperationCanceledException)
             {
@@ -616,7 +619,8 @@ public class RemoteTaskProcessor(
         catch { }
     }
 
-    private Task RunKeepAliveLoop(CancellationTokenSource cts, Func<int?> taskIdProvider,
+    private Task RunKeepAliveLoop(CancellationTokenSource cts,
+        Func<int?> taskIdProvider,
         Func<int, KeepAliveRequest> requestFactory)
     {
         return Task.Run(async () =>
@@ -638,6 +642,7 @@ public class RemoteTaskProcessor(
                         await client.KeepAliveAsync(requestFactory(id.Value), cancellationToken: cts.Token);
                     if (!ka.IsAlive)
                     {
+                        await cts.CancelAsync();
                         break;
                     }
                 }
