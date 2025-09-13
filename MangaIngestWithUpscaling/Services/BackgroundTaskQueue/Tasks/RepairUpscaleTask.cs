@@ -42,7 +42,8 @@ public class RepairUpscaleTask : BaseTask
     {
         ChapterId = chapter.Id;
         UpscalerProfileId = profile.Id;
-        FriendlyEntryName = $"Repairing upscaled {chapter.FileName} of {chapter.Manga.PrimaryTitle} with {profile.Name}";
+        FriendlyEntryName =
+            $"Repairing upscaled {chapter.FileName} of {chapter.Manga.PrimaryTitle} with {profile.Name}";
     }
 
     public override string TaskFriendlyName => FriendlyEntryName;
@@ -69,8 +70,9 @@ public class RepairUpscaleTask : BaseTask
             .Include(c => c.UpscalerProfile)
             .FirstOrDefaultAsync(
                 c => c.Id == ChapterId, cancellationToken);
-        UpscalerProfile? upscalerProfile = await dbContext.UpscalerProfiles.FirstOrDefaultAsync(
-            c => c.Id == UpscalerProfileId, cancellationToken);
+        UpscalerProfile? upscalerProfile = chapter?.UpscalerProfile ??
+                                           await dbContext.UpscalerProfiles.FirstOrDefaultAsync(
+                                               c => c.Id == UpscalerProfileId, cancellationToken);
 
         if (chapter == null || upscalerProfile == null)
         {
@@ -78,21 +80,21 @@ public class RepairUpscaleTask : BaseTask
                 $"Chapter ({chapter?.RelativePath ?? "Not found"}) or upscaler profile ({upscalerProfile?.Name ?? "Not found"}, id: {UpscalerProfileId}) not found.");
         }
 
-        if (chapter.Manga?.Library?.UpscaledLibraryPath == null)
+        if (chapter.UpscaledFullPath == null)
         {
             throw new InvalidOperationException(
                 $"Upscaled library path of library {chapter.Manga?.Library?.Name ?? "Unknown"} ({chapter.Manga?.Library?.Id}) not set.");
         }
 
-        string upscaleTargetPath = Path.Combine(chapter.Manga.Library.UpscaledLibraryPath, chapter.RelativePath);
-        string currentStoragePath = Path.Combine(chapter.Manga.Library.NotUpscaledLibraryPath, chapter.RelativePath);
+        string upscaleTargetPath = chapter.UpscaledFullPath;
+        string currentStoragePath = chapter.NotUpscaledFullPath;
 
         logger.LogInformation("Starting repair of chapter \"{chapterFileName}\" of {seriesTitle}",
             chapter.FileName, chapter.Manga.PrimaryTitle);
 
         // Analyze what pages need repair
         var differences = metadataHandling.AnalyzePageDifferences(currentStoragePath, upscaleTargetPath);
-        
+
         if (differences.AreEqual)
         {
             logger.LogInformation("Chapter \"{chapterFileName}\" of {seriesTitle} no longer needs repair",
@@ -102,9 +104,10 @@ public class RepairUpscaleTask : BaseTask
 
         if (!differences.CanRepair)
         {
-            logger.LogWarning("Chapter \"{chapterFileName}\" of {seriesTitle} cannot be repaired - will fall back to full re-upscale",
+            logger.LogWarning(
+                "Chapter \"{chapterFileName}\" of {seriesTitle} cannot be repaired - will fall back to full re-upscale",
                 chapter.FileName, chapter.Manga.PrimaryTitle);
-            
+
             // Fall back to full upscale by creating a regular UpscaleTask
             var fallbackTask = new UpscaleTask(chapter, upscalerProfile);
             await fallbackTask.ProcessAsync(services, cancellationToken);
@@ -114,7 +117,8 @@ public class RepairUpscaleTask : BaseTask
         var upscaler = services.GetRequiredService<IUpscaler>();
         try
         {
-            await PerformRepair(upscaler, currentStoragePath, upscaleTargetPath, upscalerProfile, differences, logger, cancellationToken);
+            await PerformRepair(upscaler, currentStoragePath, upscaleTargetPath, upscalerProfile, differences, logger,
+                cancellationToken);
             _ = chapterChangedNotifier.Notify(chapter, true);
         }
         catch (Exception)
@@ -124,6 +128,7 @@ public class RepairUpscaleTask : BaseTask
             {
                 File.Delete(upscaleTargetPath);
             }
+
             throw;
         }
 
@@ -214,7 +219,8 @@ public class RepairUpscaleTask : BaseTask
                 });
 
                 // Use folder-based upscaling for the missing pages
-                await UpscaleFolderContents(upscaler, tempMissingDir, tempUpscaledMissingDir, profile, reporter, logger, cancellationToken);
+                await UpscaleFolderContents(upscaler, tempMissingDir, tempUpscaledMissingDir, profile, reporter, logger,
+                    cancellationToken);
 
                 // Copy upscaled missing pages back to the upscaled directory
                 foreach (var upscaledFile in Directory.GetFiles(tempUpscaledMissingDir))
@@ -236,7 +242,8 @@ public class RepairUpscaleTask : BaseTask
             File.Delete(upscaledPath);
             File.Move(tempRepairedCbz, upscaledPath);
 
-            logger.LogInformation("Successfully repaired chapter with {missingCount} missing pages and {extraCount} extra pages removed",
+            logger.LogInformation(
+                "Successfully repaired chapter with {missingCount} missing pages and {extraCount} extra pages removed",
                 differences.MissingPages.Count, differences.ExtraPages.Count);
         }
         finally
@@ -297,7 +304,7 @@ public class RepairUpscaleTask : BaseTask
                 {
                     var imageEntry = archive.Entries.FirstOrDefault(e =>
                         e.FullName.ToLowerInvariant().EndsWithAny(".png", ".jpg", ".jpeg", ".avif", ".webp", ".bmp"));
-                    
+
                     if (imageEntry != null)
                     {
                         imageEntry.ExtractToFile(outputFile);
