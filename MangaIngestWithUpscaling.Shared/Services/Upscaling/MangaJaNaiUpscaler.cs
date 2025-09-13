@@ -71,7 +71,7 @@ public class MangaJaNaiUpscaler(
         ("https://github.com/the-database/MangaJaNai/releases/download/1.0.0/IllustrationJaNai_V1_ModelsOnly.zip",
             "6f5496f5ded597474290403de73d7a46c3f8ed328261db2e6ff830a415a6f60b"),
         ("https://github.com/the-database/MangaJaNai/releases/download/2.0.0/4x_IllustrationJaNai_V2standard_ModelsOnly.zip",
-            "f01a7117c297bdbac3697b08936ccd8064f538bda6618329a1dc61023166f096"),
+            "deb0e71aa63257692399419e33991be0496c037049948e4207936b4145d20ba5"),
         ("https://github.com/the-database/MangaJaNai/releases/download/1.0.0/MangaJaNai_V1_ModelsOnly.zip",
             "5156f4167875bba51a8ed52bd1c794b0d7277f7103f99b397518066e4dda7e55")
     ];
