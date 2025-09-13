@@ -241,65 +241,123 @@ public class RemoteTaskProcessor(
 
 
             string upscaledFile = PrepareTempFile(item.TaskId, "_upscaled");
-            var progress = new Progress<UpscaleProgress>(async p =>
+            // Progress reporting must not block upscaling: use a bounded channel and a background sender
+            var progressChannel = Channel.CreateBounded<UpscaleProgress>(new BoundedChannelOptions(1)
             {
-                DateTime now = DateTime.UtcNow;
-
-                // Update per-page stats and trigger fetch when appropriate
-                if (p.Total.HasValue && p.Current.HasValue)
-                {
-                    int total = p.Total.Value;
-                    int current = p.Current.Value;
-                    if (lastProgressCurrent.HasValue && current > lastProgressCurrent.Value)
-                    {
-                        int deltaPages = current - lastProgressCurrent.Value;
-                        double deltaTime = (now - lastProgressTime).TotalSeconds;
-                        if (deltaPages > 0 && deltaTime > 0)
-                        {
-                            _predictor.RecordPerPage(deltaTime / deltaPages);
-                        }
-                    }
-
-                    lastProgressCurrent = current;
-                    lastProgressTime = now;
-
-                    int remaining = Math.Max(0, total - current);
-                    bool shouldPrefetch = _predictor.ShouldPrefetch(remaining, total);
-                    if (!signaledThisTask && shouldPrefetch)
-                    {
-                        signaledThisTask = true;
-                        _fetchSignals?.Writer.TryWrite(true);
-                    }
-                }
-
-                if (now - lastProgressSend < TimeSpan.FromMilliseconds(400)) return;
-                lastProgressSend = now;
-                try
-                {
-                    var req = new KeepAliveRequest { TaskId = item.TaskId };
-                    if (p.Total.HasValue) req.Total = p.Total.Value;
-                    if (p.Current.HasValue) req.Current = p.Current.Value;
-                    if (!string.IsNullOrWhiteSpace(p.StatusMessage)) req.StatusMessage = p.StatusMessage;
-                    if (!string.IsNullOrWhiteSpace(p.Phase)) req.Phase = p.Phase;
-                    var resp = await client.KeepAliveAsync(req, cancellationToken: stoppingToken);
-                    if (!resp.IsAlive)
-                    {
-                        await keepAliveCts.CancelAsync();
-                        return;
-                    }
-                }
-                catch (RpcException ex) when (ex.StatusCode == StatusCode.NotFound)
-                {
-                    try { await keepAliveCts.CancelAsync(); }
-                    catch { }
-
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    logger.LogDebug(ex, "KeepAlive progress send failed for task {taskId}", item.TaskId);
-                }
+                SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.DropOldest
             });
+
+            // Writer: never await network; buffer latest only
+            var progress = new Progress<UpscaleProgress>(p =>
+            {
+                progressChannel.Writer.TryWrite(p);
+            });
+
+            // Reader/sender: debounced network I/O off the critical path
+            var progressSenderTask = Task.Run(async () =>
+            {
+                var debounce = new PeriodicTimer(TimeSpan.FromMilliseconds(200));
+                UpscaleProgress? pending = null;
+                while (!keepAliveCts.IsCancellationRequested)
+                {
+                    try
+                    {
+                        // Drain to latest
+                        while (progressChannel.Reader.TryRead(out UpscaleProgress? p))
+                        {
+                            pending = p;
+                            DateTime now = DateTime.UtcNow;
+
+                            // Update per-page stats and predictive trigger
+                            if (p.Total.HasValue && p.Current.HasValue)
+                            {
+                                int total = p.Total.Value;
+                                int current = p.Current.Value;
+                                if (lastProgressCurrent.HasValue && current > lastProgressCurrent.Value)
+                                {
+                                    int deltaPages = current - lastProgressCurrent.Value;
+                                    double deltaTime = (now - lastProgressTime).TotalSeconds;
+                                    if (deltaPages > 0 && deltaTime > 0)
+                                    {
+                                        _predictor.RecordPerPage(deltaTime / deltaPages);
+                                    }
+                                }
+
+                                lastProgressCurrent = current;
+                                lastProgressTime = now;
+
+                                int remaining = Math.Max(0, total - current);
+                                bool shouldPrefetch = _predictor.ShouldPrefetch(remaining, total);
+                                if (!signaledThisTask && shouldPrefetch)
+                                {
+                                    signaledThisTask = true;
+                                    _fetchSignals?.Writer.TryWrite(true);
+                                }
+                            }
+                        }
+
+                        // Debounced send of latest progress
+                        DateTime nowSend = DateTime.UtcNow;
+                        if (pending is not null && nowSend - lastProgressSend >= TimeSpan.FromMilliseconds(400))
+                        {
+                            lastProgressSend = nowSend;
+                            try
+                            {
+                                var req = new KeepAliveRequest { TaskId = item.TaskId };
+                                if (pending.Total.HasValue)
+                                {
+                                    req.Total = pending.Total.Value;
+                                }
+
+                                if (pending.Current.HasValue)
+                                {
+                                    req.Current = pending.Current.Value;
+                                }
+
+                                if (!string.IsNullOrWhiteSpace(pending.StatusMessage))
+                                {
+                                    req.StatusMessage = pending.StatusMessage;
+                                }
+
+                                if (!string.IsNullOrWhiteSpace(pending.Phase))
+                                {
+                                    req.Phase = pending.Phase;
+                                }
+
+                                KeepAliveResponse? resp =
+                                    await client.KeepAliveAsync(req, cancellationToken: keepAliveCts.Token);
+                                if (!resp.IsAlive)
+                                {
+                                    await keepAliveCts.CancelAsync();
+                                    break;
+                                }
+                            }
+                            catch (RpcException ex) when (ex.StatusCode == StatusCode.NotFound)
+                            {
+                                try { await keepAliveCts.CancelAsync(); }
+                                catch { }
+
+                                break;
+                            }
+                            catch (Exception ex)
+                            {
+                                logger.LogDebug(ex, "KeepAlive progress send failed for task {taskId}", item.TaskId);
+                            }
+                        }
+
+                        try { await debounce.WaitForNextTickAsync(keepAliveCts.Token); }
+                        catch { break; }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        break;
+                    }
+                    catch
+                    {
+                        // swallow and continue
+                    }
+                }
+            }, keepAliveCts.Token);
 
             try
             {
@@ -352,6 +410,12 @@ public class RemoteTaskProcessor(
 
             await keepAliveCts.CancelAsync();
             try { await keepAliveTask; }
+            catch { }
+
+            try { progressChannel.Writer.TryComplete(); }
+            catch { }
+
+            try { await progressSenderTask; }
             catch { }
 
             // Send to upload
