@@ -5,6 +5,7 @@ using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
+using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Services.MangaManagement;
 
@@ -173,7 +174,9 @@ public class MangaMerger(
                 try
                 {
                     // add the other titles to the primary manga if they are not already there
-                    if (!primary.OtherTitles.Any(t => t.Title == manga.PrimaryTitle))
+                    // Check global uniqueness constraint to avoid violating database constraint
+                    if (!primary.OtherTitles.Any(t => t.Title == manga.PrimaryTitle)
+                        && !await dbContext.MangaAlternativeTitles.AnyAsync(t => t.Title == manga.PrimaryTitle, cancellationToken))
                     {
                         primary.OtherTitles.Add(new MangaAlternativeTitle
                         {
@@ -185,6 +188,14 @@ public class MangaMerger(
                                  .Where(title => !primary.OtherTitles.Any(t => t.Title == title.Title))
                                  .ToList())
                     {
+                        // Check global uniqueness constraint to avoid violating database constraint
+                        if (await dbContext.MangaAlternativeTitles.AnyAsync(t => t.Title == title.Title, cancellationToken))
+                        {
+                            // Title already exists globally, just remove from source without adding to target
+                            manga.OtherTitles.Remove(title);
+                            continue;
+                        }
+
                         // Cannot modify key properties of existing entities, so create new ones
                         primary.OtherTitles.Add(new MangaAlternativeTitle
                         {
