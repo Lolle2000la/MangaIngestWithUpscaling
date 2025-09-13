@@ -43,6 +43,7 @@ services:
       #Ingest_Kavita__BaseUrl: http://kavita:5000 # the base URL of your Kavita instance
       #Ingest_Kavita__ApiKey: #Your API key here
       #Ingest_Kavita__Enabled: True # defaults to false
+      #Ingest_Kavita__UseSeriesUpdate: True # when true, updates existing series instead of creating new ones when manga titles change (defaults to true)
       # OIDC Authentication (v0.12.0+)
       #Ingest_OIDC__Enabled: false # Set to true to enable OIDC authentication
       #Ingest_OIDC__Authority: # Your OIDC provider's authority URL (e.g., https://authentik.yourdomain.com/application/o/your-app/)
@@ -87,6 +88,7 @@ services:
       #Ingest_Kavita__BaseUrl: http://kavita:5000 # the base URL of your Kavita instance
       #Ingest_Kavita__ApiKey: #Your API key here
       #Ingest_Kavita__Enabled: True # defaults to false
+      #Ingest_Kavita__UseSeriesUpdate: True # when true, updates existing series instead of creating new ones when manga titles change (defaults to true)
       # OIDC Authentication (v0.12.0+)
       #Ingest_OIDC__Enabled: false # Set to true to enable OIDC authentication
       #Ingest_OIDC__Authority: # Your OIDC provider's authority URL (e.g., https://authentik.yourdomain.com/application/o/your-app/)
@@ -134,6 +136,7 @@ services:
       #Ingest_Kavita__BaseUrl: http://kavita:5000 # the base URL of your Kavita instance
       #Ingest_Kavita__ApiKey: #Your API key here
       #Ingest_Kavita__Enabled: True # defaults to false
+      #Ingest_Kavita__UseSeriesUpdate: True # when true, updates existing series instead of creating new ones when manga titles change (defaults to true)
       # OIDC Authentication (v0.12.0+)
       #Ingest_OIDC__Enabled: false # Set to true to enable OIDC authentication
       #Ingest_OIDC__Authority: # Your OIDC provider's authority URL (e.g., https://authentik.yourdomain.com/application/o/your-app/)

@@ -71,6 +71,9 @@ public class MangaMetadataChanger(
             return RenameResult.Cancelled;
         }
 
+        // Store the old title before changing it
+        var oldTitle = manga.PrimaryTitle;
+        
         manga.ChangePrimaryTitle(newTitle, addOldToAlternative);
 
         // load library and chapters if not already loaded
@@ -117,6 +120,17 @@ public class MangaMetadataChanger(
                 logger.LogError(ex, "Error updating metadata for chapter {ChapterId} ({ChapterPath})", chapter.Id,
                     chapter.RelativePath);
             }
+        }
+
+        // Notify integrations about the manga title change after all files have been moved
+        try
+        {
+            await chapterChangedNotifier.NotifyMangaTitleChanged(manga, oldTitle, newTitle);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to notify integrations of manga title change from '{OldTitle}' to '{NewTitle}'", 
+                oldTitle, newTitle);
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);
