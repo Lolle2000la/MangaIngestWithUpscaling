@@ -1,6 +1,7 @@
 ﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.EntityFrameworkCore;
@@ -11,6 +12,7 @@ namespace MangaIngestWithUpscaling.Services.LibraryIntegrity;
 public class LibraryIntegrityChecker(
     ApplicationDbContext dbContext,
     IMetadataHandlingService metadataHandling,
+    ITaskQueue taskQueue,
     ILogger<LibraryIntegrityChecker> logger) : ILibraryIntegrityChecker
 {
     /// <inheritdoc/>
@@ -248,6 +250,57 @@ public class LibraryIntegrityChecker(
             }
             else
             {
+                // Analyze the differences to see if repair is possible
+                var differences = metadataHandling.AnalyzePageDifferences(chapter.NotUpscaledFullPath, chapter.UpscaledFullPath);
+                
+                if (differences.CanRepair)
+                {
+                    logger.LogInformation(
+                        "Upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle} has integrity issues but can be repaired. Missing pages: {missingCount}, Extra pages: {extraCount}. Scheduling repair task.",
+                        chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle, differences.MissingPages.Count, differences.ExtraPages.Count);
+                    
+                    // Check if a repair task is already queued for this chapter to avoid duplicates
+                    IQueryable<PersistedTask> existingRepairTaskQuery = dbContext.PersistedTasks
+                        .FromSql(
+                            $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(RepairUpscaleTask)} AND Data->>'$.ChapterId' = {chapter.Id}");
+                    PersistedTask? existingRepairTask = await existingRepairTaskQuery.FirstOrDefaultAsync(cancellationToken ?? CancellationToken.None);
+                    
+                    if (existingRepairTask == null)
+                    {
+                        // Schedule repair task instead of deleting
+                        if (chapter.Manga?.EffectiveUpscalerProfile != null)
+                        {
+                            var repairTask = new RepairUpscaleTask(chapter, chapter.Manga.EffectiveUpscalerProfile);
+                            await taskQueue.EnqueueAsync(repairTask);
+                            
+                            logger.LogInformation(
+                                "Scheduled repair task for chapter {chapterFileName} ({chapterId}) of {seriesTitle}",
+                                chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
+                            
+                            return IntegrityCheckResult.Corrected;
+                        }
+                        else
+                        {
+                            logger.LogWarning(
+                                "Cannot schedule repair for chapter {chapterFileName} ({chapterId}) of {seriesTitle} - no upscaler profile available",
+                                chapter.FileName, chapter.Id, chapter.Manga?.PrimaryTitle);
+                        }
+                    }
+                    else
+                    {
+                        logger.LogDebug(
+                            "Repair task already exists for chapter {chapterFileName} ({chapterId}) of {seriesTitle}",
+                            chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
+                        return IntegrityCheckResult.MaybeInProgress;
+                    }
+                }
+                else
+                {
+                    logger.LogWarning(
+                        "Upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle} has integrity issues that cannot be repaired. Will fall back to deletion.",
+                        chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
+                }
+                
                 throw new InvalidDataException(
                     "The upscaled chapter does not match the outward number of pages to the original chapter.");
             }
@@ -255,10 +308,46 @@ public class LibraryIntegrityChecker(
         catch (Exception ex)
         {
             logger.LogWarning(ex,
-                "An invalid upscale was found for {chapterFileName} ({chapterId}) of {seriesTitle}, but no associated task to upscale was found. Deleting.",
+                "An invalid upscale was found for {chapterFileName} ({chapterId}) of {seriesTitle}. Attempting repair before deletion.",
                 chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
             try
             {
+                // Try to analyze differences one more time in case the exception was from something else
+                var differences = metadataHandling.AnalyzePageDifferences(chapter.NotUpscaledFullPath, chapter.UpscaledFullPath);
+                
+                if (differences.CanRepair && chapter.Manga?.EffectiveUpscalerProfile != null)
+                {
+                    // Check if a repair task is already queued for this chapter
+                    IQueryable<PersistedTask> existingRepairTaskQuery = dbContext.PersistedTasks
+                        .FromSql(
+                            $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(RepairUpscaleTask)} AND Data->>'$.ChapterId' = {chapter.Id}");
+                    PersistedTask? existingRepairTask = await existingRepairTaskQuery.FirstOrDefaultAsync(cancellationToken ?? CancellationToken.None);
+                    
+                    if (existingRepairTask == null)
+                    {
+                        var repairTask = new RepairUpscaleTask(chapter, chapter.Manga.EffectiveUpscalerProfile);
+                        await taskQueue.EnqueueAsync(repairTask);
+                        
+                        logger.LogInformation(
+                            "Scheduled repair task for damaged chapter {chapterFileName} ({chapterId}) of {seriesTitle}",
+                            chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
+                        
+                        return IntegrityCheckResult.Corrected;
+                    }
+                    else
+                    {
+                        logger.LogDebug(
+                            "Repair task already exists for damaged chapter {chapterFileName} ({chapterId}) of {seriesTitle}",
+                            chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
+                        return IntegrityCheckResult.MaybeInProgress;
+                    }
+                }
+                
+                // Fall back to deletion if repair is not possible
+                logger.LogWarning(
+                    "Cannot repair chapter {chapterFileName} ({chapterId}) of {seriesTitle}. Falling back to deletion.",
+                    chapter.FileName, chapter.Id, chapter.Manga?.PrimaryTitle);
+                
                 if (chapter.UpscaledFullPath != null && File.Exists(chapter.UpscaledFullPath))
                     File.Delete(chapter.UpscaledFullPath);
                 if (chapter.IsUpscaled)
@@ -272,7 +361,7 @@ public class LibraryIntegrityChecker(
             catch (Exception ex2)
             {
                 logger.LogError(ex2,
-                    "Failed to delete invalid upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle}.",
+                    "Failed to repair or delete invalid upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle}.",
                     chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
                 return IntegrityCheckResult.Invalid;
             }

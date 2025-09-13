@@ -129,6 +129,57 @@ public class MetadataHandlingService(
         }
     }
 
+    /// <inheritdoc/>
+    public PageDifferenceResult AnalyzePageDifferences(string? originalFile, string? upscaledFile)
+    {
+        if (string.IsNullOrEmpty(originalFile) || string.IsNullOrEmpty(upscaledFile))
+            return new PageDifferenceResult([], []);
+
+        if (!originalFile.EndsWith(".cbz") || !upscaledFile.EndsWith(".cbz"))
+        {
+            return new PageDifferenceResult([], []);
+        }
+
+        try
+        {
+            using var originalArchive = ZipFile.OpenRead(originalFile);
+            using var upscaledArchive = ZipFile.OpenRead(upscaledFile);
+
+            var originalPages = originalArchive.Entries
+                .Where(e => e.FullName.ToLowerInvariant()
+                    .EndsWithAny(".png", ".jpg", ".jpeg", ".avif", ".webp", ".bmp"))
+                .Select(e => Path.GetFileNameWithoutExtension(e.FullName))
+                .OrderBy(e => e)
+                .ToList();
+
+            var upscaledPages = upscaledArchive.Entries
+                .Where(e => e.FullName.ToLowerInvariant()
+                    .EndsWithAny(".png", ".jpg", ".jpeg", ".avif", ".webp", ".bmp"))
+                .Select(e => Path.GetFileNameWithoutExtension(e.FullName))
+                .OrderBy(e => e)
+                .ToList();
+
+            var missingPages = originalPages.Except(upscaledPages).ToList();
+            var extraPages = upscaledPages.Except(originalPages).ToList();
+
+            return new PageDifferenceResult(missingPages, extraPages);
+        }
+        catch (InvalidDataException ex)
+        {
+            logger.LogError(ex, "The format of one of the following two archives is invalid.\n" +
+                                "Tried to analyze differences between \"{originalFile}\" and \"{upscaledFile}\"",
+                originalFile, upscaledFile);
+            return new PageDifferenceResult([], []);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to analyze cbz file differences.\n\n" +
+                                "Tried to analyze differences between \"{originalFile}\" and \"{upscaledFile}\"",
+                originalFile, upscaledFile);
+            return new PageDifferenceResult([], []);
+        }
+    }
+
     public void WriteComicInfo(string file, ExtractedMetadata metadata)
     {
         metadata = metadata.CheckAndCorrect();
