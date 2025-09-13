@@ -164,6 +164,21 @@ public class DistributedUpscaleTaskProcessor(
                         }
                     }
 
+                    // If this is a RepairUpscaleTask or RenameUpscaledChaptersSeriesTask, do not send it to the remote worker.
+                    // Immediately forward to the local UpscaleTaskProcessor via the reroute channel, then keep searching.
+                    if (task.Data is RepairUpscaleTask or RenameUpscaledChaptersSeriesTask)
+                    {
+                        using IServiceScope scope = scopeFactory.CreateScope();
+                        var logger = scope.ServiceProvider
+                            .GetRequiredService<ILogger<DistributedUpscaleTaskProcessor>>();
+                        logger.LogDebug(
+                            "Rerouting task {taskId} ({taskType}) to local UpscaleTaskProcessor and continuing to search.",
+                            task.Id, task.Data.GetType().Name);
+
+                        await taskQueue.SendToLocalUpscaleAsync(task, linkedCts.Token);
+                        continue;
+                    }
+
                     if (task.Data is UpscaleTask upscaleData)
                     {
                         // Check if the target chapter file still exists before giving the task to the worker
@@ -202,7 +217,8 @@ public class DistributedUpscaleTaskProcessor(
                         // check if the target file already exists and has equal pages
                         if (File.Exists(chapter.UpscaledFullPath))
                         {
-                            var metadataHandling = scope.ServiceProvider.GetRequiredService<IMetadataHandlingService>();
+                            var metadataHandling =
+                                scope.ServiceProvider.GetRequiredService<IMetadataHandlingService>();
                             if (metadataHandling.PagesEqual(chapter.NotUpscaledFullPath, chapter.UpscaledFullPath))
                             {
                                 task.Status = PersistedTaskStatus.Completed;
