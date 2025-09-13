@@ -3,6 +3,7 @@ using Grpc.Core;
 using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using System.Diagnostics;
+using System.Text;
 using System.Threading.Channels;
 using CompressionFormat = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat;
 using ScaleFactor = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.ScaleFactor;
@@ -324,10 +325,11 @@ public class RemoteTaskProcessor(
             catch (Exception ex)
             {
                 // Report failure, cleanup, and continue
+                var errorMessage = FormatUpscaleErrorMessage(item.TaskId, item.DownloadedFile, profile, ex);
                 try
                 {
                     await client.ReportTaskFailedAsync(
-                        new ReportTaskFailedRequest { TaskId = item.TaskId, ErrorMessage = ex.ToString() },
+                        new ReportTaskFailedRequest { TaskId = item.TaskId, ErrorMessage = errorMessage },
                         cancellationToken: stoppingToken);
                 }
                 catch (Exception rpcEx)
@@ -387,10 +389,11 @@ public class RemoteTaskProcessor(
             catch (Exception ex)
             {
                 logger.LogError(ex, "Task {taskId} failed during upload.", item.TaskId);
+                var errorMessage = FormatUploadErrorMessage(item.TaskId, item.UpscaledFile, ex);
                 try
                 {
                     await client.ReportTaskFailedAsync(
-                        new ReportTaskFailedRequest { TaskId = item.TaskId, ErrorMessage = ex.ToString() },
+                        new ReportTaskFailedRequest { TaskId = item.TaskId, ErrorMessage = errorMessage },
                         cancellationToken: stoppingToken);
                 }
                 catch (Exception rpcEx)
@@ -533,6 +536,68 @@ public class RemoteTaskProcessor(
             }
         }
         catch { }
+    }
+
+    /// <summary>
+    /// Formats a comprehensive error message for upscaling failures, similar to how PythonService captures process output.
+    /// </summary>
+    private static string FormatUpscaleErrorMessage(int taskId, string inputFile, UpscalerProfile profile, Exception ex)
+    {
+        var errorBuilder = new StringBuilder();
+        errorBuilder.AppendLine($"Upscaling task {taskId} failed:");
+        errorBuilder.AppendLine($"Input file: {inputFile}");
+        errorBuilder.AppendLine($"Profile: {profile.Name} ({profile.UpscalerMethod}, {profile.ScalingFactor}, {profile.CompressionFormat})");
+        errorBuilder.AppendLine($"Quality: {profile.Quality}");
+        
+        // Check if input file exists and get its size for diagnostics
+        if (File.Exists(inputFile))
+        {
+            try
+            {
+                var fileInfo = new FileInfo(inputFile);
+                errorBuilder.AppendLine($"Input file size: {fileInfo.Length:N0} bytes");
+            }
+            catch { }
+        }
+        else
+        {
+            errorBuilder.AppendLine("Input file does not exist");
+        }
+
+        errorBuilder.AppendLine("Exception details:");
+        errorBuilder.AppendLine(ex.ToString());
+
+        return errorBuilder.ToString();
+    }
+
+    /// <summary>
+    /// Formats a comprehensive error message for upload failures.
+    /// </summary>
+    private static string FormatUploadErrorMessage(int taskId, string upscaledFile, Exception ex)
+    {
+        var errorBuilder = new StringBuilder();
+        errorBuilder.AppendLine($"Upload task {taskId} failed:");
+        errorBuilder.AppendLine($"Upscaled file: {upscaledFile}");
+        
+        // Check if upscaled file exists and get its size for diagnostics
+        if (File.Exists(upscaledFile))
+        {
+            try
+            {
+                var fileInfo = new FileInfo(upscaledFile);
+                errorBuilder.AppendLine($"Upscaled file size: {fileInfo.Length:N0} bytes");
+            }
+            catch { }
+        }
+        else
+        {
+            errorBuilder.AppendLine("Upscaled file does not exist");
+        }
+
+        errorBuilder.AppendLine("Exception details:");
+        errorBuilder.AppendLine(ex.ToString());
+
+        return errorBuilder.ToString();
     }
 
     private Task RunKeepAliveLoop(CancellationTokenSource cts, Func<int?> taskIdProvider,
