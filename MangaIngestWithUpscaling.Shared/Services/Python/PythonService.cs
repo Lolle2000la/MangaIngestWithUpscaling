@@ -181,6 +181,7 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
 
         using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         var errorBuilder = new StringBuilder();
+        var outputBuilder = new StringBuilder();
         DateTime lastActivity = DateTime.UtcNow;
 
         void updateActivity() => lastActivity = DateTime.UtcNow;
@@ -203,6 +204,13 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
                 }
 
                 updateActivity();
+                
+                // Capture stdout for error reporting while still calling the progress callback
+                lock (outputBuilder)
+                {
+                    outputBuilder.AppendLine(e.Data);
+                }
+                
                 try { await onStdout(e.Data); }
                 catch
                 {
@@ -248,12 +256,32 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
             if (process.ExitCode != 0)
             {
                 string err;
+                string output;
                 lock (errorBuilder)
                 {
                     err = errorBuilder.ToString();
                 }
+                lock (outputBuilder)
+                {
+                    output = outputBuilder.ToString();
+                }
 
-                throw new InvalidOperationException($"Python process exited with code {process.ExitCode}: {err}");
+                var errorMessage = new StringBuilder();
+                errorMessage.AppendLine($"Python process exited with code {process.ExitCode}");
+                
+                if (!string.IsNullOrWhiteSpace(output))
+                {
+                    errorMessage.AppendLine("Stdout:");
+                    errorMessage.AppendLine(output);
+                }
+                
+                if (!string.IsNullOrWhiteSpace(err))
+                {
+                    errorMessage.AppendLine("Stderr:");
+                    errorMessage.AppendLine(err);
+                }
+
+                throw new InvalidOperationException(errorMessage.ToString().TrimEnd());
             }
         }
         finally

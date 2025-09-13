@@ -5,8 +5,6 @@ namespace MangaIngestWithUpscaling.RemoteWorker.Configuration;
 
 public static class ConfigRegistration
 {
-    [RequiresDynamicCode("Configuration binding may require dynamic code")]
-    [RequiresUnreferencedCode("Configuration binding may require unreferenced code")]
     public static void RegisterConfig(this WebApplicationBuilder builder)
     {
         builder.Services.Configure<UpscalerConfig>(builder.Configuration.GetSection(UpscalerConfig.Position));
