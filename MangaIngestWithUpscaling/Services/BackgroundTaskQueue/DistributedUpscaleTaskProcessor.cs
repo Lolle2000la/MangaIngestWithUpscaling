@@ -140,6 +140,30 @@ public class DistributedUpscaleTaskProcessor(
                 {
                     PersistedTask task = await _reader.ReadAsync(linkedCts.Token);
 
+                    using (IServiceScope scope = scopeFactory.CreateScope())
+                    {
+                        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                        var logger =
+                            scope.ServiceProvider.GetRequiredService<ILogger<DistributedUpscaleTaskProcessor>>();
+
+                        PersistedTask? taskFromDb = await dbContext.PersistedTasks.AsNoTracking()
+                            .FirstOrDefaultAsync(t => t.Id == task.Id, linkedCts.Token);
+
+                        // A task should only be processed if it's in the "Pending" state.
+                        // If it's anything else, another worker has claimed it or it's finalized.
+                        if (taskFromDb == null || taskFromDb.Status != PersistedTaskStatus.Pending)
+                        {
+                            if (taskFromDb != null)
+                            {
+                                logger.LogInformation(
+                                    "Skipping task {taskId} as it is no longer pending (current status: {status}).",
+                                    task.Id, taskFromDb.Status);
+                            }
+
+                            continue; // Skip this task and try to get the next one from the channel.
+                        }
+                    }
+
                     if (task.Data is UpscaleTask upscaleData)
                     {
                         // Check if the target chapter file still exists before giving the task to the worker
@@ -191,32 +215,16 @@ public class DistributedUpscaleTaskProcessor(
                                 continue;
                             }
                         }
-
-                        if (!tcs.TrySetResult(task))
-                        {
-                            // Requester couldn't accept the task (likely cancelled) — re-enqueue immediately
-                            await taskQueue.RetryAsync(task);
-                            _ = StatusChanged?.Invoke(task);
-                            completed = true; // stop trying to satisfy this now-cancelled request
-                            continue;
-                        }
-                        else
-                        {
-                            completed = true;
-                            // Persist any status changes applied above (e.g., from validation checks)
-                            PersistedTask? localTask =
-                                await dbContext.PersistedTasks.FirstOrDefaultAsync(t => t.Id == task.Id,
-                                    linkedCts.Token);
-                            if (localTask == null)
-                            {
-                                return; // Task not found in the database, nothing to do
-                            }
-
-                            localTask.ProcessedAt = task.ProcessedAt;
-                            localTask.Status = task.Status;
-                            await dbContext.SaveChangesAsync(linkedCts.Token);
-                        }
                     }
+
+                    if (!tcs.TrySetResult(task))
+                    {
+                        // Requester couldn't accept the task (likely cancelled) — re-enqueue immediately
+                        await taskQueue.RetryAsync(task);
+                        _ = StatusChanged?.Invoke(task);
+                    }
+
+                    completed = true; // Task has been successfully passed or re-enqueued.
                 }
             }
             catch (OperationCanceledException)
@@ -244,8 +252,20 @@ public class DistributedUpscaleTaskProcessor(
         {
             PersistedTask task = await tcs.Task;
 
-            using IServiceScope scope = scopeFactory.CreateScope();
-            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            //
+            // Now that we have a claimed task, update its status in the DB to "Processing"
+            //
+            using (IServiceScope scope = scopeFactory.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                PersistedTask? taskFromDb =
+                    await dbContext.PersistedTasks.FirstOrDefaultAsync(t => t.Id == task.Id, stoppingToken);
+                if (taskFromDb != null)
+                {
+                    taskFromDb.Status = PersistedTaskStatus.Processing;
+                    await dbContext.SaveChangesAsync(stoppingToken);
+                }
+            }
 
             task.Status = PersistedTaskStatus.Processing;
             task.LastKeepAlive = DateTime.UtcNow.AddSeconds(5); // Bridge network latency
@@ -255,8 +275,6 @@ public class DistributedUpscaleTaskProcessor(
                 runningTasks[task.Id] = task;
             }
 
-            dbContext.Update(task);
-            await dbContext.SaveChangesAsync(stoppingToken);
             _ = StatusChanged?.Invoke(task);
             return task;
         }
