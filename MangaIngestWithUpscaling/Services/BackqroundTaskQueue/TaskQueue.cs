@@ -46,8 +46,21 @@ public class TaskQueue : ITaskQueue, IHostedService
         _standardChannel = Channel.CreateBounded<PersistedTask>(channelOptions);
         _upscaleChannel = Channel.CreateBounded<PersistedTask>(channelOptions);
 
-        // Initialize sorted sets with order comparer
-        Comparer<PersistedTask> comparer = Comparer<PersistedTask>.Create((a, b) => a.Order.CompareTo(b.Order));
+        // Initialize sorted sets with a stable comparer
+        // NOTE: SortedSet considers items equal when comparer returns 0 and will drop duplicates.
+        //       Comparing only by Order collapses many tasks into one when orders match.
+        //       Use Order, then Id as a tiebreaker to preserve all tasks with the same Order.
+        Comparer<PersistedTask> comparer = Comparer<PersistedTask>.Create((a, b) =>
+        {
+            int byOrder = a.Order.CompareTo(b.Order);
+            if (byOrder != 0)
+            {
+                return byOrder;
+            }
+
+            // Id is unique per task (DB identity). This stabilizes ordering and avoids duplicate suppression.
+            return a.Id.CompareTo(b.Id);
+        });
         _standardTasks = new SortedSet<PersistedTask>(comparer);
         _upscaleTasks = new SortedSet<PersistedTask>(comparer);
     }
