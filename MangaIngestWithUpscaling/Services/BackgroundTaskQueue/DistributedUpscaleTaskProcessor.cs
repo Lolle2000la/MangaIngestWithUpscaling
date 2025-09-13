@@ -1,6 +1,8 @@
 ﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
+using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.EntityFrameworkCore;
 using System.Threading.Channels;
 
@@ -13,11 +15,10 @@ public class DistributedUpscaleTaskProcessor(
     private readonly Lock _lock = new();
     private readonly ChannelReader<PersistedTask> _reader = taskQueue.UpscaleReader;
 
-    private readonly Channel<TaskCompletionSource<PersistedTask>> _taskRequests =
-        Channel.CreateUnbounded<TaskCompletionSource<PersistedTask>>();
+    private readonly Channel<(TaskCompletionSource<PersistedTask>, CancellationToken)> _taskRequests =
+        Channel.CreateUnbounded<(TaskCompletionSource<PersistedTask>, CancellationToken)>();
 
     private readonly Dictionary<int, PersistedTask> runningTasks = new();
-    private PersistedTask? _orphanedTask;
     private CancellationToken serviceStoppingToken;
 
     public event Func<PersistedTask, Task>? StatusChanged;
@@ -123,38 +124,104 @@ public class DistributedUpscaleTaskProcessor(
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            TaskCompletionSource<PersistedTask> tcs = await _taskRequests.Reader.ReadAsync(stoppingToken);
+            (TaskCompletionSource<PersistedTask> tcs, CancellationToken cancelToken) =
+                await _taskRequests.Reader.ReadAsync(stoppingToken);
+            var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, cancelToken);
+            using CancellationTokenRegistration registration = linkedCts.Token.Register(() => tcs.TrySetCanceled());
             if (tcs.Task.IsCanceled)
             {
                 continue;
             }
 
-            if (_orphanedTask != null)
-            {
-                PersistedTask? taskToGive = _orphanedTask;
-                _orphanedTask = null;
-                if (tcs.TrySetResult(taskToGive))
-                {
-                    continue;
-                }
-                else
-                {
-                    _orphanedTask = taskToGive;
-                }
-            }
-
             try
             {
-                PersistedTask task = await _reader.ReadAsync(stoppingToken);
-
-                if (!tcs.TrySetResult(task))
+                bool completed = false;
+                while (!completed && !stoppingToken.IsCancellationRequested)
                 {
-                    _orphanedTask = task;
+                    PersistedTask task = await _reader.ReadAsync(linkedCts.Token);
+
+                    if (task.Data is UpscaleTask upscaleData)
+                    {
+                        // Check if the target chapter file still exists before giving the task to the worker
+                        using IServiceScope scope = scopeFactory.CreateScope();
+                        var logger =
+                            scope.ServiceProvider.GetRequiredService<ILogger<DistributedUpscaleTaskProcessor>>();
+                        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                        Chapter? chapter = await dbContext.Chapters
+                            .Include(t => t.Manga)
+                            .ThenInclude(t => t.Library)
+                            .ThenInclude(t => t.UpscalerProfile)
+                            .Include(t => t.UpscalerProfile)
+                            .FirstOrDefaultAsync(c => c.Id == upscaleData.ChapterId, linkedCts.Token);
+                        if (chapter == null || !File.Exists(chapter.NotUpscaledFullPath))
+                        {
+                            // Chapter no longer exists, mark task as failed
+                            task.Status = PersistedTaskStatus.Failed;
+                            task.ProcessedAt = DateTime.UtcNow;
+                            _ = StatusChanged?.Invoke(task);
+
+                            logger.LogWarning("Skipping task {taskId} because chapter file is missing.", task.Id);
+                            continue;
+                        }
+
+                        // check if it is already upscaled
+                        if (chapter.IsUpscaled)
+                        {
+                            task.Status = PersistedTaskStatus.Completed;
+                            task.ProcessedAt = DateTime.UtcNow;
+                            _ = StatusChanged?.Invoke(task);
+                            logger.LogInformation("Skipping task {taskId} because chapter is already upscaled.",
+                                task.Id);
+                            continue;
+                        }
+
+                        // check if the target file already exists and has equal pages
+                        if (File.Exists(chapter.UpscaledFullPath))
+                        {
+                            var metadataHandling = scope.ServiceProvider.GetRequiredService<IMetadataHandlingService>();
+                            if (metadataHandling.PagesEqual(chapter.NotUpscaledFullPath, chapter.UpscaledFullPath))
+                            {
+                                task.Status = PersistedTaskStatus.Completed;
+                                task.ProcessedAt = DateTime.UtcNow;
+                                chapter.IsUpscaled = true;
+                                _ = StatusChanged?.Invoke(task);
+                                logger.LogInformation(
+                                    "Skipping task {taskId} because target file already exists and is equal.",
+                                    task.Id);
+                                continue;
+                            }
+                        }
+
+                        if (!tcs.TrySetResult(task))
+                        {
+                            // Requester couldn't accept the task (likely cancelled) — re-enqueue immediately
+                            await taskQueue.RetryAsync(task);
+                            _ = StatusChanged?.Invoke(task);
+                            completed = true; // stop trying to satisfy this now-cancelled request
+                            continue;
+                        }
+                        else
+                        {
+                            completed = true;
+                            // Persist any status changes applied above (e.g., from validation checks)
+                            PersistedTask? localTask =
+                                await dbContext.PersistedTasks.FirstOrDefaultAsync(t => t.Id == task.Id,
+                                    linkedCts.Token);
+                            if (localTask == null)
+                            {
+                                return; // Task not found in the database, nothing to do
+                            }
+
+                            localTask.ProcessedAt = task.ProcessedAt;
+                            localTask.Status = task.Status;
+                            await dbContext.SaveChangesAsync(linkedCts.Token);
+                        }
+                    }
                 }
             }
             catch (OperationCanceledException)
             {
-                tcs.TrySetCanceled(stoppingToken);
+                tcs.TrySetCanceled(linkedCts.Token);
                 break;
             }
             catch (Exception ex)
@@ -167,7 +234,7 @@ public class DistributedUpscaleTaskProcessor(
     public async Task<PersistedTask?> GetTask(CancellationToken stoppingToken)
     {
         var tcs = new TaskCompletionSource<PersistedTask>(TaskCreationOptions.RunContinuationsAsynchronously);
-        await _taskRequests.Writer.WriteAsync(tcs, stoppingToken);
+        await _taskRequests.Writer.WriteAsync((tcs, stoppingToken), stoppingToken);
 
         using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, timeoutCts.Token);
@@ -259,11 +326,7 @@ public class DistributedUpscaleTaskProcessor(
         DateTime time = DateTime.UtcNow;
         using (_lock.EnterScope())
         {
-            // Clear orphaned task if it matches the completed task
-            if (_orphanedTask != null && _orphanedTask.Id == taskId)
-            {
-                _orphanedTask = null;
-            }
+            // No orphan buffer to clear (re-enqueued immediately on delivery failure)
 
             if (runningTasks.TryGetValue(taskId, out PersistedTask? task))
             {
