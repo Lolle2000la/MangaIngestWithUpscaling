@@ -27,6 +27,7 @@ public interface ITaskQueue
 public class TaskQueue : ITaskQueue, IHostedService
 {
     private readonly ILogger<TaskQueue> _logger;
+    private readonly Channel<PersistedTask> _reroutedUpscaleChannel;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly Channel<PersistedTask> _standardChannel;
 
@@ -45,6 +46,8 @@ public class TaskQueue : ITaskQueue, IHostedService
         var channelOptions = new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.Wait };
         _standardChannel = Channel.CreateBounded<PersistedTask>(channelOptions);
         _upscaleChannel = Channel.CreateBounded<PersistedTask>(channelOptions);
+        // Reroute channel is unbounded: it's fed only by DistributedUpscaleTaskProcessor and consumed by the local UpscaleTaskProcessor
+        _reroutedUpscaleChannel = Channel.CreateUnbounded<PersistedTask>();
 
         // Initialize sorted sets with a stable comparer
         // NOTE: SortedSet considers items equal when comparer returns 0 and will drop duplicates.
@@ -67,6 +70,7 @@ public class TaskQueue : ITaskQueue, IHostedService
 
     public ChannelReader<PersistedTask> StandardReader => _standardChannel.Reader;
     public ChannelReader<PersistedTask> UpscaleReader => _upscaleChannel.Reader;
+    public ChannelReader<PersistedTask> ReroutedUpscaleReader => _reroutedUpscaleChannel.Reader;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -145,8 +149,8 @@ public class TaskQueue : ITaskQueue, IHostedService
         // Determine which set to modify
         (SortedSet<PersistedTask> tasks, object lockObj) =
             task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask
-            ? (_upscaleTasks, _upscaleTasksLock)
-            : (_standardTasks, _standardTasksLock);
+                ? (_upscaleTasks, _upscaleTasksLock)
+                : (_standardTasks, _standardTasksLock);
 
         lock (lockObj)
         {
@@ -200,8 +204,8 @@ public class TaskQueue : ITaskQueue, IHostedService
 
         (SortedSet<PersistedTask> tasks, object lockObj) =
             task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask
-            ? (_upscaleTasks, _upscaleTasksLock)
-            : (_standardTasks, _standardTasksLock);
+                ? (_upscaleTasks, _upscaleTasksLock)
+                : (_standardTasks, _standardTasksLock);
 
         lock (lockObj)
         {
@@ -225,8 +229,8 @@ public class TaskQueue : ITaskQueue, IHostedService
 
         (SortedSet<PersistedTask> tasks, object lockObj) =
             task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask
-            ? (_upscaleTasks, _upscaleTasksLock)
-            : (_standardTasks, _standardTasksLock);
+                ? (_upscaleTasks, _upscaleTasksLock)
+                : (_standardTasks, _standardTasksLock);
 
         lock (lockObj)
         {
@@ -263,6 +267,12 @@ public class TaskQueue : ITaskQueue, IHostedService
                     _standardTasks.Add(task);
             }
         }
+    }
+
+    // Send tasks that must be handled locally (e.g., Repair/Rename upscaled) directly to the local UpscaleTaskProcessor
+    public ValueTask SendToLocalUpscaleAsync(PersistedTask task, CancellationToken cancellationToken = default)
+    {
+        return _reroutedUpscaleChannel.Writer.WriteAsync(task, cancellationToken);
     }
 
     public event Func<PersistedTask, Task>? TaskEnqueuedOrChanged;

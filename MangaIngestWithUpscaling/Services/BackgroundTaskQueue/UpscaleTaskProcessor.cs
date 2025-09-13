@@ -2,6 +2,7 @@
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using Microsoft.Extensions.Options;
+using Open.ChannelExtensions;
 using System.Threading.Channels;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
@@ -15,6 +16,7 @@ public class UpscaleTaskProcessor(
     private readonly Lock _lock = new();
     private readonly TimeSpan _progressDebounce = TimeSpan.FromMilliseconds(250);
     private readonly ChannelReader<PersistedTask> _reader = taskQueue.UpscaleReader;
+    private readonly ChannelReader<PersistedTask> _reroutedReader = taskQueue.ReroutedUpscaleReader;
     private CancellationTokenSource? currentStoppingToken;
     private PersistedTask? currentTask;
     private CancellationToken serviceStoppingToken;
@@ -47,9 +49,29 @@ public class UpscaleTaskProcessor(
         }
 
         serviceStoppingToken = stoppingToken;
+
+        // Merge the rerouted and regular upscale channels into a single reader using Open.ChannelExtensions
+        var merged = Channel.CreateUnbounded<PersistedTask>(new UnboundedChannelOptions
+        {
+            SingleReader = true, SingleWriter = false, AllowSynchronousContinuations = true
+        });
+
+        // Start piping both sources into the merged channel (will complete when sources complete)
+        _ = _reroutedReader.PipeTo(merged, stoppingToken);
+        _ = _reader.PipeTo(merged, stoppingToken);
+
         while (!stoppingToken.IsCancellationRequested)
         {
-            var task = await _reader.ReadAsync(stoppingToken);
+            PersistedTask task;
+            if (_reroutedReader.TryRead(out PersistedTask? rerouted))
+            {
+                task = rerouted;
+            }
+            else
+            {
+                task = await merged.Reader.ReadAsync(stoppingToken);
+            }
+
             using (_lock.EnterScope())
             {
                 currentStoppingToken = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
