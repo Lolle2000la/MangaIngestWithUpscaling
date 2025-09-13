@@ -356,15 +356,17 @@ public class RemoteTaskProcessor(
 
                 continue;
             }
+            finally
+            {
+                await keepAliveCts.CancelAsync();
+                try { await keepAliveTask; }
+                catch { }
 
-            await keepAliveCts.CancelAsync();
-            try { await keepAliveTask; }
-            catch { }
-
-            // Send to upload
-            await _toUpload.Writer.WriteAsync(new ProcessedItem(item.TaskId, item.DownloadedFile, upscaledFile),
-                stoppingToken);
-            _currentTaskId = null;
+                // Send to upload
+                await _toUpload.Writer.WriteAsync(new ProcessedItem(item.TaskId, item.DownloadedFile, upscaledFile),
+                    stoppingToken);
+                _currentTaskId = null;
+            }
         }
     }
 
