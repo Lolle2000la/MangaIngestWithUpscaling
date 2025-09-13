@@ -59,6 +59,7 @@ public interface IChapterPartMerger
     /// <param name="seriesTitle">The series title</param>
     /// <param name="existingChapterNumbers">Set of all existing chapter numbers</param>
     /// <param name="excludeMergedChapterIds">Set of chapter IDs that are already merged and should be skipped</param>
+    /// <param name="existingMergedBaseNumbers">Set of base numbers for existing merged chapters</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Result containing merge information for database updates</returns>
     Task<ChapterMergeResult> ProcessExistingChapterPartsAsync(
@@ -67,6 +68,7 @@ public interface IChapterPartMerger
         string seriesTitle,
         HashSet<string> existingChapterNumbers,
         HashSet<int> excludeMergedChapterIds,
+        HashSet<string> existingMergedBaseNumbers,
         CancellationToken cancellationToken = default);
 
     /// <summary>
@@ -77,6 +79,19 @@ public interface IChapterPartMerger
     /// <returns>Dictionary where key is the base chapter number and value is list of chapter parts to merge</returns>
     Dictionary<string, List<FoundChapter>> GroupChapterPartsForMerging(
         IEnumerable<FoundChapter> chapters,
+        Func<string, bool> isLastChapter);
+
+    /// <summary>
+    /// Groups chapters that can be added to existing merged chapters.
+    /// This handles individual chapters (like 2.3) that can be added to existing merged chapters (like merged chapter 2).
+    /// </summary>
+    /// <param name="chapters">Chapters to analyze</param>
+    /// <param name="existingMergedBaseNumbers">Base numbers of existing merged chapters</param>
+    /// <param name="isLastChapter">Function to determine if a chapter group is the latest chapter</param>
+    /// <returns>Dictionary where key is base chapter number and value is list of chapters to add to existing merged chapter</returns>
+    Dictionary<string, List<FoundChapter>> GroupChaptersForAdditionToExistingMerged(
+        IEnumerable<FoundChapter> chapters,
+        HashSet<string> existingMergedBaseNumbers,
         Func<string, bool> isLastChapter);
 
     /// <summary>

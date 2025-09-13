@@ -294,6 +294,15 @@ public partial class IngestProcessor(
                 var originalChapter = pci.Original;
                 var renamedChapter = pci.Renamed;
 
+                // Check if this chapter part has already been merged and skip if so
+                if (await chapterMergeCoordinator.IsChapterPartAlreadyMergedAsync(renamedChapter.FileName, seriesEntity, cancellationToken))
+                {
+                    logger.LogInformation(
+                        "Skipping ingestion of chapter {ChapterFileName} for series {SeriesTitle} - this chapter part has already been merged into another chapter",
+                        renamedChapter.FileName, seriesEntity.PrimaryTitle);
+                    continue;
+                }
+
                 // if this is an already upscaled chapter, go a different route
                 if (pci.IsUpscaled) // Check original path for _upscaled marker
                 {
