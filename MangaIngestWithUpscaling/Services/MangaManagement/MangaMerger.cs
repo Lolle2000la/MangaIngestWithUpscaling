@@ -185,9 +185,13 @@ public class MangaMerger(
                                  .Where(title => !primary.OtherTitles.Any(t => t.Title == title.Title))
                                  .ToList())
                     {
-                        title.Manga = primary;
-                        title.MangaId = primary.Id;
-                        primary.OtherTitles.Add(title);
+                        // Cannot modify key properties of existing entities, so create new ones
+                        primary.OtherTitles.Add(new MangaAlternativeTitle
+                        {
+                            Title = title.Title,
+                            Manga = primary,
+                            MangaId = primary.Id
+                        });
                         manga.OtherTitles.Remove(title);
                     }
                 }
