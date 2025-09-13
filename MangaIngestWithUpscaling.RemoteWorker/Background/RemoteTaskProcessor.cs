@@ -14,9 +14,8 @@ namespace MangaIngestWithUpscaling.RemoteWorker.Background;
 public class RemoteTaskProcessor(
     IServiceScopeFactory serviceScopeFactory) : BackgroundService
 {
-    // Rolling stats across runs
-    private readonly OnlineStats _downloadTimeStats = new();
-    private readonly OnlineStats _perPageTimeStats = new();
+    // Predictive prefetch engine (keeps rolling stats across runs)
+    private readonly PrefetchPredictor _predictor = new();
 
     // IDs to coordinate exclusions and lifecycle
     private int? _currentTaskId; // Task currently being processed
@@ -154,7 +153,7 @@ public class RemoteTaskProcessor(
                     cancellationToken: stoppingToken);
                 string file = await FetchFile(resp.TaskId, stream.ResponseStream.ReadAllAsync(stoppingToken));
                 sw.Stop();
-                _downloadTimeStats.Add(sw.Elapsed.TotalSeconds);
+                _predictor.RecordDownload(sw.Elapsed);
 
                 // Enqueue for upscaling
                 var fetched = new FetchedItem(resp.TaskId, prefetchProfile, file, prefetchKeepAliveCts);
@@ -257,7 +256,7 @@ public class RemoteTaskProcessor(
                         double deltaTime = (now - lastProgressTime).TotalSeconds;
                         if (deltaPages > 0 && deltaTime > 0)
                         {
-                            _perPageTimeStats.Add(deltaTime / deltaPages);
+                            _predictor.RecordPerPage(deltaTime / deltaPages);
                         }
                     }
 
@@ -265,18 +264,8 @@ public class RemoteTaskProcessor(
                     lastProgressTime = now;
 
                     int remaining = Math.Max(0, total - current);
-                    bool quarterLeft = remaining <= (int)Math.Ceiling(total * 0.25);
-                    bool fiveLeft = remaining <= 5;
-                    bool etaTrigger = false;
-                    if (_downloadTimeStats.Count > 0 && _perPageTimeStats.Count > 0)
-                    {
-                        double download95 = _downloadTimeStats.P95Upper;
-                        double perPage95 = _perPageTimeStats.P95Upper;
-                        double remaining95 = remaining * perPage95;
-                        etaTrigger = remaining95 <= download95;
-                    }
-
-                    if (!signaledThisTask && (quarterLeft || fiveLeft || etaTrigger))
+                    bool shouldPrefetch = _predictor.ShouldPrefetch(remaining, total);
+                    if (!signaledThisTask && shouldPrefetch)
                     {
                         signaledThisTask = true;
                         _fetchSignals?.Writer.TryWrite(true);
@@ -604,6 +593,52 @@ public class RemoteTaskProcessor(
             Mean += delta / Count;
             double delta2 = x - Mean;
             M2 += delta * delta2;
+        }
+    }
+
+    // Encapsulates predictive prefetch heuristics and rolling time statistics
+    private sealed class PrefetchPredictor
+    {
+        private readonly OnlineStats _downloadSeconds = new();
+        private readonly OnlineStats _perPageSeconds = new();
+
+        public void RecordDownload(TimeSpan elapsed)
+        {
+            if (elapsed.TotalSeconds > 0 && double.IsFinite(elapsed.TotalSeconds))
+            {
+                _downloadSeconds.Add(elapsed.TotalSeconds);
+            }
+        }
+
+        public void RecordPerPage(double secondsPerPage)
+        {
+            if (secondsPerPage > 0 && double.IsFinite(secondsPerPage))
+            {
+                _perPageSeconds.Add(secondsPerPage);
+            }
+        }
+
+        // Decide if we should prefetch now based on simple thresholds and ETA vs download P95
+        public bool ShouldPrefetch(int remainingPages, int totalPages)
+        {
+            if (totalPages <= 0)
+            {
+                return false;
+            }
+
+            bool quarterLeft = remainingPages <= (int)Math.Ceiling(totalPages * 0.25);
+            bool fiveLeft = remainingPages <= 5;
+
+            bool etaTrigger = false;
+            if (_downloadSeconds.Count > 0 && _perPageSeconds.Count > 0)
+            {
+                double download95 = _downloadSeconds.P95Upper;
+                double perPage95 = _perPageSeconds.P95Upper;
+                double remainingEta95 = remainingPages * perPage95;
+                etaTrigger = remainingEta95 <= download95;
+            }
+
+            return quarterLeft || fiveLeft || etaTrigger;
         }
     }
 }
