@@ -439,10 +439,31 @@ public partial class IngestProcessor(
                 scans.Add(chapterChangedNotifier.Notify(chapterEntity, false));
 
                 if (library.UpscaleOnIngest && seriesEntity.ShouldUpscale != false &&
-                    library.UpscalerProfileId is not null)
+                    library.UpscalerProfileId is not null && library.UpscalerProfile is not null &&
+                    library.UpscaledLibraryPath is not null && library.NotUpscaledLibraryPath is not null)
                 {
                     dbContext.Entry(chapterEntity).Reference(c => c.UpscalerProfile).Load();
-                    chaptersToUpscale.Add(chapterEntity);
+                    
+                    // Check if already upscaled with the target profile (same logic as UpscaleTask)
+                    string upscaleTargetPath = Path.Combine(library.UpscaledLibraryPath, chapterEntity.RelativePath);
+                    string currentStoragePath = Path.Combine(library.NotUpscaledLibraryPath, chapterEntity.RelativePath);
+                    
+                    bool shouldUpscale = true;
+                    if (chapterEntity.IsUpscaled && chapterEntity.UpscalerProfile?.Id == library.UpscalerProfile.Id)
+                    {
+                        if (metadataHandling.PagesEqual(currentStoragePath, upscaleTargetPath))
+                        {
+                            logger.LogInformation(
+                                "Chapter \"{chapterFileName}\" of {seriesTitle} is already upscaled with {upscalerProfileName}",
+                                chapterEntity.FileName, seriesEntity.PrimaryTitle, library.UpscalerProfile.Name);
+                            shouldUpscale = false;
+                        }
+                    }
+                    
+                    if (shouldUpscale)
+                    {
+                        chaptersToUpscale.Add(chapterEntity);
+                    }
                 }
             }
 
@@ -496,10 +517,31 @@ public partial class IngestProcessor(
 
                         // Add to upscale queue if needed
                         if (library.UpscaleOnIngest && seriesEntity.ShouldUpscale != false &&
-                            library.UpscalerProfileId is not null)
+                            library.UpscalerProfileId is not null && library.UpscalerProfile is not null &&
+                            library.UpscaledLibraryPath is not null && library.NotUpscaledLibraryPath is not null)
                         {
                             dbContext.Entry(mergedChapterEntity).Reference(c => c.UpscalerProfile).Load();
-                            chaptersToUpscale.Add(mergedChapterEntity);
+                            
+                            // Check if already upscaled with the target profile (same logic as UpscaleTask)
+                            string upscaleTargetPath = Path.Combine(library.UpscaledLibraryPath, mergedChapterEntity.RelativePath);
+                            string currentStoragePath = Path.Combine(library.NotUpscaledLibraryPath, mergedChapterEntity.RelativePath);
+                            
+                            bool shouldUpscale = true;
+                            if (mergedChapterEntity.IsUpscaled && mergedChapterEntity.UpscalerProfile?.Id == library.UpscalerProfile.Id)
+                            {
+                                if (metadataHandling.PagesEqual(currentStoragePath, upscaleTargetPath))
+                                {
+                                    logger.LogInformation(
+                                        "Merged chapter \"{chapterFileName}\" of {seriesTitle} is already upscaled with {upscalerProfileName}",
+                                        mergedChapterEntity.FileName, seriesEntity.PrimaryTitle, library.UpscalerProfile.Name);
+                                    shouldUpscale = false;
+                                }
+                            }
+                            
+                            if (shouldUpscale)
+                            {
+                                chaptersToUpscale.Add(mergedChapterEntity);
+                            }
                         }
 
                         logger.LogInformation(
