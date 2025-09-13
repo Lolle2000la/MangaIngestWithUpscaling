@@ -73,6 +73,8 @@ public class RemoteTaskProcessor(
     // Fetch: waits for signals, reserves next task (prefetch), downloads CBZ, keeps reservation alive until handed to upscaler
     private async Task FetchLoop(CancellationToken stoppingToken)
     {
+        var dispatchterTimer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -108,16 +110,25 @@ public class RemoteTaskProcessor(
                 }
 
                 // Reserve a task with prefetch hint; avoid current/uploading
-                UpscaleTaskDelegationResponse? resp;
+                UpscaleTaskDelegationResponse resp;
                 while (true)
                 {
-                    resp = await client.RequestUpscaleTaskWithHintAsync(new RequestTaskRequest { Prefetch = true },
-                        cancellationToken: stoppingToken);
-                    if (resp.TaskId == -1)
+                    try
+                    {
+                        resp = await client.RequestUpscaleTaskWithHintAsync(new RequestTaskRequest { Prefetch = true },
+                            cancellationToken: stoppingToken);
+                    }
+                    catch (RpcException e) when (e.StatusCode == StatusCode.NotFound)
                     {
                         // Nothing to fetch at the moment
+                        await dispatchterTimer.WaitForNextTickAsync(stoppingToken);
+                        continue;
+                    }
+                    catch (Exception e)
+                    {
+                        logger.LogError(e, "Failed to request upscale task for prefetch.");
                         _fetchInProgress = false;
-                        break;
+                        throw;
                     }
 
                     if ((_currentTaskId.HasValue && resp.TaskId == _currentTaskId.Value) ||
@@ -194,9 +205,10 @@ public class RemoteTaskProcessor(
             {
                 break;
             }
-            catch
+            catch (Exception e)
             {
                 _fetchInProgress = false;
+                _fetchSignals!.Writer.TryWrite(false);
                 // Soft failure; wait a bit before next signal consumption
                 try { await Task.Delay(500, stoppingToken); }
                 catch { break; }
