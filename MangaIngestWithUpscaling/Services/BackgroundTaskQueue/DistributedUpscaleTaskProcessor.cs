@@ -1,9 +1,10 @@
 ﻿using MangaIngestWithUpscaling.Data;
-using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
+using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using Microsoft.EntityFrameworkCore;
 using System.Threading.Channels;
 
-namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
+namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 
 public class DistributedUpscaleTaskProcessor(
     TaskQueue taskQueue,
@@ -97,6 +98,23 @@ public class DistributedUpscaleTaskProcessor(
 
                 foreach (PersistedTask task in deadTasksToRequeue)
                 {
+                    using IServiceScope scope2 = scopeFactory.CreateScope();
+                    var db2 = scope2.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                    // Re-check the current status in DB to avoid re-enqueueing tasks that already completed or were cancelled
+                    PersistedTask? current = await db2.PersistedTasks.AsNoTracking()
+                        .FirstOrDefaultAsync(t => t.Id == task.Id, stoppingToken);
+                    if (current is null)
+                    {
+                        continue;
+                    }
+
+                    if (current.Status == PersistedTaskStatus.Completed ||
+                        current.Status == PersistedTaskStatus.Canceled)
+                    {
+                        // Already finalized; do not re-enqueue
+                        continue;
+                    }
+
                     await taskQueue.RetryAsync(task);
                     _ = StatusChanged?.Invoke(task);
                 }
@@ -188,6 +206,8 @@ public class DistributedUpscaleTaskProcessor(
             if (runningTasks.TryGetValue(taskId, out var currentTask))
             {
                 currentTask.LastKeepAlive = DateTime.UtcNow;
+                // Notify listeners (e.g., TaskRegistry/UI) that the task heartbeat was updated
+                _ = StatusChanged?.Invoke(currentTask);
                 return true;
             }
         }
@@ -225,6 +245,9 @@ public class DistributedUpscaleTaskProcessor(
                     // Use phase as a fallback status message for visibility
                     p.StatusMessage = phase!;
                 }
+
+                // Treat progress updates as heartbeats as well, to keep liveness fresh
+                task.LastKeepAlive = DateTime.UtcNow;
 
                 _ = StatusChanged?.Invoke(task);
             }

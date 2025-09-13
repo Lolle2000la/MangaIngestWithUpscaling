@@ -1,9 +1,11 @@
-﻿namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
+﻿namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 
 public class LoggingTask : BaseTask
 {
     public override string TaskFriendlyName => $"Logging Task: {Message}";
     public required string Message { get; set; }
+
+    public override int RetryFor { get; set; } = 1;
 
     public override async Task ProcessAsync(IServiceProvider services, CancellationToken cancellationToken)
     {
@@ -12,6 +14,4 @@ public class LoggingTask : BaseTask
         await Task.Delay(1000, cancellationToken);
         await Task.CompletedTask;
     }
-
-    public override int RetryFor { get; set; } = 1;
 }

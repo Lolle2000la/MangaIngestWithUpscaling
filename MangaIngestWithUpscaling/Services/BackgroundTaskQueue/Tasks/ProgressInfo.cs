@@ -1,6 +1,6 @@
 using ReactiveUI;
 
-namespace MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
+namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 
 public class ProgressInfo : ReactiveObject
 {

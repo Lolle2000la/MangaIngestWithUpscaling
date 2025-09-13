@@ -1,4 +1,4 @@
-﻿using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
+﻿using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 
 namespace MangaIngestWithUpscaling.Services.Background;
 

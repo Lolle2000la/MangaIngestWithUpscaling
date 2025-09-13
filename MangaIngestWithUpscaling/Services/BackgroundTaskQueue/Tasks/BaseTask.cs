@@ -1,8 +1,7 @@
-﻿using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
-using System.ComponentModel.DataAnnotations.Schema;
+﻿using System.ComponentModel.DataAnnotations.Schema;
 using System.Text.Json.Serialization;
 
-namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
+namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 
 /// <summary>
 /// Represents a task that can be processed by the background task queue.

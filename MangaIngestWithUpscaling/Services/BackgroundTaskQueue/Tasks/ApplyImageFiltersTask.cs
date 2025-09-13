@@ -1,11 +1,8 @@
-using System.Text.Json.Serialization;
 using MangaIngestWithUpscaling.Data;
-using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.ImageFiltering;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
 
-namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
+namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 
 /// <summary>
 /// Background task to retroactively apply image filters to existing chapters in a library.
@@ -80,7 +77,8 @@ public class ApplyImageFiltersTask : BaseTask
                 // Apply filters to both original and upscaled using the new optimized method
                 if (File.Exists(originalPath))
                 {
-                    var result = await imageFilterService.ApplyFiltersToChapterAsync(originalPath, upscaledPath, library.FilteredImages, cancellationToken);
+                    var result = await imageFilterService.ApplyFiltersToChapterAsync(originalPath, upscaledPath,
+                        library.FilteredImages, cancellationToken);
                     filteredImages += result.FilteredCount;
 
                     if (result.FilteredCount > 0)
@@ -100,7 +98,8 @@ public class ApplyImageFiltersTask : BaseTask
 
                 if (processedChapters % 10 == 0)
                 {
-                    logger.LogInformation("Progress: {ProcessedChapters}/{TotalChapters} chapters processed, {FilteredImages} images filtered",
+                    logger.LogInformation(
+                        "Progress: {ProcessedChapters}/{TotalChapters} chapters processed, {FilteredImages} images filtered",
                         processedChapters, totalChapters, filteredImages);
                 }
             }

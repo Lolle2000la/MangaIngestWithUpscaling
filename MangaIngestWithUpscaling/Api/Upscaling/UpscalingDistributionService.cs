@@ -2,10 +2,10 @@
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Data;
-using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
+using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
-using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
-using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using Microsoft.AspNetCore.Authorization;
@@ -18,9 +18,11 @@ public partial class UpscalingDistributionService(
     DistributedUpscaleTaskProcessor taskProcessor,
     ApplicationDbContext dbContext,
     IFileSystem fileSystem,
-    IChapterChangedNotifier chapterChangedNotifier) : UpscalingService.UpscalingServiceBase
+    IChapterChangedNotifier chapterChangedNotifier,
+    ILogger<UpscalingDistributionService> logger) : UpscalingService.UpscalingServiceBase
 {
     private static readonly string tempDir = Path.Combine(Path.GetTempPath(), "mangaingestwithupscaling");
+    private readonly ILogger<UpscalingDistributionService> _logger = logger;
 
     public override Task<CheckConnectionResponse> CheckConnection(Empty request, ServerCallContext context)
     {
@@ -28,63 +30,83 @@ public partial class UpscalingDistributionService(
         return Task.FromResult(new CheckConnectionResponse { Message = "Connection established", Success = true });
     }
 
-    public override async Task<UpscaleTaskDelegationResponse> RequestUpscaleTask(Empty request,
+    public override Task<UpscaleTaskDelegationResponse> RequestUpscaleTask(Empty request,
         ServerCallContext context)
     {
-        var task = await taskProcessor.GetTask(context.CancellationToken);
+        // Delegate to the hint-based variant, mapping header hint if provided by older clients/tools.
+        bool isPrefetchHeader = context.RequestHeaders.Any(h =>
+            string.Equals(h.Key, "x-prefetch", StringComparison.OrdinalIgnoreCase) && h.Value == "1");
+        return RequestUpscaleTaskWithHint(new RequestTaskRequest { Prefetch = isPrefetchHeader }, context);
+    }
+
+    // New method that accepts hints in the request (e.g., prefetch) without relying on headers
+    public override async Task<UpscaleTaskDelegationResponse> RequestUpscaleTaskWithHint(RequestTaskRequest request,
+        ServerCallContext context)
+    {
+        if (request.HasPrefetch && request.Prefetch)
+        {
+            _logger.LogDebug("RequestUpscaleTaskWithHint called with prefetch=true");
+        }
+
+        PersistedTask? task = await taskProcessor.GetTask(context.CancellationToken);
         if (task == null)
         {
             context.Status = new Status(StatusCode.NotFound, "No tasks available");
             return new UpscaleTaskDelegationResponse { TaskId = -1, UpscalerProfile = null };
         }
-        else
+
+        var upscaleTask = (UpscaleTask)task.Data;
+        Shared.Data.LibraryManagement.UpscalerProfile? upscalerProfile =
+            await dbContext.UpscalerProfiles.FindAsync(upscaleTask.UpscalerProfileId);
+
+        if (upscalerProfile == null)
         {
-            var upscaleTask = (UpscaleTask)task.Data;
-            var upscalerProfile = await dbContext.UpscalerProfiles.FindAsync(upscaleTask.UpscalerProfileId);
-
-            if (upscalerProfile == null)
-            {
-                context.Status = new Status(StatusCode.NotFound, "Upscaler profile not found");
-                return new UpscaleTaskDelegationResponse { TaskId = -1, UpscalerProfile = null };
-            }
-
-            return new UpscaleTaskDelegationResponse()
-            {
-                TaskId = task.Id,
-                UpscalerProfile = new UpscalerProfile()
-                {
-                    Name = upscalerProfile.Name,
-                    UpscalerMethod = upscalerProfile.UpscalerMethod switch
-                    {
-                        Shared.Data.LibraryManagement.UpscalerMethod.MangaJaNai => UpscalerMethod.MangaJaNai,
-                        _ => UpscalerMethod.Unspecified
-                    },
-                    CompressionFormat = upscalerProfile.CompressionFormat switch
-                    {
-                        Shared.Data.LibraryManagement.CompressionFormat.Avif => CompressionFormat.Avif,
-                        Shared.Data.LibraryManagement.CompressionFormat.Jpg => CompressionFormat.Jpg,
-                        Shared.Data.LibraryManagement.CompressionFormat.Png => CompressionFormat.Png,
-                        Shared.Data.LibraryManagement.CompressionFormat.Webp => CompressionFormat.Webp,
-                        _ => CompressionFormat.Unspecified
-                    },
-                    Quality = upscalerProfile.Quality,
-                    ScalingFactor = upscalerProfile.ScalingFactor switch
-                    {
-                        Shared.Data.LibraryManagement.ScaleFactor.OneX => ScaleFactor.OneX,
-                        Shared.Data.LibraryManagement.ScaleFactor.TwoX => ScaleFactor.TwoX,
-                        Shared.Data.LibraryManagement.ScaleFactor.ThreeX => ScaleFactor.ThreeX,
-                        Shared.Data.LibraryManagement.ScaleFactor.FourX => ScaleFactor.FourX,
-                        _ => ScaleFactor.Unspecified
-                    }
-                },
-            };
+            context.Status = new Status(StatusCode.NotFound, "Upscaler profile not found");
+            return new UpscaleTaskDelegationResponse { TaskId = -1, UpscalerProfile = null };
         }
+
+        return new UpscaleTaskDelegationResponse
+        {
+            TaskId = task.Id,
+            UpscalerProfile = new UpscalerProfile
+            {
+                Name = upscalerProfile.Name,
+                UpscalerMethod = upscalerProfile.UpscalerMethod switch
+                {
+                    Shared.Data.LibraryManagement.UpscalerMethod.MangaJaNai => UpscalerMethod.MangaJaNai,
+                    _ => UpscalerMethod.Unspecified
+                },
+                CompressionFormat = upscalerProfile.CompressionFormat switch
+                {
+                    Shared.Data.LibraryManagement.CompressionFormat.Avif => CompressionFormat.Avif,
+                    Shared.Data.LibraryManagement.CompressionFormat.Jpg => CompressionFormat.Jpg,
+                    Shared.Data.LibraryManagement.CompressionFormat.Png => CompressionFormat.Png,
+                    Shared.Data.LibraryManagement.CompressionFormat.Webp => CompressionFormat.Webp,
+                    _ => CompressionFormat.Unspecified
+                },
+                Quality = upscalerProfile.Quality,
+                ScalingFactor = upscalerProfile.ScalingFactor switch
+                {
+                    Shared.Data.LibraryManagement.ScaleFactor.OneX => ScaleFactor.OneX,
+                    Shared.Data.LibraryManagement.ScaleFactor.TwoX => ScaleFactor.TwoX,
+                    Shared.Data.LibraryManagement.ScaleFactor.ThreeX => ScaleFactor.ThreeX,
+                    Shared.Data.LibraryManagement.ScaleFactor.FourX => ScaleFactor.FourX,
+                    _ => ScaleFactor.Unspecified
+                }
+            }
+        };
     }
 
     public override Task<KeepAliveResponse> KeepAlive(KeepAliveRequest request, ServerCallContext context)
     {
         if (taskProcessor.KeepAlive(request.TaskId))
         {
+            if ((request.HasPrefetch && request.Prefetch) || context.RequestHeaders.Any(h =>
+                    string.Equals(h.Key, "x-prefetch", StringComparison.OrdinalIgnoreCase) && h.Value == "1"))
+            {
+                _logger.LogDebug("KeepAlive received for prefetched task {taskId}", request.TaskId);
+            }
+
             // Backward-compatible: update progress if fields are provided (proto3 optional)
             bool hasAny = request.HasTotal || request.HasCurrent || request.HasStatusMessage || request.HasPhase;
             if (hasAny)
@@ -108,6 +130,14 @@ public partial class UpscalingDistributionService(
     public override async Task GetCbzFile(CbzToUpscaleRequest request, IServerStreamWriter<CbzFileChunk> responseStream,
         ServerCallContext context)
     {
+        bool isPrefetchHeader = context.RequestHeaders.Any(h =>
+            string.Equals(h.Key, "x-prefetch", StringComparison.OrdinalIgnoreCase) && h.Value == "1");
+        bool isPrefetch = isPrefetchHeader || (request.HasPrefetch && request.Prefetch);
+        if (isPrefetch)
+        {
+            _logger.LogDebug("GetCbzFile called with x-prefetch=1 for task {taskId}", request.TaskId);
+        }
+
         var task = await dbContext.PersistedTasks.FindAsync(request.TaskId);
         if (task == null)
         {

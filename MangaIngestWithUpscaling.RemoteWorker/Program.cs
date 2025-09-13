@@ -78,17 +78,22 @@ builder.Services.Configure<WorkerConfig>(builder.Configuration.GetSection(Worker
 
 // Add services to the container.
 builder.Services.AddGrpc();
+// Read config once for client configuration to avoid per-call ServiceProvider usage (prevents disposed-service issues)
+var boundWorkerConfig = new WorkerConfig();
+builder.Configuration.GetSection(WorkerConfig.SectionName).Bind(boundWorkerConfig);
+string apiUrl = boundWorkerConfig.ApiUrl ?? builder.Configuration["WorkerConfig:ApiUrl"]!;
+string authHeaderValue = $"ApiKey {boundWorkerConfig.ApiKey}";
+
 builder.Services.AddGrpcClient<UpscalingService.UpscalingServiceClient>(o =>
 {
     o.CallOptionsActions.Add(context =>
     {
-        var config = context.ServiceProvider.GetRequiredService<IOptions<WorkerConfig>>().Value;
         Metadata metadata = context.CallOptions.Headers ?? new Metadata();
-        metadata.Add("Authorization", $"ApiKey {config.ApiKey}");
+        metadata.Add("Authorization", authHeaderValue);
         context.CallOptions = context.CallOptions.WithHeaders(metadata);
     });
 
-    o.Address = new Uri(builder.Configuration["WorkerConfig:ApiUrl"]!);
+    o.Address = new Uri(apiUrl);
 });
 
 builder.Services.RegisterRemoteWorkerServices();
@@ -123,10 +128,13 @@ using (var scope = app.Services.CreateScope())
 
         Directory.CreateDirectory(upscalerConfig.Value.PythonEnvironmentDirectory);
 
-        var environment = await pythonService.PreparePythonEnvironment(upscalerConfig.Value.PythonEnvironmentDirectory, upscalerConfig.Value.PreferredGpuBackend, upscalerConfig.Value.ForceAcceptExistingEnvironment);
+        PythonEnvironment environment = await pythonService.PreparePythonEnvironment(
+            upscalerConfig.Value.PythonEnvironmentDirectory,
+            upscalerConfig.Value.PreferredGpuBackend, upscalerConfig.Value.ForceAcceptExistingEnvironment);
         PythonService.Environment = environment;
 
-        logger.LogInformation($"Python environment prepared at {environment.PythonExecutablePath} with {environment.InstalledBackend} backend");
+        logger.LogInformation(
+            $"Python environment prepared at {environment.PythonExecutablePath} with {environment.InstalledBackend} backend");
     }
 
     var upscaler = scope.ServiceProvider.GetRequiredService<IUpscaler>();

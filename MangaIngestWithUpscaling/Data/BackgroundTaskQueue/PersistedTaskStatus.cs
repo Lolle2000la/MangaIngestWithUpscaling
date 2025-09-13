@@ -1,4 +1,4 @@
-﻿namespace MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
+﻿namespace MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 
 public enum PersistedTaskStatus
 {

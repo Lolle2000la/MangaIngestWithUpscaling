@@ -1,10 +1,10 @@
 ﻿using MangaIngestWithUpscaling.Data;
-using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
-using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using Microsoft.EntityFrameworkCore;
 using System.Threading.Channels;
 
-namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
+namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 
 public interface ITaskQueue
 {
@@ -46,8 +46,21 @@ public class TaskQueue : ITaskQueue, IHostedService
         _standardChannel = Channel.CreateBounded<PersistedTask>(channelOptions);
         _upscaleChannel = Channel.CreateBounded<PersistedTask>(channelOptions);
 
-        // Initialize sorted sets with order comparer
-        Comparer<PersistedTask> comparer = Comparer<PersistedTask>.Create((a, b) => a.Order.CompareTo(b.Order));
+        // Initialize sorted sets with a stable comparer
+        // NOTE: SortedSet considers items equal when comparer returns 0 and will drop duplicates.
+        //       Comparing only by Order collapses many tasks into one when orders match.
+        //       Use Order, then Id as a tiebreaker to preserve all tasks with the same Order.
+        Comparer<PersistedTask> comparer = Comparer<PersistedTask>.Create((a, b) =>
+        {
+            int byOrder = a.Order.CompareTo(b.Order);
+            if (byOrder != 0)
+            {
+                return byOrder;
+            }
+
+            // Id is unique per task (DB identity). This stabilizes ordering and avoids duplicate suppression.
+            return a.Id.CompareTo(b.Id);
+        });
         _standardTasks = new SortedSet<PersistedTask>(comparer);
         _upscaleTasks = new SortedSet<PersistedTask>(comparer);
     }
@@ -218,24 +231,13 @@ public class TaskQueue : ITaskQueue, IHostedService
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
+        // Only consider Pending and retryable Failed tasks here; we will explicitly recover stranded Processing elsewhere
         var pendingTasks = await dbContext.PersistedTasks
             .OrderBy(t => t.Order)
             .AsAsyncEnumerable()
-            .Where(t => t.Status == PersistedTaskStatus.Pending || t.Status == PersistedTaskStatus.Processing
-                                                                || (t.Status == PersistedTaskStatus.Failed &&
-                                                                    t.RetryCount < t.Data.RetryFor))
+            .Where(t => t.Status == PersistedTaskStatus.Pending
+                        || (t.Status == PersistedTaskStatus.Failed && t.RetryCount < t.Data.RetryFor))
             .ToListAsync(cancellationToken);
-
-        // Reset processing tasks to pending
-        foreach (var task in pendingTasks)
-        {
-            if (task.Status == PersistedTaskStatus.Processing)
-            {
-                task.Status = PersistedTaskStatus.Pending;
-            }
-        }
-
-        await dbContext.SaveChangesAsync(cancellationToken);
 
         // Load tasks into sorted sets
         foreach (var task in pendingTasks)

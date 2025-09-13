@@ -1,6 +1,6 @@
 using MangaIngestWithUpscaling.Services.ImageFiltering;
 
-namespace MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
+namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 
 /// <summary>
 /// Background task to update existing filtered images with perceptual hashes

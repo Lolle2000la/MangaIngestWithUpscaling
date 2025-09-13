@@ -1,9 +1,8 @@
 @page "/libraries/{LibraryId:int}/filtered-images"
 @using MangaIngestWithUpscaling.Data.LibraryManagement
-@using MangaIngestWithUpscaling.Services.BackqroundTaskQueue
-@using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
+@using MangaIngestWithUpscaling.Services.BackgroundTaskQueue
+@using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks
 @using MangaIngestWithUpscaling.Services.ImageFiltering
-@using Microsoft.EntityFrameworkCore
 
 @inject ApplicationDbContext DbContext
 @inject IDialogService DialogService

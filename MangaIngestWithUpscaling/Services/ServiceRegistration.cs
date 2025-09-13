@@ -1,5 +1,5 @@
 ﻿using MangaIngestWithUpscaling.Services.Background;
-using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.LibraryFiltering;
 using MangaIngestWithUpscaling.Shared.Services;
