@@ -268,6 +268,7 @@ public class RepairUpscaleTask : BaseTask
         // Get all image files in the input directory
         var imageFiles = Directory.GetFiles(inputDir)
             .Where(f => f.ToLowerInvariant().EndsWithAny(".png", ".jpg", ".jpeg", ".avif", ".webp", ".bmp"))
+            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase) // stable order
             .ToList();
 
         if (imageFiles.Count == 0)
@@ -276,57 +277,89 @@ public class RepairUpscaleTask : BaseTask
             return;
         }
 
-        // For now, upscale each file individually
-        // TODO: Implement proper folder-based upscaling using MangaJaNaiUpscalerConfig folder mode
-        for (int i = 0; i < imageFiles.Count; i++)
+        Directory.CreateDirectory(outputDir);
+
+        // Create a temporary CBZ containing all missing pages and one output CBZ
+        string tempBatchInputCbz = Path.Combine(Path.GetTempPath(), $"temp_missing_batch_{Guid.NewGuid()}.cbz");
+        string tempBatchOutputCbz = Path.Combine(Path.GetTempPath(), $"temp_missing_batch_out_{Guid.NewGuid()}.cbz");
+
+        try
         {
-            var inputFile = imageFiles[i];
-            var fileName = Path.GetFileNameWithoutExtension(inputFile);
-            var outputFile = Path.Combine(outputDir, $"{fileName}.png"); // Use PNG for upscaled output
-
-            // Create a temporary CBZ for this single image
-            string tempSingleImageCbz = Path.Combine(Path.GetTempPath(), $"temp_single_{Guid.NewGuid()}.cbz");
-            string tempOutputCbz = Path.Combine(Path.GetTempPath(), $"temp_output_{Guid.NewGuid()}.cbz");
-
-            try
+            // Package all missing images into a single CBZ (entry names are the original basenames)
+            using (ZipArchive archive = ZipFile.Open(tempBatchInputCbz, ZipArchiveMode.Create))
             {
-                // Create CBZ with single image
-                using (var archive = ZipFile.Open(tempSingleImageCbz, ZipArchiveMode.Create))
+                foreach (string file in imageFiles)
                 {
-                    archive.CreateEntryFromFile(inputFile, Path.GetFileName(inputFile));
+                    string entryName = Path.GetFileName(file);
+                    archive.CreateEntryFromFile(file, entryName);
                 }
-
-                // Upscale the single-image CBZ
-                await upscaler.Upscale(tempSingleImageCbz, tempOutputCbz, profile, cancellationToken);
-
-                // Extract the upscaled image
-                using (var archive = ZipFile.OpenRead(tempOutputCbz))
-                {
-                    var imageEntry = archive.Entries.FirstOrDefault(e =>
-                        e.FullName.ToLowerInvariant().EndsWithAny(".png", ".jpg", ".jpeg", ".avif", ".webp", ".bmp"));
-
-                    if (imageEntry != null)
-                    {
-                        imageEntry.ExtractToFile(outputFile);
-                        logger.LogDebug("Upscaled single page: {fileName}", Path.GetFileName(inputFile));
-                    }
-                }
-
-                // Report progress
-                progress.Report(new UpscaleProgress(
-                    Total: imageFiles.Count,
-                    Current: i + 1,
-                    Phase: "Upscaling missing pages",
-                    StatusMessage: $"Upscaled {i + 1}/{imageFiles.Count} missing pages"
-                ));
             }
-            finally
+
+            // Basic progress info before starting batch upscale
+            progress.Report(new UpscaleProgress(
+                imageFiles.Count,
+                0,
+                "Upscaling missing pages (batch)",
+                $"Submitting {imageFiles.Count} pages to upscaler"
+            ));
+
+            // Run the upscaler once for the batch
+            await upscaler.Upscale(tempBatchInputCbz, tempBatchOutputCbz, profile, cancellationToken);
+
+            // Extract all upscaled images to the output directory
+            int extracted = 0;
+            using (ZipArchive outArchive = ZipFile.OpenRead(tempBatchOutputCbz))
             {
-                // Clean up temporary files
-                if (File.Exists(tempSingleImageCbz))
-                    File.Delete(tempSingleImageCbz);
-                if (File.Exists(tempOutputCbz))
-                    File.Delete(tempOutputCbz);
+                foreach (ZipArchiveEntry entry in outArchive.Entries)
+                {
+                    // filter only known image extensions
+                    if (!entry.FullName.ToLowerInvariant()
+                            .EndsWithAny(".png", ".jpg", ".jpeg", ".avif", ".webp", ".bmp"))
+                    {
+                        continue;
+                    }
+
+                    // Sanitize entry name and ensure no directory traversal
+                    string safeName = Path.GetFileName(entry.FullName);
+                    if (string.IsNullOrWhiteSpace(safeName))
+                    {
+                        continue;
+                    }
+
+                    string destPath = Path.Combine(outputDir, safeName);
+
+                    // Ensure destination overwrite if exists
+                    if (File.Exists(destPath))
+                    {
+                        File.Delete(destPath);
+                    }
+
+                    entry.ExtractToFile(destPath);
+                    extracted++;
+
+                    // Report coarse-grained progress while extracting results
+                    progress.Report(new UpscaleProgress(
+                        imageFiles.Count,
+                        Math.Min(extracted, imageFiles.Count),
+                        "Upscaling missing pages (batch)",
+                        $"Processed {Math.Min(extracted, imageFiles.Count)}/{imageFiles.Count} pages"
+                    ));
+                }
+            }
+
+            logger.LogDebug("Batch upscaled {extracted}/{total} missing pages", extracted, imageFiles.Count);
+        }
+        finally
+        {
+            // Clean up temporary files
+            if (File.Exists(tempBatchInputCbz))
+            {
+                File.Delete(tempBatchInputCbz);
+            }
+
+            if (File.Exists(tempBatchOutputCbz))
+            {
+                File.Delete(tempBatchOutputCbz);
             }
         }
     }
