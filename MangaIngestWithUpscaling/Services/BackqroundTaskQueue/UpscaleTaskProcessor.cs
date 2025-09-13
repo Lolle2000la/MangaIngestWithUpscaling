@@ -70,7 +70,7 @@ public class UpscaleTaskProcessor(
             task.Status = PersistedTaskStatus.Processing;
             dbContext.Update(task);
             await dbContext.SaveChangesAsync(stoppingToken);
-            var _discard1 = StatusChanged?.Invoke(task);
+            _ = StatusChanged?.Invoke(task);
 
             // Forward progress changes to UI by raising StatusChanged (debounced)
             var last = DateTime.UtcNow;
