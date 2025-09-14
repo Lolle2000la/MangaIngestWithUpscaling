@@ -27,7 +27,6 @@ public interface ITaskQueue
 public class TaskQueue : ITaskQueue, IHostedService
 {
     private readonly ILogger<TaskQueue> _logger;
-    private readonly Channel<PersistedTask> _reroutedUpscaleChannel;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly Channel<PersistedTask> _standardChannel;
 
@@ -50,8 +49,6 @@ public class TaskQueue : ITaskQueue, IHostedService
         _standardChannel = Channel.CreateBounded<PersistedTask>(channelOptions);
         _upscaleChannel = Channel.CreateBounded<PersistedTask>(channelOptions); // For UpscaleTask (distributed)
         _localUpscaleChannel = Channel.CreateBounded<PersistedTask>(channelOptions); // For RepairUpscaleTask and RenameUpscaledChaptersSeriesTask (local only)
-        // Reroute channel is unbounded: it's fed only by DistributedUpscaleTaskProcessor and consumed by the local UpscaleTaskProcessor
-        _reroutedUpscaleChannel = Channel.CreateUnbounded<PersistedTask>();
 
         // Initialize sorted sets with a stable comparer
         // NOTE: SortedSet considers items equal when comparer returns 0 and will drop duplicates.
@@ -76,7 +73,6 @@ public class TaskQueue : ITaskQueue, IHostedService
     public ChannelReader<PersistedTask> StandardReader => _standardChannel.Reader;
     public ChannelReader<PersistedTask> UpscaleReader => _upscaleChannel.Reader; // For DistributedUpscaleTaskProcessor (UpscaleTask only)
     public ChannelReader<PersistedTask> LocalUpscaleReader => _localUpscaleChannel.Reader; // For UpscaleTaskProcessor (RepairUpscaleTask and RenameUpscaledChaptersSeriesTask)
-    public ChannelReader<PersistedTask> ReroutedUpscaleReader => _reroutedUpscaleChannel.Reader;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -300,12 +296,6 @@ public class TaskQueue : ITaskQueue, IHostedService
                     _standardTasks.Add(task);
             }
         }
-    }
-
-    // Send tasks that must be handled locally (e.g., Repair/Rename upscaled) directly to the local UpscaleTaskProcessor
-    public ValueTask SendToLocalUpscaleAsync(PersistedTask task, CancellationToken cancellationToken = default)
-    {
-        return _reroutedUpscaleChannel.Writer.WriteAsync(task, cancellationToken);
     }
 
     public event Func<PersistedTask, Task>? TaskEnqueuedOrChanged;
