@@ -15,7 +15,7 @@ public class UpscaleTaskProcessor(
 {
     private readonly Lock _lock = new();
     private readonly TimeSpan _progressDebounce = TimeSpan.FromMilliseconds(250);
-    private readonly ChannelReader<PersistedTask> _reader = taskQueue.UpscaleReader;
+    private readonly ChannelReader<PersistedTask> _reader = taskQueue.LocalUpscaleReader;
     private readonly ChannelReader<PersistedTask> _reroutedReader = taskQueue.ReroutedUpscaleReader;
     private CancellationTokenSource? currentStoppingToken;
     private PersistedTask? currentTask;

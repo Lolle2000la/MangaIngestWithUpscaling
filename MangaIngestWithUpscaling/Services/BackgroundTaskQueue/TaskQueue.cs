@@ -33,9 +33,12 @@ public class TaskQueue : ITaskQueue, IHostedService
 
     private readonly SortedSet<PersistedTask> _standardTasks;
     private readonly object _standardTasksLock = new();
-    private readonly Channel<PersistedTask> _upscaleChannel;
+    private readonly Channel<PersistedTask> _upscaleChannel; // For UpscaleTask (distributed)
+    private readonly Channel<PersistedTask> _localUpscaleChannel; // For RepairUpscaleTask and RenameUpscaledChaptersSeriesTask (local only)
     private readonly SortedSet<PersistedTask> _upscaleTasks;
     private readonly object _upscaleTasksLock = new();
+    private readonly SortedSet<PersistedTask> _localUpscaleTasks;
+    private readonly object _localUpscaleTasksLock = new();
 
     public TaskQueue(IServiceScopeFactory scopeFactory, ILogger<TaskQueue> logger)
     {
@@ -45,7 +48,8 @@ public class TaskQueue : ITaskQueue, IHostedService
         // Create bounded channels to control concurrency
         var channelOptions = new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.Wait };
         _standardChannel = Channel.CreateBounded<PersistedTask>(channelOptions);
-        _upscaleChannel = Channel.CreateBounded<PersistedTask>(channelOptions);
+        _upscaleChannel = Channel.CreateBounded<PersistedTask>(channelOptions); // For UpscaleTask (distributed)
+        _localUpscaleChannel = Channel.CreateBounded<PersistedTask>(channelOptions); // For RepairUpscaleTask and RenameUpscaledChaptersSeriesTask (local only)
         // Reroute channel is unbounded: it's fed only by DistributedUpscaleTaskProcessor and consumed by the local UpscaleTaskProcessor
         _reroutedUpscaleChannel = Channel.CreateUnbounded<PersistedTask>();
 
@@ -66,10 +70,12 @@ public class TaskQueue : ITaskQueue, IHostedService
         });
         _standardTasks = new SortedSet<PersistedTask>(comparer);
         _upscaleTasks = new SortedSet<PersistedTask>(comparer);
+        _localUpscaleTasks = new SortedSet<PersistedTask>(comparer);
     }
 
     public ChannelReader<PersistedTask> StandardReader => _standardChannel.Reader;
-    public ChannelReader<PersistedTask> UpscaleReader => _upscaleChannel.Reader;
+    public ChannelReader<PersistedTask> UpscaleReader => _upscaleChannel.Reader; // For DistributedUpscaleTaskProcessor (UpscaleTask only)
+    public ChannelReader<PersistedTask> LocalUpscaleReader => _localUpscaleChannel.Reader; // For UpscaleTaskProcessor (RepairUpscaleTask and RenameUpscaledChaptersSeriesTask)
     public ChannelReader<PersistedTask> ReroutedUpscaleReader => _reroutedUpscaleChannel.Reader;
 
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -79,6 +85,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         // Start background processing
         _ = ProcessChannelAsync(_standardChannel, _standardTasks, _standardTasksLock, cancellationToken);
         _ = ProcessChannelAsync(_upscaleChannel, _upscaleTasks, _upscaleTasksLock, cancellationToken);
+        _ = ProcessChannelAsync(_localUpscaleChannel, _localUpscaleTasks, _localUpscaleTasksLock, cancellationToken);
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
@@ -94,10 +101,20 @@ public class TaskQueue : ITaskQueue, IHostedService
 
     public IReadOnlyList<PersistedTask> GetUpscaleSnapshot()
     {
+        List<PersistedTask> combined = new();
+
         lock (_upscaleTasksLock)
         {
-            return _upscaleTasks.ToList();
+            combined.AddRange(_upscaleTasks);
         }
+
+        lock (_localUpscaleTasksLock)
+        {
+            combined.AddRange(_localUpscaleTasks);
+        }
+
+        // Sort the combined list by order, then by ID
+        return combined.OrderBy(t => t.Order).ThenBy(t => t.Id).ToList();
     }
 
     public async Task EnqueueAsync<T>(T taskData) where T : BaseTask
@@ -112,16 +129,26 @@ public class TaskQueue : ITaskQueue, IHostedService
         await dbContext.PersistedTasks.AddAsync(taskItem);
         await dbContext.SaveChangesAsync();
 
-        // Add to the appropriate sorted set
-        if (taskData is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask)
+        // Add to the appropriate sorted set based on task type
+        if (taskData is UpscaleTask)
         {
+            // UpscaleTasks go to the distributed channel for remote workers
             lock (_upscaleTasksLock)
             {
                 _upscaleTasks.Add(taskItem);
             }
         }
+        else if (taskData is RenameUpscaledChaptersSeriesTask or RepairUpscaleTask)
+        {
+            // These tasks must be handled locally
+            lock (_localUpscaleTasksLock)
+            {
+                _localUpscaleTasks.Add(taskItem);
+            }
+        }
         else
         {
+            // All other tasks go to the standard channel
             lock (_standardTasksLock)
             {
                 _standardTasks.Add(taskItem);
@@ -139,11 +166,13 @@ public class TaskQueue : ITaskQueue, IHostedService
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        // Determine which set to modify
-        (SortedSet<PersistedTask> tasks, object lockObj) =
-            task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask
-                ? (_upscaleTasks, _upscaleTasksLock)
-                : (_standardTasks, _standardTasksLock);
+        // Determine which set to modify based on task type
+        (SortedSet<PersistedTask> tasks, object lockObj) = task.Data switch
+        {
+            UpscaleTask => (_upscaleTasks, _upscaleTasksLock),
+            RenameUpscaledChaptersSeriesTask or RepairUpscaleTask => (_localUpscaleTasks, _localUpscaleTasksLock),
+            _ => (_standardTasks, _standardTasksLock)
+        };
 
         lock (lockObj)
         {
@@ -195,10 +224,13 @@ public class TaskQueue : ITaskQueue, IHostedService
         dbContext.PersistedTasks.Remove(task);
         await dbContext.SaveChangesAsync();
 
-        (SortedSet<PersistedTask> tasks, object lockObj) =
-            task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask
-                ? (_upscaleTasks, _upscaleTasksLock)
-                : (_standardTasks, _standardTasksLock);
+        // Determine which set to remove from based on task type
+        (SortedSet<PersistedTask> tasks, object lockObj) = task.Data switch
+        {
+            UpscaleTask => (_upscaleTasks, _upscaleTasksLock),
+            RenameUpscaledChaptersSeriesTask or RepairUpscaleTask => (_localUpscaleTasks, _localUpscaleTasksLock),
+            _ => (_standardTasks, _standardTasksLock)
+        };
 
         lock (lockObj)
         {
@@ -220,10 +252,13 @@ public class TaskQueue : ITaskQueue, IHostedService
         dbContext.Update(task);
         await dbContext.SaveChangesAsync();
 
-        (SortedSet<PersistedTask> tasks, object lockObj) =
-            task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask
-                ? (_upscaleTasks, _upscaleTasksLock)
-                : (_standardTasks, _standardTasksLock);
+        // Determine which set to add to based on task type
+        (SortedSet<PersistedTask> tasks, object lockObj) = task.Data switch
+        {
+            UpscaleTask => (_upscaleTasks, _upscaleTasksLock),
+            RenameUpscaledChaptersSeriesTask or RepairUpscaleTask => (_localUpscaleTasks, _localUpscaleTasksLock),
+            _ => (_standardTasks, _standardTasksLock)
+        };
 
         lock (lockObj)
         {
@@ -246,13 +281,18 @@ public class TaskQueue : ITaskQueue, IHostedService
                         || (t.Status == PersistedTaskStatus.Failed && t.RetryCount < t.Data.RetryFor))
             .ToListAsync(cancellationToken);
 
-        // Load tasks into sorted sets
+        // Load tasks into sorted sets based on task type
         foreach (var task in pendingTasks)
         {
-            if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask)
+            if (task.Data is UpscaleTask)
             {
                 lock (_upscaleTasksLock)
                     _upscaleTasks.Add(task);
+            }
+            else if (task.Data is RenameUpscaledChaptersSeriesTask or RepairUpscaleTask)
+            {
+                lock (_localUpscaleTasksLock)
+                    _localUpscaleTasks.Add(task);
             }
             else
             {
