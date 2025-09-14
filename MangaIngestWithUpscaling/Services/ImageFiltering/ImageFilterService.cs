@@ -1,38 +1,35 @@
 using MangaIngestWithUpscaling.Data.LibraryManagement;
-using MangaIngestWithUpscaling.Shared.Helpers;
 using MangaIngestWithUpscaling.Shared.Constants;
+using MangaIngestWithUpscaling.Shared.Helpers;
+using NetVips;
 using System.IO.Compression;
 using System.Security.Cryptography;
-using System.Text;
-using NetVips;
-using SixLabors.ImageSharp.PixelFormats;
-using CoenM.ImageHash;
-using CoenM.ImageHash.HashAlgorithms;
 
 namespace MangaIngestWithUpscaling.Services.ImageFiltering;
 
 [RegisterScoped]
 public class ImageFilterService : IImageFilterService
 {
-    private readonly ILogger<ImageFilterService> _logger;
-    private readonly IImageHash _imageHasher;
-
     private static readonly HashSet<string> SupportedImageExtensions = ImageConstants.SupportedImageExtensions;
+    private readonly ILogger<ImageFilterService> _logger;
+    private readonly NetVipsPerceptualHash _perceptualHasher;
 
     public ImageFilterService(ILogger<ImageFilterService> logger)
     {
         _logger = logger;
-        // Use pHash algorithm which is excellent for perceptual similarity detection
-        _imageHasher = new PerceptualHash();
+        // Use NetVips-based perceptual hash implementation
+        _perceptualHasher = new NetVipsPerceptualHash();
     }
 
-    public async Task<ImageFilterResult> ApplyFiltersToChapterAsync(string cbzPath, IEnumerable<FilteredImage> filters, CancellationToken cancellationToken = default)
+    public async Task<ImageFilterResult> ApplyFiltersToChapterAsync(string cbzPath, IEnumerable<FilteredImage> filters,
+        CancellationToken cancellationToken = default)
     {
         // Delegate to the overload with null upscaled path
         return await ApplyFiltersToChapterAsync(cbzPath, null, filters, cancellationToken);
     }
 
-    public async Task<ImageFilterResult> ApplyFiltersToChapterAsync(string originalCbzPath, string? upscaledCbzPath, IEnumerable<FilteredImage> filters, CancellationToken cancellationToken = default)
+    public async Task<ImageFilterResult> ApplyFiltersToChapterAsync(string originalCbzPath, string? upscaledCbzPath,
+        IEnumerable<FilteredImage> filters, CancellationToken cancellationToken = default)
     {
         var result = new ImageFilterResult();
 
@@ -86,8 +83,10 @@ public class ImageFilterService : IImageFilterService
 
                         if (matchingFilter != null)
                         {
-                            _logger.LogInformation("Marking filtered image {ImageName} from {CbzPath} for removal (filter: {FilterDescription})",
-                                entry.FullName, originalCbzPath, matchingFilter.Description ?? matchingFilter.OriginalFileName);
+                            _logger.LogInformation(
+                                "Marking filtered image {ImageName} from {CbzPath} for removal (filter: {FilterDescription})",
+                                entry.FullName, originalCbzPath,
+                                matchingFilter.Description ?? matchingFilter.OriginalFileName);
 
                             imagesToRemove.Add(entry.FullName);
                             result.FilteredImageNames.Add(entry.FullName);
@@ -98,12 +97,14 @@ public class ImageFilterService : IImageFilterService
                         }
                         else
                         {
-                            _logger.LogDebug("No filter match found for image {ImageName} in {CbzPath}", entry.FullName, originalCbzPath);
+                            _logger.LogDebug("No filter match found for image {ImageName} in {CbzPath}", entry.FullName,
+                                originalCbzPath);
                         }
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Error processing image {ImageName} in {CbzPath}", entry.FullName, originalCbzPath);
+                        _logger.LogError(ex, "Error processing image {ImageName} in {CbzPath}", entry.FullName,
+                            originalCbzPath);
                         result.ErrorMessages.Add($"Error processing {entry.FullName}: {ex.Message}");
                     }
                 }
@@ -122,7 +123,8 @@ public class ImageFilterService : IImageFilterService
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Error removing filtered image {ImageName} from original {CbzPath}", imageToRemove, originalCbzPath);
+                    _logger.LogError(ex, "Error removing filtered image {ImageName} from original {CbzPath}",
+                        imageToRemove, originalCbzPath);
                     result.ErrorMessages.Add($"Error removing {imageToRemove} from original: {ex.Message}");
                 }
 
@@ -133,18 +135,21 @@ public class ImageFilterService : IImageFilterService
                     {
                         if (CbzCleanupHelpers.TryRemoveImageByBaseName(upscaledCbzPath, imageToRemove, _logger))
                         {
-                            _logger.LogInformation("Removed corresponding upscaled image for {ImageName} from {UpscaledCbzPath}",
+                            _logger.LogInformation(
+                                "Removed corresponding upscaled image for {ImageName} from {UpscaledCbzPath}",
                                 imageToRemove, upscaledCbzPath);
                         }
                         else
                         {
-                            _logger.LogWarning("Could not find corresponding upscaled image for {ImageName} in {UpscaledCbzPath}",
+                            _logger.LogWarning(
+                                "Could not find corresponding upscaled image for {ImageName} in {UpscaledCbzPath}",
                                 imageToRemove, upscaledCbzPath);
                         }
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "Error removing filtered image {ImageName} from upscaled {CbzPath}", imageToRemove, upscaledCbzPath);
+                        _logger.LogError(ex, "Error removing filtered image {ImageName} from upscaled {CbzPath}",
+                            imageToRemove, upscaledCbzPath);
                         result.ErrorMessages.Add($"Error removing {imageToRemove} from upscaled: {ex.Message}");
                     }
                 }
@@ -159,7 +164,8 @@ public class ImageFilterService : IImageFilterService
         return result;
     }
 
-    public async Task<FilteredImage> CreateFilteredImageFromFileAsync(string imagePath, Library library, string? description = null, CancellationToken cancellationToken = default)
+    public async Task<FilteredImage> CreateFilteredImageFromFileAsync(string imagePath, Library library,
+        string? description = null, CancellationToken cancellationToken = default)
     {
         if (!File.Exists(imagePath))
         {
@@ -173,7 +179,8 @@ public class ImageFilterService : IImageFilterService
         return await CreateFilteredImageFromBytesInternalAsync(imageBytes, fileName, library, mimeType, description);
     }
 
-    public async Task<FilteredImage> CreateFilteredImageFromCbzAsync(string cbzPath, string imageEntryName, Library library, string? description = null, CancellationToken cancellationToken = default)
+    public async Task<FilteredImage> CreateFilteredImageFromCbzAsync(string cbzPath, string imageEntryName,
+        Library library, string? description = null, CancellationToken cancellationToken = default)
     {
         if (!File.Exists(cbzPath))
         {
@@ -202,7 +209,8 @@ public class ImageFilterService : IImageFilterService
 
         var mimeType = GetMimeTypeFromExtension(Path.GetExtension(entry.FullName));
 
-        return await CreateFilteredImageFromBytesInternalAsync(imageBytes, entry.FullName, library, mimeType, description);
+        return await CreateFilteredImageFromBytesInternalAsync(imageBytes, entry.FullName, library, mimeType,
+            description);
     }
 
     public Task<string> GenerateThumbnailBase64Async(byte[] imageBytes, int maxSize = 150)
@@ -219,7 +227,7 @@ public class ImageFilterService : IImageFilterService
 
             // Resize the image
             var resizedImage = image.Resize(ratio);
-            
+
             // Save as JPEG with quality 80
             var jpegBytes = resizedImage.WriteToBuffer(".jpg[Q=80]");
 
@@ -249,9 +257,8 @@ public class ImageFilterService : IImageFilterService
     {
         try
         {
-            // Use ImageSharp for hash calculation to maintain compatibility with existing database
-            using var image = ImageHashAdapter.ConvertToImageSharpForHash(imageBytes);
-            var hash = _imageHasher.Hash(image);
+            // Use NetVips-based implementation that maintains compatibility with existing database hashes
+            ulong hash = _perceptualHasher.Hash(imageBytes);
             return hash; // Returns ulong directly
         }
         catch (Exception ex)
@@ -262,7 +269,7 @@ public class ImageFilterService : IImageFilterService
     }
 
     /// <summary>
-    /// Calculates the similarity between two perceptual hashes using CompareHash.
+    /// Calculates the similarity between two perceptual hashes using NetVips implementation.
     /// Returns a value between 0.0 and 100.0 where 100.0 means identical images.
     /// </summary>
     /// <param name="hash1">First perceptual hash</param>
@@ -272,7 +279,7 @@ public class ImageFilterService : IImageFilterService
     {
         try
         {
-            return CompareHash.Similarity(hash1, hash2);
+            return NetVipsPerceptualHash.CalculateSimilarity(hash1, hash2);
         }
         catch (Exception ex)
         {
@@ -290,17 +297,26 @@ public class ImageFilterService : IImageFilterService
     /// <returns>Approximate Hamming distance</returns>
     public int CalculateHammingDistance(ulong hash1, ulong hash2)
     {
-        var similarity = CalculateImageSimilarity(hash1, hash2);
-        // Convert similarity percentage to approximate hamming distance
-        // 100% similarity = 0 distance, 0% similarity = 64 distance (for 64-bit hash)
-        return (int)Math.Round((100.0 - similarity) * 64.0 / 100.0);
+        return NetVipsPerceptualHash.CalculateHammingDistance(hash1, hash2);
     }
 
-    private async Task<FilteredImage> CreateFilteredImageFromBytesInternalAsync(byte[] imageBytes, string fileName, Library library, string? mimeType, string? description)
+    public async Task<FilteredImage> CreateFilteredImageFromBytesAsync(byte[] imageBytes, string fileName,
+        Library library, string? mimeType = null, string? description = null)
     {
-        var contentHash = CalculateContentHash(imageBytes);
-        var perceptualHash = CalculatePerceptualHash(imageBytes);
-        var thumbnailBase64 = await GenerateThumbnailBase64Async(imageBytes);
+        if (string.IsNullOrEmpty(mimeType))
+        {
+            mimeType = GetMimeTypeFromExtension(Path.GetExtension(fileName));
+        }
+
+        return await CreateFilteredImageFromBytesInternalAsync(imageBytes, fileName, library, mimeType, description);
+    }
+
+    private async Task<FilteredImage> CreateFilteredImageFromBytesInternalAsync(byte[] imageBytes, string fileName,
+        Library library, string? mimeType, string? description)
+    {
+        string contentHash = CalculateContentHash(imageBytes);
+        ulong perceptualHash = CalculatePerceptualHash(imageBytes);
+        string thumbnailBase64 = await GenerateThumbnailBase64Async(imageBytes);
 
         return new FilteredImage
         {
@@ -317,17 +333,8 @@ public class ImageFilterService : IImageFilterService
         };
     }
 
-    public async Task<FilteredImage> CreateFilteredImageFromBytesAsync(byte[] imageBytes, string fileName, Library library, string? mimeType = null, string? description = null)
-    {
-        if (string.IsNullOrEmpty(mimeType))
-        {
-            mimeType = GetMimeTypeFromExtension(Path.GetExtension(fileName));
-        }
-
-        return await CreateFilteredImageFromBytesInternalAsync(imageBytes, fileName, library, mimeType, description);
-    }
-
-    private Task<FilteredImage?> FindMatchingFilterAsync(byte[] imageBytes, string imageName, List<FilteredImage> filters)
+    private Task<FilteredImage?> FindMatchingFilterAsync(byte[] imageBytes, string imageName,
+        List<FilteredImage> filters)
     {
         // First try exact content hash matching (fastest)
         var contentHash = CalculateContentHash(imageBytes);
@@ -350,18 +357,21 @@ public class ImageFilterService : IImageFilterService
             var similarity = CalculateImageSimilarity(perceptualHash, filter.PerceptualHash!.Value);
             if (similarity >= minSimilarityPercentage)
             {
-                _logger.LogInformation("Found perceptual hash match for {ImageName}: similarity={Similarity:F1}%, filter={FilterFileName}",
+                _logger.LogInformation(
+                    "Found perceptual hash match for {ImageName}: similarity={Similarity:F1}%, filter={FilterFileName}",
                     imageName, similarity, filter.OriginalFileName);
                 return Task.FromResult<FilteredImage?>(filter);
             }
             else if (similarity > 70.0) // Log near-matches for debugging
             {
-                _logger.LogDebug("Near match for {ImageName}: similarity={Similarity:F1}%, filter={FilterFileName} (threshold: {Threshold}%)",
+                _logger.LogDebug(
+                    "Near match for {ImageName}: similarity={Similarity:F1}%, filter={FilterFileName} (threshold: {Threshold}%)",
                     imageName, similarity, filter.OriginalFileName, minSimilarityPercentage);
             }
         }
 
-        _logger.LogDebug("No matching filter found for {ImageName} (content hash: {ContentHash}, perceptual hash: {PerceptualHash})",
+        _logger.LogDebug(
+            "No matching filter found for {ImageName} (content hash: {ContentHash}, perceptual hash: {PerceptualHash})",
             imageName, contentHash, perceptualHash);
         return Task.FromResult<FilteredImage?>(null);
     }
