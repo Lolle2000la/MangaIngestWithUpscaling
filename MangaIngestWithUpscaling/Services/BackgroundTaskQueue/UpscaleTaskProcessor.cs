@@ -53,26 +53,36 @@ public class UpscaleTaskProcessor(
         {
             PersistedTask task;
             
-            // Create separate cancellation tokens for each read operation
-            using var upscaleCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-            using var localUpscaleCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-            
             // Use Task.WhenAny to wait for either channel to have data available
-            var upscaleReadTask = _upscaleReader.ReadAsync(upscaleCts.Token).AsTask();
-            var localUpscaleReadTask = _localUpscaleReader.ReadAsync(localUpscaleCts.Token).AsTask();
+            var upscaleReadTask = _upscaleReader.ReadAsync(stoppingToken).AsTask();
+            var localUpscaleReadTask = _localUpscaleReader.ReadAsync(stoppingToken).AsTask();
 
             var completedTask = await Task.WhenAny(upscaleReadTask, localUpscaleReadTask);
 
-            // Cancel the other task immediately to prevent it from consuming a task
+            // Handle the completed task and check for the rare case where both completed
             if (completedTask == upscaleReadTask)
             {
-                localUpscaleCts.Cancel(); // Cancel the other read to prevent task consumption
                 task = await upscaleReadTask;
+                
+                // Check if the other task also completed (rare corner case)
+                if (localUpscaleReadTask.IsCompletedSuccessfully)
+                {
+                    var otherTask = await localUpscaleReadTask;
+                    // Return the local task to the queue since UpscaleTask can be picked up by remote workers
+                    await taskQueue.RetryAsync(otherTask);
+                }
             }
             else
             {
-                upscaleCts.Cancel(); // Cancel the other read to prevent task consumption
                 task = await localUpscaleReadTask;
+                
+                // Check if the other task also completed (rare corner case)
+                if (upscaleReadTask.IsCompletedSuccessfully)
+                {
+                    var otherTask = await upscaleReadTask;
+                    // Return the UpscaleTask to the queue since it can be picked up by remote workers
+                    await taskQueue.RetryAsync(otherTask);
+                }
             }
 
             using (_lock.EnterScope())
