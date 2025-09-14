@@ -1,3 +1,4 @@
+using MangaIngestWithUpscaling.Shared.Constants;
 using Microsoft.Extensions.Logging;
 using System.IO.Compression;
 
@@ -5,15 +6,6 @@ namespace MangaIngestWithUpscaling.Shared.Helpers;
 
 public static class CbzCleanupHelpers
 {
-    private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".jpg",
-        ".jpeg",
-        ".png",
-        ".webp",
-        ".avif"
-    };
-
     /// <summary>
     /// Removes a specific image by name from a CBZ archive.
     /// Returns true if the image was found and removed.
@@ -69,7 +61,7 @@ public static class CbzCleanupHelpers
             // Find an image entry that matches the base name but potentially has a different extension
             var entry = archive.Entries
                 .Where(e => !string.IsNullOrEmpty(e.Name)) // skip directories
-                .Where(e => ImageExtensions.Contains(Path.GetExtension(e.FullName)))
+                .Where(e => ImageConstants.IsSupportedImageExtension(Path.GetExtension(e.FullName)))
                 .FirstOrDefault(e =>
                 {
                     var entryBaseName = Path.GetFileNameWithoutExtension(e.FullName);
@@ -85,7 +77,7 @@ public static class CbzCleanupHelpers
                 // Fallback: try to find by base name only (ignore directory structure)
                 entry = archive.Entries
                     .Where(e => !string.IsNullOrEmpty(e.Name))
-                    .Where(e => ImageExtensions.Contains(Path.GetExtension(e.FullName)))
+                    .Where(e => ImageConstants.IsSupportedImageExtension(Path.GetExtension(e.FullName)))
                     .FirstOrDefault(e =>
                         string.Equals(Path.GetFileNameWithoutExtension(e.FullName), baseNameWithoutExt,
                             StringComparison.OrdinalIgnoreCase));
@@ -111,5 +103,4 @@ public static class CbzCleanupHelpers
             return false;
         }
     }
-
 }
