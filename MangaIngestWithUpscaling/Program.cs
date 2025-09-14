@@ -4,6 +4,7 @@ using MangaIngestWithUpscaling.Components;
 using MangaIngestWithUpscaling.Components.Account;
 using MangaIngestWithUpscaling.Configuration;
 using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.Python;
@@ -256,7 +257,10 @@ using (var scope = app.Services.CreateScope())
         dbContext.Database.Migrate();
         Console.WriteLine("Database migrations applied successfully.");
 
-        //loggingDbContext.Database.EnsureCreated();
+        // reset any tasks that were "Processing" (e.g. during a crash) back to "Pending"
+        await dbContext.PersistedTasks.Where(task => task.Status == PersistedTaskStatus.Processing)
+            .ExecuteUpdateAsync(s =>
+                s.SetProperty(p => p.Status, p => PersistedTaskStatus.Pending));
     }
     catch (Exception ex)
     {
