@@ -251,11 +251,11 @@ app.UseForwardedHeaders();
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-    var loggingDbContext = scope.ServiceProvider.GetRequiredService<LoggingDbContext>();
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
     try
     {
         dbContext.Database.Migrate();
-        Console.WriteLine("Database migrations applied successfully.");
+        logger.LogDebug("Database migrations applied successfully.");
 
         // reset any tasks that were "Processing" (e.g. during a crash) back to "Pending"
         await dbContext.PersistedTasks.Where(task => task.Status == PersistedTaskStatus.Processing)
@@ -264,12 +264,11 @@ using (var scope = app.Services.CreateScope())
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"An error occurred while applying migrations: {ex.Message}");
+        logger.LogError(ex, $"An error occurred while applying migrations: {ex.Message}");
         // Log or handle the exception as appropriate for your app
     }
 
     // Also initialize python environment
-    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
     var upscalerConfig = scope.ServiceProvider.GetRequiredService<IOptions<UpscalerConfig>>();
     if (upscalerConfig.Value.RemoteOnly)
     {
