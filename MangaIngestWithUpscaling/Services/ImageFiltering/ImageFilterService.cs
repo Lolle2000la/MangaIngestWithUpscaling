@@ -257,7 +257,7 @@ public class ImageFilterService : IImageFilterService
         try
         {
             // Use NetVips-based implementation that maintains compatibility with existing database hashes
-            ulong hash = _perceptualHasher.Hash(imageBytes);
+            ulong hash = _perceptualHasher.Hash(imageBytes, _logger);
             return hash; // Returns ulong directly
         }
         catch (Exception ex)

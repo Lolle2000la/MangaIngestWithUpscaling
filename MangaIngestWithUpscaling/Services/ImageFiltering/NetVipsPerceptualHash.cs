@@ -23,7 +23,7 @@ public class NetVipsPerceptualHash
     /// </summary>
     /// <param name="imageBytes">Raw image bytes.</param>
     /// <returns>A 64-bit perceptual hash.</returns>
-    public ulong Hash(byte[] imageBytes)
+    public ulong Hash(byte[] imageBytes, ILogger logger)
     {
         if (imageBytes == null)
         {
@@ -47,7 +47,7 @@ public class NetVipsPerceptualHash
         {
             // The forceful resize should prevent this, but as a safeguard,
             // we handle cases where VIPS might fail to produce a 64x64 image.
-            Console.Error.WriteLine("Warning: Image processing did not result in a 64x64 pixel map. Skipping hash.");
+            logger.LogError("Warning: Image processing did not result in a 64x64 pixel map. Skipping hash.");
             return 0;
         }
 
