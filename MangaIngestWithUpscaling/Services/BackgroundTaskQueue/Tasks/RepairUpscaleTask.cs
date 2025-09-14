@@ -2,8 +2,8 @@ using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
-using MangaIngestWithUpscaling.Shared.Helpers;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
@@ -267,7 +267,7 @@ public class RepairUpscaleTask : BaseTask
     {
         // Get all image files in the input directory
         var imageFiles = Directory.GetFiles(inputDir)
-            .Where(f => f.ToLowerInvariant().EndsWithAny(".png", ".jpg", ".jpeg", ".avif", ".webp", ".bmp"))
+            .Where(f => ImageConstants.IsSupportedImageExtension(Path.GetExtension(f).ToLowerInvariant()))
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase) // stable order
             .ToList();
 
@@ -313,8 +313,7 @@ public class RepairUpscaleTask : BaseTask
                 foreach (ZipArchiveEntry entry in outArchive.Entries)
                 {
                     // filter only known image extensions
-                    if (!entry.FullName.ToLowerInvariant()
-                            .EndsWithAny(".png", ".jpg", ".jpeg", ".avif", ".webp", ".bmp"))
+                    if (!ImageConstants.IsSupportedImageExtension(Path.GetExtension(entry.FullName).ToLowerInvariant()))
                     {
                         continue;
                     }
