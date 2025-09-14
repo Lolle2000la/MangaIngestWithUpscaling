@@ -53,22 +53,26 @@ public class UpscaleTaskProcessor(
         {
             PersistedTask task;
             
+            // Create separate cancellation tokens for each read operation
+            using var upscaleCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            using var localUpscaleCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            
             // Use Task.WhenAny to wait for either channel to have data available
-            var upscaleReadTask = _upscaleReader.ReadAsync(stoppingToken).AsTask();
-            var localUpscaleReadTask = _localUpscaleReader.ReadAsync(stoppingToken).AsTask();
+            var upscaleReadTask = _upscaleReader.ReadAsync(upscaleCts.Token).AsTask();
+            var localUpscaleReadTask = _localUpscaleReader.ReadAsync(localUpscaleCts.Token).AsTask();
 
             var completedTask = await Task.WhenAny(upscaleReadTask, localUpscaleReadTask);
 
-            // Cancel the other task that didn't complete to avoid resource leaks
+            // Cancel the other task immediately to prevent it from consuming a task
             if (completedTask == upscaleReadTask)
             {
+                localUpscaleCts.Cancel(); // Cancel the other read to prevent task consumption
                 task = await upscaleReadTask;
-                // The localUpscaleReadTask may still be running, but will be automatically cancelled when stoppingToken is cancelled
             }
             else
             {
+                upscaleCts.Cancel(); // Cancel the other read to prevent task consumption
                 task = await localUpscaleReadTask;
-                // The upscaleReadTask may still be running, but will be automatically cancelled when stoppingToken is cancelled
             }
 
             using (_lock.EnterScope())
