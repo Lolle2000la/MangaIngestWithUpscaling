@@ -2,15 +2,18 @@
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using System.Threading.Channels;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 
 public class DistributedUpscaleTaskProcessor(
     TaskQueue taskQueue,
-    IServiceScopeFactory scopeFactory) : BackgroundService
+    IServiceScopeFactory scopeFactory,
+    IOptions<UpscalerConfig> upscalerConfig) : BackgroundService
 {
     private readonly Lock _lock = new();
     private readonly ChannelReader<PersistedTask> _reader = taskQueue.UpscaleReader;
@@ -260,7 +263,11 @@ public class DistributedUpscaleTaskProcessor(
         var tcs = new TaskCompletionSource<PersistedTask>(TaskCreationOptions.RunContinuationsAsynchronously);
         await _taskRequests.Writer.WriteAsync((tcs, stoppingToken), stoppingToken);
 
-        using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        // When local upscaling is enabled, increase timeout to reduce competition with UpscaleTaskProcessor
+        // This gives local processing priority while still allowing remote workers to get tasks
+        var timeoutDuration = upscalerConfig.Value.RemoteOnly ? TimeSpan.FromSeconds(10) : TimeSpan.FromSeconds(30);
+        
+        using var timeoutCts = new CancellationTokenSource(timeoutDuration);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, timeoutCts.Token);
         using CancellationTokenRegistration registration = linkedCts.Token.Register(() => tcs.TrySetCanceled());
 
