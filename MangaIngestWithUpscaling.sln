@@ -11,6 +11,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling.Sh
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling.RemoteWorker", "MangaIngestWithUpscaling.RemoteWorker\MangaIngestWithUpscaling.RemoteWorker.csproj", "{7C729037-BDE9-431B-A199-5666C4905B87}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling.Shared.Tests", "MangaIngestWithUpscaling.Shared.Tests\MangaIngestWithUpscaling.Shared.Tests.csproj", "{A8B15F48-1234-4567-8901-123456789ABC}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling.Tests", "MangaIngestWithUpscaling.Tests\MangaIngestWithUpscaling.Tests.csproj", "{B8B15F48-1234-4567-8901-123456789ABC}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling.RemoteWorker.Tests", "MangaIngestWithUpscaling.RemoteWorker.Tests\MangaIngestWithUpscaling.RemoteWorker.Tests.csproj", "{C8B15F48-1234-4567-8901-123456789ABC}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -33,6 +39,18 @@ Global
 		{7C729037-BDE9-431B-A199-5666C4905B87}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7C729037-BDE9-431B-A199-5666C4905B87}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{7C729037-BDE9-431B-A199-5666C4905B87}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A8B15F48-1234-4567-8901-123456789ABC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A8B15F48-1234-4567-8901-123456789ABC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A8B15F48-1234-4567-8901-123456789ABC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A8B15F48-1234-4567-8901-123456789ABC}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B8B15F48-1234-4567-8901-123456789ABC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B8B15F48-1234-4567-8901-123456789ABC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B8B15F48-1234-4567-8901-123456789ABC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B8B15F48-1234-4567-8901-123456789ABC}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C8B15F48-1234-4567-8901-123456789ABC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C8B15F48-1234-4567-8901-123456789ABC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C8B15F48-1234-4567-8901-123456789ABC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C8B15F48-1234-4567-8901-123456789ABC}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
