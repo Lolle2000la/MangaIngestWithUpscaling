@@ -5,7 +5,6 @@ using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
-using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Services.MangaManagement;
 
@@ -24,6 +23,10 @@ public class MangaMerger(
     {
         if (!dbContext.Entry(primary).Reference(m => m.Library).IsLoaded)
             await dbContext.Entry(primary).Reference(m => m.Library).LoadAsync(cancellationToken);
+        if (!dbContext.Entry(primary).Collection(m => m.OtherTitles).IsLoaded)
+        {
+            await dbContext.Entry(primary).Collection(m => m.OtherTitles).LoadAsync(cancellationToken);
+        }
 
         if (primary.Library == null)
         {
@@ -125,7 +128,7 @@ public class MangaMerger(
                 {
                     SourceManga = manga,
                     ChapterMoves = chaptersToMove,
-                    TitlesToTransfer = await GetTitlesToTransferAsync(manga, primary, cancellationToken)
+                    TitlesToTransfer = GetTitlesToTransfer(manga, primary)
                 });
 
                 if (chaptersToMove.Count == manga.Chapters.Count)
@@ -139,9 +142,7 @@ public class MangaMerger(
                 mangasToRemove.Add(manga);
                 mergeOperations.Add(new MergeOperation
                 {
-                    SourceManga = manga,
-                    ChapterMoves = [],
-                    TitlesToTransfer = await GetTitlesToTransferAsync(manga, primary, cancellationToken)
+                    SourceManga = manga, ChapterMoves = [], TitlesToTransfer = GetTitlesToTransfer(manga, primary)
                 });
             }
             else
@@ -179,7 +180,7 @@ public class MangaMerger(
             foreach (var manga in mangasToRemove)
             {
                 var operation = mergeOperations.First(o => o.SourceManga == manga);
-                
+
                 dbContext.MangaSeries.Remove(manga);
 
                 // Transfer alternative titles using EF Core's recommended approach
@@ -195,12 +196,14 @@ public class MangaMerger(
                 // Phase 2: Create new alternative title entities with correct principal
                 foreach (var titleText in operation.TitlesToTransfer)
                 {
-                    primary.OtherTitles.Add(new MangaAlternativeTitle
+                    // Avoid duplicates across multiple merged sources in the same transaction
+                    if (!primary.OtherTitles.Any(t => string.Equals(t.Title, titleText, StringComparison.Ordinal)))
                     {
-                        Title = titleText,
-                        Manga = primary,
-                        MangaId = primary.Id
-                    });
+                        primary.OtherTitles.Add(new MangaAlternativeTitle
+                        {
+                            Title = titleText, Manga = primary, MangaId = primary.Id
+                        });
+                    }
                 }
             }
 
@@ -230,7 +233,7 @@ public class MangaMerger(
                     }
 
                     // Update metadata in the source file before moving
-                    metadataHandling.WriteComicInfo(chapterMove.SourcePath, 
+                    metadataHandling.WriteComicInfo(chapterMove.SourcePath,
                         chapterMove.ExistingMetadata with { Series = primary.PrimaryTitle });
 
                     // Move the main chapter file
@@ -242,7 +245,8 @@ public class MangaMerger(
                     {
                         try
                         {
-                            metadataChanger.ApplyMangaTitleToUpscaled(chapterMove.Chapter, primary.PrimaryTitle!, chapterMove.UpscaledSourcePath);
+                            metadataChanger.ApplyMangaTitleToUpscaled(chapterMove.Chapter, primary.PrimaryTitle!,
+                                chapterMove.UpscaledSourcePath);
                         }
                         catch (Exception ex)
                         {
@@ -254,7 +258,8 @@ public class MangaMerger(
                 }
                 catch (Exception ex)
                 {
-                    logger.LogError(ex, "Failed to move chapter {fileName} from {sourcePath} to {targetPath}. Database changes have been committed.",
+                    logger.LogError(ex,
+                        "Failed to move chapter {fileName} from {sourcePath} to {targetPath}. Database changes have been committed.",
                         chapterMove.Chapter.FileName, chapterMove.SourcePath, chapterMove.TargetPath);
                 }
             }
@@ -262,7 +267,8 @@ public class MangaMerger(
             // Clean up empty source directories
             if (operation.SourceManga.Library != null)
             {
-                string notUpscaledMangaDir = Path.Combine(operation.SourceManga.Library.NotUpscaledLibraryPath, operation.SourceManga.PrimaryTitle);
+                string notUpscaledMangaDir = Path.Combine(operation.SourceManga.Library.NotUpscaledLibraryPath,
+                    operation.SourceManga.PrimaryTitle);
                 if (!FileSystemHelpers.DeleteIfEmpty(notUpscaledMangaDir, logger))
                 {
                     logger.LogWarning(
@@ -272,7 +278,8 @@ public class MangaMerger(
 
                 if (operation.SourceManga.Library.UpscaledLibraryPath != null)
                 {
-                    string upscaledMangaDir = Path.Combine(operation.SourceManga.Library.UpscaledLibraryPath, operation.SourceManga.PrimaryTitle);
+                    string upscaledMangaDir = Path.Combine(operation.SourceManga.Library.UpscaledLibraryPath,
+                        operation.SourceManga.PrimaryTitle);
                     FileSystemHelpers.DeleteIfEmpty(upscaledMangaDir, logger);
                 }
             }
@@ -292,13 +299,20 @@ public class MangaMerger(
         });
     }
 
-    private async Task<List<string>> GetTitlesToTransferAsync(Manga sourceManga, Manga targetManga, CancellationToken cancellationToken)
+    private List<string> GetTitlesToTransfer(Manga sourceManga, Manga targetManga)
     {
-        var titlesToTransfer = new List<string>();
+        // Use a HashSet to avoid dupes
+        var titlesToTransfer = new HashSet<string>(StringComparer.Ordinal);
 
-        // Add primary title if it should be transferred
-        if (!targetManga.OtherTitles.Any(t => t.Title == sourceManga.PrimaryTitle)
-            && !await dbContext.MangaAlternativeTitles.AnyAsync(t => t.Title == sourceManga.PrimaryTitle, cancellationToken))
+        static bool ContainsTitle(IEnumerable<MangaAlternativeTitle> titles, string title)
+        {
+            return titles.Any(t => string.Equals(t.Title, title, StringComparison.Ordinal));
+        }
+
+        // Add source primary title if it isn't the same as target primary title and not already present in target's other titles
+        if (!string.IsNullOrWhiteSpace(sourceManga.PrimaryTitle)
+            && !string.Equals(sourceManga.PrimaryTitle, targetManga.PrimaryTitle, StringComparison.Ordinal)
+            && !ContainsTitle(targetManga.OtherTitles, sourceManga.PrimaryTitle))
         {
             titlesToTransfer.Add(sourceManga.PrimaryTitle);
         }
@@ -306,14 +320,15 @@ public class MangaMerger(
         // Collect other titles that should be transferred (not already in target, globally unique)
         foreach (var title in sourceManga.OtherTitles)
         {
-            if (!targetManga.OtherTitles.Any(t => t.Title == title.Title)
-                && !await dbContext.MangaAlternativeTitles.AnyAsync(t => t.Title == title.Title, cancellationToken))
+            if (!string.IsNullOrWhiteSpace(title.Title)
+                && !string.Equals(title.Title, targetManga.PrimaryTitle, StringComparison.Ordinal)
+                && !ContainsTitle(targetManga.OtherTitles, title.Title))
             {
                 titlesToTransfer.Add(title.Title);
             }
         }
 
-        return titlesToTransfer;
+        return titlesToTransfer.ToList();
     }
 
     private class MergeOperation
