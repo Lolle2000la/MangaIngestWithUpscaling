@@ -2,7 +2,6 @@
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using Microsoft.Extensions.Options;
-using Open.ChannelExtensions;
 using System.Threading.Channels;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
@@ -50,19 +49,27 @@ public class UpscaleTaskProcessor(
 
         serviceStoppingToken = stoppingToken;
 
-        // Merge both upscale channels into a single reader using Open.ChannelExtensions
-        var merged = Channel.CreateUnbounded<PersistedTask>(new UnboundedChannelOptions
-        {
-            SingleReader = true, SingleWriter = false, AllowSynchronousContinuations = true
-        });
-
-        // Start piping both sources into the merged channel (will complete when sources complete)
-        _ = _upscaleReader.PipeTo(merged, stoppingToken);
-        _ = _localUpscaleReader.PipeTo(merged, stoppingToken);
-
         while (!stoppingToken.IsCancellationRequested)
         {
-            var task = await merged.Reader.ReadAsync(stoppingToken);
+            PersistedTask task;
+            
+            // Use Task.WhenAny to wait for either channel to have data available
+            var upscaleReadTask = _upscaleReader.ReadAsync(stoppingToken).AsTask();
+            var localUpscaleReadTask = _localUpscaleReader.ReadAsync(stoppingToken).AsTask();
+
+            var completedTask = await Task.WhenAny(upscaleReadTask, localUpscaleReadTask);
+
+            // Cancel the other task that didn't complete to avoid resource leaks
+            if (completedTask == upscaleReadTask)
+            {
+                task = await upscaleReadTask;
+                // The localUpscaleReadTask may still be running, but will be automatically cancelled when stoppingToken is cancelled
+            }
+            else
+            {
+                task = await localUpscaleReadTask;
+                // The upscaleReadTask may still be running, but will be automatically cancelled when stoppingToken is cancelled
+            }
 
             using (_lock.EnterScope())
             {
