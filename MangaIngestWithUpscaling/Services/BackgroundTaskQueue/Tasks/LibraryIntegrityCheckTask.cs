@@ -38,6 +38,26 @@ public class LibraryIntegrityCheckTask : BaseTask
             throw new InvalidOperationException($"Library with ID {LibraryId} not found.");
         }
 
-        await integrityChecker.CheckIntegrity(library, cancellationToken);
+        // Prepare progress reporter
+        Progress.ProgressUnit = "chapters";
+        var reporter = new Progress<IntegrityProgress>(p =>
+        {
+            if (p.Total.HasValue)
+            {
+                Progress.Total = p.Total.Value;
+            }
+
+            if (p.Current.HasValue)
+            {
+                Progress.Current = p.Current.Value;
+            }
+
+            if (!string.IsNullOrWhiteSpace(p.StatusMessage))
+            {
+                Progress.StatusMessage = p.StatusMessage!;
+            }
+        });
+
+        await integrityChecker.CheckIntegrity(library, reporter, cancellationToken);
     }
 }
