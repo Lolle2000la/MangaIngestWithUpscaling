@@ -2,11 +2,13 @@ using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Helpers;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using System.IO.Compression;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
@@ -62,6 +64,8 @@ public class RepairUpscaleTask : BaseTask
         var metadataChanger = services.GetRequiredService<IMangaMetadataChanger>();
         var metadataHandling = services.GetRequiredService<IMetadataHandlingService>();
         var chapterChangedNotifier = services.GetRequiredService<IChapterChangedNotifier>();
+        var upscalerConfig = services.GetRequiredService<IOptions<UpscalerConfig>>();
+        var taskQueue = services.GetRequiredService<ITaskQueue>();
 
         Chapter? chapter = await dbContext.Chapters
             .Include(c => c.Manga)
@@ -114,22 +118,35 @@ public class RepairUpscaleTask : BaseTask
             return;
         }
 
-        var upscaler = services.GetRequiredService<IUpscaler>();
-        try
+        // Check if we're in remote-only mode
+        if (upscalerConfig.Value.RemoteOnly)
         {
-            await PerformRepair(upscaler, currentStoragePath, upscaleTargetPath, upscalerProfile, differences, logger,
-                cancellationToken);
-            _ = chapterChangedNotifier.Notify(chapter, true);
+            logger.LogInformation("Remote-only mode detected, using remote repair workflow for {chapterFileName}",
+                chapter.FileName);
+            
+            await PerformRemoteRepair(chapter, upscalerProfile, differences, currentStoragePath, upscaleTargetPath, 
+                metadataHandling, chapterChangedNotifier, services, logger, cancellationToken);
         }
-        catch (Exception)
+        else
         {
-            // Clean up on failure - let integrity checker handle it
-            if (File.Exists(upscaleTargetPath))
+            // Use local repair workflow
+            var upscaler = services.GetRequiredService<IUpscaler>();
+            try
             {
-                File.Delete(upscaleTargetPath);
+                await PerformLocalRepair(upscaler, currentStoragePath, upscaleTargetPath, upscalerProfile, differences, logger,
+                    cancellationToken);
+                _ = chapterChangedNotifier.Notify(chapter, true);
             }
+            catch (Exception)
+            {
+                // Clean up on failure - let integrity checker handle it
+                if (File.Exists(upscaleTargetPath))
+                {
+                    File.Delete(upscaleTargetPath);
+                }
 
-            throw;
+                throw;
+            }
         }
 
         // Reload chapter and manga from db in case title changed
@@ -140,7 +157,136 @@ public class RepairUpscaleTask : BaseTask
         metadataChanger.ApplyMangaTitleToUpscaled(chapter, chapter.Manga.PrimaryTitle, upscaleTargetPath);
     }
 
-    private async Task PerformRepair(
+    private async Task PerformRemoteRepair(
+        Chapter chapter,
+        UpscalerProfile profile,
+        PageDifferenceResult differences,
+        string originalPath,
+        string upscaledPath,
+        IMetadataHandlingService metadataHandling,
+        IChapterChangedNotifier chapterChangedNotifier,
+        IServiceProvider services,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        // Create temporary directories for repair work
+        string tempWorkDir = Path.Combine(Path.GetTempPath(), $"manga_remote_repair_{Guid.NewGuid()}");
+        string tempOriginalDir = Path.Combine(tempWorkDir, "original");
+        string tempUpscaledDir = Path.Combine(tempWorkDir, "upscaled");
+        string tempMissingDir = Path.Combine(tempWorkDir, "missing");
+        string tempMissingCbz = Path.Combine(tempWorkDir, "missing_pages.cbz");
+        string tempUpscaledMissingCbz = Path.Combine(tempWorkDir, "upscaled_missing_pages.cbz");
+
+        try
+        {
+            Directory.CreateDirectory(tempWorkDir);
+            Directory.CreateDirectory(tempOriginalDir);
+            Directory.CreateDirectory(tempUpscaledDir);
+            Directory.CreateDirectory(tempMissingDir);
+
+            Progress.StatusMessage = "Preparing missing pages for remote upscaling";
+
+            // Extract both archives
+            ZipFile.ExtractToDirectory(originalPath, tempOriginalDir);
+            ZipFile.ExtractToDirectory(upscaledPath, tempUpscaledDir);
+
+            // Remove extra pages from upscaled version
+            foreach (var extraPage in differences.ExtraPages)
+            {
+                var extraFiles = Directory.GetFiles(tempUpscaledDir, $"{extraPage}.*", SearchOption.AllDirectories);
+                foreach (var file in extraFiles)
+                {
+                    File.Delete(file);
+                    logger.LogDebug("Removed extra page: {fileName}", Path.GetFileName(file));
+                }
+            }
+
+            // Extract missing pages to temporary directory
+            foreach (var missingPage in differences.MissingPages)
+            {
+                var missingFiles = Directory.GetFiles(tempOriginalDir, $"{missingPage}.*", SearchOption.AllDirectories);
+                foreach (var file in missingFiles)
+                {
+                    var destFile = Path.Combine(tempMissingDir, Path.GetFileName(file));
+                    File.Copy(file, destFile);
+                    logger.LogDebug("Extracted missing page for upscaling: {fileName}", Path.GetFileName(file));
+                }
+            }
+
+            // Create CBZ with missing pages
+            ZipFile.CreateFromDirectory(tempMissingDir, tempMissingCbz);
+
+            Progress.StatusMessage = "Upscaling missing pages remotely";
+            Progress.Total = differences.MissingPages.Count;
+            Progress.Current = 0;
+            Progress.ProgressUnit = "pages";
+
+            // Get the upscaler from DI - this will handle remote delegation automatically
+            var upscaler = services.GetRequiredService<IUpscaler>();
+            
+            var reporter = new Progress<UpscaleProgress>(p =>
+            {
+                if (p.Total.HasValue)
+                {
+                    Progress.Total = p.Total.Value;
+                }
+
+                if (p.Current.HasValue)
+                {
+                    Progress.Current = p.Current.Value;
+                }
+
+                if (!string.IsNullOrWhiteSpace(p.StatusMessage))
+                {
+                    Progress.StatusMessage = p.StatusMessage!;
+                }
+            });
+
+            // This will be processed by the remote worker
+            await upscaler.Upscale(tempMissingCbz, tempUpscaledMissingCbz, profile, cancellationToken);
+
+            Progress.StatusMessage = "Merging repaired pages";
+
+            // Extract upscaled missing pages
+            string tempUpscaledMissingDir = Path.Combine(tempWorkDir, "upscaled_missing");
+            Directory.CreateDirectory(tempUpscaledMissingDir);
+            ZipFile.ExtractToDirectory(tempUpscaledMissingCbz, tempUpscaledMissingDir);
+
+            // Copy upscaled missing pages back to the upscaled directory
+            foreach (var upscaledFile in Directory.GetFiles(tempUpscaledMissingDir))
+            {
+                var destFile = Path.Combine(tempUpscaledDir, Path.GetFileName(upscaledFile));
+                File.Copy(upscaledFile, destFile, true);
+                logger.LogDebug("Added repaired page: {fileName}", Path.GetFileName(upscaledFile));
+            }
+
+            Progress.StatusMessage = "Packaging repaired CBZ";
+
+            // Create new CBZ file from repaired directory
+            string tempRepairedCbz = Path.Combine(tempWorkDir, "repaired.cbz");
+            ZipFile.CreateFromDirectory(tempUpscaledDir, tempRepairedCbz);
+
+            // Replace the original upscaled file
+            File.Delete(upscaledPath);
+            File.Move(tempRepairedCbz, upscaledPath);
+
+            _ = chapterChangedNotifier.Notify(chapter, true);
+
+            logger.LogInformation(
+                "Successfully repaired chapter remotely with {missingCount} missing pages and {extraCount} extra pages removed",
+                differences.MissingPages.Count, differences.ExtraPages.Count);
+        }
+        finally
+        {
+            // Clean up temporary directories
+            if (Directory.Exists(tempWorkDir))
+            {
+                Directory.Delete(tempWorkDir, true);
+            }
+        }
+    }
+
+    private async Task PerformLocalRepair(
         IUpscaler upscaler,
         string originalPath,
         string upscaledPath,

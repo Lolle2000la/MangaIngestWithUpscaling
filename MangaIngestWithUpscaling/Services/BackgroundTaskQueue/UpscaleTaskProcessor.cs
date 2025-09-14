@@ -42,13 +42,28 @@ public class UpscaleTaskProcessor(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        serviceStoppingToken = stoppingToken;
+
+        // In remote-only mode, we only process rerouted tasks (RepairUpscaleTask, RenameUpscaledChaptersSeriesTask)
+        // Regular UpscaleTasks should not be processed locally
         if (upscalerConfig.Value.RemoteOnly)
         {
-            // If the upscaler is configured to run only on the remote worker, we do not start the processor.
+            logger.LogInformation("Running in remote-only mode - only processing rerouted tasks locally");
+            
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                var task = await _reroutedReader.ReadAsync(stoppingToken);
+                
+                using (_lock.EnterScope())
+                {
+                    currentStoppingToken = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                    currentTask = task;
+                }
+
+                await ProcessTaskAsync(task, currentStoppingToken.Token);
+            }
             return;
         }
-
-        serviceStoppingToken = stoppingToken;
 
         // Merge the rerouted and regular upscale channels into a single reader using Open.ChannelExtensions
         var merged = Channel.CreateUnbounded<PersistedTask>(new UnboundedChannelOptions
