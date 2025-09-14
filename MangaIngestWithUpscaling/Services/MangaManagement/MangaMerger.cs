@@ -33,6 +33,10 @@ public class MangaMerger(
             return;
         }
 
+        // Step 1: Check if all files can be moved and collect the operation plan
+        var mergeOperations = new List<MergeOperation>();
+        var mangasToRemove = new List<Manga>();
+
         foreach (var manga in mergedInto)
         {
             if (!dbContext.Entry(manga).Reference(m => m.Library).IsLoaded)
@@ -42,17 +46,17 @@ public class MangaMerger(
             if (!dbContext.Entry(manga).Collection(m => m.OtherTitles).IsLoaded)
                 await dbContext.Entry(manga).Collection(m => m.OtherTitles).LoadAsync(cancellationToken);
 
-            // collect all the chapters to move in a separate list to avoid modifying the collection while iterating
-            List<Chapter> chaptersToMove = [];
+            var chaptersToMove = new List<ChapterMoveOperation>();
+            var canMoveAllChapters = true;
 
             foreach (var chapter in manga.Chapters)
             {
-                // change title in metadata to the primary title of the series
                 if (manga.Library == null)
                 {
                     logger.LogWarning(
                         "Manga {MangaId} does not have a library associated. Skipping chapter {ChapterFileName}.",
                         manga.Id, chapter.FileName);
+                    canMoveAllChapters = false;
                     continue;
                 }
 
@@ -62,11 +66,25 @@ public class MangaMerger(
                     logger.LogWarning(
                         "Chapter {fileName} does not exist in {LibraryId} for {MangaId}. Therefore skipping.",
                         chapter.FileName, manga.LibraryId, manga.Id);
+                    canMoveAllChapters = false;
                     continue;
                 }
 
-                ExtractedMetadata? existingMetadata = null;
+                var targetPath = Path.Combine(
+                    primary.Library!.NotUpscaledLibraryPath,
+                    PathEscaper.EscapeFileName(primary.PrimaryTitle!),
+                    PathEscaper.EscapeFileName(chapter.FileName));
 
+                if (File.Exists(targetPath))
+                {
+                    logger.LogWarning("Chapter {fileName} already exists in the target path {targetPath}. Skipping.",
+                        chapter.FileName, targetPath);
+                    canMoveAllChapters = false;
+                    continue;
+                }
+
+                // Check if we can read existing metadata
+                ExtractedMetadata? existingMetadata = null;
                 try
                 {
                     existingMetadata = metadataHandling.GetSeriesAndTitleFromComicInfo(chapterPath);
@@ -75,172 +93,192 @@ public class MangaMerger(
                 {
                     logger.LogError(ex, "Failed to read metadata from {chapterPath}. Skipping.",
                         chapterPath);
+                    canMoveAllChapters = false;
                     continue;
                 }
 
-                metadataHandling.WriteComicInfo(chapterPath, existingMetadata with { Series = primary.PrimaryTitle });
-
-                // move chapter into the primary mangas library and folder
-                var targetPath = Path.Combine(
-                    primary.Library!.NotUpscaledLibraryPath,
-                    PathEscaper.EscapeFileName(primary.PrimaryTitle!),
-                    PathEscaper.EscapeFileName(chapter.FileName));
-                if (File.Exists(targetPath))
-                {
-                    logger.LogWarning("Chapter {fileName} already exists in the target path {targetPath}. Skipping.",
-                        chapter.FileName, targetPath);
-                    continue;
-                }
-
-                try
-                {
-                    fileSystem.Move(chapterPath, targetPath);
-                    _ = chapterChangedNotifier.Notify(chapter, false);
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, "Failed to move chapter {fileName} from {chapterPath} to {targetPath}.",
-                        chapter.FileName, chapterPath, targetPath);
-                    continue;
-                }
-
+                string? upscaledSourcePath = null;
                 if (chapter.IsUpscaled && manga.Library?.UpscaledLibraryPath != null &&
                     !string.IsNullOrEmpty(manga.Library.UpscaledLibraryPath))
                 {
-                    var upscaledPath = Path.Combine(manga.Library.UpscaledLibraryPath, chapter.RelativePath);
-                    if (File.Exists(upscaledPath))
+                    upscaledSourcePath = Path.Combine(manga.Library.UpscaledLibraryPath, chapter.RelativePath);
+                    if (!File.Exists(upscaledSourcePath))
                     {
-                        if (primary.Library?.UpscaledLibraryPath != null)
-                        {
-                            try
-                            {
-                                metadataChanger.ApplyMangaTitleToUpscaled(chapter, primary.PrimaryTitle!, upscaledPath);
-                            }
-                            catch (Exception ex)
-                            {
-                                logger.LogError(ex,
-                                    "Failed to update metadata of upscaled chapter {fileName} in {MangaId}.",
-                                    chapter.FileName, manga.Id);
-                            }
-                        }
-                        else
-                        {
-                            logger.LogWarning(
-                                "Chapter {fileName} in {MangaId} is upscaled but the primary manga does not have an upscaled library path. Skipping.",
-                                chapter.FileName, manga.Id);
-                        }
+                        upscaledSourcePath = null; // File doesn't exist, skip upscaled move
                     }
                 }
 
-                chapter.RelativePath = Path.GetRelativePath(primary.Library!.NotUpscaledLibraryPath, targetPath);
-                chapter.Manga = primary;
-                chapter.MangaId = primary.Id;
-                chaptersToMove.Add(chapter);
+                chaptersToMove.Add(new ChapterMoveOperation
+                {
+                    Chapter = chapter,
+                    SourcePath = chapterPath,
+                    TargetPath = targetPath,
+                    UpscaledSourcePath = upscaledSourcePath,
+                    ExistingMetadata = existingMetadata,
+                    NewRelativePath = Path.GetRelativePath(primary.Library!.NotUpscaledLibraryPath, targetPath)
+                });
             }
 
-            // now actually move the chapters.
-            foreach (var chapter in chaptersToMove)
+            if (canMoveAllChapters && chaptersToMove.Count > 0)
             {
-                primary.Chapters.Add(chapter);
-                manga.Chapters.Remove(chapter);
+                mergeOperations.Add(new MergeOperation
+                {
+                    SourceManga = manga,
+                    ChapterMoves = chaptersToMove,
+                    TitlesToTransfer = await GetTitlesToTransferAsync(manga, primary, cancellationToken)
+                });
+
+                if (chaptersToMove.Count == manga.Chapters.Count)
+                {
+                    mangasToRemove.Add(manga);
+                }
+            }
+            else if (chaptersToMove.Count == 0)
+            {
+                // No chapters to move, but we can still transfer titles if manga will be removed
+                mangasToRemove.Add(manga);
+                mergeOperations.Add(new MergeOperation
+                {
+                    SourceManga = manga,
+                    ChapterMoves = [],
+                    TitlesToTransfer = await GetTitlesToTransferAsync(manga, primary, cancellationToken)
+                });
+            }
+            else
+            {
+                logger.LogWarning(
+                    "Cannot move all chapters for manga {MangaId} ({PrimaryTitle}). Manga will not be merged.",
+                    manga.Id, manga.PrimaryTitle);
+            }
+        }
+
+        if (mergeOperations.Count == 0)
+        {
+            logger.LogWarning("No merge operations can be performed. Aborting merge.");
+            return;
+        }
+
+        // Step 2: Perform database operations in a transaction
+        using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            // Update chapter associations in the database
+            foreach (var operation in mergeOperations)
+            {
+                foreach (var chapterMove in operation.ChapterMoves)
+                {
+                    chapterMove.Chapter.RelativePath = chapterMove.NewRelativePath;
+                    chapterMove.Chapter.Manga = primary;
+                    chapterMove.Chapter.MangaId = primary.Id;
+                    primary.Chapters.Add(chapterMove.Chapter);
+                    operation.SourceManga.Chapters.Remove(chapterMove.Chapter);
+                }
             }
 
-            // This will remove the manga from the library if it has no chapters left
-            // If it doesn't then that means that some chapters failed to move and the manga should not be removed
-            // This is an case that should be handled by the user with no reasonable way to automatically judge
-            // what to do with the manga.
-            if (manga.Chapters.Count == 0)
+            // Remove mangas that have no chapters left and handle alternative titles
+            foreach (var manga in mangasToRemove)
             {
-                // Save intermediate changes to chapters before attempting to migrate alternative titles
-                await dbContext.SaveChangesAsync(cancellationToken);
-
+                var operation = mergeOperations.First(o => o.SourceManga == manga);
+                
                 dbContext.MangaSeries.Remove(manga);
 
-                if (manga.Library != null)
+                // Transfer alternative titles using EF Core's recommended approach
+                // Phase 1: Remove all existing alternative titles from source
+                foreach (var title in manga.OtherTitles.ToList())
                 {
-                    // remove the folder if it is empty
-                    string notUpscaledMangaDir = Path.Combine(manga.Library.NotUpscaledLibraryPath, manga.PrimaryTitle);
-                    if (!FileSystemHelpers.DeleteIfEmpty(notUpscaledMangaDir, logger))
-                    {
-                        logger.LogWarning(
-                            "Manga {MangaId} was removed but the folder {notUpscaledMangaDir} was not empty.",
-                            manga.Id, notUpscaledMangaDir);
-                    }
-
-                    if (manga.Library.UpscaledLibraryPath != null)
-                    {
-                        string upscaledMangaDir = Path.Combine(manga.Library.UpscaledLibraryPath, manga.PrimaryTitle);
-                        FileSystemHelpers.DeleteIfEmpty(upscaledMangaDir, logger);
-                    }
+                    manga.OtherTitles.Remove(title);
                 }
 
+                // Save changes to delete the old entities first
+                await dbContext.SaveChangesAsync(cancellationToken);
+
+                // Phase 2: Create new alternative title entities with correct principal
+                foreach (var titleText in operation.TitlesToTransfer)
+                {
+                    primary.OtherTitles.Add(new MangaAlternativeTitle
+                    {
+                        Title = titleText,
+                        Manga = primary,
+                        MangaId = primary.Id
+                    });
+                }
+            }
+
+            // Save all database changes
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            logger.LogError(ex, "Database transaction failed during manga merge. Rolling back.");
+            throw;
+        }
+
+        // Step 3: If database transaction succeeded, perform file operations and metadata updates
+        foreach (var operation in mergeOperations)
+        {
+            foreach (var chapterMove in operation.ChapterMoves)
+            {
                 try
                 {
-                    // Follow EF Core recommendation: first delete dependents, save, then create new associations
-                    // Wrap in transaction to ensure atomicity
-                    using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
-                    
-                    try
+                    // Create target directory if it doesn't exist
+                    var targetDir = Path.GetDirectoryName(chapterMove.TargetPath);
+                    if (targetDir != null && !Directory.Exists(targetDir))
                     {
-                        // Phase 1: Collect titles to transfer and remove all existing alternative titles from source
-                        var titlesToTransfer = new List<string>();
-                        
-                        // Add primary title if it should be transferred
-                        if (!primary.OtherTitles.Any(t => t.Title == manga.PrimaryTitle)
-                            && !await dbContext.MangaAlternativeTitles.AnyAsync(t => t.Title == manga.PrimaryTitle, cancellationToken))
-                        {
-                            titlesToTransfer.Add(manga.PrimaryTitle);
-                        }
-                        
-                        // Collect other titles that should be transferred (not already in target, globally unique)
-                        foreach (var title in manga.OtherTitles.ToList())
-                        {
-                            if (!primary.OtherTitles.Any(t => t.Title == title.Title)
-                                && !await dbContext.MangaAlternativeTitles.AnyAsync(t => t.Title == title.Title, cancellationToken))
-                            {
-                                titlesToTransfer.Add(title.Title);
-                            }
-                            
-                            // Remove from source (EF will delete the entity)
-                            manga.OtherTitles.Remove(title);
-                        }
-                        
-                        // Save changes to delete the old entities first
-                        await dbContext.SaveChangesAsync(cancellationToken);
-                        
-                        // Phase 2: Create new alternative title entities with correct principal
-                        foreach (var titleText in titlesToTransfer)
-                        {
-                            primary.OtherTitles.Add(new MangaAlternativeTitle
-                            {
-                                Title = titleText,
-                                Manga = primary,
-                                MangaId = primary.Id
-                            });
-                        }
-                        
-                        // Save changes to create the new entities
-                        await dbContext.SaveChangesAsync(cancellationToken);
-                        
-                        // Ensure all changes are saved before committing the transaction
-                        await dbContext.SaveChangesAsync(cancellationToken);
-                        
-                        await transaction.CommitAsync(cancellationToken);
+                        Directory.CreateDirectory(targetDir);
                     }
-                    catch
+
+                    // Update metadata in the source file before moving
+                    metadataHandling.WriteComicInfo(chapterMove.SourcePath, 
+                        chapterMove.ExistingMetadata with { Series = primary.PrimaryTitle });
+
+                    // Move the main chapter file
+                    fileSystem.Move(chapterMove.SourcePath, chapterMove.TargetPath);
+                    _ = chapterChangedNotifier.Notify(chapterMove.Chapter, false);
+
+                    // Handle upscaled file if it exists
+                    if (chapterMove.UpscaledSourcePath != null && primary.Library?.UpscaledLibraryPath != null)
                     {
-                        await transaction.RollbackAsync(cancellationToken);
-                        throw;
+                        try
+                        {
+                            metadataChanger.ApplyMangaTitleToUpscaled(chapterMove.Chapter, primary.PrimaryTitle!, chapterMove.UpscaledSourcePath);
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogError(ex,
+                                "Failed to update metadata of upscaled chapter {fileName} in {MangaId}.",
+                                chapterMove.Chapter.FileName, operation.SourceManga.Id);
+                        }
                     }
                 }
                 catch (Exception ex)
                 {
-                    logger.LogError(ex, "Failed to move other titles from {MangaId} to {PrimaryMangaId}.",
-                        manga.Id, primary.Id);
+                    logger.LogError(ex, "Failed to move chapter {fileName} from {sourcePath} to {targetPath}. Database changes have been committed.",
+                        chapterMove.Chapter.FileName, chapterMove.SourcePath, chapterMove.TargetPath);
+                }
+            }
+
+            // Clean up empty source directories
+            if (operation.SourceManga.Library != null)
+            {
+                string notUpscaledMangaDir = Path.Combine(operation.SourceManga.Library.NotUpscaledLibraryPath, operation.SourceManga.PrimaryTitle);
+                if (!FileSystemHelpers.DeleteIfEmpty(notUpscaledMangaDir, logger))
+                {
+                    logger.LogWarning(
+                        "Manga {MangaId} was removed but the folder {notUpscaledMangaDir} was not empty.",
+                        operation.SourceManga.Id, notUpscaledMangaDir);
+                }
+
+                if (operation.SourceManga.Library.UpscaledLibraryPath != null)
+                {
+                    string upscaledMangaDir = Path.Combine(operation.SourceManga.Library.UpscaledLibraryPath, operation.SourceManga.PrimaryTitle);
+                    FileSystemHelpers.DeleteIfEmpty(upscaledMangaDir, logger);
                 }
             }
         }
 
+        // Clean up empty subdirectories in all affected library paths
         _ = Task.Run(() =>
         {
             foreach (var uniqueLibraryPath in mergedInto
@@ -249,9 +287,49 @@ public class MangaMerger(
                          .Where(path => path is not null)
                          .Distinct())
             {
-                // remove the folder if it is empty
                 FileSystemHelpers.DeleteEmptySubfolders(uniqueLibraryPath!, logger);
             }
         });
+    }
+
+    private async Task<List<string>> GetTitlesToTransferAsync(Manga sourceManga, Manga targetManga, CancellationToken cancellationToken)
+    {
+        var titlesToTransfer = new List<string>();
+
+        // Add primary title if it should be transferred
+        if (!targetManga.OtherTitles.Any(t => t.Title == sourceManga.PrimaryTitle)
+            && !await dbContext.MangaAlternativeTitles.AnyAsync(t => t.Title == sourceManga.PrimaryTitle, cancellationToken))
+        {
+            titlesToTransfer.Add(sourceManga.PrimaryTitle);
+        }
+
+        // Collect other titles that should be transferred (not already in target, globally unique)
+        foreach (var title in sourceManga.OtherTitles)
+        {
+            if (!targetManga.OtherTitles.Any(t => t.Title == title.Title)
+                && !await dbContext.MangaAlternativeTitles.AnyAsync(t => t.Title == title.Title, cancellationToken))
+            {
+                titlesToTransfer.Add(title.Title);
+            }
+        }
+
+        return titlesToTransfer;
+    }
+
+    private class MergeOperation
+    {
+        public required Manga SourceManga { get; set; }
+        public required List<ChapterMoveOperation> ChapterMoves { get; set; }
+        public required List<string> TitlesToTransfer { get; set; }
+    }
+
+    private class ChapterMoveOperation
+    {
+        public required Chapter Chapter { get; set; }
+        public required string SourcePath { get; set; }
+        public required string TargetPath { get; set; }
+        public required string? UpscaledSourcePath { get; set; }
+        public required ExtractedMetadata ExistingMetadata { get; set; }
+        public required string NewRelativePath { get; set; }
     }
 }
