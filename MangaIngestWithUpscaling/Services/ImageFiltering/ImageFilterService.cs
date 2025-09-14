@@ -10,7 +10,6 @@ namespace MangaIngestWithUpscaling.Services.ImageFiltering;
 [RegisterScoped]
 public class ImageFilterService : IImageFilterService
 {
-    private static readonly HashSet<string> SupportedImageExtensions = ImageConstants.SupportedImageExtensions;
     private readonly ILogger<ImageFilterService> _logger;
     private readonly NetVipsPerceptualHash _perceptualHasher;
 
@@ -60,7 +59,7 @@ public class ImageFilterService : IImageFilterService
             {
                 var imageEntries = archive.Entries
                     .Where(e => !string.IsNullOrEmpty(e.Name))
-                    .Where(e => SupportedImageExtensions.Contains(Path.GetExtension(e.FullName)))
+                    .Where(e => ImageConstants.IsSupportedImageExtension(Path.GetExtension(e.FullName)))
                     .ToList();
 
                 foreach (var entry in imageEntries)
