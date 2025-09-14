@@ -2,6 +2,7 @@ using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Services.RepairServices;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Helpers;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
@@ -115,9 +116,10 @@ public class RepairUpscaleTask : BaseTask
         }
 
         var upscaler = services.GetRequiredService<IUpscaler>();
+        var repairService = services.GetRequiredService<IRepairService>();
         try
         {
-            await PerformRepair(upscaler, currentStoragePath, upscaleTargetPath, upscalerProfile, differences, logger,
+            await PerformRepair(upscaler, repairService, currentStoragePath, upscaleTargetPath, upscalerProfile, differences, logger,
                 cancellationToken);
             _ = chapterChangedNotifier.Notify(chapter, true);
         }
@@ -142,6 +144,7 @@ public class RepairUpscaleTask : BaseTask
 
     private async Task PerformRepair(
         IUpscaler upscaler,
+        IRepairService repairService,
         string originalPath,
         string upscaledPath,
         UpscalerProfile profile,
@@ -149,48 +152,10 @@ public class RepairUpscaleTask : BaseTask
         ILogger logger,
         CancellationToken cancellationToken)
     {
-        // Create temporary directories for extraction and work
-        string tempWorkDir = Path.Combine(Path.GetTempPath(), $"manga_repair_{Guid.NewGuid()}");
-        string tempOriginalDir = Path.Combine(tempWorkDir, "original");
-        string tempUpscaledDir = Path.Combine(tempWorkDir, "upscaled");
-        string tempMissingDir = Path.Combine(tempWorkDir, "missing");
-        string tempUpscaledMissingDir = Path.Combine(tempWorkDir, "upscaled_missing");
-
+        var repairContext = repairService.PrepareRepairContext(differences, originalPath, upscaledPath, logger);
+        
         try
         {
-            Directory.CreateDirectory(tempWorkDir);
-            Directory.CreateDirectory(tempOriginalDir);
-            Directory.CreateDirectory(tempUpscaledDir);
-            Directory.CreateDirectory(tempMissingDir);
-            Directory.CreateDirectory(tempUpscaledMissingDir);
-
-            // Extract both archives
-            ZipFile.ExtractToDirectory(originalPath, tempOriginalDir);
-            ZipFile.ExtractToDirectory(upscaledPath, tempUpscaledDir);
-
-            // Remove extra pages from upscaled version
-            foreach (var extraPage in differences.ExtraPages)
-            {
-                var extraFiles = Directory.GetFiles(tempUpscaledDir, $"{extraPage}.*", SearchOption.AllDirectories);
-                foreach (var file in extraFiles)
-                {
-                    File.Delete(file);
-                    logger.LogDebug("Removed extra page: {fileName}", Path.GetFileName(file));
-                }
-            }
-
-            // Extract missing pages to temporary directory for upscaling
-            foreach (var missingPage in differences.MissingPages)
-            {
-                var missingFiles = Directory.GetFiles(tempOriginalDir, $"{missingPage}.*", SearchOption.AllDirectories);
-                foreach (var file in missingFiles)
-                {
-                    var destFile = Path.Combine(tempMissingDir, Path.GetFileName(file));
-                    File.Copy(file, destFile);
-                    logger.LogDebug("Extracted missing page for upscaling: {fileName}", Path.GetFileName(file));
-                }
-            }
-
             // Only upscale if there are missing pages
             if (differences.MissingPages.Count > 0)
             {
@@ -218,29 +183,16 @@ public class RepairUpscaleTask : BaseTask
                     }
                 });
 
-                // Use folder-based upscaling for the missing pages
-                await UpscaleFolderContents(upscaler, tempMissingDir, tempUpscaledMissingDir, profile, reporter, logger,
+                // Use the repair service for batch processing
+                await UpscaleFolderContents(upscaler, repairService, repairContext, profile, reporter, logger,
                     cancellationToken);
-
-                // Copy upscaled missing pages back to the upscaled directory
-                foreach (var upscaledFile in Directory.GetFiles(tempUpscaledMissingDir))
-                {
-                    var destFile = Path.Combine(tempUpscaledDir, Path.GetFileName(upscaledFile));
-                    File.Copy(upscaledFile, destFile);
-                    logger.LogDebug("Added repaired page: {fileName}", Path.GetFileName(upscaledFile));
-                }
             }
 
             // Update progress for final packaging
             Progress.StatusMessage = "Packaging repaired CBZ";
 
-            // Create new CBZ file from repaired directory
-            string tempRepairedCbz = Path.Combine(tempWorkDir, "repaired.cbz");
-            ZipFile.CreateFromDirectory(tempUpscaledDir, tempRepairedCbz);
-
-            // Replace the original upscaled file
-            File.Delete(upscaledPath);
-            File.Move(tempRepairedCbz, upscaledPath);
+            // Use the repair service to merge results
+            repairService.MergeRepairResults(repairContext, upscaledPath, logger);
 
             logger.LogInformation(
                 "Successfully repaired chapter with {missingCount} missing pages and {extraCount} extra pages removed",
@@ -248,118 +200,52 @@ public class RepairUpscaleTask : BaseTask
         }
         finally
         {
-            // Clean up temporary directories
-            if (Directory.Exists(tempWorkDir))
-            {
-                Directory.Delete(tempWorkDir, true);
-            }
+            repairContext.Dispose();
         }
     }
 
     private async Task UpscaleFolderContents(
         IUpscaler upscaler,
-        string inputDir,
-        string outputDir,
+        IRepairService repairService,
+        RepairContext repairContext,
         UpscalerProfile profile,
         IProgress<UpscaleProgress> progress,
         ILogger logger,
         CancellationToken cancellationToken)
     {
-        // Get all image files in the input directory
-        var imageFiles = Directory.GetFiles(inputDir)
-            .Where(f => f.ToLowerInvariant().EndsWithAny(".png", ".jpg", ".jpeg", ".avif", ".webp", ".bmp"))
-            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase) // stable order
-            .ToList();
+        // Get all missing pages directory for batch processing
+        string tempMissingDir = Path.Combine(repairContext.WorkDirectory, "missing");
+        
+        // Basic progress info before starting batch upscale
+        progress.Report(new UpscaleProgress(
+            null,
+            0,
+            "Upscaling missing pages (batch)",
+            "Preparing batch upscale"
+        ));
 
-        if (imageFiles.Count == 0)
+        // Create batch CBZ using the repair service
+        if (repairContext.HasMissingPages)
         {
-            logger.LogDebug("No image files found to upscale in {inputDir}", inputDir);
-            return;
-        }
+            // Use the repair service method which handles CBZ creation internally
+            await upscaler.Upscale(repairContext.MissingPagesCbz, repairContext.UpscaledMissingCbz, profile, cancellationToken);
 
-        Directory.CreateDirectory(outputDir);
+            // Process results using the repair service
+            string tempUpscaledMissingDir = Path.Combine(repairContext.WorkDirectory, "upscaled_missing");
+            await repairService.ProcessBatchUpscaleResults(
+                repairContext.UpscaledMissingCbz,
+                tempUpscaledMissingDir,
+                Directory.GetFiles(tempMissingDir).Length,
+                progress,
+                logger,
+                cancellationToken);
 
-        // Create a temporary CBZ containing all missing pages and one output CBZ
-        string tempBatchInputCbz = Path.Combine(Path.GetTempPath(), $"temp_missing_batch_{Guid.NewGuid()}.cbz");
-        string tempBatchOutputCbz = Path.Combine(Path.GetTempPath(), $"temp_missing_batch_out_{Guid.NewGuid()}.cbz");
-
-        try
-        {
-            // Package all missing images into a single CBZ (entry names are the original basenames)
-            using (ZipArchive archive = ZipFile.Open(tempBatchInputCbz, ZipArchiveMode.Create))
+            // Copy the extracted files to the upscaled directory
+            foreach (var upscaledFile in Directory.GetFiles(tempUpscaledMissingDir))
             {
-                foreach (string file in imageFiles)
-                {
-                    string entryName = Path.GetFileName(file);
-                    archive.CreateEntryFromFile(file, entryName);
-                }
-            }
-
-            // Basic progress info before starting batch upscale
-            progress.Report(new UpscaleProgress(
-                imageFiles.Count,
-                0,
-                "Upscaling missing pages (batch)",
-                $"Submitting {imageFiles.Count} pages to upscaler"
-            ));
-
-            // Run the upscaler once for the batch
-            await upscaler.Upscale(tempBatchInputCbz, tempBatchOutputCbz, profile, cancellationToken);
-
-            // Extract all upscaled images to the output directory
-            int extracted = 0;
-            using (ZipArchive outArchive = ZipFile.OpenRead(tempBatchOutputCbz))
-            {
-                foreach (ZipArchiveEntry entry in outArchive.Entries)
-                {
-                    // filter only known image extensions
-                    if (!entry.FullName.ToLowerInvariant()
-                            .EndsWithAny(".png", ".jpg", ".jpeg", ".avif", ".webp", ".bmp"))
-                    {
-                        continue;
-                    }
-
-                    // Sanitize entry name and ensure no directory traversal
-                    string safeName = Path.GetFileName(entry.FullName);
-                    if (string.IsNullOrWhiteSpace(safeName))
-                    {
-                        continue;
-                    }
-
-                    string destPath = Path.Combine(outputDir, safeName);
-
-                    // Ensure destination overwrite if exists
-                    if (File.Exists(destPath))
-                    {
-                        File.Delete(destPath);
-                    }
-
-                    entry.ExtractToFile(destPath);
-                    extracted++;
-
-                    // Report coarse-grained progress while extracting results
-                    progress.Report(new UpscaleProgress(
-                        imageFiles.Count,
-                        Math.Min(extracted, imageFiles.Count),
-                        "Upscaling missing pages (batch)",
-                        $"Processed {Math.Min(extracted, imageFiles.Count)}/{imageFiles.Count} pages"
-                    ));
-                }
-            }
-
-            logger.LogDebug("Batch upscaled {extracted}/{total} missing pages", extracted, imageFiles.Count);
-        }
-        finally
-        {
-            // Clean up temporary files
-            if (File.Exists(tempBatchInputCbz))
-            {
-                File.Delete(tempBatchInputCbz);
-            }
-
-            if (File.Exists(tempBatchOutputCbz))
-            {
-                File.Delete(tempBatchOutputCbz);
+                var destFile = Path.Combine(repairContext.UpscaledDirectory, Path.GetFileName(upscaledFile));
+                File.Copy(upscaledFile, destFile, true);
+                logger.LogDebug("Added repaired page: {fileName}", Path.GetFileName(upscaledFile));
             }
         }
     }

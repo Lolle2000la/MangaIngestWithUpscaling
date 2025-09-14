@@ -4,6 +4,7 @@ using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Services.RepairServices;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
@@ -540,9 +541,10 @@ public class DistributedUpscaleTaskProcessor(
             }
 
             // Perform the remote repair workflow
+            var repairService = services.GetRequiredService<IRepairService>();
             await PerformRemoteRepair(
                 chapter, upscalerProfile, differences, currentStoragePath, upscaleTargetPath,
-                metadataHandling, services, persistedTask, logger, cancellationToken);
+                metadataHandling, repairService, services, persistedTask, logger, cancellationToken);
 
             // Reload chapter and manga from db in case title changed
             await dbContext.Entry(chapter).ReloadAsync();
@@ -590,12 +592,13 @@ public class DistributedUpscaleTaskProcessor(
         string originalPath,
         string upscaledPath,
         IMetadataHandlingService metadataHandling,
+        IRepairService repairService,
         IServiceProvider services,
         PersistedTask persistedTask,
         ILogger logger,
         CancellationToken cancellationToken)
     {
-        var repairContext = PrepareRepairContext(differences, originalPath, upscaledPath, logger);
+        var repairContext = repairService.PrepareRepairContext(differences, originalPath, upscaledPath, logger);
         
         try
         {
@@ -620,8 +623,8 @@ public class DistributedUpscaleTaskProcessor(
             persistedTask.Data.Progress.StatusMessage = "Merging repaired pages";
             _ = StatusChanged?.Invoke(persistedTask);
 
-            // Merge the results back
-            MergeRepairResults(repairContext, upscaledPath, logger);
+            // Merge the results back using the shared repair service
+            repairService.MergeRepairResults(repairContext, upscaledPath, logger);
 
             logger.LogInformation(
                 "Successfully repaired chapter remotely with {missingCount} missing pages and {extraCount} extra pages removed",
@@ -630,127 +633,6 @@ public class DistributedUpscaleTaskProcessor(
         finally
         {
             repairContext.Dispose();
-        }
-    }
-
-    /// <summary>
-    /// Prepares the repair context by extracting pages and creating temporary CBZ files.
-    /// </summary>
-    private RepairContext PrepareRepairContext(
-        PageDifferenceResult differences,
-        string originalPath,
-        string upscaledPath,
-        ILogger logger)
-    {
-        string tempWorkDir = Path.Combine(Path.GetTempPath(), $"manga_remote_repair_{Guid.NewGuid()}");
-        string tempOriginalDir = Path.Combine(tempWorkDir, "original");
-        string tempUpscaledDir = Path.Combine(tempWorkDir, "upscaled");
-        string tempMissingDir = Path.Combine(tempWorkDir, "missing");
-        string tempMissingCbz = Path.Combine(tempWorkDir, "missing_pages.cbz");
-        string tempUpscaledMissingCbz = Path.Combine(tempWorkDir, "upscaled_missing_pages.cbz");
-
-        Directory.CreateDirectory(tempWorkDir);
-        Directory.CreateDirectory(tempOriginalDir);
-        Directory.CreateDirectory(tempUpscaledDir);
-        Directory.CreateDirectory(tempMissingDir);
-
-        // Extract both archives
-        ZipFile.ExtractToDirectory(originalPath, tempOriginalDir);
-        ZipFile.ExtractToDirectory(upscaledPath, tempUpscaledDir);
-
-        // Remove extra pages from upscaled version
-        foreach (var extraPage in differences.ExtraPages)
-        {
-            var extraFiles = Directory.GetFiles(tempUpscaledDir, $"{extraPage}.*", SearchOption.AllDirectories);
-            foreach (var file in extraFiles)
-            {
-                File.Delete(file);
-                logger.LogDebug("Removed extra page: {fileName}", Path.GetFileName(file));
-            }
-        }
-
-        // Extract missing pages to temporary directory
-        foreach (var missingPage in differences.MissingPages)
-        {
-            var missingFiles = Directory.GetFiles(tempOriginalDir, $"{missingPage}.*", SearchOption.AllDirectories);
-            foreach (var file in missingFiles)
-            {
-                var destFile = Path.Combine(tempMissingDir, Path.GetFileName(file));
-                File.Copy(file, destFile);
-                logger.LogDebug("Extracted missing page for upscaling: {fileName}", Path.GetFileName(file));
-            }
-        }
-
-        // Create CBZ with missing pages (only if there are missing pages)
-        if (differences.MissingPages.Count > 0)
-        {
-            ZipFile.CreateFromDirectory(tempMissingDir, tempMissingCbz);
-        }
-
-        return new RepairContext
-        {
-            WorkDirectory = tempWorkDir,
-            UpscaledDirectory = tempUpscaledDir,
-            MissingPagesCbz = tempMissingCbz,
-            UpscaledMissingCbz = tempUpscaledMissingCbz,
-            HasMissingPages = differences.MissingPages.Count > 0
-        };
-    }
-
-    /// <summary>
-    /// Merges the upscaled missing pages back into the upscaled directory and creates the final CBZ.
-    /// </summary>
-    private void MergeRepairResults(RepairContext context, string finalUpscaledPath, ILogger logger)
-    {
-        if (context.HasMissingPages)
-        {
-            // Extract upscaled missing pages
-            string tempUpscaledMissingDir = Path.Combine(context.WorkDirectory, "upscaled_missing");
-            Directory.CreateDirectory(tempUpscaledMissingDir);
-            ZipFile.ExtractToDirectory(context.UpscaledMissingCbz, tempUpscaledMissingDir);
-
-            // Copy upscaled missing pages back to the upscaled directory
-            foreach (var upscaledFile in Directory.GetFiles(tempUpscaledMissingDir))
-            {
-                var destFile = Path.Combine(context.UpscaledDirectory, Path.GetFileName(upscaledFile));
-                File.Copy(upscaledFile, destFile, true);
-                logger.LogDebug("Added repaired page: {fileName}", Path.GetFileName(upscaledFile));
-            }
-        }
-
-        // Create new CBZ file from repaired directory
-        string tempRepairedCbz = Path.Combine(context.WorkDirectory, "repaired.cbz");
-        ZipFile.CreateFromDirectory(context.UpscaledDirectory, tempRepairedCbz);
-
-        // Replace the original upscaled file
-        File.Delete(finalUpscaledPath);
-        File.Move(tempRepairedCbz, finalUpscaledPath);
-    }
-
-    /// <summary>
-    /// Context for repair operations that manages temporary files and directories.
-    /// </summary>
-    private class RepairContext : IDisposable
-    {
-        public string WorkDirectory { get; set; } = string.Empty;
-        public string UpscaledDirectory { get; set; } = string.Empty;
-        public string MissingPagesCbz { get; set; } = string.Empty;
-        public string UpscaledMissingCbz { get; set; } = string.Empty;
-        public bool HasMissingPages { get; set; }
-
-        public void Dispose()
-        {
-            if (Directory.Exists(WorkDirectory))
-            {
-                try
-                {
-                    Directory.Delete(WorkDirectory, true);
-                }
-                catch
-                {
-                    // Ignore cleanup errors
-                }
-            }
         }
     }
 }
