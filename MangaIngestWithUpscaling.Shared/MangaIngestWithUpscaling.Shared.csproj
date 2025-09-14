@@ -17,6 +17,8 @@
         <PackageReference Include="Open.ChannelExtensions" Version="9.1.0" />
         <PackageReference Include="Silk.NET.OpenGL" Version="2.22.0"/>
         <PackageReference Include="Silk.NET.Windowing" Version="2.22.0"/>
+        <PackageReference Include="NetVips" Version="3.0.0"/>
+        <PackageReference Include="NetVips.Native" Version="8.15.3"/>
         <PackageReference Include="SixLabors.ImageSharp" Version="3.1.11"/>
     </ItemGroup>
 

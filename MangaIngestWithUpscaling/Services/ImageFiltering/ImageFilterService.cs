@@ -1,11 +1,10 @@
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Helpers;
+using MangaIngestWithUpscaling.Shared.Constants;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Processing;
-using SixLabors.ImageSharp.Formats.Jpeg;
+using NetVips;
 using SixLabors.ImageSharp.PixelFormats;
 using CoenM.ImageHash;
 using CoenM.ImageHash.HashAlgorithms;
@@ -18,10 +17,7 @@ public class ImageFilterService : IImageFilterService
     private readonly ILogger<ImageFilterService> _logger;
     private readonly IImageHash _imageHasher;
 
-    private static readonly HashSet<string> SupportedImageExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif", ".avif"
-    };
+    private static readonly HashSet<string> SupportedImageExtensions = ImageConstants.SupportedImageExtensions;
 
     public ImageFilterService(ILogger<ImageFilterService> logger)
     {
@@ -209,23 +205,25 @@ public class ImageFilterService : IImageFilterService
         return await CreateFilteredImageFromBytesInternalAsync(imageBytes, entry.FullName, library, mimeType, description);
     }
 
-    public async Task<string> GenerateThumbnailBase64Async(byte[] imageBytes, int maxSize = 150)
+    public Task<string> GenerateThumbnailBase64Async(byte[] imageBytes, int maxSize = 150)
     {
         try
         {
-            using var image = Image.Load(imageBytes);
+            // Load image using NetVips
+            using var image = Image.NewFromBuffer(imageBytes);
 
             // Calculate new dimensions while maintaining aspect ratio
             var ratio = Math.Min((double)maxSize / image.Width, (double)maxSize / image.Height);
             var newWidth = (int)(image.Width * ratio);
             var newHeight = (int)(image.Height * ratio);
 
-            image.Mutate(x => x.Resize(newWidth, newHeight));
+            // Resize the image
+            var resizedImage = image.Resize(ratio);
+            
+            // Save as JPEG with quality 80
+            var jpegBytes = resizedImage.WriteToBuffer(".jpg[Q=80]");
 
-            using var outputStream = new MemoryStream();
-            await image.SaveAsync(outputStream, new JpegEncoder { Quality = 80 });
-
-            return Convert.ToBase64String(outputStream.ToArray());
+            return Task.FromResult(Convert.ToBase64String(jpegBytes));
         }
         catch (Exception ex)
         {
@@ -251,7 +249,8 @@ public class ImageFilterService : IImageFilterService
     {
         try
         {
-            using var image = Image.Load<Rgba32>(imageBytes);
+            // Use ImageSharp for hash calculation to maintain compatibility with existing database
+            using var image = ImageHashAdapter.ConvertToImageSharpForHash(imageBytes);
             var hash = _imageHasher.Hash(image);
             return hash; // Returns ulong directly
         }
@@ -369,15 +368,6 @@ public class ImageFilterService : IImageFilterService
 
     private static string? GetMimeTypeFromExtension(string extension)
     {
-        return extension.ToLowerInvariant() switch
-        {
-            ".jpg" or ".jpeg" => "image/jpeg",
-            ".png" => "image/png",
-            ".webp" => "image/webp",
-            ".bmp" => "image/bmp",
-            ".tiff" or ".tif" => "image/tiff",
-            ".avif" => "image/avif",
-            _ => null
-        };
+        return ImageConstants.GetMimeTypeFromExtension(extension);
     }
 }

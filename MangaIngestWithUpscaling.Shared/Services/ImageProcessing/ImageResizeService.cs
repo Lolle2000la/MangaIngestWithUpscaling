@@ -1,7 +1,7 @@
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
+using MangaIngestWithUpscaling.Shared.Constants;
 using Microsoft.Extensions.Logging;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Processing;
+using NetVips;
 using System.IO.Compression;
 
 namespace MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
@@ -13,9 +13,7 @@ public class ImageResizeService : IImageResizeService
     private readonly IFileSystem _fileSystem;
     
     private static readonly string[] SupportedImageExtensions = 
-    {
-        ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif"
-    };
+        ImageConstants.SupportedImageExtensions.ToArray();
 
     public ImageResizeService(ILogger<ImageResizeService> logger, IFileSystem fileSystem)
     {
@@ -101,7 +99,7 @@ public class ImageResizeService : IImageResizeService
             
             try
             {
-                await ResizeImageIfNeeded(imagePath, maxDimension, cancellationToken);
+                await Task.Run(() => ResizeImageIfNeeded(imagePath, maxDimension, cancellationToken), cancellationToken);
             }
             catch (Exception ex)
             {
@@ -111,9 +109,10 @@ public class ImageResizeService : IImageResizeService
         }
     }
 
-    private async Task ResizeImageIfNeeded(string imagePath, int maxDimension, CancellationToken cancellationToken)
+    private void ResizeImageIfNeeded(string imagePath, int maxDimension, CancellationToken cancellationToken)
     {
-        using var image = await Image.LoadAsync(imagePath, cancellationToken);
+        // Load image using NetVips
+        using var image = Image.NewFromFile(imagePath);
         
         // Check if resizing is needed
         if (image.Width <= maxDimension && image.Height <= maxDimension)
@@ -130,10 +129,10 @@ public class ImageResizeService : IImageResizeService
             imagePath, image.Width, image.Height, newWidth, newHeight);
 
         // Resize the image
-        image.Mutate(x => x.Resize(newWidth, newHeight));
+        var resizedImage = image.Resize((double)newWidth / image.Width);
         
         // Save the resized image back to the same path
-        await image.SaveAsync(imagePath, cancellationToken);
+        resizedImage.WriteToFile(imagePath);
     }
 
     private static (int width, int height) CalculateNewDimensions(int originalWidth, int originalHeight, int maxDimension)
