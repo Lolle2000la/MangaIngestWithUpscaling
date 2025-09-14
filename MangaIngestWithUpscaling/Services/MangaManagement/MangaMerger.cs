@@ -151,6 +151,9 @@ public class MangaMerger(
             // what to do with the manga.
             if (manga.Chapters.Count == 0)
             {
+                // Save intermediate changes to chapters before attempting to migrate alternative titles
+                await dbContext.SaveChangesAsync(cancellationToken);
+
                 dbContext.MangaSeries.Remove(manga);
 
                 if (manga.Library != null)
@@ -217,6 +220,9 @@ public class MangaMerger(
                         }
                         
                         // Save changes to create the new entities
+                        await dbContext.SaveChangesAsync(cancellationToken);
+                        
+                        // Ensure all changes are saved before committing the transaction
                         await dbContext.SaveChangesAsync(cancellationToken);
                         
                         await transaction.CommitAsync(cancellationToken);
