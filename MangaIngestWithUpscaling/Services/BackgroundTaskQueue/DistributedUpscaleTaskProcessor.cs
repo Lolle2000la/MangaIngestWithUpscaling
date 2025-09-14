@@ -266,7 +266,7 @@ public class DistributedUpscaleTaskProcessor(
         // When local upscaling is enabled, increase timeout to reduce competition with UpscaleTaskProcessor
         // This gives local processing priority while still allowing remote workers to get tasks
         var timeoutDuration = upscalerConfig.Value.RemoteOnly ? TimeSpan.FromSeconds(10) : TimeSpan.FromSeconds(30);
-        
+
         using var timeoutCts = new CancellationTokenSource(timeoutDuration);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, timeoutCts.Token);
         using CancellationTokenRegistration registration = linkedCts.Token.Register(() => tcs.TrySetCanceled());
