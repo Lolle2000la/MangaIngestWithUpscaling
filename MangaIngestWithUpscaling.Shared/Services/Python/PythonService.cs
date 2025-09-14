@@ -238,7 +238,14 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
                     try { process.Kill(true); }
                     catch { }
 
-                    throw new TimeoutException($"Python process timed out after {timeout.Value} of no output.");
+                    string err;
+                    lock (errorBuilder)
+                    {
+                        err = errorBuilder.ToString();
+                    }
+
+                    throw new TimeoutException($"Python process timed out after {timeout.Value} of no output:\n" +
+                                               $"{err}");
                 }
             }
 
@@ -253,7 +260,8 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
                     err = errorBuilder.ToString();
                 }
 
-                throw new InvalidOperationException($"Python process exited with code {process.ExitCode}: {err}");
+                throw new InvalidOperationException($"Python process exited with code {process.ExitCode}:\n" +
+                                                    $"{err}");
             }
         }
         finally
