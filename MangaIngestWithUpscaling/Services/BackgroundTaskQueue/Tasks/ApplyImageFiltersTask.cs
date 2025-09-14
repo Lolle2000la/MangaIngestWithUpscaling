@@ -54,6 +54,14 @@ public class ApplyImageFiltersTask : BaseTask
         var totalChapters = await chaptersQuery.CountAsync(cancellationToken);
         logger.LogInformation("Found {TotalChapters} chapters to process", totalChapters);
 
+        // Initialize progress reporting (units: chapters)
+        Progress.ProgressUnit = "chapters";
+        Progress.Total = totalChapters;
+        Progress.Current = 0;
+        Progress.StatusMessage = totalChapters == 0
+            ? "No chapters to process"
+            : $"Processing 0/{totalChapters} chapters";
+
         int processedChapters = 0;
         int filteredImages = 0;
 
@@ -96,6 +104,10 @@ public class ApplyImageFiltersTask : BaseTask
 
                 processedChapters++;
 
+                // Update progress after each chapter
+                Progress.Current = processedChapters;
+                Progress.StatusMessage = $"Processed: {chapter.FileName}";
+
                 if (processedChapters % 10 == 0)
                 {
                     logger.LogInformation(
@@ -120,5 +132,10 @@ public class ApplyImageFiltersTask : BaseTask
         logger.LogInformation("Completed image filter application for library {LibraryName}. " +
                               "Processed {ProcessedChapters} chapters, filtered {FilteredImages} images total",
             library.Name, processedChapters, filteredImages);
+
+        // Final progress update
+        Progress.Current = processedChapters;
+        Progress.StatusMessage =
+            $"Completed: {processedChapters}/{totalChapters} chapters | Filtered images total: {filteredImages}";
     }
 }
