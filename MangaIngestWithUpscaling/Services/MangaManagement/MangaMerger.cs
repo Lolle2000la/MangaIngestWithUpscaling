@@ -173,37 +173,58 @@ public class MangaMerger(
 
                 try
                 {
-                    // add the other titles to the primary manga if they are not already there
-                    // Check global uniqueness constraint to avoid violating database constraint
-                    if (!primary.OtherTitles.Any(t => t.Title == manga.PrimaryTitle)
-                        && !await dbContext.MangaAlternativeTitles.AnyAsync(t => t.Title == manga.PrimaryTitle, cancellationToken))
+                    // Follow EF Core recommendation: first delete dependents, save, then create new associations
+                    // Wrap in transaction to ensure atomicity
+                    using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+                    
+                    try
                     {
-                        primary.OtherTitles.Add(new MangaAlternativeTitle
+                        // Phase 1: Collect titles to transfer and remove all existing alternative titles from source
+                        var titlesToTransfer = new List<string>();
+                        
+                        // Add primary title if it should be transferred
+                        if (!primary.OtherTitles.Any(t => t.Title == manga.PrimaryTitle)
+                            && !await dbContext.MangaAlternativeTitles.AnyAsync(t => t.Title == manga.PrimaryTitle, cancellationToken))
                         {
-                            Title = manga.PrimaryTitle, Manga = primary, MangaId = primary.Id
-                        });
-                    }
-
-                    foreach (var title in manga.OtherTitles
-                                 .Where(title => !primary.OtherTitles.Any(t => t.Title == title.Title))
-                                 .ToList())
-                    {
-                        // Check global uniqueness constraint to avoid violating database constraint
-                        if (await dbContext.MangaAlternativeTitles.AnyAsync(t => t.Title == title.Title, cancellationToken))
-                        {
-                            // Title already exists globally, just remove from source without adding to target
-                            manga.OtherTitles.Remove(title);
-                            continue;
+                            titlesToTransfer.Add(manga.PrimaryTitle);
                         }
-
-                        // Cannot modify key properties of existing entities, so create new ones
-                        primary.OtherTitles.Add(new MangaAlternativeTitle
+                        
+                        // Collect other titles that should be transferred (not already in target, globally unique)
+                        foreach (var title in manga.OtherTitles.ToList())
                         {
-                            Title = title.Title,
-                            Manga = primary,
-                            MangaId = primary.Id
-                        });
-                        manga.OtherTitles.Remove(title);
+                            if (!primary.OtherTitles.Any(t => t.Title == title.Title)
+                                && !await dbContext.MangaAlternativeTitles.AnyAsync(t => t.Title == title.Title, cancellationToken))
+                            {
+                                titlesToTransfer.Add(title.Title);
+                            }
+                            
+                            // Remove from source (EF will delete the entity)
+                            manga.OtherTitles.Remove(title);
+                        }
+                        
+                        // Save changes to delete the old entities first
+                        await dbContext.SaveChangesAsync(cancellationToken);
+                        
+                        // Phase 2: Create new alternative title entities with correct principal
+                        foreach (var titleText in titlesToTransfer)
+                        {
+                            primary.OtherTitles.Add(new MangaAlternativeTitle
+                            {
+                                Title = titleText,
+                                Manga = primary,
+                                MangaId = primary.Id
+                            });
+                        }
+                        
+                        // Save changes to create the new entities
+                        await dbContext.SaveChangesAsync(cancellationToken);
+                        
+                        await transaction.CommitAsync(cancellationToken);
+                    }
+                    catch
+                    {
+                        await transaction.RollbackAsync(cancellationToken);
+                        throw;
                     }
                 }
                 catch (Exception ex)
@@ -212,21 +233,19 @@ public class MangaMerger(
                         manga.Id, primary.Id);
                 }
             }
-
-            await dbContext.SaveChangesAsync(cancellationToken);
-
-            _ = Task.Run(() =>
-            {
-                foreach (var uniqueLibraryPath in mergedInto
-                             .SelectMany(m =>
-                                 new[] { m.Library?.NotUpscaledLibraryPath, m.Library?.UpscaledLibraryPath })
-                             .Where(path => path is not null)
-                             .Distinct())
-                {
-                    // remove the folder if it is empty
-                    FileSystemHelpers.DeleteEmptySubfolders(uniqueLibraryPath!, logger);
-                }
-            });
         }
+
+        _ = Task.Run(() =>
+        {
+            foreach (var uniqueLibraryPath in mergedInto
+                         .SelectMany(m =>
+                             new[] { m.Library?.NotUpscaledLibraryPath, m.Library?.UpscaledLibraryPath })
+                         .Where(path => path is not null)
+                         .Distinct())
+            {
+                // remove the folder if it is empty
+                FileSystemHelpers.DeleteEmptySubfolders(uniqueLibraryPath!, logger);
+            }
+        });
     }
 }
