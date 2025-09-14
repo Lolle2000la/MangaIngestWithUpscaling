@@ -10,7 +10,14 @@ public static class ImageConstants
     /// </summary>
     public static readonly HashSet<string> SupportedImageExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif", ".avif"
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+        ".bmp",
+        ".tiff",
+        ".tif",
+        ".avif"
     };
 
     /// <summary>
@@ -53,6 +60,8 @@ public static class ImageConstants
     {
         if (string.IsNullOrEmpty(extension))
             return false;
+
+        extension = extension.ToLowerInvariant();
 
         if (!extension.StartsWith('.'))
             extension = "." + extension;
