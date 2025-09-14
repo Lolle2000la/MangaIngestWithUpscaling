@@ -49,11 +49,11 @@ public class UpscaleTaskProcessor(
         if (upscalerConfig.Value.RemoteOnly)
         {
             logger.LogInformation("Running in remote-only mode - only processing rerouted tasks locally");
-            
+
             while (!stoppingToken.IsCancellationRequested)
             {
                 var task = await _reroutedReader.ReadAsync(stoppingToken);
-                
+
                 using (_lock.EnterScope())
                 {
                     currentStoppingToken = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
@@ -68,7 +68,9 @@ public class UpscaleTaskProcessor(
         // Merge the rerouted and regular upscale channels into a single reader using Open.ChannelExtensions
         var merged = Channel.CreateUnbounded<PersistedTask>(new UnboundedChannelOptions
         {
-            SingleReader = true, SingleWriter = false, AllowSynchronousContinuations = true
+            SingleReader = true,
+            SingleWriter = false,
+            AllowSynchronousContinuations = true
         });
 
         // Start piping both sources into the merged channel (will complete when sources complete)

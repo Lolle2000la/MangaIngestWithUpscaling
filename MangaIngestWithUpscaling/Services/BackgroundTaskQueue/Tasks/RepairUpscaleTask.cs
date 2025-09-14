@@ -123,8 +123,8 @@ public class RepairUpscaleTask : BaseTask
         {
             logger.LogInformation("Remote-only mode detected, using remote repair workflow for {chapterFileName}",
                 chapter.FileName);
-            
-            await PerformRemoteRepair(chapter, upscalerProfile, differences, currentStoragePath, upscaleTargetPath, 
+
+            await PerformRemoteRepair(chapter, upscalerProfile, differences, currentStoragePath, upscaleTargetPath,
                 metadataHandling, chapterChangedNotifier, services, logger, cancellationToken);
         }
         else
@@ -223,7 +223,7 @@ public class RepairUpscaleTask : BaseTask
 
             // Get the upscaler from DI - this will handle remote delegation automatically
             var upscaler = services.GetRequiredService<IUpscaler>();
-            
+
             var reporter = new Progress<UpscaleProgress>(p =>
             {
                 if (p.Total.HasValue)
