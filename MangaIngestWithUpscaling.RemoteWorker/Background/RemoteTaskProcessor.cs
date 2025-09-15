@@ -262,6 +262,12 @@ public class RemoteTaskProcessor(
                             }
                         }
 
+                        // Exit if channel is completed and no more data is available
+                        if (progressChannel.Reader.Completion.IsCompleted)
+                        {
+                            break;
+                        }
+
                         // Debounced send of latest progress
                         DateTime nowSend = DateTime.UtcNow;
                         if (pending is not null && nowSend - lastProgressSend >= TimeSpan.FromMilliseconds(400))
@@ -292,7 +298,7 @@ public class RemoteTaskProcessor(
 
                                 KeepAliveResponse? resp =
                                     await client.KeepAliveAsync(req,
-                                        cancellationToken: item.PersistentKeepAliveCts.Token);
+                                        cancellationToken: upscalesCts.Token);
                                 if (!resp.IsAlive)
                                 {
                                     await Task.WhenAll(upscalesCts.CancelAsync(),
@@ -313,7 +319,7 @@ public class RemoteTaskProcessor(
                             }
                         }
 
-                        try { await debounce.WaitForNextTickAsync(item.PersistentKeepAliveCts.Token); }
+                        try { await debounce.WaitForNextTickAsync(upscalesCts.Token); }
                         catch { break; }
                     }
                     catch (OperationCanceledException)
@@ -325,7 +331,7 @@ public class RemoteTaskProcessor(
                         // swallow and continue
                     }
                 }
-            }, item.PersistentKeepAliveCts.Token);
+            }, upscalesCts.Token);
 
             try
             {
@@ -381,6 +387,9 @@ public class RemoteTaskProcessor(
             }
 
             try { progressChannel.Writer.TryComplete(); }
+            catch { }
+
+            try { await upscalesCts.CancelAsync(); }
             catch { }
 
             try { await progressSenderTask; }
