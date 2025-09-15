@@ -64,6 +64,7 @@ public class RemoteTaskProcessor(
     private async Task FetchLoop(CancellationToken stoppingToken)
     {
         var dispatcherTimer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+        bool serverAvailable = true;
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -103,9 +104,16 @@ public class RemoteTaskProcessor(
                     {
                         resp = await client.RequestUpscaleTaskWithHintAsync(new RequestTaskRequest { Prefetch = true },
                             cancellationToken: stoppingToken);
+                        serverAvailable = true;
                     }
-                    catch (RpcException e) when (e.StatusCode == StatusCode.NotFound)
+                    catch (RpcException e) when (e.StatusCode is StatusCode.NotFound or StatusCode.Unavailable)
                     {
+                        if (serverAvailable && e.StatusCode == StatusCode.Unavailable)
+                        {
+                            logger.LogWarning("Server is currently unavailable; will retry shortly.");
+                            serverAvailable = false;
+                        }
+
                         await dispatcherTimer.WaitForNextTickAsync(stoppingToken);
                         continue;
                     }
