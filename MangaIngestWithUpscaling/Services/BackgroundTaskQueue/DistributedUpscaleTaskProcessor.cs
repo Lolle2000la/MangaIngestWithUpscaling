@@ -10,7 +10,6 @@ using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using System.Text.Json;
 using System.Threading.Channels;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
@@ -504,20 +503,6 @@ public class DistributedUpscaleTaskProcessor(
                 return true;
             }
 
-            // Restore repair context from stored data
-            if (string.IsNullOrEmpty(repairState.RepairContextData))
-            {
-                logger.LogError("No repair context data found for repair task {taskId}", persistedTask.Id);
-                return false;
-            }
-
-            var contextData = JsonSerializer.Deserialize<RepairContextData>(repairState.RepairContextData);
-            if (contextData == null)
-            {
-                logger.LogError("Failed to deserialize repair context data for repair task {taskId}", persistedTask.Id);
-                return false;
-            }
-
             // Verify the upscaled missing pages file exists
             if (string.IsNullOrEmpty(repairState.UpscaledMissingPagesCbzPath) ||
                 !File.Exists(repairState.UpscaledMissingPagesCbzPath))
@@ -527,15 +512,13 @@ public class DistributedUpscaleTaskProcessor(
                 return false;
             }
 
-            // Reconstruct repair context
-            var repairContext = new RepairContext
+            if (repairState.RepairContext is null)
             {
-                WorkDirectory = contextData.WorkDirectory,
-                UpscaledDirectory = contextData.UpscaledDirectory,
-                MissingPagesCbz = contextData.MissingPagesCbz,
-                UpscaledMissingCbz = contextData.UpscaledMissingCbz,
-                HasMissingPages = contextData.HasMissingPages
-            };
+                logger.LogError("No RepairContext found for repair task {taskId}", persistedTask.Id);
+                return false;
+            }
+
+            RepairContext? repairContext = repairState.RepairContext;
 
             try
             {
@@ -559,7 +542,6 @@ public class DistributedUpscaleTaskProcessor(
             }
             finally
             {
-                repairContext.Dispose();
                 CleanupRepairFiles(persistedTask.Id, logger);
             }
         }
@@ -584,6 +566,16 @@ public class DistributedUpscaleTaskProcessor(
                 if (!remoteRepairStates.TryGetValue(taskId, out repairState))
                 {
                     return; // No repair state found, nothing to clean up
+                }
+
+                // Dispose prepared context if present
+                try
+                {
+                    repairState.RepairContext?.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    logger.LogDebug(ex, "RepairContext dispose threw, continuing cleanup for task {taskId}", taskId);
                 }
 
                 remoteRepairStates.Remove(taskId);
@@ -741,14 +733,7 @@ public class DistributedUpscaleTaskProcessor(
                 {
                     PreparedMissingPagesCbzPath = repairContext.MissingPagesCbz,
                     UpscaledMissingPagesCbzPath = repairContext.UpscaledMissingCbz,
-                    RepairContextData = JsonSerializer.Serialize(new
-                    {
-                        repairContext.WorkDirectory,
-                        repairContext.UpscaledDirectory,
-                        repairContext.MissingPagesCbz,
-                        repairContext.UpscaledMissingCbz,
-                        repairContext.HasMissingPages
-                    })
+                    RepairContext = repairContext
                 };
 
                 using (_lock.EnterScope())
@@ -792,18 +777,6 @@ public class DistributedUpscaleTaskProcessor(
     }
 
     /// <summary>
-    /// Data class for serializing/deserializing repair context information.
-    /// </summary>
-    private class RepairContextData
-    {
-        public string WorkDirectory { get; set; } = string.Empty;
-        public string UpscaledDirectory { get; set; } = string.Empty;
-        public string MissingPagesCbz { get; set; } = string.Empty;
-        public string UpscaledMissingCbz { get; set; } = string.Empty;
-        public bool HasMissingPages { get; set; }
-    }
-
-    /// <summary>
     ///     State information for managing remote repair operations.
     ///     Contains file paths and context data needed for the remote repair workflow.
     /// </summary>
@@ -820,8 +793,9 @@ public class DistributedUpscaleTaskProcessor(
         public string UpscaledMissingPagesCbzPath { get; set; } = string.Empty;
 
         /// <summary>
-        ///     Serialized RepairContext data for reconstructing the repair context during remote processing.
+        ///     RepairContext instance for reconstructing the repair process during remote processing.
+        ///     This context is created during preparation and disposed during cleanup.
         /// </summary>
-        public string RepairContextData { get; set; } = string.Empty;
+        public RepairContext? RepairContext { get; set; }
     }
 }
