@@ -396,9 +396,14 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
 
         process.Start();
 
-        while (!process.HasExited && !process.StandardOutput.EndOfStream)
+        string? line;
+
+        while (!process.HasExited && (line = await process.StandardOutput.ReadLineAsync()) is not null)
         {
-            logger.LogInformation(await process.StandardOutput.ReadLineAsync() ?? "<No output>");
+            if (!string.IsNullOrEmpty(line))
+            {
+                logger.LogInformation(line);
+            }
         }
 
         await process.WaitForExitAsync();
@@ -479,9 +484,9 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         process.StartInfo.WorkingDirectory = Directory.GetParent(environmentPath)!.FullName;
 
         process.Start();
-        while (!process.HasExited && !process.StandardOutput.EndOfStream)
+        string? line;
+        while (!process.HasExited && (line = await process.StandardOutput.ReadLineAsync()) is not null)
         {
-            var line = await process.StandardOutput.ReadLineAsync();
             if (!string.IsNullOrEmpty(line))
             {
                 logger.LogDebug("Pip: {Line}", line);
