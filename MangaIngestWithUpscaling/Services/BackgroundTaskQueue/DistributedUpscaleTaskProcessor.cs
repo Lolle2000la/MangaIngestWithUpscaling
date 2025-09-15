@@ -417,24 +417,10 @@ public class DistributedUpscaleTaskProcessor(
     public async Task TaskCompleted(int taskId)
     {
         DateTime time = DateTime.UtcNow;
-        PersistedTask? localTask;
 
         using (_lock.EnterScope())
         {
-            // No orphan buffer to clear (re-enqueued immediately on delivery failure)
-
-            if (runningTasks.TryGetValue(taskId, out PersistedTask? task))
-            {
-                task.ProcessedAt = time;
-                task.Status = PersistedTaskStatus.Completed;
-                _ = StatusChanged?.Invoke(task);
-                runningTasks.Remove(taskId);
-                localTask = task; // Save reference for repair processing
-            }
-            else
-            {
-                localTask = null;
-            }
+            runningTasks.Remove(taskId);
         }
 
         using IServiceScope scope = scopeFactory.CreateScope();
@@ -442,21 +428,20 @@ public class DistributedUpscaleTaskProcessor(
         PersistedTask? dbTask = await dbContext.PersistedTasks.FirstOrDefaultAsync(t => t.Id == taskId);
         if (dbTask == null)
         {
-            return; // Task not found in the database, nothing to do
+            return;
         }
 
-        // Handle repair task completion
         bool repairSuccess = true;
         if (dbTask.Data is RepairUpscaleTask repairTask)
         {
             repairSuccess = await HandleRepairTaskCompletion(repairTask, dbTask, scope.ServiceProvider);
         }
 
-        // Only mark as completed if repair handling succeeded
         if (repairSuccess)
         {
             dbTask.ProcessedAt = time;
             dbTask.Status = PersistedTaskStatus.Completed;
+            _ = StatusChanged?.Invoke(dbTask);
             await dbContext.SaveChangesAsync();
         }
     }
@@ -475,7 +460,6 @@ public class DistributedUpscaleTaskProcessor(
 
         try
         {
-            // Load chapter information
             Chapter? chapter = await dbContext.Chapters
                 .Include(c => c.Manga)
                 .ThenInclude(m => m.Library)
@@ -517,7 +501,7 @@ public class DistributedUpscaleTaskProcessor(
                     chapter.FileName, chapter.Manga.PrimaryTitle);
                 // Clean up repair state since repair is no longer needed
                 CleanupRepairFiles(persistedTask.Id, logger);
-                return true; // Task can be marked as completed
+                return true;
             }
 
             // Restore repair context from stored data
@@ -558,26 +542,23 @@ public class DistributedUpscaleTaskProcessor(
                 persistedTask.Data.Progress.StatusMessage = "Merging repaired pages";
                 _ = StatusChanged?.Invoke(persistedTask);
 
-                // Merge the upscaled missing pages back into the original CBZ
                 repairService.MergeRepairResults(repairContext, upscaledPath, logger);
 
                 logger.LogInformation(
                     "Successfully completed remote repair of chapter \"{chapterFileName}\" of {seriesTitle}",
                     chapter.FileName, chapter.Manga.PrimaryTitle);
 
-                // Notify that chapter was changed
                 var chapterChangedNotifier = services.GetRequiredService<IChapterChangedNotifier>();
                 _ = chapterChangedNotifier.Notify(chapter, true);
 
-                // Apply any title changes
+                // Apply any title changes that happened in the meantime
                 var metadataChanger = services.GetRequiredService<IMangaMetadataChanger>();
                 metadataChanger.ApplyMangaTitleToUpscaled(chapter, chapter.Manga.PrimaryTitle, upscaledPath);
 
-                return true; // Repair completed successfully
+                return true;
             }
             finally
             {
-                // Clean up temporary files
                 repairContext.Dispose();
                 CleanupRepairFiles(persistedTask.Id, logger);
             }
@@ -585,9 +566,8 @@ public class DistributedUpscaleTaskProcessor(
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to complete repair task {taskId}", persistedTask.Id);
-            // Clean up temporary files on error
             CleanupRepairFiles(persistedTask.Id, logger);
-            return false; // Repair failed
+            return false;
         }
     }
 
