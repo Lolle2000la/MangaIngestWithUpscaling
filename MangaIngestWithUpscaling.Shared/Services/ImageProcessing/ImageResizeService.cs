@@ -1,7 +1,7 @@
+using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using Microsoft.Extensions.Logging;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.Processing;
+using NetVips;
 using System.IO.Compression;
 
 namespace MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
@@ -9,13 +9,11 @@ namespace MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
 [RegisterScoped]
 public class ImageResizeService : IImageResizeService
 {
-    private readonly ILogger<ImageResizeService> _logger;
+    private static readonly string[] SupportedImageExtensions =
+        ImageConstants.SupportedImageExtensions.ToArray();
+
     private readonly IFileSystem _fileSystem;
-    
-    private static readonly string[] SupportedImageExtensions = 
-    {
-        ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif"
-    };
+    private readonly ILogger<ImageResizeService> _logger;
 
     public ImageResizeService(ILogger<ImageResizeService> logger, IFileSystem fileSystem)
     {
@@ -23,7 +21,8 @@ public class ImageResizeService : IImageResizeService
         _fileSystem = fileSystem;
     }
 
-    public async Task<TempResizedCbz> CreateResizedTempCbzAsync(string inputCbzPath, int maxDimension, CancellationToken cancellationToken)
+    public async Task<TempResizedCbz> CreateResizedTempCbzAsync(string inputCbzPath, int maxDimension,
+        CancellationToken cancellationToken)
     {
         if (!File.Exists(inputCbzPath))
         {
@@ -45,8 +44,9 @@ public class ImageResizeService : IImageResizeService
         try
         {
             Directory.CreateDirectory(tempDir);
-            
-            _logger.LogInformation("Resizing images in {InputPath} to max dimension {MaxDimension}", inputCbzPath, maxDimension);
+
+            _logger.LogInformation("Resizing images in {InputPath} to max dimension {MaxDimension}", inputCbzPath,
+                maxDimension);
 
             // Extract CBZ to temporary directory
             ZipFile.ExtractToDirectory(inputCbzPath, tempDir);
@@ -56,9 +56,9 @@ public class ImageResizeService : IImageResizeService
 
             // Create new CBZ with resized images
             ZipFile.CreateFromDirectory(tempDir, tempCbzPath);
-            
-            _logger.LogInformation("Created resized temporary CBZ at {TempPath}", tempCbzPath);
-            
+
+            _logger.LogDebug("Created resized temporary CBZ at {TempPath}", tempCbzPath);
+
             return new TempResizedCbz(tempCbzPath, this);
         }
         finally
@@ -95,48 +95,54 @@ public class ImageResizeService : IImageResizeService
 
         _logger.LogDebug("Found {Count} image files to process", imageFiles.Count);
 
-        foreach (string imagePath in imageFiles)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            
-            try
+        await Parallel.ForEachAsync(imageFiles,
+            new ParallelOptions
             {
-                await ResizeImageIfNeeded(imagePath, maxDimension, cancellationToken);
-            }
-            catch (Exception ex)
+                MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = cancellationToken
+            },
+            (imagePath, ct) =>
             {
-                _logger.LogWarning(ex, "Failed to resize image: {ImagePath}", imagePath);
-                // Continue processing other images even if one fails
-            }
-        }
+                try
+                {
+                    ResizeImageIfNeeded(imagePath, maxDimension, ct);
+                    return ValueTask.CompletedTask;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to resize image: {ImagePath}", imagePath);
+                    return ValueTask.CompletedTask; // Continue processing other images even if one fails
+                }
+            });
     }
 
-    private async Task ResizeImageIfNeeded(string imagePath, int maxDimension, CancellationToken cancellationToken)
+    private void ResizeImageIfNeeded(string imagePath, int maxDimension, CancellationToken cancellationToken)
     {
-        using var image = await Image.LoadAsync(imagePath, cancellationToken);
-        
+        // Load image using NetVips
+        using var image = Image.NewFromFile(imagePath);
+
         // Check if resizing is needed
         if (image.Width <= maxDimension && image.Height <= maxDimension)
         {
-            _logger.LogDebug("Image {ImagePath} ({Width}x{Height}) is already within bounds, skipping resize", 
+            _logger.LogDebug("Image {ImagePath} ({Width}x{Height}) is already within bounds, skipping resize",
                 imagePath, image.Width, image.Height);
             return;
         }
 
         // Calculate new dimensions while maintaining aspect ratio
         var (newWidth, newHeight) = CalculateNewDimensions(image.Width, image.Height, maxDimension);
-        
-        _logger.LogDebug("Resizing image {ImagePath} from {OriginalWidth}x{OriginalHeight} to {NewWidth}x{NewHeight}", 
+
+        _logger.LogDebug("Resizing image {ImagePath} from {OriginalWidth}x{OriginalHeight} to {NewWidth}x{NewHeight}",
             imagePath, image.Width, image.Height, newWidth, newHeight);
 
         // Resize the image
-        image.Mutate(x => x.Resize(newWidth, newHeight));
-        
+        var resizedImage = image.Resize((double)newWidth / image.Width);
+
         // Save the resized image back to the same path
-        await image.SaveAsync(imagePath, cancellationToken);
+        resizedImage.WriteToFile(imagePath);
     }
 
-    private static (int width, int height) CalculateNewDimensions(int originalWidth, int originalHeight, int maxDimension)
+    private static (int width, int height) CalculateNewDimensions(int originalWidth, int originalHeight,
+        int maxDimension)
     {
         if (originalWidth <= maxDimension && originalHeight <= maxDimension)
         {
@@ -144,7 +150,7 @@ public class ImageResizeService : IImageResizeService
         }
 
         double aspectRatio = (double)originalWidth / originalHeight;
-        
+
         if (originalWidth > originalHeight)
         {
             // Width is the limiting dimension

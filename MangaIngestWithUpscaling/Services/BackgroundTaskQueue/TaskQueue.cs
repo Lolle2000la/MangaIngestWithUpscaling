@@ -76,13 +76,6 @@ public class TaskQueue : ITaskQueue, IHostedService
     {
         await ReplayPendingOrFailed(cancellationToken);
 
-        // reset any tasks that were "Processing" (e.g. during a crash) back to "Pending"
-        using IServiceScope scope = _scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        await dbContext.PersistedTasks.Where(task => task.Status == PersistedTaskStatus.Processing)
-            .ExecuteUpdateAsync(s =>
-                s.SetProperty(p => p.Status, p => PersistedTaskStatus.Pending), cancellationToken);
-
         // Start background processing
         _ = ProcessChannelAsync(_standardChannel, _standardTasks, _standardTasksLock, cancellationToken);
         _ = ProcessChannelAsync(_upscaleChannel, _upscaleTasks, _upscaleTasksLock, cancellationToken);
