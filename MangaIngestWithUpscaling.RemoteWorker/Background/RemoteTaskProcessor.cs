@@ -38,7 +38,7 @@ public class RemoteTaskProcessor(
         {
             SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.Wait
         });
-        _toUpload = Channel.CreateBounded<ProcessedItem>(new BoundedChannelOptions(1)
+        _toUpload = Channel.CreateBounded<ProcessedItem>(new BoundedChannelOptions(3)
         {
             SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.Wait
         });
@@ -424,9 +424,7 @@ public class RemoteTaskProcessor(
             }
             catch (OperationCanceledException)
             {
-                await item.PersistentKeepAliveCts.CancelAsync();
-                try { await item.PersistentKeepAliveTask; }
-                catch { }
+                // this happens by normal user interruption (i.e. ctrl+c, stopping the container etc.)
             }
             catch (Exception ex)
             {
