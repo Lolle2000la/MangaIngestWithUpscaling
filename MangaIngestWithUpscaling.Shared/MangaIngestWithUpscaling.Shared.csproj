@@ -11,10 +11,10 @@
     <ItemGroup>
         <PackageReference Include="AutoRegisterInject" Version="1.4.1"/>
         <PackageReference Include="Mono.Posix.NETStandard" Version="1.0.0"/>
-        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.9"/>
-        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version=" 9.0.9 "/>
-        <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version=" 9.0.9 "/>
-        <PackageReference Include="Microsoft.Extensions.Options" Version="9.0.9"/>
+        <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0-rc.1.25451.107"/>
+        <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0-rc.1.25451.107"/>
+        <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.0-rc.1.25451.107"/>
+        <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.0-rc.1.25451.107"/>
         <PackageReference Include="Open.ChannelExtensions" Version="9.1.0"/>
         <PackageReference Include="Silk.NET.OpenGL" Version="2.22.0"/>
         <PackageReference Include="Silk.NET.Windowing" Version="2.22.0"/>
@@ -33,7 +33,7 @@
         <PackageReference Include="NetVips.Native.osx-arm64" Version="8.17.1" Condition="'$(RuntimeIdentifier)' == 'osx-arm64'"/>
 
         <!-- Fallback for AnyCPU builds - includes all platforms -->
-        <PackageReference Include="NetVips.Native" Version="8.17.1" Condition="'$(RuntimeIdentifier)' == '' OR '$(RuntimeIdentifier)' == 'any'"/>
+        <PackageReference Include="NetVips.Native" Version="8.17.2" Condition="'$(RuntimeIdentifier)' == '' OR '$(RuntimeIdentifier)' == 'any'"/>
     </ItemGroup>
 
 </Project>
