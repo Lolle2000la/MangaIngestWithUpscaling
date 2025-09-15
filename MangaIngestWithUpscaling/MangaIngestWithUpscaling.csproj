@@ -61,7 +61,7 @@
         <PackageReference Include="NetVips.Native.osx-arm64" Version="8.17.1" Condition="'$(RuntimeIdentifier)' == 'osx-arm64'"/>
 
         <!-- Fallback for AnyCPU builds - includes all platforms -->
-        <PackageReference Include="NetVips.Native" Version="8.17.1" Condition="'$(RuntimeIdentifier)' == '' OR '$(RuntimeIdentifier)' == 'any'"/>
+        <PackageReference Include="NetVips.Native" Version="8.17.2" Condition="'$(RuntimeIdentifier)' == '' OR '$(RuntimeIdentifier)' == 'any'"/>
         <PackageReference Include="System.Interactive.Async" Version="6.0.3"/>
         <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="9.0.9"/>
     </ItemGroup>
