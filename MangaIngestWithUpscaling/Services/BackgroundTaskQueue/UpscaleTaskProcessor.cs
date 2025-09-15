@@ -51,7 +51,7 @@ public class UpscaleTaskProcessor(
         serviceStoppingToken = stoppingToken;
 
         // Merge the rerouted and regular upscale channels into a single reader using Open.ChannelExtensions
-        var merged = Channel.CreateUnbounded<PersistedTask>(new UnboundedChannelOptions
+        var merged = Channel.CreateBounded<PersistedTask>(new BoundedChannelOptions(1)
         {
             SingleReader = true, SingleWriter = false, AllowSynchronousContinuations = true
         });
