@@ -36,15 +36,21 @@ public class RemoteTaskProcessor(
 
         _toUpscale = Channel.CreateBounded<FetchedItem>(new BoundedChannelOptions(1)
         {
-            SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.Wait
+            SingleReader = true,
+            SingleWriter = true,
+            FullMode = BoundedChannelFullMode.Wait
         });
         _toUpload = Channel.CreateBounded<ProcessedItem>(new BoundedChannelOptions(3)
         {
-            SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.Wait
+            SingleReader = true,
+            SingleWriter = true,
+            FullMode = BoundedChannelFullMode.Wait
         });
         _fetchSignals = Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
         {
-            SingleReader = true, SingleWriter = false, FullMode = BoundedChannelFullMode.DropOldest
+            SingleReader = true,
+            SingleWriter = false,
+            FullMode = BoundedChannelFullMode.DropOldest
         });
 
         _fetchSignals.Writer.TryWrite(true);
@@ -211,7 +217,9 @@ public class RemoteTaskProcessor(
             // Progress reporting must not block upscaling: use a bounded channel and a background sender
             var progressChannel = Channel.CreateBounded<UpscaleProgress>(new BoundedChannelOptions(1)
             {
-                SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.DropOldest
+                SingleReader = true,
+                SingleWriter = true,
+                FullMode = BoundedChannelFullMode.DropOldest
             });
 
             // Writer: never await network; buffer latest only
@@ -230,8 +238,10 @@ public class RemoteTaskProcessor(
                     try
                     {
                         // Drain to latest
+                        bool hasData = false;
                         while (progressChannel.Reader.TryRead(out UpscaleProgress? p))
                         {
+                            hasData = true;
                             pending = p;
                             DateTime now = DateTime.UtcNow;
 
@@ -260,6 +270,12 @@ public class RemoteTaskProcessor(
                                     _fetchSignals?.Writer.TryWrite(true);
                                 }
                             }
+                        }
+
+                        // Exit if channel is completed and no more data is available
+                        if (!hasData && progressChannel.Reader.Completion.IsCompleted)
+                        {
+                            break;
                         }
 
                         // Debounced send of latest progress
@@ -466,7 +482,9 @@ public class RemoteTaskProcessor(
             await uploadStream.RequestStream.WriteAsync(
                 new CbzFileChunk
                 {
-                    TaskId = taskId, ChunkNumber = chunkNumber++, Chunk = ByteString.CopyFrom(buffer, 0, bytesRead)
+                    TaskId = taskId,
+                    ChunkNumber = chunkNumber++,
+                    Chunk = ByteString.CopyFrom(buffer, 0, bytesRead)
                 }, stoppingToken);
         }
 
