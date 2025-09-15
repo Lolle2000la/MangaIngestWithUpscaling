@@ -2,13 +2,11 @@ using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
-using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Services.RepairServices;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
-using System.IO.Compression;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 
@@ -119,7 +117,8 @@ public class RepairUpscaleTask : BaseTask
         var repairService = services.GetRequiredService<IRepairService>();
         try
         {
-            await PerformRepair(upscaler, repairService, currentStoragePath, upscaleTargetPath, upscalerProfile, differences, logger,
+            await PerformRepair(upscaler, repairService, currentStoragePath, upscaleTargetPath, upscalerProfile,
+                differences, logger,
                 cancellationToken);
             _ = chapterChangedNotifier.Notify(chapter, true);
         }
@@ -153,7 +152,7 @@ public class RepairUpscaleTask : BaseTask
         CancellationToken cancellationToken)
     {
         var repairContext = repairService.PrepareRepairContext(differences, originalPath, upscaledPath, logger);
-        
+
         try
         {
             // Only upscale if there are missing pages
@@ -215,7 +214,7 @@ public class RepairUpscaleTask : BaseTask
     {
         // Get all missing pages directory for batch processing
         string tempMissingDir = Path.Combine(repairContext.WorkDirectory, "missing");
-        
+
         // Basic progress info before starting batch upscale
         progress.Report(new UpscaleProgress(
             null,
@@ -228,7 +227,8 @@ public class RepairUpscaleTask : BaseTask
         if (repairContext.HasMissingPages)
         {
             // Use the repair service method which handles CBZ creation internally
-            await upscaler.Upscale(repairContext.MissingPagesCbz, repairContext.UpscaledMissingCbz, profile, cancellationToken);
+            await upscaler.Upscale(repairContext.MissingPagesCbz, repairContext.UpscaledMissingCbz, profile,
+                cancellationToken);
 
             // Process results using the repair service
             string tempUpscaledMissingDir = Path.Combine(repairContext.WorkDirectory, "upscaled_missing");
