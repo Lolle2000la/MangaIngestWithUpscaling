@@ -84,7 +84,14 @@ public class RepairService : IRepairService
             // Extract upscaled missing pages
             string tempUpscaledMissingDir = Path.Combine(context.WorkDirectory, "upscaled_missing");
             Directory.CreateDirectory(tempUpscaledMissingDir);
-            ZipFile.ExtractToDirectory(context.UpscaledMissingCbz, tempUpscaledMissingDir);
+
+            // If directory already populated (e.g., local flow already processed results), skip re-extracting
+            bool alreadyPopulated = Directory.EnumerateFileSystemEntries(tempUpscaledMissingDir).Any();
+            if (!alreadyPopulated)
+            {
+                // Overwrite any existing files to be safe
+                ZipFile.ExtractToDirectory(context.UpscaledMissingCbz, tempUpscaledMissingDir, true);
+            }
 
             // Copy upscaled missing pages back to the upscaled directory
             foreach (var upscaledFile in Directory.GetFiles(tempUpscaledMissingDir))
