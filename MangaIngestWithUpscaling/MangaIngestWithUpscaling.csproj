@@ -65,7 +65,6 @@
 
         <!-- Fallback for AnyCPU builds - includes all platforms -->
         <PackageReference Include="NetVips.Native" Version="8.17.2" Condition="'$(RuntimeIdentifier)' == '' OR '$(RuntimeIdentifier)' == 'any'"/>
-        <PackageReference Include="System.Interactive.Async" Version="6.0.3"/>
         <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.0-rc.1.25451.107"/>
     </ItemGroup>
 
