@@ -1,5 +1,4 @@
-using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
-using MangaIngestWithUpscaling.Shared.Helpers;
+using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using System.IO.Compression;
@@ -115,7 +114,7 @@ public class RepairService : IRepairService
     {
         // Get all image files in the input directory
         var imageFiles = Directory.GetFiles(inputDir)
-            .Where(f => f.ToLowerInvariant().EndsWithAny(".png", ".jpg", ".jpeg", ".avif", ".webp", ".bmp"))
+            .Where(f => ImageConstants.IsSupportedImageExtension(Path.GetExtension(f).ToLowerInvariant()))
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase) // stable order
             .ToList();
 
@@ -163,8 +162,7 @@ public class RepairService : IRepairService
                 cancellationToken.ThrowIfCancellationRequested();
 
                 // filter only known image extensions
-                if (!entry.FullName.ToLowerInvariant()
-                        .EndsWithAny(".png", ".jpg", ".jpeg", ".avif", ".webp", ".bmp"))
+                if (!ImageConstants.IsSupportedImageExtension(Path.GetExtension(entry.Name).ToLowerInvariant()))
                 {
                     continue;
                 }
