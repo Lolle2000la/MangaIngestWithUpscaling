@@ -59,12 +59,12 @@ public class MangaLibraryMoverTests : IDisposable
         var library = CreateTestLibrary("Source Library");
         var manga = CreateTestManga(library, "Test Manga");
 
-        await _dbContext.Libraries.AddAsync(library);
-        await _dbContext.MangaSeries.AddAsync(manga);
-        await _dbContext.SaveChangesAsync();
+        await _dbContext.Libraries.AddAsync(library, TestContext.Current.CancellationToken);
+        await _dbContext.MangaSeries.AddAsync(manga, TestContext.Current.CancellationToken);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Act
-        await _libraryMover.MoveMangaAsync(manga, library);
+        await _libraryMover.MoveMangaAsync(manga, library, TestContext.Current.CancellationToken);
 
         // Assert
         // Verify no file operations occurred
@@ -87,20 +87,20 @@ public class MangaLibraryMoverTests : IDisposable
         var chapter2 = CreateTestChapter(manga, "chapter2.cbz");
 
         await _dbContext.Libraries.AddRangeAsync(sourceLibrary, targetLibrary);
-        await _dbContext.MangaSeries.AddAsync(manga);
+        await _dbContext.MangaSeries.AddAsync(manga, TestContext.Current.CancellationToken);
         await _dbContext.Chapters.AddRangeAsync(chapter1, chapter2);
-        await _dbContext.SaveChangesAsync();
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Create test files
         var sourcePath1 = Path.Combine(sourceLibrary.NotUpscaledLibraryPath, chapter1.RelativePath);
         var sourcePath2 = Path.Combine(sourceLibrary.NotUpscaledLibraryPath, chapter2.RelativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath1)!);
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath2)!);
-        await File.WriteAllTextAsync(sourcePath1, "chapter1 content");
-        await File.WriteAllTextAsync(sourcePath2, "chapter2 content");
+        await File.WriteAllTextAsync(sourcePath1, "chapter1 content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(sourcePath2, "chapter2 content", TestContext.Current.CancellationToken);
 
         // Act
-        await _libraryMover.MoveMangaAsync(manga, targetLibrary);
+        await _libraryMover.MoveMangaAsync(manga, targetLibrary, TestContext.Current.CancellationToken);
 
         // Assert
         // Verify database was updated
@@ -135,9 +135,9 @@ public class MangaLibraryMoverTests : IDisposable
         var regularChapter = CreateTestChapter(manga, "chapter2.cbz", isUpscaled: false);
 
         await _dbContext.Libraries.AddRangeAsync(sourceLibrary, targetLibrary);
-        await _dbContext.MangaSeries.AddAsync(manga);
+        await _dbContext.MangaSeries.AddAsync(manga, TestContext.Current.CancellationToken);
         await _dbContext.Chapters.AddRangeAsync(upscaledChapter, regularChapter);
-        await _dbContext.SaveChangesAsync();
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Create test files
         var sourcePath1 = Path.Combine(sourceLibrary.NotUpscaledLibraryPath, upscaledChapter.RelativePath);
@@ -148,12 +148,12 @@ public class MangaLibraryMoverTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath2)!);
         Directory.CreateDirectory(Path.GetDirectoryName(upscaledPath)!);
 
-        await File.WriteAllTextAsync(sourcePath1, "chapter1 content");
-        await File.WriteAllTextAsync(sourcePath2, "chapter2 content");
-        await File.WriteAllTextAsync(upscaledPath, "upscaled chapter1 content");
+        await File.WriteAllTextAsync(sourcePath1, "chapter1 content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(sourcePath2, "chapter2 content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(upscaledPath, "upscaled chapter1 content", TestContext.Current.CancellationToken);
 
         // Act
-        await _libraryMover.MoveMangaAsync(manga, targetLibrary);
+        await _libraryMover.MoveMangaAsync(manga, targetLibrary, TestContext.Current.CancellationToken);
 
         // Assert
         // Verify rename task was enqueued for upscaled chapter only
@@ -177,18 +177,18 @@ public class MangaLibraryMoverTests : IDisposable
         var upscaledChapter = CreateTestChapter(manga, "chapter1.cbz", isUpscaled: true);
 
         await _dbContext.Libraries.AddRangeAsync(sourceLibrary, targetLibrary);
-        await _dbContext.MangaSeries.AddAsync(manga);
-        await _dbContext.Chapters.AddAsync(upscaledChapter);
-        await _dbContext.SaveChangesAsync();
+        await _dbContext.MangaSeries.AddAsync(manga, TestContext.Current.CancellationToken);
+        await _dbContext.Chapters.AddAsync(upscaledChapter, TestContext.Current.CancellationToken);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Create only the regular file, not the upscaled one
         var sourcePath = Path.Combine(sourceLibrary.NotUpscaledLibraryPath, upscaledChapter.RelativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
-        await File.WriteAllTextAsync(sourcePath, "chapter1 content");
+        await File.WriteAllTextAsync(sourcePath, "chapter1 content", TestContext.Current.CancellationToken);
         // Upscaled file intentionally missing
 
         // Act
-        await _libraryMover.MoveMangaAsync(manga, targetLibrary);
+        await _libraryMover.MoveMangaAsync(manga, targetLibrary, TestContext.Current.CancellationToken);
 
         // Assert
         // Verify warning was logged for missing upscaled file
@@ -209,9 +209,9 @@ public class MangaLibraryMoverTests : IDisposable
         var upscaledChapter = CreateTestChapter(manga, "chapter1.cbz", isUpscaled: true);
 
         await _dbContext.Libraries.AddRangeAsync(sourceLibrary, targetLibrary);
-        await _dbContext.MangaSeries.AddAsync(manga);
-        await _dbContext.Chapters.AddAsync(upscaledChapter);
-        await _dbContext.SaveChangesAsync();
+        await _dbContext.MangaSeries.AddAsync(manga, TestContext.Current.CancellationToken);
+        await _dbContext.Chapters.AddAsync(upscaledChapter, TestContext.Current.CancellationToken);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Create test files
         var sourcePath = Path.Combine(sourceLibrary.NotUpscaledLibraryPath, upscaledChapter.RelativePath);
@@ -220,11 +220,11 @@ public class MangaLibraryMoverTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
         Directory.CreateDirectory(Path.GetDirectoryName(upscaledPath)!);
 
-        await File.WriteAllTextAsync(sourcePath, "chapter1 content");
-        await File.WriteAllTextAsync(upscaledPath, "upscaled chapter1 content");
+        await File.WriteAllTextAsync(sourcePath, "chapter1 content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(upscaledPath, "upscaled chapter1 content", TestContext.Current.CancellationToken);
 
         // Act
-        await _libraryMover.MoveMangaAsync(manga, targetLibrary);
+        await _libraryMover.MoveMangaAsync(manga, targetLibrary, TestContext.Current.CancellationToken);
 
         // Assert
         // Verify warning was logged for missing target upscaled library path
@@ -249,24 +249,24 @@ public class MangaLibraryMoverTests : IDisposable
         var chapter2 = CreateTestChapter(manga, "chapter2.cbz");
 
         await _dbContext.Libraries.AddRangeAsync(sourceLibrary, targetLibrary);
-        await _dbContext.MangaSeries.AddAsync(manga);
+        await _dbContext.MangaSeries.AddAsync(manga, TestContext.Current.CancellationToken);
         await _dbContext.Chapters.AddRangeAsync(chapter1, chapter2);
-        await _dbContext.SaveChangesAsync();
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Create test files
         var sourcePath1 = Path.Combine(sourceLibrary.NotUpscaledLibraryPath, chapter1.RelativePath);
         var sourcePath2 = Path.Combine(sourceLibrary.NotUpscaledLibraryPath, chapter2.RelativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath1)!);
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath2)!);
-        await File.WriteAllTextAsync(sourcePath1, "chapter1 content");
-        await File.WriteAllTextAsync(sourcePath2, "chapter2 content");
+        await File.WriteAllTextAsync(sourcePath1, "chapter1 content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(sourcePath2, "chapter2 content", TestContext.Current.CancellationToken);
 
         // Mock file system to throw on first move but succeed on second
         _mockFileSystem.When(x => x.Move(sourcePath1, Arg.Any<string>()))
             .Do(x => throw new IOException("File in use"));
 
         // Act
-        await _libraryMover.MoveMangaAsync(manga, targetLibrary);
+        await _libraryMover.MoveMangaAsync(manga, targetLibrary, TestContext.Current.CancellationToken);
 
         // Assert
         // Verify error was logged for failed move
@@ -291,17 +291,17 @@ public class MangaLibraryMoverTests : IDisposable
         var upscaledChapter = CreateTestChapter(manga, "chapter1.cbz", isUpscaled: true);
 
         await _dbContext.Libraries.AddRangeAsync(sourceLibrary, targetLibrary);
-        await _dbContext.MangaSeries.AddAsync(manga);
-        await _dbContext.Chapters.AddAsync(upscaledChapter);
-        await _dbContext.SaveChangesAsync();
+        await _dbContext.MangaSeries.AddAsync(manga, TestContext.Current.CancellationToken);
+        await _dbContext.Chapters.AddAsync(upscaledChapter, TestContext.Current.CancellationToken);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Create test file
         var sourcePath = Path.Combine(sourceLibrary.NotUpscaledLibraryPath, upscaledChapter.RelativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
-        await File.WriteAllTextAsync(sourcePath, "chapter1 content");
+        await File.WriteAllTextAsync(sourcePath, "chapter1 content", TestContext.Current.CancellationToken);
 
         // Act
-        await _libraryMover.MoveMangaAsync(manga, targetLibrary);
+        await _libraryMover.MoveMangaAsync(manga, targetLibrary, TestContext.Current.CancellationToken);
 
         // Assert
         // Verify that a warning was logged (logging verification with NSubstitute can be complex due to generics)

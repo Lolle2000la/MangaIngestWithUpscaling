@@ -112,7 +112,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
         var outputPath = Path.Combine(_tempDir, "output.txt"); // Wrong extension
 
         // Create a dummy input file
-        await File.WriteAllTextAsync(inputPath, "dummy content");
+        await File.WriteAllTextAsync(inputPath, "dummy content", TestContext.Current.CancellationToken);
 
         var profile = new UpscalerProfile
         {
@@ -137,7 +137,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
         // Arrange
         var inputPath = Path.Combine(_tempDir, "input.cbz");
         var outputPath = Path.Combine(_tempDir, "output.cbz");
-        await File.WriteAllTextAsync(inputPath, "dummy content");
+        await File.WriteAllTextAsync(inputPath, "dummy content", TestContext.Current.CancellationToken);
 
         var profile = new UpscalerProfile
         {
@@ -246,7 +246,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
         // Arrange
         var inputPath = Path.Combine(_tempDir, "input.cbz");
         var outputPath = Path.Combine(_tempDir, "output.cbz");
-        await File.WriteAllTextAsync(inputPath, "dummy content");
+        await File.WriteAllTextAsync(inputPath, "dummy content", TestContext.Current.CancellationToken);
 
         var profile = new UpscalerProfile
         {
@@ -279,7 +279,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
         // Arrange
         var inputPath = Path.Combine(_tempDir, "input.cbz");
         var outputPath = Path.Combine(_tempDir, "output.cbz");
-        await File.WriteAllTextAsync(inputPath, "dummy content");
+        await File.WriteAllTextAsync(inputPath, "dummy content", TestContext.Current.CancellationToken);
 
         // Configure max dimension for resizing
         _mockConfig.Value.MaxDimensionBeforeUpscaling = 1024;
@@ -297,7 +297,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
 
         // Mock image resize service to return a temp file
         string tempResizedPath = Path.Combine(_tempDir, "temp_resized.cbz");
-        await File.WriteAllTextAsync(tempResizedPath, "temp resized content");
+        await File.WriteAllTextAsync(tempResizedPath, "temp resized content", TestContext.Current.CancellationToken);
 
         // Create a real TempResizedCbz instance (but with mock cleanup)
         _mockImageResize.CreateResizedTempCbzAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>())

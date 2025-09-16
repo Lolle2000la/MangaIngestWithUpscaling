@@ -62,7 +62,7 @@ public class PythonServiceTests
 
         // Act & Assert
         var exception = await Assert.ThrowsAnyAsync<Exception>(() =>
-            _pythonService.RunPythonScript(invalidScript, arguments, CancellationToken.None));
+            _pythonService.RunPythonScript(invalidScript, arguments, TestContext.Current.CancellationToken));
 
         // Should throw some kind of exception for invalid script
         Assert.NotNull(exception);
@@ -79,7 +79,8 @@ public class PythonServiceTests
 
         // Act & Assert
         var exception = await Assert.ThrowsAnyAsync<Exception>(() =>
-            _pythonService.RunPythonScriptStreaming(invalidScript, arguments, mockCallback, CancellationToken.None));
+            _pythonService.RunPythonScriptStreaming(invalidScript, arguments, mockCallback,
+                TestContext.Current.CancellationToken));
 
         // Should throw some kind of exception for invalid script
         Assert.NotNull(exception);

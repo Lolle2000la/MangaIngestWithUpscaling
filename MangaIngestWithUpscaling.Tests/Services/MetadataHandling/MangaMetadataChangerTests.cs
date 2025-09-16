@@ -72,14 +72,14 @@ public class MangaMetadataChangerTests : IDisposable
         var manga = CreateTestManga(library, "Original Title");
         var chapter = CreateTestChapter(manga, "chapter1.cbz");
 
-        await _dbContext.Libraries.AddAsync(library);
-        await _dbContext.MangaSeries.AddAsync(manga);
-        await _dbContext.Chapters.AddAsync(chapter);
-        await _dbContext.SaveChangesAsync();
+        await _dbContext.Libraries.AddAsync(library, TestContext.Current.CancellationToken);
+        await _dbContext.MangaSeries.AddAsync(manga, TestContext.Current.CancellationToken);
+        await _dbContext.Chapters.AddAsync(chapter, TestContext.Current.CancellationToken);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var chapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(chapterPath)!);
-        await File.WriteAllTextAsync(chapterPath, "dummy content");
+        await File.WriteAllTextAsync(chapterPath, "dummy content", TestContext.Current.CancellationToken);
 
         var newTitle = "New Title";
         var metadata = new ExtractedMetadata("Original Title", "Chapter 1", "1");
@@ -87,7 +87,8 @@ public class MangaMetadataChangerTests : IDisposable
         _mockMetadataHandling.GetSeriesAndTitleFromComicInfo(chapterPath).Returns(metadata);
 
         // Act
-        var result = await _metadataChanger.ChangeMangaTitle(manga, newTitle, addOldToAlternative: true);
+        var result = await _metadataChanger.ChangeMangaTitle(manga, newTitle, addOldToAlternative: true,
+            cancellationToken: TestContext.Current.CancellationToken);
 
         // Assert
         Assert.Equal(RenameResult.Ok, result);
@@ -117,9 +118,9 @@ public class MangaMetadataChangerTests : IDisposable
         var existingManga = CreateTestManga(library, "Existing Title");
         var currentManga = CreateTestManga(library, "Current Title");
 
-        await _dbContext.Libraries.AddAsync(library);
+        await _dbContext.Libraries.AddAsync(library, TestContext.Current.CancellationToken);
         await _dbContext.MangaSeries.AddRangeAsync(existingManga, currentManga);
-        await _dbContext.SaveChangesAsync();
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Mock dialog service to return true for merge consent
         _mockDialogService.ShowMessageBox(
@@ -130,7 +131,8 @@ public class MangaMetadataChangerTests : IDisposable
             .Returns(Task.FromResult<bool?>(true));
 
         // Act
-        var result = await _metadataChanger.ChangeMangaTitle(currentManga, "Existing Title");
+        var result = await _metadataChanger.ChangeMangaTitle(currentManga, "Existing Title",
+            cancellationToken: TestContext.Current.CancellationToken);
 
         // Assert
         Assert.Equal(RenameResult.Merged, result);
@@ -149,9 +151,9 @@ public class MangaMetadataChangerTests : IDisposable
         var existingManga = CreateTestManga(library, "Existing Title");
         var currentManga = CreateTestManga(library, "Current Title");
 
-        await _dbContext.Libraries.AddAsync(library);
+        await _dbContext.Libraries.AddAsync(library, TestContext.Current.CancellationToken);
         await _dbContext.MangaSeries.AddRangeAsync(existingManga, currentManga);
-        await _dbContext.SaveChangesAsync();
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Mock dialog service to return false for merge consent
         _mockDialogService.ShowMessageBox(
@@ -162,7 +164,8 @@ public class MangaMetadataChangerTests : IDisposable
             .Returns(Task.FromResult<bool?>(false));
 
         // Act
-        var result = await _metadataChanger.ChangeMangaTitle(currentManga, "Existing Title");
+        var result = await _metadataChanger.ChangeMangaTitle(currentManga, "Existing Title",
+            cancellationToken: TestContext.Current.CancellationToken);
 
         // Assert
         Assert.Equal(RenameResult.Cancelled, result);
@@ -180,18 +183,18 @@ public class MangaMetadataChangerTests : IDisposable
         var manga = CreateTestManga(library, "Test Manga");
         var chapter = CreateTestChapter(manga, "chapter1.cbz", isUpscaled: true);
 
-        await _dbContext.Libraries.AddAsync(library);
-        await _dbContext.MangaSeries.AddAsync(manga);
-        await _dbContext.Chapters.AddAsync(chapter);
-        await _dbContext.SaveChangesAsync();
+        await _dbContext.Libraries.AddAsync(library, TestContext.Current.CancellationToken);
+        await _dbContext.MangaSeries.AddAsync(manga, TestContext.Current.CancellationToken);
+        await _dbContext.Chapters.AddAsync(chapter, TestContext.Current.CancellationToken);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var notUpscaledPath = chapter.NotUpscaledFullPath;
         var upscaledPath = chapter.UpscaledFullPath!;
 
         Directory.CreateDirectory(Path.GetDirectoryName(notUpscaledPath)!);
         Directory.CreateDirectory(Path.GetDirectoryName(upscaledPath)!);
-        await File.WriteAllTextAsync(notUpscaledPath, "dummy content");
-        await File.WriteAllTextAsync(upscaledPath, "dummy upscaled content");
+        await File.WriteAllTextAsync(notUpscaledPath, "dummy content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(upscaledPath, "dummy upscaled content", TestContext.Current.CancellationToken);
 
         var metadata = new ExtractedMetadata("Test Manga", "Old Chapter Title", "1");
         _mockMetadataHandling.GetSeriesAndTitleFromComicInfo(Arg.Any<string>()).Returns(metadata);
@@ -218,14 +221,14 @@ public class MangaMetadataChangerTests : IDisposable
         var manga = CreateTestManga(library, "Test Manga");
         var chapter = CreateTestChapter(manga, "chapter1.cbz", isUpscaled: false);
 
-        await _dbContext.Libraries.AddAsync(library);
-        await _dbContext.MangaSeries.AddAsync(manga);
-        await _dbContext.Chapters.AddAsync(chapter);
-        await _dbContext.SaveChangesAsync();
+        await _dbContext.Libraries.AddAsync(library, TestContext.Current.CancellationToken);
+        await _dbContext.MangaSeries.AddAsync(manga, TestContext.Current.CancellationToken);
+        await _dbContext.Chapters.AddAsync(chapter, TestContext.Current.CancellationToken);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var notUpscaledPath = chapter.NotUpscaledFullPath;
         Directory.CreateDirectory(Path.GetDirectoryName(notUpscaledPath)!);
-        await File.WriteAllTextAsync(notUpscaledPath, "dummy content");
+        await File.WriteAllTextAsync(notUpscaledPath, "dummy content", TestContext.Current.CancellationToken);
 
         var metadata = new ExtractedMetadata("Test Manga", "Old Chapter Title", "1");
         _mockMetadataHandling.GetSeriesAndTitleFromComicInfo(notUpscaledPath).Returns(metadata);
@@ -299,15 +302,15 @@ public class MangaMetadataChangerTests : IDisposable
         var chapter1 = CreateTestChapter(manga, "chapter1.cbz");
         var chapter2 = CreateTestChapter(manga, "chapter2.cbz");
 
-        await _dbContext.Libraries.AddAsync(library);
-        await _dbContext.MangaSeries.AddAsync(manga);
+        await _dbContext.Libraries.AddAsync(library, TestContext.Current.CancellationToken);
+        await _dbContext.MangaSeries.AddAsync(manga, TestContext.Current.CancellationToken);
         await _dbContext.Chapters.AddRangeAsync(chapter1, chapter2);
-        await _dbContext.SaveChangesAsync();
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Only create file for chapter2, chapter1 is missing
         var chapter2Path = Path.Combine(library.NotUpscaledLibraryPath, chapter2.RelativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(chapter2Path)!);
-        await File.WriteAllTextAsync(chapter2Path, "dummy content");
+        await File.WriteAllTextAsync(chapter2Path, "dummy content", TestContext.Current.CancellationToken);
 
         var metadata = new ExtractedMetadata("Original Title", "Chapter 2", "2");
         _mockMetadataHandling.GetSeriesAndTitleFromComicInfo(chapter2Path).Returns(metadata);
@@ -315,7 +318,8 @@ public class MangaMetadataChangerTests : IDisposable
         var newTitle = "New Title";
 
         // Act
-        var result = await _metadataChanger.ChangeMangaTitle(manga, newTitle);
+        var result = await _metadataChanger.ChangeMangaTitle(manga, newTitle,
+            cancellationToken: TestContext.Current.CancellationToken);
 
         // Assert
         Assert.Equal(RenameResult.Ok, result);

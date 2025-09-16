@@ -45,7 +45,8 @@ public class ImageFilterServiceTests : IDisposable
         var filters = new List<FilteredImage>();
 
         // Act
-        var result = await _service.ApplyFiltersToChapterAsync(nonExistentPath, filters);
+        var result =
+            await _service.ApplyFiltersToChapterAsync(nonExistentPath, filters, TestContext.Current.CancellationToken);
 
         // Assert
         Assert.Contains($"Original CBZ file not found: {nonExistentPath}", result.ErrorMessages);
@@ -61,7 +62,8 @@ public class ImageFilterServiceTests : IDisposable
         var filters = new List<FilteredImage>();
 
         // Act
-        var result = await _service.ApplyFiltersToChapterAsync(_testCbzPath, nonExistentUpscaledPath, filters);
+        var result = await _service.ApplyFiltersToChapterAsync(_testCbzPath, nonExistentUpscaledPath, filters,
+            TestContext.Current.CancellationToken);
 
         // Assert
         Assert.Contains($"Upscaled CBZ file not found: {nonExistentUpscaledPath}", result.ErrorMessages);
@@ -76,7 +78,8 @@ public class ImageFilterServiceTests : IDisposable
         var filters = new List<FilteredImage>();
 
         // Act
-        var result = await _service.ApplyFiltersToChapterAsync(_testCbzPath, filters);
+        var result =
+            await _service.ApplyFiltersToChapterAsync(_testCbzPath, filters, TestContext.Current.CancellationToken);
 
         // Assert
         Assert.Equal(0, result.FilteredCount);
@@ -95,7 +98,8 @@ public class ImageFilterServiceTests : IDisposable
         };
 
         // Act
-        var result = await _service.ApplyFiltersToChapterAsync(_testCbzPath, filters);
+        var result =
+            await _service.ApplyFiltersToChapterAsync(_testCbzPath, filters, TestContext.Current.CancellationToken);
 
         // Assert
         Assert.Empty(result.ErrorMessages);
@@ -315,7 +319,8 @@ public class ImageFilterServiceTests : IDisposable
 
         // Act & Assert
         await Assert.ThrowsAsync<FileNotFoundException>(() =>
-            _service.CreateFilteredImageFromFileAsync(nonExistentPath, library));
+            _service.CreateFilteredImageFromFileAsync(nonExistentPath, library,
+                cancellationToken: TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -326,7 +331,8 @@ public class ImageFilterServiceTests : IDisposable
         var library = CreateTestLibrary();
 
         // Act
-        var result = await _service.CreateFilteredImageFromFileAsync(_testImagePath, library, "Test description");
+        var result = await _service.CreateFilteredImageFromFileAsync(_testImagePath, library, "Test description",
+            TestContext.Current.CancellationToken);
 
         // Assert
         Assert.NotNull(result);
@@ -347,7 +353,8 @@ public class ImageFilterServiceTests : IDisposable
 
         // Act & Assert
         await Assert.ThrowsAsync<FileNotFoundException>(() =>
-            _service.CreateFilteredImageFromCbzAsync(nonExistentPath, "image.jpg", library));
+            _service.CreateFilteredImageFromCbzAsync(nonExistentPath, "image.jpg", library,
+                cancellationToken: TestContext.Current.CancellationToken));
     }
 
     [Fact]
@@ -359,7 +366,8 @@ public class ImageFilterServiceTests : IDisposable
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
-            _service.CreateFilteredImageFromCbzAsync(_testCbzPath, "nonexistent.jpg", library));
+            _service.CreateFilteredImageFromCbzAsync(_testCbzPath, "nonexistent.jpg", library,
+                cancellationToken: TestContext.Current.CancellationToken));
 
         Assert.Contains("not found in CBZ file", exception.Message);
     }
@@ -373,7 +381,8 @@ public class ImageFilterServiceTests : IDisposable
 
         // Act
         FilteredImage result =
-            await _service.CreateFilteredImageFromCbzAsync(_testCbzPath, "test_image.jpg", library, "Test description");
+            await _service.CreateFilteredImageFromCbzAsync(_testCbzPath, "test_image.jpg", library, "Test description",
+                TestContext.Current.CancellationToken);
 
         // Assert
         Assert.NotNull(result);
