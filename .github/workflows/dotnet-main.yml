@@ -21,6 +21,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+      with:
+        submodules: recursive
     - name: Setup .NET
       uses: actions/setup-dotnet@v5
       with:
@@ -29,6 +31,7 @@ jobs:
       run: dotnet restore MangaIngestWithUpscaling.sln
     - name: Build
       run: dotnet build --no-restore MangaIngestWithUpscaling.sln /p:TreatWarningsAsErrors=true
-    # no tests to run
-    #- name: Test
-    #  run: dotnet test --no-build --verbosity normal MangaIngestWithUpscaling.sln
+    - name: Test shared
+      run: dotnet test --no-build --verbosity normal MangaIngestWithUpscaling.Shared.Tests/MangaIngestWithUpscaling.Shared.Tests.csproj
+    - name: Test server
+      run: dotnet test --no-build --verbosity normal MangaIngestWithUpscaling.Tests/MangaIngestWithUpscaling.Tests.csproj

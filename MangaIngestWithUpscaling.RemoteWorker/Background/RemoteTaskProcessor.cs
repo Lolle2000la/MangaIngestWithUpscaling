@@ -64,6 +64,7 @@ public class RemoteTaskProcessor(
     private async Task FetchLoop(CancellationToken stoppingToken)
     {
         var dispatcherTimer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+        bool serverAvailable = true;
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -103,9 +104,16 @@ public class RemoteTaskProcessor(
                     {
                         resp = await client.RequestUpscaleTaskWithHintAsync(new RequestTaskRequest { Prefetch = true },
                             cancellationToken: stoppingToken);
+                        serverAvailable = true;
                     }
-                    catch (RpcException e) when (e.StatusCode == StatusCode.NotFound)
+                    catch (RpcException e) when (e.StatusCode is StatusCode.NotFound or StatusCode.Unavailable)
                     {
+                        if (serverAvailable && e.StatusCode == StatusCode.Unavailable)
+                        {
+                            logger.LogWarning("Server is currently unavailable; will retry shortly.");
+                            serverAvailable = false;
+                        }
+
                         await dispatcherTimer.WaitForNextTickAsync(stoppingToken);
                         continue;
                     }
@@ -262,6 +270,12 @@ public class RemoteTaskProcessor(
                             }
                         }
 
+                        // Exit if channel is completed and no more data is available
+                        if (progressChannel.Reader.Completion.IsCompleted)
+                        {
+                            break;
+                        }
+
                         // Debounced send of latest progress
                         DateTime nowSend = DateTime.UtcNow;
                         if (pending is not null && nowSend - lastProgressSend >= TimeSpan.FromMilliseconds(400))
@@ -292,7 +306,7 @@ public class RemoteTaskProcessor(
 
                                 KeepAliveResponse? resp =
                                     await client.KeepAliveAsync(req,
-                                        cancellationToken: item.PersistentKeepAliveCts.Token);
+                                        cancellationToken: upscalesCts.Token);
                                 if (!resp.IsAlive)
                                 {
                                     await Task.WhenAll(upscalesCts.CancelAsync(),
@@ -313,7 +327,7 @@ public class RemoteTaskProcessor(
                             }
                         }
 
-                        try { await debounce.WaitForNextTickAsync(item.PersistentKeepAliveCts.Token); }
+                        try { await debounce.WaitForNextTickAsync(upscalesCts.Token); }
                         catch { break; }
                     }
                     catch (OperationCanceledException)
@@ -325,7 +339,7 @@ public class RemoteTaskProcessor(
                         // swallow and continue
                     }
                 }
-            }, item.PersistentKeepAliveCts.Token);
+            }, upscalesCts.Token);
 
             try
             {
@@ -381,6 +395,9 @@ public class RemoteTaskProcessor(
             }
 
             try { progressChannel.Writer.TryComplete(); }
+            catch { }
+
+            try { await upscalesCts.CancelAsync(); }
             catch { }
 
             try { await progressSenderTask; }
