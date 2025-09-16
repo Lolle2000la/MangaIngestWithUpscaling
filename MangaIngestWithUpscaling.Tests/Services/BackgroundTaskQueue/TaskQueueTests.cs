@@ -42,81 +42,7 @@ public class TaskQueueTests : IDisposable
     }
 
     [Fact]
-    public void GetStandardSnapshot_ShouldReturnCopyOfStandardTasks()
-    {
-        // Act
-        var snapshot = _taskQueue.GetStandardSnapshot();
-
-        // Assert
-        Assert.NotNull(snapshot);
-        Assert.IsAssignableFrom<IReadOnlyList<PersistedTask>>(snapshot);
-    }
-
-    [Fact]
-    public void GetUpscaleSnapshot_ShouldReturnCopyOfUpscaleTasks()
-    {
-        // Act
-        var snapshot = _taskQueue.GetUpscaleSnapshot();
-
-        // Assert
-        Assert.NotNull(snapshot);
-        Assert.IsAssignableFrom<IReadOnlyList<PersistedTask>>(snapshot);
-    }
-
-    [Fact]
-    public async Task StartAsync_ShouldNotThrow()
-    {
-        // Act & Assert
-        var exception = await Record.ExceptionAsync(
-            () => _taskQueue.StartAsync(CancellationToken.None));
-        Assert.Null(exception);
-    }
-
-    [Fact]
-    public async Task StopAsync_ShouldNotThrow()
-    {
-        // Act & Assert
-        var exception = await Record.ExceptionAsync(
-            () => _taskQueue.StopAsync(CancellationToken.None));
-        Assert.Null(exception);
-    }
-
-    [Fact]
-    public async Task ReplayPendingOrFailed_ShouldNotThrow()
-    {
-        // Act & Assert
-        var exception = await Record.ExceptionAsync(
-            () => _taskQueue.ReplayPendingOrFailed(CancellationToken.None));
-        Assert.Null(exception);
-    }
-
-    [Fact]
-    public void TaskQueue_Constructor_ShouldNotThrow()
-    {
-        // Arrange
-        var services = new ServiceCollection();
-        services.AddDbContext<ApplicationDbContext>(options =>
-            options.UseInMemoryDatabase($"TestDb_{Guid.NewGuid()}"));
-        var serviceProvider = services.BuildServiceProvider();
-        var logger = Substitute.For<ILogger<TaskQueue>>();
-
-        // Act & Assert
-        var exception = Record.Exception(
-            () => new TaskQueue(serviceProvider.GetRequiredService<IServiceScopeFactory>(), logger));
-        Assert.Null(exception);
-    }
-
-    [Fact]
-    public void TaskQueue_ChannelReaders_ShouldBeAccessible()
-    {
-        // Act & Assert
-        Assert.NotNull(_taskQueue.StandardReader);
-        Assert.NotNull(_taskQueue.UpscaleReader);
-        Assert.NotNull(_taskQueue.ReroutedUpscaleReader);
-    }
-
-    [Fact]
-    public async Task SendToLocalUpscaleAsync_ShouldNotThrow()
+    public async Task SendToLocalUpscaleAsync_WithValidTask_ShouldCompleteSuccessfully()
     {
         // Arrange
         var task = new PersistedTask
@@ -131,5 +57,118 @@ public class TaskQueueTests : IDisposable
         var exception = await Record.ExceptionAsync(
             () => _taskQueue.SendToLocalUpscaleAsync(task, CancellationToken.None).AsTask());
         Assert.Null(exception);
+    }
+
+    [Fact]
+    public async Task EnqueueAsync_WithUpscaleTask_ShouldCallCleanupAsync()
+    {
+        // Arrange
+        var upscaleTask = new UpscaleTask 
+        { 
+            ChapterId = 1, 
+            UpscalerProfileId = 1 
+        };
+
+        // Act
+        await _taskQueue.EnqueueAsync(upscaleTask);
+
+        // Assert - Cleanup should be called when enqueueing tasks
+        await _mockQueueCleanup.Received(1).CleanupAsync();
+    }
+
+    [Fact]
+    public async Task EnqueueAsync_WithLogTask_ShouldCompleteSuccessfully()
+    {
+        // Arrange
+        var logTask = new LoggingTask 
+        { 
+            Message = "Test log message"
+        };
+
+        // Act & Assert
+        var exception = await Record.ExceptionAsync(
+            () => _taskQueue.EnqueueAsync(logTask));
+        Assert.Null(exception);
+        
+        // Verify cleanup was called
+        await _mockQueueCleanup.Received(1).CleanupAsync();
+    }
+
+    [Fact]
+    public async Task ReplayPendingOrFailed_ShouldCompleteSuccessfully()
+    {
+        // Act & Assert - This method handles database operations, should not throw
+        var exception = await Record.ExceptionAsync(
+            () => _taskQueue.ReplayPendingOrFailed(CancellationToken.None));
+        Assert.Null(exception);
+    }
+
+    [Fact]
+    public void ChannelReaders_ShouldProvideAccessToTaskChannels()
+    {
+        // Act & Assert
+        Assert.NotNull(_taskQueue.StandardReader);
+        Assert.NotNull(_taskQueue.UpscaleReader);
+        Assert.NotNull(_taskQueue.ReroutedUpscaleReader);
+        
+        // Channel readers should be distinct objects
+        Assert.NotSame(_taskQueue.StandardReader, _taskQueue.UpscaleReader);
+        Assert.NotSame(_taskQueue.StandardReader, _taskQueue.ReroutedUpscaleReader);
+        Assert.NotSame(_taskQueue.UpscaleReader, _taskQueue.ReroutedUpscaleReader);
+    }
+
+    [Fact]
+    public async Task StartAsync_ShouldCompleteSuccessfully()
+    {
+        // Act & Assert - StartAsync calls ReplayPendingOrFailed and should complete
+        var exception = await Record.ExceptionAsync(
+            () => _taskQueue.StartAsync(CancellationToken.None));
+        Assert.Null(exception);
+    }
+
+    [Fact]
+    public void GetSnapshots_ShouldReturnReadOnlyCollections()
+    {
+        // Act
+        var standardSnapshot = _taskQueue.GetStandardSnapshot();
+        var upscaleSnapshot = _taskQueue.GetUpscaleSnapshot();
+
+        // Assert
+        Assert.NotNull(standardSnapshot);
+        Assert.NotNull(upscaleSnapshot);
+        Assert.IsAssignableFrom<IReadOnlyList<PersistedTask>>(standardSnapshot);
+        Assert.IsAssignableFrom<IReadOnlyList<PersistedTask>>(upscaleSnapshot);
+    }
+
+    [Fact]
+    public async Task StopAsync_WithCancellation_ShouldHandleGracefully()
+    {
+        // Arrange
+        using var cts = new CancellationTokenSource();
+        cts.Cancel(); // Cancel immediately
+
+        // Act & Assert
+        var exception = await Record.ExceptionAsync(
+            () => _taskQueue.StopAsync(cts.Token));
+        
+        // Should handle cancellation gracefully without throwing
+        Assert.Null(exception);
+    }
+
+    [Fact]
+    public async Task RetryAsync_WithNonExistentTask_ShouldThrowDbUpdateConcurrencyException()
+    {
+        // Arrange - Create a task that doesn't exist in the database
+        var task = new PersistedTask
+        {
+            Id = 999, // Non-existent ID
+            Order = 1,
+            Status = PersistedTaskStatus.Failed,
+            Data = new UpscaleTask { ChapterId = 1, UpscalerProfileId = 1 }
+        };
+
+        // Act & Assert - Should throw exception when trying to update non-existent entity
+        await Assert.ThrowsAsync<Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException>(
+            () => _taskQueue.RetryAsync(task));
     }
 }

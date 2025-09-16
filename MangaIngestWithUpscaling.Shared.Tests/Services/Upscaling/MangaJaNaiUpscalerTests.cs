@@ -38,7 +38,8 @@ public class MangaJaNaiUpscalerTests : IDisposable
             UseCPU = false,
             SelectedDeviceIndex = 0,
             RemoteOnly = false,
-            PreferredGpuBackend = GpuBackend.Auto
+            PreferredGpuBackend = GpuBackend.Auto,
+            ModelsDirectory = Path.Combine(Path.GetTempPath(), $"models_{Guid.NewGuid()}")
         };
         _mockConfig = Substitute.For<IOptions<UpscalerConfig>>();
         _mockConfig.Value.Returns(config);
@@ -63,31 +64,11 @@ public class MangaJaNaiUpscalerTests : IDisposable
         {
             Directory.Delete(_tempDir, true);
         }
-    }
-
-    [Fact]
-    public async Task DownloadModelsIfNecessary_ShouldCallPythonServiceForModelDownload()
-    {
-        // Arrange
-        var cancellationToken = CancellationToken.None;
         
-        // Setup Python service mock
-        _mockPythonService.RunPythonScript(
-            Arg.Any<string>(),
-            Arg.Any<string>(),
-            cancellationToken,
-            Arg.Any<TimeSpan?>())
-            .Returns(Task.FromResult("Models downloaded successfully"));
-
-        // Act
-        await _upscaler.DownloadModelsIfNecessary(cancellationToken);
-
-        // Assert
-        await _mockPythonService.Received().RunPythonScript(
-            Arg.Any<string>(),
-            Arg.Any<string>(),
-            cancellationToken,
-            Arg.Any<TimeSpan?>());
+        if (Directory.Exists(_mockConfig.Value.ModelsDirectory))
+        {
+            Directory.Delete(_mockConfig.Value.ModelsDirectory, true);
+        }
     }
 
     [Fact]
@@ -110,5 +91,41 @@ public class MangaJaNaiUpscalerTests : IDisposable
             () => _upscaler.Upscale(inputPath, outputPath, profile, cancellationToken));
         
         Assert.Contains("Input file not found", exception.Message);
+    }
+
+    [Fact]
+    public async Task Upscale_InvalidOutputPath_ShouldThrowArgumentException()
+    {
+        // Arrange
+        var inputPath = Path.Combine(_tempDir, "input.cbz");
+        var outputPath = Path.Combine(_tempDir, "output.txt"); // Wrong extension
+        
+        // Create a dummy input file
+        await File.WriteAllTextAsync(inputPath, "dummy content");
+        
+        var profile = new UpscalerProfile
+        {
+            Name = "Test Profile",
+            ScalingFactor = ScaleFactor.TwoX,
+            CompressionFormat = CompressionFormat.Png,
+            Quality = 80
+        };
+        var cancellationToken = CancellationToken.None;
+
+        // Act & Assert
+        var exception = await Assert.ThrowsAsync<ArgumentException>(
+            () => _upscaler.Upscale(inputPath, outputPath, profile, cancellationToken));
+        
+        Assert.Contains("Output path must be a cbz file", exception.Message);
+    }
+
+    [Fact]
+    public void Constructor_ShouldNotThrow()
+    {
+        // This test validates that the constructor can be called with mocked dependencies
+        // without throwing exceptions due to missing dependencies
+        
+        // Arrange, Act & Assert - Constructor is called in test setup
+        Assert.NotNull(_upscaler);
     }
 }

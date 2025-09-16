@@ -18,20 +18,6 @@ public class ImageResizeServiceTests
         _service = new ImageResizeService(_mockLogger, _mockFileSystem);
     }
 
-    [Fact]
-    public async Task CreateResizedTempCbzAsync_InputFileNotFound_ShouldThrowFileNotFoundException()
-    {
-        // Arrange
-        const string nonExistentPath = "nonexistent.cbz";
-        const int maxDimension = 1024;
-
-        // Act & Assert
-        var exception = await Assert.ThrowsAsync<FileNotFoundException>(
-            () => _service.CreateResizedTempCbzAsync(nonExistentPath, maxDimension, CancellationToken.None));
-
-        Assert.Contains(nonExistentPath, exception.Message);
-    }
-
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
@@ -39,14 +25,40 @@ public class ImageResizeServiceTests
     public async Task CreateResizedTempCbzAsync_InvalidMaxDimension_ShouldThrowArgumentException(int maxDimension)
     {
         // Arrange
-        const string inputPath = "test.cbz";
+        var tempInputPath = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}.cbz");
+        
+        // Create a temporary file to pass the file existence check
+        await File.WriteAllTextAsync(tempInputPath, "dummy content");
+        
+        try
+        {
+            // Act & Assert
+            var exception = await Assert.ThrowsAsync<ArgumentException>(
+                () => _service.CreateResizedTempCbzAsync(tempInputPath, maxDimension, CancellationToken.None));
+
+            Assert.Equal("maxDimension", exception.ParamName);
+            Assert.Contains("Maximum dimension must be greater than 0", exception.Message);
+        }
+        finally
+        {
+            // Cleanup
+            if (File.Exists(tempInputPath))
+                File.Delete(tempInputPath);
+        }
+    }
+
+    [Fact]
+    public async Task CreateResizedTempCbzAsync_InputFileNotFound_ShouldThrowFileNotFoundException()
+    {
+        // Arrange
+        const string nonExistentPath = "nonexistent_file_that_does_not_exist.cbz";
+        const int maxDimension = 1024;
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<ArgumentException>(
-            () => _service.CreateResizedTempCbzAsync(inputPath, maxDimension, CancellationToken.None));
+        var exception = await Assert.ThrowsAsync<FileNotFoundException>(
+            () => _service.CreateResizedTempCbzAsync(nonExistentPath, maxDimension, CancellationToken.None));
 
-        Assert.Equal("maxDimension", exception.ParamName);
-        Assert.Contains("Maximum dimension must be greater than 0", exception.Message);
+        Assert.Contains(nonExistentPath, exception.Message);
     }
 
     [Fact]
@@ -70,46 +82,10 @@ public class ImageResizeServiceTests
     public void CleanupTempFile_NonExistentFile_ShouldNotThrow()
     {
         // Arrange
-        const string nonExistentPath = "nonexistent.tmp";
+        const string nonExistentPath = "definitely_nonexistent_file.tmp";
 
         // Act & Assert - Should not throw
-        _service.CleanupTempFile(nonExistentPath);
-    }
-
-    [Fact]
-    public void TempResizedCbz_Dispose_ShouldCallCleanupTempFile()
-    {
-        // This test would need to access the internal constructor,
-        // so we'll test it indirectly through the service
-        
-        // Arrange
-        const string tempPath = "temp.cbz";
-        var mockService = Substitute.For<IImageResizeService>();
-        
-        // We can't directly instantiate TempResizedCbz due to internal constructor
-        // This test verifies the concept through mocking
-        
-        // Act & Assert
-        mockService.CleanupTempFile(tempPath);
-        mockService.Received(1).CleanupTempFile(tempPath);
-    }
-
-    [Fact]
-    public void TempResizedCbz_Constructor_ConceptTest()
-    {
-        // Since TempResizedCbz constructor is internal, we test the concept
-        // that the service should handle cleanup properly
-        
-        // Arrange
-        const string tempPath = "temp.cbz";
-        var mockService = Substitute.For<IImageResizeService>();
-
-        // Act & Assert
-        // Test that the service interface supports the required cleanup method
-        Assert.NotNull(mockService);
-        
-        // Verify the cleanup method exists and can be called
-        mockService.CleanupTempFile(tempPath);
-        mockService.Received(1).CleanupTempFile(tempPath);
+        var exception = Record.Exception(() => _service.CleanupTempFile(nonExistentPath));
+        Assert.Null(exception);
     }
 }
