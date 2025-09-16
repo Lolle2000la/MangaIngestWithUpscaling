@@ -19,7 +19,7 @@ public class PythonServiceTests
         _pythonService = new PythonService(_mockLogger, _mockGpuDetection);
     }
 
-    [Theory]
+    [Theory(Skip = "Will run very long and should only be run when checking if the dependencies are setup correctly.")]
     [Trait("Category", "Download")]
     [Trait("Category", "Integration")]
     [InlineData(GpuBackend.Auto)]
