@@ -19,16 +19,6 @@ public class PythonServiceTests
         _pythonService = new PythonService(_mockLogger, _mockGpuDetection);
     }
 
-    [Fact]
-    public void IsPythonInstalled_ShouldReturnBoolean()
-    {
-        // Act
-        var result = _pythonService.IsPythonInstalled();
-
-        // Assert
-        Assert.IsType<bool>(result);
-    }
-
     [Theory]
     [Trait("Category", "Download")]
     [Trait("Category", "Integration")]

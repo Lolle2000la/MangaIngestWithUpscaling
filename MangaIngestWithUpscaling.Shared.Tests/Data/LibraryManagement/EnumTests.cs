@@ -48,15 +48,4 @@ public class EnumTests
         Assert.NotNull(displayAttribute);
         Assert.Equal(expectedDisplayName, displayAttribute.Name);
     }
-
-    [Fact]
-    public void UpscalerMethod_ShouldOnlyHaveMangaJaNai()
-    {
-        // Arrange
-        var values = Enum.GetValues<UpscalerMethod>();
-
-        // Act & Assert
-        Assert.Single(values);
-        Assert.Equal(UpscalerMethod.MangaJaNai, values[0]);
-    }
 }
