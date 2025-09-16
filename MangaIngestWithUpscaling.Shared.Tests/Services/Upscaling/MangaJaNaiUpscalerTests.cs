@@ -323,7 +323,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
         Assert.NotNull(_upscaler);
     }
 
-    [Fact(Skip = "Requires model download and network access. Enable in CI by removing Skip attribute.")]
+    [Fact]
     [Trait("Category", "Download")]
     [Trait("Category", "Integration")]
     public async Task DownloadModelsIfNecessary_ShouldComplete()
