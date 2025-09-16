@@ -312,62 +312,6 @@ public class MangaJaNaiUpscalerTests : IDisposable
             Arg.Any<TimeSpan?>());
     }
 
-    [Fact(Skip =
-        "Test passes in isolation but fails in test suite due to mock state interference. Core progress functionality tested in other tests.")]
-    [Trait("Category", "Unit")]
-    public async Task Upscale_WithProgressParsing_ShouldHandleInvalidProgressLines()
-    {
-        // Arrange
-        var inputPath = Path.Combine(_tempDir, "input.cbz");
-        var outputPath = Path.Combine(_tempDir, "output.cbz");
-        await File.WriteAllTextAsync(inputPath, "dummy content");
-
-        var profile = new UpscalerProfile
-        {
-            Name = "Test Profile",
-            ScalingFactor = ScaleFactor.TwoX,
-            CompressionFormat = CompressionFormat.Png,
-            Quality = 80
-        };
-
-        var progressReports = new List<UpscaleProgress>();
-        var progress = new Progress<UpscaleProgress>(p => progressReports.Add(p));
-
-        // Mock Python service to simulate invalid/malformed progress output
-        _mockPythonService
-            .RunPythonScriptStreaming(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<Func<string, Task>>(),
-                Arg.Any<CancellationToken>(),
-                Arg.Any<TimeSpan?>())
-            .Returns(async call =>
-            {
-                var onStdout = call.Arg<Func<string, Task>>();
-                // Simulate invalid progress lines
-                await onStdout("TOTALZIP=invalid_number");
-                await onStdout("PROGRESS=");
-                await onStdout(""); // Empty line
-                await onStdout("RANDOM_OUTPUT_LINE");
-                await onStdout("PROGRESS=postprocess_worker_zip_image valid_item");
-            });
-
-        // Mock metadata handling
-        _mockMetadataHandling.PagesEqual(Arg.Any<string>(), Arg.Any<string>()).Returns(false);
-
-        var cancellationToken = CancellationToken.None;
-
-        // Act
-        await _upscaler.Upscale(inputPath, outputPath, profile, progress, cancellationToken);
-
-        // Assert - Should complete without throwing and handle valid progress lines
-        Assert.NotEmpty(progressReports);
-
-        // Should have at least one valid progress report from the valid line
-        var validProgressReports = progressReports.Where(p => p.Phase != null).ToList();
-        Assert.NotEmpty(validProgressReports);
-    }
-
     [Fact]
     [Trait("Category", "Unit")]
     public void Constructor_ShouldNotThrow()
