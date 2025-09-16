@@ -1,6 +1,7 @@
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.ImageFiltering;
 using Microsoft.Extensions.Logging;
+using NetVips;
 using NSubstitute;
 using System.IO.Compression;
 
@@ -20,10 +21,10 @@ public class ImageFilterServiceTests : IDisposable
         _service = new ImageFilterService(_mockLogger);
         _tempDir = Path.Combine(Path.GetTempPath(), $"image_filter_test_{Guid.NewGuid()}");
         Directory.CreateDirectory(_tempDir);
-        
+
         _testCbzPath = Path.Combine(_tempDir, "test.cbz");
         _testImagePath = Path.Combine(_tempDir, "test.jpg");
-        
+
         CreateTestFiles();
     }
 
@@ -83,19 +84,14 @@ public class ImageFilterServiceTests : IDisposable
         Assert.Empty(result.ErrorMessages);
     }
 
-    [Fact(Skip = "Requires valid image data for NetVips processing. Enable for integration testing.")]
+    [Fact]
     [Trait("Category", "Integration")]
     public async Task ApplyFiltersToChapterAsync_WithValidFile_ShouldCompleteWithoutErrors()
     {
         // Arrange
         var filters = new List<FilteredImage>
         {
-            new()
-            {
-                OriginalFileName = "nonexistent.jpg",
-                ContentHash = "somehash",
-                Library = CreateTestLibrary()
-            }
+            new() { OriginalFileName = "nonexistent.jpg", ContentHash = "somehash", Library = CreateTestLibrary() }
         };
 
         // Act
@@ -140,7 +136,7 @@ public class ImageFilterServiceTests : IDisposable
         Assert.NotEqual(hash1, hash2);
     }
 
-    [Fact(Skip = "Requires valid image data for NetVips processing. Enable for integration testing.")]
+    [Fact]
     [Trait("Category", "Integration")]
     public void CalculatePerceptualHash_WithValidImageBytes_ShouldReturnValidHash()
     {
@@ -154,7 +150,7 @@ public class ImageFilterServiceTests : IDisposable
         Assert.True(hash >= 0); // ulong should be non-negative
     }
 
-    [Fact(Skip = "Requires valid image data for NetVips processing. Enable for integration testing.")]
+    [Fact]
     [Trait("Category", "Integration")]
     public void CalculatePerceptualHash_WithSameImageBytes_ShouldReturnSameHash()
     {
@@ -230,7 +226,7 @@ public class ImageFilterServiceTests : IDisposable
         Assert.True(distance <= 64); // Max hamming distance for 64-bit value
     }
 
-    [Fact(Skip = "Requires valid image data for NetVips processing. Enable for integration testing.")]
+    [Fact]
     [Trait("Category", "Integration")]
     public async Task GenerateThumbnailBase64Async_WithValidImageBytes_ShouldReturnBase64String()
     {
@@ -243,13 +239,13 @@ public class ImageFilterServiceTests : IDisposable
         // Assert
         Assert.NotNull(thumbnail);
         Assert.True(thumbnail.Length > 0);
-        
+
         // Should be valid base64
         var exception = Record.Exception(() => Convert.FromBase64String(thumbnail));
         Assert.Null(exception);
     }
 
-    [Fact(Skip = "Requires valid image data for NetVips processing. Enable for integration testing.")]
+    [Fact]
     [Trait("Category", "Integration")]
     public async Task GenerateThumbnailBase64Async_WithCustomMaxSize_ShouldUseSpecifiedSize()
     {
@@ -265,7 +261,7 @@ public class ImageFilterServiceTests : IDisposable
         Assert.True(thumbnail.Length > 0);
     }
 
-    [Fact(Skip = "Requires valid image data for NetVips processing. Enable for integration testing.")]
+    [Fact]
     [Trait("Category", "Integration")]
     public async Task CreateFilteredImageFromBytesAsync_WithValidInputs_ShouldCreateFilteredImage()
     {
@@ -277,7 +273,8 @@ public class ImageFilterServiceTests : IDisposable
         const string description = "Test description";
 
         // Act
-        var result = await _service.CreateFilteredImageFromBytesAsync(imageBytes, fileName, library, mimeType, description);
+        FilteredImage result =
+            await _service.CreateFilteredImageFromBytesAsync(imageBytes, fileName, library, mimeType, description);
 
         // Assert
         Assert.NotNull(result);
@@ -291,7 +288,7 @@ public class ImageFilterServiceTests : IDisposable
         Assert.True(result.DateAdded <= DateTime.UtcNow);
     }
 
-    [Fact(Skip = "Requires valid image data for NetVips processing. Enable for integration testing.")]
+    [Fact]
     [Trait("Category", "Integration")]
     public async Task CreateFilteredImageFromBytesAsync_WithNullMimeType_ShouldInferFromFileName()
     {
@@ -321,7 +318,7 @@ public class ImageFilterServiceTests : IDisposable
             _service.CreateFilteredImageFromFileAsync(nonExistentPath, library));
     }
 
-    [Fact(Skip = "Requires valid image data for NetVips processing. Enable for integration testing.")]
+    [Fact]
     [Trait("Category", "Integration")]
     public async Task CreateFilteredImageFromFileAsync_WithValidFile_ShouldCreateFilteredImage()
     {
@@ -363,11 +360,11 @@ public class ImageFilterServiceTests : IDisposable
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
             _service.CreateFilteredImageFromCbzAsync(_testCbzPath, "nonexistent.jpg", library));
-        
+
         Assert.Contains("not found in CBZ file", exception.Message);
     }
 
-    [Fact(Skip = "Requires valid image data for NetVips processing. Enable for integration testing.")]
+    [Fact]
     [Trait("Category", "Integration")]
     public async Task CreateFilteredImageFromCbzAsync_WithValidEntry_ShouldCreateFilteredImage()
     {
@@ -375,7 +372,8 @@ public class ImageFilterServiceTests : IDisposable
         var library = CreateTestLibrary();
 
         // Act
-        var result = await _service.CreateFilteredImageFromCbzAsync(_testCbzPath, "test_image.jpg", library, "Test description");
+        FilteredImage result =
+            await _service.CreateFilteredImageFromCbzAsync(_testCbzPath, "test_image.jpg", library, "Test description");
 
         // Assert
         Assert.NotNull(result);
@@ -395,7 +393,7 @@ public class ImageFilterServiceTests : IDisposable
         // Create a test CBZ file with an image entry
         using var fileStream = new FileStream(_testCbzPath, FileMode.Create);
         using var archive = new ZipArchive(fileStream, ZipArchiveMode.Create);
-        
+
         var entry = archive.CreateEntry("test_image.jpg");
         using var entryStream = entry.Open();
         entryStream.Write(testImageBytes);
@@ -403,52 +401,103 @@ public class ImageFilterServiceTests : IDisposable
 
     private static byte[] CreateTestImageBytes(bool differentContent = false)
     {
-        // Create a simple 1x1 PNG image (valid image format)
-        // PNG signature + IHDR + IDAT + IEND chunks for 1x1 white pixel
-        var baseContent = new byte[] 
+        // Create a simple but valid test image using NetVips directly
+        // This ensures compatibility with NetVips processing
+        try
         {
-            // PNG signature
-            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
-            // IHDR chunk (1x1, 8-bit grayscale)
-            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
-            0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-            0x08, 0x00, 0x00, 0x00, 0x00, 0x3A, 0x7E, 0x9B,
-            0x55,
-            // IDAT chunk (compressed data for 1 white pixel)
-            0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54,
-            0x78, 0x9C, 0x62, 0x00, 0x00, 0x00, 0x02, 0x00,
-            0x01, 0xE2, 0x21, 0xBC, 0x33,
-            // IEND chunk
-            0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44,
-            0xAE, 0x42, 0x60, 0x82
-        };
+            Image image;
 
-        if (differentContent)
+            if (differentContent)
+            {
+                // Create a different pattern - vertical stripes
+                Image? leftHalf = Image.Black(16, 32) + 200;
+                Image? rightHalf = Image.Black(16, 32) + 80;
+                image = leftHalf.Join(rightHalf, Enums.Direction.Horizontal);
+            }
+            else
+            {
+                // Create a simple checkerboard-like pattern with horizontal bands
+                Image? topHalf = Image.Black(32, 16) + 150;
+                Image? bottomHalf = Image.Black(32, 16) + 80;
+                image = topHalf.Join(bottomHalf, Enums.Direction.Vertical);
+            }
+
+            // Save as JPEG bytes (simpler than PNG and widely supported)
+            return image.JpegsaveBuffer();
+        }
+        catch
         {
-            // Create a different 1x1 PNG (black pixel instead of white)
-            var modifiedContent = new byte[baseContent.Length];
-            Array.Copy(baseContent, modifiedContent, baseContent.Length);
-            // Change the pixel data to make it black instead of white
-            modifiedContent[41] = 0x61; // Different compressed data for black pixel
-            modifiedContent[42] = 0x01; 
-            modifiedContent[43] = 0x00;
-            modifiedContent[48] = 0xE5; // Updated CRC
-            modifiedContent[49] = 0x27;
-            modifiedContent[50] = 0xDE;
-            modifiedContent[51] = 0xFC;
-            return modifiedContent;
+            // Fallback to a minimal valid JPEG if NetVips fails
+            return CreateMinimalJpeg(differentContent);
+        }
+    }
+
+    private static byte[] CreateMinimalJpeg(bool differentContent = false)
+    {
+        // Create a minimal valid JPEG header for a 32x32 grayscale image
+        // This is a very basic JPEG that most image libraries can read
+        var jpeg = new List<byte>();
+
+        // JPEG SOI marker
+        jpeg.AddRange(new byte[] { 0xFF, 0xD8 });
+
+        // APP0 marker (JFIF)
+        jpeg.AddRange(new byte[]
+        {
+            0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x48, 0x00, 0x48, 0x00,
+            0x00
+        });
+
+        // DQT marker (quantization table)
+        jpeg.AddRange(new byte[] { 0xFF, 0xDB, 0x00, 0x43, 0x00 });
+
+        // Standard luminance quantization table (simplified)
+        byte[] qtable = new byte[64];
+        for (int i = 0; i < 64; i++)
+        {
+            qtable[i] = (byte)(10 + (i % 20)); // Simple pattern
         }
 
-        return baseContent;
+        jpeg.AddRange(qtable);
+
+        // SOF0 marker (start of frame)
+        jpeg.AddRange(new byte[]
+        {
+            0xFF, 0xC0, 0x00, 0x11, 0x08, 0x00, 0x20, 0x00, 0x20, 0x01, 0x01, 0x11, 0x00, 0x02, 0x11, 0x01, 0x03,
+            0x11, 0x01
+        });
+
+        // DHT marker (Huffman table) - simplified
+        jpeg.AddRange(new byte[]
+        {
+            0xFF, 0xC4, 0x00, 0x1A, 0x00, 0x00, 0x01, 0x05, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B
+        });
+
+        // SOS marker (start of scan)
+        jpeg.AddRange(new byte[] { 0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3F, 0x00 });
+
+        // Minimal image data (32x32 pixels)
+        for (int i = 0; i < 1024; i++) // 32*32 pixels worth of data
+        {
+            if (differentContent)
+            {
+                jpeg.Add((byte)(0x80 + (i % 64))); // Different pattern
+            }
+            else
+            {
+                jpeg.Add((byte)(0x40 + (i % 32))); // Checkerboard-like pattern
+            }
+        }
+
+        // EOI marker
+        jpeg.AddRange(new byte[] { 0xFF, 0xD9 });
+
+        return jpeg.ToArray();
     }
 
     private static Library CreateTestLibrary()
     {
-        return new Library
-        {
-            Id = 1,
-            Name = "Test Library",
-            IngestPath = "/test/path"
-        };
+        return new Library { Id = 1, Name = "Test Library", IngestPath = "/test/path" };
     }
 }
