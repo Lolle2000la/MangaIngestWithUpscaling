@@ -72,6 +72,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public async Task Upscale_InputFileNotExists_ShouldThrowFileNotFoundException()
     {
         // Arrange
@@ -94,6 +95,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public async Task Upscale_InvalidOutputPath_ShouldThrowArgumentException()
     {
         // Arrange
@@ -120,6 +122,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public void Constructor_ShouldNotThrow()
     {
         // This test validates that the constructor can be called with mocked dependencies
@@ -129,19 +132,15 @@ public class MangaJaNaiUpscalerTests : IDisposable
         Assert.NotNull(_upscaler);
     }
 
-    [Fact]
-    public async Task DownloadModelsIfNecessary_ShouldCompleteWhenRunningInCI()
+    [Fact(Skip = "Requires model download and network access. Enable in CI by removing Skip attribute.")]
+    [Trait("Category", "Download")]
+    [Trait("Category", "Integration")]
+    public async Task DownloadModelsIfNecessary_ShouldComplete()
     {
-        // Only run model download tests in CI to avoid downloading in local development
-        if (!IsRunningInCI())
-        {
-            return; // Skip test in local development
-        }
-
         // Arrange
         var cancellationToken = CancellationToken.None;
 
-        // Act & Assert - This may download models but only in CI
+        // Act & Assert - This may download models
         var exception = await Record.ExceptionAsync(() =>
             _upscaler.DownloadModelsIfNecessary(cancellationToken));
         
@@ -150,6 +149,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public void DownloadModelsIfNecessary_InterfaceValidation_ShouldBeCallable()
     {
         // This test just validates that the method exists and can be called (interface compliance)
@@ -165,16 +165,5 @@ public class MangaJaNaiUpscalerTests : IDisposable
         var methodInfo = typeof(MangaJaNaiUpscaler).GetMethod(nameof(MangaJaNaiUpscaler.DownloadModelsIfNecessary));
         Assert.NotNull(methodInfo);
         Assert.True(methodInfo.ReturnType == typeof(Task));
-    }
-
-    /// <summary>
-    /// Determines if we're running in a CI environment where downloading is acceptable
-    /// </summary>
-    private static bool IsRunningInCI()
-    {
-        return !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CI")) ||
-               !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GITHUB_ACTIONS")) ||
-               !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("BUILD_BUILDID")) ||
-               !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("TF_BUILD"));
     }
 }

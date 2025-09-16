@@ -20,6 +20,7 @@ public class PythonServiceTests
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public void IsPythonInstalled_ShouldReturnBoolean()
     {
         // Act
@@ -30,6 +31,7 @@ public class PythonServiceTests
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public void GetPythonExecutablePath_ShouldReturnPathOrNull()
     {
         // Act
@@ -40,15 +42,11 @@ public class PythonServiceTests
         Assert.True(result is null or string);
     }
 
-    [Fact]
-    public async Task PreparePythonEnvironment_WithValidDirectory_ShouldNotThrowWhenSkipDownloads()
+    [Fact(Skip = "Requires Python environment setup and potential downloads. Enable in CI by removing Skip attribute.")]
+    [Trait("Category", "Download")]
+    [Trait("Category", "Integration")]
+    public async Task PreparePythonEnvironment_WithValidDirectory_ShouldNotThrow()
     {
-        // Skip this test unless we're in CI to avoid downloading packages
-        if (!IsRunningInCI())
-        {
-            return; // Skip test in local development
-        }
-
         // Arrange
         var tempDir = Path.Combine(Path.GetTempPath(), $"python_test_{Guid.NewGuid()}");
         
@@ -72,19 +70,15 @@ public class PythonServiceTests
         }
     }
 
-    [Theory]
+    [Theory(Skip = "Requires Python environment setup and potential downloads. Enable in CI by removing Skip attribute.")]
+    [Trait("Category", "Download")]
+    [Trait("Category", "Integration")]
     [InlineData(GpuBackend.Auto)]
     [InlineData(GpuBackend.CUDA)]
     [InlineData(GpuBackend.ROCm)]
     [InlineData(GpuBackend.XPU)]
-    public async Task PreparePythonEnvironment_WithDifferentBackends_ShouldHandleAllBackendTypesWhenInCI(GpuBackend backend)
+    public async Task PreparePythonEnvironment_WithDifferentBackends_ShouldHandleAllBackendTypes(GpuBackend backend)
     {
-        // Skip this test unless we're in CI to avoid downloading packages
-        if (!IsRunningInCI())
-        {
-            return; // Skip test in local development
-        }
-
         // Arrange
         var tempDir = Path.Combine(Path.GetTempPath(), $"python_test_{Guid.NewGuid()}_{backend}");
         
@@ -108,6 +102,7 @@ public class PythonServiceTests
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public async Task RunPythonScript_WithInvalidScript_ShouldThrowException()
     {
         // Arrange
@@ -123,6 +118,7 @@ public class PythonServiceTests
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public async Task RunPythonScriptStreaming_WithInvalidScript_ShouldThrowException()
     {
         // Arrange
@@ -139,6 +135,7 @@ public class PythonServiceTests
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public async Task RunPythonScriptStreaming_WithCancellation_ShouldRespectCancellationToken()
     {
         // Arrange
@@ -156,14 +153,4 @@ public class PythonServiceTests
         Assert.NotNull(exception);
     }
 
-    /// <summary>
-    /// Determines if we're running in a CI environment where downloading is acceptable
-    /// </summary>
-    private static bool IsRunningInCI()
-    {
-        return !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CI")) ||
-               !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GITHUB_ACTIONS")) ||
-               !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("BUILD_BUILDID")) ||
-               !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("TF_BUILD"));
-    }
 }

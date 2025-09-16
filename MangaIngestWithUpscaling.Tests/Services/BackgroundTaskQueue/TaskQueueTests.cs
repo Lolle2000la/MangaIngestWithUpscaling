@@ -42,6 +42,7 @@ public class TaskQueueTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public async Task SendToLocalUpscaleAsync_WithValidTask_ShouldCompleteSuccessfully()
     {
         // Arrange

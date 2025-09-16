@@ -21,6 +21,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v5
+      with:
+        submodules: recursive
     - name: Setup .NET
       uses: actions/setup-dotnet@v5
       with:
@@ -29,6 +31,33 @@ jobs:
       run: dotnet restore MangaIngestWithUpscaling.sln
     - name: Build
       run: dotnet build --no-restore MangaIngestWithUpscaling.sln /p:TreatWarningsAsErrors=true
-    # no tests to run
-    #- name: Test
-    #  run: dotnet test --no-build --verbosity normal MangaIngestWithUpscaling.sln
+    - name: Test (Unit Tests Only)
+      run: dotnet test --no-build --verbosity normal MangaIngestWithUpscaling.sln --filter "Category!=Download"
+      
+  build-with-integration:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v5
+      with:
+        submodules: recursive
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v5
+      with:
+        dotnet-version: 9.0.x
+    - name: Restore dependencies
+      run: dotnet restore MangaIngestWithUpscaling.sln
+    - name: Build
+      run: dotnet build --no-restore MangaIngestWithUpscaling.sln /p:TreatWarningsAsErrors=true
+    - name: Enable Download Tests
+      run: |
+        # Remove Skip attribute from download tests to enable them in CI
+        find . -name "*.cs" -path "*/Tests/*" -exec sed -i 's/\[Fact(Skip = "Requires.*")\]/[Fact]/g' {} \;
+        find . -name "*.cs" -path "*/Tests/*" -exec sed -i 's/\[Theory(Skip = "Requires.*")\]/[Theory]/g' {} \;
+    - name: Rebuild after enabling tests
+      run: dotnet build --no-restore MangaIngestWithUpscaling.sln
+    - name: Test (All Tests Including Downloads)
+      run: dotnet test --no-build --verbosity normal MangaIngestWithUpscaling.sln
+      env:
+        CI: true
