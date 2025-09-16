@@ -7,7 +7,6 @@ using MangaIngestWithUpscaling.Shared.Services.Python;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using NSubstitute;
 
 namespace MangaIngestWithUpscaling.Shared.Tests.Services.Upscaling;
 
@@ -64,7 +63,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
         {
             Directory.Delete(_tempDir, true);
         }
-        
+
         if (Directory.Exists(_mockConfig.Value.ModelsDirectory))
         {
             Directory.Delete(_mockConfig.Value.ModelsDirectory, true);
@@ -72,7 +71,6 @@ public class MangaJaNaiUpscalerTests : IDisposable
     }
 
     [Fact]
-    [Trait("Category", "Unit")]
     public async Task Upscale_InputFileNotExists_ShouldThrowFileNotFoundException()
     {
         // Arrange
@@ -88,23 +86,22 @@ public class MangaJaNaiUpscalerTests : IDisposable
         var cancellationToken = CancellationToken.None;
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<FileNotFoundException>(
-            () => _upscaler.Upscale(inputPath, outputPath, profile, cancellationToken));
-        
+        var exception = await Assert.ThrowsAsync<FileNotFoundException>(() =>
+            _upscaler.Upscale(inputPath, outputPath, profile, cancellationToken));
+
         Assert.Contains("Input file not found", exception.Message);
     }
 
     [Fact]
-    [Trait("Category", "Unit")]
     public async Task Upscale_InvalidOutputPath_ShouldThrowArgumentException()
     {
         // Arrange
         var inputPath = Path.Combine(_tempDir, "input.cbz");
         var outputPath = Path.Combine(_tempDir, "output.txt"); // Wrong extension
-        
+
         // Create a dummy input file
         await File.WriteAllTextAsync(inputPath, "dummy content");
-        
+
         var profile = new UpscalerProfile
         {
             Name = "Test Profile",
@@ -115,24 +112,23 @@ public class MangaJaNaiUpscalerTests : IDisposable
         var cancellationToken = CancellationToken.None;
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<ArgumentException>(
-            () => _upscaler.Upscale(inputPath, outputPath, profile, cancellationToken));
-        
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+            _upscaler.Upscale(inputPath, outputPath, profile, cancellationToken));
+
         Assert.Contains("Output path must be a cbz file", exception.Message);
     }
 
     [Fact]
-    [Trait("Category", "Unit")]
     public void Constructor_ShouldNotThrow()
     {
         // This test validates that the constructor can be called with mocked dependencies
         // without throwing exceptions due to missing dependencies
-        
+
         // Arrange, Act & Assert - Constructor is called in test setup
         Assert.NotNull(_upscaler);
     }
 
-    [Fact(Skip = "Requires model download and network access. Enable in CI by removing Skip attribute.")]
+    [Fact]
     [Trait("Category", "Download")]
     [Trait("Category", "Integration")]
     public async Task DownloadModelsIfNecessary_ShouldComplete()
@@ -143,24 +139,23 @@ public class MangaJaNaiUpscalerTests : IDisposable
         // Act & Assert - This may download models
         var exception = await Record.ExceptionAsync(() =>
             _upscaler.DownloadModelsIfNecessary(cancellationToken));
-        
+
         // Should either complete successfully or fail with expected exceptions
         Assert.True(exception is null or FileNotFoundException or InvalidOperationException or HttpRequestException);
     }
 
     [Fact]
-    [Trait("Category", "Unit")]
     public void DownloadModelsIfNecessary_InterfaceValidation_ShouldBeCallable()
     {
         // This test just validates that the method exists and can be called (interface compliance)
         // without actually executing it to avoid downloads in local development
-        
+
         // Arrange
         var cancellationToken = CancellationToken.None;
 
         // Act & Assert - Just check the method exists and is callable
         Assert.NotNull(_upscaler);
-        
+
         // Verify the method signature exists by getting method info
         var methodInfo = typeof(MangaJaNaiUpscaler).GetMethod(nameof(MangaJaNaiUpscaler.DownloadModelsIfNecessary));
         Assert.NotNull(methodInfo);

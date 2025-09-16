@@ -2,14 +2,13 @@ using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.GPU;
 using MangaIngestWithUpscaling.Shared.Services.Python;
 using Microsoft.Extensions.Logging;
-using NSubstitute;
 
 namespace MangaIngestWithUpscaling.Shared.Tests.Services.Python;
 
 public class PythonServiceTests
 {
-    private readonly ILogger<PythonService> _mockLogger;
     private readonly IGpuDetectionService _mockGpuDetection;
+    private readonly ILogger<PythonService> _mockLogger;
     private readonly PythonService _pythonService;
 
     public PythonServiceTests()
@@ -20,7 +19,6 @@ public class PythonServiceTests
     }
 
     [Fact]
-    [Trait("Category", "Unit")]
     public void IsPythonInstalled_ShouldReturnBoolean()
     {
         // Act
@@ -31,7 +29,6 @@ public class PythonServiceTests
     }
 
     [Fact]
-    [Trait("Category", "Unit")]
     public void GetPythonExecutablePath_ShouldReturnPathOrNull()
     {
         // Act
@@ -42,20 +39,20 @@ public class PythonServiceTests
         Assert.True(result is null or string);
     }
 
-    [Fact(Skip = "Requires Python environment setup and potential downloads. Enable in CI by removing Skip attribute.")]
+    [Fact]
     [Trait("Category", "Download")]
     [Trait("Category", "Integration")]
     public async Task PreparePythonEnvironment_WithValidDirectory_ShouldNotThrow()
     {
         // Arrange
         var tempDir = Path.Combine(Path.GetTempPath(), $"python_test_{Guid.NewGuid()}");
-        
+
         try
         {
             // Act & Assert
             var exception = await Record.ExceptionAsync(() =>
                 _pythonService.PreparePythonEnvironment(tempDir, GpuBackend.Auto, true));
-            
+
             // The method should complete without throwing (though may fail if Python is not available)
             // We're mainly testing that the interface is correctly implemented
             Assert.True(exception is null or FileNotFoundException or InvalidOperationException);
@@ -70,7 +67,7 @@ public class PythonServiceTests
         }
     }
 
-    [Theory(Skip = "Requires Python environment setup and potential downloads. Enable in CI by removing Skip attribute.")]
+    [Theory]
     [Trait("Category", "Download")]
     [Trait("Category", "Integration")]
     [InlineData(GpuBackend.Auto)]
@@ -81,13 +78,13 @@ public class PythonServiceTests
     {
         // Arrange
         var tempDir = Path.Combine(Path.GetTempPath(), $"python_test_{Guid.NewGuid()}_{backend}");
-        
+
         try
         {
             // Act & Assert
             var exception = await Record.ExceptionAsync(() =>
                 _pythonService.PreparePythonEnvironment(tempDir, backend, true));
-            
+
             // Should handle all backend types without crashing
             Assert.True(exception is null or FileNotFoundException or InvalidOperationException);
         }
@@ -102,40 +99,37 @@ public class PythonServiceTests
     }
 
     [Fact]
-    [Trait("Category", "Unit")]
     public async Task RunPythonScript_WithInvalidScript_ShouldThrowException()
     {
         // Arrange
         const string invalidScript = "nonexistent_script.py";
         const string arguments = "";
-        
+
         // Act & Assert
         var exception = await Assert.ThrowsAnyAsync<Exception>(() =>
             _pythonService.RunPythonScript(invalidScript, arguments, CancellationToken.None));
-        
+
         // Should throw some kind of exception for invalid script
         Assert.NotNull(exception);
     }
 
     [Fact]
-    [Trait("Category", "Unit")]
     public async Task RunPythonScriptStreaming_WithInvalidScript_ShouldThrowException()
     {
         // Arrange
         const string invalidScript = "nonexistent_script.py";
         const string arguments = "";
         var mockCallback = Substitute.For<Func<string, Task>>();
-        
+
         // Act & Assert
         var exception = await Assert.ThrowsAnyAsync<Exception>(() =>
             _pythonService.RunPythonScriptStreaming(invalidScript, arguments, mockCallback, CancellationToken.None));
-        
+
         // Should throw some kind of exception for invalid script
         Assert.NotNull(exception);
     }
 
     [Fact]
-    [Trait("Category", "Unit")]
     public async Task RunPythonScriptStreaming_WithCancellation_ShouldRespectCancellationToken()
     {
         // Arrange
@@ -144,13 +138,12 @@ public class PythonServiceTests
         var mockCallback = Substitute.For<Func<string, Task>>();
         using var cts = new CancellationTokenSource();
         cts.Cancel(); // Cancel immediately
-        
+
         // Act & Assert
         var exception = await Assert.ThrowsAnyAsync<Exception>(() =>
             _pythonService.RunPythonScriptStreaming(script, arguments, mockCallback, cts.Token));
-        
+
         // Should throw either OperationCanceledException or another exception due to invalid script
         Assert.NotNull(exception);
     }
-
 }
