@@ -84,7 +84,7 @@ builder.Configuration.GetSection(WorkerConfig.SectionName).Bind(boundWorkerConfi
 string apiUrl = boundWorkerConfig.ApiUrl ?? builder.Configuration["WorkerConfig:ApiUrl"]!;
 string authHeaderValue = $"ApiKey {boundWorkerConfig.ApiKey}";
 
-builder.Services.AddGrpcClient<UpscalingService.UpscalingServiceClient>(o =>
+var grpcClientBuilder = builder.Services.AddGrpcClient<UpscalingService.UpscalingServiceClient>(o =>
 {
     o.CallOptionsActions.Add(context =>
     {
@@ -95,6 +95,18 @@ builder.Services.AddGrpcClient<UpscalingService.UpscalingServiceClient>(o =>
 
     o.Address = new Uri(apiUrl);
 });
+
+#if DEBUG
+// 警告: これは開発専用であり、すべての証明書を信頼します。
+// 本番環境では使用しないでください。
+grpcClientBuilder.ConfigurePrimaryHttpMessageHandler(() =>
+{
+    var handler = new HttpClientHandler();
+    handler.ServerCertificateCustomValidationCallback =
+        (httpRequestMessage, cert, cetChain, policyErrors) => true;
+    return handler;
+});
+#endif
 
 builder.Services.RegisterRemoteWorkerServices();
 
