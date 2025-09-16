@@ -2,6 +2,7 @@
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.LibraryFiltering;
+using MangaIngestWithUpscaling.Services.RepairServices;
 using MangaIngestWithUpscaling.Shared.Services;
 
 namespace MangaIngestWithUpscaling.Services;
@@ -35,5 +36,6 @@ public static class ServiceRegistration
         services.AddSingleton<TaskRegistry>();
         services.AddHostedService(sp => sp.GetRequiredService<TaskRegistry>());
         services.AddScoped<ILibraryRenamingService, LibraryRenamingService>();
+        services.AddScoped<IRepairService, RepairService>();
     }
 }
