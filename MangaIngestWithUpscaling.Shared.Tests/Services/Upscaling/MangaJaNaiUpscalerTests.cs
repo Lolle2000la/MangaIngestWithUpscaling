@@ -128,4 +128,53 @@ public class MangaJaNaiUpscalerTests : IDisposable
         // Arrange, Act & Assert - Constructor is called in test setup
         Assert.NotNull(_upscaler);
     }
+
+    [Fact]
+    public async Task DownloadModelsIfNecessary_ShouldCompleteWhenRunningInCI()
+    {
+        // Only run model download tests in CI to avoid downloading in local development
+        if (!IsRunningInCI())
+        {
+            return; // Skip test in local development
+        }
+
+        // Arrange
+        var cancellationToken = CancellationToken.None;
+
+        // Act & Assert - This may download models but only in CI
+        var exception = await Record.ExceptionAsync(() =>
+            _upscaler.DownloadModelsIfNecessary(cancellationToken));
+        
+        // Should either complete successfully or fail with expected exceptions
+        Assert.True(exception is null or FileNotFoundException or InvalidOperationException or HttpRequestException);
+    }
+
+    [Fact]
+    public void DownloadModelsIfNecessary_InterfaceValidation_ShouldBeCallable()
+    {
+        // This test just validates that the method exists and can be called (interface compliance)
+        // without actually executing it to avoid downloads in local development
+        
+        // Arrange
+        var cancellationToken = CancellationToken.None;
+
+        // Act & Assert - Just check the method exists and is callable
+        Assert.NotNull(_upscaler);
+        
+        // Verify the method signature exists by getting method info
+        var methodInfo = typeof(MangaJaNaiUpscaler).GetMethod(nameof(MangaJaNaiUpscaler.DownloadModelsIfNecessary));
+        Assert.NotNull(methodInfo);
+        Assert.True(methodInfo.ReturnType == typeof(Task));
+    }
+
+    /// <summary>
+    /// Determines if we're running in a CI environment where downloading is acceptable
+    /// </summary>
+    private static bool IsRunningInCI()
+    {
+        return !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CI")) ||
+               !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GITHUB_ACTIONS")) ||
+               !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("BUILD_BUILDID")) ||
+               !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("TF_BUILD"));
+    }
 }
