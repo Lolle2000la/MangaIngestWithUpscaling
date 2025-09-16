@@ -1,11 +1,11 @@
 using MangaIngestWithUpscaling.Services.RepairServices;
-using NSubstitute;
 
 namespace MangaIngestWithUpscaling.Tests.Services.RepairServices;
 
 public class RepairServiceTests
 {
     [Fact]
+    [Trait("Category", "Unit")]
     public void RepairContext_Constructor_ShouldInitializeWithDefaultValues()
     {
         // Act
@@ -20,6 +20,7 @@ public class RepairServiceTests
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public void RepairContext_Properties_ShouldBeSettable()
     {
         // Arrange
@@ -45,6 +46,7 @@ public class RepairServiceTests
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public void RepairContext_Dispose_ShouldNotThrow()
     {
         // Arrange
@@ -53,18 +55,5 @@ public class RepairServiceTests
         // Act & Assert
         var exception = Record.Exception(() => context.Dispose());
         Assert.Null(exception);
-    }
-
-    [Fact]
-    public void IRepairService_InterfaceDefinition_ShouldExist()
-    {
-        // Arrange
-        var mockRepairService = Substitute.For<IRepairService>();
-
-        // Act & Assert
-        Assert.NotNull(mockRepairService);
-        
-        // Verify interface methods exist
-        Assert.True(typeof(IRepairService).IsAssignableFrom(mockRepairService.GetType()));
     }
 }

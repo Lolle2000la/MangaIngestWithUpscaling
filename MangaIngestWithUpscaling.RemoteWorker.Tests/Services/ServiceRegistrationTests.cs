@@ -7,6 +7,7 @@ namespace MangaIngestWithUpscaling.RemoteWorker.Tests.Services;
 public class ServiceRegistrationTests
 {
     [Fact]
+    [Trait("Category", "Unit")]
     public void RegisterRemoteWorkerServices_ShouldRegisterHostedServices()
     {
         // Arrange
@@ -18,14 +19,15 @@ public class ServiceRegistrationTests
 
         // Assert
         var hostedServiceDescriptors = services.Where(s => s.ServiceType == typeof(IHostedService)).ToList();
-        
+
         Assert.NotEmpty(hostedServiceDescriptors);
-        
+
         // Should have at least one hosted service registered as singleton
         Assert.Contains(hostedServiceDescriptors, d => d.Lifetime == ServiceLifetime.Singleton);
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public void RegisterRemoteWorkerServices_ShouldCallRegisterSharedServices()
     {
         // Arrange
@@ -37,13 +39,15 @@ public class ServiceRegistrationTests
 
         // Assert
         // Verify that shared services were registered by checking for a known shared service
-        var descriptors = services.Where(s => s.ServiceType.Namespace?.StartsWith("MangaIngestWithUpscaling.Shared") == true).ToList();
-        
+        List<ServiceDescriptor> descriptors = services
+            .Where(s => s.ServiceType.Namespace?.StartsWith("MangaIngestWithUpscaling.Shared") == true).ToList();
+
         // Should have registered several services from the Shared assembly
         Assert.NotEmpty(descriptors);
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public void RegisterRemoteWorkerServices_ShouldNotThrow()
     {
         // Arrange
@@ -56,6 +60,7 @@ public class ServiceRegistrationTests
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public void RegisterRemoteWorkerServices_ShouldRegisterServices()
     {
         // Arrange
@@ -68,7 +73,7 @@ public class ServiceRegistrationTests
         // Assert
         // Should have registered services
         Assert.NotEmpty(services);
-        
+
         // Should include services from both RemoteWorker and Shared assemblies
         var serviceTypes = services.Select(s => s.ServiceType).ToList();
         Assert.Contains(serviceTypes, t => t == typeof(IHostedService));

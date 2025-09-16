@@ -42,6 +42,7 @@ public class TaskQueueTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public async Task SendToLocalUpscaleAsync_WithValidTask_ShouldCompleteSuccessfully()
     {
         // Arrange
@@ -60,6 +61,7 @@ public class TaskQueueTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public async Task EnqueueAsync_WithUpscaleTask_ShouldCallCleanupAsync()
     {
         // Arrange
@@ -73,6 +75,7 @@ public class TaskQueueTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public async Task EnqueueAsync_WithLogTask_ShouldCompleteSuccessfully()
     {
         // Arrange
@@ -87,6 +90,7 @@ public class TaskQueueTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public async Task ReplayPendingOrFailed_ShouldCompleteSuccessfully()
     {
         // Act & Assert - This method handles database operations, should not throw
@@ -96,6 +100,7 @@ public class TaskQueueTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public void ChannelReaders_ShouldProvideAccessToTaskChannels()
     {
         // Act & Assert
@@ -110,6 +115,7 @@ public class TaskQueueTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public async Task StartAsync_ShouldCompleteSuccessfully()
     {
         // Act & Assert - StartAsync calls ReplayPendingOrFailed and should complete
@@ -118,6 +124,7 @@ public class TaskQueueTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public void GetSnapshots_ShouldReturnReadOnlyCollections()
     {
         // Act
@@ -132,6 +139,7 @@ public class TaskQueueTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public async Task StopAsync_WithCancellation_ShouldHandleGracefully()
     {
         // Arrange
@@ -146,6 +154,7 @@ public class TaskQueueTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public async Task RetryAsync_WithNonExistentTask_ShouldThrowDbUpdateConcurrencyException()
     {
         // Arrange - Create a task that doesn't exist in the database

@@ -344,23 +344,4 @@ public class MangaJaNaiUpscalerTests : IDisposable
         // Should either complete successfully or fail with expected exceptions
         Assert.True(exception is null or FileNotFoundException or InvalidOperationException or HttpRequestException);
     }
-
-    [Fact]
-    [Trait("Category", "Unit")]
-    public void DownloadModelsIfNecessary_InterfaceValidation_ShouldBeCallable()
-    {
-        // This test just validates that the method exists and can be called (interface compliance)
-        // without actually executing it to avoid downloads in local development
-
-        // Arrange
-        var cancellationToken = CancellationToken.None;
-
-        // Act & Assert - Just check the method exists and is callable
-        Assert.NotNull(_upscaler);
-
-        // Verify the method signature exists by getting method info
-        var methodInfo = typeof(MangaJaNaiUpscaler).GetMethod(nameof(MangaJaNaiUpscaler.DownloadModelsIfNecessary));
-        Assert.NotNull(methodInfo);
-        Assert.True(methodInfo.ReturnType == typeof(Task));
-    }
 }

@@ -53,6 +53,7 @@ public class PythonServiceTests
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public async Task RunPythonScript_WithInvalidScript_ShouldThrowException()
     {
         // Arrange
@@ -68,6 +69,7 @@ public class PythonServiceTests
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public async Task RunPythonScriptStreaming_WithInvalidScript_ShouldThrowException()
     {
         // Arrange
@@ -84,6 +86,7 @@ public class PythonServiceTests
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public async Task RunPythonScriptStreaming_WithCancellation_ShouldRespectCancellationToken()
     {
         // Arrange

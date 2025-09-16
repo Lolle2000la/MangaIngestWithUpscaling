@@ -1,5 +1,5 @@
-using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
+using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 
@@ -7,8 +7,8 @@ namespace MangaIngestWithUpscaling.Shared.Tests.Services.ImageProcessing;
 
 public class ImageResizeServiceTests
 {
-    private readonly ILogger<ImageResizeService> _mockLogger;
     private readonly IFileSystem _mockFileSystem;
+    private readonly ILogger<ImageResizeService> _mockLogger;
     private readonly ImageResizeService _service;
 
     public ImageResizeServiceTests()
@@ -22,19 +22,20 @@ public class ImageResizeServiceTests
     [InlineData(0)]
     [InlineData(-1)]
     [InlineData(-100)]
+    [Trait("Category", "Unit")]
     public async Task CreateResizedTempCbzAsync_InvalidMaxDimension_ShouldThrowArgumentException(int maxDimension)
     {
         // Arrange
         var tempInputPath = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}.cbz");
-        
+
         // Create a temporary file to pass the file existence check
         await File.WriteAllTextAsync(tempInputPath, "dummy content");
-        
+
         try
         {
             // Act & Assert
-            var exception = await Assert.ThrowsAsync<ArgumentException>(
-                () => _service.CreateResizedTempCbzAsync(tempInputPath, maxDimension, CancellationToken.None));
+            var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+                _service.CreateResizedTempCbzAsync(tempInputPath, maxDimension, CancellationToken.None));
 
             Assert.Equal("maxDimension", exception.ParamName);
             Assert.Contains("Maximum dimension must be greater than 0", exception.Message);
@@ -48,6 +49,7 @@ public class ImageResizeServiceTests
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public async Task CreateResizedTempCbzAsync_InputFileNotFound_ShouldThrowFileNotFoundException()
     {
         // Arrange
@@ -55,13 +57,14 @@ public class ImageResizeServiceTests
         const int maxDimension = 1024;
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<FileNotFoundException>(
-            () => _service.CreateResizedTempCbzAsync(nonExistentPath, maxDimension, CancellationToken.None));
+        var exception = await Assert.ThrowsAsync<FileNotFoundException>(() =>
+            _service.CreateResizedTempCbzAsync(nonExistentPath, maxDimension, CancellationToken.None));
 
         Assert.Contains(nonExistentPath, exception.Message);
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public void CleanupTempFile_ExistingFile_ShouldDeleteFile()
     {
         // Arrange
@@ -79,6 +82,7 @@ public class ImageResizeServiceTests
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public void CleanupTempFile_NonExistentFile_ShouldNotThrow()
     {
         // Arrange

@@ -1,5 +1,5 @@
-using System.ComponentModel.DataAnnotations;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using System.ComponentModel.DataAnnotations;
 
 namespace MangaIngestWithUpscaling.Shared.Tests.Data.LibraryManagement;
 
@@ -12,6 +12,7 @@ public class UpscalerProfileTests
     [InlineData(0, false)]
     [InlineData(101, false)]
     [InlineData(-1, false)]
+    [Trait("Category", "Unit")]
     public void UpscalerProfile_Quality_ShouldValidateRange(int quality, bool isValid)
     {
         // Arrange
@@ -38,6 +39,7 @@ public class UpscalerProfileTests
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public void UpscalerProfile_WithValidData_ShouldPassValidation()
     {
         // Arrange
