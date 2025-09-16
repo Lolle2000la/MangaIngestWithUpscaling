@@ -33,6 +33,12 @@ public class MangaJaNaiUpscalerTests : IDisposable
         _mockJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();
         _mockImageResize = Substitute.For<IImageResizeService>();
 
+        if (TestContext.Current.TestCase is null)
+        {
+            throw new InvalidOperationException(
+                "TestContext.Current.TestCase is null. Cannot proceed with test setup.");
+        }
+
         var config = new UpscalerConfig
         {
             UseFp16 = true,
@@ -40,12 +46,14 @@ public class MangaJaNaiUpscalerTests : IDisposable
             SelectedDeviceIndex = 0,
             RemoteOnly = false,
             PreferredGpuBackend = GpuBackend.Auto,
-            ModelsDirectory = Path.Combine(Path.GetTempPath(), $"models_{Guid.NewGuid()}")
+            ModelsDirectory = Path.Combine(Path.GetTempPath(),
+                $"upscaler_test_{TestContext.Current.TestCase.TestCaseDisplayName}")
         };
         _mockConfig = Substitute.For<IOptions<UpscalerConfig>>();
         _mockConfig.Value.Returns(config);
 
-        _tempDir = Path.Combine(Path.GetTempPath(), $"upscaler_test_{Guid.NewGuid()}");
+        _tempDir = Path.Combine(Path.GetTempPath(),
+            $"upscaler_test_{TestContext.Current.TestCase.TestCaseDisplayName}");
         Directory.CreateDirectory(_tempDir);
 
         _upscaler = new MangaJaNaiUpscaler(
@@ -168,6 +176,9 @@ public class MangaJaNaiUpscalerTests : IDisposable
         // Act
         await _upscaler.Upscale(inputPath, outputPath, profile, progress, cancellationToken);
 
+        // NOTE: If this test continues to fail, take into account timing issues
+        await Task.Delay(100, TestContext.Current.CancellationToken);
+
         // Assert
         Assert.NotEmpty(progressReports);
 
@@ -191,8 +202,8 @@ public class MangaJaNaiUpscalerTests : IDisposable
         // Arrange
         var inputPath = Path.Combine(_tempDir, "input.cbz");
         var outputPath = Path.Combine(_tempDir, "output.cbz");
-        await File.WriteAllTextAsync(inputPath, "dummy content");
-        await File.WriteAllTextAsync(outputPath, "existing output");
+        await File.WriteAllTextAsync(inputPath, "dummy content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(outputPath, "existing output", TestContext.Current.CancellationToken);
 
         var profile = new UpscalerProfile
         {
