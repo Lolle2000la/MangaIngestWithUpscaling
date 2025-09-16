@@ -7,22 +7,20 @@ using MangaIngestWithUpscaling.Shared.Services.Python;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using NSubstitute;
-using NSubstitute.ExceptionExtensions;
 
 namespace MangaIngestWithUpscaling.Shared.Tests.Services.Upscaling;
 
 public class MangaJaNaiUpscalerTests : IDisposable
 {
-    private readonly IPythonService _mockPythonService;
-    private readonly ILogger<MangaJaNaiUpscaler> _mockLogger;
     private readonly IOptions<UpscalerConfig> _mockConfig;
     private readonly IFileSystem _mockFileSystem;
-    private readonly IMetadataHandlingService _mockMetadataHandling;
-    private readonly IUpscalerJsonHandlingService _mockJsonHandling;
     private readonly IImageResizeService _mockImageResize;
-    private readonly MangaJaNaiUpscaler _upscaler;
+    private readonly IUpscalerJsonHandlingService _mockJsonHandling;
+    private readonly ILogger<MangaJaNaiUpscaler> _mockLogger;
+    private readonly IMetadataHandlingService _mockMetadataHandling;
+    private readonly IPythonService _mockPythonService;
     private readonly string _tempDir;
+    private readonly MangaJaNaiUpscaler _upscaler;
 
     public MangaJaNaiUpscalerTests()
     {
@@ -32,7 +30,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
         _mockMetadataHandling = Substitute.For<IMetadataHandlingService>();
         _mockJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();
         _mockImageResize = Substitute.For<IImageResizeService>();
-        
+
         var config = new UpscalerConfig
         {
             UseFp16 = true,
@@ -84,19 +82,19 @@ public class MangaJaNaiUpscalerTests : IDisposable
         // Setup file system mocks
         _mockFileSystem.FileExists(inputPath).Returns(true);
         _mockFileSystem.CreateTempDirectory().Returns(_tempDir);
-        
+
         // Setup Python service mock to simulate successful upscaling
         var pythonEnvironment = new PythonEnvironment("test-env", "test-python", true);
         _mockPythonService.PreparePythonEnvironment(Arg.Any<string>(), Arg.Any<GpuBackend>(), Arg.Any<bool>())
             .Returns(Task.FromResult(pythonEnvironment));
-        
+
         _mockPythonService.RunPythonScriptStreaming(
-            Arg.Any<PythonEnvironment>(),
-            Arg.Any<string>(),
-            Arg.Any<string>(),
-            Arg.Any<Func<string, Task>>(),
-            Arg.Any<CancellationToken?>(),
-            Arg.Any<TimeSpan?>())
+                Arg.Any<PythonEnvironment>(),
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<Func<string, Task>>(),
+                Arg.Any<CancellationToken?>(),
+                Arg.Any<TimeSpan?>())
             .Returns(Task.CompletedTask);
 
         // Setup JSON handling mock
@@ -108,8 +106,8 @@ public class MangaJaNaiUpscalerTests : IDisposable
 
         // Assert
         await _mockPythonService.Received(1).PreparePythonEnvironment(
-            Arg.Any<string>(), 
-            _mockConfig.Value.PreferredGpuBackend, 
+            Arg.Any<string>(),
+            _mockConfig.Value.PreferredGpuBackend,
             Arg.Any<bool>());
 
         await _mockPythonService.Received(1).RunPythonScriptStreaming(
@@ -143,20 +141,20 @@ public class MangaJaNaiUpscalerTests : IDisposable
         // Setup file system mocks
         _mockFileSystem.FileExists(inputPath).Returns(true);
         _mockFileSystem.CreateTempDirectory().Returns(_tempDir);
-        
+
         // Setup Python service mock
         var pythonEnvironment = new PythonEnvironment("test-env", "test-python", true);
         _mockPythonService.PreparePythonEnvironment(Arg.Any<string>(), Arg.Any<GpuBackend>(), Arg.Any<bool>())
             .Returns(Task.FromResult(pythonEnvironment));
-        
+
         // Setup streaming to simulate progress updates
         _mockPythonService.RunPythonScriptStreaming(
-            Arg.Any<PythonEnvironment>(),
-            Arg.Any<string>(),
-            Arg.Any<string>(),
-            Arg.Any<Func<string, Task>>(),
-            Arg.Any<CancellationToken?>(),
-            Arg.Any<TimeSpan?>())
+                Arg.Any<PythonEnvironment>(),
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<Func<string, Task>>(),
+                Arg.Any<CancellationToken?>(),
+                Arg.Any<TimeSpan?>())
             .Returns(callInfo =>
             {
                 var onStdout = callInfo.Arg<Func<string, Task>>();
@@ -178,7 +176,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
 
         // Assert
         progress.Received().Report(Arg.Any<UpscaleProgress>());
-        
+
         // Verify Python service was called correctly
         await _mockPythonService.Received(1).RunPythonScriptStreaming(
             pythonEnvironment,
@@ -207,19 +205,19 @@ public class MangaJaNaiUpscalerTests : IDisposable
         // Setup file system mocks
         _mockFileSystem.FileExists(inputPath).Returns(true);
         _mockFileSystem.CreateTempDirectory().Returns(_tempDir);
-        
+
         // Setup Python service to fail
         var pythonEnvironment = new PythonEnvironment("test-env", "test-python", true);
         _mockPythonService.PreparePythonEnvironment(Arg.Any<string>(), Arg.Any<GpuBackend>(), Arg.Any<bool>())
             .Returns(Task.FromResult(pythonEnvironment));
-        
+
         _mockPythonService.RunPythonScriptStreaming(
-            Arg.Any<PythonEnvironment>(),
-            Arg.Any<string>(),
-            Arg.Any<string>(),
-            Arg.Any<Func<string, Task>>(),
-            Arg.Any<CancellationToken?>(),
-            Arg.Any<TimeSpan?>())
+                Arg.Any<PythonEnvironment>(),
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<Func<string, Task>>(),
+                Arg.Any<CancellationToken?>(),
+                Arg.Any<TimeSpan?>())
             .Throws(new InvalidOperationException("Python script failed"));
 
         // Setup JSON handling mock
@@ -227,9 +225,9 @@ public class MangaJaNaiUpscalerTests : IDisposable
             .Returns("test-config.json");
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => _upscaler.Upscale(inputPath, outputPath, profile, cancellationToken));
-        
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _upscaler.Upscale(inputPath, outputPath, profile, cancellationToken));
+
         Assert.Equal("Python script failed", exception.Message);
     }
 
@@ -252,9 +250,9 @@ public class MangaJaNaiUpscalerTests : IDisposable
         _mockFileSystem.FileExists(inputPath).Returns(false);
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<FileNotFoundException>(
-            () => _upscaler.Upscale(inputPath, outputPath, profile, cancellationToken));
-        
+        var exception = await Assert.ThrowsAsync<FileNotFoundException>(() =>
+            _upscaler.Upscale(inputPath, outputPath, profile, cancellationToken));
+
         Assert.Contains(inputPath, exception.Message);
     }
 
@@ -277,19 +275,19 @@ public class MangaJaNaiUpscalerTests : IDisposable
         // Setup file system mocks
         _mockFileSystem.FileExists(inputPath).Returns(true);
         _mockFileSystem.CreateTempDirectory().Returns(_tempDir);
-        
+
         // Setup Python service mock
         var pythonEnvironment = new PythonEnvironment("test-env", "test-python", true);
         _mockPythonService.PreparePythonEnvironment(Arg.Any<string>(), Arg.Any<GpuBackend>(), Arg.Any<bool>())
             .Returns(Task.FromResult(pythonEnvironment));
-        
+
         _mockPythonService.RunPythonScriptStreaming(
-            Arg.Any<PythonEnvironment>(),
-            Arg.Any<string>(),
-            Arg.Any<string>(),
-            Arg.Any<Func<string, Task>>(),
-            Arg.Any<CancellationToken?>(),
-            Arg.Any<TimeSpan?>())
+                Arg.Any<PythonEnvironment>(),
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<Func<string, Task>>(),
+                Arg.Any<CancellationToken?>(),
+                Arg.Any<TimeSpan?>())
             .Throws(new OperationCanceledException());
 
         // Setup JSON handling mock
@@ -297,9 +295,9 @@ public class MangaJaNaiUpscalerTests : IDisposable
             .Returns("test-config.json");
 
         // Act & Assert
-        await Assert.ThrowsAsync<OperationCanceledException>(
-            () => _upscaler.Upscale(inputPath, outputPath, profile, cancellationTokenSource.Token));
-        
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            _upscaler.Upscale(inputPath, outputPath, profile, cancellationTokenSource.Token));
+
         // Verify cancellation token was passed to Python service
         await _mockPythonService.Received(1).RunPythonScriptStreaming(
             pythonEnvironment,
@@ -315,18 +313,18 @@ public class MangaJaNaiUpscalerTests : IDisposable
     {
         // Arrange
         var cancellationToken = CancellationToken.None;
-        
+
         // Setup Python service mock
         var pythonEnvironment = new PythonEnvironment("test-env", "test-python", true);
         _mockPythonService.PreparePythonEnvironment(Arg.Any<string>(), Arg.Any<GpuBackend>(), Arg.Any<bool>())
             .Returns(Task.FromResult(pythonEnvironment));
-        
+
         _mockPythonService.RunPythonScript(
-            pythonEnvironment,
-            Arg.Any<string>(),
-            Arg.Any<string>(),
-            cancellationToken,
-            Arg.Any<TimeSpan?>())
+                pythonEnvironment,
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                cancellationToken,
+                Arg.Any<TimeSpan?>())
             .Returns(Task.FromResult("Models downloaded successfully"));
 
         // Act
@@ -337,7 +335,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
             Arg.Any<string>(),
             _mockConfig.Value.PreferredGpuBackend,
             Arg.Any<bool>());
-        
+
         await _mockPythonService.Received(1).RunPythonScript(
             pythonEnvironment,
             Arg.Any<string>(),
@@ -351,23 +349,25 @@ public class MangaJaNaiUpscalerTests : IDisposable
     {
         // Arrange
         var cancellationToken = CancellationToken.None;
-        
+
         // Setup Python service to fail environment preparation
         _mockPythonService.PreparePythonEnvironment(Arg.Any<string>(), Arg.Any<GpuBackend>(), Arg.Any<bool>())
             .Throws(new InvalidOperationException("Failed to prepare Python environment"));
 
         // Act & Assert
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => _upscaler.DownloadModelsIfNecessary(cancellationToken));
-        
+        var exception =
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                _upscaler.DownloadModelsIfNecessary(cancellationToken));
+
         Assert.Equal("Failed to prepare Python environment", exception.Message);
     }
 
     [Theory]
     [InlineData(GpuBackend.Auto)]
-    [InlineData(GpuBackend.Cuda)]
-    [InlineData(GpuBackend.Rocm)]
-    [InlineData(GpuBackend.Xpu)]
+    [InlineData(GpuBackend.CUDA)]
+    [InlineData(GpuBackend.CUDA_12_8)]
+    [InlineData(GpuBackend.ROCm)]
+    [InlineData(GpuBackend.XPU)]
     public async Task Upscale_DifferentGpuBackends_ShouldPassCorrectBackendToPythonService(GpuBackend backend)
     {
         // Arrange
@@ -396,19 +396,19 @@ public class MangaJaNaiUpscalerTests : IDisposable
         // Setup file system mocks
         _mockFileSystem.FileExists(inputPath).Returns(true);
         _mockFileSystem.CreateTempDirectory().Returns(_tempDir);
-        
+
         // Setup Python service mock
         var pythonEnvironment = new PythonEnvironment("test-env", "test-python", true);
         _mockPythonService.PreparePythonEnvironment(Arg.Any<string>(), backend, Arg.Any<bool>())
             .Returns(Task.FromResult(pythonEnvironment));
-        
+
         _mockPythonService.RunPythonScriptStreaming(
-            Arg.Any<PythonEnvironment>(),
-            Arg.Any<string>(),
-            Arg.Any<string>(),
-            Arg.Any<Func<string, Task>>(),
-            Arg.Any<CancellationToken?>(),
-            Arg.Any<TimeSpan?>())
+                Arg.Any<PythonEnvironment>(),
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<Func<string, Task>>(),
+                Arg.Any<CancellationToken?>(),
+                Arg.Any<TimeSpan?>())
             .Returns(Task.CompletedTask);
 
         // Setup JSON handling mock
@@ -420,8 +420,8 @@ public class MangaJaNaiUpscalerTests : IDisposable
 
         // Assert
         await _mockPythonService.Received(1).PreparePythonEnvironment(
-            Arg.Any<string>(), 
-            backend, 
+            Arg.Any<string>(),
+            backend,
             Arg.Any<bool>());
     }
 }
