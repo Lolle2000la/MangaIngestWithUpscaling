@@ -23,7 +23,7 @@
     <ItemGroup>
         <PackageReference Include="AutoRegisterInject" Version="1.4.1"/>
         <PackageReference Include="Grpc.AspNetCore" Version="2.71.0"/>
-        <PackageReference Include="Open.ChannelExtensions" Version="9.1.0" />
+        <PackageReference Include="Open.ChannelExtensions" Version="9.1.0"/>
         <PackageReference Include="Velopack" Version="0.0.1298"/>
     </ItemGroup>
 
