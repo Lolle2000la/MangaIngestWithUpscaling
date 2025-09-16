@@ -11,6 +11,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling.Sh
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling.RemoteWorker", "MangaIngestWithUpscaling.RemoteWorker\MangaIngestWithUpscaling.RemoteWorker.csproj", "{7C729037-BDE9-431B-A199-5666C4905B87}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling.Shared.Tests", "MangaIngestWithUpscaling.Shared.Tests\MangaIngestWithUpscaling.Shared.Tests.csproj", "{A4F5C0D0-6432-4227-8B62-E5E408BF2914}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling.Tests", "MangaIngestWithUpscaling.Tests\MangaIngestWithUpscaling.Tests.csproj", "{27E11836-8C61-4BC2-B82D-7ECDB47A9F6C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling.RemoteWorker.Tests", "MangaIngestWithUpscaling.RemoteWorker.Tests\MangaIngestWithUpscaling.RemoteWorker.Tests.csproj", "{36121FAD-C040-49AB-AFEA-A351BB588466}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -33,6 +39,18 @@ Global
 		{7C729037-BDE9-431B-A199-5666C4905B87}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7C729037-BDE9-431B-A199-5666C4905B87}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{7C729037-BDE9-431B-A199-5666C4905B87}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A4F5C0D0-6432-4227-8B62-E5E408BF2914}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A4F5C0D0-6432-4227-8B62-E5E408BF2914}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A4F5C0D0-6432-4227-8B62-E5E408BF2914}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A4F5C0D0-6432-4227-8B62-E5E408BF2914}.Release|Any CPU.Build.0 = Release|Any CPU
+		{27E11836-8C61-4BC2-B82D-7ECDB47A9F6C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{27E11836-8C61-4BC2-B82D-7ECDB47A9F6C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{27E11836-8C61-4BC2-B82D-7ECDB47A9F6C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{27E11836-8C61-4BC2-B82D-7ECDB47A9F6C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{36121FAD-C040-49AB-AFEA-A351BB588466}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{36121FAD-C040-49AB-AFEA-A351BB588466}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{36121FAD-C040-49AB-AFEA-A351BB588466}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{36121FAD-C040-49AB-AFEA-A351BB588466}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
