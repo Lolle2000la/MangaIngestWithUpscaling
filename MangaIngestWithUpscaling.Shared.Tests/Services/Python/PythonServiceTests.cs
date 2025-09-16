@@ -29,39 +29,13 @@ public class PythonServiceTests
         Assert.IsType<bool>(result);
     }
 
-    [Fact]
-    [Trait("Category", "Download")]
-    [Trait("Category", "Integration")]
-    public async Task PreparePythonEnvironment_WithValidDirectory_ShouldNotThrow()
-    {
-        // Arrange
-        var tempDir = Path.Combine(Path.GetTempPath(), $"python_test_{Guid.NewGuid()}");
-
-        try
-        {
-            // Act & Assert
-            var exception = await Record.ExceptionAsync(() =>
-                _pythonService.PreparePythonEnvironment(tempDir, GpuBackend.Auto, true));
-
-            // The method should complete without throwing (though may fail if Python is not available)
-            // We're mainly testing that the interface is correctly implemented
-            Assert.True(exception is null or FileNotFoundException or InvalidOperationException);
-        }
-        finally
-        {
-            // Cleanup
-            if (Directory.Exists(tempDir))
-            {
-                Directory.Delete(tempDir, true);
-            }
-        }
-    }
-
     [Theory]
     [Trait("Category", "Download")]
     [Trait("Category", "Integration")]
     [InlineData(GpuBackend.Auto)]
+    [InlineData(GpuBackend.CPU)]
     [InlineData(GpuBackend.CUDA)]
+    [InlineData(GpuBackend.CUDA_12_8)]
     [InlineData(GpuBackend.ROCm)]
     [InlineData(GpuBackend.XPU)]
     public async Task PreparePythonEnvironment_WithDifferentBackends_ShouldHandleAllBackendTypes(GpuBackend backend)
