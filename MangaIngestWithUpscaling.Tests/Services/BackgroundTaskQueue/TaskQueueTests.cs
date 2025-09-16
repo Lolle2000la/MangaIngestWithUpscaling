@@ -5,7 +5,7 @@ using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Moq;
+using NSubstitute;
 
 namespace MangaIngestWithUpscaling.Tests.Services.BackgroundTaskQueue;
 
@@ -13,8 +13,8 @@ public class TaskQueueTests : IDisposable
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly IServiceScope _scope;
-    private readonly Mock<ILogger<TaskQueue>> _mockLogger;
-    private readonly Mock<IQueueCleanup> _mockQueueCleanup;
+    private readonly ILogger<TaskQueue> _mockLogger;
+    private readonly IQueueCleanup _mockQueueCleanup;
     private readonly TaskQueue _taskQueue;
 
     public TaskQueueTests()
@@ -23,16 +23,17 @@ public class TaskQueueTests : IDisposable
         var services = new ServiceCollection();
         services.AddDbContext<ApplicationDbContext>(options =>
             options.UseInMemoryDatabase($"TestDb_{Guid.NewGuid()}"));
-        services.AddScoped<IQueueCleanup>(_ => _mockQueueCleanup.Object);
+        
+        _mockQueueCleanup = Substitute.For<IQueueCleanup>();
+        services.AddScoped<IQueueCleanup>(_ => _mockQueueCleanup);
 
         var serviceProvider = services.BuildServiceProvider();
         _scope = serviceProvider.CreateScope();
         _dbContext = _scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        _mockLogger = new Mock<ILogger<TaskQueue>>();
-        _mockQueueCleanup = new Mock<IQueueCleanup>();
+        _mockLogger = Substitute.For<ILogger<TaskQueue>>();
 
-        _taskQueue = new TaskQueue(serviceProvider.GetRequiredService<IServiceScopeFactory>(), _mockLogger.Object);
+        _taskQueue = new TaskQueue(serviceProvider.GetRequiredService<IServiceScopeFactory>(), _mockLogger);
     }
 
     public void Dispose()
@@ -97,11 +98,11 @@ public class TaskQueueTests : IDisposable
         services.AddDbContext<ApplicationDbContext>(options =>
             options.UseInMemoryDatabase($"TestDb_{Guid.NewGuid()}"));
         var serviceProvider = services.BuildServiceProvider();
-        var logger = new Mock<ILogger<TaskQueue>>();
+        var logger = Substitute.For<ILogger<TaskQueue>>();
 
         // Act & Assert
         var exception = Record.Exception(
-            () => new TaskQueue(serviceProvider.GetRequiredService<IServiceScopeFactory>(), logger.Object));
+            () => new TaskQueue(serviceProvider.GetRequiredService<IServiceScopeFactory>(), logger));
         Assert.Null(exception);
     }
 

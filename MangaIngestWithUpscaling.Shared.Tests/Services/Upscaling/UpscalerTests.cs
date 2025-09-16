@@ -1,6 +1,6 @@
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
-using Moq;
+using NSubstitute;
 
 namespace MangaIngestWithUpscaling.Shared.Tests.Services.Upscaling;
 
@@ -42,7 +42,7 @@ public class UpscalerTests
     public async Task IUpscaler_UpscaleWithoutProgress_ShouldCallImplementation()
     {
         // Arrange
-        var mockUpscaler = new Mock<IUpscaler>();
+        var mockUpscaler = Substitute.For<IUpscaler>();
         const string inputPath = "input.cbz";
         const string outputPath = "output.cbz";
         var profile = new UpscalerProfile
@@ -55,18 +55,18 @@ public class UpscalerTests
         var cancellationToken = CancellationToken.None;
 
         // Act
-        await mockUpscaler.Object.Upscale(inputPath, outputPath, profile, cancellationToken);
+        await mockUpscaler.Upscale(inputPath, outputPath, profile, cancellationToken);
 
         // Assert
-        mockUpscaler.Verify(u => u.Upscale(inputPath, outputPath, profile, cancellationToken), Times.Once);
+        await mockUpscaler.Received(1).Upscale(inputPath, outputPath, profile, cancellationToken);
     }
 
     [Fact]
     public async Task IUpscaler_UpscaleWithProgress_ShouldCallImplementation()
     {
         // Arrange
-        var mockUpscaler = new Mock<IUpscaler>();
-        var mockProgress = new Mock<IProgress<UpscaleProgress>>();
+        var mockUpscaler = Substitute.For<IUpscaler>();
+        var mockProgress = Substitute.For<IProgress<UpscaleProgress>>();
         const string inputPath = "input.cbz";
         const string outputPath = "output.cbz";
         var profile = new UpscalerProfile
@@ -79,23 +79,23 @@ public class UpscalerTests
         var cancellationToken = CancellationToken.None;
 
         // Act
-        await mockUpscaler.Object.Upscale(inputPath, outputPath, profile, mockProgress.Object, cancellationToken);
+        await mockUpscaler.Upscale(inputPath, outputPath, profile, mockProgress, cancellationToken);
 
         // Assert
-        mockUpscaler.Verify(u => u.Upscale(inputPath, outputPath, profile, mockProgress.Object, cancellationToken), Times.Once);
+        await mockUpscaler.Received(1).Upscale(inputPath, outputPath, profile, mockProgress, cancellationToken);
     }
 
     [Fact]
     public async Task IUpscaler_DownloadModelsIfNecessary_ShouldCallImplementation()
     {
         // Arrange
-        var mockUpscaler = new Mock<IUpscaler>();
+        var mockUpscaler = Substitute.For<IUpscaler>();
         var cancellationToken = CancellationToken.None;
 
         // Act
-        await mockUpscaler.Object.DownloadModelsIfNecessary(cancellationToken);
+        await mockUpscaler.DownloadModelsIfNecessary(cancellationToken);
 
         // Assert
-        mockUpscaler.Verify(u => u.DownloadModelsIfNecessary(cancellationToken), Times.Once);
+        await mockUpscaler.Received(1).DownloadModelsIfNecessary(cancellationToken);
     }
 }

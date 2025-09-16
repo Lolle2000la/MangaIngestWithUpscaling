@@ -1,21 +1,21 @@
 using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using Microsoft.Extensions.Logging;
-using Moq;
+using NSubstitute;
 
 namespace MangaIngestWithUpscaling.Shared.Tests.Services.ImageProcessing;
 
 public class ImageResizeServiceTests
 {
-    private readonly Mock<ILogger<ImageResizeService>> _mockLogger;
-    private readonly Mock<IFileSystem> _mockFileSystem;
+    private readonly ILogger<ImageResizeService> _mockLogger;
+    private readonly IFileSystem _mockFileSystem;
     private readonly ImageResizeService _service;
 
     public ImageResizeServiceTests()
     {
-        _mockLogger = new Mock<ILogger<ImageResizeService>>();
-        _mockFileSystem = new Mock<IFileSystem>();
-        _service = new ImageResizeService(_mockLogger.Object, _mockFileSystem.Object);
+        _mockLogger = Substitute.For<ILogger<ImageResizeService>>();
+        _mockFileSystem = Substitute.For<IFileSystem>();
+        _service = new ImageResizeService(_mockLogger, _mockFileSystem);
     }
 
     [Fact]
@@ -84,15 +84,14 @@ public class ImageResizeServiceTests
         
         // Arrange
         const string tempPath = "temp.cbz";
-        var mockService = new Mock<IImageResizeService>();
+        var mockService = Substitute.For<IImageResizeService>();
         
         // We can't directly instantiate TempResizedCbz due to internal constructor
         // This test verifies the concept through mocking
         
         // Act & Assert
-        mockService.Setup(s => s.CleanupTempFile(tempPath)).Verifiable();
-        mockService.Object.CleanupTempFile(tempPath);
-        mockService.Verify(s => s.CleanupTempFile(tempPath), Times.Once);
+        mockService.CleanupTempFile(tempPath);
+        mockService.Received(1).CleanupTempFile(tempPath);
     }
 
     [Fact]
@@ -103,14 +102,14 @@ public class ImageResizeServiceTests
         
         // Arrange
         const string tempPath = "temp.cbz";
-        var mockService = new Mock<IImageResizeService>();
+        var mockService = Substitute.For<IImageResizeService>();
 
         // Act & Assert
         // Test that the service interface supports the required cleanup method
-        Assert.NotNull(mockService.Object);
+        Assert.NotNull(mockService);
         
         // Verify the cleanup method exists and can be called
-        mockService.Object.CleanupTempFile(tempPath);
-        mockService.Verify(s => s.CleanupTempFile(tempPath), Times.Once);
+        mockService.CleanupTempFile(tempPath);
+        mockService.Received(1).CleanupTempFile(tempPath);
     }
 }
