@@ -25,4 +25,4 @@ jobs:
     - name: Build
       run: dotnet build --no-restore MangaIngestWithUpscaling.sln /p:TreatWarningsAsErrors=true
     - name: Test (Unit Tests Only)
-      run: dotnet test --no-build --verbosity normal MangaIngestWithUpscaling.sln --filter "Category!=Download"
+      run: dotnet test --no-build --verbosity normal --settings development.runsettings MangaIngestWithUpscaling.sln
