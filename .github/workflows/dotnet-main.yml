@@ -30,7 +30,7 @@ jobs:
     - name: Restore dependencies
       run: dotnet restore MangaIngestWithUpscaling.sln
     - name: Build
-      run: dotnet build --no-restore MangaIngestWithUpscaling.sln /p:TreatWarningsAsErrors=true
+      run: dotnet build --no-restore MangaIngestWithUpscaling.sln /warnaserror
     - name: Test shared
       run: dotnet test --no-build --verbosity normal MangaIngestWithUpscaling.Shared.Tests/MangaIngestWithUpscaling.Shared.Tests.csproj
     - name: Test server

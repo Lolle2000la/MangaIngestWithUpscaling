@@ -25,6 +25,6 @@ jobs:
     - name: Restore dependencies
       run: dotnet restore MangaIngestWithUpscaling.RemoteWorker.Tests/MangaIngestWithUpscaling.RemoteWorker.Tests.csproj
     - name: Build
-      run: dotnet build --no-restore MangaIngestWithUpscaling.RemoteWorker.Tests/MangaIngestWithUpscaling.RemoteWorker.Tests.csproj /p:TreatWarningsAsErrors=true
+      run: dotnet build --no-restore MangaIngestWithUpscaling.RemoteWorker.Tests/MangaIngestWithUpscaling.RemoteWorker.Tests.csproj /warnaserror
     - name: Test
       run: dotnet test --no-build --verbosity normal MangaIngestWithUpscaling.RemoteWorker.Tests/MangaIngestWithUpscaling.RemoteWorker.Tests.csproj
