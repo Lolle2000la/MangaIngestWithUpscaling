@@ -312,11 +312,13 @@ public class MangaLibraryMoverTests : IDisposable
         await _libraryMover.MoveMangaAsync(manga, targetLibrary);
 
         // Assert
-        // Verify warning was logged for null upscaled library path (structured logging)
-        _mockLogger.Received().LogWarning(
-            Arg.Is<string>(s => s.Contains("Upscaled library path not set for library")),
-            Arg.Any<object>(),
-            Arg.Any<object>());
+        // Verify that a warning was logged (logging verification with NSubstitute can be complex due to generics)
+        _mockLogger.Received().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Upscaled library path not set for library")),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>());
         
         // Verify no rename task was enqueued
         await _mockTaskQueue.DidNotReceive().EnqueueAsync(Arg.Any<RenameUpscaledChaptersSeriesTask>());
