@@ -2,6 +2,7 @@ using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.GPU;
 using MangaIngestWithUpscaling.Shared.Services.Python;
 using Microsoft.Extensions.Logging;
+using NSubstitute;
 
 namespace MangaIngestWithUpscaling.Shared.Tests.Services.Python;
 
@@ -26,17 +27,6 @@ public class PythonServiceTests
 
         // Assert
         Assert.IsType<bool>(result);
-    }
-
-    [Fact]
-    public void GetPythonExecutablePath_ShouldReturnPathOrNull()
-    {
-        // Act
-        var result = _pythonService.GetPythonExecutablePath();
-
-        // Assert
-        // The result can be either a string path or null, both are valid
-        Assert.True(result is null or string);
     }
 
     [Fact]
