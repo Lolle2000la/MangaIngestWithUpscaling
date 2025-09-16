@@ -217,6 +217,12 @@ public class MangaJaNaiUpscalerTests : IDisposable
             Arg.Any<string>(),
             Arg.Any<CancellationToken>(),
             Arg.Any<TimeSpan?>());
+        await _mockPythonService.DidNotReceive().RunPythonScriptStreaming(
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<Func<string, Task>>(),
+            Arg.Any<CancellationToken>(),
+            Arg.Any<TimeSpan?>());
 
         // Verify output file still exists (wasn't deleted)
         Assert.True(File.Exists(outputPath));
