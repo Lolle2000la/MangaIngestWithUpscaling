@@ -4,6 +4,7 @@ using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.MangaManagement;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
+using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -12,6 +13,7 @@ namespace MangaIngestWithUpscaling.Tests.Services.MangaManagement;
 
 public class MangaLibraryMoverTests : IDisposable
 {
+    private readonly TestDatabaseHelper.TestDbContext _testDb;
     private readonly ApplicationDbContext _dbContext;
     private readonly ILogger<MangaLibraryMover> _mockLogger;
     private readonly ITaskQueue _mockTaskQueue;
@@ -21,11 +23,9 @@ public class MangaLibraryMoverTests : IDisposable
 
     public MangaLibraryMoverTests()
     {
-        // Create in-memory database
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-            .Options;
-        _dbContext = new ApplicationDbContext(options);
+        // Create SQLite in-memory database
+        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _dbContext = _testDb.Context;
 
         // Create mocks
         _mockLogger = Substitute.For<ILogger<MangaLibraryMover>>();
@@ -45,7 +45,7 @@ public class MangaLibraryMoverTests : IDisposable
 
     public void Dispose()
     {
-        _dbContext.Dispose();
+        _testDb?.Dispose();
         if (Directory.Exists(_tempDir))
         {
             Directory.Delete(_tempDir, true);
@@ -312,10 +312,11 @@ public class MangaLibraryMoverTests : IDisposable
         await _libraryMover.MoveMangaAsync(manga, targetLibrary);
 
         // Assert
-        // Verify warning was logged for null upscaled library path
+        // Verify warning was logged for null upscaled library path (structured logging)
         _mockLogger.Received().LogWarning(
-            Arg.Is<string>(s => s.Contains("Upscaled library path not set")),
-            Arg.Any<object[]>());
+            Arg.Is<string>(s => s.Contains("Upscaled library path not set for library")),
+            Arg.Any<object>(),
+            Arg.Any<object>());
         
         // Verify no rename task was enqueued
         await _mockTaskQueue.DidNotReceive().EnqueueAsync(Arg.Any<RenameUpscaledChaptersSeriesTask>());

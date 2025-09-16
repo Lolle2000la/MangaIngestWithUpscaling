@@ -5,6 +5,7 @@ using MangaIngestWithUpscaling.Services.MangaManagement;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -13,6 +14,7 @@ namespace MangaIngestWithUpscaling.Tests.Services.MangaManagement;
 
 public class MangaMergerTests : IDisposable
 {
+    private readonly TestDatabaseHelper.TestDbContext _testDb;
     private readonly ApplicationDbContext _dbContext;
     private readonly IMetadataHandlingService _mockMetadataHandling;
     private readonly IMangaMetadataChanger _mockMetadataChanger;
@@ -24,11 +26,9 @@ public class MangaMergerTests : IDisposable
 
     public MangaMergerTests()
     {
-        // Create in-memory database
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-            .Options;
-        _dbContext = new ApplicationDbContext(options);
+        // Create SQLite in-memory database
+        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _dbContext = _testDb.Context;
 
         // Create mocks
         _mockMetadataHandling = Substitute.For<IMetadataHandlingService>();
@@ -52,7 +52,7 @@ public class MangaMergerTests : IDisposable
 
     public void Dispose()
     {
-        _dbContext.Dispose();
+        _testDb?.Dispose();
         if (Directory.Exists(_tempDir))
         {
             Directory.Delete(_tempDir, true);
