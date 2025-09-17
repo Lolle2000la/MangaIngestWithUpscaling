@@ -289,6 +289,9 @@
             {
                 Snackbar.Add($"Failed to revert {failureCount} merged chapters. Check the logs for more information.", Severity.Error);
             }
+
+            // Update merge possibilities cache after revert operations
+            await UpdateMergePossibilitiesAsync();
         }
     }
 
@@ -358,8 +361,8 @@
                 }
             }
 
-            // Invalidate merge possibilities cache since chapters changed
-            InvalidateMergePossibilitiesCache();
+            // Update merge possibilities cache since chapters changed
+            await UpdateMergePossibilitiesAsync();
 
             Snackbar.Add($"Successfully reverted merged chapter and restored {restoredChapters.Count} individual parts.", Severity.Success);
         }
@@ -644,6 +647,9 @@
             .Sort(new NaturalSortComparer<ChapterItem>(ci => ci.ExtractedMetadata?.ChapterTitle ?? string.Empty))
             .Bind(out chapterItems)
             .Subscribe();
+
+        // Update merge possibilities cache immediately after initial load
+        await UpdateMergePossibilitiesAsync();
     }
 
     private async Task<bool> LoadChapters()
@@ -708,11 +714,8 @@
             }
         }
 
-        // Update merge possibilities cache after loading chapters
-        _ = UpdateMergePossibilitiesAsync().ContinueWith(_ => 
-        {
-            InvokeAsync(StateHasChanged);
-        }, TaskScheduler.FromCurrentSynchronizationContext());
+        // Update merge possibilities cache after loading chapters (immediate call for better UX)
+        await UpdateMergePossibilitiesAsync();
 
         return loadingFailed;
     }
@@ -1051,6 +1054,9 @@
                 ? $"Successfully merged {totalProcessedChapters} chapters into 1 group."
                 : $"Successfully merged {totalProcessedChapters} chapters into {completedMerges.Count} groups.";
 
+            // Update merge possibilities cache after successful merge
+            await UpdateMergePossibilitiesAsync();
+            
             Snackbar.Add(message, Severity.Success);
         }
         catch (Exception ex)
@@ -1164,6 +1170,9 @@
                 }
             }
 
+            // Update merge possibilities cache after successful addition
+            await UpdateMergePossibilitiesAsync();
+            
             Snackbar.Add($"Successfully added {chaptersToAdd.Count} chapters to existing merged chapter {baseNumber}.", Severity.Success);
         }
         catch (Exception ex)

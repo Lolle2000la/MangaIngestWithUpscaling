@@ -53,6 +53,11 @@ public class OriginalChapterPart
     public ExtractedMetadata Metadata { get; set; } = new("", null, null);
 
     /// <summary>
+    ///     Original raw ComicInfo.xml content (for complete metadata preservation during restoration)
+    /// </summary>
+    public string? OriginalComicInfoXml { get; set; }
+
+    /// <summary>
     ///     Names of pages in the original order (for proper page ordering when reverting)
     /// </summary>
     public List<string> PageNames { get; set; } = new();
@@ -75,12 +80,13 @@ public class OriginalChapterPart
                ChapterNumber == other.ChapterNumber &&
                StartPageIndex == other.StartPageIndex &&
                EndPageIndex == other.EndPageIndex &&
-               PageNames.SequenceEqual(other.PageNames);
+               PageNames.SequenceEqual(other.PageNames) &&
+               OriginalComicInfoXml == other.OriginalComicInfoXml;
     }
 
     public override int GetHashCode()
     {
-        int hash = HashCode.Combine(FileName, ChapterNumber, StartPageIndex, EndPageIndex);
+        int hash = HashCode.Combine(FileName, ChapterNumber, StartPageIndex, EndPageIndex, OriginalComicInfoXml);
         foreach (string pageName in PageNames)
         {
             hash = HashCode.Combine(hash, pageName);

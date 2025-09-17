@@ -182,6 +182,14 @@ public class BackwardCompatibilityService(
                 upgraded = true;
             }
 
+            // Note: OriginalComicInfoXml will be null for legacy records, which is expected
+            // The restoration process will fall back to generating ComicInfo.xml from basic metadata
+            if (string.IsNullOrEmpty(part.OriginalComicInfoXml))
+            {
+                logger.LogDebug("Legacy record part {PartFileName} has no OriginalComicInfoXml - will use metadata fallback during restoration",
+                    part.FileName);
+            }
+
             // Ensure ChapterNumber is populated - needed for enhanced merge detection
             if (string.IsNullOrEmpty(part.ChapterNumber))
             {

@@ -599,8 +599,33 @@ public partial class ChapterPartMerger(
                         }
                     }
 
-                    // Store original part information
+                    // Store original part information including raw ComicInfo.xml
                     string chapterNumber = ExtractChapterNumber(part) ?? baseChapterNumber;
+                    string? originalComicInfoXml = null;
+                    
+                    // Extract raw ComicInfo.xml for complete preservation
+                    try
+                    {
+                        using (ZipArchive partArchive = ZipFile.OpenRead(partPath))
+                        {
+                            ZipArchiveEntry? comicInfoEntry = partArchive.GetEntry("ComicInfo.xml");
+                            if (comicInfoEntry != null)
+                            {
+                                using (Stream stream = comicInfoEntry.Open())
+                                using (var reader = new StreamReader(stream))
+                                {
+                                    originalComicInfoXml = await reader.ReadToEndAsync();
+                                }
+                                logger.LogDebug("Captured original ComicInfo.xml for part {FileName} ({Length} characters)", 
+                                    part.FileName, originalComicInfoXml.Length);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "Failed to extract ComicInfo.xml from {FileName} - will use basic metadata only", part.FileName);
+                    }
+                    
                     originalParts.Add(new OriginalChapterPart
                     {
                         FileName = part.FileName,
@@ -608,7 +633,8 @@ public partial class ChapterPartMerger(
                         Metadata = part.Metadata,
                         PageNames = pageNames,
                         StartPageIndex = startPageIndex,
-                        EndPageIndex = pageCounter - 1
+                        EndPageIndex = pageCounter - 1,
+                        OriginalComicInfoXml = originalComicInfoXml
                     });
                 }
             }
@@ -719,8 +745,26 @@ public partial class ChapterPartMerger(
                         }
                     }
 
-                    // Create ComicInfo.xml with original metadata using the metadata service
-                    metadataHandling.WriteComicInfo(partArchive, originalPart.Metadata);
+                    // Create ComicInfo.xml with original content if available, otherwise use metadata
+                    if (!string.IsNullOrEmpty(originalPart.OriginalComicInfoXml))
+                    {
+                        // Use the complete original ComicInfo.xml content for full metadata preservation
+                        ZipArchiveEntry comicInfoEntry = partArchive.CreateEntry("ComicInfo.xml");
+                        using (Stream comicInfoStream = comicInfoEntry.Open())
+                        using (var writer = new StreamWriter(comicInfoStream))
+                        {
+                            await writer.WriteAsync(originalPart.OriginalComicInfoXml);
+                        }
+                        logger.LogDebug("Restored original ComicInfo.xml for {FileName} ({Length} characters)", 
+                            originalPart.FileName, originalPart.OriginalComicInfoXml.Length);
+                    }
+                    else
+                    {
+                        // Fallback to generating ComicInfo.xml from basic metadata (backward compatibility)
+                        metadataHandling.WriteComicInfo(partArchive, originalPart.Metadata);
+                        logger.LogDebug("Generated ComicInfo.xml from basic metadata for {FileName} (legacy compatibility)", 
+                            originalPart.FileName);
+                    }
                 }
 
                 restoredChapters.Add(new FoundChapter(
