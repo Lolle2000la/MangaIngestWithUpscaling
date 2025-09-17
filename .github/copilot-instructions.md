@@ -24,7 +24,7 @@ MangaIngestWithUpscaling is a **Blazor-based web application** designed to **ing
 - **First run may take 2-5 minutes** for Python environment setup
 
 ```bash
-# 1. Install .NET 10.0 SDK (REQUIRED)
+# 1. Install .NET 10.0 SDK (if not installed)
 wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh
 chmod +x dotnet-install.sh
 ./dotnet-install.sh --channel 10.0 --install-dir ~/.dotnet
