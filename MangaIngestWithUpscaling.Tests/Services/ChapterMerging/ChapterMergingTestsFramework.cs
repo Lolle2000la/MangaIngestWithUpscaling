@@ -1184,7 +1184,8 @@ public class ComicInfoPreservationTests : IDisposable
             // Act - Merge the chapters
             var targetMetadata = new ExtractedMetadata("Test Series", "Chapter 5", "5");
             (FoundChapter mergedChapter, List<OriginalChapterPart> originalParts) mergeInfo =
-                await merger.MergeChapterPartsAsync(foundChapters, tempDir, tempDir, "5", targetMetadata);
+                await merger.MergeChapterPartsAsync(foundChapters, tempDir, tempDir, "5", targetMetadata,
+                    cancellationToken: TestContext.Current.CancellationToken);
 
             // Verify merge info contains original ComicInfo.xml
             Assert.NotNull(mergeInfo.originalParts);
@@ -1199,7 +1200,7 @@ public class ComicInfoPreservationTests : IDisposable
             Assert.Contains("CommunityRating>4", part2.OriginalComicInfoXml);
 
             // Wait a moment to ensure any file handles are released
-            await Task.Delay(100);
+            await Task.Delay(100, TestContext.Current.CancellationToken);
 
             // Verify merged file exists and is accessible
             string mergedFile = Path.Combine(tempDir, mergeInfo.mergedChapter.RelativePath);
@@ -1211,8 +1212,9 @@ public class ComicInfoPreservationTests : IDisposable
             File.Delete(file2);
 
             // Act - Restore the chapters
-            var restoredChapters = await merger.RestoreChapterPartsAsync(
-                mergedFile, mergeInfo.originalParts, tempDir);
+            List<FoundChapter> restoredChapters = await merger.RestoreChapterPartsAsync(mergedFile,
+                mergeInfo.originalParts, tempDir,
+                TestContext.Current.CancellationToken);
 
             // Assert - Verify restored ComicInfo.xml content
             Assert.Equal(2, restoredChapters.Count);
@@ -1288,11 +1290,12 @@ public class ComicInfoPreservationTests : IDisposable
                 });
 
             // Wait a moment to ensure file handles are released  
-            await Task.Delay(100);
+            await Task.Delay(100, TestContext.Current.CancellationToken);
 
             // Act - Restore with legacy records
-            var restoredChapters = await merger.RestoreChapterPartsAsync(
-                mergedFile, legacyParts, tempDir);
+            List<FoundChapter> restoredChapters = await merger.RestoreChapterPartsAsync(mergedFile, legacyParts,
+                tempDir,
+                TestContext.Current.CancellationToken);
 
             // Assert - Verify fallback behavior
             Assert.Equal(2, restoredChapters.Count);
@@ -1451,7 +1454,7 @@ public class UpscaledChapterHandlingTests : IDisposable
         context.Libraries.Add(library);
         context.MangaSeries.Add(manga);
         context.UpscalerProfiles.Add(upscalerProfile);
-        await context.SaveChangesAsync();
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Create temporary directories
         var notUpscaledDir = Path.Combine(Path.GetTempPath(), "test_not_upscaled_" + Guid.NewGuid());
@@ -1521,7 +1524,7 @@ public class UpscaledChapterHandlingTests : IDisposable
 
             context.Chapters.Add(chapter);
             context.MergedChapterInfos.Add(mergeInfo);
-            await context.SaveChangesAsync();
+            await context.SaveChangesAsync(TestContext.Current.CancellationToken);
 
             // Create services
             var logger = Substitute.For<ILogger<ChapterMergeRevertService>>();
@@ -1535,7 +1538,8 @@ public class UpscaledChapterHandlingTests : IDisposable
                 context, chapterPartMerger, chapterChangedNotifier, upscalerJsonService, logger);
 
             // Act - Revert the merged chapter
-            var restoredChapters = await revertService.RevertMergedChapterAsync(chapter);
+            List<Chapter> restoredChapters =
+                await revertService.RevertMergedChapterAsync(chapter, TestContext.Current.CancellationToken);
 
             // Assert - Verify both regular and upscaled parts were restored
             Assert.Equal(2, restoredChapters.Count);
@@ -1553,7 +1557,7 @@ public class UpscaledChapterHandlingTests : IDisposable
             Assert.False(File.Exists(upscaledMergedChapterPath));
 
             // Verify upscaler.json was added to restored upscaled parts
-            upscalerJsonService.Received(2).WriteUpscalerJsonAsync(
+            _ = upscalerJsonService.Received(2).WriteUpscalerJsonAsync(
                 Arg.Any<ZipArchive>(),
                 Arg.Is<UpscalerProfile>(p => p.Name == "Test Profile"),
                 Arg.Any<CancellationToken>());
@@ -1596,7 +1600,7 @@ public class UpscaledChapterHandlingTests : IDisposable
 
         context.Libraries.Add(library);
         context.MangaSeries.Add(manga);
-        await context.SaveChangesAsync();
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var tempDir = Path.Combine(Path.GetTempPath(), "test_regular_only_" + Guid.NewGuid());
         Directory.CreateDirectory(tempDir);
@@ -1644,7 +1648,7 @@ public class UpscaledChapterHandlingTests : IDisposable
 
             context.Chapters.Add(chapter);
             context.MergedChapterInfos.Add(mergeInfo);
-            await context.SaveChangesAsync();
+            await context.SaveChangesAsync(TestContext.Current.CancellationToken);
 
             // Create services
             var logger = Substitute.For<ILogger<ChapterMergeRevertService>>();
@@ -1658,7 +1662,8 @@ public class UpscaledChapterHandlingTests : IDisposable
                 context, chapterPartMerger, chapterChangedNotifier, upscalerJsonService, logger);
 
             // Act - Revert the merged chapter
-            var restoredChapters = await revertService.RevertMergedChapterAsync(chapter);
+            List<Chapter> restoredChapters =
+                await revertService.RevertMergedChapterAsync(chapter, TestContext.Current.CancellationToken);
 
             // Assert - Verify only regular parts were restored
             Assert.Equal(2, restoredChapters.Count);
@@ -1671,7 +1676,7 @@ public class UpscaledChapterHandlingTests : IDisposable
             Assert.False(File.Exists(mergedChapterPath));
 
             // Verify no upscaler.json calls were made
-            upscalerJsonService.DidNotReceive().WriteUpscalerJsonAsync(
+            _ = upscalerJsonService.DidNotReceive().WriteUpscalerJsonAsync(
                 Arg.Any<ZipArchive>(), Arg.Any<UpscalerProfile>(), Arg.Any<CancellationToken>());
 
             // Verify database state
