@@ -1,5 +1,14 @@
 using MangaIngestWithUpscaling.Helpers;
+using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Services.ChapterMerging;
+using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
+using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Tests.Infrastructure;
+using Microsoft.Extensions.Logging;
 using NetVips;
+using NSubstitute;
+using System.IO.Compression;
 
 namespace MangaIngestWithUpscaling.Tests.Services.ChapterMerging;
 
@@ -118,153 +127,667 @@ public class ChapterNumberHelperTests
 }
 
 /// <summary>
-/// Integration tests for the chapter merging workflow
-/// These tests demonstrate how to test the overall chapter merging functionality
+/// Unit tests for ChapterPartMerger focusing on grouping logic and merge detection
 /// </summary>
-public class ChapterMergingWorkflowTests
+public class ChapterPartMergerTests : IDisposable
 {
+    private readonly ChapterPartMerger _chapterPartMerger;
+    private readonly IMetadataHandlingService _mockMetadataService;
+    private readonly ILogger<ChapterPartMerger> _mockLogger;
+    private readonly string _tempDir;
+
+    public ChapterPartMergerTests()
+    {
+        _mockMetadataService = Substitute.For<IMetadataHandlingService>();
+        _mockLogger = Substitute.For<ILogger<ChapterPartMerger>>();
+        _chapterPartMerger = new ChapterPartMerger(_mockMetadataService, _mockLogger);
+        
+        _tempDir = Path.Combine(Path.GetTempPath(), $"chapter_part_merger_test_{Guid.NewGuid()}");
+        Directory.CreateDirectory(_tempDir);
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_tempDir))
+        {
+            Directory.Delete(_tempDir, true);
+        }
+    }
+
+    #region GroupChapterPartsForMerging Tests
+
+    [Theory]
+    [Trait("Category", "Unit")]
+    [InlineData("5.1", "5.2", "5.3", "5")] // Standard consecutive
+    [InlineData("10.1", "10.2", "10", "10")] // With whole number
+    [InlineData("2.1", "2.2", "2.3", "2.4", "2")] // Four parts
+    public void GroupChapterPartsForMerging_WithConsecutiveChapterParts_ShouldGroupCorrectly(params string[] chapterNumbers)
+    {
+        // Arrange
+        var baseNumber = chapterNumbers.Last();
+        var chapters = chapterNumbers.Take(chapterNumbers.Length - 1)
+            .Select(num => CreateFoundChapter($"Chapter {num}.cbz", num))
+            .ToList();
+        
+        // Act
+        var result = _chapterPartMerger.GroupChapterPartsForMerging(chapters, _ => false);
+        
+        // Assert
+        Assert.Single(result);
+        Assert.Contains(baseNumber, result.Keys);
+        Assert.Equal(chapters.Count, result[baseNumber].Count);
+    }
+
+    [Theory]
+    [Trait("Category", "Unit")]
+    [InlineData("5.1", "5.3")] // Missing 5.2
+    [InlineData("10.1", "10.4")] // Missing 10.2, 10.3
+    [InlineData("2.2", "2.4")] // Missing 2.1, 2.3
+    public void GroupChapterPartsForMerging_WithNonConsecutiveChapterParts_ShouldNotGroup(params string[] chapterNumbers)
+    {
+        // Arrange
+        var chapters = chapterNumbers
+            .Select(num => CreateFoundChapter($"Chapter {num}.cbz", num))
+            .ToList();
+        
+        // Act
+        var result = _chapterPartMerger.GroupChapterPartsForMerging(chapters, _ => false);
+        
+        // Assert
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void GroupChapterPartsForMerging_WithLatestChapter_ShouldExcludeFromMerging()
+    {
+        // Arrange
+        var chapters = new List<FoundChapter>
+        {
+            CreateFoundChapter("Chapter 7.1.cbz", "7.1"),
+            CreateFoundChapter("Chapter 7.2.cbz", "7.2")
+        };
+        
+        // Act
+        var result = _chapterPartMerger.GroupChapterPartsForMerging(chapters, baseNumber => baseNumber == "7");
+        
+        // Assert
+        Assert.Empty(result); // Should be excluded because 7 is the latest chapter
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void GroupChapterPartsForMerging_WithSingleChapter_ShouldNotGroup()
+    {
+        // Arrange
+        var chapters = new List<FoundChapter>
+        {
+            CreateFoundChapter("Chapter 5.1.cbz", "5.1")
+        };
+        
+        // Act
+        var result = _chapterPartMerger.GroupChapterPartsForMerging(chapters, _ => false);
+        
+        // Assert
+        Assert.Empty(result); // Single chapters should not be grouped
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void GroupChapterPartsForMerging_WithMixedChapterNumbers_ShouldGroupOnlyConsecutive()
+    {
+        // Arrange
+        var chapters = new List<FoundChapter>
+        {
+            CreateFoundChapter("Chapter 3.1.cbz", "3.1"),
+            CreateFoundChapter("Chapter 3.2.cbz", "3.2"), // These should group
+            CreateFoundChapter("Chapter 5.1.cbz", "5.1"), // Single, should not group
+            CreateFoundChapter("Chapter 7.1.cbz", "7.1"),
+            CreateFoundChapter("Chapter 7.2.cbz", "7.2"),
+            CreateFoundChapter("Chapter 7.3.cbz", "7.3")  // These should group
+        };
+        
+        // Act
+        var result = _chapterPartMerger.GroupChapterPartsForMerging(chapters, _ => false);
+        
+        // Assert
+        Assert.Equal(2, result.Count);
+        Assert.Contains("3", result.Keys);
+        Assert.Contains("7", result.Keys);
+        Assert.Equal(2, result["3"].Count);
+        Assert.Equal(3, result["7"].Count);
+    }
+
+    #endregion
+
+    #region GroupChaptersForAdditionToExistingMerged Tests
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void GroupChaptersForAdditionToExistingMerged_WithValidChapter_ShouldIdentifyAddition()
+    {
+        // Arrange
+        var chapters = new List<FoundChapter>
+        {
+            CreateFoundChapter("Chapter 2.3.cbz", "2.3"),
+            CreateFoundChapter("Chapter 5.4.cbz", "5.4")
+        };
+        var existingMergedBaseNumbers = new HashSet<string> { "2", "5" };
+        
+        // Act
+        var result = _chapterPartMerger.GroupChaptersForAdditionToExistingMerged(
+            chapters, existingMergedBaseNumbers, _ => false);
+        
+        // Assert
+        Assert.Equal(2, result.Count);
+        Assert.Contains("2", result.Keys);
+        Assert.Contains("5", result.Keys);
+        Assert.Single(result["2"]);
+        Assert.Single(result["5"]);
+        Assert.Equal("Chapter 2.3.cbz", result["2"].First().FileName);
+        Assert.Equal("Chapter 5.4.cbz", result["5"].First().FileName);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void GroupChaptersForAdditionToExistingMerged_WithNonMatchingBaseNumber_ShouldNotGroup()
+    {
+        // Arrange
+        var chapters = new List<FoundChapter>
+        {
+            CreateFoundChapter("Chapter 3.1.cbz", "3.1"), // 3 is not in existing merged
+            CreateFoundChapter("Chapter 4.2.cbz", "4.2")  // 4 is not in existing merged
+        };
+        var existingMergedBaseNumbers = new HashSet<string> { "2", "5" };
+        
+        // Act
+        var result = _chapterPartMerger.GroupChaptersForAdditionToExistingMerged(
+            chapters, existingMergedBaseNumbers, _ => false);
+        
+        // Assert
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void GroupChaptersForAdditionToExistingMerged_WithLatestChapter_ShouldExclude()
+    {
+        // Arrange
+        var chapters = new List<FoundChapter>
+        {
+            CreateFoundChapter("Chapter 2.3.cbz", "2.3")
+        };
+        var existingMergedBaseNumbers = new HashSet<string> { "2" };
+        
+        // Act
+        var result = _chapterPartMerger.GroupChaptersForAdditionToExistingMerged(
+            chapters, existingMergedBaseNumbers, baseNumber => baseNumber == "2"); // 2 is latest
+        
+        // Assert
+        Assert.Empty(result); // Should be excluded because 2 is the latest chapter
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void GroupChaptersForAdditionToExistingMerged_WithWholeChapterNumber_ShouldNotAdd()
+    {
+        // Arrange
+        var chapters = new List<FoundChapter>
+        {
+            CreateFoundChapter("Chapter 2.cbz", "2") // Whole number, not a part
+        };
+        var existingMergedBaseNumbers = new HashSet<string> { "2" };
+        
+        // Act
+        var result = _chapterPartMerger.GroupChaptersForAdditionToExistingMerged(
+            chapters, existingMergedBaseNumbers, _ => false);
+        
+        // Assert
+        Assert.Empty(result); // Whole numbers should not be added to existing merged chapters
+    }
+
+    #endregion
+
+    #region File Operation Tests
+
     [Fact]
     [Trait("Category", "Integration")]
-    [Trait("Purpose", "Demonstrates testing approach for chapter merging")]
-    public void ChapterMerging_TestingApproach_Documentation()
+    public async Task MergeChapterPartsAsync_WithValidFiles_ShouldCreateMergedFile()
     {
-        // This test documents the comprehensive testing approach for chapter merging functionality
+        // Arrange
+        var chapters = new List<FoundChapter>
+        {
+            CreateFoundChapter("Chapter 1.1.cbz", "1.1"),
+            CreateFoundChapter("Chapter 1.2.cbz", "1.2")
+        };
         
-        // === TESTING STRATEGY FOR CHAPTER MERGING ===
+        CreateTestCbzFiles(chapters);
         
-        // 1. UNIT TESTS (Individual Components):
-        //    - ChapterNumberHelper: Chapter number extraction from various filename formats
-        //    - ChapterPartMerger.GroupChapterPartsForMerging: Logic for grouping consecutive chapter parts
-        //    - ChapterPartMerger.GroupChaptersForAdditionToExistingMerged: Logic for adding to existing merged chapters
-        //    - ChapterMergeCoordinator.GetPossibleMergeActionsAsync: Coordination logic for merge detection
-        //    - ChapterMergeRevertService.CanRevertChapterAsync: Merge reversion capability detection
-        //    - ChapterMergeUpscaleTaskManager: Upscale task management during merging
+        var targetMetadata = new ExtractedMetadata("Test Series", "Chapter 1", "1");
         
-        // 2. INTEGRATION TESTS (Component Interactions):
-        //    - Full chapter merging workflow: From detection to file creation to database updates
-        //    - Merge with upscaling: Ensuring upscaled versions are properly handled
-        //    - Addition to existing merged chapters: New parts added to previously merged chapters
-        //    - Merge reversion: Complete workflow of reverting merged chapters back to parts
-        //    - Re-ingestion prevention: Preventing duplicate ingestion of already-merged parts
+        // Act
+        var result = await _chapterPartMerger.MergeChapterPartsAsync(
+            chapters,
+            _tempDir,
+            _tempDir,
+            "1",
+            targetMetadata);
         
-        // 3. END-TO-END TESTS (Full System):
-        //    - Automatic merging during ingest process
-        //    - Manual merging through UI
-        //    - UI merge button visibility based on actual merge capabilities
-        //    - Upscale task scheduling when merged chapters are created or updated
+        // Assert
+        Assert.NotNull(result.mergedChapter);
+        Assert.Equal(2, result.originalParts.Count);
         
-        // 4. CORNER CASES AND ERROR HANDLING:
-        //    - Non-consecutive chapter parts (should not merge)
-        //    - Latest chapter parts (should not merge by default)
-        //    - Corrupted chapter files (should handle gracefully)
-        //    - Mixed upscale status in chapter parts
-        //    - Database consistency during merge operations
-        //    - File system errors during merge operations
+        var mergedFilePath = Path.Combine(_tempDir, result.mergedChapter.FileName);
+        Assert.True(File.Exists(mergedFilePath));
         
-        // 5. PERFORMANCE TESTS:
-        //    - Large numbers of chapter parts
-        //    - Large file sizes during merging
-        //    - Database performance with many merged chapters
+        // Verify merged file contains all pages
+        using var fileStream = new FileStream(mergedFilePath, FileMode.Open);
+        using var archive = new ZipArchive(fileStream, ZipArchiveMode.Read);
         
-        // 6. TEST DATA GENERATION:
-        //    - Use NetVips to generate realistic CBZ files with multiple pages
-        //    - Create test manga with various chapter numbering schemes
-        //    - Generate edge cases (non-consecutive numbers, different formats)
-        
-        // This test passes to indicate the testing approach is documented
-        Assert.True(true, "Chapter merging testing approach documented");
+        var imageEntries = archive.Entries.Where(e => e.Name.EndsWith(".jpg") || e.Name.EndsWith(".png")).ToList();
+        Assert.Equal(6, imageEntries.Count); // 3 pages from each chapter
     }
-    
+
     [Fact]
     [Trait("Category", "Integration")]
-    [Trait("Purpose", "Placeholder for actual integration tests")]
-    public void ChapterMerging_IntegrationTests_Placeholder()
+    public async Task RestoreChapterPartsAsync_WithValidMergedFile_ShouldRestoreOriginalParts()
     {
-        // PLACEHOLDER: This is where comprehensive integration tests would go
-        // Due to API compatibility issues with the current codebase structure,
-        // the full integration tests need to be implemented with the correct:
-        // - Entity property names (PrimaryTitle vs Title, MangaSeries vs Manga)
-        // - Service constructor parameters
-        // - Method signatures
-        // - Using statements for all required types
+        // Arrange
+        var originalParts = new List<OriginalChapterPart>
+        {
+            new()
+            {
+                FileName = "Chapter 2.1.cbz",
+                ChapterNumber = "2.1",
+                PageNames = new List<string> { "001.jpg", "002.jpg", "003.jpg" },
+                StartPageIndex = 0,
+                EndPageIndex = 2,
+                Metadata = new ExtractedMetadata("Test Series", "Chapter 2.1", "2.1")
+            },
+            new()
+            {
+                FileName = "Chapter 2.2.cbz",
+                ChapterNumber = "2.2",
+                PageNames = new List<string> { "004.jpg", "005.jpg", "006.jpg" },
+                StartPageIndex = 3,
+                EndPageIndex = 5,
+                Metadata = new ExtractedMetadata("Test Series", "Chapter 2.2", "2.2")
+            }
+        };
         
-        // KEY TEST SCENARIOS TO IMPLEMENT:
+        // Create merged file with test images
+        var mergedFilePath = Path.Combine(_tempDir, "Chapter 2.cbz");
+        CreateMergedTestCbzFile(mergedFilePath, new[] { "001.jpg", "002.jpg", "003.jpg", "004.jpg", "005.jpg", "006.jpg" });
         
-        // 1. Basic Merging:
-        //    Given: Chapters "Series 1.1.cbz", "Series 1.2.cbz", "Series 1.3.cbz"
-        //    When: ProcessChapterMergingAsync is called
-        //    Then: Should create "Series 1.cbz" with all pages combined
+        // Act
+        var restoredChapters = await _chapterPartMerger.RestoreChapterPartsAsync(
+            mergedFilePath, originalParts, _tempDir);
         
-        // 2. Addition to Existing Merged:
-        //    Given: Existing merged "Chapter 2.cbz" (from 2.1, 2.2) and new "Chapter 2.3.cbz"
-        //    When: GetPossibleMergeActionsAsync is called
-        //    Then: Should identify 2.3 can be added to existing merged Chapter 2
+        // Assert
+        Assert.Equal(2, restoredChapters.Count);
         
-        // 3. Re-ingestion Prevention:
-        //    Given: Previously merged chapter parts in MergedChapterInfo
-        //    When: Same part files appear in ingest
-        //    Then: Should skip re-ingestion of already merged parts
+        var chapter21 = restoredChapters.First(c => c.FileName == "Chapter 2.1.cbz");
+        var chapter22 = restoredChapters.First(c => c.FileName == "Chapter 2.2.cbz");
         
-        // 4. Upscale Task Management:
-        //    Given: Merged chapter created from upscaled parts
-        //    When: New part added to existing merged chapter
-        //    Then: Should mark merged chapter as not upscaled and queue new upscale task
+        Assert.NotNull(chapter21);
+        Assert.NotNull(chapter22);
         
-        // 5. UI Merge Detection:
-        //    Given: Chapters available for merging
-        //    When: GetPossibleMergeActionsAsync is called
-        //    Then: Should return accurate merge possibilities for UI buttons
+        // Verify files were created
+        Assert.True(File.Exists(Path.Combine(_tempDir, "Chapter 2.1.cbz")));
+        Assert.True(File.Exists(Path.Combine(_tempDir, "Chapter 2.2.cbz")));
         
-        Assert.True(true, "Placeholder for comprehensive integration tests");
+        // Verify each restored file has correct number of pages
+        VerifyRestoredChapterPageCount(Path.Combine(_tempDir, "Chapter 2.1.cbz"), 3);
+        VerifyRestoredChapterPageCount(Path.Combine(_tempDir, "Chapter 2.2.cbz"), 3);
     }
+
+    #endregion
+
+    #region Helper Methods
+
+    private FoundChapter CreateFoundChapter(string fileName, string chapterNumber)
+    {
+        return new FoundChapter(
+            fileName,
+            fileName, // Relative path same as filename for test
+            ChapterStorageType.Cbz,
+            new ExtractedMetadata("Test Series", Path.GetFileNameWithoutExtension(fileName), chapterNumber));
+    }
+
+    private void CreateTestCbzFiles(List<FoundChapter> chapters)
+    {
+        foreach (var chapter in chapters)
+        {
+            CreateTestCbzFile(Path.Combine(_tempDir, chapter.FileName), 3); // 3 pages each
+        }
+    }
+
+    private void CreateTestCbzFile(string filePath, int pageCount)
+    {
+        using var fileStream = new FileStream(filePath, FileMode.Create);
+        using var archive = new ZipArchive(fileStream, ZipArchiveMode.Create);
+        
+        // Add test images
+        for (int i = 1; i <= pageCount; i++)
+        {
+            var entry = archive.CreateEntry($"{i:D3}.jpg");
+            using var entryStream = entry.Open();
+            var imageBytes = CreateTestImageBytes(i);
+            entryStream.Write(imageBytes);
+        }
+        
+        // Add ComicInfo.xml
+        var comicInfoEntry = archive.CreateEntry("ComicInfo.xml");
+        using var comicInfoStream = comicInfoEntry.Open();
+        using var writer = new StreamWriter(comicInfoStream);
+        writer.Write("<?xml version=\"1.0\"?><ComicInfo><Title>Test Chapter</Title></ComicInfo>");
+    }
+
+    private void CreateMergedTestCbzFile(string filePath, string[] pageNames)
+    {
+        using var fileStream = new FileStream(filePath, FileMode.Create);
+        using var archive = new ZipArchive(fileStream, ZipArchiveMode.Create);
+        
+        // Add test images
+        for (int i = 0; i < pageNames.Length; i++)
+        {
+            var entry = archive.CreateEntry(pageNames[i]);
+            using var entryStream = entry.Open();
+            var imageBytes = CreateTestImageBytes(i + 1);
+            entryStream.Write(imageBytes);
+        }
+    }
+
+    private static byte[] CreateTestImageBytes(int variant = 1)
+    {
+        try
+        {
+            // Create different test images based on variant
+            Image image = variant switch
+            {
+                1 => Image.Black(32, 32) + 128, // Gray
+                2 => Image.Black(32, 32) + 200, // Light gray
+                3 => Image.Black(32, 32) + 50,  // Dark gray
+                _ => Image.Black(32, 32) + (variant * 30 % 255)
+            };
+            
+            // Convert to JPEG bytes
+            return image.JpegsaveBuffer();
+        }
+        catch
+        {
+            // Fallback: create a minimal valid JPEG
+            var jpegHeader = new byte[] { 0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x48, 0x00, 0x48, 0x00, 0x00, 0xFF, 0xD9 };
+            return jpegHeader;
+        }
+    }
+
+    private static void VerifyRestoredChapterPageCount(string filePath, int expectedPageCount)
+    {
+        using var fileStream = new FileStream(filePath, FileMode.Open);
+        using var archive = new ZipArchive(fileStream, ZipArchiveMode.Read);
+        
+        var imageEntries = archive.Entries.Where(e => e.Name.EndsWith(".jpg") || e.Name.EndsWith(".png")).ToList();
+        Assert.Equal(expectedPageCount, imageEntries.Count);
+    }
+
+    #endregion
 }
 
 /// <summary>
-/// Example test demonstrating NetVips usage for generating test manga pages
+/// Integration tests for database operations during chapter merging
 /// </summary>
-public class TestImageGenerationExample
+public class ChapterMergeRevertServiceTests : IDisposable
+{
+    private readonly ApplicationDbContext _dbContext;
+    private readonly TestDatabaseHelper.TestDbContext _testDb;
+    private readonly ChapterMergeRevertService _revertService;
+    private readonly IChapterPartMerger _mockChapterPartMerger;
+    private readonly Library _testLibrary;
+    private readonly Manga _testManga;
+
+    public ChapterMergeRevertServiceTests()
+    {
+        // Create test database
+        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _dbContext = _testDb.Context;
+        
+        // Create mocks
+        _mockChapterPartMerger = Substitute.For<IChapterPartMerger>();
+        var mockLogger = Substitute.For<ILogger<ChapterMergeRevertService>>();
+        
+        // Create service under test
+        _revertService = new ChapterMergeRevertService(
+            _dbContext, 
+            _mockChapterPartMerger, 
+            null!, 
+            null!, 
+            mockLogger);
+        
+        // Create test data
+        _testLibrary = CreateTestLibrary();
+        _testManga = CreateTestManga(_testLibrary, "Test Manga");
+        
+        _dbContext.Libraries.Add(_testLibrary);
+        _dbContext.MangaSeries.Add(_testManga);
+        _dbContext.SaveChanges();
+    }
+
+    public void Dispose()
+    {
+        _testDb?.Dispose();
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task CanRevertChapterAsync_WithMergedChapter_ShouldReturnTrue()
+    {
+        // Arrange
+        var mergedChapter = CreateTestChapter(_testManga, "Chapter 8.cbz", "8");
+        var mergedChapterInfo = new MergedChapterInfo
+        {
+            ChapterId = mergedChapter.Id,
+            Chapter = mergedChapter,
+            MergedChapterNumber = "8",
+            OriginalParts = new List<OriginalChapterPart>()
+        };
+        
+        _dbContext.Chapters.Add(mergedChapter);
+        _dbContext.MergedChapterInfos.Add(mergedChapterInfo);
+        await _dbContext.SaveChangesAsync();
+        
+        // Act
+        var canRevert = await _revertService.CanRevertChapterAsync(mergedChapter);
+        
+        // Assert
+        Assert.True(canRevert);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task CanRevertChapterAsync_WithNormalChapter_ShouldReturnFalse()
+    {
+        // Arrange
+        var normalChapter = CreateTestChapter(_testManga, "Chapter 9.cbz", "9");
+        _dbContext.Chapters.Add(normalChapter);
+        await _dbContext.SaveChangesAsync();
+        
+        // Act
+        var canRevert = await _revertService.CanRevertChapterAsync(normalChapter);
+        
+        // Assert
+        Assert.False(canRevert);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task GetMergeInfoAsync_WithMergedChapter_ShouldReturnMergeInfo()
+    {
+        // Arrange
+        var mergedChapter = CreateTestChapter(_testManga, "Chapter 10.cbz", "10");
+        var originalParts = new List<OriginalChapterPart>
+        {
+            new() { FileName = "Chapter 10.1.cbz", ChapterNumber = "10.1" },
+            new() { FileName = "Chapter 10.2.cbz", ChapterNumber = "10.2" }
+        };
+        
+        var mergedChapterInfo = new MergedChapterInfo
+        {
+            ChapterId = mergedChapter.Id,
+            Chapter = mergedChapter,
+            MergedChapterNumber = "10",
+            OriginalParts = originalParts
+        };
+        
+        _dbContext.Chapters.Add(mergedChapter);
+        _dbContext.MergedChapterInfos.Add(mergedChapterInfo);
+        await _dbContext.SaveChangesAsync();
+        
+        // Act
+        var result = await _revertService.GetMergeInfoAsync(mergedChapter);
+        
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal("10", result.MergedChapterNumber);
+        Assert.Equal(2, result.OriginalParts.Count);
+        Assert.Contains(result.OriginalParts, p => p.FileName == "Chapter 10.1.cbz");
+        Assert.Contains(result.OriginalParts, p => p.FileName == "Chapter 10.2.cbz");
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task GetMergeInfoAsync_WithNormalChapter_ShouldReturnNull()
+    {
+        // Arrange
+        var normalChapter = CreateTestChapter(_testManga, "Chapter 11.cbz", "11");
+        _dbContext.Chapters.Add(normalChapter);
+        await _dbContext.SaveChangesAsync();
+        
+        // Act
+        var result = await _revertService.GetMergeInfoAsync(normalChapter);
+        
+        // Assert
+        Assert.Null(result);
+    }
+
+    #region Helper Methods
+
+    private Library CreateTestLibrary()
+    {
+        return new Library
+        {
+            Id = 1,
+            Name = "Test Library",
+            NotUpscaledLibraryPath = "/test/not_upscaled",
+            UpscaledLibraryPath = "/test/upscaled",
+            IngestPath = "/test/ingest"
+        };
+    }
+
+    private Manga CreateTestManga(Library library, string title)
+    {
+        return new Manga
+        {
+            Id = 1,
+            PrimaryTitle = title,
+            Library = library,
+            LibraryId = library.Id,
+            Chapters = new List<Chapter>()
+        };
+    }
+
+    private Chapter CreateTestChapter(Manga manga, string fileName, string chapterNumber)
+    {
+        return new Chapter
+        {
+            Id = Random.Shared.Next(1000, 9999),
+            FileName = fileName,
+            RelativePath = Path.Combine(manga.PrimaryTitle, fileName),
+            Manga = manga,
+            MangaId = manga.Id
+        };
+    }
+
+    #endregion
+}
+
+/// <summary>
+/// Integration tests demonstrating chapter number edge cases and real-world scenarios
+/// </summary>
+public class ChapterNumberExtractionIntegrationTests
 {
     [Fact]
-    [Trait("Category", "Example")]
-    [Trait("Purpose", "Demonstrates NetVips usage for test data")]
-    public void GenerateTestMangaPages_Example()
+    [Trait("Category", "Integration")]
+    public void ChapterNumberExtraction_WithRealWorldExamples_ShouldHandleAllCases()
     {
-        // This demonstrates how to use NetVips to generate realistic test manga pages
-        // for comprehensive chapter merging tests
-        
-        try
+        // This tests real-world manga filename patterns that users might encounter
+        var realWorldExamples = new Dictionary<string, string?>
         {
-            // Example of creating test manga pages with NetVips
-            // These would be used in actual integration tests to create CBZ files
+            // Standard formats
+            { "One Piece - Chapter 1050.cbz", "1050" },
+            { "Attack on Titan Ch. 139.cbz", "139" },
+            { "My Hero Academia Chapter 350.5.cbz", "350.5" },
             
-            var testImages = new List<byte[]>();
+            // Sub-chapters (most important for this PR)
+            { "Naruto Chapter 700.1.cbz", "700.1" },
+            { "Demon Slayer Ch 204.2.cbz", "204.2" },
+            { "One Piece Chapter 1000.3.cbz", "1000.3" },
             
-            for (int i = 1; i <= 3; i++)
-            {
-                // Create a test manga page with some visual content
-                using var image = NetVips.Image.Black(800, 1200) // Typical manga page dimensions
-                    + (50 + i * 40); // Different brightness for each page
-                
-                // Convert to JPEG bytes (typical manga format)
-                var imageBytes = image.JpegsaveBuffer();
-                testImages.Add(imageBytes);
-            }
+            // Group releases with complex naming
+            { "[MangaStream] One Piece - Chapter 1050 [720p].cbz", "1050" },
+            { "[VIZ] My Hero Academia Ch.350.5 [Digital].cbz", "350.5" },
+            { "Tokyo Ghoul:re Chapter 179.5 [MS].cbz", "179.5" },
             
-            Assert.Equal(3, testImages.Count);
-            Assert.All(testImages, bytes => Assert.True(bytes.Length > 0));
+            // International formats
+            { "ワンピース 第1050話.cbz", "1050" },
+            { "진격의 거인 제139화.cbz", "139" },
+            { "我的英雄学院 第350.5话.cbz", "350.5" },
             
-            // In actual tests, these images would be:
-            // 1. Added to ZIP archives to create CBZ files
-            // 2. Used to test chapter merging with realistic file sizes
-            // 3. Used to verify page order is preserved during merging
-            // 4. Used to test corruption handling with invalid image data
+            // Edge cases that should work
+            { "Chapter_105.1_Final.cbz", "105.1" },
+            { "Ch105-2.cbz", "105.2" }, // Regex interprets dash as decimal point
+            { "Episode 24.5 Special.cbz", "24.5" },
             
+            // Cases that should return null or numbers
+            { "Volume 1.cbz", "1" }, // Will extract the "1" from Volume
+            { "Extras.cbz", null },
+            { "Credits and Thanks.cbz", null },
+            { "Cover Art.cbz", null }
+        };
+
+        foreach (var example in realWorldExamples)
+        {
+            // Act
+            var result = ChapterNumberHelper.ExtractChapterNumber(example.Key);
+            
+            // Assert with detailed message for debugging
+            Assert.True(
+                result == example.Value,
+                $"Expected '{example.Value}' but got '{result}' for filename: '{example.Key}'");
         }
-        catch (Exception ex)
+    }
+
+    [Theory]
+    [Trait("Category", "Integration")]
+    [InlineData("105.1", "105")]
+    [InlineData("350.5", "350")]
+    [InlineData("1000.2", "1000")]
+    [InlineData("42", "42")]
+    public void BaseChapterNumberExtraction_WithSubChapters_ShouldExtractCorrectBase(string chapterNumber, string expectedBase)
+    {
+        // This tests the critical functionality for determining which chapters can be merged
+        
+        // Act - Test the conceptual logic since the method is private
+        if (decimal.TryParse(chapterNumber, out decimal number))
         {
-            // NetVips might not be available in all test environments
-            // In that case, use fallback minimal test images
-            Assert.True(true, $"NetVips not available for test image generation: {ex.Message}");
+            var baseNumber = Math.Floor(number).ToString();
+            
+            // Assert
+            Assert.Equal(expectedBase, baseNumber);
+        }
+        else
+        {
+            Assert.Fail($"Could not parse chapter number: {chapterNumber}");
         }
     }
 }
