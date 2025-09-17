@@ -20,7 +20,8 @@ public class MangaMetadataChanger(
     ILogger<MangaMetadataChanger> logger,
     ITaskQueue taskQueue,
     IFileSystem fileSystem,
-    IChapterChangedNotifier chapterChangedNotifier) : IMangaMetadataChanger
+    IChapterChangedNotifier chapterChangedNotifier,
+    IMangaChangedNotifier mangaChangedNotifier) : IMangaMetadataChanger
 {
     /// <inheritdoc/>
     public void ApplyMangaTitleToUpscaled(Chapter chapter, string newTitle, string origChapterPath)
@@ -71,6 +72,10 @@ public class MangaMetadataChanger(
             return RenameResult.Cancelled;
         }
 
+        // Store old title and path for external service notification
+        var oldTitle = manga.PrimaryTitle;
+        var oldFolderPath = PathEscaper.EscapeFileName(oldTitle);
+        
         manga.ChangePrimaryTitle(newTitle, addOldToAlternative);
 
         // load library and chapters if not already loaded
@@ -83,6 +88,8 @@ public class MangaMetadataChanger(
         {
             await dbContext.Entry(manga).Collection(m => m.Chapters).LoadAsync();
         }
+
+        var newFolderPath = PathEscaper.EscapeFileName(manga.PrimaryTitle);
 
         foreach (var chapter in manga.Chapters)
         {
@@ -120,6 +127,10 @@ public class MangaMetadataChanger(
         }
 
         await dbContext.SaveChangesAsync(cancellationToken);
+
+        // Notify external services about the manga title change (preferred over individual chapter scans)
+        _ = mangaChangedNotifier.NotifyTitleChanged(manga, oldTitle, oldFolderPath, newFolderPath);
+
         return RenameResult.Ok;
     }
 

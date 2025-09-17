@@ -18,6 +18,7 @@ public class MangaMetadataChangerTests : IDisposable
     private readonly ApplicationDbContext _dbContext;
     private readonly MangaMetadataChanger _metadataChanger;
     private readonly IChapterChangedNotifier _mockChapterChangedNotifier;
+    private readonly IMangaChangedNotifier _mockMangaChangedNotifier;
     private readonly IDialogService _mockDialogService;
     private readonly IFileSystem _mockFileSystem;
     private readonly ILogger<MangaMetadataChanger> _mockLogger;
@@ -39,6 +40,7 @@ public class MangaMetadataChangerTests : IDisposable
         _mockTaskQueue = Substitute.For<ITaskQueue>();
         _mockFileSystem = Substitute.For<IFileSystem>();
         _mockChapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
+        _mockMangaChangedNotifier = Substitute.For<IMangaChangedNotifier>();
 
         _tempDir = Path.Combine(Path.GetTempPath(), $"metadata_test_{Guid.NewGuid()}");
         Directory.CreateDirectory(_tempDir);
@@ -50,7 +52,8 @@ public class MangaMetadataChangerTests : IDisposable
             _mockLogger,
             _mockTaskQueue,
             _mockFileSystem,
-            _mockChapterChangedNotifier
+            _mockChapterChangedNotifier,
+            _mockMangaChangedNotifier
         );
     }
 

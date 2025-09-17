@@ -9,6 +9,7 @@ public static class IntegrationRegistrations
     public static IServiceCollection RegisterIntegrations(this IServiceCollection services)
     {
         services.AddScoped<IChapterChangedNotifier, KavitaChapterChangedNotifier>();
+        services.AddScoped<IMangaChangedNotifier, KavitaMangaChangedNotifier>();
 
         services.AddHttpClient<IKavitaClient, KavitaClient>((provider, client) =>
             {
