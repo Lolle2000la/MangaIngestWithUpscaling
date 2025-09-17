@@ -2,8 +2,11 @@ using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.ChapterMerging;
+using MangaIngestWithUpscaling.Services.Integrations;
+using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.Extensions.Logging;
 using NetVips;
@@ -1070,6 +1073,605 @@ public class ChapterNumberExtractionIntegrationTests
         else
         {
             Assert.Fail($"Could not parse chapter number: {chapterNumber}");
+        }
+    }
+}
+
+/// <summary>
+/// Tests for ComicInfo.xml preservation during chapter merge and restoration operations
+/// </summary>
+public class ComicInfoPreservationTests : IDisposable
+{
+    private readonly TestDatabaseHelper.TestDbContext _testDb;
+
+    public ComicInfoPreservationTests()
+    {
+        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+    }
+
+    public void Dispose()
+    {
+        _testDb?.Dispose();
+    }
+
+    private ApplicationDbContext CreateDbContext() => _testDb.Context;
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task MergeAndRestoreChapters_ShouldPreserveCompleteComicInfoXml()
+    {
+        // Arrange
+        var tempDir = Path.Combine(Path.GetTempPath(), "ComicInfoTest_" + Guid.NewGuid());
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var logger = Substitute.For<ILogger<ChapterPartMerger>>();
+            var metadataHandler = Substitute.For<IMetadataHandlingService>();
+            var merger = new ChapterPartMerger(metadataHandler, logger);
+
+            // Create test CBZ files with complete ComicInfo.xml
+            var originalComicInfo1 = """
+                <?xml version="1.0" encoding="utf-8"?>
+                <ComicInfo>
+                    <Series>Test Series</Series>
+                    <Number>5.1</Number>
+                    <Title>Part One</Title>
+                    <Summary>This is a detailed summary of the chapter with plot details.</Summary>
+                    <Writer>Test Author</Writer>
+                    <Penciller>Test Artist</Penciller>
+                    <Genre>Action, Adventure</Genre>
+                    <CommunityRating>5</CommunityRating>
+                    <Tags>Manga, Shonen, Test</Tags>
+                    <LanguageISO>en</LanguageISO>
+                    <PageCount>3</PageCount>
+                </ComicInfo>
+                """;
+
+            var originalComicInfo2 = """
+                <?xml version="1.0" encoding="utf-8"?>
+                <ComicInfo>
+                    <Series>Test Series</Series>
+                    <Number>5.2</Number>
+                    <Title>Part Two</Title>
+                    <Summary>This is another detailed summary with different content.</Summary>
+                    <Writer>Test Author</Writer>
+                    <Penciller>Test Artist</Penciller>
+                    <Genre>Action, Adventure</Genre>
+                    <CommunityRating>4</CommunityRating>
+                    <Tags>Manga, Shonen, Test</Tags>
+                    <LanguageISO>en</LanguageISO>
+                    <PageCount>3</PageCount>
+                </ComicInfo>
+                """;
+
+            var file1 = CreateTestCbzFileWithComicInfo(tempDir, "Chapter 5.1.cbz", 3, originalComicInfo1);
+            var file2 = CreateTestCbzFileWithComicInfo(tempDir, "Chapter 5.2.cbz", 3, originalComicInfo2);
+
+            var foundChapters = new List<FoundChapter>
+            {
+                new("Chapter 5.1.cbz", file1, ChapterStorageType.Cbz, new ExtractedMetadata("Test Series", "5.1")),
+                new("Chapter 5.2.cbz", file2, ChapterStorageType.Cbz, new ExtractedMetadata("Test Series", "5.2"))
+            };
+
+            // Configure metadata handler to return the original ComicInfo.xml content
+            metadataHandler.GetSeriesAndTitleFromComicInfo(file1)
+                .Returns(new ExtractedMetadata("Test Series", "5.1"));
+            metadataHandler.GetSeriesAndTitleFromComicInfo(file2)
+                .Returns(new ExtractedMetadata("Test Series", "5.2"));
+
+            // Act - Merge the chapters
+            var mergedFile = Path.Combine(tempDir, "Chapter 5.cbz");
+            var mergeInfo = await merger.MergeChapterPartsAsync(foundChapters, mergedFile);
+
+            // Verify merge info contains original ComicInfo.xml
+            Assert.NotNull(mergeInfo.OriginalParts);
+            Assert.Equal(2, mergeInfo.OriginalParts.Count);
+            
+            var part1 = mergeInfo.OriginalParts.First(p => p.FileName == "Chapter 5.1.cbz");
+            var part2 = mergeInfo.OriginalParts.First(p => p.FileName == "Chapter 5.2.cbz");
+            
+            Assert.Contains("This is a detailed summary", part1.OriginalComicInfoXml);
+            Assert.Contains("CommunityRating>5", part1.OriginalComicInfoXml);
+            Assert.Contains("This is another detailed summary", part2.OriginalComicInfoXml);
+            Assert.Contains("CommunityRating>4", part2.OriginalComicInfoXml);
+
+            // Act - Restore the chapters
+            var restoredChapters = await merger.RestoreChapterPartsAsync(
+                mergedFile, mergeInfo.OriginalParts, tempDir);
+
+            // Assert - Verify restored ComicInfo.xml content
+            Assert.Equal(2, restoredChapters.Count);
+
+            var restoredFile1 = Path.Combine(tempDir, "Chapter 5.1.cbz");
+            var restoredFile2 = Path.Combine(tempDir, "Chapter 5.2.cbz");
+
+            Assert.True(File.Exists(restoredFile1));
+            Assert.True(File.Exists(restoredFile2));
+
+            // Verify ComicInfo.xml content in restored files
+            VerifyComicInfoContent(restoredFile1, originalComicInfo1);
+            VerifyComicInfoContent(restoredFile2, originalComicInfo2);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task RestoreChapterParts_WithLegacyRecordsWithoutComicInfo_ShouldGenerateBasicMetadata()
+    {
+        // Arrange - Test backward compatibility with legacy records
+        var tempDir = Path.Combine(Path.GetTempPath(), "LegacyComicInfoTest_" + Guid.NewGuid());
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var logger = Substitute.For<ILogger<ChapterPartMerger>>();
+            var metadataHandler = Substitute.For<IMetadataHandlingService>();
+            var merger = new ChapterPartMerger(metadataHandler, logger);
+
+            // Create a merged file
+            var mergedFile = CreateTestCbzFile(tempDir, "Chapter 5.cbz", 6);
+
+            // Create legacy OriginalParts without OriginalComicInfoXml (simulating old records)
+            var legacyParts = new List<OriginalChapterPart>
+            {
+                new()
+                {
+                    FileName = "Chapter 5.1.cbz",
+                    StartPageIndex = 0,
+                    EndPageIndex = 2,
+                    Metadata = new ExtractedMetadata("Test Series", "5.1"),
+                    PageNames = new List<string> { "0000.jpg", "0001.jpg", "0002.jpg" },
+                    // Note: OriginalComicInfoXml is null (legacy record)
+                },
+                new()
+                {
+                    FileName = "Chapter 5.2.cbz",
+                    StartPageIndex = 3,
+                    EndPageIndex = 5,
+                    Metadata = new ExtractedMetadata("Test Series", "5.2"),
+                    PageNames = new List<string> { "0003.jpg", "0004.jpg", "0005.jpg" },
+                    // Note: OriginalComicInfoXml is null (legacy record)
+                }
+            };
+
+            // Configure metadata handler for legacy fallback
+            metadataHandler.When(x => x.WriteComicInfo(Arg.Any<ZipArchive>(), Arg.Any<ExtractedMetadata>()))
+                .Do(callInfo =>
+                {
+                    var archive = callInfo.Arg<ZipArchive>();
+                    var metadata = callInfo.Arg<ExtractedMetadata>();
+                    var entry = archive.CreateEntry("ComicInfo.xml");
+                    using var stream = entry.Open();
+                    using var writer = new StreamWriter(stream);
+                    writer.Write($"<ComicInfo><Series>{metadata.SeriesTitle}</Series><Number>{metadata.ChapterTitle}</Number></ComicInfo>");
+                });
+
+            // Act - Restore with legacy records
+            var restoredChapters = await merger.RestoreChapterPartsAsync(
+                mergedFile, legacyParts, tempDir);
+
+            // Assert - Verify fallback behavior
+            Assert.Equal(2, restoredChapters.Count);
+
+            // Verify metadata handler was called for legacy fallback
+            metadataHandler.Received(2).WriteComicInfo(Arg.Any<ZipArchive>(), Arg.Any<ExtractedMetadata>());
+
+            var restoredFile1 = Path.Combine(tempDir, "Chapter 5.1.cbz");
+            var restoredFile2 = Path.Combine(tempDir, "Chapter 5.2.cbz");
+
+            Assert.True(File.Exists(restoredFile1));
+            Assert.True(File.Exists(restoredFile2));
+
+            // Verify basic ComicInfo.xml was generated
+            VerifyComicInfoBasicContent(restoredFile1, "Test Series", "5.1");
+            VerifyComicInfoBasicContent(restoredFile2, "Test Series", "5.2");
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, true);
+        }
+    }
+
+    private string CreateTestCbzFileWithComicInfo(string directory, string fileName, int pageCount, string comicInfoXml)
+    {
+        var filePath = Path.Combine(directory, fileName);
+        using var archive = ZipFile.Open(filePath, ZipArchiveMode.Create);
+
+        // Add ComicInfo.xml
+        var comicInfoEntry = archive.CreateEntry("ComicInfo.xml");
+        using (var stream = comicInfoEntry.Open())
+        using (var writer = new StreamWriter(stream))
+        {
+            writer.Write(comicInfoXml);
+        }
+
+        // Add test images
+        for (int i = 0; i < pageCount; i++)
+        {
+            var entry = archive.CreateEntry($"{i:D4}.jpg");
+            using var stream = entry.Open();
+            GenerateTestImage().WriteToStream(stream, ".jpg");
+        }
+
+        return filePath;
+    }
+
+    private void VerifyComicInfoContent(string cbzFilePath, string expectedComicInfoXml)
+    {
+        using var archive = ZipFile.OpenRead(cbzFilePath);
+        var comicInfoEntry = archive.GetEntry("ComicInfo.xml");
+        
+        Assert.NotNull(comicInfoEntry);
+        
+        using var stream = comicInfoEntry.Open();
+        using var reader = new StreamReader(stream);
+        var actualComicInfo = reader.ReadToEnd();
+        
+        // Verify key elements are preserved
+        Assert.Contains("CommunityRating", actualComicInfo);
+        Assert.Contains("Summary", actualComicInfo);
+        Assert.Contains("Writer", actualComicInfo);
+        Assert.Contains("Tags", actualComicInfo);
+    }
+
+    private void VerifyComicInfoBasicContent(string cbzFilePath, string expectedSeries, string expectedNumber)
+    {
+        using var archive = ZipFile.OpenRead(cbzFilePath);
+        var comicInfoEntry = archive.GetEntry("ComicInfo.xml");
+        
+        Assert.NotNull(comicInfoEntry);
+        
+        using var stream = comicInfoEntry.Open();
+        using var reader = new StreamReader(stream);
+        var actualComicInfo = reader.ReadToEnd();
+        
+        Assert.Contains($"<Series>{expectedSeries}</Series>", actualComicInfo);
+        Assert.Contains($"<Number>{expectedNumber}</Number>", actualComicInfo);
+    }
+
+    private string CreateTestCbzFile(string directory, string fileName, int pageCount)
+    {
+        var filePath = Path.Combine(directory, fileName);
+        using var archive = ZipFile.Open(filePath, ZipArchiveMode.Create);
+
+        // Add test images
+        for (int i = 0; i < pageCount; i++)
+        {
+            var entry = archive.CreateEntry($"{i:D4}.jpg");
+            using var stream = entry.Open();
+            GenerateTestImage().WriteToStream(stream, ".jpg");
+        }
+
+        return filePath;
+    }
+
+    private Image GenerateTestImage()
+    {
+        try
+        {
+            return Image.Black(32, 32) + 128; // Gray test image
+        }
+        catch
+        {
+            // Fallback to minimal test image
+            return Image.Black(1, 1);
+        }
+    }
+}
+
+/// <summary>
+/// Tests for upscaled chapter handling during merge and restoration operations
+/// </summary>
+public class UpscaledChapterHandlingTests : IDisposable
+{
+    private readonly TestDatabaseHelper.TestDbContext _testDb;
+
+    public UpscaledChapterHandlingTests()
+    {
+        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+    }
+
+    public void Dispose()
+    {
+        _testDb?.Dispose();
+    }
+
+    private ApplicationDbContext CreateDbContext() => _testDb.Context;
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task RevertMergedChapter_WithUpscaledVersion_ShouldRestoreUpscaledParts()
+    {
+        // Arrange
+        using var context = CreateDbContext();
+        
+        var library = new Library
+        {
+            Name = "Test Library",
+            NotUpscaledLibraryPath = Path.GetTempPath(),
+            UpscaledLibraryPath = Path.Combine(Path.GetTempPath(), "upscaled")
+        };
+        
+        var manga = new Manga
+        {
+            PrimaryTitle = "Test Manga",
+            Library = library
+        };
+        
+        var upscalerProfile = new UpscalerProfile
+        {
+            Name = "Test Profile",
+            Scale = 2
+        };
+        
+        context.Libraries.Add(library);
+        context.MangaSeries.Add(manga);
+        context.UpscalerProfiles.Add(upscalerProfile);
+        await context.SaveChangesAsync();
+
+        // Create temporary directories
+        var notUpscaledDir = Path.Combine(Path.GetTempPath(), "test_not_upscaled_" + Guid.NewGuid());
+        var upscaledDir = Path.Combine(Path.GetTempPath(), "test_upscaled_" + Guid.NewGuid());
+        Directory.CreateDirectory(notUpscaledDir);
+        Directory.CreateDirectory(upscaledDir);
+        Directory.CreateDirectory(Path.Combine(upscaledDir, "Test Manga"));
+
+        try
+        {
+            library.NotUpscaledLibraryPath = notUpscaledDir;
+            library.UpscaledLibraryPath = upscaledDir;
+
+            // Create merged chapter with upscaled version
+            var mergedChapterPath = Path.Combine(notUpscaledDir, "Test Manga", "Chapter 5.cbz");
+            var upscaledMergedChapterPath = Path.Combine(upscaledDir, "Test Manga", "Chapter 5.cbz");
+            
+            Directory.CreateDirectory(Path.GetDirectoryName(mergedChapterPath)!);
+            
+            // Create regular merged file
+            CreateTestCbzFile(Path.GetDirectoryName(mergedChapterPath)!, "Chapter 5.cbz", 6);
+            
+            // Create upscaled merged file (simulating upscaler output)
+            CreateTestCbzFile(Path.GetDirectoryName(upscaledMergedChapterPath)!, "Chapter 5.cbz", 6);
+            
+            // Add upscaler.json to upscaled file
+            using (var archive = ZipFile.Open(upscaledMergedChapterPath, ZipArchiveMode.Update))
+            {
+                var upscalerEntry = archive.CreateEntry("upscaler.json");
+                using var stream = upscalerEntry.Open();
+                using var writer = new StreamWriter(stream);
+                await writer.WriteAsync("""{"profile": "Test Profile", "scale": 2}""");
+            }
+
+            var chapter = new Chapter
+            {
+                FileName = "Chapter 5.cbz",
+                RelativePath = Path.Combine("Test Manga", "Chapter 5.cbz"),
+                Manga = manga,
+                IsUpscaled = true,
+                UpscalerProfile = upscalerProfile
+            };
+            
+            var mergeInfo = new MergedChapterInfo
+            {
+                Chapter = chapter,
+                OriginalParts = new List<OriginalChapterPart>
+                {
+                    new()
+                    {
+                        FileName = "Chapter 5.1.cbz",
+                        StartPageIndex = 0,
+                        EndPageIndex = 2,
+                        Metadata = new ExtractedMetadata("Test Manga", "5.1"),
+                        PageNames = new List<string> { "0000.jpg", "0001.jpg", "0002.jpg" }
+                    },
+                    new()
+                    {
+                        FileName = "Chapter 5.2.cbz",
+                        StartPageIndex = 3,
+                        EndPageIndex = 5,
+                        Metadata = new ExtractedMetadata("Test Manga", "5.2"),
+                        PageNames = new List<string> { "0003.jpg", "0004.jpg", "0005.jpg" }
+                    }
+                }
+            };
+
+            context.Chapters.Add(chapter);
+            context.MergedChapterInfos.Add(mergeInfo);
+            await context.SaveChangesAsync();
+
+            // Create services
+            var logger = Substitute.For<ILogger<ChapterMergeRevertService>>();
+            var chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
+            var upscalerJsonService = Substitute.For<IUpscalerJsonHandlingService>();
+            var metadataHandler = Substitute.For<IMetadataHandlingService>();
+            var partMergerLogger = Substitute.For<ILogger<ChapterPartMerger>>();
+            
+            var chapterPartMerger = new ChapterPartMerger(metadataHandler, partMergerLogger);
+            var revertService = new ChapterMergeRevertService(
+                context, chapterPartMerger, chapterChangedNotifier, upscalerJsonService, logger);
+
+            // Act - Revert the merged chapter
+            var restoredChapters = await revertService.RevertMergedChapterAsync(chapter);
+
+            // Assert - Verify both regular and upscaled parts were restored
+            Assert.Equal(2, restoredChapters.Count);
+
+            // Verify regular restored files exist
+            Assert.True(File.Exists(Path.Combine(notUpscaledDir, "Test Manga", "Chapter 5.1.cbz")));
+            Assert.True(File.Exists(Path.Combine(notUpscaledDir, "Test Manga", "Chapter 5.2.cbz")));
+
+            // Verify upscaled restored files exist
+            Assert.True(File.Exists(Path.Combine(upscaledDir, "Test Manga", "Chapter 5.1.cbz")));
+            Assert.True(File.Exists(Path.Combine(upscaledDir, "Test Manga", "Chapter 5.2.cbz")));
+
+            // Verify merged files were deleted
+            Assert.False(File.Exists(mergedChapterPath));
+            Assert.False(File.Exists(upscaledMergedChapterPath));
+
+            // Verify upscaler.json was added to restored upscaled parts
+            upscalerJsonService.Received(2).WriteUpscalerJsonAsync(
+                Arg.Any<ZipArchive>(), 
+                Arg.Is<UpscalerProfile>(p => p.Name == "Test Profile"), 
+                Arg.Any<CancellationToken>());
+
+            // Verify database state
+            var remainingChapters = context.Chapters.Where(c => c.MangaId == manga.Id).ToList();
+            Assert.Equal(2, remainingChapters.Count);
+            Assert.All(remainingChapters, c => Assert.True(c.IsUpscaled));
+            Assert.All(remainingChapters, c => Assert.Equal(upscalerProfile.Id, c.UpscalerProfileId));
+        }
+        finally
+        {
+            if (Directory.Exists(notUpscaledDir))
+                Directory.Delete(notUpscaledDir, true);
+            if (Directory.Exists(upscaledDir))
+                Directory.Delete(upscaledDir, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task RevertMergedChapter_WithoutUpscaledVersion_ShouldOnlyRestoreRegularParts()
+    {
+        // Arrange
+        using var context = CreateDbContext();
+        
+        var library = new Library
+        {
+            Name = "Test Library",
+            NotUpscaledLibraryPath = Path.GetTempPath(),
+            UpscaledLibraryPath = null // No upscaled path
+        };
+        
+        var manga = new Manga
+        {
+            PrimaryTitle = "Test Manga",
+            Library = library
+        };
+        
+        context.Libraries.Add(library);
+        context.MangaSeries.Add(manga);
+        await context.SaveChangesAsync();
+
+        var tempDir = Path.Combine(Path.GetTempPath(), "test_regular_only_" + Guid.NewGuid());
+        Directory.CreateDirectory(tempDir);
+        Directory.CreateDirectory(Path.Combine(tempDir, "Test Manga"));
+
+        try
+        {
+            library.NotUpscaledLibraryPath = tempDir;
+
+            // Create merged chapter (regular only)
+            var mergedChapterPath = Path.Combine(tempDir, "Test Manga", "Chapter 5.cbz");
+            CreateTestCbzFile(Path.GetDirectoryName(mergedChapterPath)!, "Chapter 5.cbz", 6);
+
+            var chapter = new Chapter
+            {
+                FileName = "Chapter 5.cbz",
+                RelativePath = Path.Combine("Test Manga", "Chapter 5.cbz"),
+                Manga = manga,
+                IsUpscaled = false
+            };
+            
+            var mergeInfo = new MergedChapterInfo
+            {
+                Chapter = chapter,
+                OriginalParts = new List<OriginalChapterPart>
+                {
+                    new()
+                    {
+                        FileName = "Chapter 5.1.cbz",
+                        StartPageIndex = 0,
+                        EndPageIndex = 2,
+                        Metadata = new ExtractedMetadata("Test Manga", "5.1"),
+                        PageNames = new List<string> { "0000.jpg", "0001.jpg", "0002.jpg" }
+                    },
+                    new()
+                    {
+                        FileName = "Chapter 5.2.cbz",
+                        StartPageIndex = 3,
+                        EndPageIndex = 5,
+                        Metadata = new ExtractedMetadata("Test Manga", "5.2"),
+                        PageNames = new List<string> { "0003.jpg", "0004.jpg", "0005.jpg" }
+                    }
+                }
+            };
+
+            context.Chapters.Add(chapter);
+            context.MergedChapterInfos.Add(mergeInfo);
+            await context.SaveChangesAsync();
+
+            // Create services
+            var logger = Substitute.For<ILogger<ChapterMergeRevertService>>();
+            var chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
+            var upscalerJsonService = Substitute.For<IUpscalerJsonHandlingService>();
+            var metadataHandler = Substitute.For<IMetadataHandlingService>();
+            var partMergerLogger = Substitute.For<ILogger<ChapterPartMerger>>();
+            
+            var chapterPartMerger = new ChapterPartMerger(metadataHandler, partMergerLogger);
+            var revertService = new ChapterMergeRevertService(
+                context, chapterPartMerger, chapterChangedNotifier, upscalerJsonService, logger);
+
+            // Act - Revert the merged chapter
+            var restoredChapters = await revertService.RevertMergedChapterAsync(chapter);
+
+            // Assert - Verify only regular parts were restored
+            Assert.Equal(2, restoredChapters.Count);
+
+            // Verify regular restored files exist
+            Assert.True(File.Exists(Path.Combine(tempDir, "Test Manga", "Chapter 5.1.cbz")));
+            Assert.True(File.Exists(Path.Combine(tempDir, "Test Manga", "Chapter 5.2.cbz")));
+
+            // Verify merged file was deleted
+            Assert.False(File.Exists(mergedChapterPath));
+
+            // Verify no upscaler.json calls were made
+            upscalerJsonService.DidNotReceive().WriteUpscalerJsonAsync(
+                Arg.Any<ZipArchive>(), Arg.Any<UpscalerProfile>(), Arg.Any<CancellationToken>());
+
+            // Verify database state
+            var remainingChapters = context.Chapters.Where(c => c.MangaId == manga.Id).ToList();
+            Assert.Equal(2, remainingChapters.Count);
+            Assert.All(remainingChapters, c => Assert.False(c.IsUpscaled));
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, true);
+        }
+    }
+
+    private string CreateTestCbzFile(string directory, string fileName, int pageCount)
+    {
+        var filePath = Path.Combine(directory, fileName);
+        using var archive = ZipFile.Open(filePath, ZipArchiveMode.Create);
+
+        // Add test images
+        for (int i = 0; i < pageCount; i++)
+        {
+            var entry = archive.CreateEntry($"{i:D4}.jpg");
+            using var stream = entry.Open();
+            GenerateTestImage().WriteToStream(stream, ".jpg");
+        }
+
+        return filePath;
+    }
+
+    private Image GenerateTestImage()
+    {
+        try
+        {
+            return Image.Black(32, 32) + 128; // Gray test image
+        }
+        catch
+        {
+            // Fallback to minimal test image
+            return Image.Black(1, 1);
         }
     }
 }

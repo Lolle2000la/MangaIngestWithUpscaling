@@ -623,6 +623,15 @@
 
         await LoadChapters();
 
+        // Set up the reactive binding BEFORE updating merge cache so UI elements exist
+        chapters.Connect()
+            .Sort(new NaturalSortComparer<ChapterItem>(ci => ci.ExtractedMetadata?.ChapterTitle ?? string.Empty))
+            .Bind(out chapterItems)
+            .Subscribe();
+
+        // Force initial cache update and UI state refresh to ensure merge buttons appear
+        await ForceUpdateMergePossibilitiesAsync();
+
         _ = Task.Run(async () => { return await LibraryIntegrityChecker.CheckIntegrity(Manga); }).ContinueWith(async t =>
         {
             if (t.IsFaulted)
@@ -642,14 +651,6 @@
                 });
             }
         }, TaskScheduler.FromCurrentSynchronizationContext());
-
-        chapters.Connect()
-            .Sort(new NaturalSortComparer<ChapterItem>(ci => ci.ExtractedMetadata?.ChapterTitle ?? string.Empty))
-            .Bind(out chapterItems)
-            .Subscribe();
-
-        // Update merge possibilities cache immediately after initial load
-        await UpdateMergePossibilitiesAsync();
     }
 
     private async Task<bool> LoadChapters()
@@ -713,9 +714,6 @@
                 continue;
             }
         }
-
-        // Update merge possibilities cache after loading chapters (immediate call for better UX)
-        await UpdateMergePossibilitiesAsync();
 
         return loadingFailed;
     }
