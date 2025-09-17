@@ -1149,26 +1149,27 @@ public class ComicInfoPreservationTests : IDisposable
 
             var foundChapters = new List<FoundChapter>
             {
-                new("Chapter 5.1.cbz", file1, ChapterStorageType.Cbz, new ExtractedMetadata("Test Series", "5.1")),
-                new("Chapter 5.2.cbz", file2, ChapterStorageType.Cbz, new ExtractedMetadata("Test Series", "5.2"))
+                new("Chapter 5.1.cbz", file1, ChapterStorageType.Cbz, new ExtractedMetadata("Test Series", "Chapter 5.1", "5.1")),
+                new("Chapter 5.2.cbz", file2, ChapterStorageType.Cbz, new ExtractedMetadata("Test Series", "Chapter 5.2", "5.2"))
             };
 
             // Configure metadata handler to return the original ComicInfo.xml content
             metadataHandler.GetSeriesAndTitleFromComicInfo(file1)
-                .Returns(new ExtractedMetadata("Test Series", "5.1"));
+                .Returns(new ExtractedMetadata("Test Series", "Chapter 5.1", "5.1"));
             metadataHandler.GetSeriesAndTitleFromComicInfo(file2)
-                .Returns(new ExtractedMetadata("Test Series", "5.2"));
+                .Returns(new ExtractedMetadata("Test Series", "Chapter 5.2", "5.2"));
 
             // Act - Merge the chapters
             var mergedFile = Path.Combine(tempDir, "Chapter 5.cbz");
-            var mergeInfo = await merger.MergeChapterPartsAsync(foundChapters, mergedFile);
+            var targetMetadata = new ExtractedMetadata("Test Series", "Chapter 5", "5");
+            var mergeInfo = await merger.MergeChapterPartsAsync(foundChapters, tempDir, mergedFile, "5", targetMetadata);
 
             // Verify merge info contains original ComicInfo.xml
-            Assert.NotNull(mergeInfo.OriginalParts);
-            Assert.Equal(2, mergeInfo.OriginalParts.Count);
+            Assert.NotNull(mergeInfo.originalParts);
+            Assert.Equal(2, mergeInfo.originalParts.Count);
             
-            var part1 = mergeInfo.OriginalParts.First(p => p.FileName == "Chapter 5.1.cbz");
-            var part2 = mergeInfo.OriginalParts.First(p => p.FileName == "Chapter 5.2.cbz");
+            var part1 = mergeInfo.originalParts.First(p => p.FileName == "Chapter 5.1.cbz");
+            var part2 = mergeInfo.originalParts.First(p => p.FileName == "Chapter 5.2.cbz");
             
             Assert.Contains("This is a detailed summary", part1.OriginalComicInfoXml);
             Assert.Contains("CommunityRating>5", part1.OriginalComicInfoXml);
@@ -1177,7 +1178,7 @@ public class ComicInfoPreservationTests : IDisposable
 
             // Act - Restore the chapters
             var restoredChapters = await merger.RestoreChapterPartsAsync(
-                mergedFile, mergeInfo.OriginalParts, tempDir);
+                mergedFile, mergeInfo.originalParts, tempDir);
 
             // Assert - Verify restored ComicInfo.xml content
             Assert.Equal(2, restoredChapters.Count);
@@ -1224,7 +1225,7 @@ public class ComicInfoPreservationTests : IDisposable
                     FileName = "Chapter 5.1.cbz",
                     StartPageIndex = 0,
                     EndPageIndex = 2,
-                    Metadata = new ExtractedMetadata("Test Series", "5.1"),
+                    Metadata = new ExtractedMetadata("Test Series", "Chapter 5.1", "5.1"),
                     PageNames = new List<string> { "0000.jpg", "0001.jpg", "0002.jpg" },
                     // Note: OriginalComicInfoXml is null (legacy record)
                 },
@@ -1233,7 +1234,7 @@ public class ComicInfoPreservationTests : IDisposable
                     FileName = "Chapter 5.2.cbz",
                     StartPageIndex = 3,
                     EndPageIndex = 5,
-                    Metadata = new ExtractedMetadata("Test Series", "5.2"),
+                    Metadata = new ExtractedMetadata("Test Series", "Chapter 5.2", "5.2"),
                     PageNames = new List<string> { "0003.jpg", "0004.jpg", "0005.jpg" },
                     // Note: OriginalComicInfoXml is null (legacy record)
                 }
@@ -1248,7 +1249,7 @@ public class ComicInfoPreservationTests : IDisposable
                     var entry = archive.CreateEntry("ComicInfo.xml");
                     using var stream = entry.Open();
                     using var writer = new StreamWriter(stream);
-                    writer.Write($"<ComicInfo><Series>{metadata.SeriesTitle}</Series><Number>{metadata.ChapterTitle}</Number></ComicInfo>");
+                    writer.Write($"<ComicInfo><Series>{metadata.Series}</Series><Number>{metadata.Number}</Number></ComicInfo>");
                 });
 
             // Act - Restore with legacy records
@@ -1406,7 +1407,10 @@ public class UpscaledChapterHandlingTests : IDisposable
         var upscalerProfile = new UpscalerProfile
         {
             Name = "Test Profile",
-            Scale = 2
+            UpscalerMethod = UpscalerMethod.MangaJaNai,
+            ScalingFactor = ScaleFactor.TwoX,
+            CompressionFormat = CompressionFormat.Png,
+            Quality = 85
         };
         
         context.Libraries.Add(library);
@@ -1466,7 +1470,7 @@ public class UpscaledChapterHandlingTests : IDisposable
                         FileName = "Chapter 5.1.cbz",
                         StartPageIndex = 0,
                         EndPageIndex = 2,
-                        Metadata = new ExtractedMetadata("Test Manga", "5.1"),
+                        Metadata = new ExtractedMetadata("Test Manga", "Chapter 5.1", "5.1"),
                         PageNames = new List<string> { "0000.jpg", "0001.jpg", "0002.jpg" }
                     },
                     new()
@@ -1474,7 +1478,7 @@ public class UpscaledChapterHandlingTests : IDisposable
                         FileName = "Chapter 5.2.cbz",
                         StartPageIndex = 3,
                         EndPageIndex = 5,
-                        Metadata = new ExtractedMetadata("Test Manga", "5.2"),
+                        Metadata = new ExtractedMetadata("Test Manga", "Chapter 5.2", "5.2"),
                         PageNames = new List<string> { "0003.jpg", "0004.jpg", "0005.jpg" }
                     }
                 }
@@ -1588,7 +1592,7 @@ public class UpscaledChapterHandlingTests : IDisposable
                         FileName = "Chapter 5.1.cbz",
                         StartPageIndex = 0,
                         EndPageIndex = 2,
-                        Metadata = new ExtractedMetadata("Test Manga", "5.1"),
+                        Metadata = new ExtractedMetadata("Test Manga", "Chapter 5.1", "5.1"),
                         PageNames = new List<string> { "0000.jpg", "0001.jpg", "0002.jpg" }
                     },
                     new()
@@ -1596,7 +1600,7 @@ public class UpscaledChapterHandlingTests : IDisposable
                         FileName = "Chapter 5.2.cbz",
                         StartPageIndex = 3,
                         EndPageIndex = 5,
-                        Metadata = new ExtractedMetadata("Test Manga", "5.2"),
+                        Metadata = new ExtractedMetadata("Test Manga", "Chapter 5.2", "5.2"),
                         PageNames = new List<string> { "0003.jpg", "0004.jpg", "0005.jpg" }
                     }
                 }
