@@ -684,10 +684,26 @@ public partial class ChapterPartMerger(
 
                         if (mergedEntry != null)
                         {
-                            // Restore original page name if available
-                            string originalPageName = i - originalPart.StartPageIndex < originalPart.PageNames.Count
-                                ? originalPart.PageNames[i - originalPart.StartPageIndex]
-                                : mergedEntry.Name;
+                            // Restore original page name if available (backward compatibility for legacy records)
+                            string originalPageName;
+                            int pageIndexWithinPart = i - originalPart.StartPageIndex;
+                            
+                            if (originalPart.PageNames != null && 
+                                pageIndexWithinPart >= 0 && 
+                                pageIndexWithinPart < originalPart.PageNames.Count)
+                            {
+                                // Use original page name from stored metadata
+                                originalPageName = originalPart.PageNames[pageIndexWithinPart];
+                                logger.LogDebug("Using stored original page name: {PageName} for page index {PageIndex}", 
+                                    originalPageName, i);
+                            }
+                            else
+                            {
+                                // Fallback for legacy records without PageNames or incomplete data
+                                originalPageName = $"{pageIndexWithinPart:D4}{Path.GetExtension(mergedEntry.Name)}";
+                                logger.LogDebug("Using generated page name: {PageName} for page index {PageIndex} (legacy compatibility)", 
+                                    originalPageName, i);
+                            }
 
                             ZipArchiveEntry partEntry = partArchive.CreateEntry(originalPageName);
                             using (Stream mergedStream = mergedEntry.Open())

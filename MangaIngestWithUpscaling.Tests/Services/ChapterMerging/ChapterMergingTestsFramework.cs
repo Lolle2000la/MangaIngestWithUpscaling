@@ -750,6 +750,56 @@ public class ChapterPartMergerTests : IDisposable
         Assert.Equal(expectedPageCount, imageEntries.Count);
     }
 
+    /// <summary>
+    /// Tests that chapter restoration handles missing PageNames gracefully (backward compatibility)
+    /// </summary>
+    [Fact]
+    public async Task RestoreChapterPartsAsync_WithLegacyRecordMissingPageNames_ShouldGeneratePageNames()
+    {
+        // Arrange
+        string mergedFile = Path.Combine(_tempDir, "legacy_merged_chapter.cbz");
+        CreateMergedTestCbzFile(mergedFile, new[] { "0000.jpg", "0001.jpg", "0002.jpg", "0003.jpg" });
+
+        // Create legacy-style OriginalChapterParts without PageNames (simulating old records)
+        var legacyOriginalParts = new List<OriginalChapterPart>
+        {
+            new()
+            {
+                FileName = "Chapter_20.1.cbz",
+                ChapterNumber = "20.1",
+                StartPageIndex = 0,
+                EndPageIndex = 1,
+                PageNames = new List<string>(), // Empty - simulating legacy record
+                Metadata = new ExtractedMetadata("Test Chapter 20.1", null, null)
+            },
+            new()
+            {
+                FileName = "Chapter_20.2.cbz", 
+                ChapterNumber = "20.2",
+                StartPageIndex = 2,
+                EndPageIndex = 3,
+                PageNames = new List<string>(), // Empty - simulating legacy record
+                Metadata = new ExtractedMetadata("Test Chapter 20.2", null, null)
+            }
+        };
+
+        // Act
+        List<FoundChapter> restoredChapters = await _chapterPartMerger.RestoreChapterPartsAsync(
+            mergedFile, legacyOriginalParts, _tempDir);
+
+        // Assert
+        Assert.Equal(2, restoredChapters.Count);
+
+        // Verify that the restoration worked despite missing PageNames
+        string part1Path = Path.Combine(_tempDir, "Chapter_20.1.cbz");
+        Assert.True(File.Exists(part1Path));
+        VerifyRestoredChapterPageCount(part1Path, 2);
+
+        string part2Path = Path.Combine(_tempDir, "Chapter_20.2.cbz");
+        Assert.True(File.Exists(part2Path));
+        VerifyRestoredChapterPageCount(part2Path, 2);
+    }
+
     #endregion
 }
 

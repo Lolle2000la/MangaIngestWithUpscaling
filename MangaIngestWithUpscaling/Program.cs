@@ -317,6 +317,18 @@ using (var scope = app.Services.CreateScope())
         await dbContext.PersistedTasks.Where(task => task.Status == PersistedTaskStatus.Processing)
             .ExecuteUpdateAsync(s =>
                 s.SetProperty(p => p.Status, p => PersistedTaskStatus.Pending));
+
+        // Validate and upgrade existing merged chapter records for backward compatibility
+        try
+        {
+            var backwardCompatibilityService = scope.ServiceProvider.GetRequiredService<MangaIngestWithUpscaling.Services.ChapterMerging.IBackwardCompatibilityService>();
+            await backwardCompatibilityService.ValidateAndUpgradeExistingRecordsAsync();
+            logger.LogDebug("Backward compatibility validation completed successfully.");
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Backward compatibility validation failed, but application will continue. Some merge functionality may be affected for existing records.");
+        }
     }
     catch (Exception ex)
     {
