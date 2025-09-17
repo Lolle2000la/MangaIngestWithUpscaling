@@ -1182,10 +1182,9 @@ public class ComicInfoPreservationTests : IDisposable
                 });
 
             // Act - Merge the chapters
-            var mergedFile = Path.Combine(tempDir, "Chapter 5.cbz");
             var targetMetadata = new ExtractedMetadata("Test Series", "Chapter 5", "5");
             (FoundChapter mergedChapter, List<OriginalChapterPart> originalParts) mergeInfo =
-                await merger.MergeChapterPartsAsync(foundChapters, tempDir, mergedFile, "5", targetMetadata);
+                await merger.MergeChapterPartsAsync(foundChapters, tempDir, tempDir, "5", targetMetadata);
 
             // Verify merge info contains original ComicInfo.xml
             Assert.NotNull(mergeInfo.originalParts);
@@ -1203,7 +1202,13 @@ public class ComicInfoPreservationTests : IDisposable
             await Task.Delay(100);
 
             // Verify merged file exists and is accessible
+            string mergedFile = Path.Combine(tempDir, mergeInfo.mergedChapter.RelativePath);
             Assert.True(File.Exists(mergedFile));
+
+            // Delete the original files to simulate real-world restoration scenario
+            // (In production, merged chapters replace the original parts)
+            File.Delete(file1);
+            File.Delete(file2);
 
             // Act - Restore the chapters
             var restoredChapters = await merger.RestoreChapterPartsAsync(
