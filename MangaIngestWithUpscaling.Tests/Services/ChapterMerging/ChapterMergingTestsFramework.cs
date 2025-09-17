@@ -434,6 +434,7 @@ public class ChapterPartMergerTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Unit")]
     public async Task RestoreChapterPartsAsync_WithDifferentNamingConventions_ShouldHandleAllFormats()
     {
         // Arrange - Test different page naming conventions in merged files
@@ -490,6 +491,7 @@ public class ChapterPartMergerTests : IDisposable
     /// Tests that restore works even when merged files use inconsistent page numbering
     /// </summary>
     [Fact]
+    [Trait("Category", "Unit")]
     public async Task RestoreChapterPartsAsync_WithInconsistentPageNumbering_ShouldFallbackToPositionalMatching()
     {
         // Arrange - Create a merged file with non-sequential or non-standard page names
@@ -539,6 +541,7 @@ public class ChapterPartMergerTests : IDisposable
     /// that rely entirely on natural sorting order
     /// </summary>
     [Fact]
+    [Trait("Category", "Unit")]
     public async Task RestoreChapterPartsAsync_WithCompletelyNonNumericNames_ShouldUseNaturalSorting()
     {
         // Arrange - Create merged file with descriptive, non-numeric page names
@@ -591,6 +594,7 @@ public class ChapterPartMergerTests : IDisposable
     /// Tests various edge cases of page naming that might be found in real-world CBZ files
     /// </summary>
     [Fact]
+    [Trait("Category", "Unit")]
     public async Task RestoreChapterPartsAsync_WithMixedNamingConventions_ShouldHandleAllFormats()
     {
         // Arrange - Test mixed naming conventions in a single file
@@ -757,6 +761,7 @@ public class ChapterPartMergerTests : IDisposable
     /// Tests that chapter restoration handles missing PageNames gracefully (backward compatibility)
     /// </summary>
     [Fact]
+    [Trait("Category", "Unit")]
     public async Task RestoreChapterPartsAsync_WithLegacyRecordMissingPageNames_ShouldGeneratePageNames()
     {
         // Arrange
