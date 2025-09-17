@@ -51,4 +51,51 @@ public interface IChapterMergeCoordinator
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Dictionary of merge groups, where key is base chapter number and value is list of chapters to merge</returns>
     Task<Dictionary<string, List<Chapter>>> GetValidMergeGroupsAsync(List<Chapter> selectedChapters, bool includeLatestChapters = false, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Checks if a chapter can be added to an existing merged chapter.
+    /// </summary>
+    /// <param name="chapter">The chapter to check</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>True if the chapter can be added to an existing merged chapter</returns>
+    Task<bool> CanChapterBeAddedToExistingMergedAsync(Chapter chapter, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets all possible merge actions for the given chapters, including both new merges and additions to existing merged chapters.
+    /// </summary>
+    /// <param name="chapters">The chapters to analyze</param>
+    /// <param name="includeLatestChapters">Whether to include latest chapters in the analysis</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Information about all possible merge actions</returns>
+    Task<MergeActionInfo> GetPossibleMergeActionsAsync(List<Chapter> chapters, bool includeLatestChapters = false, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Checks if a chapter part has already been merged into another chapter.
+    /// </summary>
+    /// <param name="chapterFileName">The filename of the chapter to check</param>
+    /// <param name="manga">The manga containing the chapter</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>True if the chapter part has already been merged</returns>
+    Task<bool> IsChapterPartAlreadyMergedAsync(string chapterFileName, Manga manga, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Information about possible merge actions for chapters
+/// </summary>
+public class MergeActionInfo
+{
+    /// <summary>
+    /// Chapters that can form new merge groups
+    /// </summary>
+    public Dictionary<string, List<Chapter>> NewMergeGroups { get; set; } = new();
+
+    /// <summary>
+    /// Chapters that can be added to existing merged chapters
+    /// </summary>
+    public Dictionary<string, List<Chapter>> AdditionsToExistingMerged { get; set; } = new();
+
+    /// <summary>
+    /// Whether any merge actions are possible
+    /// </summary>
+    public bool HasAnyMergePossibilities => NewMergeGroups.Any() || AdditionsToExistingMerged.Any();
 }
