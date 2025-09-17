@@ -26,12 +26,15 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
     ///     v2: Updated to torch==2.7.1, torchvision==0.22.1, unified installation approach
     ///     v3: Added Intel XPU support with PyTorch XPU backend from Intel's repository
     ///     v4: Added packaging==25.0 as an explicit dependency
+    ///     v5: Added CUDA 12.8 support with cu128 PyTorch wheel index
+    ///     v6: Updated to torch==2.8.0, torchvision==0.23.0 for latest PyTorch with proper CUDA 12.8 support
+    ///     v7: Did a partial rollback for the standard cuda version for compatibility reasons.
     ///     When updating dependencies:
     ///     1. Update the package versions in InstallPythonPackages method
     ///     2. Increment this ENVIRONMENT_VERSION constant
     ///     3. Add a comment above describing the changes
     /// </summary>
-    private const int ENVIRONMENT_VERSION = 4;
+    private const int ENVIRONMENT_VERSION = 7;
 
     public static PythonEnvironment? Environment { get; set; }
 
@@ -137,69 +140,161 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         CancellationToken? cancellationToken = null,
         TimeSpan? timeout = null)
     {
-        using var process = new Process();
-        process.StartInfo.FileName = environment.PythonExecutablePath;
-        process.StartInfo.Arguments = $"{script} {arguments}";
-        process.StartInfo.RedirectStandardOutput = true;
-        process.StartInfo.RedirectStandardError = true;
-        process.StartInfo.UseShellExecute = false;
-        process.StartInfo.CreateNoWindow = true;
-        process.StartInfo.StandardOutputEncoding = Encoding.UTF8;
-        process.StartInfo.StandardErrorEncoding = Encoding.UTF8;
-        process.StartInfo.WorkingDirectory = environment.DesiredWorkindDirectory;
+        var sb = new StringBuilder();
+        await RunPythonScriptStreaming(environment, script, arguments, line =>
+        {
+            sb.AppendLine(line);
+            return Task.CompletedTask;
+        }, cancellationToken, timeout);
+        return sb.ToString();
+    }
 
-        var outputBuilder = new StringBuilder();
+    public Task RunPythonScriptStreaming(string script, string arguments, Func<string, Task> onStdout,
+        CancellationToken? cancellationToken = null, TimeSpan? timeout = null)
+    {
+        if (Environment == null)
+        {
+            throw new InvalidOperationException(
+                "Python environment is not prepared. Call PreparePythonEnvironment first.");
+        }
+
+        return RunPythonScriptStreaming(Environment, script, arguments, onStdout, cancellationToken, timeout);
+    }
+
+    public async Task RunPythonScriptStreaming(PythonEnvironment environment, string script, string arguments,
+        Func<string, Task> onStdout, CancellationToken? cancellationToken = null, TimeSpan? timeout = null)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken ?? CancellationToken.None);
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = environment.PythonExecutablePath,
+            Arguments = $"\"{script}\" {arguments}",
+            WorkingDirectory = environment.DesiredWorkindDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8
+        };
+
+        using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         var errorBuilder = new StringBuilder();
-        TimeSpan _timeout = timeout ?? TimeSpan.FromSeconds(60);
         DateTime lastActivity = DateTime.UtcNow;
 
-        process.Start();
+        void updateActivity() => lastActivity = DateTime.UtcNow;
 
-        // Start reading output streams
-        Task readOutput = ReadStreamAsync(process.StandardOutput, outputBuilder, () => lastActivity = DateTime.UtcNow);
-        Task readError = ReadStreamAsync(process.StandardError, errorBuilder, () => lastActivity = DateTime.UtcNow);
+        if (!process.Start())
+        {
+            throw new InvalidOperationException("Failed to start python process");
+        }
+
+        DataReceivedEventHandler? outputHandler = null;
+        DataReceivedEventHandler? errorHandler = null;
 
         try
         {
-            while (true)
+            outputHandler = async (_, e) =>
             {
-                cancellationToken?.ThrowIfCancellationRequested();
-
-                // Check timeout every second
-                if (DateTime.UtcNow - lastActivity > _timeout)
+                if (e.Data == null)
                 {
-                    process.Kill(true);
-                    throw new TimeoutException(
-                        $"Process timed out after {_timeout.TotalSeconds} seconds of inactivity.\n" +
-                        $"Partial error output:\n{errorBuilder}\n\nPartial standard output{outputBuilder}");
+                    return;
                 }
 
-                if (process.HasExited)
+                updateActivity();
+                try { await onStdout(e.Data); }
+                catch
                 {
-                    await Task.WhenAll(readOutput, readError);
-                    break;
+                    /* swallow to avoid crashing reader */
+                }
+            };
+            errorHandler = (_, e) =>
+            {
+                if (e.Data == null)
+                {
+                    return;
                 }
 
-                await Task.Delay(1000, cancellationToken ?? CancellationToken.None);
+                updateActivity();
+                lock (errorBuilder)
+                {
+                    errorBuilder.AppendLine(e.Data);
+                }
+            };
+
+            process.OutputDataReceived += outputHandler;
+            process.ErrorDataReceived += errorHandler;
+
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            // Monitor for timeout based on activity
+            while (!process.HasExited)
+            {
+                await Task.Delay(200, cts.Token);
+                if (timeout.HasValue && DateTime.UtcNow - lastActivity > timeout.Value)
+                {
+                    try { process.Kill(true); }
+                    catch { }
+
+                    string err;
+                    lock (errorBuilder)
+                    {
+                        err = errorBuilder.ToString();
+                    }
+
+                    throw new TimeoutException($"Python process timed out after {timeout.Value} of no output:\n" +
+                                               $"{err}");
+                }
             }
+
+            // Ensure all output drained
+            await Task.Delay(50, cts.Token);
 
             if (process.ExitCode != 0)
             {
-                throw new InvalidOperationException(
-                    $"Python process failed with code {process.ExitCode}\n" +
-                    $"Error output:\n{errorBuilder}\n\nPartial standard output{outputBuilder}");
-            }
+                string err;
+                lock (errorBuilder)
+                {
+                    err = errorBuilder.ToString();
+                }
 
-            return outputBuilder.ToString();
-        }
-        catch (Exception)
-        {
-            process.Kill(true);
-            throw;
+                throw new InvalidOperationException($"Python process exited with code {process.ExitCode}:\n" +
+                                                    $"{err}");
+            }
         }
         finally
         {
-            process.Kill(true);
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.CancelOutputRead();
+                }
+            }
+            catch { }
+
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.CancelErrorRead();
+                }
+            }
+            catch { }
+
+            if (outputHandler is not null)
+            {
+                try { process.OutputDataReceived -= outputHandler; }
+                catch { }
+            }
+
+            if (errorHandler is not null)
+            {
+                try { process.ErrorDataReceived -= errorHandler; }
+                catch { }
+            }
         }
     }
 
@@ -252,7 +347,8 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         try
         {
             var stateJson = await File.ReadAllTextAsync(environmentStatePath);
-            var state = JsonSerializer.Deserialize<EnvironmentState>(stateJson);
+            EnvironmentState? state =
+                JsonSerializer.Deserialize(stateJson, PythonServiceJsonContext.Default.EnvironmentState);
 
             if (state == null)
             {
@@ -300,9 +396,14 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
 
         process.Start();
 
-        while (!process.HasExited && !process.StandardOutput.EndOfStream)
+        string? line;
+
+        while (!process.HasExited && (line = await process.StandardOutput.ReadLineAsync()) is not null)
         {
-            logger.LogInformation(await process.StandardOutput.ReadLineAsync() ?? "<No output>");
+            if (!string.IsNullOrEmpty(line))
+            {
+                logger.LogInformation(line);
+            }
         }
 
         await process.WaitForExitAsync();
@@ -328,22 +429,27 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
                 "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
                 "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
                 "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 --no-warn-script-location",
+            GpuBackend.CUDA_12_8 =>
+                "install torch==2.8.0 torchvision==0.23.0 --extra-index-url https://download.pytorch.org/whl/cu128 " +
+                "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
+                "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
+                "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 --no-warn-script-location",
             GpuBackend.ROCm =>
-                "install torch==2.7.1 torchvision==0.22.1 --extra-index-url https://download.pytorch.org/whl/rocm6.3 " +
+                "install torch==2.8.0 torchvision==0.23.0 --extra-index-url https://download.pytorch.org/whl/rocm6.4 " +
                 "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
                 "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
                 "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 --no-warn-script-location",
             GpuBackend.XPU =>
-                "install torch==2.7.1 torchvision==0.22.1 --extra-index-url https://download.pytorch.org/whl/xpu " +
+                "install torch==2.8.0 torchvision==0.23.0 --extra-index-url https://download.pytorch.org/whl/xpu " +
                 "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
                 "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
                 "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 --no-warn-script-location",
             GpuBackend.CPU =>
-                "install torch==2.7.1 torchvision==0.22.1 --extra-index-url https://download.pytorch.org/whl/cpu " +
+                "install torch==2.8.0 torchvision==0.23.0 --extra-index-url https://download.pytorch.org/whl/cpu " +
                 "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
                 "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
                 "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 --no-warn-script-location",
-            _ => "install torch==2.7.1 torchvision==0.22.1 " +
+            _ => "install torch==2.8.0 torchvision==0.23.0 " +
                  "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
                  "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
                  "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 --no-warn-script-location"
@@ -351,10 +457,6 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
 
         logger.LogInformation("Installing PyTorch and dependencies with {Backend} backend", targetBackend);
         await RunPipCommand(pythonPath, packagesCommand, environmentPath);
-
-        // Install backend source
-        await RunPipCommand(pythonPath, $"install \"{backendSrcDirectory}\" --no-warn-script-location",
-            environmentPath);
     }
 
     private async Task RunPipCommand(string pythonPath, string pipArgs, string environmentPath)
@@ -382,9 +484,9 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         process.StartInfo.WorkingDirectory = Directory.GetParent(environmentPath)!.FullName;
 
         process.Start();
-        while (!process.HasExited && !process.StandardOutput.EndOfStream)
+        string? line;
+        while (!process.HasExited && (line = await process.StandardOutput.ReadLineAsync()) is not null)
         {
-            var line = await process.StandardOutput.ReadLineAsync();
             if (!string.IsNullOrEmpty(line))
             {
                 logger.LogDebug("Pip: {Line}", line);
@@ -419,7 +521,7 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
                 ENVIRONMENT_VERSION
             );
 
-            var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
+            string json = JsonSerializer.Serialize(state, PythonServiceJsonContext.Default.EnvironmentState);
             await File.WriteAllTextAsync(environmentStatePath, json);
 
             logger.LogInformation("Saved environment state with {Backend} backend, version {Version}", installedBackend,
@@ -487,25 +589,5 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         }
 
         return "Unknown";
-    }
-
-    private async Task ReadStreamAsync(
-        StreamReader reader,
-        StringBuilder builder,
-        Action updateActivity)
-    {
-        try
-        {
-            while (true)
-            {
-                var line = await reader.ReadLineAsync();
-                if (line == null) break;
-
-                builder.AppendLine(line);
-                logger.LogDebug("Python Output: {line}", line);
-                updateActivity();
-            }
-        }
-        catch (ObjectDisposedException) { } // Handle process disposal
     }
 }

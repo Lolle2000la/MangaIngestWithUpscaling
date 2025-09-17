@@ -1,4 +1,4 @@
-﻿using MangaIngestWithUpscaling.Shared.Helpers;
+﻿using MangaIngestWithUpscaling.Shared.Constants;
 using Microsoft.Extensions.Logging;
 using System.IO.Compression;
 using System.Xml.Linq;
@@ -93,15 +93,15 @@ public class MetadataHandlingService(
             using var archive2 = ZipFile.OpenRead(file2);
 
             var files1 = archive1.Entries
-                .Where(e => e.FullName.ToLowerInvariant()
-                    .EndsWithAny(".png", ".jpg", ".jpeg", ".avif", ".webp", ".bmp"))
+                .Where(e => ImageConstants.IsSupportedImageExtension(
+                    Path.GetExtension(e.FullName).ToLowerInvariant()))
                 .Select(e => Path.GetFileNameWithoutExtension(e.FullName)) // upscaled images can have different formats
                 .OrderBy(e => e)
                 .ToList();
 
             var files2 = archive2.Entries
-                .Where(e => e.FullName.ToLowerInvariant()
-                    .EndsWithAny(".png", ".jpg", ".jpeg", ".avif", ".webp", ".bmp"))
+                .Where(e => ImageConstants.IsSupportedImageExtension(
+                    Path.GetExtension(e.FullName).ToLowerInvariant()))
                 .Select(e => Path.GetFileNameWithoutExtension(e.FullName))
                 .OrderBy(e => e)
                 .ToList();
@@ -126,6 +126,57 @@ public class MetadataHandlingService(
                                 "Tried to compare \"{file1}\" to \"{file2}\"",
                 file1, file2);
             return false;
+        }
+    }
+
+    /// <inheritdoc/>
+    public PageDifferenceResult AnalyzePageDifferences(string? originalFile, string? upscaledFile)
+    {
+        if (string.IsNullOrEmpty(originalFile) || string.IsNullOrEmpty(upscaledFile))
+            return new PageDifferenceResult([], []);
+
+        if (!originalFile.EndsWith(".cbz") || !upscaledFile.EndsWith(".cbz"))
+        {
+            return new PageDifferenceResult([], []);
+        }
+
+        try
+        {
+            using var originalArchive = ZipFile.OpenRead(originalFile);
+            using var upscaledArchive = ZipFile.OpenRead(upscaledFile);
+
+            var originalPages = originalArchive.Entries
+                .Where(e => ImageConstants.IsSupportedImageExtension(
+                    Path.GetExtension(e.FullName).ToLowerInvariant()))
+                .Select(e => Path.GetFileNameWithoutExtension(e.FullName))
+                .OrderBy(e => e)
+                .ToList();
+
+            var upscaledPages = upscaledArchive.Entries
+                .Where(e => ImageConstants.IsSupportedImageExtension(
+                    Path.GetExtension(e.FullName).ToLowerInvariant()))
+                .Select(e => Path.GetFileNameWithoutExtension(e.FullName))
+                .OrderBy(e => e)
+                .ToList();
+
+            var missingPages = originalPages.Except(upscaledPages).ToList();
+            var extraPages = upscaledPages.Except(originalPages).ToList();
+
+            return new PageDifferenceResult(missingPages, extraPages);
+        }
+        catch (InvalidDataException ex)
+        {
+            logger.LogError(ex, "The format of one of the following two archives is invalid.\n" +
+                                "Tried to analyze differences between \"{originalFile}\" and \"{upscaledFile}\"",
+                originalFile, upscaledFile);
+            return new PageDifferenceResult([], []);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to analyze cbz file differences.\n\n" +
+                                "Tried to analyze differences between \"{originalFile}\" and \"{upscaledFile}\"",
+                originalFile, upscaledFile);
+            return new PageDifferenceResult([], []);
         }
     }
 

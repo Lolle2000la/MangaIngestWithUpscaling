@@ -1,5 +1,3 @@
-using System.Security.Claims;
-using System.Text.Json;
 using MangaIngestWithUpscaling.Components.Account.Pages;
 using MangaIngestWithUpscaling.Components.Account.Pages.Manage;
 using MangaIngestWithUpscaling.Data;
@@ -9,8 +7,10 @@ using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Primitives;
+using System.Security.Claims;
+using System.Text.Json;
 
-namespace Microsoft.AspNetCore.Routing;
+namespace MangaIngestWithUpscaling.Components.Account;
 
 internal static class IdentityComponentsEndpointRouteBuilderExtensions
 {
@@ -27,9 +27,11 @@ internal static class IdentityComponentsEndpointRouteBuilderExtensions
             [FromForm] string provider,
             [FromForm] string returnUrl) =>
         {
-            IEnumerable<KeyValuePair<string, StringValues>> query = [
+            IEnumerable<KeyValuePair<string, StringValues>> query =
+            [
                 new("ReturnUrl", returnUrl),
-                new("Action", ExternalLogin.LoginCallbackAction)];
+                new("Action", ExternalLogin.LoginCallbackAction)
+            ];
 
             var redirectUrl = UriHelper.BuildRelative(
                 context.Request.PathBase,
@@ -64,7 +66,8 @@ internal static class IdentityComponentsEndpointRouteBuilderExtensions
                 "/Account/Manage/ExternalLogins",
                 QueryString.Create("Action", ExternalLogins.LinkLoginCallbackAction));
 
-            var properties = signInManager.ConfigureExternalAuthenticationProperties(provider, redirectUrl, signInManager.UserManager.GetUserId(context.User));
+            var properties = signInManager.ConfigureExternalAuthenticationProperties(provider, redirectUrl,
+                signInManager.UserManager.GetUserId(context.User));
             return TypedResults.Challenge(properties, [provider]);
         });
 
@@ -87,8 +90,8 @@ internal static class IdentityComponentsEndpointRouteBuilderExtensions
 
             // Only include personal data for download
             var personalData = new Dictionary<string, string>();
-            var personalDataProps = typeof(ApplicationUser).GetProperties().Where(
-                prop => Attribute.IsDefined(prop, typeof(PersonalDataAttribute)));
+            var personalDataProps = typeof(ApplicationUser).GetProperties()
+                .Where(prop => Attribute.IsDefined(prop, typeof(PersonalDataAttribute)));
             foreach (var p in personalDataProps)
             {
                 personalData.Add(p.Name, p.GetValue(user)?.ToString() ?? "null");

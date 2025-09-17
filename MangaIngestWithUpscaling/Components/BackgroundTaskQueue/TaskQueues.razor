@@ -1,10 +1,8 @@
-﻿@using System.Collections.ObjectModel
-@using MangaIngestWithUpscaling.Data.BackqroundTaskQueue
-@using MangaIngestWithUpscaling.Services.BackqroundTaskQueue
-@using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
+﻿@using System.Collections.Specialized
+@using MangaIngestWithUpscaling.Data.BackgroundTaskQueue
+@using MangaIngestWithUpscaling.Services.BackgroundTaskQueue
 @implements IDisposable
 
-@inject ApplicationDbContext DbContext
 @inject ILogger<TaskQueues> Logger
 @inject ISnackbar Snackbar
 
@@ -12,6 +10,7 @@
 @inject StandardTaskProcessor StandardTaskProcessor
 @inject UpscaleTaskProcessor UpscaleTaskProcessor
 @inject DistributedUpscaleTaskProcessor DistributedUpscaleTaskProcessor
+@inject TaskRegistry TaskRegistry
 
 @page "/tasks"
 
@@ -21,28 +20,20 @@
 
 <MudGrid>
     <MudItem lg="6" xs="12">
-        <TaskTable Tasks="@standardTasks" Title="Standard Tasks"
-                   OnClearCompleted="OnClearCompletedStandardTasks"
-                   OnClearFailed="OnClearFailedStandardTasks"
-                   OnRetryFailed="OnRetryFailed"
-                   OnDelete="OnDelete"
-                   OnCancel="OnCancelStandardTask"
-                   OnRunNow="OnRunNow" />
+        <TaskTable Tasks="@standardTasks" Title="Standard Tasks" OnClearCompleted="OnClearCompletedStandardTasks"
+            OnClearFailed="OnClearFailedStandardTasks" OnRetryFailed="OnRetryFailed" OnDelete="OnDelete"
+            OnCancel="OnCancelStandardTask" OnRunNow="OnRunNow" />
     </MudItem>
     <MudItem lg="6" xs="12">
-        <TaskTable Tasks="@upscaleTasks" Title="Upscaling Tasks"
-                   OnClearCompleted="OnClearCompletedUpscaleTasks"
-                   OnClearFailed="OnClearFailedUpscaleTasks"
-                   OnRetryFailed="OnRetryFailed"
-                   OnDelete="OnDelete"
-                   OnCancel="OnCancelUpscaleTask"
-                   OnRunNow="OnRunNow" />
+        <TaskTable Tasks="@upscaleTasks" Title="Upscaling Tasks" OnClearCompleted="OnClearCompletedUpscaleTasks"
+            OnClearFailed="OnClearFailedUpscaleTasks" OnRetryFailed="OnRetryFailed" OnDelete="OnDelete"
+            OnCancel="OnCancelUpscaleTask" OnRunNow="OnRunNow" />
     </MudItem>
 </MudGrid>
 
 @code {
-    private ObservableCollection<PersistedTask> standardTasks { get; set; } = [];
-    private ObservableCollection<PersistedTask> upscaleTasks { get; set; } = [];
+    private IReadOnlyCollection<PersistedTask> standardTasks => TaskRegistry.StandardTasks;
+    private IReadOnlyCollection<PersistedTask> upscaleTasks => TaskRegistry.UpscaleTasks;
 
     private async Task OnClearCompletedStandardTasks()
     {
@@ -51,16 +42,14 @@
             var completedTasks = standardTasks.Where(x => x.Status == PersistedTaskStatus.Completed).ToList();
             foreach (var task in completedTasks)
             {
-                DbContext.Remove(task);
-                standardTasks.Remove(task);
+                await TaskQueue.RemoveTaskAsync(task);
             }
-            await DbContext.SaveChangesAsync();
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Failed to clear completed tasks");
             Snackbar.Add("Failed to clear completed tasks: " + ex.Message, Severity.Error);
-            await LoadTasks();
+            StateHasChanged();
         }
     }
 
@@ -71,16 +60,14 @@
             var failedTasks = standardTasks.Where(x => x.Status == PersistedTaskStatus.Failed).ToList();
             foreach (var task in failedTasks)
             {
-                DbContext.Remove(task);
-                standardTasks.Remove(task);
+                await TaskQueue.RemoveTaskAsync(task);
             }
-            await DbContext.SaveChangesAsync();
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Failed to clear failed tasks");
             Snackbar.Add("Failed to clear failed tasks: " + ex.Message, Severity.Error);
-            await LoadTasks();
+            StateHasChanged();
         }
     }
 
@@ -91,16 +78,14 @@
             var completedTasks = upscaleTasks.Where(x => x.Status == PersistedTaskStatus.Completed).ToList();
             foreach (var task in completedTasks)
             {
-                DbContext.Remove(task);
-                upscaleTasks.Remove(task);
+                await TaskQueue.RemoveTaskAsync(task);
             }
-            await DbContext.SaveChangesAsync();
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Failed to clear completed tasks");
             Snackbar.Add("Failed to clear completed tasks: " + ex.Message, Severity.Error);
-            await LoadTasks();
+            StateHasChanged();
         }
     }
 
@@ -111,16 +96,14 @@
             var failedTasks = upscaleTasks.Where(x => x.Status == PersistedTaskStatus.Failed).ToList();
             foreach (var task in failedTasks)
             {
-                DbContext.Remove(task);
-                upscaleTasks.Remove(task);
+                await TaskQueue.RemoveTaskAsync(task);
             }
-            await DbContext.SaveChangesAsync();
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Failed to clear failed tasks");
             Snackbar.Add("Failed to clear failed tasks: " + ex.Message, Severity.Error);
-            await LoadTasks();
+            StateHasChanged();
         }
     }
 
@@ -134,7 +117,7 @@
         {
             Logger.LogError(ex, "Failed to retry task {TaskId}", task.Id);
             Snackbar.Add("Failed to retry task: " + ex.Message, Severity.Error);
-            await LoadTasks();
+            StateHasChanged();
         }
     }
 
@@ -143,24 +126,16 @@
         try
         {
             await TaskQueue.RemoveTaskAsync(task);
-            if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask)
-            {
-                upscaleTasks.Remove(task);
-            }
-            else
-            {
-                standardTasks.Remove(task);
-            }
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Failed to delete task {TaskId}", task.Id);
             Snackbar.Add("Failed to delete task: " + ex.Message, Severity.Error);
-            await LoadTasks();
+            StateHasChanged();
         }
     }
 
-    private async Task OnCancelStandardTask(PersistedTask task)
+    private Task OnCancelStandardTask(PersistedTask task)
     {
         try
         {
@@ -170,8 +145,10 @@
         {
             Logger.LogError(ex, "Failed to cancel task {TaskId}", task.Id);
             Snackbar.Add("Failed to cancel task: " + ex.Message, Severity.Error);
-            await LoadTasks();
+            StateHasChanged();
         }
+
+        return Task.CompletedTask;
     }
 
     private async Task OnCancelUpscaleTask(PersistedTask task)
@@ -185,107 +162,88 @@
         {
             Logger.LogError(ex, "Failed to cancel task {TaskId}", task.Id);
             Snackbar.Add("Failed to cancel task: " + ex.Message, Severity.Error);
-            await LoadTasks();
+            StateHasChanged();
         }
     }
 
     private async Task OnRunNow(PersistedTask task)
     {
-        await TaskQueue.ReorderTaskAsync(task, await DbContext.PersistedTasks.MinAsync(x => x.Order) - 1);
+        await TaskQueue.MoveToFrontAsync(task);
     }
 
-    protected override async Task OnInitializedAsync()
+    protected override Task OnInitializedAsync()
     {
-        await LoadTasks();
-
         TaskQueue.TaskEnqueuedOrChanged += OnTaskUpdate;
+        TaskQueue.TaskRemoved += OnTaskRemoved;
         StandardTaskProcessor.StatusChanged += OnStandardTaskChanged;
         UpscaleTaskProcessor.StatusChanged += OnUpscaleTaskChanged;
         DistributedUpscaleTaskProcessor.StatusChanged += OnUpscaleTaskChanged;
-    }
 
-    private async Task LoadTasks()
-    {
-        var allTasks = await DbContext.PersistedTasks.ToListAsync();
-        standardTasks = new ObservableCollection<PersistedTask>(allTasks.Where(x => x.Data is not UpscaleTask and not RenameUpscaledChaptersSeriesTask).ToList());
-        upscaleTasks = new ObservableCollection<PersistedTask>(allTasks.Where(x => x.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask).ToList());
+        // Also listen to registry collection changes to repaint when order or membership changes
+        if (TaskRegistry.StandardTasks is INotifyCollectionChanged std)
+            std.CollectionChanged += OnRegistryCollectionChanged;
+        if (TaskRegistry.UpscaleTasks is INotifyCollectionChanged up)
+            up.CollectionChanged += OnRegistryCollectionChanged;
+        return Task.CompletedTask;
     }
 
     public void Dispose()
     {
         TaskQueue.TaskEnqueuedOrChanged -= OnTaskUpdate;
+        TaskQueue.TaskRemoved -= OnTaskRemoved;
         StandardTaskProcessor.StatusChanged -= OnStandardTaskChanged;
         UpscaleTaskProcessor.StatusChanged -= OnUpscaleTaskChanged;
         DistributedUpscaleTaskProcessor.StatusChanged -= OnUpscaleTaskChanged;
+
+        if (TaskRegistry.StandardTasks is INotifyCollectionChanged std)
+            std.CollectionChanged -= OnRegistryCollectionChanged;
+        if (TaskRegistry.UpscaleTasks is INotifyCollectionChanged up)
+            up.CollectionChanged -= OnRegistryCollectionChanged;
     }
 
     private async Task OnTaskUpdate(PersistedTask task)
     {
-        await InvokeAsync(async () =>
+        await InvokeAsync(() =>
         {
-            if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask)
-            {
-                await AddOrAssignTask(upscaleTasks, task);
-            }
-            else
-            {
-                await AddOrAssignTask(standardTasks, task);
-            }
+            // Registry drives the state; we only trigger UI refresh
             StateHasChanged();
+            return Task.CompletedTask;
         });
     }
 
     private async Task OnStandardTaskChanged(PersistedTask task)
     {
-        await InvokeAsync(async () =>
+        await InvokeAsync(() =>
         {
-            await AddOrAssignTask(standardTasks, task);
-
+            // Registry drives the state; we only trigger UI refresh
             StateHasChanged();
+            return Task.CompletedTask;
         });
     }
 
     private async Task OnUpscaleTaskChanged(PersistedTask task)
     {
-        await InvokeAsync(async () =>
+        await InvokeAsync(() =>
         {
-            await AddOrAssignTask(upscaleTasks, task);
-
+            // Registry drives the state; we only trigger UI refresh
             StateHasChanged();
+            return Task.CompletedTask;
         });
     }
 
-    private PersistedTask AssingPersistedTask(PersistedTask to, PersistedTask from)
+    private async Task OnTaskRemoved(PersistedTask task)
     {
-        to.Data = from.Data;
-        to.CreatedAt = from.CreatedAt;
-        to.Order = from.Order;
-        to.ProcessedAt = from.ProcessedAt;
-        to.Status = from.Status;
-        to.RetryCount = from.RetryCount;
-
-        return to;
+        await InvokeAsync(() =>
+        {
+            StateHasChanged();
+            return Task.CompletedTask;
+        });
     }
 
-    private async Task AddOrAssignTask(ObservableCollection<PersistedTask> tasks, PersistedTask task)
+    private void OnRegistryCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
-        var existingTask = tasks.FirstOrDefault(x => x.Id == task.Id);
-        if (existingTask != null)
-        {
-            AssingPersistedTask(existingTask, task);
-        }
-        else
-        {
-            var taskFromDb = await DbContext.PersistedTasks.FindAsync(task.Id);
-            if (taskFromDb != null)
-            {
-                tasks.Add(AssingPersistedTask(taskFromDb, task));
-            }
-            else
-            {
-                Snackbar.Add("Some task has been received, but no matching task was found.", Severity.Warning);
-                Logger.LogWarning("Some task has been received, but no matching task was found. (ID: {TaskId})", task.Id);
-            }
-        }
+        _ = InvokeAsync(StateHasChanged);
     }
+
+    // No local collections; TaskRegistry is the single source of truth.
 }

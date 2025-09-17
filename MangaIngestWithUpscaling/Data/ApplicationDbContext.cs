@@ -1,6 +1,6 @@
-using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
+using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
-using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
@@ -15,8 +15,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
-        WriteIndented = false,
-        AllowTrailingCommas = true
+        WriteIndented = false, AllowTrailingCommas = true
     };
 
     public DbSet<Library> Libraries { get; set; }

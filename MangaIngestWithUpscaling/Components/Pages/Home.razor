@@ -1,6 +1,6 @@
 ﻿@page "/"
-@using MangaIngestWithUpscaling.Services.BackqroundTaskQueue
-@using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks
+@using MangaIngestWithUpscaling.Services.BackgroundTaskQueue
+@using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks
 
 @inject ITaskQueue TaskQueue
 @inject IWebHostEnvironment WebHostEnvironment
@@ -13,10 +13,15 @@
     <MudText Typo="Typo.body1">
         A few steps to get you started:
         <ol class="ml-5">
-            <li>Set up a library in the <MudLink href="libraries">Libraries</MudLink> section.</li>
+            <li>Set up a library in the
+                <MudLink href="libraries">Libraries</MudLink>
+                section.
+            </li>
             <li>Add a few mangas by adding them to your configured ingest folder.</li>
             <li>Wait for the system to ingest the mangas and chapters.</li>
-            <li>Upscale the chapters you want to upscale. If you set it up that way, it should automatically start upscaling right now.</li>
+            <li>Upscale the chapters you want to upscale. If you set it up that way, it should automatically start
+                upscaling right now.
+            </li>
         </ol>
     </MudText>
 
@@ -28,7 +33,7 @@
                         MangaJaNai
                     </MudLink>
                     - Attribution-NonCommercial 4.0 International<br/>
-                    At the moment the only supported upscalling model provided. Very good quality, specifically for
+                    At the moment the only supported upscaling model provided. Very good quality, specifically for
                     Manga.
                 </li>
                 <li>
@@ -77,8 +82,47 @@
                     - MIT License
                 </li>
                 <li>
+                    <MudLink Href="https://github.com/kleisauke/net-vips/blob/master/LICENSE" Target="_blank">
+                        NetVips
+                    </MudLink>
+                    - MIT License<br/>
+                    .NET bindings for libvips, used for high-performance image processing and format support.
+                </li>
+                <li>
+                    <MudLink Href="https://github.com/libvips/libvips/blob/master/LICENSE" Target="_blank">
+                        libvips
+                    </MudLink>
+                    - LGPL-2.1-or-later<br/>
+                    Fast image processing library powering the NetVips backend.
+                </li>
+                <li>
                     <MudLink Href="https://github.com/PinguApps/Blazor.QRCode/blob/main/LICENSE" Target="_blank">
                         PinguApps.Blazor.QRCode
+                    </MudLink>
+                    - MIT License
+                </li>
+                <li>
+                    <MudLink Href="https://github.com/dotnet/Silk.NET/blob/main/LICENSE.md" Target="_blank">
+                        Silk.NET (OpenGL, Windowing)
+                    </MudLink>
+                    - MIT License
+                </li>
+                <li>
+                    <MudLink Href="https://github.com/Open-NET-Libraries/Open.ChannelExtensions/blob/master/LICENSE"
+                             Target="_blank">
+                        Open.ChannelExtensions
+                    </MudLink>
+                    - MIT License
+                </li>
+                <li>
+                    <MudLink Href="https://www.nuget.org/packages/MudBlazor.Translations/" Target="_blank">
+                        MudBlazor.Translations
+                    </MudLink>
+                    - MIT License
+                </li>
+                <li>
+                    <MudLink Href="https://github.com/dotnet/reactive/blob/main/LICENSE" Target="_blank">
+                        System.Interactive.Async (Reactive Extensions)
                     </MudLink>
                     - MIT License
                 </li>
@@ -112,7 +156,7 @@
     {
         <MudPaper Elevation="2">
             <h3>Task Queue test</h3>
-            <MudInput @bind-Value="message" Label="Message" />
+            <MudInput @bind-Value="message" Label="Message"/>
             <MudButton OnClick="TestTaskQueue" Variant="Variant.Filled">Enqueue logging Task</MudButton>
         </MudPaper>
     }

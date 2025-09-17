@@ -1,30 +1,35 @@
-﻿@using MangaIngestWithUpscaling.Data.BackqroundTaskQueue
-<MudTable T="PersistedTask" Items="@Tasks" RowsPerPage="10" Elevation="3"
-          Dense="true"
-          @ref="Table">
+﻿@using MangaIngestWithUpscaling.Data.BackgroundTaskQueue
+<MudTable T="PersistedTask" Items="@Tasks" RowsPerPage="10" Elevation="3" Dense="true" @ref="Table">
     <ToolBarContent>
         <MudText Typo="Typo.h6">@Title</MudText>
         <MudSpacer/>
-        <MudButton StartIcon="@Icons.Material.Filled.Delete"
-                   Variant="Variant.Outlined" Color="Color.Primary"
-                   OnClick="OnClearFailed">Clear Failed</MudButton>
-        <MudButton StartIcon="@Icons.Material.Filled.ClearAll"
-                   Variant="Variant.Filled" Color="Color.Primary"
-                   OnClick="OnClearCompleted">Clear Completed</MudButton>
+        <MudButton StartIcon="@Icons.Material.Filled.Delete" Variant="Variant.Outlined" Color="Color.Primary"
+                   OnClick="OnClearFailed">Clear Failed
+        </MudButton>
+        <MudButton StartIcon="@Icons.Material.Filled.ClearAll" Variant="Variant.Filled" Color="Color.Primary"
+                   OnClick="OnClearCompleted">Clear Completed
+        </MudButton>
     </ToolBarContent>
     <HeaderContent>
         <MudTh>
             <MudTableSortLabel InitialDirection="SortDirection.Ascending"
-                               SortBy="new Func<PersistedTask, object>(x=>x.Order)">Order
+                               SortBy="new Func<PersistedTask, object>(x => x.Order)">Order
             </MudTableSortLabel>
         </MudTh>
-        <MudTh><MudTableSortLabel SortBy="new Func<PersistedTask, object>(x=>x.Data.TaskFriendlyName)">Name</MudTableSortLabel></MudTh>
-        <MudTh><MudTableSortLabel SortBy="new Func<PersistedTask, object>(x=>x.CreatedAt)">Queued At</MudTableSortLabel></MudTh>
         <MudTh>
-            <MudTableSortLabel SortBy="new Func<PersistedTask, object?>(x=>x.ProcessedAt)">Finished At
+            <MudTableSortLabel SortBy="new Func<PersistedTask, object>(x => x.Data.TaskFriendlyName)">Name
             </MudTableSortLabel>
         </MudTh>
-        <MudTh><MudTableSortLabel SortBy="new Func<PersistedTask, object>(x=>x.Status)">Status</MudTableSortLabel></MudTh>
+        <MudTh>
+            <MudTableSortLabel SortBy="new Func<PersistedTask, object>(x => x.CreatedAt)">Queued At</MudTableSortLabel>
+        </MudTh>
+        <MudTh>
+            <MudTableSortLabel SortBy="new Func<PersistedTask, object?>(x => x.ProcessedAt)">Finished At
+            </MudTableSortLabel>
+        </MudTh>
+        <MudTh>
+            <MudTableSortLabel SortBy="new Func<PersistedTask, object>(x => x.Status)">Status</MudTableSortLabel>
+        </MudTh>
         <MudTh>Actions</MudTh>
     </HeaderContent>
     <RowTemplate>
@@ -32,46 +37,67 @@
             @context.Order
         </MudTd>
         <MudTd DataLabel="Name">@context.Data.TaskFriendlyName</MudTd>
-        <MudTd>@context.CreatedAt.ToLocalTime()</MudTd>
-        <MudTd
-            DataLabel="Queued At">@(context.ProcessedAt is not null ? context.ProcessedAt.Value.ToLocalTime() : "")</MudTd>
-        <MudTd DataLabel="Finished At">@context.Status</MudTd>
-        <MudTd DataLabel="Status"
-               Style="white-space: nowrap">
+        <MudTd DataLabel="Queued At">@context.CreatedAt.ToLocalTime()</MudTd>
+        <MudTd DataLabel="Finished At">@(context.ProcessedAt is not null ? context.ProcessedAt.Value.ToLocalTime() : "")
+        </MudTd>
+        <MudTd DataLabel="Status">
+            @context.Status
+            @if (context.Status == PersistedTaskStatus.Processing && context.Data?.Progress is not null)
+            {
+                var p = context.Data.Progress;
+                <div style="font-size: 0.85em; color: var(--mud-palette-text-secondary); margin-top: 2px;">
+                    @(p.IsIndeterminate ? "Working…" : $"{p.Current}/{p.Total} {p.ProgressUnit}")
+                    @if (!string.IsNullOrWhiteSpace(p.StatusMessage))
+                    {
+                        <span> — @p.StatusMessage</span>
+                    }
+                </div>
+            }
+        </MudTd>
+        <MudTd DataLabel="Actions" Style="white-space: nowrap">
             @if (context.Status == PersistedTaskStatus.Pending)
             {
-                <MudIconButton Icon="@Icons.Material.Filled.PlayArrow"
-                               Variant="Variant.Text"
-                               Size="Size.Small"
-                               OnClick="_ => OnRunNow.InvokeAsync(context)" />
+                <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" Variant="Variant.Text" Size="Size.Small"
+                               OnClick="_ => OnRunNow.InvokeAsync(context)"/>
             }
             else if (context.Status is PersistedTaskStatus.Failed or PersistedTaskStatus.Canceled)
             {
-                <MudIconButton Icon="@Icons.Material.Filled.Refresh"
-                               Variant="Variant.Text"
-                               Size="Size.Small"
-                               OnClick="_ => OnRetryFailed.InvokeAsync(context)" />
+                <MudIconButton Icon="@Icons.Material.Filled.Refresh" Variant="Variant.Text" Size="Size.Small"
+                               OnClick="_ => OnRetryFailed.InvokeAsync(context)"/>
             }
             @if (context.Status == PersistedTaskStatus.Processing)
             {
-                <MudIconButton Icon="@Icons.Material.Filled.Cancel"
-                               Variant="Variant.Text"
-                               Color="Color.Error"
-                               Size="Size.Small"
-                               OnClick="_ => OnCancel.InvokeAsync(context)" />
+                <MudIconButton Icon="@Icons.Material.Filled.Cancel" Variant="Variant.Text" Color="Color.Error"
+                               Size="Size.Small" OnClick="_ => OnCancel.InvokeAsync(context)"/>
             }
             else
             {
-                <MudIconButton Icon="@Icons.Material.Filled.Delete"
-                               Variant="Variant.Text"
-                               Color="Color.Error"
-                               Size="Size.Small"
-                               OnClick="_ => OnDelete.InvokeAsync(context)" />
+                <MudIconButton Icon="@Icons.Material.Filled.Delete" Variant="Variant.Text" Color="Color.Error"
+                               Size="Size.Small" OnClick="_ => OnDelete.InvokeAsync(context)"/>
             }
         </MudTd>
     </RowTemplate>
+    <ChildRowContent>
+        @if (context.Status == PersistedTaskStatus.Processing)
+        {
+            var p = context.Data?.Progress;
+            <MudTd colspan="6" Class="pa-0">
+                <div style="width: 100%; height: 4px;">
+                    @if (p is null || p.IsIndeterminate || p.Total <= 0)
+                    {
+                        <MudProgressLinear Indeterminate="true" Color="Color.Primary" Style="height: 4px;"/>
+                    }
+                    else
+                    {
+                        <MudProgressLinear Value="@(Math.Clamp((double)p.Current / p.Total * 100.0, 0, 100))"
+                                           Color="Color.Primary" Style="height: 4px;"/>
+                    }
+                </div>
+            </MudTd>
+        }
+    </ChildRowContent>
     <PagerContent>
-        <MudTablePager />
+        <MudTablePager/>
     </PagerContent>
 </MudTable>
 
@@ -92,4 +118,5 @@
     {
         Tasks = new List<PersistedTask>(Tasks);
     }
+
 }

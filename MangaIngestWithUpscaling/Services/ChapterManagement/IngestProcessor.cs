@@ -1,8 +1,8 @@
 ﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
-using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
-using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.ChapterMerging;
 using MangaIngestWithUpscaling.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Services.ImageFiltering;
@@ -14,7 +14,6 @@ using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
-using MangaIngestWithUpscaling.Shared.Helpers;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -66,7 +65,7 @@ public partial class IngestProcessor(
         // preserve original series for alternative title
         Dictionary<string, string> originalSeriesMap = await foundChapters.ToDictionaryAsync(c => c.RelativePath,
             c => c.Metadata.Series,
-            cancellationToken);
+            cancellationToken: cancellationToken);
 
         // apply rename rules and keep track of original and renamed versions
         var processedChapters = new List<ProcessedChapterInfo>();
@@ -398,7 +397,9 @@ public partial class IngestProcessor(
                 {
                     try
                     {
-                        var filterResult = await imageFilterService.ApplyFiltersToChapterAsync(targetPath, library.FilteredImages, cancellationToken);
+                        var filterResult =
+                            await imageFilterService.ApplyFiltersToChapterAsync(targetPath, library.FilteredImages,
+                                cancellationToken);
                         if (filterResult.FilteredCount > 0)
                         {
                             logger.LogInformation("Filtered {Count} images from chapter {FileName} during ingest",
@@ -574,8 +575,7 @@ public partial class IngestProcessor(
             {
                 seriesEntity.OtherTitles.Add(new MangaAlternativeTitle
                 {
-                    Manga = seriesEntity,
-                    Title = originalSeries
+                    Manga = seriesEntity, Title = originalSeries
                 });
             }
 
@@ -703,7 +703,9 @@ public partial class IngestProcessor(
                 try
                 {
                     // For upscaled chapters, we need to match by base filename since extensions might change
-                    var filterResult = await imageFilterService.ApplyFiltersToChapterAsync(cbzPath, library.FilteredImages, cancellationToken);
+                    var filterResult =
+                        await imageFilterService.ApplyFiltersToChapterAsync(cbzPath, library.FilteredImages,
+                            cancellationToken);
                     if (filterResult.FilteredCount > 0)
                     {
                         logger.LogInformation("Filtered {Count} images from upscaled chapter {FileName} during ingest",

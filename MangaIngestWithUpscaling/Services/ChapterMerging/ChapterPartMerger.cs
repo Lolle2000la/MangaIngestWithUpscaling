@@ -1,5 +1,6 @@
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
+using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using System.IO.Compression;
@@ -1010,7 +1011,7 @@ public partial class ChapterPartMerger(
     private static bool IsImageFile(string fileName)
     {
         string extension = Path.GetExtension(fileName).ToLowerInvariant();
-        return extension is ".jpg" or ".jpeg" or ".png" or ".gif" or ".bmp" or ".webp" or ".avif";
+        return ImageConstants.IsSupportedImageExtension(extension);
     }
 }
 

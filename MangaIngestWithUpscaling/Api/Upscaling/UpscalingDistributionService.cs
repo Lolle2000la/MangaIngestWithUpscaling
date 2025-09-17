@@ -2,10 +2,10 @@
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Data;
-using MangaIngestWithUpscaling.Data.BackqroundTaskQueue;
+using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
-using MangaIngestWithUpscaling.Services.BackqroundTaskQueue;
-using MangaIngestWithUpscaling.Services.BackqroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using Microsoft.AspNetCore.Authorization;
@@ -18,9 +18,11 @@ public partial class UpscalingDistributionService(
     DistributedUpscaleTaskProcessor taskProcessor,
     ApplicationDbContext dbContext,
     IFileSystem fileSystem,
-    IChapterChangedNotifier chapterChangedNotifier) : UpscalingService.UpscalingServiceBase
+    IChapterChangedNotifier chapterChangedNotifier,
+    ILogger<UpscalingDistributionService> logger) : UpscalingService.UpscalingServiceBase
 {
     private static readonly string tempDir = Path.Combine(Path.GetTempPath(), "mangaingestwithupscaling");
+    private readonly ILogger<UpscalingDistributionService> _logger = logger;
 
     public override Task<CheckConnectionResponse> CheckConnection(Empty request, ServerCallContext context)
     {
@@ -28,63 +30,109 @@ public partial class UpscalingDistributionService(
         return Task.FromResult(new CheckConnectionResponse { Message = "Connection established", Success = true });
     }
 
-    public override async Task<UpscaleTaskDelegationResponse> RequestUpscaleTask(Empty request,
+    public override Task<UpscaleTaskDelegationResponse> RequestUpscaleTask(Empty request,
         ServerCallContext context)
     {
-        var task = await taskProcessor.GetTask(context.CancellationToken);
+        // Delegate to the hint-based variant, mapping header hint if provided by older clients/tools.
+        bool isPrefetchHeader = context.RequestHeaders.Any(h =>
+            string.Equals(h.Key, "x-prefetch", StringComparison.OrdinalIgnoreCase) && h.Value == "1");
+        return RequestUpscaleTaskWithHint(new RequestTaskRequest { Prefetch = isPrefetchHeader }, context);
+    }
+
+    // New method that accepts hints in the request (e.g., prefetch) without relying on headers
+    public override async Task<UpscaleTaskDelegationResponse> RequestUpscaleTaskWithHint(RequestTaskRequest request,
+        ServerCallContext context)
+    {
+        if (request.HasPrefetch && request.Prefetch)
+        {
+            _logger.LogDebug("RequestUpscaleTaskWithHint called with prefetch=true");
+        }
+
+        PersistedTask? task = await taskProcessor.GetTask(context.CancellationToken);
         if (task == null)
         {
             context.Status = new Status(StatusCode.NotFound, "No tasks available");
             return new UpscaleTaskDelegationResponse { TaskId = -1, UpscalerProfile = null };
         }
+
+        // Handle both UpscaleTask and RepairUpscaleTask
+        int upscalerProfileId;
+        if (task.Data is UpscaleTask upscaleTask)
+        {
+            upscalerProfileId = upscaleTask.UpscalerProfileId;
+        }
+        else if (task.Data is RepairUpscaleTask repairTask)
+        {
+            upscalerProfileId = repairTask.UpscalerProfileId;
+        }
         else
         {
-            var upscaleTask = (UpscaleTask)task.Data;
-            var upscalerProfile = await dbContext.UpscalerProfiles.FindAsync(upscaleTask.UpscalerProfileId);
-
-            if (upscalerProfile == null)
-            {
-                context.Status = new Status(StatusCode.NotFound, "Upscaler profile not found");
-                return new UpscaleTaskDelegationResponse { TaskId = -1, UpscalerProfile = null };
-            }
-
-            return new UpscaleTaskDelegationResponse()
-            {
-                TaskId = task.Id,
-                UpscalerProfile = new UpscalerProfile()
-                {
-                    Name = upscalerProfile.Name,
-                    UpscalerMethod = upscalerProfile.UpscalerMethod switch
-                    {
-                        Shared.Data.LibraryManagement.UpscalerMethod.MangaJaNai => UpscalerMethod.MangaJaNai,
-                        _ => UpscalerMethod.Unspecified
-                    },
-                    CompressionFormat = upscalerProfile.CompressionFormat switch
-                    {
-                        Shared.Data.LibraryManagement.CompressionFormat.Avif => CompressionFormat.Avif,
-                        Shared.Data.LibraryManagement.CompressionFormat.Jpg => CompressionFormat.Jpg,
-                        Shared.Data.LibraryManagement.CompressionFormat.Png => CompressionFormat.Png,
-                        Shared.Data.LibraryManagement.CompressionFormat.Webp => CompressionFormat.Webp,
-                        _ => CompressionFormat.Unspecified
-                    },
-                    Quality = upscalerProfile.Quality,
-                    ScalingFactor = upscalerProfile.ScalingFactor switch
-                    {
-                        Shared.Data.LibraryManagement.ScaleFactor.OneX => ScaleFactor.OneX,
-                        Shared.Data.LibraryManagement.ScaleFactor.TwoX => ScaleFactor.TwoX,
-                        Shared.Data.LibraryManagement.ScaleFactor.ThreeX => ScaleFactor.ThreeX,
-                        Shared.Data.LibraryManagement.ScaleFactor.FourX => ScaleFactor.FourX,
-                        _ => ScaleFactor.Unspecified
-                    }
-                },
-            };
+            context.Status = new Status(StatusCode.InvalidArgument, "Invalid task type");
+            return new UpscaleTaskDelegationResponse { TaskId = -1, UpscalerProfile = null };
         }
+
+        Shared.Data.LibraryManagement.UpscalerProfile? upscalerProfile =
+            await dbContext.UpscalerProfiles.FindAsync(upscalerProfileId);
+
+        if (upscalerProfile == null)
+        {
+            context.Status = new Status(StatusCode.NotFound, "Upscaler profile not found");
+            return new UpscaleTaskDelegationResponse { TaskId = -1, UpscalerProfile = null };
+        }
+
+        return new UpscaleTaskDelegationResponse
+        {
+            TaskId = task.Id,
+            UpscalerProfile = new UpscalerProfile
+            {
+                Name = upscalerProfile.Name,
+                UpscalerMethod = upscalerProfile.UpscalerMethod switch
+                {
+                    Shared.Data.LibraryManagement.UpscalerMethod.MangaJaNai => UpscalerMethod.MangaJaNai,
+                    _ => UpscalerMethod.Unspecified
+                },
+                CompressionFormat = upscalerProfile.CompressionFormat switch
+                {
+                    Shared.Data.LibraryManagement.CompressionFormat.Avif => CompressionFormat.Avif,
+                    Shared.Data.LibraryManagement.CompressionFormat.Jpg => CompressionFormat.Jpg,
+                    Shared.Data.LibraryManagement.CompressionFormat.Png => CompressionFormat.Png,
+                    Shared.Data.LibraryManagement.CompressionFormat.Webp => CompressionFormat.Webp,
+                    _ => CompressionFormat.Unspecified
+                },
+                Quality = upscalerProfile.Quality,
+                ScalingFactor = upscalerProfile.ScalingFactor switch
+                {
+                    Shared.Data.LibraryManagement.ScaleFactor.OneX => ScaleFactor.OneX,
+                    Shared.Data.LibraryManagement.ScaleFactor.TwoX => ScaleFactor.TwoX,
+                    Shared.Data.LibraryManagement.ScaleFactor.ThreeX => ScaleFactor.ThreeX,
+                    Shared.Data.LibraryManagement.ScaleFactor.FourX => ScaleFactor.FourX,
+                    _ => ScaleFactor.Unspecified
+                }
+            }
+        };
     }
 
     public override Task<KeepAliveResponse> KeepAlive(KeepAliveRequest request, ServerCallContext context)
     {
         if (taskProcessor.KeepAlive(request.TaskId))
         {
+            if ((request.HasPrefetch && request.Prefetch) || context.RequestHeaders.Any(h =>
+                    string.Equals(h.Key, "x-prefetch", StringComparison.OrdinalIgnoreCase) && h.Value == "1"))
+            {
+                _logger.LogDebug("KeepAlive received for prefetched task {taskId}", request.TaskId);
+            }
+
+            // Backward-compatible: update progress if fields are provided (proto3 optional)
+            bool hasAny = request.HasTotal || request.HasCurrent || request.HasStatusMessage || request.HasPhase;
+            if (hasAny)
+            {
+                taskProcessor.ApplyProgress(request.TaskId,
+                    request.HasTotal ? request.Total : null,
+                    request.HasCurrent ? request.Current : null,
+                    request.HasStatusMessage ? request.StatusMessage : null,
+                    request.HasPhase ? request.Phase : null);
+            }
+
             return Task.FromResult(new KeepAliveResponse { IsAlive = true });
         }
         else
@@ -97,6 +145,14 @@ public partial class UpscalingDistributionService(
     public override async Task GetCbzFile(CbzToUpscaleRequest request, IServerStreamWriter<CbzFileChunk> responseStream,
         ServerCallContext context)
     {
+        bool isPrefetchHeader = context.RequestHeaders.Any(h =>
+            string.Equals(h.Key, "x-prefetch", StringComparison.OrdinalIgnoreCase) && h.Value == "1");
+        bool isPrefetch = isPrefetchHeader || (request.HasPrefetch && request.Prefetch);
+        if (isPrefetch)
+        {
+            _logger.LogDebug("GetCbzFile called with x-prefetch=1 for task {taskId}", request.TaskId);
+        }
+
         var task = await dbContext.PersistedTasks.FindAsync(request.TaskId);
         if (task == null)
         {
@@ -104,24 +160,52 @@ public partial class UpscalingDistributionService(
             return;
         }
 
-        var cbzTask = (UpscaleTask)task.Data;
-        var chapter = await dbContext.Chapters
-            .Include(chapter => chapter.Manga)
-            .ThenInclude(manga => manga.Library)
-            .FirstOrDefaultAsync(c => c.Id == cbzTask.ChapterId);
-        if (chapter == null)
+        string filePath;
+
+        // Handle different task types
+        if (task.Data is UpscaleTask upscaleTask)
         {
-            context.Status = new Status(StatusCode.NotFound, "Chapter not found");
+            Chapter? chapter = await dbContext.Chapters
+                .Include(chapter => chapter.Manga)
+                .ThenInclude(manga => manga.Library)
+                .FirstOrDefaultAsync(c => c.Id == upscaleTask.ChapterId);
+            if (chapter == null)
+            {
+                context.Status = new Status(StatusCode.NotFound, "Chapter not found");
+                return;
+            }
+
+            filePath = chapter.NotUpscaledFullPath;
+        }
+        else if (task.Data is RepairUpscaleTask repairTask)
+        {
+            // For repair tasks, serve the prepared missing pages CBZ
+            DistributedUpscaleTaskProcessor.RemoteRepairState? repairState =
+                taskProcessor.GetRemoteRepairState(request.TaskId);
+            if (repairState == null || string.IsNullOrEmpty(repairState.PreparedMissingPagesCbzPath) ||
+                !File.Exists(repairState.PreparedMissingPagesCbzPath))
+            {
+                context.Status = new Status(StatusCode.NotFound, "Prepared missing pages CBZ not found");
+                return;
+            }
+
+            filePath = repairState.PreparedMissingPagesCbzPath;
+            _logger.LogDebug("Serving prepared missing pages CBZ for repair task {taskId}: {filePath}", request.TaskId,
+                filePath);
+        }
+        else
+        {
+            context.Status = new Status(StatusCode.InvalidArgument, "Invalid task type");
             return;
         }
 
-        if (!File.Exists(chapter.NotUpscaledFullPath))
+        if (!File.Exists(filePath))
         {
-            context.Status = new Status(StatusCode.NotFound, "Chapter not found");
+            context.Status = new Status(StatusCode.NotFound, "File not found");
             return;
         }
 
-        using var fileStream = File.OpenRead(chapter.NotUpscaledFullPath);
+        using FileStream fileStream = File.OpenRead(filePath);
         // Read the file in chunks of 1MB and stream it to the client
         var buffer = new byte[1024 * 1024];
         int bytesRead;
@@ -147,24 +231,50 @@ public partial class UpscalingDistributionService(
             return new CbzFileChunk();
         }
 
-        var cbzTask = (UpscaleTask)task.Data;
-        var chapter = await dbContext.Chapters
-            .Include(chapter => chapter.Manga)
-            .ThenInclude(manga => manga.Library)
-            .FirstOrDefaultAsync(c => c.Id == cbzTask.ChapterId);
-        if (chapter == null)
+        string filePath;
+
+        // Handle different task types
+        if (task.Data is UpscaleTask upscaleTask)
         {
-            context.Status = new Status(StatusCode.NotFound, "Chapter not found");
+            Chapter? chapter = await dbContext.Chapters
+                .Include(chapter => chapter.Manga)
+                .ThenInclude(manga => manga.Library)
+                .FirstOrDefaultAsync(c => c.Id == upscaleTask.ChapterId);
+            if (chapter == null)
+            {
+                context.Status = new Status(StatusCode.NotFound, "Chapter not found");
+                return new CbzFileChunk();
+            }
+
+            filePath = chapter.NotUpscaledFullPath;
+        }
+        else if (task.Data is RepairUpscaleTask repairTask)
+        {
+            // For repair tasks, serve the prepared missing pages CBZ
+            DistributedUpscaleTaskProcessor.RemoteRepairState? repairState =
+                taskProcessor.GetRemoteRepairState(request.TaskId);
+            if (repairState == null || string.IsNullOrEmpty(repairState.PreparedMissingPagesCbzPath) ||
+                !File.Exists(repairState.PreparedMissingPagesCbzPath))
+            {
+                context.Status = new Status(StatusCode.NotFound, "Prepared missing pages CBZ not found");
+                return new CbzFileChunk();
+            }
+
+            filePath = repairState.PreparedMissingPagesCbzPath;
+        }
+        else
+        {
+            context.Status = new Status(StatusCode.InvalidArgument, "Invalid task type");
             return new CbzFileChunk();
         }
 
-        if (!File.Exists(chapter.NotUpscaledFullPath))
+        if (!File.Exists(filePath))
         {
-            context.Status = new Status(StatusCode.NotFound, "Chapter not found");
+            context.Status = new Status(StatusCode.NotFound, "File not found");
             return new CbzFileChunk();
         }
 
-        using var fileStream = File.OpenRead(chapter.NotUpscaledFullPath);
+        using FileStream fileStream = File.OpenRead(filePath);
         // Read the file in chunks of 1MB and stream it to the client
         var buffer = new byte[1024 * 1024];
         int bytesRead;
@@ -232,55 +342,105 @@ public partial class UpscalingDistributionService(
                     continue;
                 }
 
-                var upscaleTask = (UpscaleTask)task.Data;
-                Chapter? chapter = await dbContext.Chapters
-                    .Include(chapter => chapter.Manga)
-                    .ThenInclude(manga => manga.Library)
-                    .FirstOrDefaultAsync(c => c.Id == upscaleTask.ChapterId);
+                // Handle different task types
+                if (task.Data is UpscaleTask upscaleTask)
+                {
+                    Chapter? chapter = await dbContext.Chapters
+                        .Include(chapter => chapter.Manga)
+                        .ThenInclude(manga => manga.Library)
+                        .FirstOrDefaultAsync(c => c.Id == upscaleTask.ChapterId);
 
-                if (chapter == null)
+                    if (chapter == null)
+                    {
+                        File.Delete(tempFile);
+                        await responseStream.WriteAsync(new UploadUpscaledCbzResponse
+                        {
+                            Success = false, Message = "Chapter not found", TaskId = taskId
+                        });
+                        continue;
+                    }
+
+                    if (chapter.UpscaledFullPath == null)
+                    {
+                        File.Delete(tempFile);
+                        await responseStream.WriteAsync(new UploadUpscaledCbzResponse
+                        {
+                            Success = false,
+                            Message = "Suitable location to save the chapter not found.",
+                            TaskId = taskId
+                        });
+                        continue;
+                    }
+
+                    if (File.Exists(chapter.UpscaledFullPath))
+                    {
+                        File.Delete(chapter.UpscaledFullPath);
+                    }
+
+                    string? destinationDirectory = Path.GetDirectoryName(chapter.UpscaledFullPath);
+                    if (destinationDirectory != null)
+                    {
+                        fileSystem.CreateDirectory(destinationDirectory);
+                    }
+
+                    fileSystem.Move(tempFile, chapter.UpscaledFullPath);
+                    chapter.IsUpscaled = true;
+                    chapter.UpscalerProfileId = upscaleTask.UpscalerProfileId;
+                    await dbContext.SaveChangesAsync();
+                    await taskProcessor.TaskCompleted(taskId);
+                    await responseStream.WriteAsync(new UploadUpscaledCbzResponse
+                    {
+                        Success = true, Message = "Chapter upscaled", TaskId = taskId
+                    });
+                    _ = chapterChangedNotifier.Notify(chapter, true);
+                }
+                else if (task.Data is RepairUpscaleTask repairTask)
+                {
+                    // For repair tasks, save the upscaled result to the designated repair path
+                    DistributedUpscaleTaskProcessor.RemoteRepairState? repairState =
+                        taskProcessor.GetRemoteRepairState(taskId);
+                    if (repairState == null || string.IsNullOrEmpty(repairState.UpscaledMissingPagesCbzPath))
+                    {
+                        File.Delete(tempFile);
+                        await responseStream.WriteAsync(new UploadUpscaledCbzResponse
+                        {
+                            Success = false,
+                            Message = "No upscaled missing pages path specified for repair task.",
+                            TaskId = taskId
+                        });
+                        continue;
+                    }
+
+                    string? destinationDirectory = Path.GetDirectoryName(repairState.UpscaledMissingPagesCbzPath);
+                    if (destinationDirectory != null)
+                    {
+                        fileSystem.CreateDirectory(destinationDirectory);
+                    }
+
+                    if (File.Exists(repairState.UpscaledMissingPagesCbzPath))
+                    {
+                        File.Delete(repairState.UpscaledMissingPagesCbzPath);
+                    }
+
+                    fileSystem.Move(tempFile, repairState.UpscaledMissingPagesCbzPath);
+
+                    // Save the updated task data with the upscaled file path
+                    await dbContext.SaveChangesAsync();
+                    await taskProcessor.TaskCompleted(taskId);
+                    await responseStream.WriteAsync(new UploadUpscaledCbzResponse
+                    {
+                        Success = true, Message = "Repair missing pages upscaled", TaskId = taskId
+                    });
+                }
+                else
                 {
                     File.Delete(tempFile);
                     await responseStream.WriteAsync(new UploadUpscaledCbzResponse
                     {
-                        Success = false, Message = "Chapter not found", TaskId = taskId
+                        Success = false, Message = "Invalid task type", TaskId = taskId
                     });
                     continue;
                 }
-
-                if (chapter.UpscaledFullPath == null)
-                {
-                    File.Delete(tempFile);
-                    await responseStream.WriteAsync(new UploadUpscaledCbzResponse
-                    {
-                        Success = false,
-                        Message = "Suitable location to save the chapter not found.",
-                        TaskId = taskId
-                    });
-                    continue;
-                }
-
-                if (File.Exists(chapter.UpscaledFullPath))
-                {
-                    File.Delete(chapter.UpscaledFullPath);
-                }
-
-                string? destinationDirectory = Path.GetDirectoryName(chapter.UpscaledFullPath);
-                if (destinationDirectory != null)
-                {
-                    fileSystem.CreateDirectory(destinationDirectory);
-                }
-
-                fileSystem.Move(tempFile, chapter.UpscaledFullPath);
-                chapter.IsUpscaled = true;
-                chapter.UpscalerProfileId = upscaleTask.UpscalerProfileId;
-                await dbContext.SaveChangesAsync();
-                await taskProcessor.TaskCompleted(taskId);
-                await responseStream.WriteAsync(new UploadUpscaledCbzResponse
-                {
-                    Success = true, Message = "Chapter upscaled", TaskId = taskId
-                });
-                _ = chapterChangedNotifier.Notify(chapter, true);
             }
             catch (Exception ex)
             {

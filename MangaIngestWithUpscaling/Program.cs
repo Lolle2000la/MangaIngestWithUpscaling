@@ -4,6 +4,7 @@ using MangaIngestWithUpscaling.Components;
 using MangaIngestWithUpscaling.Components.Account;
 using MangaIngestWithUpscaling.Configuration;
 using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.Python;
@@ -82,10 +83,11 @@ builder.Services.AddSerilog((services, lc) => lc
 // Configure Forwarded Headers
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
-    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto |
+                               ForwardedHeaders.XForwardedHost;
     // If the proxy isn't on localhost from the app container's perspective
     options.KnownProxies.Clear();
-    options.KnownNetworks.Clear();
+    options.KnownIPNetworks.Clear();
 });
 
 // Add services to the container.
@@ -138,6 +140,18 @@ if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
 
             options.Events = new OpenIdConnectEvents
             {
+                OnRedirectToIdentityProvider = ctx =>
+                {
+                    // Ensure redirect URIs use HTTPS when behind a reverse proxy
+                    if (ctx.Request.Headers.ContainsKey("X-Forwarded-Proto") &&
+                        ctx.Request.Headers["X-Forwarded-Proto"].ToString().Contains("https"))
+                    {
+                        ctx.ProtocolMessage.RedirectUri =
+                            ctx.ProtocolMessage.RedirectUri?.Replace("http://", "https://");
+                    }
+
+                    return Task.CompletedTask;
+                },
                 OnTokenValidated = async ctx =>
                 {
                     var signInManager = ctx.HttpContext.RequestServices
@@ -250,22 +264,67 @@ app.UseForwardedHeaders();
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-    var loggingDbContext = scope.ServiceProvider.GetRequiredService<LoggingDbContext>();
+    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+
+    // Create database backup before .NET 10 upgrade if this is the first time
+    var dbPath = Path.GetFullPath(sqliteConnectionStringBuilder.DataSource);
+    string dbDirectory = Path.GetDirectoryName(dbPath) ??
+                         throw new InvalidOperationException("Unable to determine database directory");
+    var upgradeMarkerFile = Path.Combine(dbDirectory, ".net10-upgrade-complete");
+
+    if (!File.Exists(upgradeMarkerFile) && File.Exists(dbPath))
+    {
+        try
+        {
+            var backupPath = dbPath + ".bak";
+            File.Copy(dbPath, backupPath, overwrite: false);
+            logger.LogInformation("Created database backup at {BackupPath} before .NET 10 upgrade", backupPath);
+
+            // Also backup the logging database if it exists
+            var loggingDbPath = Path.GetFullPath(loggingConnectionReadOnlyStringBuilder.DataSource);
+            if (File.Exists(loggingDbPath))
+            {
+                var loggingBackupPath = loggingDbPath + ".bak";
+                File.Copy(loggingDbPath, loggingBackupPath, overwrite: false);
+                logger.LogInformation("Created logging database backup at {BackupPath}", loggingBackupPath);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex,
+                "Failed to create database backup before .NET 10 upgrade. Continuing with migration...");
+        }
+    }
+
     try
     {
         dbContext.Database.Migrate();
-        Console.WriteLine("Database migrations applied successfully.");
+        logger.LogDebug("Database migrations applied successfully.");
 
-        //loggingDbContext.Database.EnsureCreated();
+        // Mark the .NET 10 upgrade as complete
+        try
+        {
+            await File.WriteAllTextAsync(upgradeMarkerFile,
+                $"Upgrade completed on {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+            logger.LogDebug("Marked .NET 10 upgrade as complete");
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to create upgrade marker file, but migration completed successfully");
+        }
+
+        // reset any tasks that were "Processing" (e.g. during a crash) back to "Pending"
+        await dbContext.PersistedTasks.Where(task => task.Status == PersistedTaskStatus.Processing)
+            .ExecuteUpdateAsync(s =>
+                s.SetProperty(p => p.Status, p => PersistedTaskStatus.Pending));
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"An error occurred while applying migrations: {ex.Message}");
+        logger.LogError(ex, $"An error occurred while applying migrations: {ex.Message}");
         // Log or handle the exception as appropriate for your app
     }
 
     // Also initialize python environment
-    var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
     var upscalerConfig = scope.ServiceProvider.GetRequiredService<IOptions<UpscalerConfig>>();
     if (upscalerConfig.Value.RemoteOnly)
     {
