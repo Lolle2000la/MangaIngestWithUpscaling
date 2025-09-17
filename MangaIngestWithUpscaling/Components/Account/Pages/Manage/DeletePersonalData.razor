@@ -1,8 +1,6 @@
 ﻿@page "/Account/Manage/DeletePersonalData"
-
 @using System.ComponentModel.DataAnnotations
 @using Microsoft.AspNetCore.Identity
-@using MangaIngestWithUpscaling.Data
 
 @inject UserManager<ApplicationUser> UserManager
 @inject SignInManager<ApplicationUser> SignInManager
@@ -29,9 +27,11 @@
         @if (requirePassword)
         {
             <div class="form-floating mb-3">
-                <InputText type="password" @bind-Value="Input.Password" id="Input.Password" class="form-control" autocomplete="current-password" aria-required="true" placeholder="Please enter your password." />
+                <InputText type="password" @bind-Value="Input!.Password" id="Input.Password" class="form-control"
+                           autocomplete="current-password" aria-required="true"
+                           placeholder="Please enter your password."/>
                 <label for="Input.Password" class="form-label">Password</label>
-                <ValidationMessage For="() => Input.Password" class="text-danger" />
+                <ValidationMessage For="() => Input!.Password" class="text-danger"/>
             </div>
         }
         <button class="w-100 btn btn-lg btn-danger" type="submit">Delete data and close my account</button>
@@ -46,8 +46,7 @@
     [CascadingParameter]
     private HttpContext HttpContext { get; set; } = default!;
 
-    [SupplyParameterFromForm]
-    private InputModel Input { get; set; } = new();
+    [SupplyParameterFromForm] private InputModel? Input { get; set; }
 
     protected override async Task OnInitializedAsync()
     {
@@ -58,7 +57,7 @@
 
     private async Task OnValidSubmitAsync()
     {
-        if (requirePassword && !await UserManager.CheckPasswordAsync(user, Input.Password))
+        if (requirePassword && !await UserManager.CheckPasswordAsync(user, Input!.Password))
         {
             message = "Error: Incorrect password.";
             return;
