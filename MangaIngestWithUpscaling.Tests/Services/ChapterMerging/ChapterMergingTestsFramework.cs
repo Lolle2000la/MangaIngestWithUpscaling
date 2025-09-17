@@ -531,6 +531,111 @@ public class ChapterPartMergerTests : IDisposable
         VerifyRestoredChapterPageCount(Path.Combine(_tempDir, "Chapter 4.2.cbz"), 3);
     }
 
+    /// <summary>
+    /// Tests that restoration handles completely non-numeric page naming conventions
+    /// that rely entirely on natural sorting order
+    /// </summary>
+    [Fact]
+    public async Task RestoreChapterPartsAsync_WithCompletelyNonNumericNames_ShouldUseNaturalSorting()
+    {
+        // Arrange - Create merged file with descriptive, non-numeric page names
+        var originalParts = new List<OriginalChapterPart>
+        {
+            new()
+            {
+                FileName = "Chapter 5.1.cbz",
+                ChapterNumber = "5.1",
+                PageNames = new List<string> { "opening_scene.jpg", "character_intro.png" },
+                StartPageIndex = 0,
+                EndPageIndex = 1,
+                Metadata = new ExtractedMetadata("Test Series", "Chapter 5.1", "5.1")
+            },
+            new()
+            {
+                FileName = "Chapter 5.2.cbz", 
+                ChapterNumber = "5.2",
+                PageNames = new List<string> { "action_begins.jpg", "battle_page_01.png", "climax_moment.jpg" },
+                StartPageIndex = 2,
+                EndPageIndex = 4,
+                Metadata = new ExtractedMetadata("Test Series", "Chapter 5.2", "5.2")
+            }
+        };
+
+        // Create merged file with completely descriptive names that should sort naturally
+        var mergedFilePath = Path.Combine(_tempDir, "Chapter 5 Merged.cbz");
+        var descriptivePageNames = new[] 
+        { 
+            "a_opening_scene.jpg",         // Prefix ensures it sorts first
+            "b_character_intro.png",       // Natural alphabetical sorting
+            "c_action_begins.jpg",         // Descriptive but orderable
+            "d_battle_page_main.png",      // No numbers, just names
+            "e_climax_final.jpg"           // Natural conclusion
+        };
+        CreateMergedTestCbzFileWithCustomNames(mergedFilePath, descriptivePageNames);
+
+        // Act
+        List<FoundChapter> restoredChapters = await _chapterPartMerger.RestoreChapterPartsAsync(mergedFilePath,
+            originalParts,
+            _tempDir, TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.Equal(2, restoredChapters.Count);
+        VerifyRestoredChapterPageCount(Path.Combine(_tempDir, "Chapter 5.1.cbz"), 2);
+        VerifyRestoredChapterPageCount(Path.Combine(_tempDir, "Chapter 5.2.cbz"), 3);
+    }
+
+    /// <summary>
+    /// Tests various edge cases of page naming that might be found in real-world CBZ files
+    /// </summary>
+    [Fact]
+    public async Task RestoreChapterPartsAsync_WithMixedNamingConventions_ShouldHandleAllFormats()
+    {
+        // Arrange - Test mixed naming conventions in a single file
+        var originalParts = new List<OriginalChapterPart>
+        {
+            new()
+            {
+                FileName = "Chapter 6.1.cbz",
+                ChapterNumber = "6.1",
+                PageNames = new List<string> { "cover.jpg", "p2.png" },
+                StartPageIndex = 0,
+                EndPageIndex = 1,
+                Metadata = new ExtractedMetadata("Test Series", "Chapter 6.1", "6.1")
+            },
+            new()
+            {
+                FileName = "Chapter 6.2.cbz",
+                ChapterNumber = "6.2", 
+                PageNames = new List<string> { "Page003.jpg", "scan_4.png", "final_page.jpg" },
+                StartPageIndex = 2,
+                EndPageIndex = 4,
+                Metadata = new ExtractedMetadata("Test Series", "Chapter 6.2", "6.2")
+            }
+        };
+
+        // Create merged file with mixed naming conventions
+        var mergedFilePath = Path.Combine(_tempDir, "Chapter 6 Merged.cbz");
+        var mixedPageNames = new[]
+        {
+            "cover.jpg",           // Simple name
+            "p2.png",              // Short with number
+            "Page003.jpg",         // Mixed case with padding
+            "scan_4.png",          // Underscore separator
+            "final_page.jpg"       // Descriptive name
+        };
+        CreateMergedTestCbzFileWithCustomNames(mergedFilePath, mixedPageNames);
+
+        // Act
+        List<FoundChapter> restoredChapters = await _chapterPartMerger.RestoreChapterPartsAsync(mergedFilePath,
+            originalParts,
+            _tempDir, TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.Equal(2, restoredChapters.Count);
+        VerifyRestoredChapterPageCount(Path.Combine(_tempDir, "Chapter 6.1.cbz"), 2);
+        VerifyRestoredChapterPageCount(Path.Combine(_tempDir, "Chapter 6.2.cbz"), 3);
+    }
+
     #endregion
 
     #region Helper Methods

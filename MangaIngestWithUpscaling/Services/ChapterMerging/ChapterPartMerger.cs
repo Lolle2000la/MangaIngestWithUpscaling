@@ -722,11 +722,24 @@ public partial class ChapterPartMerger(
     }
 
     /// <summary>
-    /// Finds a page entry in the merged archive by index, handling different naming conventions
+    /// Finds a page entry in the merged archive by index, handling different naming conventions including non-numeric names
     /// </summary>
     private ZipArchiveEntry? FindPageByIndex(ZipArchive mergedArchive, int pageIndex)
     {
-        // Try different padding formats that might be used in merged files
+        // First, get all image entries sorted naturally to establish the canonical order
+        var imageEntries = mergedArchive.Entries
+            .Where(e => IsImageFile(e.Name) && !e.FullName.EndsWith("/"))
+            .OrderBy(e => e.Name, new NaturalStringComparer())
+            .ToList();
+
+        // If pageIndex is within range, return by position (most reliable for any naming scheme)
+        if (pageIndex >= 0 && pageIndex < imageEntries.Count)
+        {
+            return imageEntries[pageIndex];
+        }
+
+        // If out of range, try numeric matching as fallback for edge cases
+        // This handles specific numeric patterns that might exist
         var possibleFormats = new[]
         {
             $"{pageIndex:D4}", // 4-digit padding (our standard)
@@ -738,26 +751,21 @@ public partial class ChapterPartMerger(
 
         foreach (string format in possibleFormats)
         {
-            ZipArchiveEntry? entry = mergedArchive.Entries
-                .FirstOrDefault(e => IsImageFile(e.Name) && e.Name.StartsWith(format));
+            ZipArchiveEntry? entry = imageEntries
+                .FirstOrDefault(e => e.Name.StartsWith(format + ".") || 
+                                     e.Name.StartsWith(format + "_") ||
+                                     e.Name.Equals(format + Path.GetExtension(e.Name), StringComparison.OrdinalIgnoreCase));
             
             if (entry != null)
             {
+                logger.LogDebug("Found page {PageIndex} using numeric format '{Format}': {EntryName}", 
+                    pageIndex, format, entry.Name);
                 return entry;
             }
         }
 
-        // If no direct match, try to find by position in sorted order
-        // This handles cases where pages might have non-numeric prefixes or different naming schemes
-        var imageEntries = mergedArchive.Entries
-            .Where(e => IsImageFile(e.Name) && !e.FullName.EndsWith("/"))
-            .OrderBy(e => e.Name, new NaturalStringComparer())
-            .ToList();
-
-        if (pageIndex >= 0 && pageIndex < imageEntries.Count)
-        {
-            return imageEntries[pageIndex];
-        }
+        logger.LogWarning("Could not find page at index {PageIndex} in archive with {TotalPages} pages. Available pages: {PageNames}", 
+            pageIndex, imageEntries.Count, string.Join(", ", imageEntries.Take(5).Select(e => e.Name)));
 
         return null;
     }
