@@ -65,7 +65,7 @@ public partial class IngestProcessor(
         // preserve original series for alternative title
         Dictionary<string, string> originalSeriesMap = await foundChapters.ToDictionaryAsync(c => c.RelativePath,
             c => c.Metadata.Series,
-            cancellationToken);
+            cancellationToken: cancellationToken);
 
         // apply rename rules and keep track of original and renamed versions
         var processedChapters = new List<ProcessedChapterInfo>();

@@ -13,7 +13,7 @@
 <PageTitle>API Key</PageTitle>
 
 <h3>API Key</h3>
-<StatusMessage />
+<StatusMessage/>
 
 <div class="row">
     <div class="col-xl-6">
@@ -43,14 +43,14 @@
     private ApplicationUser user = default!;
     private ApiKey? apiKey;
 
-    [CascadingParameter]
-    private HttpContext HttpContext { get; set; } = default!;
+    [CascadingParameter] private HttpContext HttpContext { get; set; } = default!;
 
-    [SupplyParameterFromForm]
-    private InputModel Input { get; set; } = new();
+    [SupplyParameterFromForm] private InputModel? Input { get; set; }
 
     protected override async Task OnInitializedAsync()
     {
+        Input ??= new InputModel();
+
         user = await UserAccessor.GetRequiredUserAsync(HttpContext);
         apiKey = await DbContext.ApiKeys.FirstOrDefaultAsync(k => k.User == user && k.IsActive);
 
@@ -64,7 +64,7 @@
             Input = new();
         }
 
-        Input.ApiKey ??= apiKey.Key;
+        Input!.ApiKey ??= apiKey.Key;
     }
 
     private async Task OnValidSubmitAsync()
@@ -89,4 +89,5 @@
         [Display(Name = "API Key")]
         public string ApiKey { get; set; } = "";
     }
+
 }

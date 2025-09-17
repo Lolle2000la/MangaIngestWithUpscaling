@@ -366,9 +366,11 @@ FodyWeavers.xsd
 MangaIngestWithUpscaling/data.db*
 /MangaIngestWithUpscaling/logs*.db*
 /MangaIngestWithUpscaling.RemoteWorker/appsettings.Development.json
+MangaIngestWithUpscaling/.net10-upgrade-complete
 
 # IDEA
 .idea/
 
 # test data
 test_data/
+

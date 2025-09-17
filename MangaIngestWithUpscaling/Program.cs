@@ -86,7 +86,7 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
     // If the proxy isn't on localhost from the app container's perspective
     options.KnownProxies.Clear();
-    options.KnownNetworks.Clear();
+    options.KnownIPNetworks.Clear();
 });
 
 // Add services to the container.
@@ -163,7 +163,9 @@ if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
                         {
                             user = new ApplicationUser
                             {
-                                UserName = emailClaim, Email = emailClaim, EmailConfirmed = true
+                                UserName = emailClaim,
+                                Email = emailClaim,
+                                EmailConfirmed = true
                             };
                             IdentityResult createUserResult = await userManager.CreateAsync(user);
                             if (!createUserResult.Succeeded)
@@ -252,10 +254,50 @@ using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+
+    // Create database backup before .NET 10 upgrade if this is the first time
+    var dbPath = Path.GetFullPath(sqliteConnectionStringBuilder.DataSource);
+    var dbDirectory = Path.GetDirectoryName(dbPath) ?? throw new InvalidOperationException("Unable to determine database directory");
+    var upgradeMarkerFile = Path.Combine(dbDirectory, ".net10-upgrade-complete");
+
+    if (!File.Exists(upgradeMarkerFile) && File.Exists(dbPath))
+    {
+        try
+        {
+            var backupPath = dbPath + ".bak";
+            File.Copy(dbPath, backupPath, overwrite: false);
+            logger.LogInformation("Created database backup at {BackupPath} before .NET 10 upgrade", backupPath);
+
+            // Also backup the logging database if it exists
+            var loggingDbPath = Path.GetFullPath(loggingConnectionReadOnlyStringBuilder.DataSource);
+            if (File.Exists(loggingDbPath))
+            {
+                var loggingBackupPath = loggingDbPath + ".bak";
+                File.Copy(loggingDbPath, loggingBackupPath, overwrite: false);
+                logger.LogInformation("Created logging database backup at {BackupPath}", loggingBackupPath);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to create database backup before .NET 10 upgrade. Continuing with migration...");
+        }
+    }
+
     try
     {
         dbContext.Database.Migrate();
         logger.LogDebug("Database migrations applied successfully.");
+
+        // Mark the .NET 10 upgrade as complete
+        try
+        {
+            await File.WriteAllTextAsync(upgradeMarkerFile, $"Upgrade completed on {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+            logger.LogDebug("Marked .NET 10 upgrade as complete");
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to create upgrade marker file, but migration completed successfully");
+        }
 
         // reset any tasks that were "Processing" (e.g. during a crash) back to "Pending"
         await dbContext.PersistedTasks.Where(task => task.Status == PersistedTaskStatus.Processing)
