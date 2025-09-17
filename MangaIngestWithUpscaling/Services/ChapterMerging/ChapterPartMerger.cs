@@ -680,9 +680,7 @@ public partial class ChapterPartMerger(
                     // Extract pages for this part
                     for (int i = originalPart.StartPageIndex; i <= originalPart.EndPageIndex; i++)
                     {
-                        string paddedIndex = $"{i:D4}";
-                        ZipArchiveEntry? mergedEntry = mergedArchive.Entries
-                            .FirstOrDefault(e => e.Name.StartsWith(paddedIndex));
+                        ZipArchiveEntry? mergedEntry = FindPageByIndex(mergedArchive, i);
 
                         if (mergedEntry != null)
                         {
@@ -697,6 +695,11 @@ public partial class ChapterPartMerger(
                             {
                                 await mergedStream.CopyToAsync(partStream, cancellationToken);
                             }
+                        }
+                        else
+                        {
+                            logger.LogWarning("Could not find page at index {PageIndex} in merged archive {MergedFile}",
+                                i, Path.GetFileName(mergedChapterPath));
                         }
                     }
 
@@ -716,6 +719,47 @@ public partial class ChapterPartMerger(
             originalParts.Count, Path.GetFileName(mergedChapterPath));
 
         return restoredChapters;
+    }
+
+    /// <summary>
+    /// Finds a page entry in the merged archive by index, handling different naming conventions
+    /// </summary>
+    private ZipArchiveEntry? FindPageByIndex(ZipArchive mergedArchive, int pageIndex)
+    {
+        // Try different padding formats that might be used in merged files
+        var possibleFormats = new[]
+        {
+            $"{pageIndex:D4}", // 4-digit padding (our standard)
+            $"{pageIndex:D3}", // 3-digit padding
+            $"{pageIndex:D2}", // 2-digit padding
+            $"{pageIndex:D1}", // 1-digit (no padding)
+            pageIndex.ToString() // Plain number
+        };
+
+        foreach (string format in possibleFormats)
+        {
+            ZipArchiveEntry? entry = mergedArchive.Entries
+                .FirstOrDefault(e => IsImageFile(e.Name) && e.Name.StartsWith(format));
+            
+            if (entry != null)
+            {
+                return entry;
+            }
+        }
+
+        // If no direct match, try to find by position in sorted order
+        // This handles cases where pages might have non-numeric prefixes or different naming schemes
+        var imageEntries = mergedArchive.Entries
+            .Where(e => IsImageFile(e.Name) && !e.FullName.EndsWith("/"))
+            .OrderBy(e => e.Name, new NaturalStringComparer())
+            .ToList();
+
+        if (pageIndex >= 0 && pageIndex < imageEntries.Count)
+        {
+            return imageEntries[pageIndex];
+        }
+
+        return null;
     }
 
     private bool IsLatestChapter(string baseNumber, HashSet<string> allChapterNumbers)

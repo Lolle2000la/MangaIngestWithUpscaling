@@ -433,6 +433,104 @@ public class ChapterPartMergerTests : IDisposable
         VerifyRestoredChapterPageCount(Path.Combine(_tempDir, "Chapter 2.2.cbz"), 3);
     }
 
+    [Fact]
+    public async Task RestoreChapterPartsAsync_WithDifferentNamingConventions_ShouldHandleAllFormats()
+    {
+        // Arrange - Test different page naming conventions in merged files
+        var testCases = new[]
+        {
+            new { Description = "3-digit padding", PageNames = new[] { "001.jpg", "002.jpg", "003.jpg" } },
+            new { Description = "2-digit padding", PageNames = new[] { "01.jpg", "02.jpg", "03.jpg" } },
+            new { Description = "1-digit padding", PageNames = new[] { "1.jpg", "2.jpg", "3.jpg" } },
+            new { Description = "mixed formats", PageNames = new[] { "page1.jpg", "img_02.png", "003.jpeg" } },
+            new { Description = "4-digit standard", PageNames = new[] { "0000.jpg", "0001.jpg", "0002.jpg" } }
+        };
+
+        foreach (var testCase in testCases)
+        {
+            using var testScope = new TestScope($"Testing {testCase.Description}");
+            
+            var originalParts = new List<OriginalChapterPart>
+            {
+                new()
+                {
+                    FileName = "Chapter 3.1.cbz",
+                    ChapterNumber = "3.1",
+                    PageNames = testCase.PageNames.ToList(),
+                    StartPageIndex = 0,
+                    EndPageIndex = testCase.PageNames.Length - 1,
+                    Metadata = new ExtractedMetadata("Test Series", "Chapter 3.1", "3.1")
+                }
+            };
+
+            // Create merged file with the specific naming convention
+            var mergedFilePath = Path.Combine(_tempDir, $"merged_{testCase.Description.Replace(" ", "_")}.cbz");
+            CreateMergedTestCbzFileWithCustomNames(mergedFilePath, testCase.PageNames);
+
+            // Act
+            List<FoundChapter> restoredChapters = await _chapterPartMerger.RestoreChapterPartsAsync(mergedFilePath,
+                originalParts,
+                _tempDir, TestContext.Current.CancellationToken);
+
+            // Assert
+            Assert.Single(restoredChapters);
+            var restoredPath = Path.Combine(_tempDir, "Chapter 3.1.cbz");
+            Assert.True(File.Exists(restoredPath), $"Restored file should exist for {testCase.Description}");
+            
+            // Verify the restored file has all pages
+            VerifyRestoredChapterPageCount(restoredPath, testCase.PageNames.Length);
+            
+            // Clean up for next iteration
+            if (File.Exists(restoredPath)) File.Delete(restoredPath);
+            if (File.Exists(mergedFilePath)) File.Delete(mergedFilePath);
+        }
+    }
+
+    /// <summary>
+    /// Tests that restore works even when merged files use inconsistent page numbering
+    /// </summary>
+    [Fact] 
+    public async Task RestoreChapterPartsAsync_WithInconsistentPageNumbering_ShouldFallbackToPositionalMatching()
+    {
+        // Arrange - Create a merged file with non-sequential or non-standard page names
+        var originalParts = new List<OriginalChapterPart>
+        {
+            new()
+            {
+                FileName = "Chapter 4.1.cbz",
+                ChapterNumber = "4.1", 
+                PageNames = new List<string> { "cover.jpg", "page1.jpg" },
+                StartPageIndex = 0,
+                EndPageIndex = 1,
+                Metadata = new ExtractedMetadata("Test Series", "Chapter 4.1", "4.1")
+            },
+            new()
+            {
+                FileName = "Chapter 4.2.cbz",
+                ChapterNumber = "4.2",
+                PageNames = new List<string> { "start.png", "middle.png", "end.png" }, 
+                StartPageIndex = 2,
+                EndPageIndex = 4,
+                Metadata = new ExtractedMetadata("Test Series", "Chapter 4.2", "4.2")
+            }
+        };
+
+        // Create merged file with non-standard naming that doesn't follow numeric patterns
+        var mergedFilePath = Path.Combine(_tempDir, "Chapter 4 Merged.cbz");
+        var nonStandardPageNames = new[] { "titlepage.jpg", "story_01.png", "battle_scene.jpg", "conclusion.png", "credits.jpg" };
+        CreateMergedTestCbzFileWithCustomNames(mergedFilePath, nonStandardPageNames);
+
+        // Act
+        List<FoundChapter> restoredChapters = await _chapterPartMerger.RestoreChapterPartsAsync(mergedFilePath,
+            originalParts,
+            _tempDir, TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.Equal(2, restoredChapters.Count);
+        VerifyRestoredChapterPageCount(Path.Combine(_tempDir, "Chapter 4.1.cbz"), 2);
+        VerifyRestoredChapterPageCount(Path.Combine(_tempDir, "Chapter 4.2.cbz"), 3);
+    }
+
     #endregion
 
     #region Helper Methods
@@ -492,6 +590,21 @@ public class ChapterPartMergerTests : IDisposable
         }
     }
 
+    private void CreateMergedTestCbzFileWithCustomNames(string filePath, string[] pageNames)
+    {
+        using var fileStream = new FileStream(filePath, FileMode.Create);
+        using var archive = new ZipArchive(fileStream, ZipArchiveMode.Create);
+
+        // Add test images with the exact page names provided
+        for (int i = 0; i < pageNames.Length; i++)
+        {
+            var entry = archive.CreateEntry(pageNames[i]);
+            using var entryStream = entry.Open();
+            var imageBytes = CreateTestImageBytes(i + 1);
+            entryStream.Write(imageBytes);
+        }
+    }
+
     private static byte[] CreateTestImageBytes(int variant = 1)
     {
         try
@@ -525,7 +638,10 @@ public class ChapterPartMergerTests : IDisposable
         using var fileStream = new FileStream(filePath, FileMode.Open);
         using var archive = new ZipArchive(fileStream, ZipArchiveMode.Read);
 
-        var imageEntries = archive.Entries.Where(e => e.Name.EndsWith(".jpg") || e.Name.EndsWith(".png")).ToList();
+        var imageEntries = archive.Entries.Where(e => 
+            e.Name.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) || 
+            e.Name.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase) || 
+            e.Name.EndsWith(".png", StringComparison.OrdinalIgnoreCase)).ToList();
         Assert.Equal(expectedPageCount, imageEntries.Count);
     }
 
@@ -792,5 +908,21 @@ public class ChapterNumberExtractionIntegrationTests
         {
             Assert.Fail($"Could not parse chapter number: {chapterNumber}");
         }
+    }
+}
+
+/// <summary>
+/// Simple disposable scope for organizing test outputs
+/// </summary>
+public class TestScope : IDisposable
+{
+    public TestScope(string description)
+    {
+        // This is just for test organization, no actual implementation needed
+    }
+
+    public void Dispose()
+    {
+        // No cleanup needed for test scope
     }
 }
