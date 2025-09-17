@@ -687,6 +687,9 @@
                 // Check if this chapter is a merged chapter
                 var isMerged = await ChapterMergeRevertService.CanRevertChapterAsync(chapter);
 
+                Logger.LogDebug("LoadChapters: Chapter {FileName} (ID: {ChapterId}) - IsMerged: {IsMerged}", 
+                    chapter.FileName, chapter.Id, isMerged);
+
                 chapters.Add(new ChapterItem
                 {
                     Chapter = chapter,
@@ -776,6 +779,13 @@
 
         try
         {
+            Logger.LogDebug("UpdateMergePossibilitiesAsync: Total chapter items: {TotalCount}", chapterItems.Count);
+            foreach (var ci in chapterItems)
+            {
+                Logger.LogDebug("UpdateMergePossibilitiesAsync: Chapter {FileName} (ID: {ChapterId}) - IsMerged: {IsMerged}", 
+                    ci.Chapter.FileName, ci.Chapter.Id, ci.IsMerged);
+            }
+            
             var allChapters = chapterItems.Where(ci => !ci.IsMerged).Select(ci => ci.Chapter).ToList();
             Logger.LogDebug("UpdateMergePossibilitiesAsync: Found {ChapterCount} non-merged chapters: [{ChapterNames}]", 
                 allChapters.Count, string.Join(", ", allChapters.Select(c => c.FileName)));
