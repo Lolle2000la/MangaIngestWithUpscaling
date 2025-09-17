@@ -13,7 +13,7 @@ MangaIngestWithUpscaling is a **Blazor-based web application** designed to **ing
 
 ### Prerequisites
 - .NET 10.0 SDK (REQUIRED - .NET 9/8 will not work)
-- Python 3.x (installed automatically by application on first run)
+- Python 3.12 (higher might work, but is rejected under some circumstances) 
 - Git with submodule support
 
 ### Bootstrap, Build, and Test the Repository
