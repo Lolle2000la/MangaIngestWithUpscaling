@@ -475,15 +475,17 @@ public class ChapterPartMergerTests : IDisposable
         writer.Write("<?xml version=\"1.0\"?><ComicInfo><Title>Test Chapter</Title></ComicInfo>");
     }
 
-    private void CreateMergedTestCbzFile(string filePath, string[] pageNames)
+    private void CreateMergedTestCbzFile(string filePath, string[] originalPageNames)
     {
         using var fileStream = new FileStream(filePath, FileMode.Create);
         using var archive = new ZipArchive(fileStream, ZipArchiveMode.Create);
 
-        // Add test images
-        for (int i = 0; i < pageNames.Length; i++)
+        // Add test images with 4-digit padding as the actual merge implementation does
+        for (int i = 0; i < originalPageNames.Length; i++)
         {
-            var entry = archive.CreateEntry(pageNames[i]);
+            // Use 4-digit padding to match actual MergeChapterPartsAsync implementation
+            string mergedPageName = $"{i:D4}.jpg";
+            var entry = archive.CreateEntry(mergedPageName);
             using var entryStream = entry.Open();
             var imageBytes = CreateTestImageBytes(i + 1);
             entryStream.Write(imageBytes);
