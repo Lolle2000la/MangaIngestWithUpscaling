@@ -5,63 +5,116 @@
 
 <PageTitle>Logs</PageTitle>
 
-<MudTable T="Log" Items="@_logs" Hover="true" ServerData="@ServerData"
-          SortLabel="Timestamp"
-          @ref="table"
-          HorizontalScrollbar="true"
-          Dense="true"
-          Breakpoint="Breakpoint.None"
-          OnRowClick="OnRowClick">
-    <ToolBarContent>
-        <MudText Typo="Typo.h6">Application Logs</MudText>
-        <MudSpacer />
-        <MudSelect @bind-Value="_selectedLevel" @bind-Value:after="async () => await table.ReloadServerData()" Label="Logging level filter"
-                   Immediate="true">
-            @foreach (var level in Enum.GetValues<LogLevel>())
-            {
-                <MudSelectItem Value="@level">@level.ToString()</MudSelectItem>
-            }
-        </MudSelect>
-    </ToolBarContent>
-
-    <HeaderContent>
-        <MudTh>Timestamp</MudTh>
-        <MudTh>Level</MudTh>
-        <MudTh>Message</MudTh>
-        <MudTh>Exception</MudTh>
-    </HeaderContent>
-
-    <RowTemplate>
-        <MudTd DataLabel="Timestamp">
-            @context.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
-        </MudTd>
-
-        <MudTd DataLabel="Level">
-            <MudChip T="string" Color="@GetLevelColor(context.Level)" Variant="Variant.Filled" Class="ma-1">
-                @context.Level
-            </MudChip>
-        </MudTd>
-
-        <MudTd DataLabel="Message" Class="log-message">
-            <div class="log-message">
-                <MudText title="@context.RenderedMessage">@context.RenderedMessage</MudText>
+<MudGrid>
+    <MudItem xs="12">
+        <div class="d-flex align-center justify-space-between mb-6">
+            <div class="d-flex align-center">
+                <MudIcon Icon="@Icons.Material.Filled.List" Color="Color.Primary" Size="Size.Large" Class="mr-3" />
+                <MudText Typo="Typo.h3" Color="Color.Primary">System Logs</MudText>
             </div>
-        </MudTd>
+            <MudStack Row Spacing="2">
+                <MudText Typo="Typo.body2" Color="Color.Surface">Filter Level:</MudText>
+                <MudSelect @bind-Value="_selectedLevel" 
+                           @bind-Value:after="async () => await table.ReloadServerData()" 
+                           Variant="Variant.Outlined"
+                           Margin="Margin.Dense"
+                           Immediate="true"
+                           Style="min-width: 150px;">
+                    @foreach (var level in Enum.GetValues<LogLevel>())
+                    {
+                        <MudSelectItem Value="@level">@level.ToString()</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudStack>
+        </div>
+    </MudItem>
 
-        <MudTd DataLabel="Exception">
-            @if (!string.IsNullOrEmpty(context.Exception))
-            {
-                <div class="log-message">
-                    <MudText title="@context.Exception">@context.Exception</MudText>
-                </div>
-            }
-        </MudTd>
-    </RowTemplate>
+    <MudItem xs="12">
+        <MudPaper Elevation="2">
+            <MudTable T="Log" Items="@_logs" 
+                      Hover="true" 
+                      ServerData="@ServerData"
+                      SortLabel="Timestamp"
+                      @ref="table"
+                      HorizontalScrollbar="true"
+                      Dense="true"
+                      Breakpoint="Breakpoint.None"
+                      OnRowClick="OnRowClick"
+                      FixedHeader="true"
+                      Height="70vh">
+                
+                <ToolBarContent>
+                    <MudText Typo="Typo.h6">Application Logs</MudText>
+                    <MudSpacer />
+                    <MudText Typo="Typo.body2" Color="Color.Surface">
+                        Click any row to view details
+                    </MudText>
+                </ToolBarContent>
 
-    <PagerContent>
-        <MudTablePager />
-    </PagerContent>
-</MudTable>
+                <HeaderContent>
+                    <MudTh Style="width: 180px;"><MudText Typo="Typo.subtitle2">Timestamp</MudText></MudTh>
+                    <MudTh Style="width: 120px;"><MudText Typo="Typo.subtitle2">Level</MudText></MudTh>
+                    <MudTh><MudText Typo="Typo.subtitle2">Message</MudText></MudTh>
+                    <MudTh Style="width: 100px;"><MudText Typo="Typo.subtitle2">Exception</MudText></MudTh>
+                </HeaderContent>
+
+                <RowTemplate>
+                    <MudTd DataLabel="Timestamp" Style="width: 180px;">
+                        <div class="d-flex flex-column">
+                            <MudText Typo="Typo.body2" Class="font-weight-medium">
+                                @context.Timestamp.ToLocalTime().ToString("MM/dd HH:mm:ss")
+                            </MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Surface">
+                                @context.Timestamp.ToLocalTime().ToString("yyyy")
+                            </MudText>
+                        </div>
+                    </MudTd>
+
+                    <MudTd DataLabel="Level" Style="width: 120px;">
+                        <MudChip T="string" 
+                                 Color="@GetLevelColor(context.Level)" 
+                                 Variant="Variant.Filled" 
+                                 Size="Size.Small"
+                                 Icon="@GetLevelIcon(context.Level)">
+                            @context.Level
+                        </MudChip>
+                    </MudTd>
+
+                    <MudTd DataLabel="Message" Class="log-message">
+                        <MudTooltip Text="@context.RenderedMessage">
+                            <MudText Typo="Typo.body2" 
+                                     Class="text-truncate" 
+                                     Style="max-width: 500px;">
+                                @context.RenderedMessage
+                            </MudText>
+                        </MudTooltip>
+                    </MudTd>
+
+                    <MudTd DataLabel="Exception" Style="width: 100px;">
+                        @if (!string.IsNullOrEmpty(context.Exception))
+                        {
+                            <MudIcon Icon="@Icons.Material.Filled.Error" 
+                                     Color="Color.Error" 
+                                     Size="Size.Small"
+                                     title="Has Exception" />
+                        }
+                        else
+                        {
+                            <MudIcon Icon="@Icons.Material.Filled.CheckCircle" 
+                                     Color="Color.Success" 
+                                     Size="Size.Small"
+                                     title="No Exception" />
+                        }
+                    </MudTd>
+                </RowTemplate>
+
+                <PagerContent>
+                    <MudTablePager PageSizeOptions="new int[]{10, 25, 50, 100}" />
+                </PagerContent>
+            </MudTable>
+        </MudPaper>
+    </MudItem>
+</MudGrid>
 
 @code {
     private List<Log> _logs = new();
@@ -105,6 +158,18 @@
             "INFORMATION" => Color.Info,
             "DEBUG" => Color.Default,
             _ => Color.Default
+        };
+    }
+
+    private string GetLevelIcon(string level)
+    {
+        return level?.ToUpper() switch
+        {
+            "ERROR" => Icons.Material.Filled.Error,
+            "WARNING" => Icons.Material.Filled.Warning,
+            "INFORMATION" => Icons.Material.Filled.Info,
+            "DEBUG" => Icons.Material.Filled.BugReport,
+            _ => Icons.Material.Filled.Circle
         };
     }
 

@@ -4,74 +4,92 @@
 @inject IConfiguration Configuration
 
 
-<MudNavMenu>
-    <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Home">
-        Home
-    </MudNavLink>
-    <MudNavLink Href="libraries" Icon="@Icons.Material.Filled.LibraryBooks">
-        Libraries
-    </MudNavLink>
-    <MudNavLink Href="upscaling/profiles" Icon="@Icons.Material.Filled.ImageAspectRatio">
-        Upscale Profiles
-    </MudNavLink>
-    <MudNavLink Href="mangas" Icon="@Icons.Material.Filled.Book">
-        Mangas
-    </MudNavLink>
-    <MudNavLink Href="tasks" Icon="@Icons.Material.Filled.Task">
-        Tasks
-    </MudNavLink>
-    <MudNavLink Href="logs" Icon="@Icons.Material.Filled.List">
-        Logs
-    </MudNavLink>
+<MudNavMenu Margin="Margin.Dense">
+    <MudNavGroup Title="Main" Icon="@Icons.Material.Filled.Dashboard" Expanded="true">
+        <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Home">
+            Home
+        </MudNavLink>
+        <MudNavLink Href="libraries" Icon="@Icons.Material.Filled.LibraryBooks">
+            Libraries
+        </MudNavLink>
+        <MudNavLink Href="mangas" Icon="@Icons.Material.Filled.Book">
+            Mangas
+        </MudNavLink>
+    </MudNavGroup>
+    
+    <MudNavGroup Title="Configuration" Icon="@Icons.Material.Filled.Settings" Expanded="false">
+        <MudNavLink Href="upscaling/profiles" Icon="@Icons.Material.Filled.ImageAspectRatio">
+            Upscale Profiles
+        </MudNavLink>
+    </MudNavGroup>
+    
+    <MudNavGroup Title="System" Icon="@Icons.Material.Filled.Computer" Expanded="false">
+        <MudNavLink Href="tasks" Icon="@Icons.Material.Filled.Task">
+            Tasks
+        </MudNavLink>
+        <MudNavLink Href="logs" Icon="@Icons.Material.Filled.List">
+            Logs
+        </MudNavLink>
+    </MudNavGroup>
+
+    <MudDivider Class="my-2" />
+    
     <AuthorizeView>
         <Authorized>
             @if (Configuration.GetValue<bool>("OIDC:Enabled"))
             {
-                // When OIDC is enabled, show user email and a logout button that redirects to OIDC logout
                 <MudNavLink Href="Account/Manage" Icon="@Icons.Material.Filled.ManageAccounts">
                     @context.User.Identity?.Name
                 </MudNavLink>
-                <form action="/Account/LogoutOidc" method="post"> @* Changed action for OIDC logout *@
+                <form action="/Account/LogoutOidc" method="post">
                     <AntiforgeryToken />
                     <input type="hidden" name="ReturnUrl" value="@currentUrl" />
-                    <button type="submit" class="mud-nav-link mud-ripple">
-                        <MudIcon Class="mud-icon-root mud-icon-default mud-svg-icon mud-icon-size-medium mud-nav-link-icon mud-nav-link-icon-default"
-                                 Icon="@Icons.Material.Filled.Logout" />
-                        <div class="mud-nav-link-text">Logout</div>
-                    </button>
+                    <MudButton FullWidth="true" 
+                               StartIcon="@Icons.Material.Filled.Logout" 
+                               Color="Color.Error" 
+                               Variant="Variant.Text"
+                               Class="justify-start"
+                               Style="text-transform: none;"
+                               ButtonType="ButtonType.Submit">
+                        Logout
+                    </MudButton>
                 </form>
             }
             else
             {
-                // non-OIDC authorized view
                 <MudNavLink Href="Account/Manage" Icon="@Icons.Material.Filled.ManageAccounts">
                     @context.User.Identity?.Name
                 </MudNavLink>
                 <form action="Account/Logout" method="post">
                     <AntiforgeryToken />
                     <input type="hidden" name="ReturnUrl" value="@currentUrl" />
-                    <button type="submit" class="mud-nav-link mud-ripple">
-                        <MudIcon Class="mud-icon-root mud-icon-default mud-svg-icon mud-icon-size-medium mud-nav-link-icon mud-nav-link-icon-default"
-                                 Icon="@Icons.Material.Filled.Logout" />
-                        <div class="mud-nav-link-text">Logout</div>
-                    </button>
+                    <MudButton FullWidth="true" 
+                               StartIcon="@Icons.Material.Filled.Logout" 
+                               Color="Color.Error" 
+                               Variant="Variant.Text"
+                               Class="justify-start"
+                               Style="text-transform: none;"
+                               ButtonType="ButtonType.Submit">
+                        Logout
+                    </MudButton>
                 </form>
             }
         </Authorized>
         <NotAuthorized>
-            @if (!Configuration.GetValue<bool>("OIDC:Enabled")) // Only show Register/Login if OIDC is NOT enabled
+            @if (!Configuration.GetValue<bool>("OIDC:Enabled"))
             {
-                <MudNavLink Href="Account/Register">
-                    <MudIcon Icon="bi bi-person-nav-menu" /><span>Register</span>
+                <MudNavLink Href="Account/Register" Icon="@Icons.Material.Filled.PersonAdd">
+                    Register
                 </MudNavLink>
-                <MudNavLink Href="Account/Login">
-                    <MudIcon Icon="@Icons.Material.Filled.Login" /><span>Login</span>
+                <MudNavLink Href="Account/Login" Icon="@Icons.Material.Filled.Login">
+                    Login
                 </MudNavLink>
             }
             else
             {
-                 // Optionally, show a login button that triggers OIDC challenge if OIDC is enabled and user is not authorized
-                 <MudNavLink Href="/Account/LoginOidc" Icon="@Icons.Material.Filled.Login">Login with OIDC</MudNavLink>
+                <MudNavLink Href="/Account/LoginOidc" Icon="@Icons.Material.Filled.Login">
+                    Login with OIDC
+                </MudNavLink>
             }
         </NotAuthorized>
     </AuthorizeView>
