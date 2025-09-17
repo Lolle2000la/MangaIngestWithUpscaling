@@ -83,7 +83,8 @@ builder.Services.AddSerilog((services, lc) => lc
 // Configure Forwarded Headers
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
-    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto |
+                               ForwardedHeaders.XForwardedHost;
     // If the proxy isn't on localhost from the app container's perspective
     options.KnownProxies.Clear();
     options.KnownIPNetworks.Clear();
@@ -139,6 +140,18 @@ if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
 
             options.Events = new OpenIdConnectEvents
             {
+                OnRedirectToIdentityProvider = ctx =>
+                {
+                    // Ensure redirect URIs use HTTPS when behind a reverse proxy
+                    if (ctx.Request.Headers.ContainsKey("X-Forwarded-Proto") &&
+                        ctx.Request.Headers["X-Forwarded-Proto"].ToString().Contains("https"))
+                    {
+                        ctx.ProtocolMessage.RedirectUri =
+                            ctx.ProtocolMessage.RedirectUri?.Replace("http://", "https://");
+                    }
+
+                    return Task.CompletedTask;
+                },
                 OnTokenValidated = async ctx =>
                 {
                     var signInManager = ctx.HttpContext.RequestServices
@@ -163,9 +176,7 @@ if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
                         {
                             user = new ApplicationUser
                             {
-                                UserName = emailClaim,
-                                Email = emailClaim,
-                                EmailConfirmed = true
+                                UserName = emailClaim, Email = emailClaim, EmailConfirmed = true
                             };
                             IdentityResult createUserResult = await userManager.CreateAsync(user);
                             if (!createUserResult.Succeeded)
@@ -257,7 +268,8 @@ using (var scope = app.Services.CreateScope())
 
     // Create database backup before .NET 10 upgrade if this is the first time
     var dbPath = Path.GetFullPath(sqliteConnectionStringBuilder.DataSource);
-    var dbDirectory = Path.GetDirectoryName(dbPath) ?? throw new InvalidOperationException("Unable to determine database directory");
+    string dbDirectory = Path.GetDirectoryName(dbPath) ??
+                         throw new InvalidOperationException("Unable to determine database directory");
     var upgradeMarkerFile = Path.Combine(dbDirectory, ".net10-upgrade-complete");
 
     if (!File.Exists(upgradeMarkerFile) && File.Exists(dbPath))
@@ -279,7 +291,8 @@ using (var scope = app.Services.CreateScope())
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Failed to create database backup before .NET 10 upgrade. Continuing with migration...");
+            logger.LogWarning(ex,
+                "Failed to create database backup before .NET 10 upgrade. Continuing with migration...");
         }
     }
 
@@ -291,7 +304,8 @@ using (var scope = app.Services.CreateScope())
         // Mark the .NET 10 upgrade as complete
         try
         {
-            await File.WriteAllTextAsync(upgradeMarkerFile, $"Upgrade completed on {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+            await File.WriteAllTextAsync(upgradeMarkerFile,
+                $"Upgrade completed on {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
             logger.LogDebug("Marked .NET 10 upgrade as complete");
         }
         catch (Exception ex)
