@@ -358,10 +358,19 @@
                 }
             }
 
+            // Clear merge cache to ensure fresh recalculation
+            InvalidateMergePossibilitiesCache();
+
+            // Force UI update to ensure proper button state
+            StateHasChanged();
+
             // Update merge possibilities cache since chapters changed
             await UpdateMergePossibilitiesAsync();
 
             Snackbar.Add($"Successfully reverted merged chapter and restored {restoredChapters.Count} individual parts.", Severity.Success);
+
+            // Final UI refresh to ensure all button states are correct
+            StateHasChanged();
         }
         catch (Exception ex)
         {
@@ -720,6 +729,10 @@
     {
         get
         {
+            // Must have chapters selected and none of them should be merged
+            if (!selectedChapters.Any() || selectedChapters.Any(c => c.IsMerged))
+                return false;
+
             // Use cached merge possibilities if available
             return _cachedMergePossibilities?.HasAnyMergePossibilities == true;
         }
@@ -992,14 +1005,9 @@
             // Update UI: Remove original chapters and add merged chapters
             foreach (var mergeInfo in completedMerges)
             {
-                // Find the chapters that were part of this merge based on the merge info
-                var originalChapterIds = mergeInfo.OriginalParts.Select(op =>
-                        chaptersToMerge.FirstOrDefault(c => c.FileName == op.FileName)?.Id)
-                    .Where(id => id.HasValue)
-                    .Select(id => id!.Value)
-                    .ToHashSet();
+                // Remove ALL the original chapters from the UI (we'll add the updated merged chapter below)
+                var originalChapterIds = chaptersToMerge.Select(c => c.Id).ToHashSet();
 
-                // Remove the original chapters from UI
                 var itemsToRemove = chapterItems.Where(ci => originalChapterIds.Contains(ci.Chapter.Id)).ToList();
                 foreach (var item in itemsToRemove)
                 {
@@ -1007,41 +1015,42 @@
                     totalProcessedChapters++;
                 }
 
-                // Find the merged chapter from the database - it should be one of the original chapters, updated
-                var mergedChapterId = chaptersToMerge.FirstOrDefault(c => originalChapterIds.Contains(c.Id))?.Id;
-                if (mergedChapterId.HasValue)
+                // Find the merged chapter from the database - it should be the FIRST chapter from the original set 
+                // (as per ChapterMergeCoordinator.UpdateDatabaseForMergeAsync which keeps the first and removes the rest)
+                var primaryChapterId = chaptersToMerge.First().Id;
+                var mergedChapter = await DbContext.Chapters.FindAsync(primaryChapterId);
+                if (mergedChapter != null)
                 {
-                    var mergedChapter = await DbContext.Chapters.FindAsync(mergedChapterId.Value);
-                    if (mergedChapter != null)
+                    // Reload the chapter to get updated data
+                    await DbContext.Entry(mergedChapter).ReloadAsync();
+
+                    var extractedMetadata = MetadataHandler.GetSeriesAndTitleFromComicInfo(
+                        Path.Combine(Manga.Library.NotUpscaledLibraryPath, mergedChapter.RelativePath));
+
+                    // Properly determine if the chapter is merged by checking the database
+                    var isMerged = await ChapterMergeRevertService.CanRevertChapterAsync(mergedChapter);
+
+                    chapters.Add(new ChapterItem
                     {
-                        // Reload the chapter to get updated data
-                        await DbContext.Entry(mergedChapter).ReloadAsync();
+                        Chapter = mergedChapter,
+                        ExtractedMetadata = extractedMetadata,
+                        NewTitle = extractedMetadata?.ChapterTitle ?? string.Empty,
+                        NewFileName = Path.GetFileNameWithoutExtension(mergedChapter.FileName),
+                        IsMerged = isMerged
+                    });
 
-                        var extractedMetadata = MetadataHandler.GetSeriesAndTitleFromComicInfo(
-                            Path.Combine(Manga.Library.NotUpscaledLibraryPath, mergedChapter.RelativePath));
-
-                        chapters.Add(new ChapterItem
+                    try
+                    {
+                        await ChapterChangedNotifier.Notify(mergedChapter, false);
+                        if (mergedChapter.IsUpscaled)
                         {
-                            Chapter = mergedChapter,
-                            ExtractedMetadata = extractedMetadata,
-                            NewTitle = extractedMetadata?.ChapterTitle ?? string.Empty,
-                            NewFileName = Path.GetFileNameWithoutExtension(mergedChapter.FileName),
-                            IsMerged = true
-                        });
-
-                        try
-                        {
-                            await ChapterChangedNotifier.Notify(mergedChapter, false);
-                            if (mergedChapter.IsUpscaled)
-                            {
-                                await ChapterChangedNotifier.Notify(mergedChapter, true);
-                            }
+                            await ChapterChangedNotifier.Notify(mergedChapter, true);
                         }
-                        catch (Exception ex)
-                        {
-                            Logger.LogError(ex, "Failed to notify connected service of chapter change for merged chapter {ChapterId}", mergedChapter.Id);
-                            Snackbar.Add($"Failed to notify connected service of chapter change for {mergedChapter.FileName}. Check the logs for more information.", Severity.Error);
-                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogError(ex, "Failed to notify connected service of chapter change for merged chapter {ChapterId}", mergedChapter.Id);
+                        Snackbar.Add($"Failed to notify connected service of chapter change for {mergedChapter.FileName}. Check the logs for more information.", Severity.Error);
                     }
                 }
             }
@@ -1050,10 +1059,19 @@
                 ? $"Successfully merged {totalProcessedChapters} chapters into 1 group."
                 : $"Successfully merged {totalProcessedChapters} chapters into {completedMerges.Count} groups.";
 
+            // Clear merge cache to ensure fresh recalculation
+            InvalidateMergePossibilitiesCache();
+
+            // Force UI update to ensure proper button state
+            StateHasChanged();
+
             // Update merge possibilities cache after successful merge
             await UpdateMergePossibilitiesAsync();
 
             Snackbar.Add(message, Severity.Success);
+
+            // Final UI refresh to ensure all button states are correct
+            StateHasChanged();
         }
         catch (Exception ex)
         {
