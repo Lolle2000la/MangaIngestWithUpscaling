@@ -23,6 +23,7 @@
 @inject IChapterChangedNotifier ChapterChangedNotifier
 @inject IChapterMergeRevertService ChapterMergeRevertService
 @inject IChapterMergeCoordinator ChapterMergeCoordinator
+@inject IWebHostEnvironment WebHostEnvironment
 
 <MudTable T="ChapterItem" @bind-SelectedItems="selectedChapters"
           Items="@chapterItems"
@@ -68,30 +69,26 @@
                        OnClick="@MergeSelectedChapters">
                 Merge Selected / Add to Existing (Experimental)
             </MudButton>
-            <MudButton StartIcon="@Icons.Material.Filled.Refresh"
-                       Color="Color.Warning"
-                       Variant="Variant.Text"
-                       Size="Size.Small"
-                       OnClick="@ForceUpdateMergePossibilitiesAsync">
-                DEBUG: Refresh Merge Cache
-            </MudButton>
         </MudStack>
-        <MudText Typo="Typo.caption" Color="Color.Secondary" Style="margin-top: 8px;">
-            DEBUG: Merge Cache Status - 
-            @if (_cachedMergePossibilities == null)
-            {
-                <span style="color: red;">Not Loaded</span>
-            }
-            else
-            {
-                <span style="color: green;">
-                    Loaded (@((DateTime.UtcNow - _lastMergePossibilitiesUpdate).TotalSeconds.ToString("F1"))s ago) - 
-                    New: @_cachedMergePossibilities.NewMergeGroups.Count, 
-                    Additions: @_cachedMergePossibilities.AdditionsToExistingMerged.Count,
-                    HasAny: @_cachedMergePossibilities.HasAnyMergePossibilities
-                </span>
-            }
-        </MudText>
+        @if (WebHostEnvironment.IsDevelopment())
+        {
+            <MudText Typo="Typo.caption" Color="Color.Secondary" Style="margin-top: 8px;">
+                DEBUG: Merge Cache Status -
+                @if (_cachedMergePossibilities == null)
+                {
+                    <span style="color: red;">Not Loaded</span>
+                }
+                else
+                {
+                    <span style="color: green;">
+                        Loaded (@((DateTime.UtcNow - _lastMergePossibilitiesUpdate).TotalSeconds.ToString("F1"))s ago) -
+                        New: @_cachedMergePossibilities.NewMergeGroups.Count,
+                        Additions: @_cachedMergePossibilities.AdditionsToExistingMerged.Count,
+                        HasAny: @_cachedMergePossibilities.HasAnyMergePossibilities
+                    </span>
+                }
+            </MudText>
+        }
     </ToolBarContent>
     <HeaderContent>
         <MudTh>Chapter Title</MudTh>
@@ -429,7 +426,7 @@
         await DbContext.SaveChangesAsync();
 
         chapters.Remove(chapterItems.First(ci => ci.Chapter == chapter));
-        
+
         // Invalidate merge possibilities cache since chapters changed
         InvalidateMergePossibilitiesCache();
     }
@@ -694,7 +691,7 @@
                 // Check if this chapter is a merged chapter
                 var isMerged = await ChapterMergeRevertService.CanRevertChapterAsync(chapter);
 
-                Logger.LogDebug("LoadChapters: Chapter {FileName} (ID: {ChapterId}) - IsMerged: {IsMerged}", 
+                Logger.LogDebug("LoadChapters: Chapter {FileName} (ID: {ChapterId}) - IsMerged: {IsMerged}",
                     chapter.FileName, chapter.Id, isMerged);
 
                 chapters.Add(new ChapterItem
@@ -771,7 +768,7 @@
     {
         if (DateTime.UtcNow - _lastMergePossibilitiesUpdate < _mergePossibilitiesCacheTimeout)
         {
-            Logger.LogDebug("UpdateMergePossibilitiesAsync: Skipping update, cache still valid (age: {Age}ms)", 
+            Logger.LogDebug("UpdateMergePossibilitiesAsync: Skipping update, cache still valid (age: {Age}ms)",
                 (DateTime.UtcNow - _lastMergePossibilitiesUpdate).TotalMilliseconds);
             return;
         }
@@ -783,32 +780,32 @@
             Logger.LogDebug("UpdateMergePossibilitiesAsync: Total chapter items: {TotalCount}", chapterItems.Count);
             foreach (var ci in chapterItems)
             {
-                Logger.LogDebug("UpdateMergePossibilitiesAsync: Chapter {FileName} (ID: {ChapterId}) - IsMerged: {IsMerged}", 
+                Logger.LogDebug("UpdateMergePossibilitiesAsync: Chapter {FileName} (ID: {ChapterId}) - IsMerged: {IsMerged}",
                     ci.Chapter.FileName, ci.Chapter.Id, ci.IsMerged);
             }
-            
+
             var allChapters = chapterItems.Where(ci => !ci.IsMerged).Select(ci => ci.Chapter).ToList();
-            Logger.LogDebug("UpdateMergePossibilitiesAsync: Found {ChapterCount} non-merged chapters: [{ChapterNames}]", 
+            Logger.LogDebug("UpdateMergePossibilitiesAsync: Found {ChapterCount} non-merged chapters: [{ChapterNames}]",
                 allChapters.Count, string.Join(", ", allChapters.Select(c => c.FileName)));
-            
+
             if (allChapters.Any())
             {
                 Logger.LogDebug("UpdateMergePossibilitiesAsync: Calling GetPossibleMergeActionsAsync with {ChapterCount} chapters", allChapters.Count);
                 _cachedMergePossibilities = await ChapterMergeCoordinator.GetPossibleMergeActionsAsync(allChapters, includeLatestChapters: true);
-                
+
                 Logger.LogDebug("Updated merge possibilities cache: {NewMergeGroups} new merge groups, {AdditionsToExisting} additions to existing, HasAnyMergePossibilities: {HasAny}",
                     _cachedMergePossibilities.NewMergeGroups.Count, _cachedMergePossibilities.AdditionsToExistingMerged.Count, _cachedMergePossibilities.HasAnyMergePossibilities);
-                
+
                 // Log detailed merge group information
                 foreach (var (baseNumber, chapterList) in _cachedMergePossibilities.NewMergeGroups)
                 {
-                    Logger.LogDebug("New merge group {BaseNumber}: [{ChapterNames}]", 
+                    Logger.LogDebug("New merge group {BaseNumber}: [{ChapterNames}]",
                         baseNumber, string.Join(", ", chapterList.Select(c => c.FileName)));
                 }
-                
+
                 foreach (var (baseNumber, chapterList) in _cachedMergePossibilities.AdditionsToExistingMerged)
                 {
-                    Logger.LogDebug("Addition to existing merged {BaseNumber}: [{ChapterNames}]", 
+                    Logger.LogDebug("Addition to existing merged {BaseNumber}: [{ChapterNames}]",
                         baseNumber, string.Join(", ", chapterList.Select(c => c.FileName)));
                 }
             }
@@ -817,6 +814,7 @@
                 _cachedMergePossibilities = new MergeActionInfo();
                 Logger.LogDebug("No non-merged chapters found, created empty merge possibilities cache");
             }
+
             _lastMergePossibilitiesUpdate = DateTime.UtcNow;
         }
         catch (Exception ex)
@@ -831,7 +829,7 @@
         // Simple heuristic: check if both have same numeric prefix
         var num1 = ExtractNumericPrefix(fileName1);
         var num2 = ExtractNumericPrefix(fileName2);
-        return !string.IsNullOrEmpty(num1) && !string.IsNullOrEmpty(num2) && 
+        return !string.IsNullOrEmpty(num1) && !string.IsNullOrEmpty(num2) &&
                Math.Floor(decimal.Parse(num1)) == Math.Floor(decimal.Parse(num2));
     }
 
@@ -857,14 +855,14 @@
             Snackbar.Add("No non-merged chapters selected for merging.", Severity.Warning);
             return;
         }
-        
+
         // Get possible merge actions for the selected chapters
         var mergeActionsWithoutLatest = await ChapterMergeCoordinator.GetPossibleMergeActionsAsync(
-            selectedChapterList, 
+            selectedChapterList,
             includeLatestChapters: false);
-            
+
         var mergeActionsWithLatest = await ChapterMergeCoordinator.GetPossibleMergeActionsAsync(
-            selectedChapterList, 
+            selectedChapterList,
             includeLatestChapters: true);
 
         if (!mergeActionsWithLatest.HasAnyMergePossibilities)
@@ -874,11 +872,11 @@
         }
 
         bool includeLatest = true;
-        
+
         // If there's a difference, ask the user about latest chapters
         var totalActionsWithoutLatest = mergeActionsWithoutLatest.NewMergeGroups.Count + mergeActionsWithoutLatest.AdditionsToExistingMerged.Count;
         var totalActionsWithLatest = mergeActionsWithLatest.NewMergeGroups.Count + mergeActionsWithLatest.AdditionsToExistingMerged.Count;
-        
+
         if (totalActionsWithLatest > totalActionsWithoutLatest)
         {
             var result = await DialogService.ShowMessageBox(
@@ -898,7 +896,7 @@
         // Get all chapters in the series to properly identify merge actions
         var allChapters = chapterItems.Where(ci => !ci.IsMerged).Select(ci => ci.Chapter).ToList();
         var mergeActions = await ChapterMergeCoordinator.GetPossibleMergeActionsAsync(
-            allChapters, 
+            allChapters,
             includeLatestChapters: true);
 
         if (!mergeActions.HasAnyMergePossibilities)
@@ -947,11 +945,11 @@
 
         // Check if latest chapter is involved
         var mergeActionsWithoutLatest = await ChapterMergeCoordinator.GetPossibleMergeActionsAsync(
-            chaptersToMerge, 
+            chaptersToMerge,
             includeLatestChapters: false);
 
         bool includeLatest = true;
-        bool hasActionsWithoutLatest = mergeActionsWithoutLatest.NewMergeGroups.ContainsKey(baseNumber) || 
+        var hasActionsWithoutLatest = mergeActionsWithoutLatest.NewMergeGroups.ContainsKey(baseNumber) ||
                                       mergeActionsWithoutLatest.AdditionsToExistingMerged.ContainsKey(baseNumber);
 
         if (!hasActionsWithoutLatest)
@@ -980,7 +978,7 @@
         try
         {
             var completedMerges = await ChapterMergeCoordinator.MergeSelectedChaptersAsync(
-                chaptersToMerge, 
+                chaptersToMerge,
                 includeLatestChapters);
 
             if (!completedMerges.Any())
@@ -1054,7 +1052,7 @@
 
             // Update merge possibilities cache after successful merge
             await UpdateMergePossibilitiesAsync();
-            
+
             Snackbar.Add(message, Severity.Success);
         }
         catch (Exception ex)
@@ -1132,7 +1130,7 @@
             }
 
             // Find and update the merged chapter in the UI
-            var mergedChapter = Manga.Chapters.FirstOrDefault(c => 
+            var mergedChapter = Manga.Chapters.FirstOrDefault(c =>
                 chapterItems.Any(ci => ci.Chapter.Id == c.Id && ci.IsMerged) &&
                 c.FileName.StartsWith(baseNumber + ".") || c.FileName == baseNumber + ".cbz");
 
@@ -1147,7 +1145,7 @@
                     // Update the existing item
                     var extractedMetadata = MetadataHandler.GetSeriesAndTitleFromComicInfo(
                         Path.Combine(Manga.Library.NotUpscaledLibraryPath, mergedChapter.RelativePath));
-                    
+
                     existingItem.ExtractedMetadata = extractedMetadata;
                     existingItem.NewTitle = extractedMetadata?.ChapterTitle ?? string.Empty;
                     existingItem.NewFileName = Path.GetFileNameWithoutExtension(mergedChapter.FileName);
@@ -1170,7 +1168,7 @@
 
             // Update merge possibilities cache after successful addition
             await UpdateMergePossibilitiesAsync();
-            
+
             Snackbar.Add($"Successfully added {chaptersToAdd.Count} chapters to existing merged chapter {baseNumber}.", Severity.Success);
         }
         catch (Exception ex)
