@@ -85,7 +85,7 @@
             else
             {
                 <span style="color: green;">
-                    Loaded (@((DateTime.UtcNow - _lastMergePossibilitiesUpdate).TotalSeconds:F1)s ago) - 
+                    Loaded (@((DateTime.UtcNow - _lastMergePossibilitiesUpdate).TotalSeconds.ToString("F1"))s ago) - 
                     New: @_cachedMergePossibilities.NewMergeGroups.Count, 
                     Additions: @_cachedMergePossibilities.AdditionsToExistingMerged.Count,
                     HasAny: @_cachedMergePossibilities.HasAnyMergePossibilities
