@@ -115,7 +115,7 @@ dotnet run --project MangaIngestWithUpscaling
      Don't run download tests unless you have a specific reason. They can take very long.
    - If you add new features or make changes that affect logic, consider writing new or updating existing tests.
    - Ensure tests pass before PR or merge.
-   - Unless specified differently, tests should be written using xUnit, NSubstitute, and bUnit if testing Blazor components.
+   - Unless specified differently, tests should be written using xUnit v3, NSubstitute, and bUnit if testing Blazor components.
 
 ## Commenting Guidelines
 
