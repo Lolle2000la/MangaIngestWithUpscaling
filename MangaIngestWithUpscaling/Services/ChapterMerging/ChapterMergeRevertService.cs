@@ -1,4 +1,5 @@
 using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
@@ -48,6 +49,9 @@ public class ChapterMergeRevertService(
         {
             throw new FileNotFoundException($"Merged chapter file not found: {mergedChapterPath}");
         }
+
+        // If a partial upscaling repair task was scheduled for this merged chapter, cancel it now to avoid wasted work
+        await CancelPendingRepairTaskForChapterAsync(chapter.Id, cancellationToken);
 
         try
         {
@@ -359,6 +363,32 @@ public class ChapterMergeRevertService(
             // Remove existing chapters
             dbContext.Chapters.RemoveRange(existingChapters);
             await dbContext.SaveChangesAsync(cancellationToken);
+        }
+    }
+
+    private async Task CancelPendingRepairTaskForChapterAsync(int chapterId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Load pending tasks and filter in-memory for the specific RepairUpscaleTask bound to this chapter
+            List<PersistedTask> pending = await dbContext.PersistedTasks
+                .Where(t => t.Status == PersistedTaskStatus.Pending)
+                .ToListAsync(cancellationToken);
+
+            foreach (PersistedTask task in pending)
+            {
+                if (task.Data is RepairUpscaleTask repair && repair.ChapterId == chapterId)
+                {
+                    logger.LogInformation("Removing pending RepairUpscaleTask for merged chapter {ChapterId}",
+                        chapterId);
+                    await taskQueue.RemoveTaskAsync(task);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Non-fatal: if we fail to remove a pending task, the processor will later skip it gracefully
+            logger.LogWarning(ex, "Failed to remove pending repair task for chapter {ChapterId}", chapterId);
         }
     }
 }
