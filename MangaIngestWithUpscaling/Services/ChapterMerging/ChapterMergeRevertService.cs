@@ -1,6 +1,8 @@
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
@@ -15,6 +17,7 @@ public class ChapterMergeRevertService(
     IChapterPartMerger chapterPartMerger,
     IChapterChangedNotifier chapterChangedNotifier,
     IUpscalerJsonHandlingService upscalerJsonHandlingService,
+    ITaskQueue taskQueue,
     ILogger<ChapterMergeRevertService> logger) : IChapterMergeRevertService
 {
     public async Task<List<Chapter>> RevertMergedChapterAsync(Chapter chapter,
@@ -110,7 +113,8 @@ public class ChapterMergeRevertService(
             // Now create upscaled versions if needed
             if (chapter.IsUpscaled && chapter.UpscalerProfile != null)
             {
-                await CreateUpscaledRestoredChaptersAsync(chapter, library, mergeInfo, cancellationToken);
+                await CreateUpscaledRestoredChaptersAsync(chapter, library, mergeInfo, restoredChapterEntities,
+                    cancellationToken);
             }
 
             logger.LogInformation("Successfully reverted merged chapter {ChapterFile} to {PartCount} original parts",
@@ -139,18 +143,21 @@ public class ChapterMergeRevertService(
     }
 
     private async Task CreateUpscaledRestoredChaptersAsync(Chapter originalChapter,
-        Library library, MergedChapterInfo? mergeInfo, CancellationToken cancellationToken)
+        Library library, MergedChapterInfo? mergeInfo, List<Chapter> restoredChapters,
+        CancellationToken cancellationToken)
     {
         // Get the path to the upscaled merged chapter file
         string upscaledMergedChapterPath = Path.Combine(library.UpscaledLibraryPath!, originalChapter.RelativePath);
 
         if (!File.Exists(upscaledMergedChapterPath))
         {
-            logger.LogWarning("Upscaled merged chapter file not found: {UpscaledPath}, will check for pending repair tasks and individual parts",
+            logger.LogWarning(
+                "Upscaled merged chapter file not found: {UpscaledPath}, will check for pending repair tasks and individual parts",
                 upscaledMergedChapterPath);
-            
+
             // Corner case 2: Check if there's a pending RepairUpscaleTask that hasn't completed yet
-            await HandleMissingUpscaledChapterWithPendingRepairAsync(originalChapter, library, mergeInfo, cancellationToken);
+            await HandleMissingUpscaledChapterWithPendingRepairAsync(originalChapter, library, mergeInfo,
+                restoredChapters, cancellationToken);
             return;
         }
 
@@ -168,12 +175,13 @@ public class ChapterMergeRevertService(
 
         // Corner case 1: Check if this was a partial merge that was later completed
         // We need to verify that the upscaled file contains all expected pages
-        await HandlePotentialPartialMergeRevertAsync(originalChapter, library, mergeInfo, 
-            upscaledMergedChapterPath, upscaledSeriesDirectory, cancellationToken);
+        await HandlePotentialPartialMergeRevertAsync(originalChapter, library, mergeInfo,
+            upscaledMergedChapterPath, upscaledSeriesDirectory, restoredChapters, cancellationToken);
     }
 
     private async Task HandleMissingUpscaledChapterWithPendingRepairAsync(Chapter originalChapter,
-        Library library, MergedChapterInfo? mergeInfo, CancellationToken cancellationToken)
+        Library library, MergedChapterInfo? mergeInfo, List<Chapter> restoredChapters,
+        CancellationToken cancellationToken)
     {
         if (mergeInfo?.OriginalParts == null)
         {
@@ -203,8 +211,9 @@ public class ChapterMergeRevertService(
 
         if (availableUpscaledParts.Any())
         {
-            logger.LogInformation("Found {AvailableCount} upscaled parts available for restoration out of {TotalCount} total parts. " +
-                                  "Missing parts: {MissingParts}",
+            logger.LogInformation(
+                "Found {AvailableCount} upscaled parts available for restoration out of {TotalCount} total parts. " +
+                "Missing parts: {MissingParts}",
                 availableUpscaledParts.Count, mergeInfo.OriginalParts.Count,
                 string.Join(", ", missingUpscaledParts.Select(p => p.FileName)));
 
@@ -212,7 +221,7 @@ public class ChapterMergeRevertService(
             foreach (var availablePart in availableUpscaledParts)
             {
                 string upscaledPartPath = Path.Combine(upscaledSeriesDirectory, availablePart.FileName);
-                
+
                 // Add upscaler.json to the existing upscaled part
                 using ZipArchive archive = ZipFile.Open(upscaledPartPath, ZipArchiveMode.Update);
                 await upscalerJsonHandlingService.WriteUpscalerJsonAsync(archive, originalChapter.UpscalerProfile!,
@@ -222,21 +231,24 @@ public class ChapterMergeRevertService(
             // Schedule upscale tasks for the missing parts
             if (missingUpscaledParts.Any())
             {
-                await ScheduleUpscaleTasksForMissingPartsAsync(missingUpscaledParts, originalChapter, library, cancellationToken);
+                await ScheduleUpscaleTasksForMissingPartsAsync(missingUpscaledParts, originalChapter, library,
+                    restoredChapters, cancellationToken);
             }
         }
         else
         {
-            logger.LogInformation("No upscaled parts found for restoration. All parts will need to be upscaled from scratch.");
-            
+            logger.LogInformation(
+                "No upscaled parts found for restoration. All parts will need to be upscaled from scratch.");
+
             // Schedule upscale tasks for all parts since none exist
-            await ScheduleUpscaleTasksForMissingPartsAsync(mergeInfo.OriginalParts.ToList(), originalChapter, library, cancellationToken);
+            await ScheduleUpscaleTasksForMissingPartsAsync(mergeInfo.OriginalParts.ToList(), originalChapter, library,
+                restoredChapters, cancellationToken);
         }
     }
 
-    private async Task HandlePotentialPartialMergeRevertAsync(Chapter originalChapter, Library library, 
+    private async Task HandlePotentialPartialMergeRevertAsync(Chapter originalChapter, Library library,
         MergedChapterInfo mergeInfo, string upscaledMergedChapterPath, string upscaledSeriesDirectory,
-        CancellationToken cancellationToken)
+        List<Chapter> restoredChapters, CancellationToken cancellationToken)
     {
         try
         {
@@ -256,8 +268,11 @@ public class ChapterMergeRevertService(
                     missingFromRestoration.Count, string.Join(", ", missingFromRestoration));
 
                 // Corner case 1: Schedule upscale tasks for the missing parts
-                var missingParts = mergeInfo.OriginalParts.Where(p => missingFromRestoration.Contains(p.FileName)).ToList();
-                await ScheduleUpscaleTasksForMissingPartsAsync(missingParts, originalChapter, library, cancellationToken);
+                List<OriginalChapterPart> missingParts = mergeInfo.OriginalParts
+                    .Where(p => missingFromRestoration.Contains(p.FileName))
+                    .ToList();
+                await ScheduleUpscaleTasksForMissingPartsAsync(missingParts, originalChapter, library, restoredChapters,
+                    cancellationToken);
             }
 
             // Add upscaler.json to each restored upscaled part
@@ -280,31 +295,49 @@ public class ChapterMergeRevertService(
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to restore upscaled chapter parts from {MergedFile}. " +
-                              "Will attempt to schedule individual upscale tasks for all parts.", 
+                                "Will attempt to schedule individual upscale tasks for all parts.",
                 Path.GetFileName(upscaledMergedChapterPath));
 
             // Fallback: Schedule upscale tasks for all original parts
-            await ScheduleUpscaleTasksForMissingPartsAsync(mergeInfo.OriginalParts.ToList(), originalChapter, library, cancellationToken);
+            await ScheduleUpscaleTasksForMissingPartsAsync(mergeInfo.OriginalParts.ToList(), originalChapter, library,
+                restoredChapters, cancellationToken);
         }
     }
 
-    private async Task ScheduleUpscaleTasksForMissingPartsAsync(List<OriginalChapterPart> missingParts, 
-        Chapter originalChapter, Library library, CancellationToken cancellationToken)
+    private async Task ScheduleUpscaleTasksForMissingPartsAsync(List<OriginalChapterPart> missingParts,
+        Chapter originalChapter, Library library, List<Chapter> restoredChapters, CancellationToken cancellationToken)
     {
         if (!missingParts.Any() || originalChapter.UpscalerProfile == null)
         {
             return;
         }
 
-        // We would need access to ITaskQueue here to schedule individual upscale tasks
-        // For now, log the need for manual intervention
-        logger.LogWarning("Need to schedule upscale tasks for {MissingCount} parts: {MissingParts}. " +
-                           "Consider implementing individual part upscale task scheduling.",
-            missingParts.Count, string.Join(", ", missingParts.Select(p => p.FileName)));
+        // Find the restored Chapter entities for the missing parts by filename within the same manga from provided list
+        HashSet<string> missingFileNames =
+            missingParts.Select(p => p.FileName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        List<Chapter> chaptersToUpscale = restoredChapters
+            .Where(c => c.MangaId == originalChapter.MangaId && missingFileNames.Contains(c.FileName))
+            .ToList();
 
-        // TODO: Implement individual part upscale task scheduling
-        // This would require creating UpscaleTask instances for individual chapter parts
-        // which may need modifications to the UpscaleTask to handle single parts rather than merged chapters
+        // Log if some parts couldn't be located (should be rare)
+        HashSet<string> foundSet =
+            chaptersToUpscale.Select(c => c.FileName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        List<string> notFound = missingFileNames.Except(foundSet).ToList();
+        if (notFound.Count != 0)
+        {
+            logger.LogWarning(
+                "Could not find {Count} restored chapters for missing parts: {Parts}. They will be skipped.",
+                notFound.Count, string.Join(", ", notFound));
+        }
+
+        foreach (Chapter partChapter in chaptersToUpscale)
+        {
+            // Queue an individual upscale task for each missing part using the original chapter's profile
+            var task = new UpscaleTask(partChapter, originalChapter.UpscalerProfile!);
+            await taskQueue.EnqueueAsync(task);
+            logger.LogInformation("Queued individual upscale task for missing part {FileName} (ChapterId {ChapterId})",
+                partChapter.FileName, partChapter.Id);
+        }
     }
 
     private async Task CleanupExistingChaptersAsync(List<FoundChapter> restoredChapters, int mangaId,

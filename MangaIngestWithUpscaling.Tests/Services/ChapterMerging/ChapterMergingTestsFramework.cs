@@ -841,6 +841,7 @@ public class ChapterMergeRevertServiceTests : IDisposable
         // Create mocks
         _mockChapterPartMerger = Substitute.For<IChapterPartMerger>();
         var mockLogger = Substitute.For<ILogger<ChapterMergeRevertService>>();
+        var taskQueue = Substitute.For<ITaskQueue>();
 
         // Create service under test
         _revertService = new ChapterMergeRevertService(
@@ -848,6 +849,7 @@ public class ChapterMergeRevertServiceTests : IDisposable
             _mockChapterPartMerger,
             null!,
             null!,
+            taskQueue,
             mockLogger);
 
         // Create test data
@@ -1534,6 +1536,7 @@ public class UpscaledChapterHandlingTests : IDisposable
 
             // Create services
             var logger = Substitute.For<ILogger<ChapterMergeRevertService>>();
+            var taskQueue = Substitute.For<ITaskQueue>();
             var chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
             var upscalerJsonService = Substitute.For<IUpscalerJsonHandlingService>();
             var metadataHandler = Substitute.For<IMetadataHandlingService>();
@@ -1541,7 +1544,7 @@ public class UpscaledChapterHandlingTests : IDisposable
 
             var chapterPartMerger = new ChapterPartMerger(metadataHandler, partMergerLogger);
             var revertService = new ChapterMergeRevertService(
-                context, chapterPartMerger, chapterChangedNotifier, upscalerJsonService, logger);
+                context, chapterPartMerger, chapterChangedNotifier, upscalerJsonService, taskQueue, logger);
 
             // Act - Revert the merged chapter
             List<Chapter> restoredChapters =
@@ -1658,6 +1661,7 @@ public class UpscaledChapterHandlingTests : IDisposable
 
             // Create services
             var logger = Substitute.For<ILogger<ChapterMergeRevertService>>();
+            var taskQueue = Substitute.For<ITaskQueue>();
             var chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
             var upscalerJsonService = Substitute.For<IUpscalerJsonHandlingService>();
             var metadataHandler = Substitute.For<IMetadataHandlingService>();
@@ -1665,7 +1669,7 @@ public class UpscaledChapterHandlingTests : IDisposable
 
             var chapterPartMerger = new ChapterPartMerger(metadataHandler, partMergerLogger);
             var revertService = new ChapterMergeRevertService(
-                context, chapterPartMerger, chapterChangedNotifier, upscalerJsonService, logger);
+                context, chapterPartMerger, chapterChangedNotifier, upscalerJsonService, taskQueue, logger);
 
             // Act - Revert the merged chapter
             List<Chapter> restoredChapters =
@@ -2163,9 +2167,10 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         var chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
         var upscalerJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();
         var logger = Substitute.For<ILogger<ChapterMergeRevertService>>();
+        var taskQueue = Substitute.For<ITaskQueue>();
 
         var revertService = new ChapterMergeRevertService(
-            context, chapterPartMerger, chapterChangedNotifier, upscalerJsonHandling, logger);
+            context, chapterPartMerger, chapterChangedNotifier, upscalerJsonHandling, taskQueue, logger);
 
         // Create test data
         var library = CreateTestLibrary();
@@ -2241,6 +2246,9 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         // Verify that missing upscaled file scenario was handled
         // The method should log warnings about missing upscaled parts and handle gracefully
         logger.ReceivedWithAnyArgs().LogWarning(default!);
+
+        // Verify that individual upscale task was queued for the missing upscaled part (Chapter 5.2.cbz)
+        await taskQueue.Received(1).EnqueueAsync(Arg.Is<UpscaleTask>(t => t.ChapterId != 0));
     }
 
     [Fact]
@@ -2254,9 +2262,10 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         var chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
         var upscalerJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();
         var logger = Substitute.For<ILogger<ChapterMergeRevertService>>();
+        var taskQueue2 = Substitute.For<ITaskQueue>();
 
         var revertService = new ChapterMergeRevertService(
-            context, chapterPartMerger, chapterChangedNotifier, upscalerJsonHandling, logger);
+            context, chapterPartMerger, chapterChangedNotifier, upscalerJsonHandling, taskQueue2, logger);
 
         // Create test data
         var library = CreateTestLibrary();
@@ -2311,26 +2320,46 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         Directory.CreateDirectory(Path.GetDirectoryName(upscaledMergedPath)!);
         CreateTestCbzFile(Path.GetDirectoryName(upscaledMergedPath)!, "Chapter 6.cbz", 2); // Only 2 pages, missing 1
 
-        // Mock restoration that returns fewer parts than expected (simulating partial merge)
+        // Mock restoration: regular restoration returns all parts, upscaled restoration returns fewer parts
         var testMetadata = new ExtractedMetadata("Test Manga", "Chapter 6.1", "6.1");
         var testMetadata2 = new ExtractedMetadata("Test Manga", "Chapter 6.2", "6.2");
+        var testMetadata3 = new ExtractedMetadata("Test Manga", "Chapter 6.3", "6.3");
+
         chapterPartMerger.RestoreChapterPartsAsync(Arg.Any<string>(), Arg.Any<List<OriginalChapterPart>>(),
                 Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(new List<FoundChapter>
+            .Returns(ci =>
             {
-                new("Chapter 6.1.cbz", "Chapter 6.1.cbz", ChapterStorageType.Cbz, testMetadata),
-                new("Chapter 6.2.cbz", "Chapter 6.2.cbz", ChapterStorageType.Cbz, testMetadata2)
-                // Chapter 6.3.cbz is missing from restoration - indicates partial merge
+                string sourcePath = (string)ci.Args()[0]!;
+                if (string.Equals(sourcePath, upscaledMergedPath, StringComparison.Ordinal))
+                {
+                    // Upscaled restore from merged upscaled file: return only two parts (simulate partial)
+                    return new List<FoundChapter>
+                    {
+                        new("Chapter 6.1.cbz", "Chapter 6.1.cbz", ChapterStorageType.Cbz, testMetadata),
+                        new("Chapter 6.2.cbz", "Chapter 6.2.cbz", ChapterStorageType.Cbz, testMetadata2)
+                    };
+                }
+
+                // Regular restore from merged regular file: return all parts to create all Chapter entities
+                return new List<FoundChapter>
+                {
+                    new("Chapter 6.1.cbz", "Chapter 6.1.cbz", ChapterStorageType.Cbz, testMetadata),
+                    new("Chapter 6.2.cbz", "Chapter 6.2.cbz", ChapterStorageType.Cbz, testMetadata2),
+                    new("Chapter 6.3.cbz", "Chapter 6.3.cbz", ChapterStorageType.Cbz, testMetadata3)
+                };
             });
 
         // Act
         var result = await revertService.RevertMergedChapterAsync(chapter, TestContext.Current.CancellationToken);
 
         // Assert
-        Assert.Equal(2, result.Count);
+        Assert.Equal(3, result.Count);
 
         // Verify that the missing parts were detected and logged
         logger.ReceivedWithAnyArgs().LogWarning(default!);
+
+        // Verify that an upscale task was queued for the missing part (Chapter 6.3.cbz)
+        await taskQueue2.Received(1).EnqueueAsync(Arg.Is<UpscaleTask>(t => t.ChapterId != 0));
     }
 
     private Library CreateTestLibrary()
