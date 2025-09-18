@@ -14,9 +14,9 @@ using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
-using Moq;
 using MudBlazor;
 using MudBlazor.Services;
+using NSubstitute;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -29,17 +29,17 @@ namespace MangaIngestWithUpscaling.Tests.UI;
 public class ChapterListMergingTests : TestContext
 {
     private ApplicationDbContext _dbContext = null!;
-    private Mock<IChapterChangedNotifier> _mockChapterChangedNotifier = null!;
-    private Mock<IDialogService> _mockDialogService = null!;
-    private Mock<IFileSystem> _mockFileSystem = null!;
-    private Mock<ILibraryIntegrityChecker> _mockLibraryIntegrityChecker = null!;
-    private Mock<IMangaMetadataChanger> _mockMangaMetadataChanger = null!;
-    private Mock<IChapterMergeCoordinator> _mockMergeCoordinator = null!;
-    private Mock<IMetadataHandlingService> _mockMetadataHandler = null!;
-    private Mock<IChapterMergeRevertService> _mockRevertService = null!;
-    private Mock<ISnackbar> _mockSnackbar = null!;
-    private Mock<ITaskQueue> _mockTaskQueue = null!;
-    private Mock<IWebHostEnvironment> _mockWebHostEnvironment = null!;
+    private IChapterChangedNotifier _subChapterChangedNotifier = null!;
+    private IDialogService _subDialogService = null!;
+    private IFileSystem _subFileSystem = null!;
+    private ILibraryIntegrityChecker _subLibraryIntegrityChecker = null!;
+    private IMangaMetadataChanger _subMangaMetadataChanger = null!;
+    private IChapterMergeCoordinator _subMergeCoordinator = null!;
+    private IMetadataHandlingService _subMetadataHandler = null!;
+    private IChapterMergeRevertService _subRevertService = null!;
+    private ISnackbar _subSnackbar = null!;
+    private ITaskQueue _subTaskQueue = null!;
+    private IWebHostEnvironment _subWebHostEnvironment = null!;
 
     public ChapterListMergingTests()
     {
@@ -50,21 +50,21 @@ public class ChapterListMergingTests : TestContext
 
     private void SetupMocks()
     {
-        _mockMergeCoordinator = new Mock<IChapterMergeCoordinator>();
-        _mockRevertService = new Mock<IChapterMergeRevertService>();
-        _mockMetadataHandler = new Mock<IMetadataHandlingService>();
-        _mockFileSystem = new Mock<IFileSystem>();
-        _mockTaskQueue = new Mock<ITaskQueue>();
-        _mockChapterChangedNotifier = new Mock<IChapterChangedNotifier>();
-        _mockLibraryIntegrityChecker = new Mock<ILibraryIntegrityChecker>();
-        _mockMangaMetadataChanger = new Mock<IMangaMetadataChanger>();
-        _mockWebHostEnvironment = new Mock<IWebHostEnvironment>();
-        _mockSnackbar = new Mock<ISnackbar>();
-        _mockDialogService = new Mock<IDialogService>();
+        _subMergeCoordinator = Substitute.For<IChapterMergeCoordinator>();
+        _subRevertService = Substitute.For<IChapterMergeRevertService>();
+        _subMetadataHandler = Substitute.For<IMetadataHandlingService>();
+        _subFileSystem = Substitute.For<IFileSystem>();
+        _subTaskQueue = Substitute.For<ITaskQueue>();
+        _subChapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
+        _subLibraryIntegrityChecker = Substitute.For<ILibraryIntegrityChecker>();
+        _subMangaMetadataChanger = Substitute.For<IMangaMetadataChanger>();
+        _subWebHostEnvironment = Substitute.For<IWebHostEnvironment>();
+        _subSnackbar = Substitute.For<ISnackbar>();
+        _subDialogService = Substitute.For<IDialogService>();
 
         // Setup common mock behaviors
-        _mockWebHostEnvironment.Setup(x => x.EnvironmentName).Returns("Test");
-        _mockMetadataHandler.Setup(x => x.GetSeriesAndTitleFromComicInfo(It.IsAny<string>()))
+        _subWebHostEnvironment.EnvironmentName.Returns("Test");
+        _subMetadataHandler.GetSeriesAndTitleFromComicInfo(Arg.Any<string>())
             .Returns(new ExtractedMetadata("Test Series", "Test Chapter", "1"));
     }
 
@@ -83,17 +83,17 @@ public class ChapterListMergingTests : TestContext
     {
         Services.AddMudServices();
         Services.AddSingleton(_dbContext);
-        Services.AddSingleton(_mockMergeCoordinator.Object);
-        Services.AddSingleton(_mockRevertService.Object);
-        Services.AddSingleton(_mockMetadataHandler.Object);
-        Services.AddSingleton(_mockWebHostEnvironment.Object);
-        Services.AddSingleton(_mockTaskQueue.Object);
-        Services.AddSingleton(_mockChapterChangedNotifier.Object);
-        Services.AddSingleton(_mockLibraryIntegrityChecker.Object);
-        Services.AddSingleton(_mockMangaMetadataChanger.Object);
-        Services.AddSingleton(_mockSnackbar.Object);
-        Services.AddSingleton(_mockDialogService.Object);
-        Services.AddSingleton(_mockFileSystem.Object);
+        Services.AddSingleton(_subMergeCoordinator);
+        Services.AddSingleton(_subRevertService);
+        Services.AddSingleton(_subMetadataHandler);
+        Services.AddSingleton(_subWebHostEnvironment);
+        Services.AddSingleton(_subTaskQueue);
+        Services.AddSingleton(_subChapterChangedNotifier);
+        Services.AddSingleton(_subLibraryIntegrityChecker);
+        Services.AddSingleton(_subMangaMetadataChanger);
+        Services.AddSingleton(_subSnackbar);
+        Services.AddSingleton(_subDialogService);
+        Services.AddSingleton(_subFileSystem);
 
         // Setup MudBlazor JavaScript interop with comprehensive coverage
         JSInterop.Mode = JSRuntimeMode.Loose;
@@ -173,8 +173,10 @@ public class ChapterListMergingTests : TestContext
 
         // Setup merge coordinator to return no merge possibilities initially
         var mergeInfo = new MergeActionInfo();
-        _mockMergeCoordinator.Setup(x => x.GetPossibleMergeActionsAsync(It.IsAny<List<Chapter>>(), It.IsAny<bool>()))
-            .ReturnsAsync(mergeInfo);
+#pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+        _subMergeCoordinator.GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .Returns(mergeInfo);
+#pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Act
         IRenderedComponent<ChapterList> component = RenderComponentWithProviders<ChapterList>(parameters => parameters
@@ -202,8 +204,10 @@ public class ChapterListMergingTests : TestContext
                 { "1", new List<Chapter> { chapters[0], chapters[1] } }
             }
         };
-        _mockMergeCoordinator.Setup(x => x.GetPossibleMergeActionsAsync(It.IsAny<List<Chapter>>(), It.IsAny<bool>()))
-            .ReturnsAsync(mergeInfo);
+#pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+        _subMergeCoordinator.GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .Returns(mergeInfo);
+#pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Act
         IRenderedComponent<ChapterList> component = RenderComponentWithProviders<ChapterList>(parameters => parameters
@@ -236,16 +240,20 @@ public class ChapterListMergingTests : TestContext
         };
 
         _dbContext.MergedChapterInfos.Add(mergedChapterInfo);
-        await _dbContext.SaveChangesAsync(Xunit.TestContext.Current.CancellationToken);
+        await _dbContext.SaveChangesAsync(CancellationToken.None);
 
         // Setup revert service to indicate chapter can be reverted
-        _mockRevertService.Setup(x => x.CanRevertChapterAsync(chapters[0]))
-            .ReturnsAsync(true);
+#pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+        _subRevertService.CanRevertChapterAsync(chapters[0])
+            .Returns(true);
+#pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Setup merge coordinator
         var mergeInfo = new MergeActionInfo();
-        _mockMergeCoordinator.Setup(x => x.GetPossibleMergeActionsAsync(It.IsAny<List<Chapter>>(), It.IsAny<bool>()))
-            .ReturnsAsync(mergeInfo);
+#pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+        _subMergeCoordinator.GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .Returns(mergeInfo);
+#pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Act
         IRenderedComponent<ChapterList> component = RenderComponentWithProviders<ChapterList>(parameters => parameters
@@ -272,8 +280,10 @@ public class ChapterListMergingTests : TestContext
             }
         };
 
-        _mockMergeCoordinator.Setup(x => x.GetPossibleMergeActionsAsync(It.IsAny<List<Chapter>>(), It.IsAny<bool>()))
-            .ReturnsAsync(mergeInfo);
+#pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+        _subMergeCoordinator.GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .Returns(mergeInfo);
+#pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         var completedMerges = new List<MergeInfo>
         {
@@ -288,29 +298,35 @@ public class ChapterListMergingTests : TestContext
             )
         };
 
-        _mockMergeCoordinator.Setup(x => x.MergeSelectedChaptersAsync(
-                It.IsAny<List<Chapter>>(), It.IsAny<bool>()))
-            .ReturnsAsync(completedMerges);
+#pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+        _subMergeCoordinator.MergeSelectedChaptersAsync(
+                Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .Returns(completedMerges);
+#pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Setup the merged chapter to be found in database after merge
         Chapter mergedChapter = chapters[0]; // First chapter becomes the merged one
         mergedChapter.FileName = "Chapter 1.cbz";
 
         // Setup revert service to indicate the merged chapter can be reverted
-        _mockRevertService.Setup(x => x.CanRevertChapterAsync(mergedChapter))
-            .ReturnsAsync(true);
+#pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+        _subRevertService.CanRevertChapterAsync(mergedChapter)
+            .Returns(true);
+#pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Act
         IRenderedComponent<ChapterList> component = RenderComponentWithProviders<ChapterList>(parameters => parameters
             .Add(p => p.Manga, manga));
 
-        // Verify merge coordinator was called for getting possibilities
-        _mockMergeCoordinator.Verify(x => x.GetPossibleMergeActionsAsync(
-            It.IsAny<List<Chapter>>(),
-            It.IsAny<bool>()), Times.AtLeastOnce);
-
         // Assert
         Assert.NotNull(component);
+
+        // Verify merge coordinator was called for getting possibilities
+#pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+        await _subMergeCoordinator.Received().GetPossibleMergeActionsAsync(
+            Arg.Any<List<Chapter>>(),
+            Arg.Any<bool>());
+#pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
     }
 
     protected override void Dispose(bool disposing)
@@ -344,17 +360,21 @@ public class ChapterListMergingTests : TestContext
         };
 
         _dbContext.MergedChapterInfos.Add(mergedChapterInfo);
-        await _dbContext.SaveChangesAsync(Xunit.TestContext.Current.CancellationToken);
+        await _dbContext.SaveChangesAsync(CancellationToken.None);
 
         // Setup revert service to indicate this chapter can be reverted (it's merged)
-        _mockRevertService.Setup(x => x.CanRevertChapterAsync(chapters[0]))
-            .ReturnsAsync(true);
+#pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+        _subRevertService.CanRevertChapterAsync(chapters[0])
+            .Returns(true);
+#pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Setup merge coordinator to return NO merge possibilities for the merged chapter
         // (merged chapters should not be mergeable)
         var mergeInfo = new MergeActionInfo(); // Empty - no merge possibilities
-        _mockMergeCoordinator.Setup(x => x.GetPossibleMergeActionsAsync(It.IsAny<List<Chapter>>(), It.IsAny<bool>()))
-            .ReturnsAsync(mergeInfo);
+#pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+        _subMergeCoordinator.GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .Returns(mergeInfo);
+#pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Act
         IRenderedComponent<ChapterList> component = RenderComponentWithProviders<ChapterList>(parameters => parameters
@@ -410,22 +430,27 @@ public class ChapterListMergingTests : TestContext
             }
         };
 
-        _mockMergeCoordinator.Setup(x => x.GetPossibleMergeActionsAsync(It.IsAny<List<Chapter>>(), It.IsAny<bool>()))
-            .ReturnsAsync(mergeInfo);
+#pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+        _subMergeCoordinator.GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .Returns(mergeInfo);
+#pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Chapters are NOT merged, so revert service should return false
-        _mockRevertService.Setup(x => x.CanRevertChapterAsync(It.IsAny<Chapter>()))
-            .ReturnsAsync(false);
+#pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+        _subRevertService.CanRevertChapterAsync(Arg.Any<Chapter>())
+            .Returns(false);
+#pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Act
         IRenderedComponent<ChapterList> component = RenderComponentWithProviders<ChapterList>(parameters => parameters
             .Add(p => p.Manga, manga));
 
         // Assert - Check that merge possibilities service is called (indicates caching system works)
-        _mockMergeCoordinator.Verify(x => x.GetPossibleMergeActionsAsync(
-                It.IsAny<List<Chapter>>(),
-                It.IsAny<bool>()),
-            Times.AtLeastOnce(), "Merge coordinator should be called to check merge possibilities");
+#pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+        await _subMergeCoordinator.Received().GetPossibleMergeActionsAsync(
+            Arg.Any<List<Chapter>>(),
+            Arg.Any<bool>());
+#pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Check that merge buttons exist in the UI
         IEnumerable<IElement> mergeButtons = component.FindAll("button")
@@ -448,18 +473,21 @@ public class ChapterListMergingTests : TestContext
             }
         };
 
-        _mockMergeCoordinator.Setup(x => x.GetPossibleMergeActionsAsync(It.IsAny<List<Chapter>>(), It.IsAny<bool>()))
-            .ReturnsAsync(mergeInfo);
+#pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+        _subMergeCoordinator.GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .Returns(mergeInfo);
+#pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Act
         IRenderedComponent<ChapterList> component = RenderComponentWithProviders<ChapterList>(parameters => parameters
             .Add(p => p.Manga, manga));
 
         // Assert - Verify that the component properly calls the merge coordinator for possibilities
-        _mockMergeCoordinator.Verify(x => x.GetPossibleMergeActionsAsync(
-                It.IsAny<List<Chapter>>(),
-                It.IsAny<bool>()),
-            Times.AtLeastOnce()); // Should be called at least once to get merge possibilities
+#pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+        await _subMergeCoordinator.Received().GetPossibleMergeActionsAsync(
+            Arg.Any<List<Chapter>>(),
+            Arg.Any<bool>());
+#pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Test that merge button exists when there are merge possibilities
         IEnumerable<IElement> mergeButtons = component.FindAll("button")
@@ -487,15 +515,14 @@ public class ChapterListMergingTests : TestContext
         };
 
         _dbContext.MergedChapterInfos.Add(mergedChapterInfo);
-        await _dbContext.SaveChangesAsync(Xunit.TestContext.Current.CancellationToken);
+        await _dbContext.SaveChangesAsync(CancellationToken.None);
 
         // Setup revert service - first chapter can be reverted (it's merged)
-        _mockRevertService.Setup(x => x.CanRevertChapterAsync(chapters[0]))
-            .ReturnsAsync(true);
-        _mockRevertService.Setup(x => x.CanRevertChapterAsync(chapters[1]))
-            .ReturnsAsync(false);
-        _mockRevertService.Setup(x => x.CanRevertChapterAsync(chapters[2]))
-            .ReturnsAsync(false);
+#pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+        _subRevertService.CanRevertChapterAsync(chapters[0]).Returns(true);
+        _subRevertService.CanRevertChapterAsync(chapters[1]).Returns(false);
+        _subRevertService.CanRevertChapterAsync(chapters[2]).Returns(false);
+#pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Setup merge coordinator - second chapter can be merged
         var mergeInfo = new MergeActionInfo
@@ -505,8 +532,10 @@ public class ChapterListMergingTests : TestContext
                 { "2", new List<Chapter> { chapters[1], chapters[2] } }
             }
         };
-        _mockMergeCoordinator.Setup(x => x.GetPossibleMergeActionsAsync(It.IsAny<List<Chapter>>(), It.IsAny<bool>()))
-            .ReturnsAsync(mergeInfo);
+#pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+        _subMergeCoordinator.GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .Returns(mergeInfo);
+#pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Act
         IRenderedComponent<ChapterList> component = RenderComponentWithProviders<ChapterList>(parameters => parameters
@@ -554,7 +583,7 @@ public class ChapterListMergingTests : TestContext
         chapters[0].RelativePath = "Test Manga/Chapter 1.1.cbz";
         chapters[1].FileName = "Chapter 1.2.cbz";
         chapters[1].RelativePath = "Test Manga/Chapter 1.2.cbz";
-        await _dbContext.SaveChangesAsync(Xunit.TestContext.Current.CancellationToken);
+        await _dbContext.SaveChangesAsync(CancellationToken.None);
 
         // Setup merge coordinator to indicate these chapters can be merged
         var mergeInfo = new MergeActionInfo
@@ -565,13 +594,11 @@ public class ChapterListMergingTests : TestContext
             }
         };
 
-        _mockMergeCoordinator
-            .SetupSequence(x => x.GetPossibleMergeActionsAsync(It.IsAny<List<Chapter>>(), It.IsAny<bool>()))
-            .ReturnsAsync(mergeInfo) // Initial load - with latest chapters
-            .ReturnsAsync(mergeInfo) // When checking if individual chapter can merge - with latest chapters
-            .ReturnsAsync(new MergeActionInfo()) // For latest chapter check (without latest) - NO merge actions
-            .ReturnsAsync(mergeInfo) // For latest chapter check (with latest) - HAS merge actions  
-            .ReturnsAsync(new MergeActionInfo()); // After merge (no more merge possibilities)
+#pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+        _subMergeCoordinator
+            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .Returns(mergeInfo, mergeInfo, new MergeActionInfo(), mergeInfo, new MergeActionInfo());
+#pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Setup merge coordinator to actually perform the merge
         var mergeResult = new List<MergeInfo>
@@ -587,12 +614,12 @@ public class ChapterListMergingTests : TestContext
                 "1")
         };
 
-        _mockMergeCoordinator.Setup(x => x.MergeSelectedChaptersAsync(
-                It.Is<List<Chapter>>(list =>
+        _subMergeCoordinator.MergeSelectedChaptersAsync(
+                Arg.Is<List<Chapter>>(list =>
                     list.Count == 2 && list.Contains(chapters[0]) && list.Contains(chapters[1])),
-                It.IsAny<bool>(),
-                It.IsAny<CancellationToken>()))
-            .Callback<List<Chapter>, bool, CancellationToken>((chapterList, includeLatest, cancellationToken) =>
+                Arg.Any<bool>(),
+                Arg.Any<CancellationToken>())
+            .Returns(callInfo =>
             {
                 // Simulate the actual merge operation by updating the database
                 // Update first chapter to be the merged chapter
@@ -612,23 +639,25 @@ public class ChapterListMergingTests : TestContext
                 };
                 _dbContext.MergedChapterInfos.Add(mergedChapterInfo);
                 _dbContext.SaveChanges();
-            })
-            .ReturnsAsync(mergeResult);
+
+                return Task.FromResult(mergeResult);
+            });
 
         // Setup revert service to reflect initial and post-merge states
-        _mockRevertService.SetupSequence(x => x.CanRevertChapterAsync(It.Is<Chapter>(c => c.Id == chapters[0].Id)))
-            .ReturnsAsync(false) // Initially not merged
-            .ReturnsAsync(true); // After merge, can be reverted
-        _mockRevertService.Setup(x => x.CanRevertChapterAsync(It.Is<Chapter>(c => c.Id == chapters[1].Id)))
-            .ReturnsAsync(false); // Chapter 1.2 is never merged (gets removed)
+#pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+        _subRevertService.CanRevertChapterAsync(Arg.Is<Chapter>(c => c.Id == chapters[0].Id))
+            .Returns(false, true); // Initially not merged, then after merge, it can be reverted
+        _subRevertService.CanRevertChapterAsync(Arg.Is<Chapter>(c => c.Id == chapters[1].Id))
+            .Returns(false); // Chapter 1.2 is never merged (gets removed)
+#pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Setup dialog service to confirm the merge (simulate user clicking "Yes")
-        _mockDialogService.Setup(x => x.ShowMessageBox(
-                It.Is<string>(title => title.Contains("Latest Chapter")),
-                It.IsAny<string>(),
-                It.IsAny<string>(),
-                It.IsAny<string>()))
-            .ReturnsAsync(true); // User confirms the merge
+        _subDialogService.ShowMessageBox(
+                Arg.Is<string>(title => title.Contains("Latest Chapter")),
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<string>())
+            .Returns(Task.FromResult<bool?>(true)); // User confirms the merge
 
         // Act - Step 1: Render the component initially
         IRenderedComponent<ChapterList> component = RenderComponentWithProviders<ChapterList>(parameters => parameters
@@ -673,18 +702,18 @@ public class ChapterListMergingTests : TestContext
         Assert.Empty(finalChapter12); // Original Chapter 1.2 should not be displayed anymore
 
         // 3. Verify that the merge operation was actually called
-        _mockMergeCoordinator.Verify(x => x.MergeSelectedChaptersAsync(
-                It.Is<List<Chapter>>(list => list.Count == 2),
-                It.IsAny<bool>()),
-            Times.Once, "Merge operation should have been called once");
+#pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+        await _subMergeCoordinator.Received(1).MergeSelectedChaptersAsync(
+            Arg.Is<List<Chapter>>(list => list.Count == 2),
+            Arg.Any<bool>());
+#pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // 4. Verify that the dialog was shown for latest chapter confirmation
-        _mockDialogService.Verify(x => x.ShowMessageBox(
-                It.Is<string>(title => title.Contains("Latest Chapter")),
-                It.IsAny<string>(),
-                It.IsAny<string>(),
-                It.IsAny<string>()),
-            Times.Once, "Dialog should have been shown to confirm latest chapter merge");
+        await _subDialogService.Received(1).ShowMessageBox(
+            Arg.Is<string>(title => title.Contains("Latest Chapter")),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<string>());
 
         // 5. Verify that the merged chapter shows the correct merged filename
         IRefreshableElementCollection<IElement> chapterCells = component.FindAll("td");
@@ -700,8 +729,9 @@ public class ChapterListMergingTests : TestContext
         Assert.Equal(2, mergeInfoInDb.OriginalParts.Count); // Should have 2 original parts
 
         // 7. Verify that revert service was called to update merge status  
-        _mockRevertService.Verify(x => x.CanRevertChapterAsync(It.IsAny<Chapter>()),
-            Times.AtLeast(2), "Component should check merge status for chapters before and after merge");
+#pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+        await _subRevertService.Received().CanRevertChapterAsync(Arg.Any<Chapter>());
+#pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // 8. Verify that only merged chapters are displayed (merged chapter + third chapter)
         IEnumerable<IElement> dataRows = finalRows.Where(row =>
