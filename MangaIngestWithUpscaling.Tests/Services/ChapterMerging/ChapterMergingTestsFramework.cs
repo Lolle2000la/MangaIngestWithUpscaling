@@ -2393,6 +2393,527 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         await taskQueue2.Received(1).EnqueueAsync(Arg.Is<UpscaleTask>(t => t.ChapterId == expectedMissing.Id));
     }
 
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task RevertMergedChapter_WithTwoMissingUpscaledParts_ShouldQueueTwoUpscaleTasks()
+    {
+        // Arrange
+        using var context = CreateDbContext();
+        var chapterPartMerger = Substitute.For<IChapterPartMerger>();
+        var chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
+        var upscalerJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();
+        var logger = Substitute.For<ILogger<ChapterMergeRevertService>>();
+        var taskQueue = Substitute.For<ITaskQueue>();
+
+        var revertService = new ChapterMergeRevertService(
+            context, chapterPartMerger, chapterChangedNotifier, upscalerJsonHandling, taskQueue, logger);
+
+        var library = CreateTestLibrary();
+        var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
+        var profile = new UpscalerProfile
+        {
+            Name = "Test Profile",
+            UpscalerMethod = UpscalerMethod.MangaJaNai,
+            ScalingFactor = ScaleFactor.TwoX,
+            CompressionFormat = CompressionFormat.Png,
+            Quality = 85
+        };
+
+        var chapter = new Chapter
+        {
+            FileName = "Chapter 7.cbz",
+            RelativePath = "Test Manga/Chapter 7.cbz",
+            Manga = manga,
+            IsUpscaled = true,
+            UpscalerProfile = profile
+        };
+
+        context.Libraries.Add(library);
+        context.MangaSeries.Add(manga);
+        context.UpscalerProfiles.Add(profile);
+        context.Chapters.Add(chapter);
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var mergeInfo = new MergedChapterInfo
+        {
+            ChapterId = chapter.Id,
+            OriginalParts = new List<OriginalChapterPart>
+            {
+                new() { FileName = "Chapter 7.1.cbz", PageNames = ["001.jpg"] },
+                new() { FileName = "Chapter 7.2.cbz", PageNames = ["002.jpg"] },
+                new() { FileName = "Chapter 7.3.cbz", PageNames = ["003.jpg"] }
+            },
+            MergedChapterNumber = "7"
+        };
+
+        context.MergedChapterInfos.Add(mergeInfo);
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Regular merged exists
+        var mergedChapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(mergedChapterPath)!);
+        CreateTestCbzFile(Path.GetDirectoryName(mergedChapterPath)!, "Chapter 7.cbz", 3);
+
+        // Upscaled merged is missing; only one individual upscaled part exists (7.1)
+        var upscaledSeriesPath = Path.Combine(library.UpscaledLibraryPath!, "Test Manga");
+        Directory.CreateDirectory(upscaledSeriesPath);
+        CreateTestCbzFile(upscaledSeriesPath, "Chapter 7.1.cbz", 1);
+        var upscaledMergedPath = Path.Combine(library.UpscaledLibraryPath!, chapter.RelativePath);
+
+        // Mock restoration for regular path -> all parts; upscaled merged path -> none (file missing)
+        var md1 = new ExtractedMetadata("Test Manga", "Chapter 7.1", "7.1");
+        var md2 = new ExtractedMetadata("Test Manga", "Chapter 7.2", "7.2");
+        var md3 = new ExtractedMetadata("Test Manga", "Chapter 7.3", "7.3");
+        chapterPartMerger.RestoreChapterPartsAsync(Arg.Any<string>(), Arg.Any<List<OriginalChapterPart>>(),
+                Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+            {
+                string sourcePath = (string)ci.Args()[0]!;
+                if (string.Equals(sourcePath, mergedChapterPath, StringComparison.Ordinal))
+                {
+                    return new List<FoundChapter>
+                    {
+                        new("Chapter 7.1.cbz", "Chapter 7.1.cbz", ChapterStorageType.Cbz, md1),
+                        new("Chapter 7.2.cbz", "Chapter 7.2.cbz", ChapterStorageType.Cbz, md2),
+                        new("Chapter 7.3.cbz", "Chapter 7.3.cbz", ChapterStorageType.Cbz, md3)
+                    };
+                }
+                if (string.Equals(sourcePath, upscaledMergedPath, StringComparison.Ordinal))
+                {
+                    return new List<FoundChapter>();
+                }
+                return new List<FoundChapter>();
+            });
+
+        // Act
+        var restored = await revertService.RevertMergedChapterAsync(chapter, TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.Equal(3, restored.Count);
+        logger.ReceivedWithAnyArgs().LogWarning(default!);
+
+        var missing2 = context.Chapters.Single(c => c.MangaId == manga.Id && c.FileName == "Chapter 7.2.cbz");
+        var missing3 = context.Chapters.Single(c => c.MangaId == manga.Id && c.FileName == "Chapter 7.3.cbz");
+        await taskQueue.Received(1).EnqueueAsync(Arg.Is<UpscaleTask>(t => t.ChapterId == missing2.Id));
+        await taskQueue.Received(1).EnqueueAsync(Arg.Is<UpscaleTask>(t => t.ChapterId == missing3.Id));
+
+        // The single available upscaled part should receive upscaler.json once
+        await upscalerJsonHandling.Received(1).WriteUpscalerJsonAsync(
+            Arg.Any<ZipArchive>(),
+            Arg.Is<UpscalerProfile>(p => p.Name == profile.Name),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task RevertMergedChapter_WithMissingRegularMergedFile_ShouldThrowFileNotFound()
+    {
+        // Arrange
+        using var context = CreateDbContext();
+        var chapterPartMerger = Substitute.For<IChapterPartMerger>();
+        var chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
+        var upscalerJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();
+        var logger = Substitute.For<ILogger<ChapterMergeRevertService>>();
+        var taskQueue = Substitute.For<ITaskQueue>();
+
+        var revertService = new ChapterMergeRevertService(
+            context, chapterPartMerger, chapterChangedNotifier, upscalerJsonHandling, taskQueue, logger);
+
+        var library = CreateTestLibrary();
+        var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
+        var chapter = new Chapter
+        {
+            FileName = "Chapter 8.cbz",
+            RelativePath = "Test Manga/Chapter 8.cbz",
+            Manga = manga,
+            IsUpscaled = false
+        };
+
+        context.Libraries.Add(library);
+        context.MangaSeries.Add(manga);
+        context.Chapters.Add(chapter);
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var mergeInfo = new MergedChapterInfo
+        {
+            ChapterId = chapter.Id,
+            OriginalParts = new List<OriginalChapterPart>
+            {
+                new() { FileName = "Chapter 8.1.cbz", PageNames = ["001.jpg"] }
+            },
+            MergedChapterNumber = "8"
+        };
+
+        context.MergedChapterInfos.Add(mergeInfo);
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Don't create the regular merged file intentionally
+
+        // Act + Assert
+        await Assert.ThrowsAsync<FileNotFoundException>(async () =>
+            await revertService.RevertMergedChapterAsync(chapter, TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task RevertMergedChapter_WithUpscaledChapterMissingProfile_ShouldNotEnqueueUpscaleTasks()
+    {
+        // Arrange
+        using var context = CreateDbContext();
+        var chapterPartMerger = Substitute.For<IChapterPartMerger>();
+        var chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
+        var upscalerJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();
+        var logger = Substitute.For<ILogger<ChapterMergeRevertService>>();
+        var taskQueue = Substitute.For<ITaskQueue>();
+
+        var revertService = new ChapterMergeRevertService(
+            context, chapterPartMerger, chapterChangedNotifier, upscalerJsonHandling, taskQueue, logger);
+
+        var library = CreateTestLibrary();
+        var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
+
+        var chapter = new Chapter
+        {
+            FileName = "Chapter 9.cbz",
+            RelativePath = "Test Manga/Chapter 9.cbz",
+            Manga = manga,
+            IsUpscaled = true,
+            UpscalerProfile = null // Missing profile
+        };
+
+        context.Libraries.Add(library);
+        context.MangaSeries.Add(manga);
+        context.Chapters.Add(chapter);
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var mergeInfo = new MergedChapterInfo
+        {
+            ChapterId = chapter.Id,
+            OriginalParts = new List<OriginalChapterPart>
+            {
+                new() { FileName = "Chapter 9.1.cbz", PageNames = ["001.jpg"] },
+                new() { FileName = "Chapter 9.2.cbz", PageNames = ["002.jpg"] }
+            },
+            MergedChapterNumber = "9"
+        };
+
+        context.MergedChapterInfos.Add(mergeInfo);
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Create regular merged file
+        var mergedChapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(mergedChapterPath)!);
+        CreateTestCbzFile(Path.GetDirectoryName(mergedChapterPath)!, "Chapter 9.cbz", 2);
+
+        // Mock regular restore to return both parts
+        var md1 = new ExtractedMetadata("Test Manga", "Chapter 9.1", "9.1");
+        var md2 = new ExtractedMetadata("Test Manga", "Chapter 9.2", "9.2");
+        chapterPartMerger.RestoreChapterPartsAsync(Arg.Any<string>(), Arg.Any<List<OriginalChapterPart>>(),
+                Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new List<FoundChapter>
+            {
+                new("Chapter 9.1.cbz", "Chapter 9.1.cbz", ChapterStorageType.Cbz, md1),
+                new("Chapter 9.2.cbz", "Chapter 9.2.cbz", ChapterStorageType.Cbz, md2)
+            });
+
+        // Act
+        var restored = await revertService.RevertMergedChapterAsync(chapter, TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.Equal(2, restored.Count);
+        // No profile -> CreateUpscaledRestoredChaptersAsync is skipped -> no tasks
+        await taskQueue.DidNotReceive().EnqueueAsync(Arg.Any<UpscaleTask>());
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task RevertMergedChapter_Twice_ShouldThrowOnSecondRunAndNoExtraTasks()
+    {
+        // Arrange
+        using var context = CreateDbContext();
+        var chapterPartMerger = Substitute.For<IChapterPartMerger>();
+        var chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
+        var upscalerJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();
+        var logger = Substitute.For<ILogger<ChapterMergeRevertService>>();
+        var taskQueue = Substitute.For<ITaskQueue>();
+
+        var revertService = new ChapterMergeRevertService(
+            context, chapterPartMerger, chapterChangedNotifier, upscalerJsonHandling, taskQueue, logger);
+
+        var library = CreateTestLibrary();
+        var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
+        var profile = new UpscalerProfile
+        {
+            Name = "Test Profile",
+            UpscalerMethod = UpscalerMethod.MangaJaNai,
+            ScalingFactor = ScaleFactor.TwoX,
+            CompressionFormat = CompressionFormat.Png,
+            Quality = 85
+        };
+
+        var chapter = new Chapter
+        {
+            FileName = "Chapter 10.cbz",
+            RelativePath = "Test Manga/Chapter 10.cbz",
+            Manga = manga,
+            IsUpscaled = true,
+            UpscalerProfile = profile
+        };
+
+        context.Libraries.Add(library);
+        context.MangaSeries.Add(manga);
+        context.UpscalerProfiles.Add(profile);
+        context.Chapters.Add(chapter);
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var mergeInfo = new MergedChapterInfo
+        {
+            ChapterId = chapter.Id,
+            OriginalParts = new List<OriginalChapterPart>
+            {
+                new() { FileName = "Chapter 10.1.cbz", PageNames = ["001.jpg"] },
+                new() { FileName = "Chapter 10.2.cbz", PageNames = ["002.jpg"] }
+            },
+            MergedChapterNumber = "10"
+        };
+
+        context.MergedChapterInfos.Add(mergeInfo);
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Create both regular and upscaled merged chapter files
+        var mergedChapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(mergedChapterPath)!);
+        CreateTestCbzFile(Path.GetDirectoryName(mergedChapterPath)!, "Chapter 10.cbz", 2);
+
+        var upscaledMergedPath = Path.Combine(library.UpscaledLibraryPath!, chapter.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(upscaledMergedPath)!);
+        CreateTestCbzFile(Path.GetDirectoryName(upscaledMergedPath)!, "Chapter 10.cbz", 2);
+
+        // Mock: regular and upscaled restore both return all parts
+        var md1 = new ExtractedMetadata("Test Manga", "Chapter 10.1", "10.1");
+        var md2 = new ExtractedMetadata("Test Manga", "Chapter 10.2", "10.2");
+        chapterPartMerger.RestoreChapterPartsAsync(Arg.Any<string>(), Arg.Any<List<OriginalChapterPart>>(),
+                Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new List<FoundChapter>
+            {
+                new("Chapter 10.1.cbz", "Chapter 10.1.cbz", ChapterStorageType.Cbz, md1),
+                new("Chapter 10.2.cbz", "Chapter 10.2.cbz", ChapterStorageType.Cbz, md2)
+            });
+
+        // Act: First run should succeed
+        var restoredFirst = await revertService.RevertMergedChapterAsync(chapter, TestContext.Current.CancellationToken);
+        Assert.Equal(2, restoredFirst.Count);
+
+        // Act + Assert: Second run should throw because merge info was removed with the chapter (cascade delete)
+        var ex2 = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await revertService.RevertMergedChapterAsync(chapter, TestContext.Current.CancellationToken));
+        Assert.Contains("is not a merged chapter", ex2.Message);
+
+        // And no tasks should have been enqueued across runs
+        await taskQueue.DidNotReceive().EnqueueAsync(Arg.Any<UpscaleTask>());
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task RevertMergedChapter_TaskQueueEnqueueFailure_ShouldLogAndThrow()
+    {
+        // Arrange
+        using var context = CreateDbContext();
+        var chapterPartMerger = Substitute.For<IChapterPartMerger>();
+        var chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
+        var upscalerJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();
+        var logger = Substitute.For<ILogger<ChapterMergeRevertService>>();
+        var taskQueue = Substitute.For<ITaskQueue>();
+
+        // Make enqueue throw
+        taskQueue
+            .When(x => x.EnqueueAsync(Arg.Any<UpscaleTask>()))
+            .Do(_ => throw new InvalidOperationException("Queue failure"));
+
+        var revertService = new ChapterMergeRevertService(
+            context, chapterPartMerger, chapterChangedNotifier, upscalerJsonHandling, taskQueue, logger);
+
+        var library = CreateTestLibrary();
+        var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
+        var profile = new UpscalerProfile
+        {
+            Name = "Test Profile",
+            UpscalerMethod = UpscalerMethod.MangaJaNai,
+            ScalingFactor = ScaleFactor.TwoX,
+            CompressionFormat = CompressionFormat.Png,
+            Quality = 85
+        };
+
+        var chapter = new Chapter
+        {
+            FileName = "Chapter 11.cbz",
+            RelativePath = "Test Manga/Chapter 11.cbz",
+            Manga = manga,
+            IsUpscaled = true,
+            UpscalerProfile = profile
+        };
+
+        context.Libraries.Add(library);
+        context.MangaSeries.Add(manga);
+        context.UpscalerProfiles.Add(profile);
+        context.Chapters.Add(chapter);
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var mergeInfo = new MergedChapterInfo
+        {
+            ChapterId = chapter.Id,
+            OriginalParts = new List<OriginalChapterPart>
+            {
+                new() { FileName = "Chapter 11.1.cbz", PageNames = ["001.jpg"] },
+                new() { FileName = "Chapter 11.2.cbz", PageNames = ["002.jpg"] }
+            },
+            MergedChapterNumber = "11"
+        };
+
+        context.MergedChapterInfos.Add(mergeInfo);
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Regular merged exists
+        var mergedChapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(mergedChapterPath)!);
+        CreateTestCbzFile(Path.GetDirectoryName(mergedChapterPath)!, "Chapter 11.cbz", 2);
+
+        // Upscaled merged is missing so scheduling will run
+        var upscaledSeriesPath = Path.Combine(library.UpscaledLibraryPath!, "Test Manga");
+        Directory.CreateDirectory(upscaledSeriesPath);
+        // No individual upscaled parts created -> both missing
+
+        // Mock restore from regular merged to create restored chapters
+        var md1 = new ExtractedMetadata("Test Manga", "Chapter 11.1", "11.1");
+        var md2 = new ExtractedMetadata("Test Manga", "Chapter 11.2", "11.2");
+        chapterPartMerger.RestoreChapterPartsAsync(Arg.Any<string>(), Arg.Any<List<OriginalChapterPart>>(),
+                Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+            {
+                string sourcePath = (string)ci.Args()[0]!;
+                if (string.Equals(sourcePath, mergedChapterPath, StringComparison.Ordinal))
+                {
+                    return new List<FoundChapter>
+                    {
+                        new("Chapter 11.1.cbz", "Chapter 11.1.cbz", ChapterStorageType.Cbz, md1),
+                        new("Chapter 11.2.cbz", "Chapter 11.2.cbz", ChapterStorageType.Cbz, md2)
+                    };
+                }
+                return new List<FoundChapter>();
+            });
+
+        // Act + Assert
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await revertService.RevertMergedChapterAsync(chapter, TestContext.Current.CancellationToken));
+        Assert.Equal("Queue failure", ex.Message);
+
+        // Regular restored chapters should still be present in the DB since save happens before scheduling
+        var restoredInDb = context.Chapters.Where(c => c.MangaId == manga.Id && c.FileName.StartsWith("Chapter 11.")).ToList();
+        Assert.Equal(2, restoredInDb.Count);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task RevertMergedChapter_WithDuplicateFilenamesAcrossManga_ShouldEnqueueOnlyForTargetManga()
+    {
+        // Arrange
+        using var context = CreateDbContext();
+        var chapterPartMerger = Substitute.For<IChapterPartMerger>();
+        var chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
+        var upscalerJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();
+        var logger = Substitute.For<ILogger<ChapterMergeRevertService>>();
+        var taskQueue = Substitute.For<ITaskQueue>();
+
+        var revertService = new ChapterMergeRevertService(
+            context, chapterPartMerger, chapterChangedNotifier, upscalerJsonHandling, taskQueue, logger);
+
+        var library = CreateTestLibrary();
+        var mangaA = new Manga { PrimaryTitle = "Series A", Library = library };
+        var mangaB = new Manga { PrimaryTitle = "Series B", Library = library };
+        var profile = new UpscalerProfile
+        {
+            Name = "Test Profile",
+            UpscalerMethod = UpscalerMethod.MangaJaNai,
+            ScalingFactor = ScaleFactor.TwoX,
+            CompressionFormat = CompressionFormat.Png,
+            Quality = 85
+        };
+
+        // Target merged chapter in Series A
+        var chapterA = new Chapter
+        {
+            FileName = "Chapter 12.cbz",
+            RelativePath = "Series A/Chapter 12.cbz",
+            Manga = mangaA,
+            IsUpscaled = true,
+            UpscalerProfile = profile
+        };
+
+        // Pre-existing chapters in both manga with colliding filenames for parts
+        var partA1 = new Chapter { FileName = "Chapter 12.1.cbz", RelativePath = "Series A/Chapter 12.1.cbz", Manga = mangaA, IsUpscaled = true, UpscalerProfile = profile };
+        var partA2 = new Chapter { FileName = "Chapter 12.2.cbz", RelativePath = "Series A/Chapter 12.2.cbz", Manga = mangaA, IsUpscaled = true, UpscalerProfile = profile };
+        var partB1 = new Chapter { FileName = "Chapter 12.1.cbz", RelativePath = "Series B/Chapter 12.1.cbz", Manga = mangaB, IsUpscaled = true, UpscalerProfile = profile };
+        var partB2 = new Chapter { FileName = "Chapter 12.2.cbz", RelativePath = "Series B/Chapter 12.2.cbz", Manga = mangaB, IsUpscaled = true, UpscalerProfile = profile };
+
+        context.Libraries.Add(library);
+        context.MangaSeries.AddRange(mangaA, mangaB);
+        context.UpscalerProfiles.Add(profile);
+        context.Chapters.AddRange(chapterA, partA1, partA2, partB1, partB2);
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var mergeInfo = new MergedChapterInfo
+        {
+            ChapterId = chapterA.Id,
+            OriginalParts = new List<OriginalChapterPart>
+            {
+                new() { FileName = "Chapter 12.1.cbz", PageNames = ["001.jpg"] },
+                new() { FileName = "Chapter 12.2.cbz", PageNames = ["002.jpg"] }
+            },
+            MergedChapterNumber = "12"
+        };
+        context.MergedChapterInfos.Add(mergeInfo);
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Create regular merged file but not upscaled merged file
+        var mergedChapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapterA.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(mergedChapterPath)!);
+        CreateTestCbzFile(Path.GetDirectoryName(mergedChapterPath)!, "Chapter 12.cbz", 2);
+
+        // No individual upscaled parts exist for Series A to force scheduling; Series B parts exist but should be ignored
+        var md1 = new ExtractedMetadata("Series A", "Chapter 12.1", "12.1");
+        var md2 = new ExtractedMetadata("Series A", "Chapter 12.2", "12.2");
+        chapterPartMerger.RestoreChapterPartsAsync(Arg.Any<string>(), Arg.Any<List<OriginalChapterPart>>(),
+                Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+            {
+                string src = (string)ci.Args()[0]!;
+                if (string.Equals(src, mergedChapterPath, StringComparison.Ordinal))
+                {
+                    return new List<FoundChapter>
+                    {
+                        new("Chapter 12.1.cbz", "Chapter 12.1.cbz", ChapterStorageType.Cbz, md1),
+                        new("Chapter 12.2.cbz", "Chapter 12.2.cbz", ChapterStorageType.Cbz, md2)
+                    };
+                }
+                return new List<FoundChapter>();
+            });
+
+        // Act
+        var restored = await revertService.RevertMergedChapterAsync(chapterA, TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.Equal(2, restored.Count);
+        var restoredA1 = restored.Single(c => c.FileName == "Chapter 12.1.cbz" && c.MangaId == mangaA.Id);
+        var restoredA2 = restored.Single(c => c.FileName == "Chapter 12.2.cbz" && c.MangaId == mangaA.Id);
+
+        // Should enqueue only for Series A restored chapters
+        await taskQueue.Received(1).EnqueueAsync(Arg.Is<UpscaleTask>(t => t.ChapterId == restoredA1.Id));
+        await taskQueue.Received(1).EnqueueAsync(Arg.Is<UpscaleTask>(t => t.ChapterId == restoredA2.Id));
+        // And must not accidentally target Series B chapters with same filenames
+        await taskQueue.DidNotReceive().EnqueueAsync(Arg.Is<UpscaleTask>(t => t.ChapterId == partB1.Id));
+        await taskQueue.DidNotReceive().EnqueueAsync(Arg.Is<UpscaleTask>(t => t.ChapterId == partB2.Id));
+    }
+
     private Library CreateTestLibrary()
     {
         var library = new Library
