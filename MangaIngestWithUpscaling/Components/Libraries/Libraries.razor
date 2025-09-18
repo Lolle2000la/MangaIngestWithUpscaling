@@ -57,7 +57,7 @@
         else
         {
             <MudPaper Elevation="2">
-                <MudTable T="Library" Items="@LoadedLibraries" Hover="true" Striped="true" FixedHeader="true">
+                <MudTable T="Library" Items="@LoadedLibraries" Striped="true" FixedHeader="true">
                     <ToolBarContent>
                         <MudText Typo="Typo.h6" Class="mr-4">Library Overview</MudText>
                         <MudSpacer />
@@ -83,10 +83,6 @@
                                 <MudIcon Icon="@Icons.Material.Filled.Folder" Color="Color.Primary" Class="mr-3" />
                                 <div>
                                     <MudText Typo="Typo.body1" Class="font-weight-medium">@context.Name</MudText>
-                                    @if (context.UpscaleOnIngest)
-                                    {
-                                        <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Text">Auto-Upscale</MudChip>
-                                    }
                                 </div>
                             </div>
                         </MudTd>
@@ -100,18 +96,24 @@
                         </MudTd>
                         
                         <MudTd DataLabel="Upscaler Config">
-                            @if (context.UpscalerProfile != null)
-                            {
-                                <MudChip T="string" Icon="@Icons.Material.Filled.ImageAspectRatio" 
-                                         Color="Color.Info" 
-                                         Size="Size.Small">
-                                    @context.UpscalerProfile.Name
-                                </MudChip>
-                            }
-                            else
-                            {
-                                <MudText Typo="Typo.body2" Color="Color.Surface">Not configured</MudText>
-                            }
+                            <div class="d-flex flex-column gap-1">
+                                @if (context.UpscalerProfile != null)
+                                {
+                                    <MudChip T="string" Icon="@Icons.Material.Filled.ImageAspectRatio" 
+                                             Color="Color.Info" 
+                                             Size="Size.Small">
+                                        @context.UpscalerProfile.Name
+                                    </MudChip>
+                                }
+                                else
+                                {
+                                    <MudText Typo="Typo.body2" Color="Color.Surface">Not configured</MudText>
+                                }
+                                @if (context.UpscaleOnIngest)
+                                {
+                                    <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Text">Auto-Upscale</MudChip>
+                                }
+                            </div>
                         </MudTd>
                         
                         <MudTd DataLabel="Mangas" Style="text-align: center;">
@@ -127,7 +129,7 @@
                         </MudTd>
                         
                         <MudTd DataLabel="Actions" Style="text-align: center;">
-                            <MudButtonGroup Variant="Variant.Text" Size="Size.Small">
+                            <MudStack Row Spacing="1" Justify="Justify.Center">
                                 <MudTooltip Text="Edit this library">
                                     <MudIconButton Href="@($"libraries/edit/{context.Id}")"
                                                    Icon="@Icons.Material.Filled.Edit" 
@@ -172,7 +174,7 @@
                                                    Size="Size.Small"
                                                    OnClick="@(e => OnDeleteLibraryEntry(context))" />
                                 </MudTooltip>
-                            </MudButtonGroup>
+                            </MudStack>
                         </MudTd>
                     </RowTemplate>
                 </MudTable>

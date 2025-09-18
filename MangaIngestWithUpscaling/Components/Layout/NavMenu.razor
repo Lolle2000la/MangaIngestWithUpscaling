@@ -44,15 +44,11 @@
                 <form action="/Account/LogoutOidc" method="post">
                     <AntiforgeryToken />
                     <input type="hidden" name="ReturnUrl" value="@currentUrl" />
-                    <MudButton FullWidth="true" 
-                               StartIcon="@Icons.Material.Filled.Logout" 
-                               Color="Color.Error" 
-                               Variant="Variant.Text"
-                               Class="justify-start"
-                               Style="text-transform: none;"
-                               ButtonType="ButtonType.Submit">
-                        Logout
-                    </MudButton>
+                    <button type="submit" class="mud-nav-link mud-ripple">
+                        <MudIcon Class="mud-icon-root mud-icon-default mud-svg-icon mud-icon-size-medium mud-nav-link-icon mud-nav-link-icon-default"
+                                 Icon="@Icons.Material.Filled.Logout" />
+                        <div class="mud-nav-link-text">Logout</div>
+                    </button>
                 </form>
             }
             else
@@ -63,15 +59,11 @@
                 <form action="Account/Logout" method="post">
                     <AntiforgeryToken />
                     <input type="hidden" name="ReturnUrl" value="@currentUrl" />
-                    <MudButton FullWidth="true" 
-                               StartIcon="@Icons.Material.Filled.Logout" 
-                               Color="Color.Error" 
-                               Variant="Variant.Text"
-                               Class="justify-start"
-                               Style="text-transform: none;"
-                               ButtonType="ButtonType.Submit">
-                        Logout
-                    </MudButton>
+                    <button type="submit" class="mud-nav-link mud-ripple">
+                        <MudIcon Class="mud-icon-root mud-icon-default mud-svg-icon mud-icon-size-medium mud-nav-link-icon mud-nav-link-icon-default"
+                                 Icon="@Icons.Material.Filled.Logout" />
+                        <div class="mud-nav-link-text">Logout</div>
+                    </button>
                 </form>
             }
         </Authorized>
