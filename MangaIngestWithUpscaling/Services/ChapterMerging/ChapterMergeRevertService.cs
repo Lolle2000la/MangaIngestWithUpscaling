@@ -371,7 +371,7 @@ public class ChapterMergeRevertService(
         try
         {
             // Load pending tasks and filter in-memory for the specific RepairUpscaleTask bound to this chapter
-            List<PersistedTask> pending = await dbContext.PersistedTasks
+            var pending = await dbContext.PersistedTasks
                 .Where(t => t.Status == PersistedTaskStatus.Pending)
                 .ToListAsync(cancellationToken);
 

@@ -2701,7 +2701,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
             });
 
         // Act: First run should succeed
-        List<Chapter> restoredFirst =
+        var restoredFirst =
             await revertService.RevertMergedChapterAsync(chapter, TestContext.Current.CancellationToken);
         Assert.Equal(2, restoredFirst.Count);
 
@@ -2810,8 +2810,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         Assert.Equal("Queue failure", ex.Message);
 
         // Regular restored chapters should still be present in the DB since save happens before scheduling
-        List<Chapter> restoredInDb = context.Chapters
-            .Where(c => c.MangaId == manga.Id && c.FileName.StartsWith("Chapter 11."))
+        var restoredInDb = context.Chapters.Where(c => c.MangaId == manga.Id && c.FileName.StartsWith("Chapter 11."))
             .ToList();
         Assert.Equal(2, restoredInDb.Count);
     }
@@ -2888,7 +2887,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         await taskQueue.EnqueueAsync(new RepairUpscaleTask(merged, profile));
 
         // Ensure only one upscaled part exists to force scheduling of the other
-        string upscaledSeriesDir =
+        var upscaledSeriesDir =
             Path.Combine(library.UpscaledLibraryPath!, PathEscaper.EscapeFileName(manga.PrimaryTitle!));
         Directory.CreateDirectory(upscaledSeriesDir);
         // Create only 20.1 upscaled
