@@ -2054,6 +2054,14 @@ public class PartialUpscalingMergeTests : IDisposable
             Arg.Any<ExtractedMetadata>(),
             Arg.Any<Func<FoundChapter, string>?>(),
             Arg.Any<CancellationToken>());
+
+        // And no repair scheduling should occur
+        await upscaleTaskManager.DidNotReceive().HandleUpscaleTaskManagementAsync(
+            Arg.Any<List<Chapter>>(),
+            Arg.Any<MergeInfo>(),
+            Arg.Any<Library>(),
+            Arg.Any<UpscaledMergeResult>(),
+            Arg.Any<CancellationToken>());
     }
 
     private Library CreateTestLibrary()
