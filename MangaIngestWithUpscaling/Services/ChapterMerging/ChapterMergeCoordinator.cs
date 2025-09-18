@@ -229,15 +229,15 @@ public class ChapterMergeCoordinator(
             }
 
             // Handle merging of upscaled versions if they exist
-            await HandleUpscaledChapterMergingAsync(
+            UpscaledMergeResult upscaledMergeResult = await HandleUpscaledChapterMergingAsync(
                 chapters, mergeInfo, library, seriesLibraryPath, cancellationToken);
 
             // Update database records to reflect the merge
             await UpdateDatabaseForMergeAsync(mergeInfo, chapters, cancellationToken);
 
-            // Handle upscale task management
+            // Handle upscale task management with information about partial merging
             await upscaleTaskManager.HandleUpscaleTaskManagementAsync(
-                chapters, mergeInfo, library, cancellationToken);
+                chapters, mergeInfo, library, upscaledMergeResult, cancellationToken);
 
             await dbContext.SaveChangesAsync(cancellationToken);
 
@@ -342,13 +342,13 @@ public class ChapterMergeCoordinator(
                 // Delete original chapter part files after successful merging
                 DeleteOriginalChapterPartFiles(mergeInfo, library);
 
-                // Handle upscale task management
-                await upscaleTaskManager.HandleUpscaleTaskManagementAsync(
-                    originalChapters, mergeInfo, library, cancellationToken);
-
                 // Handle merging of upscaled versions if they exist
-                await HandleUpscaledChapterMergingAsync(
+                UpscaledMergeResult upscaledMergeResult = await HandleUpscaledChapterMergingAsync(
                     originalChapters, mergeInfo, library, seriesLibraryPath, cancellationToken);
+
+                // Handle upscale task management with information about partial merging
+                await upscaleTaskManager.HandleUpscaleTaskManagementAsync(
+                    originalChapters, mergeInfo, library, upscaledMergeResult, cancellationToken);
 
                 completedMerges.Add(mergeInfo);
 
@@ -623,7 +623,7 @@ public class ChapterMergeCoordinator(
         }
     }
 
-    private async Task HandleUpscaledChapterMergingAsync(
+    private async Task<UpscaledMergeResult> HandleUpscaledChapterMergingAsync(
         List<Chapter> originalChapters,
         MergeInfo mergeInfo,
         Library library,
@@ -632,7 +632,7 @@ public class ChapterMergeCoordinator(
     {
         if (string.IsNullOrEmpty(library.UpscaledLibraryPath))
         {
-            return; // No upscaled library is configured for this library
+            return UpscaledMergeResult.NoUpscaledContent(); // No upscaled library is configured for this library
         }
 
         // Determine the path where upscaled versions of the chapters should be located
@@ -641,9 +641,9 @@ public class ChapterMergeCoordinator(
             PathEscaper.EscapeFileName(mergeInfo.MergedChapter.Metadata.Series ?? "Unknown"));
 
         var upscaledParts = new List<FoundChapter>();
-        bool allPartsHaveUpscaledVersions = true;
+        var missingUpscaledParts = new List<OriginalChapterPart>();
 
-        // Check if upscaled versions exist for all the original chapter parts
+        // Check which parts have upscaled versions and which are missing
         foreach (OriginalChapterPart originalPart in mergeInfo.OriginalParts)
         {
             string upscaledFilePath = Path.Combine(upscaledSeriesPath, originalPart.FileName);
@@ -658,25 +658,51 @@ public class ChapterMergeCoordinator(
             }
             else
             {
-                allPartsHaveUpscaledVersions = false;
-                break;
+                missingUpscaledParts.Add(originalPart);
             }
         }
 
-        if (!allPartsHaveUpscaledVersions)
+        // If no upscaled parts exist, let the normal upscale task handle it
+        if (upscaledParts.Count == 0)
         {
             logger.LogDebug(
-                "Upscaled versions not found for all chapter parts with base number {BaseNumber}, skipping upscaled merge",
+                "No upscaled versions found for chapter parts with base number {BaseNumber}, will rely on full upscale task",
                 mergeInfo.BaseChapterNumber);
-            return;
+            return UpscaledMergeResult.NoUpscaledContent();
         }
 
-        // Merge the upscaled chapter parts using the core merging functionality
+        // If all parts have upscaled versions, merge them normally
+        if (missingUpscaledParts.Count == 0)
+        {
+            await MergeAllUpscaledPartsAsync(upscaledParts, mergeInfo, library, upscaledSeriesPath, cancellationToken);
+            return UpscaledMergeResult.CompleteMerge(upscaledParts.Count);
+        }
+
+        // Partial upscaling scenario: merge existing upscaled parts and create repair task for missing ones
+        logger.LogInformation(
+            "Found {ExistingCount} upscaled parts and {MissingCount} missing parts for base number {BaseNumber}. " +
+            "Will merge existing parts and schedule repair task for missing ones.",
+            upscaledParts.Count, missingUpscaledParts.Count, mergeInfo.BaseChapterNumber);
+
+        await HandlePartialUpscaledMergingAsync(
+            upscaledParts, missingUpscaledParts, mergeInfo, library, upscaledSeriesPath, 
+            originalChapters, cancellationToken);
+
+        return UpscaledMergeResult.PartialMerge(upscaledParts.Count, missingUpscaledParts.Count);
+    }
+
+    private async Task MergeAllUpscaledPartsAsync(
+        List<FoundChapter> upscaledParts,
+        MergeInfo mergeInfo,
+        Library library,
+        string upscaledSeriesPath,
+        CancellationToken cancellationToken)
+    {
         try
         {
             var (upscaledMergedChapter, upscaledOriginalParts) = await chapterPartMerger.MergeChapterPartsAsync(
                 upscaledParts,
-                library.UpscaledLibraryPath, // Base library path for resolving relative paths
+                library.UpscaledLibraryPath!, // Base library path for resolving relative paths
                 upscaledSeriesPath, // Target directory for the merged chapter file
                 mergeInfo.BaseChapterNumber,
                 mergeInfo.MergedChapter.Metadata,
@@ -695,11 +721,6 @@ public class ChapterMergeCoordinator(
                         logger.LogInformation("Deleted original upscaled chapter part file: {FilePath}",
                             upscaledPartFilePath);
                     }
-                    else
-                    {
-                        logger.LogWarning("Original upscaled chapter part file not found for deletion: {FilePath}",
-                            upscaledPartFilePath);
-                    }
                 }
                 catch (Exception deleteEx)
                 {
@@ -714,9 +735,65 @@ public class ChapterMergeCoordinator(
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex,
+            logger.LogError(ex,
                 "Failed to merge upscaled chapter parts for base number {BaseNumber}",
                 mergeInfo.BaseChapterNumber);
+            throw;
+        }
+    }
+
+    private async Task HandlePartialUpscaledMergingAsync(
+        List<FoundChapter> existingUpscaledParts,
+        List<OriginalChapterPart> missingUpscaledParts,
+        MergeInfo mergeInfo,
+        Library library,
+        string upscaledSeriesPath,
+        List<Chapter> originalChapters,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Create partial merged upscaled chapter from existing parts
+            var (partialUpscaledChapter, _) = await chapterPartMerger.MergeChapterPartsAsync(
+                existingUpscaledParts,
+                library.UpscaledLibraryPath!,
+                upscaledSeriesPath,
+                mergeInfo.BaseChapterNumber,
+                mergeInfo.MergedChapter.Metadata,
+                null,
+                cancellationToken);
+
+            // Clean up the individual upscaled part files that were merged
+            foreach (FoundChapter upscaledPart in existingUpscaledParts)
+            {
+                try
+                {
+                    string upscaledPartFilePath = Path.Combine(upscaledSeriesPath, upscaledPart.FileName);
+                    if (File.Exists(upscaledPartFilePath))
+                    {
+                        File.Delete(upscaledPartFilePath);
+                        logger.LogDebug("Deleted merged upscaled chapter part file: {FilePath}", upscaledPartFilePath);
+                    }
+                }
+                catch (Exception deleteEx)
+                {
+                    logger.LogError(deleteEx, "Failed to delete upscaled chapter part file: {PartFileName}",
+                        upscaledPart.FileName);
+                }
+            }
+
+            logger.LogInformation(
+                "Successfully created partial merged upscaled chapter {MergedFileName} from {ExistingCount} existing parts. " +
+                "Missing {MissingCount} parts will be handled by repair task.",
+                partialUpscaledChapter.FileName, existingUpscaledParts.Count, missingUpscaledParts.Count);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex,
+                "Failed to create partial merged upscaled chapter for base number {BaseNumber}. " +
+                "Will fall back to full upscale task.",
+                mergeInfo.BaseChapterNumber);
+            // Don't rethrow - let the normal upscale process handle it
         }
     }
 
@@ -825,7 +902,7 @@ public class ChapterMergeCoordinator(
 
             // Handle upscale task management for the new parts (cancels any pending tasks)
             await upscaleTaskManager.HandleUpscaleTaskManagementAsync(
-                newChapterParts, mergeInfo, library, cancellationToken);
+                newChapterParts, mergeInfo, library, null, cancellationToken);
 
             // Handle upscaling for the existing merged chapter that now has new parts
             await HandleExistingMergedChapterUpscalingAsync(
@@ -1237,15 +1314,15 @@ public class ChapterMergeCoordinator(
         }
 
         // Handle merging of upscaled versions if they exist
-        await HandleUpscaledChapterMergingAsync(
+        UpscaledMergeResult upscaledMergeResult = await HandleUpscaledChapterMergingAsync(
             originalChapters, mergeInfo, library, seriesLibraryPath, cancellationToken);
 
         // Update database records to reflect the merge
         await UpdateDatabaseForMergeAsync(mergeInfo, originalChapters, cancellationToken);
 
-        // Handle upscale task management
+        // Handle upscale task management with information about partial merging
         await upscaleTaskManager.HandleUpscaleTaskManagementAsync(
-            originalChapters, mergeInfo, library, cancellationToken);
+            originalChapters, mergeInfo, library, upscaledMergeResult, cancellationToken);
     }
 
     #endregion

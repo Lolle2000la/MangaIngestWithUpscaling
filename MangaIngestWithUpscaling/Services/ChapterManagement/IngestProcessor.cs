@@ -1,4 +1,5 @@
 ﻿using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
@@ -34,6 +35,7 @@ public partial class IngestProcessor(
     IUpscalerJsonHandlingService upscalerJsonHandlingService,
     IChapterPartMerger chapterPartMerger,
     IChapterMergeCoordinator chapterMergeCoordinator,
+    UpscaleTaskProcessor upscaleTaskProcessor,
     IImageFilterService imageFilterService
 ) : IIngestProcessor
 {
@@ -220,7 +222,7 @@ public partial class IngestProcessor(
                 var mergedProcessedItems = new List<ProcessedChapterInfo>();
 
                 // Create a set of all original chapter parts that were successfully merged
-                var mergedOriginalPartPaths = new HashSet<string>();
+                var mergedOriginalPartPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (MergeInfo mergeInfo in mergeResult.MergeInformation)
                 {
                     foreach (OriginalChapterPart originalPart in mergeInfo.OriginalParts)
@@ -232,6 +234,20 @@ public partial class IngestProcessor(
                 logger.LogInformation(
                     "Merge completed: {MergedCount} merged chapters created, {OriginalPartsCount} original parts should be excluded from processing",
                     mergeResult.MergeInformation.Count, mergedOriginalPartPaths.Count);
+
+                // NEW: Cancel and remove any existing upscale tasks for original parts that were merged
+                // This ensures we don't waste work on chapters that are no longer relevant after merge
+                if (mergedOriginalPartPaths.Count != 0 && seriesEntity.Chapters.Any())
+                {
+                    List<Chapter> originalsForMerge = seriesEntity.Chapters
+                        .Where(c => mergedOriginalPartPaths.Contains(c.FileName))
+                        .ToList();
+
+                    if (originalsForMerge.Count != 0)
+                    {
+                        await CancelUpscaleTasksForOriginalPartsAsync(originalsForMerge, cancellationToken);
+                    }
+                }
 
                 // Add only chapters that were NOT merged into new files
                 foreach (FoundChapter processedChapter in mergeResult.ProcessedChapters)
@@ -295,7 +311,8 @@ public partial class IngestProcessor(
                 var renamedChapter = pci.Renamed;
 
                 // Check if this chapter part has already been merged and skip if so
-                if (await chapterMergeCoordinator.IsChapterPartAlreadyMergedAsync(renamedChapter.FileName, seriesEntity, cancellationToken))
+                if (await chapterMergeCoordinator.IsChapterPartAlreadyMergedAsync(renamedChapter.FileName, seriesEntity,
+                        cancellationToken))
                 {
                     logger.LogInformation(
                         "Skipping ingestion of chapter {ChapterFileName} for series {SeriesTitle} - this chapter part has already been merged into another chapter",
@@ -546,6 +563,62 @@ public partial class IngestProcessor(
             chaptersBySeries.Count, library.Name);
         // Clean the ingest path of all empty directories recursively
         FileSystemHelpers.DeleteEmptySubfolders(library.IngestPath, logger);
+    }
+
+    /// <summary>
+    ///     Cancel and remove any existing UpscaleTasks for the given original chapter parts.
+    ///     Pending tasks are removed directly; processing tasks are canceled via the processor and then removed.
+    ///     Completed/failed/canceled tasks are cleaned up.
+    /// </summary>
+    private async Task CancelUpscaleTasksForOriginalPartsAsync(List<Chapter> originals,
+        CancellationToken cancellationToken)
+    {
+        foreach (Chapter ch in originals)
+        {
+            List<PersistedTask> tasks = await dbContext.PersistedTasks
+                .FromSql(
+                    $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(UpscaleTask)} AND Data->>'$.ChapterId' = {ch.Id}")
+                .ToListAsync(cancellationToken);
+
+            foreach (PersistedTask task in tasks)
+            {
+                switch (task.Status)
+                {
+                    case PersistedTaskStatus.Pending:
+                        // Remove pending tasks
+                        upscaleTaskProcessor.CancelCurrent(task);
+                        await taskQueue.RemoveTaskAsync(task);
+                        logger.LogInformation(
+                            "Removed pending upscale task for original chapter {ChapterId} due to merge", ch.Id);
+                        break;
+
+                    case PersistedTaskStatus.Processing:
+                        // Cancel and then remove processing tasks
+                        upscaleTaskProcessor.CancelCurrent(task);
+                        // Give processor a brief moment and refresh status
+                        await Task.Delay(50, cancellationToken);
+                        try { await dbContext.Entry(task).ReloadAsync(cancellationToken); }
+                        catch
+                        {
+                            /* ignore */
+                        }
+
+                        await taskQueue.RemoveTaskAsync(task);
+                        logger.LogInformation(
+                            "Canceled and removed processing upscale task for original chapter {ChapterId} due to merge",
+                            ch.Id);
+                        break;
+
+                    default:
+                        // Clean up completed/failed/canceled
+                        await taskQueue.RemoveTaskAsync(task);
+                        logger.LogDebug(
+                            "Cleaned up {Status} upscale task for original chapter {ChapterId} due to merge",
+                            task.Status, ch.Id);
+                        break;
+                }
+            }
+        }
     }
 
     private async Task<Manga> GetMangaSeriesEntity(Library library, string newSeries, string originalSeries,
