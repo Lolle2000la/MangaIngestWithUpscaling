@@ -1790,7 +1790,7 @@ public class PartialUpscalingMergeTests : IDisposable
 
         context.Libraries.Add(library);
         context.MangaSeries.Add(manga);
-        await context.SaveChangesAsync();
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Create directories
         Directory.CreateDirectory(library.NotUpscaledLibraryPath);
@@ -2119,7 +2119,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         context.Chapters.Add(chapter);
 
         // Save first to get the IDs
-        await context.SaveChangesAsync();
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var mergeInfo = new MergedChapterInfo
         {
@@ -2133,7 +2133,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         };
 
         context.MergedChapterInfos.Add(mergeInfo);
-        await context.SaveChangesAsync();
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Create the regular merged chapter file but NOT the upscaled one
         var mergedChapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
@@ -2158,7 +2158,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
             });
 
         // Act
-        var result = await revertService.RevertMergedChapterAsync(chapter);
+        var result = await revertService.RevertMergedChapterAsync(chapter, TestContext.Current.CancellationToken);
 
         // Assert
         Assert.Equal(2, result.Count);
@@ -2210,7 +2210,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         context.Chapters.Add(chapter);
 
         // Save first to get the IDs
-        await context.SaveChangesAsync();
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var mergeInfo = new MergedChapterInfo
         {
@@ -2225,7 +2225,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         };
 
         context.MergedChapterInfos.Add(mergeInfo);
-        await context.SaveChangesAsync();
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Create both regular and upscaled merged chapter files
         var mergedChapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
@@ -2249,7 +2249,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
             });
 
         // Act
-        var result = await revertService.RevertMergedChapterAsync(chapter);
+        var result = await revertService.RevertMergedChapterAsync(chapter, TestContext.Current.CancellationToken);
 
         // Assert
         Assert.Equal(2, result.Count);
