@@ -96,17 +96,6 @@
                 </MudItem>
 
                 <MudItem xs="12">
-                    <MudCheckBox T="bool"
-                                 Label="Merge chapter parts (e.g., Chapter 22.1, 22.2, 22.3 → Chapter 22). Only merges completed chapters, not the latest one."
-                                 Color="Color.Warning"
-                                 @bind-Value="Library.MergeChapterParts" 
-                                 @bind-Value:after="OnInputChanged" />
-                    <MudText Typo="Typo.caption" Color="Color.Warning">
-                        ⚠️ Experimental feature - expect potential data loss!
-                    </MudText>
-                </MudItem>
-
-                <MudItem xs="12">
                     <MudSelect T="int?" 
                                Label="Upscaler Profile"
                                HelperText="Select an upscaling profile to use for this library. Leave at 'none' if you do not want to upscale any images."
@@ -134,6 +123,18 @@
                 
                 <MudItem xs="12">
                     <EditLibraryFilters Library="@Library" />
+                </MudItem>
+                
+                <MudItem xs="12">
+                    <MudText Typo="Typo.h6" GutterBottom="true">Chapter Processing Options</MudText>
+                    <MudCheckBox T="bool"
+                                 Label="Merge chapter parts (e.g., Chapter 22.1, 22.2, 22.3 → Chapter 22). Only merges completed chapters, not the latest one."
+                                 Color="Color.Warning"
+                                 @bind-Value="Library.MergeChapterParts" 
+                                 @bind-Value:after="OnInputChanged" />
+                    <MudText Typo="Typo.caption" Color="Color.Warning">
+                        ⚠️ Experimental feature - expect potential data loss!
+                    </MudText>
                 </MudItem>
             </MudGrid>
         </MudTabPanel>
