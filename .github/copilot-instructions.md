@@ -107,12 +107,15 @@ dotnet run --project MangaIngestWithUpscaling
 
 6. **Test Suite (If you make logic or backend changes, or add features):**
    - **ALWAYS build and run tests if applicable and valuable for your changes.**
-   - If a test project exists, run:
+   - All test projects have "Tests" in their name.
+   - To run all tests in the solution:
      ```bash
-     dotnet test MangaIngestWithUpscaling.Tests
+     dotnet test MangaIngestWithUpscaling.Tests --filter Category!=Download
      ```
+     Don't run download tests unless you have a specific reason. They can take very long.
    - If you add new features or make changes that affect logic, consider writing new or updating existing tests.
    - Ensure tests pass before PR or merge.
+   - Unless specified differently, tests should be written using xUnit, NSubstitute, and bUnit if testing Blazor components.
 
 ## Commenting Guidelines
 
