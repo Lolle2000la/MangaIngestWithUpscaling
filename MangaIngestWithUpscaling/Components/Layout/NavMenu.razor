@@ -5,35 +5,29 @@
 
 
 <MudNavMenu Margin="Margin.Dense">
-    <MudNavGroup Title="Main" Icon="@Icons.Material.Filled.Dashboard" Expanded="true">
-        <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Home">
-            Home
-        </MudNavLink>
-        <MudNavLink Href="libraries" Icon="@Icons.Material.Filled.LibraryBooks">
-            Libraries
-        </MudNavLink>
-        <MudNavLink Href="mangas" Icon="@Icons.Material.Filled.Book">
-            Mangas
-        </MudNavLink>
-    </MudNavGroup>
-    
-    <MudNavGroup Title="Configuration" Icon="@Icons.Material.Filled.Settings" Expanded="false">
-        <MudNavLink Href="upscaling/profiles" Icon="@Icons.Material.Filled.ImageAspectRatio">
-            Upscale Profiles
-        </MudNavLink>
-    </MudNavGroup>
-    
-    <MudNavGroup Title="System" Icon="@Icons.Material.Filled.Computer" Expanded="false">
-        <MudNavLink Href="tasks" Icon="@Icons.Material.Filled.Task">
-            Tasks
-        </MudNavLink>
-        <MudNavLink Href="logs" Icon="@Icons.Material.Filled.List">
-            Logs
-        </MudNavLink>
-    </MudNavGroup>
+    <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Home">
+        Home
+    </MudNavLink>
+    <MudNavLink Href="libraries" Icon="@Icons.Material.Filled.LibraryBooks">
+        Libraries
+    </MudNavLink>
+    <MudNavLink Href="mangas" Icon="@Icons.Material.Filled.Book">
+        Mangas
+    </MudNavLink>
 
-    <MudDivider Class="my-2" />
-    
+    <MudNavLink Href="upscaling/profiles" Icon="@Icons.Material.Filled.ImageAspectRatio">
+        Upscale Profiles
+    </MudNavLink>
+
+    <MudNavLink Href="tasks" Icon="@Icons.Material.Filled.Task">
+        Tasks
+    </MudNavLink>
+    <MudNavLink Href="logs" Icon="@Icons.Material.Filled.List">
+        Logs
+    </MudNavLink>
+
+    <MudDivider Class="my-2"/>
+
     <AuthorizeView>
         <Authorized>
             @if (Configuration.GetValue<bool>("OIDC:Enabled"))
@@ -42,11 +36,12 @@
                     @context.User.Identity?.Name
                 </MudNavLink>
                 <form action="/Account/LogoutOidc" method="post">
-                    <AntiforgeryToken />
-                    <input type="hidden" name="ReturnUrl" value="@currentUrl" />
+                    <AntiforgeryToken/>
+                    <input type="hidden" name="ReturnUrl" value="@currentUrl"/>
                     <button type="submit" class="mud-nav-link mud-ripple">
-                        <MudIcon Class="mud-icon-root mud-icon-default mud-svg-icon mud-icon-size-medium mud-nav-link-icon mud-nav-link-icon-default"
-                                 Icon="@Icons.Material.Filled.Logout" />
+                        <MudIcon
+                            Class="mud-icon-root mud-icon-default mud-svg-icon mud-icon-size-medium mud-nav-link-icon mud-nav-link-icon-default"
+                            Icon="@Icons.Material.Filled.Logout"/>
                         <div class="mud-nav-link-text">Logout</div>
                     </button>
                 </form>
@@ -57,11 +52,12 @@
                     @context.User.Identity?.Name
                 </MudNavLink>
                 <form action="Account/Logout" method="post">
-                    <AntiforgeryToken />
-                    <input type="hidden" name="ReturnUrl" value="@currentUrl" />
+                    <AntiforgeryToken/>
+                    <input type="hidden" name="ReturnUrl" value="@currentUrl"/>
                     <button type="submit" class="mud-nav-link mud-ripple">
-                        <MudIcon Class="mud-icon-root mud-icon-default mud-svg-icon mud-icon-size-medium mud-nav-link-icon mud-nav-link-icon-default"
-                                 Icon="@Icons.Material.Filled.Logout" />
+                        <MudIcon
+                            Class="mud-icon-root mud-icon-default mud-svg-icon mud-icon-size-medium mud-nav-link-icon mud-nav-link-icon-default"
+                            Icon="@Icons.Material.Filled.Logout"/>
                         <div class="mud-nav-link-text">Logout</div>
                     </button>
                 </form>
@@ -111,4 +107,5 @@
     {
         NavigationManager.LocationChanged -= OnLocationChanged;
     }
+
 }
