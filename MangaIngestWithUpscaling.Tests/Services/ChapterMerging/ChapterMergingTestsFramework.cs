@@ -2217,6 +2217,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
 
         // Create the regular merged chapter file but NOT the upscaled one
         var mergedChapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
+        string upscaledMergedPath = Path.Combine(library.UpscaledLibraryPath!, chapter.RelativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(mergedChapterPath)!);
         CreateTestCbzFile(Path.GetDirectoryName(mergedChapterPath)!, "Chapter 5.cbz", 2);
 
@@ -2226,15 +2227,33 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         CreateTestCbzFile(upscaledSeriesPath, "Chapter 5.1.cbz", 1);
         // Chapter 5.2.cbz is missing - simulating RepairUpscaleTask not completed yet
 
-        // Mock the restoration to return successful results
+        // Mock the restoration to return successful results from the regular merged file,
+        // and no results from the missing upscaled merged file path (so we don't mask the scenario)
         var testMetadata = new ExtractedMetadata("Test Manga", "Chapter 5.1", "5.1");
         var testMetadata2 = new ExtractedMetadata("Test Manga", "Chapter 5.2", "5.2");
         chapterPartMerger.RestoreChapterPartsAsync(Arg.Any<string>(), Arg.Any<List<OriginalChapterPart>>(),
                 Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(new List<FoundChapter>
+            .Returns(ci =>
             {
-                new("Chapter 5.1.cbz", "Chapter 5.1.cbz", ChapterStorageType.Cbz, testMetadata),
-                new("Chapter 5.2.cbz", "Chapter 5.2.cbz", ChapterStorageType.Cbz, testMetadata2)
+                string sourcePath = (string)ci.Args()[0]!;
+                if (string.Equals(sourcePath, mergedChapterPath, StringComparison.Ordinal))
+                {
+                    // Regular restore returns both parts to create Chapter entities
+                    return new List<FoundChapter>
+                    {
+                        new("Chapter 5.1.cbz", "Chapter 5.1.cbz", ChapterStorageType.Cbz, testMetadata),
+                        new("Chapter 5.2.cbz", "Chapter 5.2.cbz", ChapterStorageType.Cbz, testMetadata2)
+                    };
+                }
+
+                if (string.Equals(sourcePath, upscaledMergedPath, StringComparison.Ordinal))
+                {
+                    // Upscaled merged file is missing: behave as if nothing could be restored
+                    return new List<FoundChapter>();
+                }
+
+                // Default fallback (shouldn't be hit)
+                return new List<FoundChapter>();
             });
 
         // Act
@@ -2247,8 +2266,10 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         // The method should log warnings about missing upscaled parts and handle gracefully
         logger.ReceivedWithAnyArgs().LogWarning(default!);
 
-        // Verify that individual upscale task was queued for the missing upscaled part (Chapter 5.2.cbz)
-        await taskQueue.Received(1).EnqueueAsync(Arg.Is<UpscaleTask>(t => t.ChapterId != 0));
+        // Verify that individual upscale task was queued specifically for the missing upscaled part (Chapter 5.2.cbz)
+        Chapter expectedMissing =
+            context.Chapters.Single(c => c.MangaId == manga.Id && c.FileName == "Chapter 5.2.cbz");
+        await taskQueue.Received(1).EnqueueAsync(Arg.Is<UpscaleTask>(t => t.ChapterId == expectedMissing.Id));
     }
 
     [Fact]
@@ -2358,8 +2379,10 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         // Verify that the missing parts were detected and logged
         logger.ReceivedWithAnyArgs().LogWarning(default!);
 
-        // Verify that an upscale task was queued for the missing part (Chapter 6.3.cbz)
-        await taskQueue2.Received(1).EnqueueAsync(Arg.Is<UpscaleTask>(t => t.ChapterId != 0));
+        // Verify that an upscale task was queued for the specific missing part (Chapter 6.3.cbz)
+        Chapter expectedMissing =
+            context.Chapters.Single(c => c.MangaId == manga.Id && c.FileName == "Chapter 6.3.cbz");
+        await taskQueue2.Received(1).EnqueueAsync(Arg.Is<UpscaleTask>(t => t.ChapterId == expectedMissing.Id));
     }
 
     private Library CreateTestLibrary()
