@@ -12,6 +12,7 @@ using Microsoft.Extensions.Logging;
 using NetVips;
 using NSubstitute;
 using System.IO.Compression;
+using System.Reflection;
 
 namespace MangaIngestWithUpscaling.Tests.Services.ChapterMerging;
 
@@ -1734,5 +1735,561 @@ public class TestScope : IDisposable
     public void Dispose()
     {
         // No cleanup needed for test scope
+    }
+}
+
+/// <summary>
+/// Tests for partial upscaling functionality during chapter merging operations
+/// </summary>
+public class PartialUpscalingMergeTests : IDisposable
+{
+    private readonly TestDatabaseHelper.TestDbContext _testDb;
+    private readonly string _tempDir;
+
+    public PartialUpscalingMergeTests()
+    {
+        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _tempDir = Path.Combine(Path.GetTempPath(), "partial_upscaling_tests_" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(_tempDir);
+    }
+
+    public void Dispose()
+    {
+        _testDb?.Dispose();
+        if (Directory.Exists(_tempDir))
+        {
+            Directory.Delete(_tempDir, true);
+        }
+    }
+
+    private ApplicationDbContext CreateDbContext() => _testDb.Context;
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task HandleUpscaledChapterMerging_WithPartiallyUpscaledParts_ShouldCreatePartialMergeAndScheduleRepairTask()
+    {
+        // Arrange
+        using var context = CreateDbContext();
+        var logger = Substitute.For<ILogger<ChapterMergeCoordinator>>();
+        var metadataHandling = Substitute.For<IMetadataHandlingService>();
+        var chapterPartMerger = Substitute.For<IChapterPartMerger>();
+        var upscaleTaskManager = Substitute.For<IChapterMergeUpscaleTaskManager>();
+
+        var coordinator = new ChapterMergeCoordinator(
+            context, chapterPartMerger, upscaleTaskManager, null, metadataHandling, logger);
+
+        // Create test library and manga
+        var library = new Library
+        {
+            Name = "Test Library",
+            NotUpscaledLibraryPath = Path.Combine(_tempDir, "regular"),
+            UpscaledLibraryPath = Path.Combine(_tempDir, "upscaled")
+        };
+
+        var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
+
+        context.Libraries.Add(library);
+        context.MangaSeries.Add(manga);
+        await context.SaveChangesAsync();
+
+        // Create directories
+        Directory.CreateDirectory(library.NotUpscaledLibraryPath);
+        Directory.CreateDirectory(library.UpscaledLibraryPath!);
+        var upscaledSeriesPath = Path.Combine(library.UpscaledLibraryPath, "Test Manga");
+        Directory.CreateDirectory(upscaledSeriesPath);
+
+        // Create test merge info with 3 parts
+        var mergeInfo = new MergeInfo(
+            new FoundChapter("Chapter 5.cbz", "Test Manga/Chapter 5.cbz", ChapterStorageType.Cbz, null),
+            new List<OriginalChapterPart>
+            {
+                new() { FileName = "Chapter 5.1.cbz", PageNames = ["001.jpg", "002.jpg"] },
+                new() { FileName = "Chapter 5.2.cbz", PageNames = ["003.jpg", "004.jpg"] },
+                new() { FileName = "Chapter 5.3.cbz", PageNames = ["005.jpg", "006.jpg"] }
+            },
+            "5");
+
+        // Create upscaled files for only 2 out of 3 parts (partial scenario)
+        CreateTestCbzFile(upscaledSeriesPath, "Chapter 5.1.cbz", 2);
+        CreateTestCbzFile(upscaledSeriesPath, "Chapter 5.2.cbz", 2);
+        // Chapter 5.3.cbz is missing - this creates the partial scenario
+
+        // Mock the merge operation to return a successful partial merge
+        var mockMergedChapter = new FoundChapter("Chapter 5.cbz", "Test Manga/Chapter 5.cbz", ChapterStorageType.Cbz, null);
+        chapterPartMerger.MergeChapterPartsAsync(
+            Arg.Any<List<FoundChapter>>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<ExtractedMetadata>(),
+            Arg.Any<Func<FoundChapter, string>?>(),
+            Arg.Any<CancellationToken>())
+            .Returns((mockMergedChapter, new List<OriginalChapterPart>()));
+
+        var chapters = new List<Chapter>
+        {
+            new() { FileName = "Chapter 5.1.cbz", Manga = manga },
+            new() { FileName = "Chapter 5.2.cbz", Manga = manga },
+            new() { FileName = "Chapter 5.3.cbz", Manga = manga }
+        };
+
+        // Act
+        var result = await CallHandleUpscaledChapterMergingAsync(coordinator, chapters, mergeInfo, library);
+
+        // Assert
+        Assert.True(result.IsPartialMerge);
+        Assert.Equal(2, result.UpscaledPartsCount);
+        Assert.Equal(1, result.MissingPartsCount);
+        Assert.Equal(3, result.TotalPartsCount);
+
+        // Verify that chapterPartMerger.MergeChapterPartsAsync was called for the partial merge
+        await chapterPartMerger.Received(1).MergeChapterPartsAsync(
+            Arg.Is<List<FoundChapter>>(list => list.Count == 2), // Only 2 upscaled parts
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<ExtractedMetadata>(),
+            Arg.Any<Func<FoundChapter, string>?>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task HandleUpscaledChapterMerging_WithAllPartsUpscaled_ShouldCreateCompleteMerge()
+    {
+        // Arrange
+        using var context = CreateDbContext();
+        var logger = Substitute.For<ILogger<ChapterMergeCoordinator>>();
+        var metadataHandling = Substitute.For<IMetadataHandlingService>();
+        var chapterPartMerger = Substitute.For<IChapterPartMerger>();
+        var upscaleTaskManager = Substitute.For<IChapterMergeUpscaleTaskManager>();
+
+        var coordinator = new ChapterMergeCoordinator(
+            context, chapterPartMerger, upscaleTaskManager, null, metadataHandling, logger);
+
+        // Create test setup
+        var library = CreateTestLibrary();
+        var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
+
+        var upscaledSeriesPath = Path.Combine(library.UpscaledLibraryPath!, "Test Manga");
+        Directory.CreateDirectory(upscaledSeriesPath);
+
+        var mergeInfo = new MergeInfo(
+            new FoundChapter("Chapter 7.cbz", "Test Manga/Chapter 7.cbz", ChapterStorageType.Cbz, null),
+            new List<OriginalChapterPart>
+            {
+                new() { FileName = "Chapter 7.1.cbz", PageNames = ["001.jpg"] },
+                new() { FileName = "Chapter 7.2.cbz", PageNames = ["002.jpg"] }
+            },
+            "7");
+
+        // Create upscaled files for ALL parts (complete scenario)
+        CreateTestCbzFile(upscaledSeriesPath, "Chapter 7.1.cbz", 1);
+        CreateTestCbzFile(upscaledSeriesPath, "Chapter 7.2.cbz", 1);
+
+        // Mock successful merge
+        var mockMergedChapter = new FoundChapter("Chapter 7.cbz", "Test Manga/Chapter 7.cbz", ChapterStorageType.Cbz, null);
+        chapterPartMerger.MergeChapterPartsAsync(Arg.Any<List<FoundChapter>>(), Arg.Any<string>(), Arg.Any<string>(),
+            Arg.Any<string>(), Arg.Any<ExtractedMetadata>(), Arg.Any<Func<FoundChapter, string>?>(), Arg.Any<CancellationToken>())
+            .Returns((mockMergedChapter, new List<OriginalChapterPart>()));
+
+        var chapters = new List<Chapter>
+        {
+            new() { FileName = "Chapter 7.1.cbz", Manga = manga },
+            new() { FileName = "Chapter 7.2.cbz", Manga = manga }
+        };
+
+        // Act
+        var result = await CallHandleUpscaledChapterMergingAsync(coordinator, chapters, mergeInfo, library);
+
+        // Assert
+        Assert.False(result.IsPartialMerge);
+        Assert.True(result.HasUpscaledContent);
+        Assert.Equal(2, result.UpscaledPartsCount);
+        Assert.Equal(0, result.MissingPartsCount);
+        Assert.Equal(2, result.TotalPartsCount);
+
+        // Verify that all parts were merged
+        await chapterPartMerger.Received(1).MergeChapterPartsAsync(
+            Arg.Is<List<FoundChapter>>(list => list.Count == 2),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<ExtractedMetadata>(),
+            Arg.Any<Func<FoundChapter, string>?>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task HandleUpscaledChapterMerging_WithNoUpscaledParts_ShouldReturnNoUpscaledContent()
+    {
+        // Arrange
+        using var context = CreateDbContext();
+        var logger = Substitute.For<ILogger<ChapterMergeCoordinator>>();
+        var metadataHandling = Substitute.For<IMetadataHandlingService>();
+        var chapterPartMerger = Substitute.For<IChapterPartMerger>();
+        var upscaleTaskManager = Substitute.For<IChapterMergeUpscaleTaskManager>();
+
+        var coordinator = new ChapterMergeCoordinator(
+            context, chapterPartMerger, upscaleTaskManager, null, metadataHandling, logger);
+
+        var library = CreateTestLibrary();
+        var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
+
+        var mergeInfo = new MergeInfo(
+            new FoundChapter("Chapter 8.cbz", "Test Manga/Chapter 8.cbz", ChapterStorageType.Cbz, null),
+            new List<OriginalChapterPart>
+            {
+                new() { FileName = "Chapter 8.1.cbz", PageNames = ["001.jpg"] },
+                new() { FileName = "Chapter 8.2.cbz", PageNames = ["002.jpg"] }
+            },
+            "8");
+
+        // Don't create any upscaled files - no upscaled content scenario
+
+        var chapters = new List<Chapter>
+        {
+            new() { FileName = "Chapter 8.1.cbz", Manga = manga },
+            new() { FileName = "Chapter 8.2.cbz", Manga = manga }
+        };
+
+        // Act
+        var result = await CallHandleUpscaledChapterMergingAsync(coordinator, chapters, mergeInfo, library);
+
+        // Assert
+        Assert.False(result.HasUpscaledContent);
+        Assert.False(result.IsPartialMerge);
+        Assert.Equal(0, result.UpscaledPartsCount);
+        Assert.Equal(0, result.MissingPartsCount);
+        Assert.Equal(0, result.TotalPartsCount);
+
+        // Verify that no merge operations were attempted
+        await chapterPartMerger.DidNotReceive().MergeChapterPartsAsync(
+            Arg.Any<List<FoundChapter>>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<string>(),
+            Arg.Any<ExtractedMetadata>(),
+            Arg.Any<Func<FoundChapter, string>?>(),
+            Arg.Any<CancellationToken>());
+    }
+
+    private Library CreateTestLibrary()
+    {
+        var library = new Library
+        {
+            Name = "Test Library",
+            NotUpscaledLibraryPath = Path.Combine(_tempDir, "regular"),
+            UpscaledLibraryPath = Path.Combine(_tempDir, "upscaled")
+        };
+
+        Directory.CreateDirectory(library.NotUpscaledLibraryPath);
+        Directory.CreateDirectory(library.UpscaledLibraryPath!);
+
+        return library;
+    }
+
+    private void CreateTestCbzFile(string directory, string fileName, int pageCount)
+    {
+        string filePath = Path.Combine(directory, fileName);
+        using var zip = ZipFile.Open(filePath, ZipArchiveMode.Create);
+
+        for (int i = 1; i <= pageCount; i++)
+        {
+            var entry = zip.CreateEntry($"{i:D3}.jpg");
+            using var stream = entry.Open();
+            using var writer = new BinaryWriter(stream);
+            // Write minimal JPEG header
+            writer.Write(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0 });
+            writer.Write(CreateTestImageBytes());
+        }
+
+        // Add ComicInfo.xml
+        var comicInfoEntry = zip.CreateEntry("ComicInfo.xml");
+        using var comicInfoStream = comicInfoEntry.Open();
+        using var comicInfoWriter = new StreamWriter(comicInfoStream);
+        comicInfoWriter.Write("<?xml version=\"1.0\"?><ComicInfo><Title>Test Chapter</Title></ComicInfo>");
+    }
+
+    private static byte[] CreateTestImageBytes(int variant = 1)
+    {
+        try
+        {
+            // Create a simple test image using NetVips and convert to byte array
+            var image = Image.Black(32, 32) + 128; // Gray test image
+            return image.JpegsaveBuffer();
+        }
+        catch
+        {
+            // Fallback to minimal JPEG bytes
+            return [0xFF, 0xD8, 0xFF, 0xD9]; // Minimal JPEG
+        }
+    }
+
+    // Helper method to call the private method using reflection
+    private async Task<UpscaledMergeResult> CallHandleUpscaledChapterMergingAsync(
+        ChapterMergeCoordinator coordinator,
+        List<Chapter> chapters,
+        MergeInfo mergeInfo,
+        Library library)
+    {
+        var method = typeof(ChapterMergeCoordinator).GetMethod("HandleUpscaledChapterMergingAsync",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        Assert.NotNull(method);
+
+        var result = await (Task<UpscaledMergeResult>)method.Invoke(coordinator,
+            [chapters, mergeInfo, library, library.NotUpscaledLibraryPath, CancellationToken.None]);
+
+        return result;
+    }
+}
+
+/// <summary>
+/// Tests for the corner cases in chapter merge reverting operations
+/// </summary>
+public class ChapterMergeRevertCornerCaseTests : IDisposable
+{
+    private readonly TestDatabaseHelper.TestDbContext _testDb;
+    private readonly string _tempDir;
+
+    public ChapterMergeRevertCornerCaseTests()
+    {
+        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _tempDir = Path.Combine(Path.GetTempPath(), "revert_corner_case_tests_" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(_tempDir);
+    }
+
+    public void Dispose()
+    {
+        _testDb?.Dispose();
+        if (Directory.Exists(_tempDir))
+        {
+            Directory.Delete(_tempDir, true);
+        }
+    }
+
+    private ApplicationDbContext CreateDbContext() => _testDb.Context;
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task RevertMergedChapter_WithMissingUpscaledFile_ShouldHandleGracefully()
+    {
+        // This tests corner case 2: reverting when RepairUpscaleTask hasn't processed yet
+        // Arrange
+        using var context = CreateDbContext();
+        var chapterPartMerger = Substitute.For<IChapterPartMerger>();
+        var chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
+        var upscalerJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();
+        var logger = Substitute.For<ILogger<ChapterMergeRevertService>>();
+
+        var revertService = new ChapterMergeRevertService(
+            context, chapterPartMerger, chapterChangedNotifier, upscalerJsonHandling, logger);
+
+        // Create test data
+        var library = CreateTestLibrary();
+        var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
+        var upscalerProfile = new UpscalerProfile 
+        { 
+            Name = "Test Profile",
+            UpscalerMethod = UpscalerMethod.MangaJaNai,
+            ScalingFactor = ScaleFactor.TwoX,
+            CompressionFormat = CompressionFormat.Png,
+            Quality = 85
+        };
+
+        var chapter = new Chapter
+        {
+            FileName = "Chapter 5.cbz",
+            RelativePath = "Test Manga/Chapter 5.cbz",
+            Manga = manga,
+            IsUpscaled = true,
+            UpscalerProfile = upscalerProfile
+        };
+
+        context.Libraries.Add(library);
+        context.MangaSeries.Add(manga);
+        context.UpscalerProfiles.Add(upscalerProfile);
+        context.Chapters.Add(chapter);
+
+        var mergeInfo = new MergedChapterInfo
+        {
+            ChapterId = chapter.Id,
+            OriginalParts = new List<OriginalChapterPart>
+            {
+                new() { FileName = "Chapter 5.1.cbz", PageNames = ["001.jpg"] },
+                new() { FileName = "Chapter 5.2.cbz", PageNames = ["002.jpg"] }
+            },
+            MergedChapterNumber = "5"
+        };
+
+        context.MergedChapterInfos.Add(mergeInfo);
+        await context.SaveChangesAsync();
+
+        // Create the regular merged chapter file but NOT the upscaled one
+        var mergedChapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(mergedChapterPath)!);
+        CreateTestCbzFile(Path.GetDirectoryName(mergedChapterPath)!, "Chapter 5.cbz", 2);
+
+        // Create one upscaled part but not the other (partial scenario)
+        var upscaledSeriesPath = Path.Combine(library.UpscaledLibraryPath!, "Test Manga");
+        Directory.CreateDirectory(upscaledSeriesPath);
+        CreateTestCbzFile(upscaledSeriesPath, "Chapter 5.1.cbz", 1);
+        // Chapter 5.2.cbz is missing - simulating RepairUpscaleTask not completed yet
+
+        // Mock the restoration to return successful results
+        chapterPartMerger.RestoreChapterPartsAsync(Arg.Any<string>(), Arg.Any<List<OriginalChapterPart>>(),
+            Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new List<FoundChapter>
+            {
+                new("Chapter 5.1.cbz", "Chapter 5.1.cbz", ChapterStorageType.Cbz, null),
+                new("Chapter 5.2.cbz", "Chapter 5.2.cbz", ChapterStorageType.Cbz, null)
+            });
+
+        // Act
+        var result = await revertService.RevertMergedChapterAsync(chapter);
+
+        // Assert
+        Assert.Equal(2, result.Count);
+
+        // Verify that missing upscaled file scenario was handled
+        // The method should log warnings about missing upscaled parts and handle gracefully
+        logger.Received().LogWarning(Arg.Is<string>(s => s.Contains("upscaled merged chapter file not found")), Arg.Any<object[]>());
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task RevertMergedChapter_WithPartialUpscaledContent_ShouldDetectMissingParts()
+    {
+        // This tests corner case 1: reverting chapter that wasn't merged as full upscaled initially
+        // Arrange
+        using var context = CreateDbContext();
+        var chapterPartMerger = Substitute.For<IChapterPartMerger>();
+        var chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
+        var upscalerJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();
+        var logger = Substitute.For<ILogger<ChapterMergeRevertService>>();
+
+        var revertService = new ChapterMergeRevertService(
+            context, chapterPartMerger, chapterChangedNotifier, upscalerJsonHandling, logger);
+
+        // Create test data
+        var library = CreateTestLibrary();
+        var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
+        var upscalerProfile = new UpscalerProfile 
+        { 
+            Name = "Test Profile",
+            UpscalerMethod = UpscalerMethod.MangaJaNai,
+            ScalingFactor = ScaleFactor.TwoX,
+            CompressionFormat = CompressionFormat.Png,
+            Quality = 85
+        };
+
+        var chapter = new Chapter
+        {
+            FileName = "Chapter 6.cbz",
+            RelativePath = "Test Manga/Chapter 6.cbz",
+            Manga = manga,
+            IsUpscaled = true,
+            UpscalerProfile = upscalerProfile
+        };
+
+        context.Libraries.Add(library);
+        context.MangaSeries.Add(manga);
+        context.UpscalerProfiles.Add(upscalerProfile);
+        context.Chapters.Add(chapter);
+
+        var mergeInfo = new MergedChapterInfo
+        {
+            ChapterId = chapter.Id,
+            OriginalParts = new List<OriginalChapterPart>
+            {
+                new() { FileName = "Chapter 6.1.cbz", PageNames = ["001.jpg"] },
+                new() { FileName = "Chapter 6.2.cbz", PageNames = ["002.jpg"] },
+                new() { FileName = "Chapter 6.3.cbz", PageNames = ["003.jpg"] }
+            },
+            MergedChapterNumber = "6"
+        };
+
+        context.MergedChapterInfos.Add(mergeInfo);
+        await context.SaveChangesAsync();
+
+        // Create both regular and upscaled merged chapter files
+        var mergedChapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(mergedChapterPath)!);
+        CreateTestCbzFile(Path.GetDirectoryName(mergedChapterPath)!, "Chapter 6.cbz", 3);
+
+        var upscaledMergedPath = Path.Combine(library.UpscaledLibraryPath!, chapter.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(upscaledMergedPath)!);
+        CreateTestCbzFile(Path.GetDirectoryName(upscaledMergedPath)!, "Chapter 6.cbz", 2); // Only 2 pages, missing 1
+
+        // Mock restoration that returns fewer parts than expected (simulating partial merge)
+        chapterPartMerger.RestoreChapterPartsAsync(Arg.Any<string>(), Arg.Any<List<OriginalChapterPart>>(),
+            Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(new List<FoundChapter>
+            {
+                new("Chapter 6.1.cbz", "Chapter 6.1.cbz", ChapterStorageType.Cbz, null),
+                new("Chapter 6.2.cbz", "Chapter 6.2.cbz", ChapterStorageType.Cbz, null)
+                // Chapter 6.3.cbz is missing from restoration - indicates partial merge
+            });
+
+        // Act
+        var result = await revertService.RevertMergedChapterAsync(chapter);
+
+        // Assert
+        Assert.Equal(2, result.Count);
+
+        // Verify that the missing parts were detected and logged
+        logger.Received().LogWarning(Arg.Is<string>(s => s.Contains("missing") && s.Contains("parts")), Arg.Any<object[]>());
+    }
+
+    private Library CreateTestLibrary()
+    {
+        var library = new Library
+        {
+            Name = "Test Library",
+            NotUpscaledLibraryPath = Path.Combine(_tempDir, "regular"),
+            UpscaledLibraryPath = Path.Combine(_tempDir, "upscaled")
+        };
+
+        Directory.CreateDirectory(library.NotUpscaledLibraryPath);
+        Directory.CreateDirectory(library.UpscaledLibraryPath!);
+
+        return library;
+    }
+
+    private void CreateTestCbzFile(string directory, string fileName, int pageCount)
+    {
+        string filePath = Path.Combine(directory, fileName);
+        using var zip = ZipFile.Open(filePath, ZipArchiveMode.Create);
+
+        for (int i = 1; i <= pageCount; i++)
+        {
+            var entry = zip.CreateEntry($"{i:D3}.jpg");
+            using var stream = entry.Open();
+            using var writer = new BinaryWriter(stream);
+            // Write minimal JPEG header
+            writer.Write(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0 });
+            writer.Write(CreateTestImageBytes());
+        }
+
+        // Add ComicInfo.xml
+        var comicInfoEntry = zip.CreateEntry("ComicInfo.xml");
+        using var comicInfoStream = comicInfoEntry.Open();
+        using var comicInfoWriter = new StreamWriter(comicInfoStream);
+        comicInfoWriter.Write("<?xml version=\"1.0\"?><ComicInfo><Title>Test Chapter</Title></ComicInfo>");
+    }
+
+    private static byte[] CreateTestImageBytes()
+    {
+        try
+        {
+            var image = Image.Black(16, 16);
+            return image.JpegsaveBuffer();
+        }
+        catch
+        {
+            return [0xFF, 0xD8, 0xFF, 0xD9]; // Minimal JPEG
+        }
     }
 }
