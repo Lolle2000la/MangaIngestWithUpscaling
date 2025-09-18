@@ -1,5 +1,5 @@
 html, body {
-    font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    font-family: 'Roboto', 'Helvetica Neue', Helvetica, Arial, sans-serif;
 }
 
 a, .btn-link {
@@ -59,8 +59,39 @@ h1:focus {
     text-align: start;
 }
 
-
 .mud-table-toolbar {
     height: unset !important;
     min-height: var(--mud-toolbar-height) !important;
+}
+
+/* Material Design enhancements */
+.log-message {
+    max-width: 500px;
+    word-break: break-word;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Enhanced spacing for better Material Design */
+.mud-grid .mud-grid-item {
+    padding: 8px;
+}
+
+/* Improved table row hover effects */
+.mud-table-row:hover {
+    background-color: rgba(0, 0, 0, 0.04);
+}
+
+.mud-theme-dark .mud-table-row:hover {
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+/* Better button group styling */
+.mud-button-group .mud-button {
+    margin-right: 4px;
+}
+
+/* Enhanced card styling */
+.mud-paper {
+    border-radius: 8px;
 }
