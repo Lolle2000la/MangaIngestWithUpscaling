@@ -1799,8 +1799,9 @@ public class PartialUpscalingMergeTests : IDisposable
         Directory.CreateDirectory(upscaledSeriesPath);
 
         // Create test merge info with 3 parts
+        var testMetadata = new ExtractedMetadata("Test Manga", "Chapter 5", "5");
         var mergeInfo = new MergeInfo(
-            new FoundChapter("Chapter 5.cbz", "Test Manga/Chapter 5.cbz", ChapterStorageType.Cbz, null),
+            new FoundChapter("Chapter 5.cbz", "Test Manga/Chapter 5.cbz", ChapterStorageType.Cbz, testMetadata),
             new List<OriginalChapterPart>
             {
                 new() { FileName = "Chapter 5.1.cbz", PageNames = ["001.jpg", "002.jpg"] },
@@ -1815,7 +1816,8 @@ public class PartialUpscalingMergeTests : IDisposable
         // Chapter 5.3.cbz is missing - this creates the partial scenario
 
         // Mock the merge operation to return a successful partial merge
-        var mockMergedChapter = new FoundChapter("Chapter 5.cbz", "Test Manga/Chapter 5.cbz", ChapterStorageType.Cbz, null);
+        var mockTestMetadata = new ExtractedMetadata("Test Manga", "Chapter 5", "5");
+        var mockMergedChapter = new FoundChapter("Chapter 5.cbz", "Test Manga/Chapter 5.cbz", ChapterStorageType.Cbz, mockTestMetadata);
         chapterPartMerger.MergeChapterPartsAsync(
             Arg.Any<List<FoundChapter>>(),
             Arg.Any<string>(),
@@ -1874,8 +1876,9 @@ public class PartialUpscalingMergeTests : IDisposable
         var upscaledSeriesPath = Path.Combine(library.UpscaledLibraryPath!, "Test Manga");
         Directory.CreateDirectory(upscaledSeriesPath);
 
+        var testMetadata2 = new ExtractedMetadata("Test Manga", "Chapter 7", "7");
         var mergeInfo = new MergeInfo(
-            new FoundChapter("Chapter 7.cbz", "Test Manga/Chapter 7.cbz", ChapterStorageType.Cbz, null),
+            new FoundChapter("Chapter 7.cbz", "Test Manga/Chapter 7.cbz", ChapterStorageType.Cbz, testMetadata2),
             new List<OriginalChapterPart>
             {
                 new() { FileName = "Chapter 7.1.cbz", PageNames = ["001.jpg"] },
@@ -1888,7 +1891,8 @@ public class PartialUpscalingMergeTests : IDisposable
         CreateTestCbzFile(upscaledSeriesPath, "Chapter 7.2.cbz", 1);
 
         // Mock successful merge
-        var mockMergedChapter = new FoundChapter("Chapter 7.cbz", "Test Manga/Chapter 7.cbz", ChapterStorageType.Cbz, null);
+        var mockTestMetadata2 = new ExtractedMetadata("Test Manga", "Chapter 7", "7");
+        var mockMergedChapter = new FoundChapter("Chapter 7.cbz", "Test Manga/Chapter 7.cbz", ChapterStorageType.Cbz, mockTestMetadata2);
         chapterPartMerger.MergeChapterPartsAsync(Arg.Any<List<FoundChapter>>(), Arg.Any<string>(), Arg.Any<string>(),
             Arg.Any<string>(), Arg.Any<ExtractedMetadata>(), Arg.Any<Func<FoundChapter, string>?>(), Arg.Any<CancellationToken>())
             .Returns((mockMergedChapter, new List<OriginalChapterPart>()));
@@ -1937,8 +1941,9 @@ public class PartialUpscalingMergeTests : IDisposable
         var library = CreateTestLibrary();
         var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
 
+        var testMetadata3 = new ExtractedMetadata("Test Manga", "Chapter 8", "8");
         var mergeInfo = new MergeInfo(
-            new FoundChapter("Chapter 8.cbz", "Test Manga/Chapter 8.cbz", ChapterStorageType.Cbz, null),
+            new FoundChapter("Chapter 8.cbz", "Test Manga/Chapter 8.cbz", ChapterStorageType.Cbz, testMetadata3),
             new List<OriginalChapterPart>
             {
                 new() { FileName = "Chapter 8.1.cbz", PageNames = ["001.jpg"] },
@@ -2113,6 +2118,9 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         context.UpscalerProfiles.Add(upscalerProfile);
         context.Chapters.Add(chapter);
 
+        // Save first to get the IDs
+        await context.SaveChangesAsync();
+
         var mergeInfo = new MergedChapterInfo
         {
             ChapterId = chapter.Id,
@@ -2198,6 +2206,9 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         context.MangaSeries.Add(manga);
         context.UpscalerProfiles.Add(upscalerProfile);
         context.Chapters.Add(chapter);
+
+        // Save first to get the IDs
+        await context.SaveChangesAsync();
 
         var mergeInfo = new MergedChapterInfo
         {
