@@ -1,6 +1,7 @@
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -18,6 +19,7 @@ public class ChapterMergeUpscaleTaskManager(
         List<Chapter> originalChapters,
         MergeInfo mergeInfo,
         Library library,
+        UpscaledMergeResult? upscaledMergeResult = null,
         CancellationToken cancellationToken = default)
     {
         List<int> chapterIds = originalChapters.Select(c => c.Id).ToList();
@@ -114,8 +116,8 @@ public class ChapterMergeUpscaleTaskManager(
         }
 
         // If library has upscaling enabled and merged chapter should be upscaled,
-        // queue an upscale task for the merged chapter
-        await QueueUpscaleTaskForMergedChapterIfNeeded(originalChapters, mergeInfo, library, cancellationToken);
+        // queue an appropriate task for the merged chapter (full upscale or repair)
+        await QueueUpscaleTaskForMergedChapterIfNeeded(originalChapters, mergeInfo, library, upscaledMergeResult, cancellationToken);
     }
 
     public async Task<UpscaleCompatibilityResult> CheckUpscaleCompatibilityForMergeAsync(
@@ -161,6 +163,7 @@ public class ChapterMergeUpscaleTaskManager(
         List<Chapter> originalChapters,
         MergeInfo mergeInfo,
         Library library,
+        UpscaledMergeResult? upscaledMergeResult,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrEmpty(library.UpscaledLibraryPath) || library.UpscalerProfile is null)
@@ -174,19 +177,41 @@ public class ChapterMergeUpscaleTaskManager(
         await dbContext.Entry(primaryChapter.Manga.Library).Reference(x => x.UpscalerProfile)
             .LoadAsync(cancellationToken);
 
-        // Check if there's already an upscale task for the merged chapter
         bool shouldUpscale = (primaryChapter.Manga.ShouldUpscale ?? primaryChapter.Manga.Library.UpscaleOnIngest)
                              && primaryChapter.Manga.Library.UpscalerProfile != null;
 
         if (shouldUpscale)
         {
-            var upscaleTask = new UpscaleTask(primaryChapter);
+            // Check if this is a partial upscaling scenario based on the merge result
+            if (upscaledMergeResult?.IsPartialMerge == true)
+            {
+                // Queue a repair task to handle the missing pages
+                var repairTask = new RepairUpscaleTask(primaryChapter, primaryChapter.Manga.Library.UpscalerProfile!);
+                await taskQueue.EnqueueAsync(repairTask);
 
-            await taskQueue.EnqueueAsync(upscaleTask);
+                logger.LogInformation(
+                    "Queued repair upscale task for partially merged chapter {FileName} (Chapter ID: {ChapterId}) " +
+                    "to complete {MissingCount} missing pages from {ExistingCount} existing upscaled parts",
+                    mergeInfo.MergedChapter.FileName, primaryChapter.Id, 
+                    upscaledMergeResult.MissingPartsCount, upscaledMergeResult.UpscaledPartsCount);
+            }
+            else if (upscaledMergeResult?.HasUpscaledContent == true)
+            {
+                // Complete merge already happened, no task needed
+                logger.LogDebug(
+                    "Complete upscaled merge already processed for chapter {FileName}, no additional task needed",
+                    mergeInfo.MergedChapter.FileName);
+            }
+            else
+            {
+                // Queue a full upscale task for normal scenarios (no existing upscaled content)
+                var upscaleTask = new UpscaleTask(primaryChapter);
+                await taskQueue.EnqueueAsync(upscaleTask);
 
-            logger.LogInformation(
-                "Queued replacement upscale task for merged chapter {FileName} (Chapter ID: {ChapterId})",
-                mergeInfo.MergedChapter.FileName, primaryChapter.Id);
+                logger.LogInformation(
+                    "Queued full upscale task for merged chapter {FileName} (Chapter ID: {ChapterId})",
+                    mergeInfo.MergedChapter.FileName, primaryChapter.Id);
+            }
         }
         else
         {

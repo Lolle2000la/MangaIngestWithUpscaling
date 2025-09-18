@@ -11,11 +11,13 @@ public interface IChapterMergeUpscaleTaskManager
     /// <param name="originalChapters">The original chapters that were merged</param>
     /// <param name="mergeInfo">Information about the merge operation</param>
     /// <param name="library">The library being processed</param>
+    /// <param name="upscaledMergeResult">Result of upscaled chapter merging to determine task type</param>
     /// <param name="cancellationToken">Cancellation token</param>
     Task HandleUpscaleTaskManagementAsync(
         List<Chapter> originalChapters,
         MergeInfo mergeInfo,
         Library library,
+        UpscaledMergeResult? upscaledMergeResult = null,
         CancellationToken cancellationToken = default);
 
     /// <summary>
