@@ -6,7 +6,7 @@
 <MudSnackbarProvider />
 
 <MudLayout>
-    <MudAppBar Elevation="4" Color="Color.Primary">
+    <MudAppBar Elevation="4">
         <MudIconButton Icon="@Icons.Material.Filled.Menu" 
                        Color="Color.Inherit" 
                        Edge="Edge.Start" 
@@ -14,9 +14,9 @@
                        Size="Size.Large" />
         <MudSpacer />
         <MudLink Href="" Class="d-flex align-center" Style="text-decoration: none;">
-            <MudIcon Icon="@Icons.Material.Filled.AutoStories" Color="Color.Inherit" Class="mr-3" Size="Size.Large" />
-            <MudText Typo="Typo.h5" Color="Color.Inherit" Class="font-weight-medium">
-                Manga Ingest Dashboard
+            <MudIcon Icon="@Icons.Material.Filled.AutoStories" Class="mr-3" Size="Size.Large"/>
+            <MudText Typo="Typo.h5" Class="font-weight-medium">
+                Manga Ingest
             </MudText>
         </MudLink>
         <MudSpacer />
@@ -29,17 +29,6 @@
                Elevation="1" 
                Variant="@DrawerVariant.Responsive" 
                ClipMode="DrawerClipMode.Always">
-        <MudDrawerHeader Class="py-6">
-            <div class="d-flex align-center">
-                <MudIcon Icon="@Icons.Material.Filled.AutoStories" 
-                         Color="Color.Primary" 
-                         Size="Size.Large" 
-                         Class="mr-3" />
-                <MudText Typo="Typo.h6" Color="Color.Primary" Class="font-weight-bold">
-                    MangaIngest
-                </MudText>
-            </div>
-        </MudDrawerHeader>
         <NavMenu />
     </MudDrawer>
 
