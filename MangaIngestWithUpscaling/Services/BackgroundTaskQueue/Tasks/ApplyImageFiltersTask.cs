@@ -87,14 +87,15 @@ public class ApplyImageFiltersTask : BaseTask
                     // Apply filters to both original and upscaled using the new optimized method
                     if (File.Exists(originalPath))
                     {
-                        ImageFilterResult result = await imageFilterService.ApplyFiltersToChapterAsync(originalPath,
-                            upscaledPath,
+                        var result = await imageFilterService.ApplyFiltersToChapterAsync(originalPath, upscaledPath,
                             library.FilteredImages, token);
-                        filteredImages += result.FilteredCount;
+
+                        // Atomically increment the total filtered images
+                        Interlocked.Add(ref filteredImages, result.FilteredCount);
 
                         if (result.FilteredCount > 0)
                         {
-                            string message = upscaledPath != null
+                            var message = upscaledPath != null
                                 ? $"Filtered {result.FilteredCount} images from chapter {chapter.FileName} (both original and upscaled)"
                                 : $"Filtered {result.FilteredCount} images from original chapter {chapter.FileName}";
                             logger.LogInformation(message);
@@ -105,20 +106,21 @@ public class ApplyImageFiltersTask : BaseTask
                         logger.LogWarning("Original chapter file not found: {OriginalPath}", originalPath);
                     }
 
+                    // Use Interlocked for thread-safe increment of processed chapters
+                    int currentCount = Interlocked.Increment(ref processedChapters);
+
+                    // Use a lock to update the progress object
                     lock (Progress)
                     {
-                        processedChapters++;
-                        // Update progress after each chapter
-                        Progress.Current = processedChapters;
+                        Progress.Current = currentCount;
                         Progress.StatusMessage = $"Processed: {chapter.FileName}";
                     }
 
-
-                    if (processedChapters % 10 == 0)
+                    if (currentCount % 10 == 0)
                     {
                         logger.LogInformation(
                             "Progress: {ProcessedChapters}/{TotalChapters} chapters processed, {FilteredImages} images filtered",
-                            processedChapters, totalChapters, filteredImages);
+                            currentCount, filteredImages, totalChapters);
                     }
                 }
                 catch (Exception ex)
