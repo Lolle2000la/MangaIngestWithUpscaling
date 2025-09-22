@@ -167,4 +167,10 @@ public class UnixFileSystem(
             Logger.LogWarning("Unable to change ownership of {destFileName}.", destFileName);
         }
     }
+
+    /// <inheritdoc/>
+    public bool FileExists(string path)
+    {
+        return File.Exists(path);
+    }
 }

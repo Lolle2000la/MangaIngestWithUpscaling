@@ -18,4 +18,10 @@ public interface IFileSystem
     /// </summary>
     /// <param name="path">Path to the file for which to apply the permissions.</param>
     void ApplyPermissions(string path);
+    /// <summary>
+    /// Determines whether the specified file exists.
+    /// </summary>
+    /// <param name="path">The file to check.</param>
+    /// <returns>true if the file exists; otherwise, false.</returns>
+    bool FileExists(string path);
 }

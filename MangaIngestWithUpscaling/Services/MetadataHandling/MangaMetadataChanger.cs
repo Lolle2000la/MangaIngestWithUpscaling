@@ -25,7 +25,7 @@ public class MangaMetadataChanger(
     /// <inheritdoc/>
     public void ApplyMangaTitleToUpscaled(Chapter chapter, string newTitle, string origChapterPath)
     {
-        if (!File.Exists(origChapterPath))
+        if (!fileSystem.FileExists(origChapterPath))
         {
             throw new InvalidOperationException("Chapter file not found.");
         }
@@ -42,8 +42,22 @@ public class MangaMetadataChanger(
         }
 
         UpdateChapterTitle(newTitle, origChapterPath);
-        RelocateChapterToNewTitleDirectory(chapter, origChapterPath, chapter.Manga.Library.UpscaledLibraryPath,
-            newTitle);
+        
+        // Move chapter to the correct directory with the new title
+        var newChapterPath = Path.Combine(
+            chapter.Manga.Library.UpscaledLibraryPath,
+            PathEscaper.EscapeFileName(newTitle),
+            PathEscaper.EscapeFileName(chapter.FileName));
+
+        if (fileSystem.FileExists(newChapterPath))
+        {
+            logger.LogWarning("Chapter file already exists: {ChapterPath}", newChapterPath);
+            return;
+        }
+
+        fileSystem.CreateDirectory(Path.GetDirectoryName(newChapterPath)!);
+        fileSystem.Move(origChapterPath, newChapterPath);
+        FileSystemHelpers.DeleteIfEmpty(Path.GetDirectoryName(origChapterPath)!, logger);
         _ = chapterChangedNotifier.Notify(chapter, true);
     }
 
@@ -71,55 +85,208 @@ public class MangaMetadataChanger(
             return RenameResult.Cancelled;
         }
 
-        manga.ChangePrimaryTitle(newTitle, addOldToAlternative);
-
-        // load library and chapters if not already loaded
+        // Load library and chapters if not already loaded
         if (!dbContext.Entry(manga).Reference(m => m.Library).IsLoaded)
         {
-            await dbContext.Entry(manga).Reference(m => m.Library).LoadAsync();
+            await dbContext.Entry(manga).Reference(m => m.Library).LoadAsync(cancellationToken);
         }
 
         if (!dbContext.Entry(manga).Collection(m => m.Chapters).IsLoaded)
         {
-            await dbContext.Entry(manga).Collection(m => m.Chapters).LoadAsync();
+            await dbContext.Entry(manga).Collection(m => m.Chapters).LoadAsync(cancellationToken);
         }
+
+        if (manga.Library == null)
+        {
+            logger.LogError("Manga {MangaId} (Title: {PrimaryTitle}) must have an associated library to be renamed. Aborting rename.",
+                manga.Id, manga.PrimaryTitle);
+            return RenameResult.Cancelled;
+        }
+
+        // Step 1: Pre-flight validation - check if all files can be processed and collect operation plan
+        var renameOperations = new List<ChapterRenameOperation>();
+        var canRenameAllChapters = true;
 
         foreach (var chapter in manga.Chapters)
         {
+            var currentChapterPath = Path.Combine(manga.Library.NotUpscaledLibraryPath, chapter.RelativePath);
+            if (!fileSystem.FileExists(currentChapterPath))
+            {
+                logger.LogWarning("Chapter file not found: {ChapterPath}. Skipping chapter.", currentChapterPath);
+                continue;
+            }
+
+            var newChapterPath = Path.Combine(
+                manga.Library.NotUpscaledLibraryPath,
+                PathEscaper.EscapeFileName(newTitle),
+                PathEscaper.EscapeFileName(chapter.FileName));
+
+            if (fileSystem.FileExists(newChapterPath))
+            {
+                logger.LogWarning("Chapter file already exists at target path: {TargetPath}. Cannot rename manga.", newChapterPath);
+                canRenameAllChapters = false;
+                continue;
+            }
+
+            // Check if we can read existing metadata
+            ExtractedMetadata? existingMetadata = null;
             try
             {
-                var origChapterPath = Path.Combine(manga.Library.NotUpscaledLibraryPath, chapter.RelativePath);
-                if (!File.Exists(origChapterPath))
-                {
-                    logger.LogWarning("Chapter file not found: {ChapterPath}", origChapterPath);
-                    continue;
-                }
-
-                var oldRelativePath = chapter.RelativePath;
-                UpdateChapterTitle(newTitle, origChapterPath);
-                RelocateChapterToNewTitleDirectory(chapter, origChapterPath, manga.Library.NotUpscaledLibraryPath,
-                    manga.PrimaryTitle);
-                _ = chapterChangedNotifier.Notify(chapter, false);
-
-                if (chapter.IsUpscaled)
-                {
-                    ApplyMangaTitleToUpscaled(chapter, newTitle,
-                        Path.Combine(manga.Library.UpscaledLibraryPath!, oldRelativePath));
-                }
-            }
-            catch (XmlException ex)
-            {
-                logger.LogWarning(ex, "Error parsing ComicInfo XML for chapter {ChapterId} ({ChapterPath})", chapter.Id,
-                    chapter.RelativePath);
+                existingMetadata = metadataHandling.GetSeriesAndTitleFromComicInfo(currentChapterPath);
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Error updating metadata for chapter {ChapterId} ({ChapterPath})", chapter.Id,
-                    chapter.RelativePath);
+                logger.LogError(ex, "Failed to read metadata from {ChapterPath}. Skipping chapter.", currentChapterPath);
+                continue;
+            }
+
+            string? currentUpscaledPath = null;
+            string? newUpscaledPath = null;
+            if (chapter.IsUpscaled && manga.Library.UpscaledLibraryPath != null)
+            {
+                currentUpscaledPath = Path.Combine(manga.Library.UpscaledLibraryPath, chapter.RelativePath);
+                if (fileSystem.FileExists(currentUpscaledPath))
+                {
+                    newUpscaledPath = Path.Combine(
+                        manga.Library.UpscaledLibraryPath,
+                        PathEscaper.EscapeFileName(newTitle),
+                        PathEscaper.EscapeFileName(chapter.FileName));
+
+                    if (fileSystem.FileExists(newUpscaledPath))
+                    {
+                        logger.LogWarning("Upscaled chapter file already exists at target path: {TargetPath}. Cannot rename manga.", newUpscaledPath);
+                        canRenameAllChapters = false;
+                        continue;
+                    }
+                }
+                else
+                {
+                    currentUpscaledPath = null; // File doesn't exist, skip upscaled operations
+                }
+            }
+
+            renameOperations.Add(new ChapterRenameOperation
+            {
+                Chapter = chapter,
+                CurrentPath = currentChapterPath,
+                NewPath = newChapterPath,
+                CurrentUpscaledPath = currentUpscaledPath,
+                NewUpscaledPath = newUpscaledPath,
+                ExistingMetadata = existingMetadata,
+                NewRelativePath = Path.GetRelativePath(manga.Library.NotUpscaledLibraryPath, newChapterPath)
+            });
+        }
+
+        if (!canRenameAllChapters)
+        {
+            logger.LogError("Cannot rename manga {MangaId} ({PrimaryTitle}) due to conflicting target files. Aborting rename.",
+                manga.Id, manga.PrimaryTitle);
+            return RenameResult.Cancelled;
+        }
+
+        if (renameOperations.Count == 0)
+        {
+            logger.LogWarning("No chapters found to rename for manga {MangaId} ({PrimaryTitle}). Proceeding with title change only.",
+                manga.Id, manga.PrimaryTitle);
+        }
+
+        // Step 2: Perform database operations in a transaction
+        using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            // Update manga title
+            manga.ChangePrimaryTitle(newTitle, addOldToAlternative);
+
+            // Update chapter relative paths in the database
+            foreach (var operation in renameOperations)
+            {
+                operation.Chapter.RelativePath = operation.NewRelativePath;
+            }
+
+            // Save all database changes
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            logger.LogError(ex, "Database transaction failed during manga rename. Rolling back.");
+            return RenameResult.Cancelled;
+        }
+
+        // Step 3: If database transaction succeeded, perform file operations
+        foreach (var operation in renameOperations)
+        {
+            try
+            {
+                // Create target directory if it doesn't exist
+                var targetDir = Path.GetDirectoryName(operation.NewPath);
+                if (targetDir != null && !Directory.Exists(targetDir))
+                {
+                    fileSystem.CreateDirectory(targetDir);
+                }
+
+                // Update metadata in the source file before moving
+                metadataHandling.WriteComicInfo(operation.CurrentPath,
+                    operation.ExistingMetadata with { Series = newTitle });
+
+                // Move the main chapter file
+                fileSystem.Move(operation.CurrentPath, operation.NewPath);
+                _ = chapterChangedNotifier.Notify(operation.Chapter, false);
+
+                // Handle upscaled file if it exists
+                if (operation.CurrentUpscaledPath != null && operation.NewUpscaledPath != null)
+                {
+                    try
+                    {
+                        var upscaledTargetDir = Path.GetDirectoryName(operation.NewUpscaledPath);
+                        if (upscaledTargetDir != null && !Directory.Exists(upscaledTargetDir))
+                        {
+                            fileSystem.CreateDirectory(upscaledTargetDir);
+                        }
+
+                        // Update metadata in upscaled file before moving
+                        metadataHandling.WriteComicInfo(operation.CurrentUpscaledPath,
+                            metadataHandling.GetSeriesAndTitleFromComicInfo(operation.CurrentUpscaledPath) with { Series = newTitle });
+
+                        // Move the upscaled file
+                        fileSystem.Move(operation.CurrentUpscaledPath, operation.NewUpscaledPath);
+                        _ = chapterChangedNotifier.Notify(operation.Chapter, true);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex, "Failed to move upscaled chapter {FileName} from {SourcePath} to {TargetPath}. Database changes have been committed.",
+                            operation.Chapter.FileName, operation.CurrentUpscaledPath, operation.NewUpscaledPath);
+                    }
+                }
+
+                // Clean up empty source directory
+                var sourceDir = Path.GetDirectoryName(operation.CurrentPath);
+                if (sourceDir != null)
+                {
+                    FileSystemHelpers.DeleteIfEmpty(sourceDir, logger);
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to move chapter {FileName} from {SourcePath} to {TargetPath}. Database changes have been committed.",
+                    operation.Chapter.FileName, operation.CurrentPath, operation.NewPath);
             }
         }
 
-        await dbContext.SaveChangesAsync(cancellationToken);
+        // Clean up empty subdirectories in library paths
+        _ = Task.Run(() =>
+        {
+            var pathsToClean = new[] { manga.Library.NotUpscaledLibraryPath, manga.Library.UpscaledLibraryPath }
+                .Where(path => path != null)
+                .Distinct();
+
+            foreach (var libraryPath in pathsToClean)
+            {
+                FileSystemHelpers.DeleteEmptySubfolders(libraryPath!, logger);
+            }
+        });
+
         return RenameResult.Ok;
     }
 
@@ -164,30 +331,9 @@ public class MangaMetadataChanger(
         }
     }
 
-    private void RelocateChapterToNewTitleDirectory(Chapter chapter, string origChapterPath, string libraryBasePath,
-        string newTitle)
-    {
-        // move chapter to the correct directory with the new title
-        var newChapterPath = Path.Combine(
-            libraryBasePath,
-            PathEscaper.EscapeFileName(newTitle),
-            PathEscaper.EscapeFileName(chapter.FileName));
-        var newRelativePath = Path.GetRelativePath(libraryBasePath, newChapterPath);
-        if (File.Exists(newChapterPath))
-        {
-            logger.LogWarning("Chapter file already exists: {ChapterPath}", newChapterPath);
-            return;
-        }
-
-        fileSystem.CreateDirectory(Path.GetDirectoryName(newChapterPath)!);
-        fileSystem.Move(origChapterPath, newChapterPath);
-        FileSystemHelpers.DeleteIfEmpty(Path.GetDirectoryName(origChapterPath)!, logger);
-        chapter.RelativePath = newRelativePath;
-    }
-
     private void UpdateChapterTitle(string newTitle, string origChapterPath)
     {
-        if (!File.Exists(origChapterPath))
+        if (!fileSystem.FileExists(origChapterPath))
         {
             logger.LogWarning("Chapter file not found: {ChapterPath}", origChapterPath);
             return;
@@ -196,5 +342,16 @@ public class MangaMetadataChanger(
         var metadata = metadataHandling.GetSeriesAndTitleFromComicInfo(origChapterPath);
         var newMetadata = metadata with { Series = newTitle };
         metadataHandling.WriteComicInfo(origChapterPath, newMetadata);
+    }
+
+    private class ChapterRenameOperation
+    {
+        public required Chapter Chapter { get; set; }
+        public required string CurrentPath { get; set; }
+        public required string NewPath { get; set; }
+        public required string? CurrentUpscaledPath { get; set; }
+        public required string? NewUpscaledPath { get; set; }
+        public required ExtractedMetadata ExistingMetadata { get; set; }
+        public required string NewRelativePath { get; set; }
     }
 }
