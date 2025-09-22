@@ -1,5 +1,6 @@
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.Integrations;
@@ -331,6 +332,104 @@ public class MangaMetadataChangerTests : IDisposable
         // Verify chapter2 was processed
         _mockMetadataHandling.Received(1).WriteComicInfo(chapter2Path,
             Arg.Is<ExtractedMetadata>(m => m.Series == newTitle));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ChangeMangaTitle_WithFileConflict_ShouldCancelEarly()
+    {
+        // Arrange
+        var library = CreateTestLibrary();
+        var manga = CreateTestManga(library, "Original Title");
+        var chapter = CreateTestChapter(manga, "chapter1.cbz");
+
+        await _dbContext.Libraries.AddAsync(library, TestContext.Current.CancellationToken);
+        await _dbContext.MangaSeries.AddAsync(manga, TestContext.Current.CancellationToken);
+        await _dbContext.Chapters.AddAsync(chapter, TestContext.Current.CancellationToken);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Create source file
+        var chapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(chapterPath)!);
+        await File.WriteAllTextAsync(chapterPath, "dummy content", TestContext.Current.CancellationToken);
+
+        // Create conflicting target file
+        var newTitle = "New Title";
+        var targetPath = Path.Combine(library.NotUpscaledLibraryPath, 
+            PathEscaper.EscapeFileName(newTitle), PathEscaper.EscapeFileName(chapter.FileName));
+        Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+        await File.WriteAllTextAsync(targetPath, "existing content", TestContext.Current.CancellationToken);
+
+        var metadata = new ExtractedMetadata("Original Title", "Chapter 1", "1");
+        _mockMetadataHandling.GetSeriesAndTitleFromComicInfo(chapterPath).Returns(metadata);
+
+        var originalTitle = manga.PrimaryTitle;
+
+        // Act
+        var result = await _metadataChanger.ChangeMangaTitle(manga, newTitle, addOldToAlternative: true,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.Equal(RenameResult.Cancelled, result);
+        
+        // Verify no database changes were made
+        Assert.Equal(originalTitle, manga.PrimaryTitle);
+        Assert.DoesNotContain(manga.OtherTitles, t => t.Title == originalTitle);
+        
+        // Verify no file operations were performed
+        _mockFileSystem.DidNotReceive().CreateDirectory(Arg.Any<string>());
+        _mockFileSystem.DidNotReceive().Move(Arg.Any<string>(), Arg.Any<string>());
+        
+        // Verify warning was logged about file conflict
+        _mockLogger.Received().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("already exists")),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ChangeMangaTitle_WithMissingSourceFile_ShouldSkipFileAndContinue()
+    {
+        // Arrange
+        var library = CreateTestLibrary();
+        var manga = CreateTestManga(library, "Original Title");
+        var chapter = CreateTestChapter(manga, "chapter1.cbz");
+
+        await _dbContext.Libraries.AddAsync(library, TestContext.Current.CancellationToken);
+        await _dbContext.MangaSeries.AddAsync(manga, TestContext.Current.CancellationToken);
+        await _dbContext.Chapters.AddAsync(chapter, TestContext.Current.CancellationToken);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Don't create the source file - it's missing
+
+        var newTitle = "New Title";
+        var originalTitle = manga.PrimaryTitle;
+
+        // Act
+        var result = await _metadataChanger.ChangeMangaTitle(manga, newTitle, addOldToAlternative: true,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.Equal(RenameResult.Ok, result);
+        
+        // Verify title was still updated (operation succeeds with warning)
+        Assert.Equal(newTitle, manga.PrimaryTitle);
+        Assert.Contains(manga.OtherTitles, t => t.Title == originalTitle);
+        
+        // Verify warning was logged for missing file
+        _mockLogger.Received().Log(
+            LogLevel.Warning,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("not found")),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>());
+        
+        // Verify no file operations were performed due to missing source
+        _mockFileSystem.DidNotReceive().CreateDirectory(Arg.Any<string>());
+        _mockFileSystem.DidNotReceive().Move(Arg.Any<string>(), Arg.Any<string>());
     }
 
     private Library CreateTestLibrary()
