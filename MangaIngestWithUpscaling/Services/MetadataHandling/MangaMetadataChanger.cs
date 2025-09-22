@@ -25,7 +25,7 @@ public class MangaMetadataChanger(
     /// <inheritdoc/>
     public void ApplyMangaTitleToUpscaled(Chapter chapter, string newTitle, string origChapterPath)
     {
-        if (!File.Exists(origChapterPath))
+        if (!fileSystem.FileExists(origChapterPath))
         {
             throw new InvalidOperationException("Chapter file not found.");
         }
@@ -49,7 +49,7 @@ public class MangaMetadataChanger(
             PathEscaper.EscapeFileName(newTitle),
             PathEscaper.EscapeFileName(chapter.FileName));
 
-        if (File.Exists(newChapterPath))
+        if (fileSystem.FileExists(newChapterPath))
         {
             logger.LogWarning("Chapter file already exists: {ChapterPath}", newChapterPath);
             return;
@@ -110,7 +110,7 @@ public class MangaMetadataChanger(
         foreach (var chapter in manga.Chapters)
         {
             var currentChapterPath = Path.Combine(manga.Library.NotUpscaledLibraryPath, chapter.RelativePath);
-            if (!File.Exists(currentChapterPath))
+            if (!fileSystem.FileExists(currentChapterPath))
             {
                 logger.LogWarning("Chapter file not found: {ChapterPath}. Skipping chapter.", currentChapterPath);
                 continue;
@@ -121,7 +121,7 @@ public class MangaMetadataChanger(
                 PathEscaper.EscapeFileName(newTitle),
                 PathEscaper.EscapeFileName(chapter.FileName));
 
-            if (File.Exists(newChapterPath))
+            if (fileSystem.FileExists(newChapterPath))
             {
                 logger.LogWarning("Chapter file already exists at target path: {TargetPath}. Cannot rename manga.", newChapterPath);
                 canRenameAllChapters = false;
@@ -145,14 +145,14 @@ public class MangaMetadataChanger(
             if (chapter.IsUpscaled && manga.Library.UpscaledLibraryPath != null)
             {
                 currentUpscaledPath = Path.Combine(manga.Library.UpscaledLibraryPath, chapter.RelativePath);
-                if (File.Exists(currentUpscaledPath))
+                if (fileSystem.FileExists(currentUpscaledPath))
                 {
                     newUpscaledPath = Path.Combine(
                         manga.Library.UpscaledLibraryPath,
                         PathEscaper.EscapeFileName(newTitle),
                         PathEscaper.EscapeFileName(chapter.FileName));
 
-                    if (File.Exists(newUpscaledPath))
+                    if (fileSystem.FileExists(newUpscaledPath))
                     {
                         logger.LogWarning("Upscaled chapter file already exists at target path: {TargetPath}. Cannot rename manga.", newUpscaledPath);
                         canRenameAllChapters = false;
@@ -333,7 +333,7 @@ public class MangaMetadataChanger(
 
     private void UpdateChapterTitle(string newTitle, string origChapterPath)
     {
-        if (!File.Exists(origChapterPath))
+        if (!fileSystem.FileExists(origChapterPath))
         {
             logger.LogWarning("Chapter file not found: {ChapterPath}", origChapterPath);
             return;

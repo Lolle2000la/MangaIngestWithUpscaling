@@ -83,8 +83,13 @@ public class MangaMetadataChangerTests : IDisposable
         await File.WriteAllTextAsync(chapterPath, "dummy content", TestContext.Current.CancellationToken);
 
         var newTitle = "New Title";
+        var newChapterPath = Path.Combine(library.NotUpscaledLibraryPath, 
+            PathEscaper.EscapeFileName(newTitle), PathEscaper.EscapeFileName(chapter.FileName));
         var metadata = new ExtractedMetadata("Original Title", "Chapter 1", "1");
 
+        // Set up mocks - source file exists, target doesn't
+        _mockFileSystem.FileExists(chapterPath).Returns(true);
+        _mockFileSystem.FileExists(newChapterPath).Returns(false);
         _mockMetadataHandling.GetSeriesAndTitleFromComicInfo(chapterPath).Returns(metadata);
 
         // Act
@@ -309,14 +314,22 @@ public class MangaMetadataChangerTests : IDisposable
         await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Only create file for chapter2, chapter1 is missing
+        var chapter1Path = Path.Combine(library.NotUpscaledLibraryPath, chapter1.RelativePath);
         var chapter2Path = Path.Combine(library.NotUpscaledLibraryPath, chapter2.RelativePath);
+        var newTitle = "New Title";
+        var newChapter2Path = Path.Combine(library.NotUpscaledLibraryPath, 
+            PathEscaper.EscapeFileName(newTitle), PathEscaper.EscapeFileName(chapter2.FileName));
+        
         Directory.CreateDirectory(Path.GetDirectoryName(chapter2Path)!);
         await File.WriteAllTextAsync(chapter2Path, "dummy content", TestContext.Current.CancellationToken);
 
         var metadata = new ExtractedMetadata("Original Title", "Chapter 2", "2");
+        
+        // Set up mocks - chapter1 missing, chapter2 exists, no target conflicts
+        _mockFileSystem.FileExists(chapter1Path).Returns(false);
+        _mockFileSystem.FileExists(chapter2Path).Returns(true);
+        _mockFileSystem.FileExists(newChapter2Path).Returns(false);
         _mockMetadataHandling.GetSeriesAndTitleFromComicInfo(chapter2Path).Returns(metadata);
-
-        var newTitle = "New Title";
 
         // Act
         var result = await _metadataChanger.ChangeMangaTitle(manga, newTitle,
@@ -361,6 +374,10 @@ public class MangaMetadataChangerTests : IDisposable
         await File.WriteAllTextAsync(targetPath, "existing content", TestContext.Current.CancellationToken);
 
         var metadata = new ExtractedMetadata("Original Title", "Chapter 1", "1");
+
+        // Set up mocks - both source and target files exist (conflict)
+        _mockFileSystem.FileExists(chapterPath).Returns(true);
+        _mockFileSystem.FileExists(targetPath).Returns(true); // This should cause conflict
         _mockMetadataHandling.GetSeriesAndTitleFromComicInfo(chapterPath).Returns(metadata);
 
         var originalTitle = manga.PrimaryTitle;
@@ -404,6 +421,10 @@ public class MangaMetadataChangerTests : IDisposable
         await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Don't create the source file - it's missing
+        var chapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
+
+        // Set up mocks - source file missing
+        _mockFileSystem.FileExists(chapterPath).Returns(false);
 
         var newTitle = "New Title";
         var originalTitle = manga.PrimaryTitle;
@@ -430,6 +451,191 @@ public class MangaMetadataChangerTests : IDisposable
         // Verify no file operations were performed due to missing source
         _mockFileSystem.DidNotReceive().CreateDirectory(Arg.Any<string>());
         _mockFileSystem.DidNotReceive().Move(Arg.Any<string>(), Arg.Any<string>());
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ChangeMangaTitle_WithValidOperation_ShouldPerformFileSystemActions()
+    {
+        // Arrange
+        var library = CreateTestLibrary();
+        var manga = CreateTestManga(library, "Original Title");
+        var chapter = CreateTestChapter(manga, "chapter1.cbz");
+
+        await _dbContext.Libraries.AddAsync(library, TestContext.Current.CancellationToken);
+        await _dbContext.MangaSeries.AddAsync(manga, TestContext.Current.CancellationToken);
+        await _dbContext.Chapters.AddAsync(chapter, TestContext.Current.CancellationToken);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var chapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
+        var newTitle = "New Title";
+        var newChapterPath = Path.Combine(library.NotUpscaledLibraryPath, 
+            PathEscaper.EscapeFileName(newTitle), PathEscaper.EscapeFileName(chapter.FileName));
+
+        var metadata = new ExtractedMetadata("Original Title", "Chapter 1", "1");
+
+        // Set up mocks - source file exists, target doesn't
+        _mockFileSystem.FileExists(chapterPath).Returns(true);
+        _mockFileSystem.FileExists(newChapterPath).Returns(false);
+        _mockMetadataHandling.GetSeriesAndTitleFromComicInfo(chapterPath).Returns(metadata);
+
+        // Act
+        var result = await _metadataChanger.ChangeMangaTitle(manga, newTitle, addOldToAlternative: true,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.Equal(RenameResult.Ok, result);
+        
+        // Verify file system operations were performed
+        _mockFileSystem.Received(1).CreateDirectory(Arg.Any<string>());
+        _mockFileSystem.Received(1).Move(chapterPath, newChapterPath);
+        
+        // Verify metadata was updated
+        _mockMetadataHandling.Received(1).WriteComicInfo(chapterPath,
+            Arg.Is<ExtractedMetadata>(m => m.Series == newTitle));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ChangeMangaTitle_WithTargetFileExists_ShouldNotPerformFileOperations()
+    {
+        // Arrange
+        var library = CreateTestLibrary();
+        var manga = CreateTestManga(library, "Original Title");
+        var chapter = CreateTestChapter(manga, "chapter1.cbz");
+
+        await _dbContext.Libraries.AddAsync(library, TestContext.Current.CancellationToken);
+        await _dbContext.MangaSeries.AddAsync(manga, TestContext.Current.CancellationToken);
+        await _dbContext.Chapters.AddAsync(chapter, TestContext.Current.CancellationToken);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var chapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
+        var newTitle = "New Title";
+        var newChapterPath = Path.Combine(library.NotUpscaledLibraryPath, 
+            PathEscaper.EscapeFileName(newTitle), PathEscaper.EscapeFileName(chapter.FileName));
+
+        var metadata = new ExtractedMetadata("Original Title", "Chapter 1", "1");
+        var originalTitle = manga.PrimaryTitle;
+
+        // Set up mocks - both source and target files exist (conflict)
+        _mockFileSystem.FileExists(chapterPath).Returns(true);
+        _mockFileSystem.FileExists(newChapterPath).Returns(true); // This should cause conflict
+        _mockMetadataHandling.GetSeriesAndTitleFromComicInfo(chapterPath).Returns(metadata);
+
+        // Act
+        var result = await _metadataChanger.ChangeMangaTitle(manga, newTitle, addOldToAlternative: true,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.Equal(RenameResult.Cancelled, result);
+        
+        // Verify no database changes were made
+        Assert.Equal(originalTitle, manga.PrimaryTitle);
+        Assert.DoesNotContain(manga.OtherTitles, t => t.Title == originalTitle);
+        
+        // Verify NO file operations were performed due to conflict detection
+        _mockFileSystem.DidNotReceive().CreateDirectory(Arg.Any<string>());
+        _mockFileSystem.DidNotReceive().Move(Arg.Any<string>(), Arg.Any<string>());
+        
+        // Verify NO metadata updates were attempted
+        _mockMetadataHandling.DidNotReceive().WriteComicInfo(Arg.Any<string>(), Arg.Any<ExtractedMetadata>());
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ChangeMangaTitle_WithUpscaledChapter_ShouldHandleBothFiles()
+    {
+        // Arrange
+        var library = CreateTestLibrary();
+        var manga = CreateTestManga(library, "Original Title");
+        var chapter = CreateTestChapter(manga, "chapter1.cbz", isUpscaled: true);
+
+        await _dbContext.Libraries.AddAsync(library, TestContext.Current.CancellationToken);
+        await _dbContext.MangaSeries.AddAsync(manga, TestContext.Current.CancellationToken);
+        await _dbContext.Chapters.AddAsync(chapter, TestContext.Current.CancellationToken);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var chapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
+        var upscaledPath = Path.Combine(library.UpscaledLibraryPath!, chapter.RelativePath);
+        var newTitle = "New Title";
+        var newChapterPath = Path.Combine(library.NotUpscaledLibraryPath, 
+            PathEscaper.EscapeFileName(newTitle), PathEscaper.EscapeFileName(chapter.FileName));
+        var newUpscaledPath = Path.Combine(library.UpscaledLibraryPath!, 
+            PathEscaper.EscapeFileName(newTitle), PathEscaper.EscapeFileName(chapter.FileName));
+
+        var metadata = new ExtractedMetadata("Original Title", "Chapter 1", "1");
+
+        // Set up mocks - all source files exist, no target conflicts
+        _mockFileSystem.FileExists(chapterPath).Returns(true);
+        _mockFileSystem.FileExists(upscaledPath).Returns(true);
+        _mockFileSystem.FileExists(newChapterPath).Returns(false);
+        _mockFileSystem.FileExists(newUpscaledPath).Returns(false);
+        _mockMetadataHandling.GetSeriesAndTitleFromComicInfo(Arg.Any<string>()).Returns(metadata);
+
+        // Act
+        var result = await _metadataChanger.ChangeMangaTitle(manga, newTitle, addOldToAlternative: true,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.Equal(RenameResult.Ok, result);
+        
+        // Verify file system operations were performed for both files
+        _mockFileSystem.Received(2).CreateDirectory(Arg.Any<string>()); // Once for each file
+        _mockFileSystem.Received(1).Move(chapterPath, newChapterPath);
+        _mockFileSystem.Received(1).Move(upscaledPath, newUpscaledPath);
+        
+        // Verify metadata was updated for both files
+        _mockMetadataHandling.Received(1).WriteComicInfo(chapterPath,
+            Arg.Is<ExtractedMetadata>(m => m.Series == newTitle));
+        _mockMetadataHandling.Received(1).WriteComicInfo(upscaledPath,
+            Arg.Is<ExtractedMetadata>(m => m.Series == newTitle));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ChangeMangaTitle_WithUpscaledFileConflict_ShouldNotPerformAnyFileOperations()
+    {
+        // Arrange
+        var library = CreateTestLibrary();
+        var manga = CreateTestManga(library, "Original Title");
+        var chapter = CreateTestChapter(manga, "chapter1.cbz", isUpscaled: true);
+
+        await _dbContext.Libraries.AddAsync(library, TestContext.Current.CancellationToken);
+        await _dbContext.MangaSeries.AddAsync(manga, TestContext.Current.CancellationToken);
+        await _dbContext.Chapters.AddAsync(chapter, TestContext.Current.CancellationToken);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var chapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
+        var upscaledPath = Path.Combine(library.UpscaledLibraryPath!, chapter.RelativePath);
+        var newTitle = "New Title";
+        var newUpscaledPath = Path.Combine(library.UpscaledLibraryPath!, 
+            PathEscaper.EscapeFileName(newTitle), PathEscaper.EscapeFileName(chapter.FileName));
+
+        var metadata = new ExtractedMetadata("Original Title", "Chapter 1", "1");
+        var originalTitle = manga.PrimaryTitle;
+
+        // Set up mocks - source files exist, but upscaled target conflicts
+        _mockFileSystem.FileExists(chapterPath).Returns(true);
+        _mockFileSystem.FileExists(upscaledPath).Returns(true);
+        _mockFileSystem.FileExists(newUpscaledPath).Returns(true); // Conflict in upscaled file
+        _mockMetadataHandling.GetSeriesAndTitleFromComicInfo(chapterPath).Returns(metadata);
+
+        // Act
+        var result = await _metadataChanger.ChangeMangaTitle(manga, newTitle, addOldToAlternative: true,
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.Equal(RenameResult.Cancelled, result);
+        
+        // Verify no database changes were made
+        Assert.Equal(originalTitle, manga.PrimaryTitle);
+        
+        // Verify NO file operations were performed due to conflict detection
+        _mockFileSystem.DidNotReceive().CreateDirectory(Arg.Any<string>());
+        _mockFileSystem.DidNotReceive().Move(Arg.Any<string>(), Arg.Any<string>());
+        
+        // Verify NO metadata updates were attempted
+        _mockMetadataHandling.DidNotReceive().WriteComicInfo(Arg.Any<string>(), Arg.Any<ExtractedMetadata>());
     }
 
     private Library CreateTestLibrary()
