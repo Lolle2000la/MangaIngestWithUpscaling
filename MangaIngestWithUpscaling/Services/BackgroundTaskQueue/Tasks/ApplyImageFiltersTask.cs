@@ -65,61 +65,67 @@ public class ApplyImageFiltersTask : BaseTask
         int processedChapters = 0;
         int filteredImages = 0;
 
-        await foreach (var chapter in chaptersQuery.AsAsyncEnumerable().WithCancellation(cancellationToken))
-        {
-            try
+        await Parallel.ForEachAsync(chaptersQuery.AsAsyncEnumerable(),
+            cancellationToken,
+            async (chapter, token) =>
             {
-                // Build paths for original and upscaled chapters
-                var originalPath = chapter.NotUpscaledFullPath;
-                string? upscaledPath = null;
-
-                if (chapter.IsUpscaled && !string.IsNullOrEmpty(library.UpscaledLibraryPath))
+                try
                 {
-                    upscaledPath = chapter.UpscaledFullPath;
-                    if (!File.Exists(upscaledPath))
+                    // Build paths for original and upscaled chapters
+                    string originalPath = chapter.NotUpscaledFullPath;
+                    string? upscaledPath = null;
+
+                    if (chapter.IsUpscaled && !string.IsNullOrEmpty(library.UpscaledLibraryPath))
                     {
-                        upscaledPath = null; // Don't pass invalid path
+                        upscaledPath = chapter.UpscaledFullPath;
+                        if (!File.Exists(upscaledPath))
+                        {
+                            upscaledPath = null; // Don't pass invalid path
+                        }
+                    }
+
+                    // Apply filters to both original and upscaled using the new optimized method
+                    if (File.Exists(originalPath))
+                    {
+                        ImageFilterResult result = await imageFilterService.ApplyFiltersToChapterAsync(originalPath,
+                            upscaledPath,
+                            library.FilteredImages, token);
+                        filteredImages += result.FilteredCount;
+
+                        if (result.FilteredCount > 0)
+                        {
+                            string message = upscaledPath != null
+                                ? $"Filtered {result.FilteredCount} images from chapter {chapter.FileName} (both original and upscaled)"
+                                : $"Filtered {result.FilteredCount} images from original chapter {chapter.FileName}";
+                            logger.LogInformation(message);
+                        }
+                    }
+                    else
+                    {
+                        logger.LogWarning("Original chapter file not found: {OriginalPath}", originalPath);
+                    }
+
+                    lock (Progress)
+                    {
+                        processedChapters++;
+                        // Update progress after each chapter
+                        Progress.Current = processedChapters;
+                        Progress.StatusMessage = $"Processed: {chapter.FileName}";
+                    }
+
+
+                    if (processedChapters % 10 == 0)
+                    {
+                        logger.LogInformation(
+                            "Progress: {ProcessedChapters}/{TotalChapters} chapters processed, {FilteredImages} images filtered",
+                            processedChapters, totalChapters, filteredImages);
                     }
                 }
-
-                // Apply filters to both original and upscaled using the new optimized method
-                if (File.Exists(originalPath))
+                catch (Exception ex)
                 {
-                    var result = await imageFilterService.ApplyFiltersToChapterAsync(originalPath, upscaledPath,
-                        library.FilteredImages, cancellationToken);
-                    filteredImages += result.FilteredCount;
-
-                    if (result.FilteredCount > 0)
-                    {
-                        var message = upscaledPath != null
-                            ? $"Filtered {result.FilteredCount} images from chapter {chapter.FileName} (both original and upscaled)"
-                            : $"Filtered {result.FilteredCount} images from original chapter {chapter.FileName}";
-                        logger.LogInformation(message);
-                    }
+                    logger.LogError(ex, "Error processing chapter {ChapterFile}", chapter.FileName);
                 }
-                else
-                {
-                    logger.LogWarning("Original chapter file not found: {OriginalPath}", originalPath);
-                }
-
-                processedChapters++;
-
-                // Update progress after each chapter
-                Progress.Current = processedChapters;
-                Progress.StatusMessage = $"Processed: {chapter.FileName}";
-
-                if (processedChapters % 10 == 0)
-                {
-                    logger.LogInformation(
-                        "Progress: {ProcessedChapters}/{TotalChapters} chapters processed, {FilteredImages} images filtered",
-                        processedChapters, totalChapters, filteredImages);
-                }
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Error processing chapter {ChapterFile}", chapter.FileName);
-            }
-        }
+            });
 
         // Update occurrence counts for filtered images
         foreach (var filteredImage in library.FilteredImages.Where(f => f.OccurrenceCount > 0))

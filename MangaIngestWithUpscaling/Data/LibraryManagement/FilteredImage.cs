@@ -7,12 +7,14 @@ namespace MangaIngestWithUpscaling.Data.LibraryManagement;
 /// </summary>
 public class FilteredImage
 {
+    private int _occurrenceCount;
     public int Id { get; set; }
 
     /// <summary>
     /// The library this filtered image belongs to
     /// </summary>
     public int LibraryId { get; set; }
+
     public required Library Library { get; set; }
 
     /// <summary>
@@ -59,10 +61,15 @@ public class FilteredImage
     /// <summary>
     /// Number of times this filtered image has been found and removed
     /// </summary>
-    public int OccurrenceCount { get; set; } = 0;
+    public int OccurrenceCount { get => _occurrenceCount; set => _occurrenceCount = value; }
 
     /// <summary>
     /// Last time this filter was applied/matched
     /// </summary>
     public DateTime? LastMatchedAt { get; set; }
+
+    public int IncrementOccurrenceCountThreadSafe()
+    {
+        return Interlocked.Increment(ref _occurrenceCount);
+    }
 }

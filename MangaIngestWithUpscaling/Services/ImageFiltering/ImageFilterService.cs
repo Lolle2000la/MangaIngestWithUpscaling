@@ -91,7 +91,7 @@ public class ImageFilterService : IImageFilterService
                             result.FilteredImageNames.Add(entry.FullName);
 
                             // Update occurrence count
-                            matchingFilter.OccurrenceCount++;
+                            matchingFilter.IncrementOccurrenceCountThreadSafe();
                             matchingFilter.LastMatchedAt = DateTime.UtcNow;
                         }
                         else
