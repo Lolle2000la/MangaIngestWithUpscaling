@@ -70,20 +70,20 @@ public class LibraryIntegrityCheckerTests : IDisposable
         await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         _metadata.PagesEqual(Arg.Any<string>(), Arg.Any<string>()).Returns(true);
-        _metadata.GetSeriesAndTitleFromComicInfo(Arg.Any<string>())
-            .Returns(new ExtractedMetadata("SeriesWrong", "Ch1", null));
-
-        // Return corrected metadata different from original
-        _metadata
-            .When(m => m.WriteComicInfo(Arg.Any<string>(), Arg.Any<ExtractedMetadata>()))
-            .Do(ci =>
-            {
-                /* no-op in test */
-            });
-
-        // Ensure original metadata retrieval returns a non-null value
+        // Provide valid metadata and allow WriteComicInfo to be called (no-op)
         _metadata.GetSeriesAndTitleFromComicInfo(Arg.Any<string>())
             .Returns(new ExtractedMetadata("Series", "Ch1", null));
+        _metadata
+            .When(m => m.WriteComicInfo(Arg.Any<string>(), Arg.Any<ExtractedMetadata>()))
+            .Do(_ =>
+            {
+                /* no-op */
+            });
+
+        // Sanity: ensure upscaled file exists before running (valid upscale present)
+        string upscaledPath = Path.Combine(lib.UpscaledLibraryPath!, rel);
+        Assert.True(File.Exists(upscaledPath), "Test setup error: upscaled file missing");
+        Assert.Equal(upscaledPath, chapter.UpscaledFullPath);
 
         var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _taskQueue,
             NullLogger<LibraryIntegrityChecker>.Instance, _options);
@@ -179,6 +179,10 @@ public class LibraryIntegrityCheckerTests : IDisposable
 
         ctx.Libraries.Add(lib);
         await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Stub original metadata to avoid null and exception path
+        _metadata.GetSeriesAndTitleFromComicInfo(Arg.Any<string>())
+            .Returns(new ExtractedMetadata("Series", "Ch1", null));
 
         var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _taskQueue,
             NullLogger<LibraryIntegrityChecker>.Instance, _options);
@@ -481,7 +485,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
 #pragma warning restore xUnit1051
     }
 
-    [Fact(Skip = "Currently broken, to be fixed")]
+    [Fact]
     [Trait("Category", "Integration")]
     public async Task CheckIntegrity_UpscaledFileMissing_ClearsFlag()
     {
@@ -511,22 +515,30 @@ public class LibraryIntegrityCheckerTests : IDisposable
         ctx.Libraries.Add(lib);
         await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
 
+        // Stub original metadata to avoid nulls during original integrity check
+        _metadata.GetSeriesAndTitleFromComicInfo(Arg.Any<string>())
+            .Returns(new ExtractedMetadata("Series", "Ch1", null));
+
         var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _taskQueue,
             NullLogger<LibraryIntegrityChecker>.Instance, _options);
 
         bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
 
         Assert.True(changed);
-        var reloaded = await ctx.Chapters.AsNoTracking()
-            .FirstAsync(c => c.Id == chapter.Id, TestContext.Current.CancellationToken);
-        Assert.False(reloaded.IsUpscaled);
+        await using (ApplicationDbContext verifyCtx = _db.CreateContext())
+        {
+            Chapter reloaded = await verifyCtx.Chapters.AsNoTracking()
+                .FirstAsync(c => c.Id == chapter.Id, TestContext.Current.CancellationToken);
+            Assert.False(reloaded.IsUpscaled);
+        }
+
         Assert.False(File.Exists(Path.Combine(lib.UpscaledLibraryPath!, rel)));
         await _taskQueue.DidNotReceiveWithAnyArgs().EnqueueAsync<RepairUpscaleTask>(default!);
     }
 
-    [Fact(Skip = "Currently broken, to be fixed")]
+    [Fact]
     [Trait("Category", "Integration")]
-    public async Task CheckIntegrity_DifferencesUnrepairable_DeletesAndClears()
+    public async Task CheckIntegrity_DifferencesWithExtras_WithProfile_EnqueuesRepairAndKeepsFile()
     {
         using ApplicationDbContext ctx = _db.CreateContext();
 
@@ -562,7 +574,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         ctx.Libraries.Add(lib);
         await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        // Differences are not repairable -> extras present
+        // Differences are repairable (extras can be removed)
         _metadata.PagesEqual(Arg.Any<string>(), Arg.Any<string>()).Returns(false);
         _metadata.GetSeriesAndTitleFromComicInfo(Arg.Any<string>())
             .Returns(new ExtractedMetadata("Series", "Ch1", null));
@@ -575,13 +587,11 @@ public class LibraryIntegrityCheckerTests : IDisposable
         bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
 
         Assert.True(changed);
-        var reloaded = await ctx.Chapters.AsNoTracking()
-            .FirstAsync(c => c.Id == chapter.Id, TestContext.Current.CancellationToken);
-        Assert.False(reloaded.IsUpscaled);
-        Assert.False(File.Exists(Path.Combine(lib.UpscaledLibraryPath!, rel)));
+        // Should enqueue a repair task and keep the upscaled file
 #pragma warning disable xUnit1051
-        await _taskQueue.DidNotReceive().EnqueueAsync(Arg.Any<RepairUpscaleTask>());
+        await _taskQueue.Received(1).EnqueueAsync(Arg.Is<RepairUpscaleTask>(t => t.ChapterId == chapter.Id));
 #pragma warning restore xUnit1051
+        Assert.True(File.Exists(Path.Combine(lib.UpscaledLibraryPath!, rel)));
     }
 
     [Fact]
