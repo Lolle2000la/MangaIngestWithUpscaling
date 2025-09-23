@@ -74,7 +74,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
 
         // Assert
         Assert.True(changed);
-        Chapter? inDb = await ctx.Chapters.FirstOrDefaultAsync(c => c.Id == chapter.Id,
+        var inDb = await ctx.Chapters.FirstOrDefaultAsync(c => c.Id == chapter.Id,
             TestContext.Current.CancellationToken);
         Assert.Null(inDb);
     }
@@ -121,7 +121,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
 
         // Assert
         Assert.True(changed);
-        Chapter reloaded = await ctx.Chapters.AsNoTracking()
+        var reloaded = await ctx.Chapters.AsNoTracking()
             .FirstAsync(c => c.Id == chapter.Id, TestContext.Current.CancellationToken);
         Assert.True(reloaded.IsUpscaled);
     }
@@ -293,7 +293,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
 
         Assert.True(changed);
         // Should have cleared IsUpscaled and deleted file
-        Chapter reloaded = await ctx.Chapters.AsNoTracking()
+        var reloaded = await ctx.Chapters.AsNoTracking()
             .FirstAsync(c => c.Id == chapter.Id, TestContext.Current.CancellationToken);
         Assert.False(reloaded.IsUpscaled);
         Assert.False(File.Exists(Path.Combine(lib.UpscaledLibraryPath!, rel)));
@@ -415,7 +415,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
             var conn = new SqliteConnection(_connectionString);
             conn.Open();
 
-            DbContextOptions<ApplicationDbContext> options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            var options = new DbContextOptionsBuilder<ApplicationDbContext>()
                 .UseSqlite(conn)
                 .ConfigureWarnings(w => w.Ignore(RelationalEventId.AmbientTransactionWarning))
                 .Options;

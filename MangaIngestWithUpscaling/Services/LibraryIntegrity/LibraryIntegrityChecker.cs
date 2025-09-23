@@ -546,40 +546,23 @@ public class LibraryIntegrityChecker(
     private static async Task<bool> HasExistingUpscaleTaskAsync(ApplicationDbContext context, int chapterId,
         CancellationToken cancellationToken)
     {
-        if (context.Database.IsSqlite())
-        {
-            // Use the System.Text.Json discriminator "$type" and ChapterId
-            IQueryable<PersistedTask> query = context.PersistedTasks.FromSqlInterpolated($@"
-                SELECT * FROM PersistedTasks
-                WHERE json_extract(Data, '$.ChapterId') = {chapterId}
-                  AND json_extract(Data, '$.""$type""') = 'UpscaleTask'
-            ");
-            return await query.AnyAsync(cancellationToken);
-        }
-
-        IQueryable<PersistedTask> taskQuery = context.PersistedTasks
-            .FromSql(
-                $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(UpscaleTask)} AND Data->>'$.ChapterId' = {chapterId}");
-        return await taskQuery.AnyAsync(cancellationToken);
+        IQueryable<PersistedTask> query = context.PersistedTasks.FromSql($@"
+            SELECT * FROM PersistedTasks
+            WHERE Data->>'$.$type' = {nameof(UpscaleTask)}
+              AND Data->>'$.ChapterId' = {chapterId}
+        ");
+        return await query.AnyAsync(cancellationToken);
     }
 
     private static async Task<bool> HasExistingRepairTaskAsync(ApplicationDbContext context, int chapterId,
         CancellationToken cancellationToken)
     {
-        if (context.Database.IsSqlite())
-        {
-            IQueryable<PersistedTask> query = context.PersistedTasks.FromSqlInterpolated($@"
-                SELECT * FROM PersistedTasks
-                WHERE json_extract(Data, '$.ChapterId') = {chapterId}
-                  AND json_extract(Data, '$.""$type""') = 'RepairUpscaleTask'
-            ");
-            return await query.AnyAsync(cancellationToken);
-        }
-
-        IQueryable<PersistedTask> existingRepairTaskQuery = context.PersistedTasks
-            .FromSql(
-                $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(RepairUpscaleTask)} AND Data->>'$.ChapterId' = {chapterId}");
-        return await existingRepairTaskQuery.AnyAsync(cancellationToken);
+        IQueryable<PersistedTask> query = context.PersistedTasks.FromSql($@"
+            SELECT * FROM PersistedTasks
+            WHERE Data->>'$.$type' = {nameof(RepairUpscaleTask)}
+              AND Data->>'$.ChapterId' = {chapterId}
+        ");
+        return await query.AnyAsync(cancellationToken);
     }
 
     private enum IntegrityCheckResult
