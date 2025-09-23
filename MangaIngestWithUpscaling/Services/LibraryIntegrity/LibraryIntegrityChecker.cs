@@ -61,12 +61,15 @@ public class LibraryIntegrityChecker(
 
             bool libraryChanged = await CheckIntegrity(library, new Progress<IntegrityProgress>(p =>
             {
+                int currentAfter = current;
                 if (p.Scope == "chapter")
                 {
-                    current = Math.Min(totalChapters, Interlocked.Increment(ref current));
+                    // Atomically increment the shared chapter counter; cap separately for reporting
+                    currentAfter = Interlocked.Increment(ref current);
                 }
 
-                progress.Report(new IntegrityProgress(totalChapters, current, p.Scope, p.StatusMessage));
+                int cappedCurrent = currentAfter > totalChapters ? totalChapters : currentAfter;
+                progress.Report(new IntegrityProgress(totalChapters, cappedCurrent, p.Scope, p.StatusMessage));
             }), ct);
 
             if (libraryChanged)
