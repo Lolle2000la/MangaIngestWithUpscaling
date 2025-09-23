@@ -24,6 +24,9 @@ public class LibraryIntegrityChecker(
         configOptions?.Value?.MaxParallelism ?? Environment.ProcessorCount,
         2, 64);
 
+    private readonly int _progressReportInterval = Math.Clamp(
+        configOptions?.Value?.MaxParallelism ?? Environment.ProcessorCount, 10, 64);
+
     /// <inheritdoc/>
     public async Task<bool> CheckIntegrity(CancellationToken? cancellationToken = null)
     {
@@ -119,9 +122,12 @@ public class LibraryIntegrityChecker(
             }
 
             int curr = Interlocked.Increment(ref currentInLibrary);
-            // Only report once per chapter completion to reduce chatter
-            progress.Report(new IntegrityProgress(totalChaptersInLibrary, curr, "chapter",
-                $"Checked chapter {chapterId} in {library.Name}"));
+            // Report progress every few chapters, and always at the last chapter
+            if (curr % _progressReportInterval == 0 || curr == totalChaptersInLibrary)
+            {
+                progress.Report(new IntegrityProgress(totalChaptersInLibrary, curr, "chapter",
+                    $"Checked chapter {chapterId} in {library.Name}"));
+            }
         });
 
         progress.Report(new IntegrityProgress(totalChaptersInLibrary, totalChaptersInLibrary, "library",
