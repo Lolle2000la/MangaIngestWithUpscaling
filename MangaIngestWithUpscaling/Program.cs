@@ -6,6 +6,7 @@ using MangaIngestWithUpscaling.Configuration;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services;
+using MangaIngestWithUpscaling.Services.ChapterMerging;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.Python;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
@@ -214,11 +215,17 @@ if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
         });
 }
 
-builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlite(connectionString, builder =>
+// Register a factory to create short-lived DbContext instances for parallel/background operations
+builder.Services.AddDbContextFactory<ApplicationDbContext>(options =>
+    options.UseSqlite(connectionString, sqlite =>
     {
-        builder.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+        sqlite.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
     }));
+builder.Services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseSqlite(connectionString, sqlite =>
+    {
+        sqlite.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+    }), optionsLifetime: ServiceLifetime.Singleton);
 builder.Services.AddDbContext<LoggingDbContext>(options =>
     options.UseSqlite(loggingConnectionReadOnlyString, builder =>
     {
@@ -321,13 +328,15 @@ using (var scope = app.Services.CreateScope())
         // Validate and upgrade existing merged chapter records for backward compatibility
         try
         {
-            var backwardCompatibilityService = scope.ServiceProvider.GetRequiredService<MangaIngestWithUpscaling.Services.ChapterMerging.IBackwardCompatibilityService>();
+            var backwardCompatibilityService =
+                scope.ServiceProvider.GetRequiredService<IBackwardCompatibilityService>();
             await backwardCompatibilityService.ValidateAndUpgradeExistingRecordsAsync();
             logger.LogDebug("Backward compatibility validation completed successfully.");
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Backward compatibility validation failed, but application will continue. Some merge functionality may be affected for existing records.");
+            logger.LogWarning(ex,
+                "Backward compatibility validation failed, but application will continue. Some merge functionality may be affected for existing records.");
         }
     }
     catch (Exception ex)
