@@ -1,7 +1,7 @@
 ﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.MangaManagement
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IMangaMerger MangaMerger
 
 <MudDialog>

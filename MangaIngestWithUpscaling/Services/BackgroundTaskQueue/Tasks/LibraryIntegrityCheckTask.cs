@@ -24,9 +24,8 @@ public class LibraryIntegrityCheckTask : BaseTask
     public override async Task ProcessAsync(IServiceProvider services, CancellationToken cancellationToken)
     {
         var integrityChecker = services.GetRequiredService<ILibraryIntegrityChecker>();
-        var dbContextFactory = services.GetRequiredService<IDbContextFactory<ApplicationDbContext>>();
+        var dbContext = services.GetRequiredService<ApplicationDbContext>();
 
-        using var dbContext = dbContextFactory.CreateDbContext();
         var library = await dbContext.Libraries
             .Include(l => l.MangaSeries)
             .ThenInclude(m => m.Chapters)

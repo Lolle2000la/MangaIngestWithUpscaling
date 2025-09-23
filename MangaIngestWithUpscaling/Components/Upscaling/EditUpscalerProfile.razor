@@ -1,7 +1,7 @@
 ﻿@page "/upscaling/profiles/edit/{ProfileId:int}"
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject NavigationManager NavigationManager
 
 <PageTitle>Edit Upscaler Profile "@Profile.Name"</PageTitle>
@@ -44,7 +44,8 @@
     {
         if (ProfileId.HasValue)
         {
-            existingProfile = await DbContext.UpscalerProfiles.FindAsync(ProfileId.Value);
+            using var context = DbContextFactory.CreateDbContext();
+            existingProfile = await context.UpscalerProfiles.FindAsync(ProfileId.Value);
             if (existingProfile != null)
             {
                 Profile = new UpscalerProfile
@@ -74,20 +75,21 @@
             return;
         }
 
-        DbContext.UpscalerProfiles.Add(Profile);
+        using var context = DbContextFactory.CreateDbContext();
+        context.UpscalerProfiles.Add(Profile);
         existingProfile.Deleted = true;
-        await DbContext.SaveChangesAsync();
+        await context.SaveChangesAsync();
         // change all references to existingProfile to Profile, except for concrete chapters
         // (right now this is only the upscaler profile id in the library))
-        await DbContext.Libraries
+        await context.Libraries
             .Where(l => l.UpscalerProfileId == existingProfile.Id)
             .ExecuteUpdateAsync(s => s.SetProperty(l => l.UpscalerProfileId, Profile.Id));
 
-        await DbContext.MangaSeries
+        await context.MangaSeries
             .Where(m => m.UpscalerProfilePreferenceId == existingProfile.Id)
             .ExecuteUpdateAsync(s => s.SetProperty(m => m.UpscalerProfilePreferenceId, Profile.Id));
 
-        await DbContext.SaveChangesAsync();
+        await context.SaveChangesAsync();
         NavigationManager.NavigateTo("/upscaling/profiles");
     }
 

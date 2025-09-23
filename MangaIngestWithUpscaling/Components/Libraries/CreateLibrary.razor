@@ -3,7 +3,7 @@
 
 @page "/libraries/create"
 
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject NavigationManager NavigationManager
 
 <PageTitle>Create Library</PageTitle>
@@ -40,8 +40,9 @@
 
     private async Task OnCreateLibrary()
     {
-        DbContext.Libraries.Add(Library);
-        await DbContext.SaveChangesAsync();
+        using var context = DbContextFactory.CreateDbContext();
+        context.Libraries.Add(Library);
+        await context.SaveChangesAsync();
         NavigationManager.NavigateTo("/libraries");
     }
 }

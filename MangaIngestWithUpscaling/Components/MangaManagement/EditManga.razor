@@ -4,7 +4,7 @@
 @using MangaIngestWithUpscaling.Services.MetadataHandling
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IMangaMetadataChanger MetadataChanger
 @inject NavigationManager NavigationManager
 @inject ISnackbar Snackbar
@@ -262,7 +262,8 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        manga = await DbContext.MangaSeries
+        using var context = DbContextFactory.CreateDbContext();
+        manga = await context.MangaSeries
             .Include(m => m.Library)
             .Include(m => m.Chapters)
             .ThenInclude(c => c.UpscalerProfile)
@@ -277,7 +278,7 @@ else
         }
 
         originalTitle = manga.PrimaryTitle;
-        upscalerProfiles = await DbContext.UpscalerProfiles.ToListAsync();
+        upscalerProfiles = await context.UpscalerProfiles.ToListAsync();
     }
 
     private void AddAlternativeTitle()
@@ -323,7 +324,10 @@ else
                 }
             }
 
-            await DbContext.SaveChangesAsync();
+            using var context = DbContextFactory.CreateDbContext();
+            context.MangaSeries.Attach(manga);
+            context.Entry(manga).State = EntityState.Modified;
+            await context.SaveChangesAsync();
 
             Snackbar.Add("Manga updated successfully.", Severity.Success);
             NavigationManager.NavigateTo("/mangas");

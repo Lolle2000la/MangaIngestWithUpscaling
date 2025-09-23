@@ -1,7 +1,7 @@
 ﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.MangaManagement
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IMangaLibraryMover MangaMover
 
 <MudDialog>
@@ -14,7 +14,7 @@
                 This will also move <b>ALL</b> files associated with the Manga.
             </MudText>
             <MudSelect Label="The libary to move the Manga into." T="Library" @bind-Value="selected">
-                @foreach (var library in DbContext.Libraries)
+                @foreach (var library in libraries)
                 {
                     <MudSelectItem T="Library" Value="@library">@library.Name</MudSelectItem>
                 }
@@ -37,6 +37,13 @@
     [Parameter] public required List<Manga> Mangas { get; set; }
 
     private Library? selected;
+    private List<Library> libraries = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        using var context = DbContextFactory.CreateDbContext();
+        libraries = await context.Libraries.ToListAsync();
+    }
 
     async Task Submit()
     {

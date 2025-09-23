@@ -2,8 +2,9 @@
 @using MangaIngestWithUpscaling.Components.Libraries.Filters
 @using MangaIngestWithUpscaling.Configuration
 @using MangaIngestWithUpscaling.Data.LibraryManagement
+@using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using Microsoft.Extensions.Options
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IOptions<KavitaConfiguration> KavitaConfig
 @inject IDialogService DialogService
 
@@ -109,7 +110,7 @@
                                Clearable="true"
                                Variant="Variant.Outlined">
                         <MudSelectItem T="int?" Value="null">«None (Do Not Upscale)»</MudSelectItem>
-                        @foreach (var upscalerConfig in DbContext.UpscalerProfiles)
+                        @foreach (var upscalerConfig in upscalerProfiles)
                         {
                             <MudSelectItem T="int?" Value="@upscalerConfig.Id">@upscalerConfig.Name</MudSelectItem>
                         }
@@ -243,6 +244,14 @@
 
     [Parameter] public bool IsValid { get; set; } = false;
     [Parameter] public EventCallback<bool> IsValidChanged { get; set; }
+
+    private List<UpscalerProfile> upscalerProfiles = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        using var context = DbContextFactory.CreateDbContext();
+        upscalerProfiles = await context.UpscalerProfiles.ToListAsync();
+    }
 
     private void IsValidChangedHandler(bool isValid)
     {

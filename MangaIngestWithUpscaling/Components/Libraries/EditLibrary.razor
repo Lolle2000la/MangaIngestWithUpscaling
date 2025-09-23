@@ -1,7 +1,7 @@
 @page "/libraries/edit/{LibraryId:int}"
 @using MangaIngestWithUpscaling.Data.LibraryManagement
 
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject NavigationManager NavigationManager
 
 <PageTitle>Edit Library "@(Library?.Name ?? "Unknown")"</PageTitle>
@@ -44,7 +44,8 @@
     {
         if (LibraryId.HasValue)
         {
-            Library = await DbContext.Libraries
+            using var context = DbContextFactory.CreateDbContext();
+            Library = await context.Libraries
                 .Include(l => l.MangaSeries)
                 .Include(l => l.FilterRules)
                 .Include(l => l.RenameRules)
@@ -64,7 +65,10 @@
     {
         if (Library == null) return;
 
-        await DbContext.SaveChangesAsync();
+        using var context = DbContextFactory.CreateDbContext();
+        context.Libraries.Attach(Library);
+        context.Entry(Library).State = EntityState.Modified;
+        await context.SaveChangesAsync();
         NavigationManager.NavigateTo("/libraries");
     }
 }

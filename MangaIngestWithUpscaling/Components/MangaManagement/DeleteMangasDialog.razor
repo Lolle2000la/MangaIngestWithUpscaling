@@ -1,7 +1,7 @@
 ﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.ChapterManagement
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IChapterDeletion DeletionService
 
 <MudDialog>
@@ -38,7 +38,8 @@
             DeletionService.DeleteManga(manga, DeleteOriginalFiles, DeleteUpscaledFiles);
         }
 
-        await DbContext.SaveChangesAsync();
+        using var context = DbContextFactory.CreateDbContext();
+        await context.SaveChangesAsync();
 
         MudDialog.Close(DialogResult.Ok(true));
     }
