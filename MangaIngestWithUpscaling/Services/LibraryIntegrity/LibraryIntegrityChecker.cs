@@ -85,12 +85,19 @@ public class LibraryIntegrityChecker(
         CancellationToken? cancellationToken = null)
     {
         // Parallelize per-chapter within the library using fresh DbContexts per task
-        int totalChaptersInLibrary = library.MangaSeries.Sum(m => m.Chapters.Count);
+        // Compute totals via DB to avoid relying on loaded graphs
+        int totalChaptersInLibrary = await dbContext.Chapters
+            .Where(c => c.Manga!.Library!.Id == library.Id)
+            .CountAsync(cancellationToken ?? CancellationToken.None);
         int currentInLibrary = 0;
         progress.Report(new IntegrityProgress(totalChaptersInLibrary, currentInLibrary, "library",
             $"Checking {library.Name}"));
 
-        List<int> chapterIds = library.MangaSeries.SelectMany(m => m.Chapters).Select(c => c.Id).ToList();
+        IAsyncEnumerable<int> chapterIdsStream = dbContext.Chapters
+            .AsNoTracking()
+            .Where(c => c.Manga!.Library!.Id == library.Id)
+            .Select(c => c.Id)
+            .AsAsyncEnumerable();
         int anyChange = 0;
         CancellationToken ct = cancellationToken ?? CancellationToken.None;
 
@@ -99,7 +106,7 @@ public class LibraryIntegrityChecker(
             MaxDegreeOfParallelism = _maxDegreeOfParallelism, CancellationToken = ct
         };
 
-        await Parallel.ForEachAsync(chapterIds, parallelOptions, async (chapterId, token) =>
+        await Parallel.ForEachAsync(chapterIdsStream, parallelOptions, async (chapterId, token) =>
         {
             bool changed = await ProcessChapterByIdAsync(chapterId, token);
             if (changed)
@@ -128,11 +135,17 @@ public class LibraryIntegrityChecker(
     public async Task<bool> CheckIntegrity(Manga manga, IProgress<IntegrityProgress> progress,
         CancellationToken? cancellationToken = null)
     {
-        int totalChapters = manga.Chapters.Count;
+        int totalChapters = await dbContext.Chapters
+            .Where(c => c.MangaId == manga.Id)
+            .CountAsync(cancellationToken ?? CancellationToken.None);
         int current = 0;
         progress.Report(new IntegrityProgress(totalChapters, current, "manga", $"Checking {manga.PrimaryTitle}"));
 
-        List<int> chapterIds = manga.Chapters.Select(c => c.Id).ToList();
+        IAsyncEnumerable<int> chapterIdsStream = dbContext.Chapters
+            .AsNoTracking()
+            .Where(c => c.MangaId == manga.Id)
+            .Select(c => c.Id)
+            .AsAsyncEnumerable();
         int anyChange = 0;
         CancellationToken ct = cancellationToken ?? CancellationToken.None;
         var parallelOptions = new ParallelOptions
@@ -140,7 +153,7 @@ public class LibraryIntegrityChecker(
             MaxDegreeOfParallelism = _maxDegreeOfParallelism, CancellationToken = ct
         };
 
-        await Parallel.ForEachAsync(chapterIds, parallelOptions, async (chapterId, token) =>
+        await Parallel.ForEachAsync(chapterIdsStream, parallelOptions, async (chapterId, token) =>
         {
             bool changed = await ProcessChapterByIdAsync(chapterId, token);
             if (changed)
@@ -500,7 +513,7 @@ public class LibraryIntegrityChecker(
         await using ApplicationDbContext context = await dbContextFactory.CreateDbContextAsync(cancellationToken);
 
         // Load the chapter with minimal required relationships for logging and repair decisions
-        Chapter? chapter = await context.Chapters
+        var chapter = await context.Chapters
             .Include(c => c.Manga)
             .Include(c => c.UpscalerProfile)
             .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
