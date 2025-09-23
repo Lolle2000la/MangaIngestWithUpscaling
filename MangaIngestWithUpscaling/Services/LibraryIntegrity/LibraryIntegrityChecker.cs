@@ -1,20 +1,32 @@
-﻿using MangaIngestWithUpscaling.Data;
+﻿using MangaIngestWithUpscaling.Configuration;
+using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace MangaIngestWithUpscaling.Services.LibraryIntegrity;
 
 [RegisterScoped]
 public class LibraryIntegrityChecker(
     ApplicationDbContext dbContext,
+    IDbContextFactory<ApplicationDbContext> dbContextFactory,
     IMetadataHandlingService metadataHandling,
     ITaskQueue taskQueue,
-    ILogger<LibraryIntegrityChecker> logger) : ILibraryIntegrityChecker
+    ILogger<LibraryIntegrityChecker> logger,
+    IOptions<IntegrityCheckerConfig> configOptions) : ILibraryIntegrityChecker
 {
+    // Bound concurrency to avoid overloading disk/CPU and to keep services thread-safe
+    private readonly int _maxDegreeOfParallelism = Math.Clamp(
+        configOptions?.Value?.MaxParallelism ?? Environment.ProcessorCount,
+        2, 64);
+
+    private readonly int _progressReportInterval = Math.Clamp(
+        configOptions?.Value?.MaxParallelism ?? Environment.ProcessorCount, 10, 64);
+
     /// <inheritdoc/>
     public async Task<bool> CheckIntegrity(CancellationToken? cancellationToken = null)
     {
@@ -25,6 +37,9 @@ public class LibraryIntegrityChecker(
     public async Task<bool> CheckIntegrity(IProgress<IntegrityProgress> progress,
         CancellationToken? cancellationToken = null)
     {
+        CancellationToken ct = cancellationToken ?? CancellationToken.None;
+
+        // Load libraries just for progress grouping; chapter processing will be parallelized per-library
         var libraries = await dbContext.Libraries
             .Include(l => l.UpscalerProfile)
             .Include(l => l.MangaSeries)
@@ -32,35 +47,41 @@ public class LibraryIntegrityChecker(
             .ThenInclude(c => c.UpscalerProfile)
             .Include(l => l.MangaSeries)
             .ThenInclude(m => m.OtherTitles)
-            .ToListAsync(cancellationToken ?? CancellationToken.None);
+            .ToListAsync(ct);
 
-        // Compute total chapters across all libraries for deterministic progress
         int totalChapters = libraries.SelectMany(l => l.MangaSeries).Sum(m => m.Chapters.Count);
         int current = 0;
         progress.Report(new IntegrityProgress(totalChapters, current, "all", "Starting integrity check"));
+        // Track any change flag across libraries in a thread-safe way
+        int anyChange = 0;
 
-        bool changesHappened = false;
-
-        foreach (var library in libraries.ToArray())
+        foreach (Library library in libraries)
         {
             progress.Report(new IntegrityProgress(totalChapters, current, "library", $"Checking {library.Name}"));
-            bool integrityCheckResult = await CheckIntegrity(library, new Progress<IntegrityProgress>(p =>
+
+            bool libraryChanged = await CheckIntegrity(library, new Progress<IntegrityProgress>(p =>
             {
-                // Bump global current when a chapter completes, ignore nested totals
+                int currentAfter = current;
                 if (p.Scope == "chapter")
                 {
-                    current = Math.Min(totalChapters, current + 1);
+                    // Atomically increment the shared chapter counter; cap separately for reporting
+                    currentAfter = Interlocked.Increment(ref current);
                 }
 
-                // Forward status with global scale
-                progress.Report(new IntegrityProgress(totalChapters, current, p.Scope, p.StatusMessage));
-            }), cancellationToken);
-            changesHappened = changesHappened || integrityCheckResult;
+                int cappedCurrent = currentAfter > totalChapters ? totalChapters : currentAfter;
+                progress.Report(new IntegrityProgress(totalChapters, cappedCurrent, p.Scope, p.StatusMessage));
+            }), ct);
+
+            if (libraryChanged)
+            {
+                Interlocked.Exchange(ref anyChange, 1);
+            }
+
             progress.Report(new IntegrityProgress(totalChapters, current, "library", $"Completed {library.Name}"));
         }
 
         progress.Report(new IntegrityProgress(totalChapters, totalChapters, "all", "Completed"));
-        return changesHappened;
+        return anyChange == 1;
     }
 
     /// <inheritdoc/>
@@ -73,33 +94,48 @@ public class LibraryIntegrityChecker(
     public async Task<bool> CheckIntegrity(Library library, IProgress<IntegrityProgress> progress,
         CancellationToken? cancellationToken = null)
     {
-        // Compute totals per-library and also report against a global context if provided by caller
-        int totalChaptersInLibrary = library.MangaSeries.Sum(m => m.Chapters.Count);
+        // Parallelize per-chapter within the library using fresh DbContexts per task
+        // Compute totals via DB to avoid relying on loaded graphs
+        int totalChaptersInLibrary = await dbContext.Chapters
+            .Where(c => c.Manga!.Library!.Id == library.Id)
+            .CountAsync(cancellationToken ?? CancellationToken.None);
         int currentInLibrary = 0;
         progress.Report(new IntegrityProgress(totalChaptersInLibrary, currentInLibrary, "library",
             $"Checking {library.Name}"));
 
-        bool changesHappened = false;
+        IAsyncEnumerable<int> chapterIdsStream = dbContext.Chapters
+            .AsNoTracking()
+            .Where(c => c.Manga!.Library!.Id == library.Id)
+            .Select(c => c.Id)
+            .AsAsyncEnumerable();
+        int anyChange = 0;
+        CancellationToken ct = cancellationToken ?? CancellationToken.None;
 
-        foreach (var manga in library.MangaSeries.ToArray())
+        var parallelOptions = new ParallelOptions
         {
-            bool integrityCheckResult = await CheckIntegrity(manga, new Progress<IntegrityProgress>(p =>
-            {
-                // Promote chapter-level increments
-                if (p.Scope == "chapter")
-                {
-                    currentInLibrary = Math.Min(totalChaptersInLibrary, currentInLibrary + 1);
-                }
+            MaxDegreeOfParallelism = _maxDegreeOfParallelism, CancellationToken = ct
+        };
 
-                progress.Report(new IntegrityProgress(totalChaptersInLibrary, currentInLibrary, p.Scope,
-                    p.StatusMessage));
-            }), cancellationToken);
-            changesHappened = changesHappened || integrityCheckResult;
-        }
+        await Parallel.ForEachAsync(chapterIdsStream, parallelOptions, async (chapterId, token) =>
+        {
+            bool changed = await ProcessChapterByIdAsync(chapterId, token);
+            if (changed)
+            {
+                Interlocked.Exchange(ref anyChange, 1);
+            }
+
+            int curr = Interlocked.Increment(ref currentInLibrary);
+            // Report progress every few chapters, and always at the last chapter
+            if (curr % _progressReportInterval == 0 || curr == totalChaptersInLibrary)
+            {
+                progress.Report(new IntegrityProgress(totalChaptersInLibrary, curr, "chapter",
+                    $"Checked chapter {chapterId} in {library.Name}"));
+            }
+        });
 
         progress.Report(new IntegrityProgress(totalChaptersInLibrary, totalChaptersInLibrary, "library",
             $"Completed {library.Name}"));
-        return changesHappened;
+        return anyChange == 1;
     }
 
     /// <inheritdoc/>   
@@ -112,33 +148,40 @@ public class LibraryIntegrityChecker(
     public async Task<bool> CheckIntegrity(Manga manga, IProgress<IntegrityProgress> progress,
         CancellationToken? cancellationToken = null)
     {
-        int totalChapters = manga.Chapters.Count;
+        int totalChapters = await dbContext.Chapters
+            .Where(c => c.MangaId == manga.Id)
+            .CountAsync(cancellationToken ?? CancellationToken.None);
         int current = 0;
         progress.Report(new IntegrityProgress(totalChapters, current, "manga", $"Checking {manga.PrimaryTitle}"));
 
-        bool changesHappened = false;
-
-        foreach (var chapter in manga.Chapters.ToArray())
+        IAsyncEnumerable<int> chapterIdsStream = dbContext.Chapters
+            .AsNoTracking()
+            .Where(c => c.MangaId == manga.Id)
+            .Select(c => c.Id)
+            .AsAsyncEnumerable();
+        int anyChange = 0;
+        CancellationToken ct = cancellationToken ?? CancellationToken.None;
+        var parallelOptions = new ParallelOptions
         {
-            bool integrityCheckResult = await CheckIntegrity(chapter, new Progress<IntegrityProgress>(p =>
+            MaxDegreeOfParallelism = _maxDegreeOfParallelism, CancellationToken = ct
+        };
+
+        await Parallel.ForEachAsync(chapterIdsStream, parallelOptions, async (chapterId, token) =>
+        {
+            bool changed = await ProcessChapterByIdAsync(chapterId, token);
+            if (changed)
             {
-                // Increment per chapter completion
-                if (p.Scope == "chapter")
-                {
-                    current = Math.Min(totalChapters, current + 1);
-                    progress.Report(new IntegrityProgress(totalChapters, current, "chapter", p.StatusMessage));
-                }
-                else
-                {
-                    progress.Report(new IntegrityProgress(totalChapters, current, p.Scope, p.StatusMessage));
-                }
-            }), cancellationToken);
-            changesHappened = changesHappened || integrityCheckResult;
-        }
+                Interlocked.Exchange(ref anyChange, 1);
+            }
+
+            int curr = Interlocked.Increment(ref current);
+            progress.Report(new IntegrityProgress(totalChapters, curr, "chapter",
+                $"Checked chapter {chapterId} in {manga.PrimaryTitle}"));
+        });
 
         progress.Report(new IntegrityProgress(totalChapters, totalChapters, "manga",
             $"Completed {manga.PrimaryTitle}"));
-        return changesHappened;
+        return anyChange == 1;
     }
 
     /// <inheritdoc/>
@@ -204,6 +247,12 @@ public class LibraryIntegrityChecker(
     private async Task<IntegrityCheckResult> CheckOriginalIntegrity(Chapter chapter,
         CancellationToken? cancellationToken = null)
     {
+        return await CheckOriginalIntegrity(dbContext, chapter, cancellationToken);
+    }
+
+    private async Task<IntegrityCheckResult> CheckOriginalIntegrity(ApplicationDbContext context, Chapter chapter,
+        CancellationToken? cancellationToken = null)
+    {
         if (!File.Exists(chapter.NotUpscaledFullPath))
         {
             logger.LogWarning("Chapter {chapterFileName} ({chapterId}) of {seriesTitle} is missing. Removing.",
@@ -224,10 +273,10 @@ public class LibraryIntegrityChecker(
                 }
             }
 
-            dbContext.Remove(chapter);
+            context.Remove(chapter);
             try
             {
-                await dbContext.SaveChangesAsync(cancellationToken ?? CancellationToken.None);
+                await context.SaveChangesAsync(cancellationToken ?? CancellationToken.None);
 
                 return IntegrityCheckResult.Missing;
             }
@@ -257,6 +306,12 @@ public class LibraryIntegrityChecker(
     private async Task<IntegrityCheckResult> CheckUpscaledIntegrity(Chapter chapter,
         CancellationToken? cancellationToken = null)
     {
+        return await CheckUpscaledIntegrity(dbContext, chapter, cancellationToken);
+    }
+
+    private async Task<IntegrityCheckResult> CheckUpscaledIntegrity(ApplicationDbContext context, Chapter chapter,
+        CancellationToken? cancellationToken = null)
+    {
         if (!chapter.IsUpscaled)
         {
             if (!File.Exists(chapter.UpscaledFullPath))
@@ -264,18 +319,16 @@ public class LibraryIntegrityChecker(
                 return IntegrityCheckResult.Ok;
             }
 
-            IQueryable<PersistedTask> taskQuery = dbContext.PersistedTasks
-                .FromSql(
-                    $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(UpscaleTask)} AND Data->>'$.ChapterId' = {chapter.Id}");
-            PersistedTask? task = await taskQuery.FirstOrDefaultAsync();
+            bool hasExistingUpscaleTask = await HasExistingUpscaleTaskAsync(context, chapter.Id,
+                cancellationToken ?? CancellationToken.None);
 
             // Do not modify the chapter from under the processing task.
-            if (task != null)
+            if (hasExistingUpscaleTask)
             {
                 return IntegrityCheckResult.MaybeInProgress;
             }
 
-            return await CheckUpscaledArchiveValidity(chapter, cancellationToken);
+            return await CheckUpscaledArchiveValidity(context, chapter, cancellationToken);
         }
         else
         {
@@ -285,17 +338,23 @@ public class LibraryIntegrityChecker(
                     "Upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle} is missing. Marking as not upscaled.",
                     chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
                 chapter.IsUpscaled = false;
-                await dbContext.SaveChangesAsync(cancellationToken ?? CancellationToken.None);
+                await context.SaveChangesAsync(cancellationToken ?? CancellationToken.None);
                 return IntegrityCheckResult.Missing;
             }
             else
             {
-                return await CheckUpscaledArchiveValidity(chapter, cancellationToken);
+                return await CheckUpscaledArchiveValidity(context, chapter, cancellationToken);
             }
         }
     }
 
     private async Task<IntegrityCheckResult> CheckUpscaledArchiveValidity(Chapter chapter,
+        CancellationToken? cancellationToken = null)
+    {
+        return await CheckUpscaledArchiveValidity(dbContext, chapter, cancellationToken);
+    }
+
+    private async Task<IntegrityCheckResult> CheckUpscaledArchiveValidity(ApplicationDbContext context, Chapter chapter,
         CancellationToken? cancellationToken = null)
     {
         try
@@ -306,7 +365,7 @@ public class LibraryIntegrityChecker(
                     "Chapter {chapterFileName} ({chapterId}) of {seriesTitle} is missing a path. Marking as not upscaled.",
                     chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
                 chapter.IsUpscaled = false;
-                await dbContext.SaveChangesAsync(cancellationToken ?? CancellationToken.None);
+                await context.SaveChangesAsync(cancellationToken ?? CancellationToken.None);
                 return IntegrityCheckResult.Missing;
             }
 
@@ -331,7 +390,7 @@ public class LibraryIntegrityChecker(
                     "A seemingly valid upscale was found for {chapterFileName}({chapterId}) of {seriesTitle}. Marking chapter as upscaled.",
                     chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
                 chapter.IsUpscaled = true;
-                await dbContext.SaveChangesAsync(cancellationToken ?? CancellationToken.None);
+                await context.SaveChangesAsync(cancellationToken ?? CancellationToken.None);
                 return IntegrityCheckResult.Corrected;
             }
             else
@@ -348,13 +407,10 @@ public class LibraryIntegrityChecker(
                         differences.ExtraPages.Count);
 
                     // Check if a repair task is already queued for this chapter to avoid duplicates
-                    IQueryable<PersistedTask> existingRepairTaskQuery = dbContext.PersistedTasks
-                        .FromSql(
-                            $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(RepairUpscaleTask)} AND Data->>'$.ChapterId' = {chapter.Id}");
-                    PersistedTask? existingRepairTask =
-                        await existingRepairTaskQuery.FirstOrDefaultAsync(cancellationToken ?? CancellationToken.None);
+                    bool hasExistingRepairTask = await HasExistingRepairTaskAsync(context, chapter.Id,
+                        cancellationToken ?? CancellationToken.None);
 
-                    if (existingRepairTask == null)
+                    if (!hasExistingRepairTask)
                     {
                         // Schedule repair task instead of deleting
                         if (chapter.Manga?.EffectiveUpscalerProfile != null)
@@ -408,13 +464,10 @@ public class LibraryIntegrityChecker(
                 if (differences.CanRepair && chapter.Manga?.EffectiveUpscalerProfile != null)
                 {
                     // Check if a repair task is already queued for this chapter
-                    IQueryable<PersistedTask> existingRepairTaskQuery = dbContext.PersistedTasks
-                        .FromSql(
-                            $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(RepairUpscaleTask)} AND Data->>'$.ChapterId' = {chapter.Id}");
-                    PersistedTask? existingRepairTask =
-                        await existingRepairTaskQuery.FirstOrDefaultAsync(cancellationToken ?? CancellationToken.None);
+                    bool hasExistingRepairTask = await HasExistingRepairTaskAsync(context, chapter.Id,
+                        cancellationToken ?? CancellationToken.None);
 
-                    if (existingRepairTask == null)
+                    if (!hasExistingRepairTask)
                     {
                         var repairTask = new RepairUpscaleTask(chapter, chapter.Manga.EffectiveUpscalerProfile);
                         await taskQueue.EnqueueAsync(repairTask);
@@ -444,7 +497,7 @@ public class LibraryIntegrityChecker(
                 if (chapter.IsUpscaled)
                 {
                     chapter.IsUpscaled = false;
-                    await dbContext.SaveChangesAsync(cancellationToken ?? CancellationToken.None);
+                    await context.SaveChangesAsync(cancellationToken ?? CancellationToken.None);
                 }
 
                 return IntegrityCheckResult.Invalid;
@@ -457,6 +510,71 @@ public class LibraryIntegrityChecker(
                 return IntegrityCheckResult.Invalid;
             }
         }
+    }
+
+    // Process a single chapter by ID with its own DbContext for safe parallelization
+    private async Task<bool> ProcessChapterByIdAsync(int chapterId, CancellationToken cancellationToken)
+    {
+        await using ApplicationDbContext context = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+
+        // Load the chapter with minimal required relationships for logging and repair decisions
+        var chapter = await context.Chapters
+            .Include(c => c.Manga)
+            .ThenInclude(m => m.Library)
+            .ThenInclude(l => l.UpscalerProfile)
+            .Include(c => c.Manga)
+            .ThenInclude(m => m.UpscalerProfilePreference)
+            .Include(c => c.UpscalerProfile)
+            .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
+
+        if (chapter == null)
+        {
+            // Nothing to do; treat as no changes
+            return false;
+        }
+
+        try
+        {
+            IntegrityCheckResult origIntegrity = await CheckOriginalIntegrity(context, chapter, cancellationToken);
+            var upscaledIntegrity = IntegrityCheckResult.Ok;
+            if (origIntegrity != IntegrityCheckResult.Missing &&
+                origIntegrity != IntegrityCheckResult.Invalid &&
+                origIntegrity != IntegrityCheckResult.MaybeInProgress)
+            {
+                upscaledIntegrity = await CheckUpscaledIntegrity(context, chapter, cancellationToken);
+            }
+
+            return origIntegrity != IntegrityCheckResult.Ok || upscaledIntegrity != IntegrityCheckResult.Ok;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex,
+                "An error occurred while checking integrity of chapter {chapterId}.",
+                chapterId);
+            return true; // conservative: treat as needing attention
+        }
+    }
+
+    private static async Task<bool> HasExistingUpscaleTaskAsync(ApplicationDbContext context, int chapterId,
+        CancellationToken cancellationToken)
+    {
+        IQueryable<PersistedTask> query = context.PersistedTasks.FromSql($@"
+            SELECT * FROM PersistedTasks
+            WHERE Data->>'$.$type' = {nameof(UpscaleTask)}
+              AND Data->>'$.ChapterId' = {chapterId}
+        ");
+        return await query.AnyAsync(cancellationToken);
+    }
+
+    private static async Task<bool> HasExistingRepairTaskAsync(ApplicationDbContext context, int chapterId,
+        CancellationToken cancellationToken)
+    {
+        IQueryable<PersistedTask> query = context.PersistedTasks.FromSql($@"
+            SELECT * FROM PersistedTasks
+            WHERE Data->>'$.$type' = {nameof(RepairUpscaleTask)}
+              AND Data->>'$.ChapterId' = {chapterId}
+        ");
+        return await query.AnyAsync(cancellationToken);
     }
 
     private enum IntegrityCheckResult
