@@ -6,7 +6,7 @@
 @using MangaIngestWithUpscaling.Services.MetadataHandling
 @implements IDisposable
 
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IDialogService DialogService
 @inject NavigationManager NavigationManager
 @inject IMangaMetadataChanger MangaMetadataChanger
@@ -35,7 +35,7 @@
                            @bind-Value="selectedLibrary"
                            @bind-Value:after="async () => await table.ReloadServerData()">
                     <MudSelectItem T="Library?" Value="null">All</MudSelectItem>
-                    @foreach (var library in DbContext.Libraries)
+                    @foreach (var library in libraries)
                     {
                         <MudSelectItem T="Library?" Value="@library">@library.Name</MudSelectItem>
                     }
@@ -134,7 +134,7 @@
 
 @code {
     private Library? selectedLibrary;
-
+    private List<Library> libraries = new();
 
     [Parameter]
     [SupplyParameterFromQuery(Name = "search")]
@@ -148,9 +148,21 @@
 
     private CompositeDisposable disposables = new();
 
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadLibrariesAsync();
+    }
+
+    private async Task LoadLibrariesAsync()
+    {
+        using var context = DbContextFactory.CreateDbContext();
+        libraries = await context.Libraries.ToListAsync();
+    }
+
     private async Task<TableData<Manga>> GetMangas(TableState state, CancellationToken cancellationToken)
     {
-        var query = DbContext.MangaSeries
+        using var context = DbContextFactory.CreateDbContext();
+        var query = context.MangaSeries
             .Include(x => x.Library)
             .ThenInclude(x => x.UpscalerProfile)
             .Include(x => x.Chapters)
@@ -322,6 +334,12 @@
         mangaToRestore.ShouldUpscale = mangaBeforeEdit.ShouldUpscale;
     }
 
+    private async Task RestoreOnCancel()
+    {
+        // This method is used when we need to reload data after an error
+        await table.ReloadServerData();
+    }
+
     private async Task OnCommitEdit(object m)
     {
         Manga manga = (Manga)m;
@@ -329,28 +347,41 @@
         // if the primary title was changed, change it back and then use the metadata changer.
         if (manga.PrimaryTitle != mangaBeforeEdit.PrimaryTitle)
         {
-            await DbContext.Entry(manga).Collection(x => x.OtherTitles).LoadAsync();
-            var newTitle = manga.PrimaryTitle;
-            manga.PrimaryTitle = mangaBeforeEdit.PrimaryTitle;
-            try
+            using var context = DbContextFactory.CreateDbContext();
+            var attachedManga = await context.MangaSeries
+                .Include(x => x.OtherTitles)
+                .FirstOrDefaultAsync(x => x.Id == manga.Id);
+            
+            if (attachedManga != null)
             {
-                var renameResult = await MangaMetadataChanger.ChangeMangaTitle(manga, newTitle.Trim());
-                if (renameResult is not RenameResult.Ok)
+                var newTitle = manga.PrimaryTitle;
+                manga.PrimaryTitle = mangaBeforeEdit.PrimaryTitle;
+                try
                 {
-                    await table.ReloadServerData();
-                    return;
+                    var renameResult = await MangaMetadataChanger.ChangeMangaTitle(attachedManga, newTitle.Trim());
+                    if (renameResult is not RenameResult.Ok)
+                    {
+                        await table.ReloadServerData();
+                        return;
+                    }
                 }
-            }
-            catch (Exception e)
-            {
-                Snackbar.Add($"Error: {e.Message}", Severity.Error);
-                Logger.LogError(e, "Error changing title of manga {MangaId} to {NewTitle}", manga.Id, newTitle);
+                catch (Exception e)
+                {
+                    Snackbar.Add($"Error: {e.Message}", Severity.Error);
+                    Logger.LogError(e, "Error changing title of manga {MangaId} to {NewTitle}", manga.Id, newTitle);
+                }
             }
         }
 
         try
         {
-            await DbContext.SaveChangesAsync();
+            using var context = DbContextFactory.CreateDbContext();
+            
+            // Attach the entity to the new context and mark as modified
+            context.MangaSeries.Attach(manga);
+            context.Entry(manga).State = EntityState.Modified;
+            
+            await context.SaveChangesAsync();
         }
         catch (Exception e)
         {

@@ -4,7 +4,7 @@
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks
 
 
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IDialogService DialogService
 @inject TaskQueue TaskQueue
 
@@ -204,7 +204,8 @@
 
     protected override async Task OnInitializedAsync()
     {
-        LoadedLibraries = await DbContext.Libraries
+        using var context = DbContextFactory.CreateDbContext();
+        LoadedLibraries = await context.Libraries
         .Include(x => x.UpscalerProfile)
         .Include(x => x.MangaSeries)
         .ThenInclude(x => x.UpscalerProfilePreference)
@@ -215,7 +216,14 @@
 
     private async Task OnLibraryChanged()
     {
-        LoadedLibraries = await DbContext.Libraries.ToListAsync();
+        using var context = DbContextFactory.CreateDbContext();
+        LoadedLibraries = await context.Libraries
+            .Include(x => x.UpscalerProfile)
+            .Include(x => x.MangaSeries)
+            .ThenInclude(x => x.UpscalerProfilePreference)
+            .Include(x => x.MangaSeries)
+            .ThenInclude(x => x.Chapters)
+            .ToListAsync();
     }
 
     protected async Task OnScanLibrary(Library library)
@@ -242,8 +250,13 @@
 
         if (result.HasValue && result.Value)
         {
-            DbContext.Libraries.Remove(library);
-            await DbContext.SaveChangesAsync();
+            using var context = DbContextFactory.CreateDbContext();
+            var libraryToDelete = await context.Libraries.FindAsync(library.Id);
+            if (libraryToDelete != null)
+            {
+                context.Libraries.Remove(libraryToDelete);
+                await context.SaveChangesAsync();
+            }
         }
 
         await OnLibraryChanged();
