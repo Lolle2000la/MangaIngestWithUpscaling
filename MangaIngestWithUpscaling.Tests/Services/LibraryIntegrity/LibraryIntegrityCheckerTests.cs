@@ -40,6 +40,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Integration")]
     public async Task CheckIntegrity_UpscaledValid_AlreadyMarked_OnlyFixesMetadata()
     {
         using ApplicationDbContext ctx = _db.CreateContext();
@@ -93,6 +94,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Integration")]
     public async Task CheckIntegrity_ExistingUpscaleTask_ReturnsMaybeInProgress_NoTouch()
     {
         using ApplicationDbContext ctx = _db.CreateContext();
@@ -188,6 +190,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Integration")]
     public async Task CheckIntegrity_UpscaledValid_MarksUpscaledTrue()
     {
         using ApplicationDbContext ctx = _db.CreateContext();
@@ -235,6 +238,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Integration")]
     public async Task CheckIntegrity_Library_ReportsTotalsAndCompletes()
     {
         using ApplicationDbContext ctx = _db.CreateContext();
@@ -300,6 +304,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Integration")]
     public async Task CheckIntegrity_DifferentPages_WithProfile_EnqueuesRepair()
     {
         using ApplicationDbContext ctx = _db.CreateContext();
@@ -358,6 +363,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Integration")]
     public async Task CheckIntegrity_DifferentPages_NoProfile_DeletesUpscaled()
     {
         using ApplicationDbContext ctx = _db.CreateContext();
@@ -409,6 +415,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
     }
 
     [Fact]
+    [Trait("Category", "Integration")]
     public async Task CheckIntegrity_DifferentPages_ExistingRepairTask_NoDuplicate()
     {
         using ApplicationDbContext ctx = _db.CreateContext();
