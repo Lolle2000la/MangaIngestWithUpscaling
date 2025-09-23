@@ -11,7 +11,7 @@
 @using MangaIngestWithUpscaling.Services.MetadataHandling
 @using MangaIngestWithUpscaling.Shared.Services.FileSystem
 @using MangaIngestWithUpscaling.Shared.Services.MetadataHandling
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IMetadataHandlingService MetadataHandler
 @inject IMangaMetadataChanger MangaMetadataChanger
 @inject ITaskQueue TaskQueue
@@ -430,9 +430,13 @@
             Snackbar.Add($"Failed to delete {chapter.FileName}. Check the logs for more information.", Severity.Error);
         }
 
-        DbContext.Remove(chapter);
-
-        await DbContext.SaveChangesAsync();
+        using var context = DbContextFactory.CreateDbContext();
+        var chapterToDelete = await context.Chapters.FindAsync(chapter.Id);
+        if (chapterToDelete != null)
+        {
+            context.Remove(chapterToDelete);
+            await context.SaveChangesAsync();
+        }
 
         chapters.Remove(chapterItems.First(ci => ci.Chapter == chapter));
 
@@ -447,24 +451,22 @@
             return;
         }
 
-        if (!DbContext.Entry(Manga.Library).Reference(l => l.UpscalerProfile).IsLoaded)
-        {
-            await DbContext.Entry(Manga.Library).Reference(l => l.UpscalerProfile).LoadAsync();
-        }
+        using var context = DbContextFactory.CreateDbContext();
+        
+        // Load necessary entities
+        var loadedManga = await context.MangaSeries
+            .Include(m => m.Library)
+            .ThenInclude(l => l.UpscalerProfile)
+            .Include(m => m.UpscalerProfilePreference)
+            .FirstOrDefaultAsync(m => m.Id == Manga.Id);
 
-        if (!DbContext.Entry(Manga).Reference(m => m.UpscalerProfilePreference).IsLoaded)
-        {
-            await DbContext.Entry(Manga).Reference(m => m.UpscalerProfilePreference).LoadAsync();
-        }
-
-        if (Manga.EffectiveUpscalerProfile == null)
+        if (loadedManga?.EffectiveUpscalerProfile == null)
         {
             Snackbar.Add("Upscaler profile not set for this library/manga.", Severity.Error);
             return;
         }
 
-        await TaskQueue.EnqueueAsync(
-            new UpscaleTask(chapter));
+        await TaskQueue.EnqueueAsync(new UpscaleTask(chapter));
     }
 
     private async Task DeleteUpscaledConfirm(Chapter chapter)
@@ -507,7 +509,10 @@
 
         chapter.IsUpscaled = false;
 
-        await DbContext.SaveChangesAsync();
+        using var context = DbContextFactory.CreateDbContext();
+        context.Chapters.Attach(chapter);
+        context.Entry(chapter).Property(c => c.IsUpscaled).IsModified = true;
+        await context.SaveChangesAsync();
     }
 
     private async Task<bool> RenameChapterFile(Chapter chapter, string newFileName)
@@ -576,7 +581,12 @@
         {
             chapter.RelativePath = targetRelativePath;
             chapter.FileName = newFileName;
-            await DbContext.SaveChangesAsync();
+            
+            using var context = DbContextFactory.CreateDbContext();
+            context.Chapters.Attach(chapter);
+            context.Entry(chapter).Property(c => c.RelativePath).IsModified = true;
+            context.Entry(chapter).Property(c => c.FileName).IsModified = true;
+            await context.SaveChangesAsync();
             _ = ChapterChangedNotifier.Notify(chapter, false);
             if (chapter.IsUpscaled)
             {
@@ -617,14 +627,20 @@
 
     protected override async Task OnInitializedAsync()
     {
-        if (!DbContext.Entry(Manga).Collection(m => m.Chapters).IsLoaded)
-        {
-            await DbContext.Entry(Manga).Collection(m => m.Chapters).LoadAsync();
-        }
+        using var context = DbContextFactory.CreateDbContext();
+        
+        // Load the manga with all necessary related data
+        var loadedManga = await context.MangaSeries
+            .Include(m => m.Chapters)
+            .Include(m => m.Library)
+            .ThenInclude(l => l.UpscalerProfile)
+            .Include(m => m.UpscalerProfilePreference)
+            .FirstOrDefaultAsync(m => m.Id == Manga.Id);
 
-        if (!DbContext.Entry(Manga).Reference(m => m.Library).IsLoaded)
+        if (loadedManga != null)
         {
-            await DbContext.Entry(Manga).Reference(m => m.Library).LoadAsync();
+            // Update the Manga reference with loaded data
+            Manga = loadedManga;
         }
 
         await LoadChapters();
@@ -675,7 +691,8 @@
             if (chapter.UpscalerProfileId is not null && chapter.UpscalerProfile is null)
             {
                 // The following is used to ignore soft deleted profiles
-                loadProfile = DbContext.UpscalerProfiles.IgnoreQueryFilters()
+                using var context = DbContextFactory.CreateDbContext();
+                loadProfile = context.UpscalerProfiles.IgnoreQueryFilters()
                     .FirstOrDefaultAsync(p => p.Id == chapter.UpscalerProfileId);
             }
 
@@ -1018,11 +1035,13 @@
                 // Find the merged chapter from the database - it should be the FIRST chapter from the original set 
                 // (as per ChapterMergeCoordinator.UpdateDatabaseForMergeAsync which keeps the first and removes the rest)
                 var primaryChapterId = chaptersToMerge.First().Id;
-                var mergedChapter = await DbContext.Chapters.FindAsync(primaryChapterId);
+                
+                using var context = DbContextFactory.CreateDbContext();
+                var mergedChapter = await context.Chapters.FindAsync(primaryChapterId);
                 if (mergedChapter != null)
                 {
                     // Reload the chapter to get updated data
-                    await DbContext.Entry(mergedChapter).ReloadAsync();
+                    await context.Entry(mergedChapter).ReloadAsync();
 
                     var extractedMetadata = MetadataHandler.GetSeriesAndTitleFromComicInfo(
                         Path.Combine(Manga.Library.NotUpscaledLibraryPath, mergedChapter.RelativePath));
@@ -1155,7 +1174,17 @@
             if (mergedChapter != null)
             {
                 // Reload the merged chapter to get updated data
-                await DbContext.Entry(mergedChapter).ReloadAsync();
+                using var context = DbContextFactory.CreateDbContext();
+                var contextChapter = await context.Chapters.FindAsync(mergedChapter.Id);
+                if (contextChapter != null)
+                {
+                    await context.Entry(contextChapter).ReloadAsync();
+                    
+                    // Update the local chapter reference with reloaded data
+                    mergedChapter.FileName = contextChapter.FileName;
+                    mergedChapter.RelativePath = contextChapter.RelativePath;
+                    // Copy other relevant properties as needed
+                }
 
                 var existingItem = chapterItems.FirstOrDefault(ci => ci.Chapter.Id == mergedChapter.Id);
                 if (existingItem != null)

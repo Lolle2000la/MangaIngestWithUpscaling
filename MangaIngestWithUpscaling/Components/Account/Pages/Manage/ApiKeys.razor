@@ -8,7 +8,7 @@
 @inject IdentityUserAccessor UserAccessor
 @inject IdentityRedirectManager RedirectManager
 @inject IApiKeyService ApiKeyService
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 
 <PageTitle>API Key</PageTitle>
 
@@ -52,7 +52,9 @@
         Input ??= new InputModel();
 
         user = await UserAccessor.GetRequiredUserAsync(HttpContext);
-        apiKey = await DbContext.ApiKeys.FirstOrDefaultAsync(k => k.User == user && k.IsActive);
+        
+        using var context = DbContextFactory.CreateDbContext();
+        apiKey = await context.ApiKeys.FirstOrDefaultAsync(k => k.User == user && k.IsActive);
 
         if (apiKey == null)
         {
@@ -74,8 +76,14 @@
             return;
         }
 
-        apiKey.IsActive = false;
-        await DbContext.SaveChangesAsync();
+        using var context = DbContextFactory.CreateDbContext();
+        var apiKeyToUpdate = await context.ApiKeys.FindAsync(apiKey.Id);
+        if (apiKeyToUpdate != null)
+        {
+            apiKeyToUpdate.IsActive = false;
+            await context.SaveChangesAsync();
+        }
+        
         apiKey = await ApiKeyService.CreateApiKeyAsync(user.Id);
 
         await SignInManager.RefreshSignInAsync(user);

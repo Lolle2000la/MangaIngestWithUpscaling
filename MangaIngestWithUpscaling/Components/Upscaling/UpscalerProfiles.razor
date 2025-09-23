@@ -2,7 +2,7 @@
 @using MangaIngestWithUpscaling.Helpers
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IDialogService DialogService
 
 <PageTitle>Upscaler Profiles</PageTitle>
@@ -49,7 +49,8 @@
 
     protected override async Task OnInitializedAsync()
     {
-        Profiles = await DbContext.UpscalerProfiles.ToListAsync();
+        using var context = DbContextFactory.CreateDbContext();
+        Profiles = await context.UpscalerProfiles.ToListAsync();
     }
 
     private async Task OnDeleteProfile(UpscalerProfile profile)
@@ -67,10 +68,16 @@
 
         if (result.HasValue && result.Value)
         {
-            profile.Deleted = true;
-            await DbContext.SaveChangesAsync();
+            using var context = DbContextFactory.CreateDbContext();
+            var profileToDelete = await context.UpscalerProfiles.FindAsync(profile.Id);
+            if (profileToDelete != null)
+            {
+                profileToDelete.Deleted = true;
+                await context.SaveChangesAsync();
+            }
         }
 
-        Profiles = await DbContext.UpscalerProfiles.ToListAsync();
+        using var reloadContext = DbContextFactory.CreateDbContext();
+        Profiles = await reloadContext.UpscalerProfiles.ToListAsync();
     }
 }
