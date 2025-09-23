@@ -1,10 +1,12 @@
-﻿using MangaIngestWithUpscaling.Data;
+﻿using MangaIngestWithUpscaling.Configuration;
+using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace MangaIngestWithUpscaling.Services.LibraryIntegrity;
 
@@ -14,10 +16,13 @@ public class LibraryIntegrityChecker(
     IDbContextFactory<ApplicationDbContext> dbContextFactory,
     IMetadataHandlingService metadataHandling,
     ITaskQueue taskQueue,
-    ILogger<LibraryIntegrityChecker> logger) : ILibraryIntegrityChecker
+    ILogger<LibraryIntegrityChecker> logger,
+    IOptions<IntegrityCheckerConfig> configOptions) : ILibraryIntegrityChecker
 {
     // Bound concurrency to avoid overloading disk/CPU and to keep services thread-safe
-    private readonly int _maxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount, 2, 8);
+    private readonly int _maxDegreeOfParallelism = Math.Clamp(
+        configOptions?.Value?.MaxParallelism ?? Environment.ProcessorCount,
+        2, 64);
 
     /// <inheritdoc/>
     public async Task<bool> CheckIntegrity(CancellationToken? cancellationToken = null)
@@ -44,7 +49,6 @@ public class LibraryIntegrityChecker(
         int totalChapters = libraries.SelectMany(l => l.MangaSeries).Sum(m => m.Chapters.Count);
         int current = 0;
         progress.Report(new IntegrityProgress(totalChapters, current, "all", "Starting integrity check"));
-
         // Track any change flag across libraries in a thread-safe way
         int anyChange = 0;
 
@@ -515,6 +519,7 @@ public class LibraryIntegrityChecker(
         // Load the chapter with minimal required relationships for logging and repair decisions
         var chapter = await context.Chapters
             .Include(c => c.Manga)
+            .ThenInclude(m => m.Library)
             .Include(c => c.UpscalerProfile)
             .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
 
