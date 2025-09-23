@@ -40,6 +40,114 @@ public class LibraryIntegrityCheckerTests : IDisposable
     }
 
     [Fact]
+    public async Task CheckIntegrity_UpscaledValid_AlreadyMarked_OnlyFixesMetadata()
+    {
+        using ApplicationDbContext ctx = _db.CreateContext();
+
+        string temp = Directory.CreateTempSubdirectory().FullName;
+        var lib = new Library
+        {
+            Name = "Lib",
+            NotUpscaledLibraryPath = Path.Combine(temp, "orig"),
+            UpscaledLibraryPath = Path.Combine(temp, "up")
+        };
+        Directory.CreateDirectory(lib.NotUpscaledLibraryPath);
+        Directory.CreateDirectory(lib.UpscaledLibraryPath!);
+
+        string rel = "Series/Ch1.cbz";
+        Directory.CreateDirectory(Path.Combine(lib.NotUpscaledLibraryPath, "Series"));
+        Directory.CreateDirectory(Path.Combine(lib.UpscaledLibraryPath!, "Series"));
+        File.WriteAllText(Path.Combine(lib.NotUpscaledLibraryPath, rel), "orig");
+        File.WriteAllText(Path.Combine(lib.UpscaledLibraryPath!, rel), "up");
+
+        var manga = new Manga { PrimaryTitle = "Series", Library = lib };
+        var chapter = new Chapter { FileName = "ch1.cbz", RelativePath = rel, Manga = manga, IsUpscaled = true };
+        manga.Chapters.Add(chapter);
+        lib.MangaSeries.Add(manga);
+
+        ctx.Libraries.Add(lib);
+        await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        _metadata.PagesEqual(Arg.Any<string>(), Arg.Any<string>()).Returns(true);
+        _metadata.GetSeriesAndTitleFromComicInfo(Arg.Any<string>())
+            .Returns(new ExtractedMetadata("SeriesWrong", "Ch1", null));
+
+        // Return corrected metadata different from original
+        _metadata
+            .When(m => m.WriteComicInfo(Arg.Any<string>(), Arg.Any<ExtractedMetadata>()))
+            .Do(ci =>
+            {
+                /* no-op in test */
+            });
+
+        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _taskQueue,
+            NullLogger<LibraryIntegrityChecker>.Instance, _options);
+
+        bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
+
+        // Since IsUpscaled was already true and pages equal, we don't mark corrected; metadata could be fixed
+        Assert.False(changed);
+        Chapter reloaded = await ctx.Chapters.AsNoTracking()
+            .FirstAsync(c => c.Id == chapter.Id, TestContext.Current.CancellationToken);
+        Assert.True(reloaded.IsUpscaled);
+    }
+
+    [Fact]
+    public async Task CheckIntegrity_ExistingUpscaleTask_ReturnsMaybeInProgress_NoTouch()
+    {
+        using ApplicationDbContext ctx = _db.CreateContext();
+
+        string temp = Directory.CreateTempSubdirectory().FullName;
+        var lib = new Library
+        {
+            Name = "Lib",
+            NotUpscaledLibraryPath = Path.Combine(temp, "orig"),
+            UpscaledLibraryPath = Path.Combine(temp, "up")
+        };
+        Directory.CreateDirectory(lib.NotUpscaledLibraryPath);
+        Directory.CreateDirectory(lib.UpscaledLibraryPath!);
+
+        string rel = "Series/Ch1.cbz";
+        Directory.CreateDirectory(Path.Combine(lib.NotUpscaledLibraryPath, "Series"));
+        Directory.CreateDirectory(Path.Combine(lib.UpscaledLibraryPath!, "Series"));
+        File.WriteAllText(Path.Combine(lib.NotUpscaledLibraryPath, rel), "orig");
+        File.WriteAllText(Path.Combine(lib.UpscaledLibraryPath!, rel), "up");
+
+        var manga = new Manga { PrimaryTitle = "Series", Library = lib };
+        var chapter = new Chapter { FileName = "ch1.cbz", RelativePath = rel, Manga = manga, IsUpscaled = false };
+        manga.Chapters.Add(chapter);
+        lib.MangaSeries.Add(manga);
+
+        ctx.Libraries.Add(lib);
+        await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Seed an existing UpscaleTask for this chapter
+        var dummyProfile = new UpscalerProfile
+        {
+            Name = "P", CompressionFormat = CompressionFormat.Avif, Quality = 50, ScalingFactor = ScaleFactor.TwoX
+        };
+        var existingUpscale = new PersistedTask { Data = new UpscaleTask(chapter, dummyProfile), Order = 1 };
+        ctx.PersistedTasks.Add(existingUpscale);
+        await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        _metadata.PagesEqual(Arg.Any<string>(), Arg.Any<string>()).Returns(false);
+
+        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _taskQueue,
+            NullLogger<LibraryIntegrityChecker>.Instance, _options);
+
+        bool result = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
+
+        Assert.True(result); // MaybeInProgress counts as needs attention
+        Chapter reloaded = await ctx.Chapters.AsNoTracking()
+            .FirstAsync(c => c.Id == chapter.Id, TestContext.Current.CancellationToken);
+        Assert.False(reloaded.IsUpscaled);
+        // No repair enqueued
+#pragma warning disable xUnit1051
+        await _taskQueue.DidNotReceive().EnqueueAsync(Arg.Any<RepairUpscaleTask>());
+#pragma warning restore xUnit1051
+    }
+
+    [Fact]
     public async Task CheckIntegrity_ChapterMissing_RemovesFromDbAndReturnsTrue()
     {
         using ApplicationDbContext ctx = _db.CreateContext();
@@ -381,8 +489,8 @@ public class LibraryIntegrityCheckerTests : IDisposable
     private sealed class SharedSqliteDb : IDisposable
     {
         private readonly string _connectionString;
-        private readonly SqliteConnection _keeper; // keeps the shared in-memory DB alive
         private readonly bool _initialized;
+        private readonly SqliteConnection _keeper; // keeps the shared in-memory DB alive
 
         public SharedSqliteDb()
         {
