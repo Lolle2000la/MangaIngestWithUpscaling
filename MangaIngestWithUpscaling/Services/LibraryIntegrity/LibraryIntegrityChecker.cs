@@ -310,13 +310,11 @@ public class LibraryIntegrityChecker(
                 return IntegrityCheckResult.Ok;
             }
 
-            IQueryable<PersistedTask> taskQuery = context.PersistedTasks
-                .FromSql(
-                    $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(UpscaleTask)} AND Data->>'$.ChapterId' = {chapter.Id}");
-            PersistedTask? task = await taskQuery.FirstOrDefaultAsync();
+            bool hasExistingUpscaleTask = await HasExistingUpscaleTaskAsync(context, chapter.Id,
+                cancellationToken ?? CancellationToken.None);
 
             // Do not modify the chapter from under the processing task.
-            if (task != null)
+            if (hasExistingUpscaleTask)
             {
                 return IntegrityCheckResult.MaybeInProgress;
             }
@@ -400,13 +398,10 @@ public class LibraryIntegrityChecker(
                         differences.ExtraPages.Count);
 
                     // Check if a repair task is already queued for this chapter to avoid duplicates
-                    IQueryable<PersistedTask> existingRepairTaskQuery = context.PersistedTasks
-                        .FromSql(
-                            $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(RepairUpscaleTask)} AND Data->>'$.ChapterId' = {chapter.Id}");
-                    PersistedTask? existingRepairTask =
-                        await existingRepairTaskQuery.FirstOrDefaultAsync(cancellationToken ?? CancellationToken.None);
+                    bool hasExistingRepairTask = await HasExistingRepairTaskAsync(context, chapter.Id,
+                        cancellationToken ?? CancellationToken.None);
 
-                    if (existingRepairTask == null)
+                    if (!hasExistingRepairTask)
                     {
                         // Schedule repair task instead of deleting
                         if (chapter.Manga?.EffectiveUpscalerProfile != null)
@@ -460,13 +455,10 @@ public class LibraryIntegrityChecker(
                 if (differences.CanRepair && chapter.Manga?.EffectiveUpscalerProfile != null)
                 {
                     // Check if a repair task is already queued for this chapter
-                    IQueryable<PersistedTask> existingRepairTaskQuery = context.PersistedTasks
-                        .FromSql(
-                            $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(RepairUpscaleTask)} AND Data->>'$.ChapterId' = {chapter.Id}");
-                    PersistedTask? existingRepairTask =
-                        await existingRepairTaskQuery.FirstOrDefaultAsync(cancellationToken ?? CancellationToken.None);
+                    bool hasExistingRepairTask = await HasExistingRepairTaskAsync(context, chapter.Id,
+                        cancellationToken ?? CancellationToken.None);
 
-                    if (existingRepairTask == null)
+                    if (!hasExistingRepairTask)
                     {
                         var repairTask = new RepairUpscaleTask(chapter, chapter.Manga.EffectiveUpscalerProfile);
                         await taskQueue.EnqueueAsync(repairTask);
@@ -549,6 +541,45 @@ public class LibraryIntegrityChecker(
                 chapterId);
             return true; // conservative: treat as needing attention
         }
+    }
+
+    private static async Task<bool> HasExistingUpscaleTaskAsync(ApplicationDbContext context, int chapterId,
+        CancellationToken cancellationToken)
+    {
+        if (context.Database.IsSqlite())
+        {
+            // Use the System.Text.Json discriminator "$type" and ChapterId
+            IQueryable<PersistedTask> query = context.PersistedTasks.FromSqlInterpolated($@"
+                SELECT * FROM PersistedTasks
+                WHERE json_extract(Data, '$.ChapterId') = {chapterId}
+                  AND json_extract(Data, '$.""$type""') = 'UpscaleTask'
+            ");
+            return await query.AnyAsync(cancellationToken);
+        }
+
+        IQueryable<PersistedTask> taskQuery = context.PersistedTasks
+            .FromSql(
+                $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(UpscaleTask)} AND Data->>'$.ChapterId' = {chapterId}");
+        return await taskQuery.AnyAsync(cancellationToken);
+    }
+
+    private static async Task<bool> HasExistingRepairTaskAsync(ApplicationDbContext context, int chapterId,
+        CancellationToken cancellationToken)
+    {
+        if (context.Database.IsSqlite())
+        {
+            IQueryable<PersistedTask> query = context.PersistedTasks.FromSqlInterpolated($@"
+                SELECT * FROM PersistedTasks
+                WHERE json_extract(Data, '$.ChapterId') = {chapterId}
+                  AND json_extract(Data, '$.""$type""') = 'RepairUpscaleTask'
+            ");
+            return await query.AnyAsync(cancellationToken);
+        }
+
+        IQueryable<PersistedTask> existingRepairTaskQuery = context.PersistedTasks
+            .FromSql(
+                $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(RepairUpscaleTask)} AND Data->>'$.ChapterId' = {chapterId}");
+        return await existingRepairTaskQuery.AnyAsync(cancellationToken);
     }
 
     private enum IntegrityCheckResult
