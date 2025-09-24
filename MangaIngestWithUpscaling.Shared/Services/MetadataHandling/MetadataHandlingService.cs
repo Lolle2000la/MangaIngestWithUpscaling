@@ -130,7 +130,7 @@ public class MetadataHandlingService(
     }
 
     /// <inheritdoc/>
-    public PageDifferenceResult AnalyzePageDifferences(string? originalFile, string? upscaledFile)
+    public async Task<PageDifferenceResult> AnalyzePageDifferencesAsync(string? originalFile, string? upscaledFile)
     {
         if (string.IsNullOrEmpty(originalFile) || string.IsNullOrEmpty(upscaledFile))
             return new PageDifferenceResult([], []);
@@ -142,8 +142,8 @@ public class MetadataHandlingService(
 
         try
         {
-            using var originalArchive = ZipFile.OpenRead(originalFile);
-            using var upscaledArchive = ZipFile.OpenRead(upscaledFile);
+            await using ZipArchive originalArchive = await ZipFile.OpenReadAsync(originalFile);
+            await using ZipArchive upscaledArchive = await ZipFile.OpenReadAsync(upscaledFile);
 
             var originalPages = originalArchive.Entries
                 .Where(e => ImageConstants.IsSupportedImageExtension(

@@ -354,7 +354,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         _metadata.PagesEqualAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(false));
         _metadata.GetSeriesAndTitleFromComicInfoAsync(Arg.Any<string>())
             .Returns(new ExtractedMetadata("Series", "Ch1", null));
-        _metadata.AnalyzePageDifferences(Arg.Any<string>(), Arg.Any<string>())
+        _metadata.AnalyzePageDifferencesAsync(Arg.Any<string>(), Arg.Any<string>())
             .Returns(ci => new PageDifferenceResult(new[] { "001.png" }, Array.Empty<string>()));
 
         var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _taskQueue,
@@ -405,7 +405,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         _metadata.PagesEqualAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(false));
         _metadata.GetSeriesAndTitleFromComicInfoAsync(Arg.Any<string>())
             .Returns(new ExtractedMetadata("Series", "Ch1", null));
-        _metadata.AnalyzePageDifferences(Arg.Any<string>(), Arg.Any<string>())
+        _metadata.AnalyzePageDifferencesAsync(Arg.Any<string>(), Arg.Any<string>())
             .Returns(ci => new PageDifferenceResult(Array.Empty<string>(), new[] { "X.png" }));
 
         var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _taskQueue,
@@ -470,7 +470,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         _metadata.PagesEqualAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(false));
-        _metadata.AnalyzePageDifferences(Arg.Any<string>(), Arg.Any<string>())
+        _metadata.AnalyzePageDifferencesAsync(Arg.Any<string>(), Arg.Any<string>())
             .Returns(ci => new PageDifferenceResult(new[] { "001.png" }, Array.Empty<string>()));
 
         var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _taskQueue,
@@ -578,7 +578,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         _metadata.PagesEqualAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(false));
         _metadata.GetSeriesAndTitleFromComicInfoAsync(Arg.Any<string>())
             .Returns(new ExtractedMetadata("Series", "Ch1", null));
-        _metadata.AnalyzePageDifferences(Arg.Any<string>(), Arg.Any<string>())
+        _metadata.AnalyzePageDifferencesAsync(Arg.Any<string>(), Arg.Any<string>())
             .Returns(ci => new PageDifferenceResult(Array.Empty<string>(), new[] { "extra.png" }));
 
         var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _taskQueue,

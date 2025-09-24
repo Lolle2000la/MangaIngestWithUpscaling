@@ -494,7 +494,8 @@ public class DistributedUpscaleTaskProcessor(
             string originalPath = chapter.NotUpscaledFullPath;
             string upscaledPath = chapter.UpscaledFullPath;
 
-            PageDifferenceResult differences = metadataHandling.AnalyzePageDifferences(originalPath, upscaledPath);
+            PageDifferenceResult differences =
+                await metadataHandling.AnalyzePageDifferencesAsync(originalPath, upscaledPath);
             if (differences.AreEqual)
             {
                 logger.LogInformation(
@@ -690,7 +691,8 @@ public class DistributedUpscaleTaskProcessor(
                 chapter.FileName, chapter.Manga.PrimaryTitle);
 
             var metadataHandling = services.GetRequiredService<IMetadataHandlingService>();
-            var differences = metadataHandling.AnalyzePageDifferences(currentStoragePath, upscaleTargetPath);
+            PageDifferenceResult differences =
+                await metadataHandling.AnalyzePageDifferencesAsync(currentStoragePath, upscaleTargetPath);
 
             if (differences.AreEqual)
             {

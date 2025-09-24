@@ -92,7 +92,8 @@ public class RepairUpscaleTask : BaseTask
             chapter.FileName, chapter.Manga.PrimaryTitle);
 
         // Analyze what pages need repair
-        var differences = metadataHandling.AnalyzePageDifferences(currentStoragePath, upscaleTargetPath);
+        PageDifferenceResult differences =
+            await metadataHandling.AnalyzePageDifferencesAsync(currentStoragePath, upscaleTargetPath);
 
         if (differences.AreEqual)
         {

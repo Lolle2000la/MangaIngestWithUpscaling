@@ -399,7 +399,8 @@ public class LibraryIntegrityChecker(
             {
                 // Analyze the differences to see if repair is possible
                 PageDifferenceResult differences =
-                    metadataHandling.AnalyzePageDifferences(chapter.NotUpscaledFullPath, chapter.UpscaledFullPath);
+                    await metadataHandling.AnalyzePageDifferencesAsync(chapter.NotUpscaledFullPath,
+                        chapter.UpscaledFullPath);
 
                 if (differences.CanRepair)
                 {
@@ -461,7 +462,8 @@ public class LibraryIntegrityChecker(
             {
                 // Try to analyze differences one more time in case the exception was from something else
                 PageDifferenceResult differences =
-                    metadataHandling.AnalyzePageDifferences(chapter.NotUpscaledFullPath, chapter.UpscaledFullPath);
+                    await metadataHandling.AnalyzePageDifferencesAsync(chapter.NotUpscaledFullPath,
+                        chapter.UpscaledFullPath);
 
                 if (differences.CanRepair && chapter.Manga?.EffectiveUpscalerProfile != null)
                 {

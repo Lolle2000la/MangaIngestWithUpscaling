@@ -24,5 +24,5 @@ public interface IMetadataHandlingService
     /// <param name="originalFile">The original CBZ file</param>
     /// <param name="upscaledFile">The upscaled CBZ file</param>
     /// <returns>A result containing lists of missing and extra page names</returns>
-    PageDifferenceResult AnalyzePageDifferences(string? originalFile, string? upscaledFile);
+    Task<PageDifferenceResult> AnalyzePageDifferencesAsync(string? originalFile, string? upscaledFile);
 }
