@@ -116,7 +116,7 @@ public class ImageFilterService : IImageFilterService
                 // Remove from original CBZ
                 try
                 {
-                    if (CbzCleanupHelpers.TryRemoveImageByName(originalCbzPath, imageToRemove, _logger))
+                    if (await CbzCleanupHelpers.TryRemoveImageByNameAsync(originalCbzPath, imageToRemove, _logger))
                     {
                         result.FilteredCount++;
                     }
@@ -133,7 +133,8 @@ public class ImageFilterService : IImageFilterService
                 {
                     try
                     {
-                        if (CbzCleanupHelpers.TryRemoveImageByBaseName(upscaledCbzPath, imageToRemove, _logger))
+                        if (await CbzCleanupHelpers.TryRemoveImageByBaseNameAsync(upscaledCbzPath, imageToRemove,
+                                _logger))
                         {
                             _logger.LogInformation(
                                 "Removed corresponding upscaled image for {ImageName} from {UpscaledCbzPath}",
