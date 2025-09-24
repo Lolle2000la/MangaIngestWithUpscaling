@@ -1,15 +1,24 @@
 ﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
+using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Services.ChapterManagement;
 
 [RegisterScoped]
-public class ChapterDeletion(ApplicationDbContext dbContext,
+public class ChapterDeletion(IDbContextFactory<ApplicationDbContext> dbContextFactory,
     ILogger<ChapterDeletion> logger) : IChapterDeletion
 {
     /// <inheritdoc/>
     public void DeleteChapter(Chapter chapter, bool deleteNormal, bool deleteUpscaled)
+    {
+        using var context = dbContextFactory.CreateDbContext();
+        DeleteChapter(context, chapter, deleteNormal, deleteUpscaled);
+        context.SaveChanges();
+    }
+
+    /// <inheritdoc/>
+    public void DeleteChapter(ApplicationDbContext context, Chapter chapter, bool deleteNormal, bool deleteUpscaled)
     {
         var normalPath = Path.Combine(chapter.Manga.Library.NotUpscaledLibraryPath, chapter.RelativePath);
         if (deleteNormal && File.Exists(normalPath))
@@ -35,17 +44,25 @@ public class ChapterDeletion(ApplicationDbContext dbContext,
             }
         }
 
-        dbContext.Chapters.Remove(chapter);
+        context.Chapters.Remove(chapter);
     }
 
     /// <inheritdoc/>
     public void DeleteManga(Manga manga, bool deleteNormal, bool deleteUpscaled)
     {
+        using var context = dbContextFactory.CreateDbContext();
+        DeleteManga(context, manga, deleteNormal, deleteUpscaled);
+        context.SaveChanges();
+    }
+
+    /// <inheritdoc/>
+    public void DeleteManga(ApplicationDbContext context, Manga manga, bool deleteNormal, bool deleteUpscaled)
+    {
         foreach (var chapter in manga.Chapters)
         {
-            DeleteChapter(chapter, deleteNormal, deleteUpscaled);
+            DeleteChapter(context, chapter, deleteNormal, deleteUpscaled);
         }
 
-        dbContext.MangaSeries.Remove(manga);
+        context.MangaSeries.Remove(manga);
     }
 }

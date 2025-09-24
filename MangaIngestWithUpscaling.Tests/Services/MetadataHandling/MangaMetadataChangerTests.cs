@@ -8,6 +8,7 @@ using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using MudBlazor;
 using NSubstitute;
@@ -24,6 +25,7 @@ public class MangaMetadataChangerTests : IDisposable
     private readonly ILogger<MangaMetadataChanger> _mockLogger;
     private readonly IMetadataHandlingService _mockMetadataHandling;
     private readonly ITaskQueue _mockTaskQueue;
+    private readonly IDbContextFactory<ApplicationDbContext> _mockDbContextFactory;
     private readonly string _tempDir;
     private readonly TestDatabaseHelper.TestDbContext _testDb;
 
@@ -40,13 +42,17 @@ public class MangaMetadataChangerTests : IDisposable
         _mockTaskQueue = Substitute.For<ITaskQueue>();
         _mockFileSystem = Substitute.For<IFileSystem>();
         _mockChapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
+        _mockDbContextFactory = Substitute.For<IDbContextFactory<ApplicationDbContext>>();
+        
+        // Set up the factory to return our test context
+        _mockDbContextFactory.CreateDbContext().Returns(_dbContext);
 
         _tempDir = Path.Combine(Path.GetTempPath(), $"metadata_test_{Guid.NewGuid()}");
         Directory.CreateDirectory(_tempDir);
 
         _metadataChanger = new MangaMetadataChanger(
             _mockMetadataHandling,
-            _dbContext,
+            _mockDbContextFactory,
             _mockDialogService,
             _mockLogger,
             _mockTaskQueue,

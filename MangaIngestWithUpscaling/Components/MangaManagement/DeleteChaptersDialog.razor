@@ -32,12 +32,13 @@
 
     private async Task Submit()
     {
+        using var context = DbContextFactory.CreateDbContext();
+        
         foreach (var chapter in Chapters)
         {
-            DeletionService.DeleteChapter(chapter, DeleteOriginalFiles, DeleteUpscaledFiles);
+            DeletionService.DeleteChapter(context, chapter, DeleteOriginalFiles, DeleteUpscaledFiles);
         }
 
-        await using var context = await DbContextFactory.CreateDbContextAsync();
         await context.SaveChangesAsync();
 
         MudDialog.Close(DialogResult.Ok(true));
