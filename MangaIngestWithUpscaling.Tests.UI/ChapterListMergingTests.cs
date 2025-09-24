@@ -64,8 +64,8 @@ public class ChapterListMergingTests : TestContext
 
         // Setup common mock behaviors
         _subWebHostEnvironment.EnvironmentName.Returns("Test");
-        _subMetadataHandler.GetSeriesAndTitleFromComicInfo(Arg.Any<string>())
-            .Returns(new ExtractedMetadata("Test Series", "Test Chapter", "1"));
+        _subMetadataHandler.GetSeriesAndTitleFromComicInfoAsync(Arg.Any<string>())
+            .Returns(Task.FromResult(new ExtractedMetadata("Test Series", "Test Chapter", "1")));
     }
 
     private void SetupDatabase()

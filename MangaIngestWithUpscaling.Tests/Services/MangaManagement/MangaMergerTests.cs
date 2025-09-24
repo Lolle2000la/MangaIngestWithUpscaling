@@ -84,8 +84,8 @@ public class MangaMergerTests : IDisposable
 
         var metadata1 = new ExtractedMetadata("Merged Manga", "Chapter 1", "1");
         var metadata2 = new ExtractedMetadata("Merged Manga", "Chapter 2", "2");
-        _mockMetadataHandling.GetSeriesAndTitleFromComicInfo(chapter1Path).Returns(metadata1);
-        _mockMetadataHandling.GetSeriesAndTitleFromComicInfo(chapter2Path).Returns(metadata2);
+        _mockMetadataHandling.GetSeriesAndTitleFromComicInfoAsync(chapter1Path).Returns(Task.FromResult(metadata1));
+        _mockMetadataHandling.GetSeriesAndTitleFromComicInfoAsync(chapter2Path).Returns(Task.FromResult(metadata2));
 
         // Act
         await _mangaMerger.MergeAsync(primaryManga, [mergedManga], TestContext.Current.CancellationToken);
@@ -106,7 +106,9 @@ public class MangaMergerTests : IDisposable
         _mockFileSystem.Received(2).Move(Arg.Any<string>(), Arg.Any<string>());
 
         // Verify metadata updates
-        _mockMetadataHandling.Received(2).WriteComicInfo(
+#pragma warning disable CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
+        _mockMetadataHandling.Received(2).WriteComicInfoAsync(
+#pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
             Arg.Any<string>(),
             Arg.Is<ExtractedMetadata>(m => m.Series == "Primary Manga"));
 
@@ -139,7 +141,7 @@ public class MangaMergerTests : IDisposable
             TestContext.Current.CancellationToken);
 
         var metadata = new ExtractedMetadata("Merged Manga", "Chapter 1", "1");
-        _mockMetadataHandling.GetSeriesAndTitleFromComicInfo(chapterPath).Returns(metadata);
+        _mockMetadataHandling.GetSeriesAndTitleFromComicInfoAsync(chapterPath).Returns(Task.FromResult(metadata));
 
         // Act
         await _mangaMerger.MergeAsync(primaryManga, [mergedManga], TestContext.Current.CancellationToken);
@@ -149,7 +151,9 @@ public class MangaMergerTests : IDisposable
         Assert.Contains(chapter, primaryManga.Chapters);
 
         // Verify upscaled file was processed
-        _mockMetadataChanger.Received(1).ApplyMangaTitleToUpscaled(
+#pragma warning disable CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
+        _mockMetadataChanger.Received(1).ApplyMangaTitleToUpscaledAsync(
+#pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
             chapter, "Primary Manga", upscaledChapterPath);
     }
 
@@ -175,7 +179,7 @@ public class MangaMergerTests : IDisposable
         await File.WriteAllTextAsync(chapter2Path, "chapter2 content", TestContext.Current.CancellationToken);
 
         var metadata2 = new ExtractedMetadata("Merged Manga", "Chapter 2", "2");
-        _mockMetadataHandling.GetSeriesAndTitleFromComicInfo(chapter2Path).Returns(metadata2);
+        _mockMetadataHandling.GetSeriesAndTitleFromComicInfoAsync(chapter2Path).Returns(Task.FromResult(metadata2));
 
         // Act
         await _mangaMerger.MergeAsync(primaryManga, [mergedManga], TestContext.Current.CancellationToken);
@@ -222,7 +226,7 @@ public class MangaMergerTests : IDisposable
         await File.WriteAllTextAsync(targetPath, "existing content", TestContext.Current.CancellationToken);
 
         var metadata = new ExtractedMetadata("Merged Manga", "Chapter 1", "1");
-        _mockMetadataHandling.GetSeriesAndTitleFromComicInfo(sourcePath).Returns(metadata);
+        _mockMetadataHandling.GetSeriesAndTitleFromComicInfoAsync(sourcePath).Returns(Task.FromResult(metadata));
 
         // Act
         await _mangaMerger.MergeAsync(primaryManga, [mergedManga], TestContext.Current.CancellationToken);

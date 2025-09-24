@@ -55,7 +55,8 @@ public class ImageFilterService : IImageFilterService
             var imagesToRemove = new List<string>();
 
             // First pass: scan for images to filter using the original CBZ (read-only access)
-            using (var archive = ZipFile.Open(originalCbzPath, ZipArchiveMode.Read))
+            await using (ZipArchive archive =
+                         await ZipFile.OpenAsync(originalCbzPath, ZipArchiveMode.Read, cancellationToken))
             {
                 var imageEntries = archive.Entries
                     .Where(e => !string.IsNullOrEmpty(e.Name))
@@ -69,7 +70,7 @@ public class ImageFilterService : IImageFilterService
                     try
                     {
                         // Read the image data
-                        using var entryStream = entry.Open();
+                        await using Stream entryStream = await entry.OpenAsync(cancellationToken);
                         using var memoryStream = new MemoryStream();
                         await entryStream.CopyToAsync(memoryStream, cancellationToken);
                         var imageBytes = memoryStream.ToArray();
@@ -115,7 +116,7 @@ public class ImageFilterService : IImageFilterService
                 // Remove from original CBZ
                 try
                 {
-                    if (CbzCleanupHelpers.TryRemoveImageByName(originalCbzPath, imageToRemove, _logger))
+                    if (await CbzCleanupHelpers.TryRemoveImageByNameAsync(originalCbzPath, imageToRemove, _logger))
                     {
                         result.FilteredCount++;
                     }
@@ -132,7 +133,8 @@ public class ImageFilterService : IImageFilterService
                 {
                     try
                     {
-                        if (CbzCleanupHelpers.TryRemoveImageByBaseName(upscaledCbzPath, imageToRemove, _logger))
+                        if (await CbzCleanupHelpers.TryRemoveImageByBaseNameAsync(upscaledCbzPath, imageToRemove,
+                                _logger))
                         {
                             _logger.LogInformation(
                                 "Removed corresponding upscaled image for {ImageName} from {UpscaledCbzPath}",
@@ -186,7 +188,7 @@ public class ImageFilterService : IImageFilterService
             throw new FileNotFoundException($"CBZ file not found: {cbzPath}");
         }
 
-        using var archive = ZipFile.Open(cbzPath, ZipArchiveMode.Read);
+        await using ZipArchive archive = await ZipFile.OpenAsync(cbzPath, ZipArchiveMode.Read, cancellationToken);
         var entry = archive.GetEntry(imageEntryName);
 
         if (entry == null)
@@ -201,7 +203,7 @@ public class ImageFilterService : IImageFilterService
             throw new ArgumentException($"Image entry '{imageEntryName}' not found in CBZ file");
         }
 
-        using var entryStream = entry.Open();
+        await using Stream entryStream = await entry.OpenAsync(cancellationToken);
         using var memoryStream = new MemoryStream();
         await entryStream.CopyToAsync(memoryStream, cancellationToken);
         var imageBytes = memoryStream.ToArray();

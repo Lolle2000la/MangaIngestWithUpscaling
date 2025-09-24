@@ -38,7 +38,8 @@ public class ChapterInIngestRecognitionService(
                         var relativePath = Path.GetRelativePath(ingestPath, file);
                         var storageType = file.EndsWith(".cbz") ? ChapterStorageType.Cbz : ChapterStorageType.Folder;
 
-                        var metadata = metadataExtractionService.GetSeriesAndTitleFromComicInfo(file);
+                        ExtractedMetadata metadata =
+                            await metadataExtractionService.GetSeriesAndTitleFromComicInfoAsync(file);
                         foundChapter = new FoundChapter(Path.GetFileName(file), relativePath, storageType, metadata);
 
                         if (libraryFilterRules is { Count: > 0 } &&

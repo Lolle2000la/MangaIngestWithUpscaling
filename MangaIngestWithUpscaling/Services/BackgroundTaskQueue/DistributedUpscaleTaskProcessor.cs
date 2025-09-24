@@ -138,7 +138,8 @@ public class DistributedUpscaleTaskProcessor(
             (TaskCompletionSource<PersistedTask> tcs, CancellationToken cancelToken) =
                 await _taskRequests.Reader.ReadAsync(stoppingToken);
             var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, cancelToken);
-            using CancellationTokenRegistration registration = linkedCts.Token.Register(() => tcs.TrySetCanceled());
+            await using CancellationTokenRegistration registration =
+                linkedCts.Token.Register(() => tcs.TrySetCanceled());
             if (tcs.Task.IsCanceled)
             {
                 continue;
@@ -266,7 +267,8 @@ public class DistributedUpscaleTaskProcessor(
                         {
                             var metadataHandling =
                                 scope.ServiceProvider.GetRequiredService<IMetadataHandlingService>();
-                            if (metadataHandling.PagesEqual(chapter.NotUpscaledFullPath, chapter.UpscaledFullPath))
+                            if (await metadataHandling.PagesEqualAsync(chapter.NotUpscaledFullPath,
+                                    chapter.UpscaledFullPath))
                             {
                                 task.Status = PersistedTaskStatus.Completed;
                                 task.ProcessedAt = DateTime.UtcNow;
@@ -309,7 +311,7 @@ public class DistributedUpscaleTaskProcessor(
 
         using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, timeoutCts.Token);
-        using CancellationTokenRegistration registration = linkedCts.Token.Register(() => tcs.TrySetCanceled());
+        await using CancellationTokenRegistration registration = linkedCts.Token.Register(() => tcs.TrySetCanceled());
 
         try
         {
@@ -492,7 +494,8 @@ public class DistributedUpscaleTaskProcessor(
             string originalPath = chapter.NotUpscaledFullPath;
             string upscaledPath = chapter.UpscaledFullPath;
 
-            PageDifferenceResult differences = metadataHandling.AnalyzePageDifferences(originalPath, upscaledPath);
+            PageDifferenceResult differences =
+                await metadataHandling.AnalyzePageDifferencesAsync(originalPath, upscaledPath);
             if (differences.AreEqual)
             {
                 logger.LogInformation(
@@ -536,7 +539,7 @@ public class DistributedUpscaleTaskProcessor(
 
                 // Apply any title changes that happened in the meantime
                 var metadataChanger = services.GetRequiredService<IMangaMetadataChanger>();
-                metadataChanger.ApplyMangaTitleToUpscaled(chapter, chapter.Manga.PrimaryTitle, upscaledPath);
+                await metadataChanger.ApplyMangaTitleToUpscaledAsync(chapter, chapter.Manga.PrimaryTitle, upscaledPath);
 
                 return true;
             }
@@ -688,7 +691,8 @@ public class DistributedUpscaleTaskProcessor(
                 chapter.FileName, chapter.Manga.PrimaryTitle);
 
             var metadataHandling = services.GetRequiredService<IMetadataHandlingService>();
-            var differences = metadataHandling.AnalyzePageDifferences(currentStoragePath, upscaleTargetPath);
+            PageDifferenceResult differences =
+                await metadataHandling.AnalyzePageDifferencesAsync(currentStoragePath, upscaleTargetPath);
 
             if (differences.AreEqual)
             {

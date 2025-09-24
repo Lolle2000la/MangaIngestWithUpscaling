@@ -366,7 +366,7 @@ public partial class IngestProcessor(
                     {
                         logger.LogInformation("Updating metadata for {Path}. Old: {Old}, New: {New}",
                             convertedChapterPath, currentMeta, desiredMeta);
-                        metadataHandling.WriteComicInfo(convertedChapterPath, desiredMeta);
+                        await metadataHandling.WriteComicInfoAsync(convertedChapterPath, desiredMeta);
                     }
                 }
                 catch (Exception ex)
@@ -451,7 +451,7 @@ public partial class IngestProcessor(
                                 {
                                     ChapterTitle = parts[0]
                                 };
-                                metadataHandling.WriteComicInfo(targetPath, cleanMetadata);
+                                await metadataHandling.WriteComicInfoAsync(targetPath, cleanMetadata);
                             }
                         }
                         catch (Exception ex)
@@ -686,30 +686,37 @@ public partial class IngestProcessor(
             c.FileName == renamedUpscaled.FileName ||
             c.FileName == PathEscaper.EscapeFileName(renamedUpscaled.FileName));
 
+        // Corrected: Use a foreach loop to await the asynchronous predicate
         if (nonUpscaledChapter == null && !string.IsNullOrEmpty(renamedUpscaled.Metadata.ChapterTitle))
         {
-            nonUpscaledChapter = seriesEntity.Chapters.FirstOrDefault(c =>
+            foreach (Chapter chapter in seriesEntity.Chapters)
             {
                 try
                 {
                     // Path to the existing non-upscaled chapter file in the library
-                    var existingNonUpscaledFilePath = Path.Combine(library.NotUpscaledLibraryPath, c.RelativePath);
+                    string existingNonUpscaledFilePath =
+                        Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
                     if (!File.Exists(existingNonUpscaledFilePath))
                     {
-                        return false;
+                        continue;
                     }
 
-                    var existingMetadata = metadataHandling.GetSeriesAndTitleFromComicInfo(existingNonUpscaledFilePath);
-                    return existingMetadata.ChapterTitle == renamedUpscaled.Metadata.ChapterTitle;
+                    ExtractedMetadata existingMetadata =
+                        await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(existingNonUpscaledFilePath);
+                    if (existingMetadata.ChapterTitle == renamedUpscaled.Metadata.ChapterTitle)
+                    {
+                        nonUpscaledChapter = chapter;
+                        break;
+                    }
                 }
                 catch (Exception ex)
                 {
                     logger.LogError(ex,
                         "Error reading metadata for existing chapter {chapterPath} ({chapterId}) during upscaled matching.",
-                        Path.Combine(library.NotUpscaledLibraryPath, c.RelativePath), c.Id);
-                    return false;
+                        Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath), chapter.Id);
+                    continue;
                 }
-            });
+            }
         }
 
         if (nonUpscaledChapter == null)
@@ -767,7 +774,7 @@ public partial class IngestProcessor(
                 logger.LogInformation(
                     "Metadata for upscaled chapter {ChapterPath} changed. Writing new metadata. Old: {OldMetadata}, New: {NewMetadata}",
                     cbzPath, metadataInFile, finalDesiredMetadata);
-                metadataHandling.WriteComicInfo(cbzPath, finalDesiredMetadata);
+                await metadataHandling.WriteComicInfoAsync(cbzPath, finalDesiredMetadata);
             }
 
             // Apply image filters to the upscaled chapter if configured

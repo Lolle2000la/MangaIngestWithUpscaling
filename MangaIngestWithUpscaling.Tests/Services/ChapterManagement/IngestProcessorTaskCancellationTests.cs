@@ -48,7 +48,7 @@ public class IngestProcessorTaskCancellationTests : IDisposable
     [Trait("Category", "Integration")]
     public async Task Ingest_MergeCancelsOriginalUpscaleTasks_QueuesMergedTaskOnly()
     {
-        using ApplicationDbContext db = CreateDb();
+        await using ApplicationDbContext db = CreateDb();
 
         // Arrange basic services (mostly substitutes) and a real TaskQueue+Processor
         var chapterRecognition = Substitute.For<IChapterInIngestRecognitionService>();
@@ -128,7 +128,8 @@ public class IngestProcessorTaskCancellationTests : IDisposable
         var mergedFound = new FoundChapter("Chapter 1.cbz", "Series/Chapter 1.cbz", ChapterStorageType.Cbz,
             new ExtractedMetadata("Series", "Chapter 1", "1"));
         // Create a dummy merged file at the expected location so DB step doesn’t throw
-        using (ZipArchive zip = ZipFile.Open(Path.Combine(seriesDir, mergedFound.FileName), ZipArchiveMode.Create)) { }
+        await using (ZipArchive zip = await ZipFile.OpenAsync(Path.Combine(seriesDir, mergedFound.FileName),
+                         ZipArchiveMode.Create, TestContext.Current.CancellationToken)) { }
 
         chapterPartMerger.ProcessChapterMergingAsync(
                 Arg.Any<List<FoundChapter>>(),
