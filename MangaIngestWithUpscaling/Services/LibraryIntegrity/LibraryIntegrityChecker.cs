@@ -4,6 +4,8 @@ using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Services.ChapterRecognition;
+using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -15,6 +17,7 @@ public class LibraryIntegrityChecker(
     ApplicationDbContext dbContext,
     IDbContextFactory<ApplicationDbContext> dbContextFactory,
     IMetadataHandlingService metadataHandling,
+    IChapterInIngestRecognitionService chapterRecognitionService,
     ITaskQueue taskQueue,
     ILogger<LibraryIntegrityChecker> logger,
     IOptions<IntegrityCheckerConfig> configOptions) : ILibraryIntegrityChecker
@@ -132,6 +135,13 @@ public class LibraryIntegrityChecker(
                     $"Checked chapter {chapterId} in {library.Name}"));
             }
         });
+
+        // Check for orphaned files after processing existing chapters
+        bool orphanedFilesFound = await CheckForOrphanedFiles(library, progress, totalChaptersInLibrary, ct);
+        if (orphanedFilesFound)
+        {
+            Interlocked.Exchange(ref anyChange, 1);
+        }
 
         progress.Report(new IntegrityProgress(totalChaptersInLibrary, totalChaptersInLibrary, "library",
             $"Completed {library.Name}"));
@@ -575,6 +585,128 @@ public class LibraryIntegrityChecker(
               AND Data->>'$.ChapterId' = {chapterId}
         ");
         return await query.AnyAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Checks for orphaned files in the library directories that don't have corresponding chapter entities.
+    /// Creates missing chapter entities for valid chapter files found.
+    /// </summary>
+    /// <param name="library">The library to check for orphaned files</param>
+    /// <param name="progress">Progress reporter</param>
+    /// <param name="baseProgressCount">Base count for progress reporting</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>True if any orphaned files were found and entities were created</returns>
+    private async Task<bool> CheckForOrphanedFiles(Library library, IProgress<IntegrityProgress> progress,
+        int baseProgressCount, CancellationToken cancellationToken)
+    {
+        progress.Report(new IntegrityProgress(baseProgressCount, baseProgressCount, "library",
+            $"Checking for orphaned files in {library.Name}"));
+
+        bool anyChanges = false;
+
+        // Check both NotUpscaled and Upscaled library paths
+        var pathsToCheck = new List<(string Path, bool IsUpscaled)>();
+        
+        if (Directory.Exists(library.NotUpscaledLibraryPath))
+        {
+            pathsToCheck.Add((library.NotUpscaledLibraryPath, false));
+        }
+        
+        if (!string.IsNullOrEmpty(library.UpscaledLibraryPath) && Directory.Exists(library.UpscaledLibraryPath))
+        {
+            pathsToCheck.Add((library.UpscaledLibraryPath, true));
+        }
+
+        foreach (var (libraryPath, isUpscaled) in pathsToCheck)
+        {
+            try
+            {
+                // Use the existing chapter recognition service to find potential chapters
+                var foundChapters = chapterRecognitionService.FindAllChaptersAt(libraryPath, null, cancellationToken);
+                
+                await foreach (var foundChapter in foundChapters)
+                {
+                    // Check if a chapter entity already exists for this file
+                    var existingChapter = await dbContext.Chapters
+                        .AsNoTracking()
+                        .Include(c => c.Manga)
+                        .Where(c => c.Manga.LibraryId == library.Id)
+                        .FirstOrDefaultAsync(c => c.RelativePath == foundChapter.RelativePath, cancellationToken);
+
+                    if (existingChapter == null)
+                    {
+                        // This is an orphaned file - create a chapter entity for it
+                        anyChanges = await CreateChapterEntityForOrphanedFile(library, foundChapter, isUpscaled, cancellationToken) || anyChanges;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Error checking for orphaned files in path {LibraryPath} for library {LibraryName}",
+                    libraryPath, library.Name);
+            }
+        }
+
+        return anyChanges;
+    }
+
+    /// <summary>
+    /// Creates a chapter entity for an orphaned file, finding or creating the appropriate manga series.
+    /// </summary>
+    /// <param name="library">The library the file belongs to</param>
+    /// <param name="foundChapter">The found chapter information</param>
+    /// <param name="isUpscaled">Whether this is an upscaled chapter</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>True if a chapter entity was created</returns>
+    private async Task<bool> CreateChapterEntityForOrphanedFile(Library library, FoundChapter foundChapter,
+        bool isUpscaled, CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Find or create the manga series for this chapter
+            var manga = await dbContext.MangaSeries
+                .FirstOrDefaultAsync(m => m.PrimaryTitle == foundChapter.Metadata.Series && m.LibraryId == library.Id,
+                    cancellationToken);
+
+            if (manga == null)
+            {
+                // Create a new manga series
+                manga = new Manga
+                {
+                    PrimaryTitle = foundChapter.Metadata.Series,
+                    LibraryId = library.Id
+                };
+                dbContext.MangaSeries.Add(manga);
+                await dbContext.SaveChangesAsync(cancellationToken);
+                
+                logger.LogInformation("Created new manga series '{SeriesTitle}' in library '{LibraryName}' for orphaned file '{FileName}'",
+                    foundChapter.Metadata.Series, library.Name, foundChapter.FileName);
+            }
+
+            // Create the chapter entity
+            var chapter = new Chapter
+            {
+                MangaId = manga.Id,
+                Manga = manga,
+                FileName = foundChapter.FileName,
+                RelativePath = foundChapter.RelativePath,
+                IsUpscaled = isUpscaled
+            };
+
+            dbContext.Chapters.Add(chapter);
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            logger.LogInformation("Created chapter entity for orphaned file '{FileName}' in series '{SeriesTitle}' (Library: '{LibraryName}')",
+                foundChapter.FileName, foundChapter.Metadata.Series, library.Name);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to create chapter entity for orphaned file '{FileName}' in series '{SeriesTitle}' (Library: '{LibraryName}')",
+                foundChapter.FileName, foundChapter.Metadata.Series, library.Name);
+            return false;
+        }
     }
 
     private enum IntegrityCheckResult

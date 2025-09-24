@@ -4,8 +4,10 @@ using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Services.LibraryIntegrity;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -22,6 +24,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
     private readonly SharedSqliteDb _db;
     private readonly IDbContextFactory<ApplicationDbContext> _factory;
     private readonly IMetadataHandlingService _metadata;
+    private readonly IChapterInIngestRecognitionService _chapterRecognition;
     private readonly IOptions<IntegrityCheckerConfig> _options;
     private readonly ITaskQueue _taskQueue;
 
@@ -30,6 +33,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         _db = new SharedSqliteDb();
         _factory = new TestDbContextFactory(_db);
         _metadata = Substitute.For<IMetadataHandlingService>();
+        _chapterRecognition = Substitute.For<IChapterInIngestRecognitionService>();
         _taskQueue = Substitute.For<ITaskQueue>();
         _options = Options.Create(new IntegrityCheckerConfig { MaxParallelism = 1 });
     }
@@ -85,7 +89,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         Assert.True(File.Exists(upscaledPath), "Test setup error: upscaled file missing");
         Assert.Equal(upscaledPath, chapter.UpscaledFullPath);
 
-        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _taskQueue,
+        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _chapterRecognition, _taskQueue,
             NullLogger<LibraryIntegrityChecker>.Instance, _options);
 
         bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
@@ -138,7 +142,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
 
         _metadata.PagesEqual(Arg.Any<string>(), Arg.Any<string>()).Returns(false);
 
-        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _taskQueue,
+        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _chapterRecognition, _taskQueue,
             NullLogger<LibraryIntegrityChecker>.Instance, _options);
 
         bool result = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
@@ -184,7 +188,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         _metadata.GetSeriesAndTitleFromComicInfo(Arg.Any<string>())
             .Returns(new ExtractedMetadata("Series", "Ch1", null));
 
-        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _taskQueue,
+        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _chapterRecognition, _taskQueue,
             NullLogger<LibraryIntegrityChecker>.Instance, _options);
 
         // Act - file does not exist
@@ -232,7 +236,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         _metadata.GetSeriesAndTitleFromComicInfo(Arg.Any<string>())
             .Returns(new ExtractedMetadata("Series", "Ch1", null));
 
-        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _taskQueue,
+        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _chapterRecognition, _taskQueue,
             NullLogger<LibraryIntegrityChecker>.Instance, _options);
 
         // Act
@@ -284,7 +288,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         _metadata.GetSeriesAndTitleFromComicInfo(Arg.Any<string>())
             .Returns(new ExtractedMetadata("Series", "Ch", null));
 
-        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _taskQueue,
+        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _chapterRecognition, _taskQueue,
             NullLogger<LibraryIntegrityChecker>.Instance, _options);
 
         int? total = null;
@@ -357,7 +361,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         _metadata.AnalyzePageDifferences(Arg.Any<string>(), Arg.Any<string>())
             .Returns(ci => new PageDifferenceResult(new[] { "001.png" }, Array.Empty<string>()));
 
-        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _taskQueue,
+        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _chapterRecognition, _taskQueue,
             NullLogger<LibraryIntegrityChecker>.Instance, _options);
 
         bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
@@ -408,7 +412,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         _metadata.AnalyzePageDifferences(Arg.Any<string>(), Arg.Any<string>())
             .Returns(ci => new PageDifferenceResult(Array.Empty<string>(), new[] { "X.png" }));
 
-        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _taskQueue,
+        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _chapterRecognition, _taskQueue,
             NullLogger<LibraryIntegrityChecker>.Instance, _options);
 
         bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
@@ -473,7 +477,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         _metadata.AnalyzePageDifferences(Arg.Any<string>(), Arg.Any<string>())
             .Returns(ci => new PageDifferenceResult(new[] { "001.png" }, Array.Empty<string>()));
 
-        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _taskQueue,
+        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _chapterRecognition, _taskQueue,
             NullLogger<LibraryIntegrityChecker>.Instance, _options);
 
         bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
@@ -519,7 +523,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         _metadata.GetSeriesAndTitleFromComicInfo(Arg.Any<string>())
             .Returns(new ExtractedMetadata("Series", "Ch1", null));
 
-        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _taskQueue,
+        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _chapterRecognition, _taskQueue,
             NullLogger<LibraryIntegrityChecker>.Instance, _options);
 
         bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
@@ -581,7 +585,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         _metadata.AnalyzePageDifferences(Arg.Any<string>(), Arg.Any<string>())
             .Returns(ci => new PageDifferenceResult(Array.Empty<string>(), new[] { "extra.png" }));
 
-        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _taskQueue,
+        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _chapterRecognition, _taskQueue,
             NullLogger<LibraryIntegrityChecker>.Instance, _options);
 
         bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
@@ -624,7 +628,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         ctx.Libraries.Add(lib);
         await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _taskQueue,
+        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _chapterRecognition, _taskQueue,
             NullLogger<LibraryIntegrityChecker>.Instance, _options);
 
         bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
@@ -635,6 +639,72 @@ public class LibraryIntegrityCheckerTests : IDisposable
         Assert.Null(inDb);
         Assert.False(File.Exists(Path.Combine(lib.UpscaledLibraryPath!, rel)));
         await _taskQueue.DidNotReceiveWithAnyArgs().EnqueueAsync<RepairUpscaleTask>(default!);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task CheckIntegrity_OrphanedFile_CreatesChapterEntity()
+    {
+        using ApplicationDbContext ctx = _db.CreateContext();
+
+        string temp = Directory.CreateTempSubdirectory().FullName;
+        var lib = new Library
+        {
+            Name = "TestLib",
+            NotUpscaledLibraryPath = temp,
+            IngestPath = temp
+        };
+        ctx.Libraries.Add(lib);
+
+        // Create manga series
+        var manga = new Manga
+        {
+            PrimaryTitle = "Test Series",
+            LibraryId = lib.Id,
+            Library = lib
+        };
+        ctx.MangaSeries.Add(manga);
+        await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Create an orphaned file (file exists but no chapter entity)
+        string testFileName = "Chapter 001.cbz";
+        string testRelativePath = Path.Join("Test Series", testFileName);
+        string testFullPath = Path.Combine(temp, testRelativePath);
+        
+        Directory.CreateDirectory(Path.GetDirectoryName(testFullPath)!);
+        await File.WriteAllTextAsync(testFullPath, "test content", TestContext.Current.CancellationToken);
+
+        // Setup mock to return the found chapter
+        var foundChapter = new MangaIngestWithUpscaling.Shared.Services.ChapterRecognition.FoundChapter(
+            testFileName,
+            testRelativePath,
+            MangaIngestWithUpscaling.Shared.Services.ChapterRecognition.ChapterStorageType.Cbz,
+            new MangaIngestWithUpscaling.Shared.Services.MetadataHandling.ExtractedMetadata("Test Series", "Chapter 001", "001")
+        );
+
+        _chapterRecognition.FindAllChaptersAt(temp, null, Arg.Any<CancellationToken>())
+            .Returns(new[] { foundChapter }.ToAsyncEnumerable());
+
+        // Initially no chapters should exist
+        Assert.Equal(0, await ctx.Chapters.CountAsync(TestContext.Current.CancellationToken));
+
+        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _chapterRecognition, _taskQueue,
+            NullLogger<LibraryIntegrityChecker>.Instance, _options);
+
+        bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
+
+        // Should have detected and created the missing chapter entity
+        Assert.True(changed);
+        Assert.Equal(1, await ctx.Chapters.CountAsync(TestContext.Current.CancellationToken));
+        
+        var createdChapter = await ctx.Chapters.FirstAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(testFileName, createdChapter.FileName);
+        Assert.Equal(testRelativePath, createdChapter.RelativePath);
+        Assert.Equal(manga.Id, createdChapter.MangaId);
+        Assert.False(createdChapter.IsUpscaled);
+
+        // Clean up
+        Directory.Delete(temp, true);
     }
 
     private sealed class TestDbContextFactory : IDbContextFactory<ApplicationDbContext>
