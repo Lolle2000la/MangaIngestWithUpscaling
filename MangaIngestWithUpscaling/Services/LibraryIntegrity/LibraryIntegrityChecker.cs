@@ -371,7 +371,7 @@ public class LibraryIntegrityChecker(
             }
 
 
-            if (metadataHandling.PagesEqual(chapter.NotUpscaledFullPath, chapter.UpscaledFullPath))
+            if (await metadataHandling.PagesEqualAsync(chapter.NotUpscaledFullPath, chapter.UpscaledFullPath))
             {
                 ExtractedMetadata metadata =
                     await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(chapter.UpscaledFullPath);

@@ -85,7 +85,7 @@ public class UpscaleTask : BaseTask
 
         if (chapter.IsUpscaled && (!UpdateIfProfileNew || chapter.UpscalerProfile?.Id == upscalerProfile.Id))
         {
-            if (metadataHandling.PagesEqual(currentStoragePath, upscaleTargetPath))
+            if (await metadataHandling.PagesEqualAsync(currentStoragePath, upscaleTargetPath))
             {
                 logger.LogInformation(
                     "Chapter \"{chapterFileName}\" of {seriesTitle} is already upscaled with {upscalerProfileName}",

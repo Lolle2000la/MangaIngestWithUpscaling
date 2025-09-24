@@ -267,7 +267,8 @@ public class DistributedUpscaleTaskProcessor(
                         {
                             var metadataHandling =
                                 scope.ServiceProvider.GetRequiredService<IMetadataHandlingService>();
-                            if (metadataHandling.PagesEqual(chapter.NotUpscaledFullPath, chapter.UpscaledFullPath))
+                            if (await metadataHandling.PagesEqualAsync(chapter.NotUpscaledFullPath,
+                                    chapter.UpscaledFullPath))
                             {
                                 task.Status = PersistedTaskStatus.Completed;
                                 task.ProcessedAt = DateTime.UtcNow;

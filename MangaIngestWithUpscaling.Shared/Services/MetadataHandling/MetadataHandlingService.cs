@@ -78,7 +78,7 @@ public class MetadataHandlingService(
 
 
     /// <inheritdoc/>
-    public bool PagesEqual(string? file1, string? file2)
+    public async Task<bool> PagesEqualAsync(string? file1, string? file2)
     {
         if (string.IsNullOrEmpty(file1) || string.IsNullOrEmpty(file2)) return false;
 
@@ -89,8 +89,8 @@ public class MetadataHandlingService(
 
         try
         {
-            using var archive1 = ZipFile.OpenRead(file1);
-            using var archive2 = ZipFile.OpenRead(file2);
+            await using ZipArchive archive1 = await ZipFile.OpenReadAsync(file1);
+            await using ZipArchive archive2 = await ZipFile.OpenReadAsync(file2);
 
             var files1 = archive1.Entries
                 .Where(e => ImageConstants.IsSupportedImageExtension(

@@ -69,7 +69,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         ctx.Libraries.Add(lib);
         await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        _metadata.PagesEqual(Arg.Any<string>(), Arg.Any<string>()).Returns(true);
+        _metadata.PagesEqualAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(true));
         // Provide valid metadata and allow WriteComicInfo to be called (no-op)
         _metadata.GetSeriesAndTitleFromComicInfoAsync(Arg.Any<string>())
             .Returns(Task.FromResult(new ExtractedMetadata("Series", "Ch1", null)));
@@ -136,7 +136,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         ctx.PersistedTasks.Add(existingUpscale);
         await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        _metadata.PagesEqual(Arg.Any<string>(), Arg.Any<string>()).Returns(false);
+        _metadata.PagesEqualAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(false));
 
         var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _taskQueue,
             NullLogger<LibraryIntegrityChecker>.Instance, _options);
@@ -228,7 +228,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Stub metadata handling
-        _metadata.PagesEqual(Arg.Any<string>(), Arg.Any<string>()).Returns(true);
+        _metadata.PagesEqualAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(true));
         _metadata.GetSeriesAndTitleFromComicInfoAsync(Arg.Any<string>())
             .Returns(new ExtractedMetadata("Series", "Ch1", null));
 
@@ -280,7 +280,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Stub so that upscaled is considered valid and metadata OK
-        _metadata.PagesEqual(Arg.Any<string>(), Arg.Any<string>()).Returns(true);
+        _metadata.PagesEqualAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(true));
         _metadata.GetSeriesAndTitleFromComicInfoAsync(Arg.Any<string>())
             .Returns(new ExtractedMetadata("Series", "Ch", null));
 
@@ -351,7 +351,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Pages differ, but can repair
-        _metadata.PagesEqual(Arg.Any<string>(), Arg.Any<string>()).Returns(false);
+        _metadata.PagesEqualAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(false));
         _metadata.GetSeriesAndTitleFromComicInfoAsync(Arg.Any<string>())
             .Returns(new ExtractedMetadata("Series", "Ch1", null));
         _metadata.AnalyzePageDifferences(Arg.Any<string>(), Arg.Any<string>())
@@ -402,7 +402,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Pages differ and cannot repair (simulate by throwing from analyze or returning differences and then exception path triggers deletion)
-        _metadata.PagesEqual(Arg.Any<string>(), Arg.Any<string>()).Returns(false);
+        _metadata.PagesEqualAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(false));
         _metadata.GetSeriesAndTitleFromComicInfoAsync(Arg.Any<string>())
             .Returns(new ExtractedMetadata("Series", "Ch1", null));
         _metadata.AnalyzePageDifferences(Arg.Any<string>(), Arg.Any<string>())
@@ -469,7 +469,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         ctx.PersistedTasks.Add(existing);
         await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        _metadata.PagesEqual(Arg.Any<string>(), Arg.Any<string>()).Returns(false);
+        _metadata.PagesEqualAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(false));
         _metadata.AnalyzePageDifferences(Arg.Any<string>(), Arg.Any<string>())
             .Returns(ci => new PageDifferenceResult(new[] { "001.png" }, Array.Empty<string>()));
 
@@ -575,7 +575,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Differences are repairable (extras can be removed)
-        _metadata.PagesEqual(Arg.Any<string>(), Arg.Any<string>()).Returns(false);
+        _metadata.PagesEqualAsync(Arg.Any<string>(), Arg.Any<string>()).Returns(Task.FromResult(false));
         _metadata.GetSeriesAndTitleFromComicInfoAsync(Arg.Any<string>())
             .Returns(new ExtractedMetadata("Series", "Ch1", null));
         _metadata.AnalyzePageDifferences(Arg.Any<string>(), Arg.Any<string>())
