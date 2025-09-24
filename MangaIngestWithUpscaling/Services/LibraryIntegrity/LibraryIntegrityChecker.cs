@@ -290,13 +290,14 @@ public class LibraryIntegrityChecker(
             }
         }
 
-        var metadata = metadataHandling.GetSeriesAndTitleFromComicInfo(chapter.NotUpscaledFullPath);
+        ExtractedMetadata metadata =
+            await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(chapter.NotUpscaledFullPath);
         if (!CheckMetadata(metadata, out var correctedMetadata))
         {
             logger.LogWarning(
                 "Metadata of chapter {chapterFileName} ({chapterId}) of {seriesTitle} is incorrect. Correcting.",
                 chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
-            metadataHandling.WriteComicInfo(chapter.NotUpscaledFullPath, correctedMetadata);
+            await metadataHandling.WriteComicInfoAsync(chapter.NotUpscaledFullPath, correctedMetadata);
             return IntegrityCheckResult.Corrected;
         }
 
@@ -372,13 +373,14 @@ public class LibraryIntegrityChecker(
 
             if (metadataHandling.PagesEqual(chapter.NotUpscaledFullPath, chapter.UpscaledFullPath))
             {
-                var metadata = metadataHandling.GetSeriesAndTitleFromComicInfo(chapter.UpscaledFullPath);
+                ExtractedMetadata metadata =
+                    await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(chapter.UpscaledFullPath);
                 if (!CheckMetadata(metadata, out var correctedMetadata))
                 {
                     logger.LogWarning(
                         "Metadata of upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle} is incorrect. Correcting.",
                         chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
-                    metadataHandling.WriteComicInfo(chapter.UpscaledFullPath, correctedMetadata);
+                    await metadataHandling.WriteComicInfoAsync(chapter.UpscaledFullPath, correctedMetadata);
                 }
 
                 if (chapter.IsUpscaled)

@@ -138,7 +138,7 @@ public class RepairUpscaleTask : BaseTask
         await dbContext.Entry(chapter.Manga).ReloadAsync();
 
         // Apply any title changes
-        metadataChanger.ApplyMangaTitleToUpscaled(chapter, chapter.Manga.PrimaryTitle, upscaleTargetPath);
+        await metadataChanger.ApplyMangaTitleToUpscaledAsync(chapter, chapter.Manga.PrimaryTitle, upscaleTargetPath);
     }
 
     private async Task PerformRepair(

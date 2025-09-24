@@ -204,7 +204,7 @@ public class ChapterMergeCoordinator(
             .ToHashSet();
 
         // Convert chapters to FoundChapter format for merging
-        List<FoundChapter> foundChapters = ConvertChaptersToFoundChapters(chapters);
+        List<FoundChapter> foundChapters = await ConvertChaptersToFoundChapters(chapters);
 
         // Perform the merge using ChapterPartMerger
         ChapterMergeResult mergeResult = await chapterPartMerger.ProcessExistingChapterPartsAsync(
@@ -270,7 +270,7 @@ public class ChapterMergeCoordinator(
             .ToHashSet();
 
         // Convert selected chapters to FoundChapter format for processing
-        List<FoundChapter> foundChapters = ConvertChaptersToFoundChapters(selectedChapters);
+        List<FoundChapter> foundChapters = await ConvertChaptersToFoundChapters(selectedChapters);
 
         // Group chapters for merging, respecting latest chapter inclusion setting
         Dictionary<string, List<FoundChapter>> mergeGroups = chapterPartMerger.GroupChapterPartsForMerging(
@@ -391,7 +391,7 @@ public class ChapterMergeCoordinator(
             .ToHashSet();
 
         // Convert selected chapters to FoundChapter format for validation
-        List<FoundChapter> foundChapters = ConvertChaptersToFoundChapters(selectedChapters);
+        List<FoundChapter> foundChapters = await ConvertChaptersToFoundChapters(selectedChapters);
 
         // Group chapters for merging
         Dictionary<string, List<FoundChapter>> foundChapterGroups = chapterPartMerger.GroupChapterPartsForMerging(
@@ -493,7 +493,7 @@ public class ChapterMergeCoordinator(
             existingMergedBaseNumbers.Count, string.Join(", ", existingMergedBaseNumbers));
 
         // Convert chapters to FoundChapter format for processing
-        List<FoundChapter> foundChapters = ConvertChaptersToFoundChapters(chapters);
+        List<FoundChapter> foundChapters = await ConvertChaptersToFoundChapters(chapters);
 
         logger.LogDebug(
             "GetPossibleMergeActionsAsync: Converted to {FoundChapterCount} FoundChapters: [{FoundChapterNames}]",
@@ -599,7 +599,7 @@ public class ChapterMergeCoordinator(
                 baseChapterNumber));
     }
 
-    private ExtractedMetadata GetChapterMetadata(Chapter chapter)
+    private async Task<ExtractedMetadata> GetChapterMetadata(Chapter chapter)
     {
         try
         {
@@ -616,7 +616,8 @@ public class ChapterMergeCoordinator(
             }
 
             // Use MetadataHandlingService to extract the actual metadata from ComicInfo.xml
-            ExtractedMetadata fileMetadata = metadataHandlingService.GetSeriesAndTitleFromComicInfo(fullPath);
+            ExtractedMetadata fileMetadata =
+                await metadataHandlingService.GetSeriesAndTitleFromComicInfoAsync(fullPath);
 
             // Use the file's metadata but override the series with the manga's primary title
             return fileMetadata with { Series = chapter.Manga.PrimaryTitle! };
@@ -1252,14 +1253,14 @@ public class ChapterMergeCoordinator(
     /// <summary>
     /// Converts Chapter entities to FoundChapter objects for processing.
     /// </summary>
-    private List<FoundChapter> ConvertChaptersToFoundChapters(List<Chapter> chapters)
+    private async Task<List<FoundChapter>> ConvertChaptersToFoundChapters(List<Chapter> chapters)
     {
-        return chapters.Select(c => new FoundChapter(
+        return (await Task.WhenAll(chapters.Select<Chapter, Task<FoundChapter>>(async c => new FoundChapter(
             c.FileName,
             Path.GetFileName(c.RelativePath),
             ChapterStorageType.Cbz,
-            GetChapterMetadata(c)
-        )).ToList();
+            await GetChapterMetadata(c)
+        )))).ToList();
     }
 
     /// <summary>

@@ -537,7 +537,7 @@ public class DistributedUpscaleTaskProcessor(
 
                 // Apply any title changes that happened in the meantime
                 var metadataChanger = services.GetRequiredService<IMangaMetadataChanger>();
-                metadataChanger.ApplyMangaTitleToUpscaled(chapter, chapter.Manga.PrimaryTitle, upscaledPath);
+                await metadataChanger.ApplyMangaTitleToUpscaledAsync(chapter, chapter.Manga.PrimaryTitle, upscaledPath);
 
                 return true;
             }

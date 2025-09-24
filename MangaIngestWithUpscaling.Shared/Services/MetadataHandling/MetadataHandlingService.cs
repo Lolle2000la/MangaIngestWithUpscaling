@@ -9,18 +9,18 @@ namespace MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 public class MetadataHandlingService(
     ILogger<MetadataHandlingService> logger) : IMetadataHandlingService
 {
-    public ExtractedMetadata GetSeriesAndTitleFromComicInfo(string file)
+    public async Task<ExtractedMetadata> GetSeriesAndTitleFromComicInfoAsync(string file)
     {
         var title = string.Empty;
         var series = string.Empty;
         var number = string.Empty;
         if (file.EndsWith(".cbz"))
         {
-            using var archive = ZipFile.OpenRead(file);
+            await using ZipArchive archive = await ZipFile.OpenReadAsync(file);
             var comicInfoEntry = archive.GetEntry("ComicInfo.xml");
             if (comicInfoEntry != null)
             {
-                using var stream = comicInfoEntry.Open();
+                await using Stream stream = await comicInfoEntry.OpenAsync();
                 var document = XDocument.Load(stream);
                 if (document.Root == null)
                 {
@@ -180,13 +180,13 @@ public class MetadataHandlingService(
         }
     }
 
-    public void WriteComicInfo(string file, ExtractedMetadata metadata)
+    public async Task WriteComicInfoAsync(string file, ExtractedMetadata metadata)
     {
         metadata = metadata.CheckAndCorrect();
         if (file.EndsWith(".cbz"))
         {
-            using var archive = ZipFile.Open(file, ZipArchiveMode.Update);
-            WriteComicInfo(archive, metadata);
+            await using ZipArchive archive = await ZipFile.OpenAsync(file, ZipArchiveMode.Update);
+            await WriteComicInfoAsync(archive, metadata);
         }
         else if (file.EndsWith("ComicInfo.xml"))
         {
@@ -201,7 +201,7 @@ public class MetadataHandlingService(
     /// </summary>
     /// <param name="archive">The ZIP archive to write to</param>
     /// <param name="metadata">The metadata to write</param>
-    public void WriteComicInfo(ZipArchive archive, ExtractedMetadata metadata)
+    public async Task WriteComicInfoAsync(ZipArchive archive, ExtractedMetadata metadata)
     {
         metadata = metadata.CheckAndCorrect();
 
@@ -213,7 +213,7 @@ public class MetadataHandlingService(
         if (comicInfoEntry != null)
         {
             // Updating existing ComicInfo.xml in Update mode
-            using Stream stream = comicInfoEntry.Open();
+            await using Stream stream = await comicInfoEntry.OpenAsync();
             XDocument document = XDocument.Load(stream);
             WriteMetadataToXmlDoc(document, metadata);
             stream.Seek(0, SeekOrigin.Begin);
@@ -224,7 +224,7 @@ public class MetadataHandlingService(
         {
             // Creating new ComicInfo.xml (works in both Create and Update modes)
             ZipArchiveEntry entry = archive.CreateEntry("ComicInfo.xml");
-            using Stream stream = entry.Open();
+            await using Stream stream = await entry.OpenAsync();
             var document = new XDocument(
                 new XElement("ComicInfo",
                     new XElement("Title", metadata.ChapterTitle),

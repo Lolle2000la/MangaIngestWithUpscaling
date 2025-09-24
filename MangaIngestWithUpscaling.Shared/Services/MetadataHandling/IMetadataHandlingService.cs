@@ -4,9 +4,9 @@ namespace MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 
 public interface IMetadataHandlingService
 {
-    ExtractedMetadata GetSeriesAndTitleFromComicInfo(string file);
-    void WriteComicInfo(string file, ExtractedMetadata metadata);
-    void WriteComicInfo(ZipArchive archive, ExtractedMetadata metadata);
+    Task<ExtractedMetadata> GetSeriesAndTitleFromComicInfoAsync(string file);
+    Task WriteComicInfoAsync(string file, ExtractedMetadata metadata);
+    Task WriteComicInfoAsync(ZipArchive archive, ExtractedMetadata metadata);
 
     /// <summary>
     /// Compares two pages to see if they are equal.

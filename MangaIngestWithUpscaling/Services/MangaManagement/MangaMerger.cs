@@ -91,7 +91,7 @@ public class MangaMerger(
                 ExtractedMetadata? existingMetadata = null;
                 try
                 {
-                    existingMetadata = metadataHandling.GetSeriesAndTitleFromComicInfo(chapterPath);
+                    existingMetadata = await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(chapterPath);
                 }
                 catch (Exception ex)
                 {
@@ -235,7 +235,7 @@ public class MangaMerger(
                     }
 
                     // Update metadata in the source file before moving
-                    metadataHandling.WriteComicInfo(chapterMove.SourcePath,
+                    await metadataHandling.WriteComicInfoAsync(chapterMove.SourcePath,
                         chapterMove.ExistingMetadata with { Series = primary.PrimaryTitle });
 
                     // Move the main chapter file
@@ -247,7 +247,8 @@ public class MangaMerger(
                     {
                         try
                         {
-                            metadataChanger.ApplyMangaTitleToUpscaled(chapterMove.Chapter, primary.PrimaryTitle!,
+                            await metadataChanger.ApplyMangaTitleToUpscaledAsync(chapterMove.Chapter,
+                                primary.PrimaryTitle!,
                                 chapterMove.UpscaledSourcePath);
                         }
                         catch (Exception ex)

@@ -660,7 +660,7 @@ public partial class ChapterPartMerger(
             }
 
             // Update the merged CBZ's ComicInfo.xml with the target metadata
-            metadataHandling.WriteComicInfo(tempMergedFilePath, targetMetadata);
+            await metadataHandling.WriteComicInfoAsync(tempMergedFilePath, targetMetadata);
 
             // Ensure the output directory exists
             Directory.CreateDirectory(outputPath);
@@ -785,7 +785,7 @@ public partial class ChapterPartMerger(
                     else
                     {
                         // Fallback to generating ComicInfo.xml from basic metadata (backward compatibility)
-                        metadataHandling.WriteComicInfo(partArchive, originalPart.Metadata);
+                        await metadataHandling.WriteComicInfoAsync(partArchive, originalPart.Metadata);
                         logger.LogDebug(
                             "Generated ComicInfo.xml from basic metadata for {FileName} (legacy compatibility)",
                             originalPart.FileName);
