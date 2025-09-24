@@ -26,14 +26,16 @@ public partial class ChapterPartMerger(
             string? chapterNumber = ExtractChapterNumber(chapter);
             if (chapterNumber == null)
             {
-                logger.LogDebug("GroupChapterPartsForMerging: Skipping {FileName} - no chapter number extracted", chapter.FileName);
+                logger.LogDebug("GroupChapterPartsForMerging: Skipping {FileName} - no chapter number extracted",
+                    chapter.FileName);
                 continue;
             }
 
             string? baseNumber = ExtractBaseChapterNumber(chapterNumber);
             if (baseNumber == null)
             {
-                logger.LogDebug("GroupChapterPartsForMerging: Skipping {FileName} (chapter {ChapterNumber}) - no base number extracted", 
+                logger.LogDebug(
+                    "GroupChapterPartsForMerging: Skipping {FileName} (chapter {ChapterNumber}) - no base number extracted",
                     chapter.FileName, chapterNumber);
                 continue;
             }
@@ -41,7 +43,8 @@ public partial class ChapterPartMerger(
             // Don't merge if this is the latest chapter
             if (isLastChapter(baseNumber))
             {
-                logger.LogDebug("GroupChapterPartsForMerging: Skipping {FileName} (chapter {ChapterNumber}, base {BaseNumber}) - is latest chapter", 
+                logger.LogDebug(
+                    "GroupChapterPartsForMerging: Skipping {FileName} (chapter {ChapterNumber}, base {BaseNumber}) - is latest chapter",
                     chapter.FileName, chapterNumber, baseNumber);
                 continue;
             }
@@ -52,7 +55,8 @@ public partial class ChapterPartMerger(
             }
 
             result[baseNumber].Add(chapter);
-            logger.LogDebug("GroupChapterPartsForMerging: Added {FileName} (chapter {ChapterNumber}) to base group {BaseNumber}", 
+            logger.LogDebug(
+                "GroupChapterPartsForMerging: Added {FileName} (chapter {ChapterNumber}) to base group {BaseNumber}",
                 chapter.FileName, chapterNumber, baseNumber);
         }
 
@@ -60,7 +64,8 @@ public partial class ChapterPartMerger(
         var filteredResult = result.Where(kvp => kvp.Value.Count > 1 && AreConsecutiveChapterParts(kvp.Value, kvp.Key))
             .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
 
-        logger.LogDebug("GroupChapterPartsForMerging: Initial groups: {InitialCount}, After filtering: {FilteredCount}. Groups: [{Groups}]",
+        logger.LogDebug(
+            "GroupChapterPartsForMerging: Initial groups: {InitialCount}, After filtering: {FilteredCount}. Groups: [{Groups}]",
             result.Count, filteredResult.Count, string.Join(", ", filteredResult.Keys));
 
         return filteredResult;
@@ -81,7 +86,8 @@ public partial class ChapterPartMerger(
     {
         var result = new Dictionary<string, List<FoundChapter>>();
 
-        logger.LogDebug("GroupChaptersForAdditionToExistingMerged: Processing {ChapterCount} chapters, {ExistingMergedCount} existing merged base numbers: [{ExistingMerged}]",
+        logger.LogDebug(
+            "GroupChaptersForAdditionToExistingMerged: Processing {ChapterCount} chapters, {ExistingMergedCount} existing merged base numbers: [{ExistingMerged}]",
             chapters.Count(), existingMergedBaseNumbers.Count, string.Join(", ", existingMergedBaseNumbers));
 
         foreach (FoundChapter chapter in chapters)
@@ -89,14 +95,17 @@ public partial class ChapterPartMerger(
             string? chapterNumber = ExtractChapterNumber(chapter);
             if (chapterNumber == null)
             {
-                logger.LogDebug("GroupChaptersForAdditionToExistingMerged: Skipping {FileName} - no chapter number extracted", chapter.FileName);
+                logger.LogDebug(
+                    "GroupChaptersForAdditionToExistingMerged: Skipping {FileName} - no chapter number extracted",
+                    chapter.FileName);
                 continue;
             }
 
             string? baseNumber = ExtractBaseChapterNumber(chapterNumber);
             if (baseNumber == null)
             {
-                logger.LogDebug("GroupChaptersForAdditionToExistingMerged: Skipping {FileName} (chapter {ChapterNumber}) - no base number extracted", 
+                logger.LogDebug(
+                    "GroupChaptersForAdditionToExistingMerged: Skipping {FileName} (chapter {ChapterNumber}) - no base number extracted",
                     chapter.FileName, chapterNumber);
                 continue;
             }
@@ -104,7 +113,8 @@ public partial class ChapterPartMerger(
             // Only consider chapters whose base number matches an existing merged chapter
             if (!existingMergedBaseNumbers.Contains(baseNumber))
             {
-                logger.LogDebug("GroupChaptersForAdditionToExistingMerged: Skipping {FileName} (chapter {ChapterNumber}, base {BaseNumber}) - base number not in existing merged chapters", 
+                logger.LogDebug(
+                    "GroupChaptersForAdditionToExistingMerged: Skipping {FileName} (chapter {ChapterNumber}, base {BaseNumber}) - base number not in existing merged chapters",
                     chapter.FileName, chapterNumber, baseNumber);
                 continue;
             }
@@ -112,7 +122,8 @@ public partial class ChapterPartMerger(
             // Don't merge if this is the latest chapter
             if (isLastChapter(baseNumber))
             {
-                logger.LogDebug("GroupChaptersForAdditionToExistingMerged: Skipping {FileName} (chapter {ChapterNumber}, base {BaseNumber}) - is latest chapter", 
+                logger.LogDebug(
+                    "GroupChaptersForAdditionToExistingMerged: Skipping {FileName} (chapter {ChapterNumber}, base {BaseNumber}) - is latest chapter",
                     chapter.FileName, chapterNumber, baseNumber);
                 continue;
             }
@@ -120,7 +131,8 @@ public partial class ChapterPartMerger(
             // Validate that this is a proper chapter part (has decimal part)
             if (!IsChapterPart(chapterNumber, baseNumber))
             {
-                logger.LogDebug("GroupChaptersForAdditionToExistingMerged: Skipping {FileName} (chapter {ChapterNumber}, base {BaseNumber}) - not a valid chapter part", 
+                logger.LogDebug(
+                    "GroupChaptersForAdditionToExistingMerged: Skipping {FileName} (chapter {ChapterNumber}, base {BaseNumber}) - not a valid chapter part",
                     chapter.FileName, chapterNumber, baseNumber);
                 continue;
             }
@@ -131,11 +143,13 @@ public partial class ChapterPartMerger(
             }
 
             result[baseNumber].Add(chapter);
-            logger.LogDebug("GroupChaptersForAdditionToExistingMerged: Added {FileName} (chapter {ChapterNumber}) to existing merged base group {BaseNumber}", 
+            logger.LogDebug(
+                "GroupChaptersForAdditionToExistingMerged: Added {FileName} (chapter {ChapterNumber}) to existing merged base group {BaseNumber}",
                 chapter.FileName, chapterNumber, baseNumber);
         }
 
-        logger.LogDebug("GroupChaptersForAdditionToExistingMerged: Found {GroupCount} groups for addition to existing merged chapters: [{Groups}]",
+        logger.LogDebug(
+            "GroupChaptersForAdditionToExistingMerged: Found {GroupCount} groups for addition to existing merged chapters: [{Groups}]",
             result.Count, string.Join(", ", result.Keys));
 
         return result;
@@ -454,8 +468,9 @@ public partial class ChapterPartMerger(
                             ChapterNumber = chapterNumber,
                             Metadata = chapterPart.Metadata,
                             PageNames = new List<string>(), // Will be populated when actually processing the file
-                            StartPageIndex = 0, // Will be set by the coordinator when actually adding to the merged file
-                            EndPageIndex = 0  // Will be set by the coordinator when actually adding to the merged file
+                            StartPageIndex =
+                                0, // Will be set by the coordinator when actually adding to the merged file
+                            EndPageIndex = 0 // Will be set by the coordinator when actually adding to the merged file
                         });
                     }
 
@@ -549,7 +564,8 @@ public partial class ChapterPartMerger(
             logger.LogDebug("Created temporary merge directory: {TempDirectory}", tempDirectory);
 
             // Create the merged CBZ file in temporary location
-            using (ZipArchive mergedArchive = ZipFile.Open(tempMergedFilePath, ZipArchiveMode.Create))
+            await using (ZipArchive mergedArchive =
+                         await ZipFile.OpenAsync(tempMergedFilePath, ZipArchiveMode.Create, cancellationToken))
             {
                 int pageCounter = 0;
 
@@ -561,7 +577,7 @@ public partial class ChapterPartMerger(
                     int startPageIndex = pageCounter;
 
                     // Read pages from the part's CBZ file
-                    using (ZipArchive partArchive = ZipFile.OpenRead(partPath))
+                    await using (ZipArchive partArchive = await ZipFile.OpenReadAsync(partPath, cancellationToken))
                     {
                         // Get image entries, sorted by name for consistent ordering
                         List<ZipArchiveEntry> imageEntries = partArchive.Entries
@@ -577,8 +593,8 @@ public partial class ChapterPartMerger(
 
                             // Copy the image to the merged archive
                             ZipArchiveEntry newEntry = mergedArchive.CreateEntry(newPageName);
-                            using (Stream originalStream = entry.Open())
-                            using (Stream newStream = newEntry.Open())
+                            await using (Stream originalStream = await entry.OpenAsync(cancellationToken))
+                            await using (Stream newStream = await newEntry.OpenAsync(cancellationToken))
                             {
                                 await originalStream.CopyToAsync(newStream, cancellationToken);
                             }
@@ -591,8 +607,8 @@ public partial class ChapterPartMerger(
                         if (comicInfoEntry != null && originalParts.Count == 0) // Only copy from first part
                         {
                             ZipArchiveEntry newComicInfo = mergedArchive.CreateEntry("ComicInfo.xml");
-                            using (Stream originalStream = comicInfoEntry.Open())
-                            using (Stream newStream = newComicInfo.Open())
+                            await using (Stream originalStream = await comicInfoEntry.OpenAsync(cancellationToken))
+                            await using (Stream newStream = await newComicInfo.OpenAsync(cancellationToken))
                             {
                                 await originalStream.CopyToAsync(newStream, cancellationToken);
                             }
@@ -602,30 +618,34 @@ public partial class ChapterPartMerger(
                     // Store original part information including raw ComicInfo.xml
                     string chapterNumber = ExtractChapterNumber(part) ?? baseChapterNumber;
                     string? originalComicInfoXml = null;
-                    
+
                     // Extract raw ComicInfo.xml for complete preservation
                     try
                     {
-                        using (ZipArchive partArchive = ZipFile.OpenRead(partPath))
+                        await using (ZipArchive partArchive = await ZipFile.OpenReadAsync(partPath, cancellationToken))
                         {
                             ZipArchiveEntry? comicInfoEntry = partArchive.GetEntry("ComicInfo.xml");
                             if (comicInfoEntry != null)
                             {
-                                using (Stream stream = comicInfoEntry.Open())
+                                await using (Stream stream = await comicInfoEntry.OpenAsync(cancellationToken))
                                 using (var reader = new StreamReader(stream))
                                 {
-                                    originalComicInfoXml = await reader.ReadToEndAsync();
+                                    originalComicInfoXml = await reader.ReadToEndAsync(cancellationToken);
                                 }
-                                logger.LogDebug("Captured original ComicInfo.xml for part {FileName} ({Length} characters)", 
+
+                                logger.LogDebug(
+                                    "Captured original ComicInfo.xml for part {FileName} ({Length} characters)",
                                     part.FileName, originalComicInfoXml.Length);
                             }
                         }
                     }
                     catch (Exception ex)
                     {
-                        logger.LogWarning(ex, "Failed to extract ComicInfo.xml from {FileName} - will use basic metadata only", part.FileName);
+                        logger.LogWarning(ex,
+                            "Failed to extract ComicInfo.xml from {FileName} - will use basic metadata only",
+                            part.FileName);
                     }
-                    
+
                     originalParts.Add(new OriginalChapterPart
                     {
                         FileName = part.FileName,
@@ -694,14 +714,15 @@ public partial class ChapterPartMerger(
     {
         var restoredChapters = new List<FoundChapter>();
 
-        using (ZipArchive mergedArchive = ZipFile.OpenRead(mergedChapterPath))
+        await using (ZipArchive mergedArchive = await ZipFile.OpenReadAsync(mergedChapterPath, cancellationToken))
         {
             foreach (OriginalChapterPart originalPart in originalParts)
             {
                 string partPath = Path.Combine(outputDirectory, originalPart.FileName);
 
                 // Create the individual part CBZ
-                using (ZipArchive partArchive = ZipFile.Open(partPath, ZipArchiveMode.Create))
+                await using (ZipArchive partArchive =
+                             await ZipFile.OpenAsync(partPath, ZipArchiveMode.Create, cancellationToken))
                 {
                     // Extract pages for this part
                     for (int i = originalPart.StartPageIndex; i <= originalPart.EndPageIndex; i++)
@@ -713,27 +734,29 @@ public partial class ChapterPartMerger(
                             // Restore original page name if available (backward compatibility for legacy records)
                             string originalPageName;
                             int pageIndexWithinPart = i - originalPart.StartPageIndex;
-                            
-                            if (originalPart.PageNames != null && 
-                                pageIndexWithinPart >= 0 && 
+
+                            if (originalPart.PageNames != null &&
+                                pageIndexWithinPart >= 0 &&
                                 pageIndexWithinPart < originalPart.PageNames.Count)
                             {
                                 // Use original page name from stored metadata
                                 originalPageName = originalPart.PageNames[pageIndexWithinPart];
-                                logger.LogDebug("Using stored original page name: {PageName} for page index {PageIndex}", 
+                                logger.LogDebug(
+                                    "Using stored original page name: {PageName} for page index {PageIndex}",
                                     originalPageName, i);
                             }
                             else
                             {
                                 // Fallback for legacy records without PageNames or incomplete data
                                 originalPageName = $"{pageIndexWithinPart:D4}{Path.GetExtension(mergedEntry.Name)}";
-                                logger.LogDebug("Using generated page name: {PageName} for page index {PageIndex} (legacy compatibility)", 
+                                logger.LogDebug(
+                                    "Using generated page name: {PageName} for page index {PageIndex} (legacy compatibility)",
                                     originalPageName, i);
                             }
 
                             ZipArchiveEntry partEntry = partArchive.CreateEntry(originalPageName);
-                            using (Stream mergedStream = mergedEntry.Open())
-                            using (Stream partStream = partEntry.Open())
+                            await using (Stream mergedStream = await mergedEntry.OpenAsync(cancellationToken))
+                            await using (Stream partStream = await partEntry.OpenAsync(cancellationToken))
                             {
                                 await mergedStream.CopyToAsync(partStream, cancellationToken);
                             }
@@ -750,19 +773,21 @@ public partial class ChapterPartMerger(
                     {
                         // Use the complete original ComicInfo.xml content for full metadata preservation
                         ZipArchiveEntry comicInfoEntry = partArchive.CreateEntry("ComicInfo.xml");
-                        using (Stream comicInfoStream = comicInfoEntry.Open())
-                        using (var writer = new StreamWriter(comicInfoStream))
+                        await using (Stream comicInfoStream = await comicInfoEntry.OpenAsync(cancellationToken))
+                        await using (var writer = new StreamWriter(comicInfoStream))
                         {
                             await writer.WriteAsync(originalPart.OriginalComicInfoXml);
                         }
-                        logger.LogDebug("Restored original ComicInfo.xml for {FileName} ({Length} characters)", 
+
+                        logger.LogDebug("Restored original ComicInfo.xml for {FileName} ({Length} characters)",
                             originalPart.FileName, originalPart.OriginalComicInfoXml.Length);
                     }
                     else
                     {
                         // Fallback to generating ComicInfo.xml from basic metadata (backward compatibility)
                         metadataHandling.WriteComicInfo(partArchive, originalPart.Metadata);
-                        logger.LogDebug("Generated ComicInfo.xml from basic metadata for {FileName} (legacy compatibility)", 
+                        logger.LogDebug(
+                            "Generated ComicInfo.xml from basic metadata for {FileName} (legacy compatibility)",
                             originalPart.FileName);
                     }
                 }
@@ -812,19 +837,21 @@ public partial class ChapterPartMerger(
         foreach (string format in possibleFormats)
         {
             ZipArchiveEntry? entry = imageEntries
-                .FirstOrDefault(e => e.Name.StartsWith(format + ".") || 
+                .FirstOrDefault(e => e.Name.StartsWith(format + ".") ||
                                      e.Name.StartsWith(format + "_") ||
-                                     e.Name.Equals(format + Path.GetExtension(e.Name), StringComparison.OrdinalIgnoreCase));
-            
+                                     e.Name.Equals(format + Path.GetExtension(e.Name),
+                                         StringComparison.OrdinalIgnoreCase));
+
             if (entry != null)
             {
-                logger.LogDebug("Found page {PageIndex} using numeric format '{Format}': {EntryName}", 
+                logger.LogDebug("Found page {PageIndex} using numeric format '{Format}': {EntryName}",
                     pageIndex, format, entry.Name);
                 return entry;
             }
         }
 
-        logger.LogWarning("Could not find page at index {PageIndex} in archive with {TotalPages} pages. Available pages: {PageNames}", 
+        logger.LogWarning(
+            "Could not find page at index {PageIndex} in archive with {TotalPages} pages. Available pages: {PageNames}",
             pageIndex, imageEntries.Count, string.Join(", ", imageEntries.Take(5).Select(e => e.Name)));
 
         return null;
@@ -978,7 +1005,7 @@ public partial class ChapterPartMerger(
 
         // Extract and sort the decimal parts
         List<decimal> chapterNumbers = chapters
-            .Select(c => ExtractChapterNumber(c))
+            .Select(ExtractChapterNumber)
             .Where(n => n != null)
             .Select(n => decimal.TryParse(n, out decimal num) ? num : (decimal?)null)
             .Where(n => n.HasValue)
@@ -1101,7 +1128,7 @@ public partial class ChapterPartMerger(
 
         // Check if the chapter number starts with the base number and has a decimal part
         decimal decimalPart = fullNumber - baseNum;
-        
+
         // Must have a positive decimal part less than 1
         if (decimalPart <= 0 || decimalPart >= 1)
         {

@@ -290,7 +290,7 @@ public class MangaJaNaiUpscaler(
                 return true;
             }
 
-            using FileStream stream = File.OpenRead(filePath);
+            await using FileStream stream = File.OpenRead(filePath);
             byte[] hash = await sha256.ComputeHashAsync(stream, cancellationToken);
             string hashString = Convert.ToHexStringLower(hash);
             if (hashString != expectedHash)
@@ -357,7 +357,7 @@ public class MangaJaNaiUpscaler(
                 throw new FileNotFoundException($"Model file not found after download: {fileName}", filePath);
             }
 
-            using FileStream stream = File.OpenRead(filePath);
+            await using FileStream stream = File.OpenRead(filePath);
             byte[] hash = await sha256.ComputeHashAsync(stream, cancellationToken);
             string hashString = Convert.ToHexStringLower(hash);
             if (hashString != expectedHash)
