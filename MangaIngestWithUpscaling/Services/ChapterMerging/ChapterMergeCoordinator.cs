@@ -203,9 +203,6 @@ public class ChapterMergeCoordinator(
             .Cast<string>()
             .ToHashSet();
 
-        // Convert chapters to FoundChapter format for merging
-        List<FoundChapter> foundChapters = await ConvertChaptersToFoundChapters(chapters);
-
         // Perform the merge using ChapterPartMerger
         ChapterMergeResult mergeResult = await chapterPartMerger.ProcessExistingChapterPartsAsync(
             chapters,
@@ -1255,12 +1252,18 @@ public class ChapterMergeCoordinator(
     /// </summary>
     private async Task<List<FoundChapter>> ConvertChaptersToFoundChapters(List<Chapter> chapters)
     {
-        return (await Task.WhenAll(chapters.Select<Chapter, Task<FoundChapter>>(async c => new FoundChapter(
-            c.FileName,
-            Path.GetFileName(c.RelativePath),
-            ChapterStorageType.Cbz,
-            await GetChapterMetadata(c)
-        )))).ToList();
+        List<FoundChapter> foundChapters = new(chapters.Count);
+        foreach (Chapter chapter in chapters)
+        {
+            ExtractedMetadata metadata = await GetChapterMetadata(chapter);
+            foundChapters.Add(new FoundChapter(
+                chapter.FileName,
+                Path.GetFileName(chapter.RelativePath),
+                ChapterStorageType.Cbz,
+                metadata));
+        }
+
+        return foundChapters;
     }
 
     /// <summary>
