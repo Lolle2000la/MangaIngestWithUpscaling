@@ -4,7 +4,7 @@
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks
 @using MangaIngestWithUpscaling.Services.ImageFiltering
 
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IDialogService DialogService
 @inject ITaskQueue TaskQueue
 @inject IImageFilterService ImageFilterService
@@ -170,7 +170,8 @@
 
     protected override async Task OnInitializedAsync()
     {
-        Library = await DbContext.Libraries
+        using var context = DbContextFactory.CreateDbContext();
+        Library = await context.Libraries
             .Include(l => l.FilteredImages)
             .FirstOrDefaultAsync(l => l.Id == LibraryId);
 
@@ -259,7 +260,7 @@
         
         if (result is not null && !result.Canceled)
         {
-            await DbContext.SaveChangesAsync();
+            // The EditImageFilterDialog now handles its own context, so we just need to reload
             await table.ReloadServerData();
             Snackbar.Add("Filter updated successfully", Severity.Success);
         }
@@ -274,9 +275,15 @@
 
         if (confirm == true)
         {
+            using var context = DbContextFactory.CreateDbContext();
+            
+            // Remove the filter from the database
+            context.FilteredImages.Remove(filteredImage);
+            await context.SaveChangesAsync();
+            
+            // Also remove from the local collection
             Library!.FilteredImages.Remove(filteredImage);
-            DbContext.FilteredImages.Remove(filteredImage);
-            await DbContext.SaveChangesAsync();
+            
             await table.ReloadServerData();
             Snackbar.Add("Filter deleted successfully", Severity.Success);
         }

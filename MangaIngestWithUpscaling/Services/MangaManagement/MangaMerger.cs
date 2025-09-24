@@ -11,7 +11,7 @@ namespace MangaIngestWithUpscaling.Services.MangaManagement;
 
 [RegisterScoped]
 public class MangaMerger(
-    IDbContextFactory<ApplicationDbContext> dbContextFactory,
+    ApplicationDbContext dbContext,
     IMetadataHandlingService metadataHandling,
     IMangaMetadataChanger metadataChanger,
     ILogger<MangaMerger> logger,
@@ -22,16 +22,14 @@ public class MangaMerger(
     public async Task MergeAsync(Manga primary, IEnumerable<Manga> mergedInto,
         CancellationToken cancellationToken = default)
     {
-        using var dbContext = dbContextFactory.CreateDbContext();
-        
-        // Load the primary manga with all required data
-        var managedPrimary = await dbContext.MangaSeries
-            .Include(m => m.Library)
-            .Include(m => m.OtherTitles)
-            .Include(m => m.Chapters)
-            .FirstOrDefaultAsync(m => m.Id == primary.Id, cancellationToken);
+        if (!dbContext.Entry(primary).Reference(m => m.Library).IsLoaded)
+            await dbContext.Entry(primary).Reference(m => m.Library).LoadAsync(cancellationToken);
+        if (!dbContext.Entry(primary).Collection(m => m.OtherTitles).IsLoaded)
+        {
+            await dbContext.Entry(primary).Collection(m => m.OtherTitles).LoadAsync(cancellationToken);
+        }
 
-        if (managedPrimary?.Library == null)
+        if (primary.Library == null)
         {
             logger.LogError(
                 "Primary manga {MangaId} (Title: {PrimaryTitle}) must have an associated library to be a merge target. Aborting merge.",
@@ -45,39 +43,33 @@ public class MangaMerger(
 
         foreach (var manga in mergedInto)
         {
-            // Load the manga to merge with all required data
-            var managedManga = await dbContext.MangaSeries
-                .Include(m => m.Library)
-                .Include(m => m.Chapters)
-                .Include(m => m.OtherTitles)
-                .FirstOrDefaultAsync(m => m.Id == manga.Id, cancellationToken);
-
-            if (managedManga?.Library == null)
-            {
-                logger.LogWarning("Manga {MangaId} not found or missing library data, skipping", manga.Id);
-                continue;
-            }
+            if (!dbContext.Entry(manga).Reference(m => m.Library).IsLoaded)
+                await dbContext.Entry(manga).Reference(m => m.Library).LoadAsync(cancellationToken);
+            if (!dbContext.Entry(manga).Collection(m => m.Chapters).IsLoaded)
+                await dbContext.Entry(manga).Collection(m => m.Chapters).LoadAsync(cancellationToken);
+            if (!dbContext.Entry(manga).Collection(m => m.OtherTitles).IsLoaded)
+                await dbContext.Entry(manga).Collection(m => m.OtherTitles).LoadAsync(cancellationToken);
 
             var chaptersToMove = new List<ChapterMoveOperation>();
             var canMoveAllChapters = true;
 
-            foreach (var chapter in managedManga.Chapters)
+            foreach (var chapter in manga.Chapters)
             {
-                if (managedManga.Library == null)
+                if (manga.Library == null)
                 {
                     logger.LogWarning(
                         "Manga {MangaId} does not have a library associated. Skipping chapter {ChapterFileName}.",
-                        managedManga.Id, chapter.FileName);
+                        manga.Id, chapter.FileName);
                     canMoveAllChapters = false;
                     continue;
                 }
 
-                var chapterPath = Path.Combine(managedManga.Library.NotUpscaledLibraryPath, chapter.RelativePath);
+                var chapterPath = Path.Combine(manga.Library.NotUpscaledLibraryPath, chapter.RelativePath);
                 if (!File.Exists(chapterPath))
                 {
                     logger.LogWarning(
                         "Chapter {fileName} does not exist in {LibraryId} for {MangaId}. Therefore skipping.",
-                        chapter.FileName, managedManga.LibraryId, managedManga.Id);
+                        chapter.FileName, manga.LibraryId, manga.Id);
                     canMoveAllChapters = false;
                     continue;
                 }
