@@ -155,13 +155,13 @@
 
     private async Task LoadLibrariesAsync()
     {
-        using var context = DbContextFactory.CreateDbContext();
+        await using var context = await DbContextFactory.CreateDbContextAsync();
         libraries = await context.Libraries.ToListAsync();
     }
 
     private async Task<TableData<Manga>> GetMangas(TableState state, CancellationToken cancellationToken)
     {
-        using var context = DbContextFactory.CreateDbContext();
+        await using var context = await DbContextFactory.CreateDbContextAsync(cancellationToken);
         var query = context.MangaSeries
             .Include(x => x.Library)
             .ThenInclude(x => x.UpscalerProfile)
@@ -347,7 +347,7 @@
         // if the primary title was changed, change it back and then use the metadata changer.
         if (manga.PrimaryTitle != mangaBeforeEdit.PrimaryTitle)
         {
-            using var context = DbContextFactory.CreateDbContext();
+            await using var context = await DbContextFactory.CreateDbContextAsync();
             var attachedManga = await context.MangaSeries
                 .Include(x => x.OtherTitles)
                 .FirstOrDefaultAsync(x => x.Id == manga.Id);
@@ -375,7 +375,7 @@
 
         try
         {
-            using var context = DbContextFactory.CreateDbContext();
+            await using var context = await DbContextFactory.CreateDbContextAsync();
             
             // Attach the entity to the new context and mark as modified
             context.MangaSeries.Attach(manga);

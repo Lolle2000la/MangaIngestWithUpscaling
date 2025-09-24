@@ -1,7 +1,5 @@
-﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
-@using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
-
-@page "/libraries/create"
+﻿@page "/libraries/create"
+@using MangaIngestWithUpscaling.Data.LibraryManagement
 
 @inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject NavigationManager NavigationManager
@@ -40,7 +38,7 @@
 
     private async Task OnCreateLibrary()
     {
-        using var context = DbContextFactory.CreateDbContext();
+        await using var context = await DbContextFactory.CreateDbContextAsync();
         context.Libraries.Add(Library);
         await context.SaveChangesAsync();
         NavigationManager.NavigateTo("/libraries");

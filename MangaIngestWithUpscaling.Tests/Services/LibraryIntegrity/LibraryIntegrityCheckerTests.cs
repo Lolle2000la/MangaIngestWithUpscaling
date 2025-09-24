@@ -43,7 +43,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
     [Trait("Category", "Integration")]
     public async Task CheckIntegrity_UpscaledValid_AlreadyMarked_OnlyFixesMetadata()
     {
-        using ApplicationDbContext ctx = _db.CreateContext();
+        await using ApplicationDbContext ctx = _db.CreateContext();
 
         string temp = Directory.CreateTempSubdirectory().FullName;
         var lib = new Library
@@ -101,7 +101,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
     [Trait("Category", "Integration")]
     public async Task CheckIntegrity_ExistingUpscaleTask_ReturnsMaybeInProgress_NoTouch()
     {
-        using ApplicationDbContext ctx = _db.CreateContext();
+        await using ApplicationDbContext ctx = _db.CreateContext();
 
         string temp = Directory.CreateTempSubdirectory().FullName;
         var lib = new Library
@@ -156,7 +156,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
     [Fact]
     public async Task CheckIntegrity_ChapterMissing_RemovesFromDbAndReturnsTrue()
     {
-        using ApplicationDbContext ctx = _db.CreateContext();
+        await using ApplicationDbContext ctx = _db.CreateContext();
 
         // Arrange paths
         string temp = Directory.CreateTempSubdirectory().FullName;
@@ -201,7 +201,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
     [Trait("Category", "Integration")]
     public async Task CheckIntegrity_UpscaledValid_MarksUpscaledTrue()
     {
-        using ApplicationDbContext ctx = _db.CreateContext();
+        await using ApplicationDbContext ctx = _db.CreateContext();
 
         string temp = Directory.CreateTempSubdirectory().FullName;
         var lib = new Library
@@ -249,7 +249,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
     [Trait("Category", "Integration")]
     public async Task CheckIntegrity_Library_ReportsTotalsAndCompletes()
     {
-        using ApplicationDbContext ctx = _db.CreateContext();
+        await using ApplicationDbContext ctx = _db.CreateContext();
 
         string temp = Directory.CreateTempSubdirectory().FullName;
         var lib = new Library
@@ -315,7 +315,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
     [Trait("Category", "Integration")]
     public async Task CheckIntegrity_DifferentPages_WithProfile_EnqueuesRepair()
     {
-        using ApplicationDbContext ctx = _db.CreateContext();
+        await using ApplicationDbContext ctx = _db.CreateContext();
 
         string temp = Directory.CreateTempSubdirectory().FullName;
         // Create profile and attach to library
@@ -374,7 +374,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
     [Trait("Category", "Integration")]
     public async Task CheckIntegrity_DifferentPages_NoProfile_DeletesUpscaled()
     {
-        using ApplicationDbContext ctx = _db.CreateContext();
+        await using ApplicationDbContext ctx = _db.CreateContext();
 
         string temp = Directory.CreateTempSubdirectory().FullName;
         // Library without profile; also ensure manga has no preference
@@ -430,7 +430,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
     [Trait("Category", "Integration")]
     public async Task CheckIntegrity_DifferentPages_ExistingRepairTask_NoDuplicate()
     {
-        using ApplicationDbContext ctx = _db.CreateContext();
+        await using ApplicationDbContext ctx = _db.CreateContext();
 
         string temp = Directory.CreateTempSubdirectory().FullName;
         var profile = new UpscalerProfile
@@ -489,7 +489,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
     [Trait("Category", "Integration")]
     public async Task CheckIntegrity_UpscaledFileMissing_ClearsFlag()
     {
-        using ApplicationDbContext ctx = _db.CreateContext();
+        await using ApplicationDbContext ctx = _db.CreateContext();
 
         string temp = Directory.CreateTempSubdirectory().FullName;
         var lib = new Library
@@ -540,7 +540,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
     [Trait("Category", "Integration")]
     public async Task CheckIntegrity_DifferencesWithExtras_WithProfile_EnqueuesRepairAndKeepsFile()
     {
-        using ApplicationDbContext ctx = _db.CreateContext();
+        await using ApplicationDbContext ctx = _db.CreateContext();
 
         string temp = Directory.CreateTempSubdirectory().FullName;
         var profile = new UpscalerProfile
@@ -598,7 +598,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
     [Trait("Category", "Integration")]
     public async Task CheckIntegrity_OriginalMissing_RemovesChapter_DeletesUpscaledIfExists()
     {
-        using ApplicationDbContext ctx = _db.CreateContext();
+        await using ApplicationDbContext ctx = _db.CreateContext();
 
         string temp = Directory.CreateTempSubdirectory().FullName;
         var lib = new Library

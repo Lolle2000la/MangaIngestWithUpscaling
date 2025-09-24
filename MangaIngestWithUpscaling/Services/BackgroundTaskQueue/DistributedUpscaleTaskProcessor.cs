@@ -138,7 +138,8 @@ public class DistributedUpscaleTaskProcessor(
             (TaskCompletionSource<PersistedTask> tcs, CancellationToken cancelToken) =
                 await _taskRequests.Reader.ReadAsync(stoppingToken);
             var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, cancelToken);
-            using CancellationTokenRegistration registration = linkedCts.Token.Register(() => tcs.TrySetCanceled());
+            await using CancellationTokenRegistration registration =
+                linkedCts.Token.Register(() => tcs.TrySetCanceled());
             if (tcs.Task.IsCanceled)
             {
                 continue;
@@ -309,7 +310,7 @@ public class DistributedUpscaleTaskProcessor(
 
         using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, timeoutCts.Token);
-        using CancellationTokenRegistration registration = linkedCts.Token.Register(() => tcs.TrySetCanceled());
+        await using CancellationTokenRegistration registration = linkedCts.Token.Register(() => tcs.TrySetCanceled());
 
         try
         {

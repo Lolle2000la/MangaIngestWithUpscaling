@@ -37,7 +37,7 @@
 
     private async Task OnCreateLibrary()
     {
-        using var context = DbContextFactory.CreateDbContext();
+        await using var context = await DbContextFactory.CreateDbContextAsync();
         context.UpscalerProfiles.Add(Profile);
         await context.SaveChangesAsync();
         NavigationManager.NavigateTo("/upscaling/profiles");

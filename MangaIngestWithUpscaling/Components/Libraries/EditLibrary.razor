@@ -44,7 +44,7 @@
     {
         if (LibraryId.HasValue)
         {
-            using var context = DbContextFactory.CreateDbContext();
+            await using var context = await DbContextFactory.CreateDbContextAsync();
             Library = await context.Libraries
                 .Include(l => l.MangaSeries)
                 .Include(l => l.FilterRules)
@@ -65,7 +65,7 @@
     {
         if (Library == null) return;
 
-        using var context = DbContextFactory.CreateDbContext();
+        await using var context = await DbContextFactory.CreateDbContextAsync();
         context.Libraries.Attach(Library);
         context.Entry(Library).State = EntityState.Modified;
         await context.SaveChangesAsync();

@@ -52,8 +52,8 @@
         Input ??= new InputModel();
 
         user = await UserAccessor.GetRequiredUserAsync(HttpContext);
-        
-        using var context = DbContextFactory.CreateDbContext();
+
+        await using var context = await DbContextFactory.CreateDbContextAsync();
         apiKey = await context.ApiKeys.FirstOrDefaultAsync(k => k.User == user && k.IsActive);
 
         if (apiKey == null)
@@ -76,7 +76,7 @@
             return;
         }
 
-        using var context = DbContextFactory.CreateDbContext();
+        await using var context = await DbContextFactory.CreateDbContextAsync();
         var apiKeyToUpdate = await context.ApiKeys.FindAsync(apiKey.Id);
         if (apiKeyToUpdate != null)
         {

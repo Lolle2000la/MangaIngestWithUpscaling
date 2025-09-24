@@ -381,8 +381,8 @@ public class ChapterPartMergerTests : IDisposable
         Assert.True(File.Exists(mergedFilePath));
 
         // Verify merged file contains all pages
-        using var fileStream = new FileStream(mergedFilePath, FileMode.Open);
-        using var archive = new ZipArchive(fileStream, ZipArchiveMode.Read);
+        await using var fileStream = new FileStream(mergedFilePath, FileMode.Open);
+        await using var archive = new ZipArchive(fileStream, ZipArchiveMode.Read);
 
         var imageEntries = archive.Entries.Where(e => e.Name.EndsWith(".jpg") || e.Name.EndsWith(".png")).ToList();
         Assert.Equal(6, imageEntries.Count); // 3 pages from each chapter
@@ -1440,7 +1440,7 @@ public class UpscaledChapterHandlingTests : IDisposable
     public async Task RevertMergedChapter_WithUpscaledVersion_ShouldRestoreUpscaledParts()
     {
         // Arrange
-        using var context = CreateDbContext();
+        await using ApplicationDbContext context = CreateDbContext();
 
         var library = new Library
         {
@@ -1490,11 +1490,11 @@ public class UpscaledChapterHandlingTests : IDisposable
             CreateTestCbzFile(Path.GetDirectoryName(upscaledMergedChapterPath)!, "Chapter 5.cbz", 6);
 
             // Add upscaler.json to upscaled file
-            using (var archive = ZipFile.Open(upscaledMergedChapterPath, ZipArchiveMode.Update))
+            await using (ZipArchive archive = ZipFile.Open(upscaledMergedChapterPath, ZipArchiveMode.Update))
             {
                 var upscalerEntry = archive.CreateEntry("upscaler.json");
-                using var stream = upscalerEntry.Open();
-                using var writer = new StreamWriter(stream);
+                await using Stream stream = upscalerEntry.Open();
+                await using var writer = new StreamWriter(stream);
                 await writer.WriteAsync("""{"profile": "Test Profile", "scale": 2}""");
             }
 
@@ -1597,7 +1597,7 @@ public class UpscaledChapterHandlingTests : IDisposable
     public async Task RevertMergedChapter_WithoutUpscaledVersion_ShouldOnlyRestoreRegularParts()
     {
         // Arrange
-        using var context = CreateDbContext();
+        await using ApplicationDbContext context = CreateDbContext();
 
         var library = new Library
         {
@@ -1780,7 +1780,7 @@ public class PartialUpscalingMergeTests : IDisposable
         HandleUpscaledChapterMerging_WithPartiallyUpscaledParts_ShouldCreatePartialMergeAndScheduleRepairTask()
     {
         // Arrange
-        using var context = CreateDbContext();
+        await using ApplicationDbContext context = CreateDbContext();
         var logger = Substitute.For<ILogger<ChapterMergeCoordinator>>();
         var metadataHandling = Substitute.For<IMetadataHandlingService>();
         var chapterPartMerger = Substitute.For<IChapterPartMerger>();
@@ -1933,7 +1933,7 @@ public class PartialUpscalingMergeTests : IDisposable
     public async Task HandleUpscaledChapterMerging_WithAllPartsUpscaled_ShouldCreateCompleteMerge()
     {
         // Arrange
-        using var context = CreateDbContext();
+        await using ApplicationDbContext context = CreateDbContext();
         var logger = Substitute.For<ILogger<ChapterMergeCoordinator>>();
         var metadataHandling = Substitute.For<IMetadataHandlingService>();
         var chapterPartMerger = Substitute.For<IChapterPartMerger>();
@@ -2005,7 +2005,7 @@ public class PartialUpscalingMergeTests : IDisposable
     public async Task HandleUpscaledChapterMerging_WithNoUpscaledParts_ShouldReturnNoUpscaledContent()
     {
         // Arrange
-        using var context = CreateDbContext();
+        await using ApplicationDbContext context = CreateDbContext();
         var logger = Substitute.For<ILogger<ChapterMergeCoordinator>>();
         var metadataHandling = Substitute.For<IMetadataHandlingService>();
         var chapterPartMerger = Substitute.For<IChapterPartMerger>();
@@ -2171,7 +2171,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
     {
         // This tests corner case 2: reverting when RepairUpscaleTask hasn't processed yet
         // Arrange
-        using var context = CreateDbContext();
+        await using ApplicationDbContext context = CreateDbContext();
         var chapterPartMerger = Substitute.For<IChapterPartMerger>();
         var chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
         var upscalerJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();
@@ -2287,7 +2287,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
     {
         // This tests corner case 1: reverting chapter that wasn't merged as full upscaled initially
         // Arrange
-        using var context = CreateDbContext();
+        await using ApplicationDbContext context = CreateDbContext();
         var chapterPartMerger = Substitute.For<IChapterPartMerger>();
         var chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
         var upscalerJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();
@@ -2399,7 +2399,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
     public async Task RevertMergedChapter_WithTwoMissingUpscaledParts_ShouldQueueTwoUpscaleTasks()
     {
         // Arrange
-        using var context = CreateDbContext();
+        await using ApplicationDbContext context = CreateDbContext();
         var chapterPartMerger = Substitute.For<IChapterPartMerger>();
         var chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
         var upscalerJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();
@@ -2512,7 +2512,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
     public async Task RevertMergedChapter_WithMissingRegularMergedFile_ShouldThrowFileNotFound()
     {
         // Arrange
-        using var context = CreateDbContext();
+        await using ApplicationDbContext context = CreateDbContext();
         var chapterPartMerger = Substitute.For<IChapterPartMerger>();
         var chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
         var upscalerJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();
@@ -2559,7 +2559,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
     public async Task RevertMergedChapter_WithUpscaledChapterMissingProfile_ShouldNotEnqueueUpscaleTasks()
     {
         // Arrange
-        using var context = CreateDbContext();
+        await using ApplicationDbContext context = CreateDbContext();
         var chapterPartMerger = Substitute.For<IChapterPartMerger>();
         var chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
         var upscalerJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();
@@ -2630,7 +2630,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
     public async Task RevertMergedChapter_Twice_ShouldThrowOnSecondRunAndNoExtraTasks()
     {
         // Arrange
-        using var context = CreateDbContext();
+        await using ApplicationDbContext context = CreateDbContext();
         var chapterPartMerger = Substitute.For<IChapterPartMerger>();
         var chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
         var upscalerJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();
@@ -2719,7 +2719,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
     public async Task RevertMergedChapter_TaskQueueEnqueueFailure_ShouldLogAndThrow()
     {
         // Arrange
-        using var context = CreateDbContext();
+        await using ApplicationDbContext context = CreateDbContext();
         var chapterPartMerger = Substitute.For<IChapterPartMerger>();
         var chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
         var upscalerJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();
@@ -2820,7 +2820,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
     public async Task RevertMergedChapter_BeforeRepairCompletes_ShouldRemoveRepairAndSchedulePerPartUpscales()
     {
         // Arrange
-        using ApplicationDbContext context = CreateDbContext();
+        await using ApplicationDbContext context = CreateDbContext();
         var chapterPartMerger = Substitute.For<IChapterPartMerger>();
         var chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
         var upscalerJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();
@@ -2923,7 +2923,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
     public async Task RevertMergedChapter_WithDuplicateFilenamesAcrossManga_ShouldEnqueueOnlyForTargetManga()
     {
         // Arrange
-        using var context = CreateDbContext();
+        await using ApplicationDbContext context = CreateDbContext();
         var chapterPartMerger = Substitute.For<IChapterPartMerger>();
         var chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
         var upscalerJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();

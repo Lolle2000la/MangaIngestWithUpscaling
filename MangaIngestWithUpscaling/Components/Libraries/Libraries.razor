@@ -204,19 +204,18 @@
 
     protected override async Task OnInitializedAsync()
     {
-        using var context = DbContextFactory.CreateDbContext();
-        LoadedLibraries = await context.Libraries
-        .Include(x => x.UpscalerProfile)
-        .Include(x => x.MangaSeries)
-        .ThenInclude(x => x.UpscalerProfilePreference)
-        .Include(x => x.MangaSeries)
-        .ThenInclude(x => x.Chapters)
-        .ToListAsync();
+        await using var context = await DbContextFactory.CreateDbContextAsync();
+        await ReloadLibrary(context);
     }
 
     private async Task OnLibraryChanged()
     {
-        using var context = DbContextFactory.CreateDbContext();
+        await using var context = await DbContextFactory.CreateDbContextAsync();
+        await ReloadLibrary(context);
+    }
+
+    private async Task ReloadLibrary(ApplicationDbContext context)
+    {
         LoadedLibraries = await context.Libraries
             .Include(x => x.UpscalerProfile)
             .Include(x => x.MangaSeries)
@@ -250,7 +249,7 @@
 
         if (result.HasValue && result.Value)
         {
-            using var context = DbContextFactory.CreateDbContext();
+            await using var context = await DbContextFactory.CreateDbContextAsync();
             var libraryToDelete = await context.Libraries.FindAsync(library.Id);
             if (libraryToDelete != null)
             {

@@ -5,6 +5,7 @@ using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace MangaIngestWithUpscaling.Services.MangaManagement;
 
@@ -160,7 +161,8 @@ public class MangaMerger(
         }
 
         // Step 2: Perform database operations in a transaction
-        using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        await using IDbContextTransaction transaction =
+            await dbContext.Database.BeginTransactionAsync(cancellationToken);
         try
         {
             // Update chapter associations in the database

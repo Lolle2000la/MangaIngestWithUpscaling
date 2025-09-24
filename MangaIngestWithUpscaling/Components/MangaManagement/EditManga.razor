@@ -262,7 +262,7 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        using var context = DbContextFactory.CreateDbContext();
+        await using var context = await DbContextFactory.CreateDbContextAsync();
         manga = await context.MangaSeries
             .Include(m => m.Library)
             .Include(m => m.Chapters)
@@ -324,7 +324,7 @@ else
                 }
             }
 
-            using var context = DbContextFactory.CreateDbContext();
+            await using var context = await DbContextFactory.CreateDbContextAsync();
             context.MangaSeries.Attach(manga);
             context.Entry(manga).State = EntityState.Modified;
             await context.SaveChangesAsync();

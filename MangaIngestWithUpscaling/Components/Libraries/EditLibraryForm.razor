@@ -249,7 +249,7 @@
 
     protected override async Task OnInitializedAsync()
     {
-        using var context = DbContextFactory.CreateDbContext();
+        await using var context = await DbContextFactory.CreateDbContextAsync();
         upscalerProfiles = await context.UpscalerProfiles.ToListAsync();
     }
 

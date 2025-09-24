@@ -7,6 +7,7 @@ using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using MudBlazor;
 using System.Xml;
 
@@ -42,7 +43,7 @@ public class MangaMetadataChanger(
         }
 
         UpdateChapterTitle(newTitle, origChapterPath);
-        
+
         // Move chapter to the correct directory with the new title
         var newChapterPath = Path.Combine(
             chapter.Manga.Library.UpscaledLibraryPath,
@@ -98,7 +99,8 @@ public class MangaMetadataChanger(
 
         if (manga.Library == null)
         {
-            logger.LogError("Manga {MangaId} (Title: {PrimaryTitle}) must have an associated library to be renamed. Aborting rename.",
+            logger.LogError(
+                "Manga {MangaId} (Title: {PrimaryTitle}) must have an associated library to be renamed. Aborting rename.",
                 manga.Id, manga.PrimaryTitle);
             return RenameResult.Cancelled;
         }
@@ -123,7 +125,8 @@ public class MangaMetadataChanger(
 
             if (fileSystem.FileExists(newChapterPath))
             {
-                logger.LogWarning("Chapter file already exists at target path: {TargetPath}. Cannot rename manga.", newChapterPath);
+                logger.LogWarning("Chapter file already exists at target path: {TargetPath}. Cannot rename manga.",
+                    newChapterPath);
                 canRenameAllChapters = false;
                 continue;
             }
@@ -136,7 +139,8 @@ public class MangaMetadataChanger(
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Failed to read metadata from {ChapterPath}. Skipping chapter.", currentChapterPath);
+                logger.LogError(ex, "Failed to read metadata from {ChapterPath}. Skipping chapter.",
+                    currentChapterPath);
                 continue;
             }
 
@@ -154,7 +158,9 @@ public class MangaMetadataChanger(
 
                     if (fileSystem.FileExists(newUpscaledPath))
                     {
-                        logger.LogWarning("Upscaled chapter file already exists at target path: {TargetPath}. Cannot rename manga.", newUpscaledPath);
+                        logger.LogWarning(
+                            "Upscaled chapter file already exists at target path: {TargetPath}. Cannot rename manga.",
+                            newUpscaledPath);
                         canRenameAllChapters = false;
                         continue;
                     }
@@ -179,19 +185,22 @@ public class MangaMetadataChanger(
 
         if (!canRenameAllChapters)
         {
-            logger.LogError("Cannot rename manga {MangaId} ({PrimaryTitle}) due to conflicting target files. Aborting rename.",
+            logger.LogError(
+                "Cannot rename manga {MangaId} ({PrimaryTitle}) due to conflicting target files. Aborting rename.",
                 manga.Id, manga.PrimaryTitle);
             return RenameResult.Cancelled;
         }
 
         if (renameOperations.Count == 0)
         {
-            logger.LogWarning("No chapters found to rename for manga {MangaId} ({PrimaryTitle}). Proceeding with title change only.",
+            logger.LogWarning(
+                "No chapters found to rename for manga {MangaId} ({PrimaryTitle}). Proceeding with title change only.",
                 manga.Id, manga.PrimaryTitle);
         }
 
         // Step 2: Perform database operations in a transaction
-        using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        await using IDbContextTransaction transaction =
+            await dbContext.Database.BeginTransactionAsync(cancellationToken);
         try
         {
             // Update manga title
@@ -247,7 +256,10 @@ public class MangaMetadataChanger(
 
                         // Update metadata in upscaled file before moving
                         metadataHandling.WriteComicInfo(operation.CurrentUpscaledPath,
-                            metadataHandling.GetSeriesAndTitleFromComicInfo(operation.CurrentUpscaledPath) with { Series = newTitle });
+                            metadataHandling.GetSeriesAndTitleFromComicInfo(operation.CurrentUpscaledPath) with
+                            {
+                                Series = newTitle
+                            });
 
                         // Move the upscaled file
                         fileSystem.Move(operation.CurrentUpscaledPath, operation.NewUpscaledPath);
@@ -255,7 +267,8 @@ public class MangaMetadataChanger(
                     }
                     catch (Exception ex)
                     {
-                        logger.LogError(ex, "Failed to move upscaled chapter {FileName} from {SourcePath} to {TargetPath}. Database changes have been committed.",
+                        logger.LogError(ex,
+                            "Failed to move upscaled chapter {FileName} from {SourcePath} to {TargetPath}. Database changes have been committed.",
                             operation.Chapter.FileName, operation.CurrentUpscaledPath, operation.NewUpscaledPath);
                     }
                 }
@@ -269,7 +282,8 @@ public class MangaMetadataChanger(
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Failed to move chapter {FileName} from {SourcePath} to {TargetPath}. Database changes have been committed.",
+                logger.LogError(ex,
+                    "Failed to move chapter {FileName} from {SourcePath} to {TargetPath}. Database changes have been committed.",
                     operation.Chapter.FileName, operation.CurrentPath, operation.NewPath);
             }
         }

@@ -430,7 +430,7 @@
             Snackbar.Add($"Failed to delete {chapter.FileName}. Check the logs for more information.", Severity.Error);
         }
 
-        using var context = DbContextFactory.CreateDbContext();
+        await using var context = await DbContextFactory.CreateDbContextAsync();
         var chapterToDelete = await context.Chapters.FindAsync(chapter.Id);
         if (chapterToDelete != null)
         {
@@ -451,7 +451,7 @@
             return;
         }
 
-        using var context = DbContextFactory.CreateDbContext();
+        await using var context = await DbContextFactory.CreateDbContextAsync();
         
         // Load necessary entities
         var loadedManga = await context.MangaSeries
@@ -509,7 +509,7 @@
 
         chapter.IsUpscaled = false;
 
-        using var context = DbContextFactory.CreateDbContext();
+        await using var context = await DbContextFactory.CreateDbContextAsync();
         context.Chapters.Attach(chapter);
         context.Entry(chapter).Property(c => c.IsUpscaled).IsModified = true;
         await context.SaveChangesAsync();
@@ -581,8 +581,8 @@
         {
             chapter.RelativePath = targetRelativePath;
             chapter.FileName = newFileName;
-            
-            using var context = DbContextFactory.CreateDbContext();
+
+            await using var context = await DbContextFactory.CreateDbContextAsync();
             context.Chapters.Attach(chapter);
             context.Entry(chapter).Property(c => c.RelativePath).IsModified = true;
             context.Entry(chapter).Property(c => c.FileName).IsModified = true;
@@ -627,7 +627,7 @@
 
     protected override async Task OnInitializedAsync()
     {
-        using var context = DbContextFactory.CreateDbContext();
+        await using var context = await DbContextFactory.CreateDbContextAsync();
         
         // Load the manga with all necessary related data
         var loadedManga = await context.MangaSeries
@@ -691,7 +691,7 @@
             if (chapter.UpscalerProfileId is not null && chapter.UpscalerProfile is null)
             {
                 // The following is used to ignore soft deleted profiles
-                using var context = DbContextFactory.CreateDbContext();
+                await using var context = await DbContextFactory.CreateDbContextAsync();
                 loadProfile = context.UpscalerProfiles.IgnoreQueryFilters()
                     .FirstOrDefaultAsync(p => p.Id == chapter.UpscalerProfileId);
             }
@@ -1035,8 +1035,8 @@
                 // Find the merged chapter from the database - it should be the FIRST chapter from the original set 
                 // (as per ChapterMergeCoordinator.UpdateDatabaseForMergeAsync which keeps the first and removes the rest)
                 var primaryChapterId = chaptersToMerge.First().Id;
-                
-                using var context = DbContextFactory.CreateDbContext();
+
+                await using var context = await DbContextFactory.CreateDbContextAsync();
                 var mergedChapter = await context.Chapters.FindAsync(primaryChapterId);
                 if (mergedChapter != null)
                 {
@@ -1174,7 +1174,7 @@
             if (mergedChapter != null)
             {
                 // Reload the merged chapter to get updated data
-                using var context = DbContextFactory.CreateDbContext();
+                await using var context = await DbContextFactory.CreateDbContextAsync();
                 var contextChapter = await context.Chapters.FindAsync(mergedChapter.Id);
                 if (contextChapter != null)
                 {

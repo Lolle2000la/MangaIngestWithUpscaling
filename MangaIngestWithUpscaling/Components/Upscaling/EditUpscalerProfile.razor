@@ -44,7 +44,7 @@
     {
         if (ProfileId.HasValue)
         {
-            using var context = DbContextFactory.CreateDbContext();
+            await using var context = await DbContextFactory.CreateDbContextAsync();
             existingProfile = await context.UpscalerProfiles.FindAsync(ProfileId.Value);
             if (existingProfile != null)
             {
@@ -75,7 +75,7 @@
             return;
         }
 
-        using var context = DbContextFactory.CreateDbContext();
+        await using var context = await DbContextFactory.CreateDbContextAsync();
         context.UpscalerProfiles.Add(Profile);
         existingProfile.Deleted = true;
         await context.SaveChangesAsync();

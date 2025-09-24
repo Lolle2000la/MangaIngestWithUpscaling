@@ -1,5 +1,4 @@
 ﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
-@using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.MangaManagement
 @inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IMangaLibraryMover MangaMover
@@ -41,7 +40,7 @@
 
     protected override async Task OnInitializedAsync()
     {
-        using var context = DbContextFactory.CreateDbContext();
+        await using var context = await DbContextFactory.CreateDbContextAsync();
         libraries = await context.Libraries.ToListAsync();
     }
 
