@@ -76,8 +76,9 @@ public class IngestProcessorTaskCancellationTests : IDisposable
         var processor = new UpscaleTaskProcessor(taskQueue, scopeFactory, upscalerOptions, processorLogger);
 
         // SUT
+        var chapterProcessingService = Substitute.For<ChapterProcessingService>();
         var ingest = new IngestProcessor(db, chapterRecognition, renaming, cbz, logger, taskQueue, metadata, fs,
-            changedNotifier, upscalerJson, chapterPartMerger, mergeCoordinator, processor, imageFilter);
+            changedNotifier, chapterPartMerger, mergeCoordinator, processor, imageFilter, chapterProcessingService);
 
         // Library and series
         string tempRoot = Path.Combine(Path.GetTempPath(),

@@ -5,6 +5,7 @@ using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.ChapterRecognition;
+using MangaIngestWithUpscaling.Services.ChapterManagement;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
@@ -22,8 +23,7 @@ public partial class LibraryIntegrityChecker(
     IDbContextFactory<ApplicationDbContext> dbContextFactory,
     IMetadataHandlingService metadataHandling,
     IChapterInIngestRecognitionService chapterRecognitionService,
-    IUpscalerJsonHandlingService upscalerJsonHandlingService,
-    IFileSystem fileSystem,
+    ChapterProcessingService chapterProcessingService,
     ITaskQueue taskQueue,
     ILogger<LibraryIntegrityChecker> logger,
     IOptions<IntegrityCheckerConfig> configOptions) : ILibraryIntegrityChecker
@@ -694,7 +694,7 @@ public partial class LibraryIntegrityChecker(
         foreach (var (chapter, isFromUpscaledPath) in allFoundChapters)
         {
             // Determine canonical path (remove _upscaled folder from path if present)
-            string canonicalPath = GetCanonicalPath(chapter.RelativePath);
+            string canonicalPath = ChapterProcessingService.GetCanonicalPath(chapter.RelativePath);
             
             if (!groups.TryGetValue(canonicalPath, out var group))
             {
@@ -707,35 +707,26 @@ public partial class LibraryIntegrityChecker(
                 group.UpscaledChapter = chapter;
                 // Try to extract upscaler profile from the upscaled file
                 string fullPath = Path.Combine(library.UpscaledLibraryPath!, chapter.RelativePath);
-                group.UpscalerProfileDto = await upscalerJsonHandlingService.ReadUpscalerJsonAsync(fullPath, cancellationToken);
+                var (_, upscalerProfile) = await chapterProcessingService.DetectUpscaledFileAsync(fullPath, chapter.RelativePath, cancellationToken);
+                group.UpscalerProfileDto = upscalerProfile;
             }
             else
             {
-                // Check if this file has upscaler.json (which means it's actually upscaled)
+                // Use shared service to detect if this file is upscaled
                 string fullPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
-                var upscalerProfileDto = await upscalerJsonHandlingService.ReadUpscalerJsonAsync(fullPath, cancellationToken);
+                var (isUpscaled, upscalerProfile) = await chapterProcessingService.DetectUpscaledFileAsync(fullPath, chapter.RelativePath, cancellationToken);
                 
-                if (upscalerProfileDto != null)
+                if (isUpscaled)
                 {
-                    // This is an upscaled file with upscaler.json - it should be moved to upscaled folder
+                    // This is an upscaled file - it should be moved to upscaled folder if upscaler.json was found
                     group.UpscaledChapter = chapter;
-                    group.UpscalerProfileDto = upscalerProfileDto;
-                    group.RequiresFileMovement = true; // Mark for movement
+                    group.UpscalerProfileDto = upscalerProfile;
+                    group.RequiresFileMovement = upscalerProfile != null; // Only move files with upscaler.json
                     group.SourcePath = fullPath;
                 }
                 else
                 {
-                    // Check if this is actually an upscaled file in the non-upscaled path (has _upscaled in path)
-                    if (IsUpscaledChapterRegex().IsMatch(chapter.RelativePath))
-                    {
-                        group.UpscaledChapter = chapter;
-                        group.RequiresFileMovement = true; // Mark for movement
-                        group.SourcePath = fullPath;
-                    }
-                    else
-                    {
-                        group.OriginalChapter = chapter;
-                    }
+                    group.OriginalChapter = chapter;
                 }
             }
         }
@@ -748,8 +739,7 @@ public partial class LibraryIntegrityChecker(
     /// </summary>
     private static string GetCanonicalPath(string relativePath)
     {
-        // Remove _upscaled folder components from the path
-        return IsUpscaledChapterRegex().Replace(relativePath, "");
+        return ChapterProcessingService.GetCanonicalPath(relativePath);
     }
 
     /// <summary>
@@ -791,29 +781,13 @@ public partial class LibraryIntegrityChecker(
             }
 
             // Find or create the manga series for this chapter
-            var manga = await dbContext.MangaSeries
-                .FirstOrDefaultAsync(m => m.PrimaryTitle == chapterToUse.Metadata.Series && m.LibraryId == library.Id,
-                    cancellationToken);
-
-            if (manga == null)
-            {
-                // Create a new manga series
-                manga = new Manga
-                {
-                    PrimaryTitle = chapterToUse.Metadata.Series,
-                    LibraryId = library.Id
-                };
-                dbContext.MangaSeries.Add(manga);
-                await dbContext.SaveChangesAsync(cancellationToken);
-                
-                logger.LogInformation("Created new manga series '{SeriesTitle}' in library '{LibraryName}' for orphaned chapter '{FileName}'",
-                    chapterToUse.Metadata.Series, library.Name, chapterToUse.FileName);
-            }
+            var manga = await chapterProcessingService.GetOrCreateMangaSeriesAsync(
+                library, chapterToUse.Metadata.Series, null, cancellationToken);
 
             // Handle file movement if required (upscaled file in wrong location)
             if (group.RequiresFileMovement && group.UpscaledChapter != null && !string.IsNullOrEmpty(library.UpscaledLibraryPath))
             {
-                MoveUpscaledFileToCorrectLocation(library, group, cancellationToken);
+                chapterProcessingService.MoveUpscaledFileToLibrary(group.SourcePath!, library, group.CanonicalRelativePath, cancellationToken);
             }
 
             // Create the chapter entity - use original chapter info if available, otherwise upscaled
@@ -830,7 +804,7 @@ public partial class LibraryIntegrityChecker(
             if (group.UpscalerProfileDto != null)
             {
                 // Find or create the upscaler profile
-                var upscalerProfile = await FindOrCreateUpscalerProfile(group.UpscalerProfileDto, cancellationToken);
+                var upscalerProfile = await chapterProcessingService.FindOrCreateUpscalerProfileAsync(group.UpscalerProfileDto, cancellationToken);
                 if (upscalerProfile != null)
                 {
                     chapter.UpscalerProfileId = upscalerProfile.Id;
@@ -867,7 +841,7 @@ public partial class LibraryIntegrityChecker(
             // Handle file movement if required
             if (group.RequiresFileMovement && group.UpscaledChapter != null && !string.IsNullOrEmpty(library.UpscaledLibraryPath))
             {
-                MoveUpscaledFileToCorrectLocation(library, group, cancellationToken);
+                chapterProcessingService.MoveUpscaledFileToLibrary(group.SourcePath!, library, group.CanonicalRelativePath, cancellationToken);
             }
 
             // Update the existing chapter to mark it as upscaled
@@ -876,7 +850,7 @@ public partial class LibraryIntegrityChecker(
             // Set upscaler profile if we extracted one from the upscaled file
             if (group.UpscalerProfileDto != null)
             {
-                var upscalerProfile = await FindOrCreateUpscalerProfile(group.UpscalerProfileDto, cancellationToken);
+                var upscalerProfile = await chapterProcessingService.FindOrCreateUpscalerProfileAsync(group.UpscalerProfileDto, cancellationToken);
                 if (upscalerProfile != null)
                 {
                     existingChapter.UpscalerProfileId = upscalerProfile.Id;
@@ -897,83 +871,6 @@ public partial class LibraryIntegrityChecker(
             return false;
         }
     }
-
-    /// <summary>
-    /// Moves an upscaled file from the normal library path to the upscaled library path.
-    /// </summary>
-    private void MoveUpscaledFileToCorrectLocation(Library library, ChapterGroup group, CancellationToken cancellationToken)
-    {
-        if (group.UpscaledChapter == null || group.SourcePath == null || string.IsNullOrEmpty(library.UpscaledLibraryPath))
-            return;
-
-        try
-        {
-            // Construct target path in upscaled library
-            string targetPath = Path.Combine(library.UpscaledLibraryPath, group.CanonicalRelativePath);
-            string targetDirectory = Path.GetDirectoryName(targetPath)!;
-
-            // Create target directory if it doesn't exist
-            if (!Directory.Exists(targetDirectory))
-            {
-                Directory.CreateDirectory(targetDirectory);
-            }
-
-            // Move the file
-            fileSystem.Move(group.SourcePath, targetPath);
-
-            logger.LogInformation("Moved upscaled file from '{SourcePath}' to '{TargetPath}' in library '{LibraryName}'",
-                group.SourcePath, targetPath, library.Name);
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Failed to move upscaled file from '{SourcePath}' to upscaled library path in library '{LibraryName}'",
-                group.SourcePath, library.Name);
-            throw; // Re-throw to indicate the operation failed
-        }
-    }
-
-    /// <summary>
-    /// Finds an existing upscaler profile or creates a new one based on the DTO.
-    /// </summary>
-    private async Task<UpscalerProfile?> FindOrCreateUpscalerProfile(UpscalerProfileJsonDto dto, CancellationToken cancellationToken)
-    {
-        try
-        {
-            // Try to find an existing profile with matching characteristics
-            var existingProfile = await dbContext.UpscalerProfiles
-                .FirstOrDefaultAsync(p => 
-                    p.Name == dto.Name &&
-                    p.UpscalerMethod == dto.UpscalerMethod &&
-                    (int)p.ScalingFactor == dto.ScalingFactor,
-                    cancellationToken);
-
-            if (existingProfile != null)
-            {
-                return existingProfile;
-            }
-
-            // Create a new profile - this is a simplified implementation
-            // In a real scenario, you might want to validate the DTO more thoroughly
-            logger.LogInformation("Creating new upscaler profile from extracted data: {ProfileName}", dto.Name);
-            
-            // For now, we'll just log that we found the profile but not create it automatically
-            // as this might require more validation and user approval
-            logger.LogWarning("Upscaler profile '{ProfileName}' not found in database. Manual creation may be required.", dto.Name);
-            
-            return null;
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error finding or creating upscaler profile for {ProfileName}", dto.Name);
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// Regular expression to detect upscaled chapters (matches _upscaled folder in path).
-    /// </summary>
-    [GeneratedRegex(@"(?:^|[\\/])_upscaled(?=[\\/])")]
-    private static partial Regex IsUpscaledChapterRegex();
 
     /// <summary>
     /// Represents a group of chapter files (original and/or upscaled variants) that belong to the same logical chapter.
