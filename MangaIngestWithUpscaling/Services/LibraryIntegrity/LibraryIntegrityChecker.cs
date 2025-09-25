@@ -23,7 +23,7 @@ public partial class LibraryIntegrityChecker(
     IDbContextFactory<ApplicationDbContext> dbContextFactory,
     IMetadataHandlingService metadataHandling,
     IChapterInIngestRecognitionService chapterRecognitionService,
-    ChapterProcessingService chapterProcessingService,
+    IChapterProcessingService chapterProcessingService,
     ITaskQueue taskQueue,
     ILogger<LibraryIntegrityChecker> logger,
     IOptions<IntegrityCheckerConfig> configOptions) : ILibraryIntegrityChecker

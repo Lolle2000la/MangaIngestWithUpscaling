@@ -36,7 +36,7 @@ public partial class IngestProcessor(
     IChapterMergeCoordinator chapterMergeCoordinator,
     UpscaleTaskProcessor upscaleTaskProcessor,
     IImageFilterService imageFilterService,
-    ChapterProcessingService chapterProcessingService
+    IChapterProcessingService chapterProcessingService
 ) : IIngestProcessor
 {
     public async Task ProcessAsync(Library library, CancellationToken cancellationToken)

@@ -17,7 +17,7 @@ public partial class ChapterProcessingService(
     ApplicationDbContext dbContext,
     IUpscalerJsonHandlingService upscalerJsonHandlingService,
     IFileSystem fileSystem,
-    ILogger<ChapterProcessingService> logger)
+    ILogger<ChapterProcessingService> logger) : IChapterProcessingService
 {
     /// <summary>
     /// Detects if a chapter file is upscaled based on upscaler.json presence and path patterns.
