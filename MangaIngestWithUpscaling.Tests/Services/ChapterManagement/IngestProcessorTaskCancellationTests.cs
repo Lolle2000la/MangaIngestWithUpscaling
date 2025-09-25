@@ -76,8 +76,14 @@ public class IngestProcessorTaskCancellationTests : IDisposable
         var processor = new UpscaleTaskProcessor(taskQueue, scopeFactory, upscalerOptions, processorLogger);
 
         // SUT
+        var chapterProcessingService = Substitute.For<IChapterProcessingService>();
+        
+        // Setup mock for DetectUpscaledFileAsync - return false for upscaled and null for profile
+        chapterProcessingService.DetectUpscaledFileAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult((false, (UpscalerProfileJsonDto?)null)));
+        
         var ingest = new IngestProcessor(db, chapterRecognition, renaming, cbz, logger, taskQueue, metadata, fs,
-            changedNotifier, upscalerJson, chapterPartMerger, mergeCoordinator, processor, imageFilter);
+            changedNotifier, chapterPartMerger, mergeCoordinator, processor, imageFilter, chapterProcessingService);
 
         // Library and series
         string tempRoot = Path.Combine(Path.GetTempPath(),
@@ -102,7 +108,15 @@ public class IngestProcessorTaskCancellationTests : IDisposable
         Directory.CreateDirectory(lib.NotUpscaledLibraryPath);
         Directory.CreateDirectory(lib.UpscaledLibraryPath!);
         db.Libraries.Add(lib);
+        
+        // Create manga series for the test
+        var manga = new Manga { PrimaryTitle = "Series", Library = lib };
+        db.MangaSeries.Add(manga);
         await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        
+        // Setup mock for GetOrCreateMangaSeriesAsync - return the existing manga
+        chapterProcessingService.GetOrCreateMangaSeriesAsync(Arg.Any<Library>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(manga));
 
         // Simulate recognition of two parts that will be merged into Chapter 1.cbz
         var meta1 = new ExtractedMetadata("Series", "Chapter 1.1", "1.1");
@@ -154,8 +168,6 @@ public class IngestProcessorTaskCancellationTests : IDisposable
             });
 
         // Create two original chapter entities with pre-existing UpscaleTasks that should be removed
-        var manga = new Manga { PrimaryTitle = "Series", Library = lib };
-        db.MangaSeries.Add(manga);
         var ch11 = new Chapter
         {
             FileName = "Chapter 1.1.cbz", RelativePath = Path.Combine("Series", "Chapter 1.1.cbz"), Manga = manga

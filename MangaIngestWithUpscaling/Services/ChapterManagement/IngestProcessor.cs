@@ -32,11 +32,11 @@ public partial class IngestProcessor(
     IMetadataHandlingService metadataHandling,
     IFileSystem fileSystem,
     IChapterChangedNotifier chapterChangedNotifier,
-    IUpscalerJsonHandlingService upscalerJsonHandlingService,
     IChapterPartMerger chapterPartMerger,
     IChapterMergeCoordinator chapterMergeCoordinator,
     UpscaleTaskProcessor upscaleTaskProcessor,
-    IImageFilterService imageFilterService
+    IImageFilterService imageFilterService,
+    IChapterProcessingService chapterProcessingService
 ) : IIngestProcessor
 {
     public async Task ProcessAsync(Library library, CancellationToken cancellationToken)
@@ -74,16 +74,9 @@ public partial class IngestProcessor(
         await foreach (FoundChapter originalChapter in foundChapters)
         {
             FoundChapter renamedChapter = renamingService.ApplyRenameRules(originalChapter, library.RenameRules);
-            bool isUpscaled = IsUpscaledChapter().IsMatch(originalChapter.RelativePath);
-            UpscalerProfileJsonDto? upscalerProfileDto = null;
-
+            
             string fullPath = Path.Combine(library.IngestPath, originalChapter.RelativePath);
-            upscalerProfileDto =
-                await upscalerJsonHandlingService.ReadUpscalerJsonAsync(fullPath, cancellationToken);
-            if (upscalerProfileDto != null)
-            {
-                isUpscaled = true;
-            }
+            var (isUpscaled, upscalerProfileDto) = await chapterProcessingService.DetectUpscaledFileAsync(fullPath, originalChapter.RelativePath, cancellationToken);
 
             processedChapters.Add(new ProcessedChapterInfo(originalChapter, renamedChapter, isUpscaled,
                 upscalerProfileDto));
@@ -107,7 +100,7 @@ public partial class IngestProcessor(
         {
             var firstOriginalRelativePath = processedItems.First().Original.RelativePath;
             var originalSeriesTitle = originalSeriesMap[firstOriginalRelativePath];
-            Manga seriesEntity = await GetMangaSeriesEntity(library, series, originalSeriesTitle, cancellationToken);
+            Manga seriesEntity = await chapterProcessingService.GetOrCreateMangaSeriesAsync(library, series, originalSeriesTitle, cancellationToken);
             processedSeriesEntities.Add(seriesEntity); // Track this series
 
             // Check if chapter merging is enabled for this library/series
@@ -621,48 +614,6 @@ public partial class IngestProcessor(
         }
     }
 
-    private async Task<Manga> GetMangaSeriesEntity(Library library, string newSeries, string originalSeries,
-        CancellationToken cancellationToken)
-    {
-        // create series if it doesn't exist
-        // Also take into account the alternate names
-        var seriesEntity = await dbContext.MangaSeries
-            .Include(s => s.OtherTitles)
-            .Include(s => s.Chapters)
-            .Include(s => s.UpscalerProfilePreference)
-            .FirstOrDefaultAsync(s => s.PrimaryTitle == newSeries || s.OtherTitles.Any(an => an.Title == newSeries),
-                cancellationToken: cancellationToken);
-
-        if (seriesEntity == null)
-        {
-            seriesEntity = new Manga
-            {
-                PrimaryTitle = newSeries,
-                OtherTitles = new List<MangaAlternativeTitle>(),
-                Library = library,
-                LibraryId = library.Id,
-                Chapters = new List<Chapter>()
-            };
-            // add original as alternative title if changed
-            if (!string.Equals(originalSeries, newSeries, StringComparison.Ordinal))
-            {
-                seriesEntity.OtherTitles.Add(new MangaAlternativeTitle
-                {
-                    Manga = seriesEntity, Title = originalSeries
-                });
-            }
-
-            dbContext.MangaSeries.Add(seriesEntity);
-        }
-
-        if (seriesEntity.Chapters == null)
-        {
-            seriesEntity.Chapters = new List<Chapter>();
-        }
-
-        return seriesEntity;
-    }
-
     private async Task<Chapter?> IngestUpscaledChapterIfMatchFound(FoundChapter originalUpscaled,
         FoundChapter renamedUpscaled,
         Manga seriesEntity, Library library, UpscalerProfileJsonDto? upscalerProfileDto,
@@ -852,9 +803,6 @@ public partial class IngestProcessor(
 
         return nonUpscaledChapter;
     }
-
-    [GeneratedRegex(@"(?:^|[\\/])_upscaled(?=[\\/])")]
-    private static partial Regex IsUpscaledChapter();
 
     private record ProcessedChapterInfo(
         FoundChapter Original,
