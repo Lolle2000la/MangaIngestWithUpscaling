@@ -743,8 +743,169 @@ public partial class LibraryIntegrityChecker(
     }
 
     /// <summary>
+    /// Checks for duplicate chapter files and handles them by deleting the orphaned file if a duplicate exists.
+    /// Uses both primary titles and alternative titles to detect duplicates.
+    /// </summary>
+    private async Task<bool> CheckAndHandleDuplicateChapterFiles(Library library, ChapterGroup group, FoundChapter chapterToUse, CancellationToken cancellationToken)
+    {
+        // Look for existing chapters with the same series title (including alternative titles)
+        var existingChapters = await dbContext.Chapters
+            .Include(c => c.Manga)
+            .ThenInclude(m => m.OtherTitles)
+            .Where(c => c.Manga.LibraryId == library.Id)
+            .Where(c => c.Manga.PrimaryTitle == chapterToUse.Metadata.Series || 
+                       c.Manga.OtherTitles.Any(at => at.Title == chapterToUse.Metadata.Series))
+            .Where(c => c.FileName == chapterToUse.FileName || c.RelativePath == group.CanonicalRelativePath)
+            .ToListAsync(cancellationToken);
+
+        if (existingChapters.Any())
+        {
+            // Found duplicate - delete the orphaned file(s)
+            try
+            {
+                if (group.OriginalChapter != null)
+                {
+                    string originalPath = Path.Combine(library.NotUpscaledLibraryPath, group.OriginalChapter.RelativePath);
+                    if (File.Exists(originalPath))
+                    {
+                        File.Delete(originalPath);
+                        logger.LogInformation("Deleted orphaned duplicate original file '{FileName}' (existing chapter found)", group.OriginalChapter.FileName);
+                    }
+                }
+
+                if (group.UpscaledChapter != null && !string.IsNullOrEmpty(library.UpscaledLibraryPath))
+                {
+                    string upscaledPath = group.RequiresFileMovement && group.SourcePath != null ? 
+                        group.SourcePath : 
+                        Path.Combine(library.UpscaledLibraryPath, group.UpscaledChapter.RelativePath);
+                    
+                    if (File.Exists(upscaledPath))
+                    {
+                        File.Delete(upscaledPath);
+                        logger.LogInformation("Deleted orphaned duplicate upscaled file '{FileName}' (existing chapter found)", group.UpscaledChapter.FileName);
+                    }
+                }
+
+                return true; // Duplicate was handled
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to delete orphaned duplicate file for chapter '{FileName}'", chapterToUse.FileName);
+                return false;
+            }
+        }
+
+        return false; // No duplicate found
+    }
+
+    /// <summary>
+    /// Moves an orphaned original file to the correct location in the library structure.
+    /// </summary>
+    private string MoveOrphanedOriginalFileToCorrectLocation(Library library, ChapterGroup group, Manga manga, CancellationToken cancellationToken)
+    {
+        if (group.OriginalChapter == null) return string.Empty;
+
+        try
+        {
+            // Determine the correct target path in the library structure
+            string sourcePath = Path.Combine(library.NotUpscaledLibraryPath, group.OriginalChapter.RelativePath);
+            
+            // Create target path: SeriesName/ChapterFile.ext
+            string targetRelativePath = Path.Combine(manga.PrimaryTitle, group.OriginalChapter.FileName);
+            string targetPath = Path.Combine(library.NotUpscaledLibraryPath, targetRelativePath);
+
+            // Only move if source and target are different
+            if (Path.GetFullPath(sourcePath) != Path.GetFullPath(targetPath))
+            {
+                // Ensure target directory exists
+                string? targetDir = Path.GetDirectoryName(targetPath);
+                if (targetDir != null && !Directory.Exists(targetDir))
+                {
+                    Directory.CreateDirectory(targetDir);
+                }
+
+                // Move the file
+                if (File.Exists(sourcePath))
+                {
+                    if (File.Exists(targetPath))
+                    {
+                        // Target exists, delete source as it's a duplicate
+                        File.Delete(sourcePath);
+                        logger.LogInformation("Deleted orphaned duplicate original file '{FileName}' (target already exists)", group.OriginalChapter.FileName);
+                    }
+                    else
+                    {
+                        File.Move(sourcePath, targetPath);
+                        logger.LogInformation("Moved orphaned original file '{FileName}' to correct location '{TargetPath}'", 
+                            group.OriginalChapter.FileName, targetRelativePath);
+                    }
+                }
+
+                // Update the canonical relative path to match the new location
+                group.CanonicalRelativePath = targetRelativePath;
+            }
+
+            return targetPath;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to move orphaned original file '{FileName}' to correct location", group.OriginalChapter.FileName);
+            return Path.Combine(library.NotUpscaledLibraryPath, group.OriginalChapter.RelativePath);
+        }
+    }
+
+    /// <summary>
+    /// Fixes metadata in orphaned files to ensure correct series title and other metadata.
+    /// </summary>
+    private async Task FixOrphanedFileMetadata(Library library, ChapterGroup group, Manga manga, string finalOriginalPath, CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Fix metadata in original file if it exists
+            if (group.OriginalChapter != null && File.Exists(finalOriginalPath))
+            {
+                var originalMetadata = await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(finalOriginalPath);
+                
+                // Check if metadata needs fixing (series title mismatch)
+                if (originalMetadata.Series != manga.PrimaryTitle)
+                {
+                    var correctedMetadata = originalMetadata with { Series = manga.PrimaryTitle };
+                    await metadataHandling.WriteComicInfoAsync(finalOriginalPath, correctedMetadata);
+                    
+                    logger.LogInformation("Fixed metadata in orphaned original file '{FileName}': series title '{OldTitle}' -> '{NewTitle}'",
+                        group.OriginalChapter.FileName, originalMetadata.Series, manga.PrimaryTitle);
+                }
+            }
+
+            // Fix metadata in upscaled file if it exists
+            if (group.UpscaledChapter != null && !string.IsNullOrEmpty(library.UpscaledLibraryPath))
+            {
+                string upscaledPath = Path.Combine(library.UpscaledLibraryPath, group.CanonicalRelativePath);
+                if (File.Exists(upscaledPath))
+                {
+                    var upscaledMetadata = await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(upscaledPath);
+                    
+                    // Check if metadata needs fixing (series title mismatch)
+                    if (upscaledMetadata.Series != manga.PrimaryTitle)
+                    {
+                        var correctedMetadata = upscaledMetadata with { Series = manga.PrimaryTitle };
+                        await metadataHandling.WriteComicInfoAsync(upscaledPath, correctedMetadata);
+                        
+                        logger.LogInformation("Fixed metadata in orphaned upscaled file '{FileName}': series title '{OldTitle}' -> '{NewTitle}'",
+                            group.UpscaledChapter.FileName, upscaledMetadata.Series, manga.PrimaryTitle);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to fix metadata for orphaned chapter group with canonical path '{CanonicalPath}'", group.CanonicalRelativePath);
+        }
+    }
+
+    /// <summary>
     /// Creates a chapter entity for an orphaned chapter group, handling both original and upscaled variants.
-    /// Only processes upscaled files when there's a matching original file and handles file movement.
+    /// Moves files to correct locations, fixes metadata, and handles duplicate detection.
     /// </summary>
     private async Task<bool> CreateChapterEntityForOrphanedChapterGroup(Library library, ChapterGroup group, CancellationToken cancellationToken)
     {
@@ -780,15 +941,27 @@ public partial class LibraryIntegrityChecker(
                 return false;
             }
 
+            // Check for duplicates by looking for existing chapters with same series (including alternative titles)
+            if (await CheckAndHandleDuplicateChapterFiles(library, group, chapterToUse, cancellationToken))
+            {
+                return true; // Duplicate was handled (orphaned file deleted)
+            }
+
             // Find or create the manga series for this chapter
             var manga = await chapterProcessingService.GetOrCreateMangaSeriesAsync(
                 library, chapterToUse.Metadata.Series, null, cancellationToken);
 
-            // Handle file movement if required (upscaled file in wrong location)
+            // Move original file to correct location if needed
+            string finalOriginalPath = MoveOrphanedOriginalFileToCorrectLocation(library, group, manga, cancellationToken);
+            
+            // Handle upscaled file movement if required
             if (group.RequiresFileMovement && group.UpscaledChapter != null && !string.IsNullOrEmpty(library.UpscaledLibraryPath))
             {
                 chapterProcessingService.MoveUpscaledFileToLibrary(group.SourcePath!, library, group.CanonicalRelativePath, cancellationToken);
             }
+
+            // Fix metadata in the moved files
+            await FixOrphanedFileMetadata(library, group, manga, finalOriginalPath, cancellationToken);
 
             // Create the chapter entity - use original chapter info if available, otherwise upscaled
             var chapter = new Chapter

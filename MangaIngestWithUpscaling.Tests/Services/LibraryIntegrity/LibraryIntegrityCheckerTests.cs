@@ -1069,6 +1069,187 @@ public class LibraryIntegrityCheckerTests : IDisposable
         Directory.Delete(upscaledTemp, true);
     }
 
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task CheckIntegrity_OrphanedFileWithFileMovement_MovesFileToCorrectLocation()
+    {
+        using ApplicationDbContext ctx = _db.CreateContext();
+
+        string temp = Directory.CreateTempSubdirectory().FullName;
+        var lib = new Library
+        {
+            Name = "TestLib",
+            NotUpscaledLibraryPath = temp,
+            IngestPath = temp
+        };
+        ctx.Libraries.Add(lib);
+        await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Create orphaned file in wrong location (no series directory structure)
+        string wrongLocationFile = Path.Combine(temp, "Chapter 001.cbz");
+        await File.WriteAllTextAsync(wrongLocationFile, "test content", TestContext.Current.CancellationToken);
+
+        // Setup mocks to return the orphaned chapter with correct series name
+        var orphanedChapter = new MangaIngestWithUpscaling.Shared.Services.ChapterRecognition.FoundChapter(
+            "Chapter 001.cbz",
+            "Chapter 001.cbz", // No series folder in path
+            MangaIngestWithUpscaling.Shared.Services.ChapterRecognition.ChapterStorageType.Cbz,
+            new MangaIngestWithUpscaling.Shared.Services.MetadataHandling.ExtractedMetadata("Correct Series", "Chapter 001", "001")
+        );
+
+        _chapterRecognition.FindAllChaptersAt(temp, null, Arg.Any<CancellationToken>())
+            .Returns(new[] { orphanedChapter }.ToAsyncEnumerable());
+
+        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _chapterRecognition, new ChapterProcessingService(ctx, _upscalerJsonHandling, _fileSystem, NullLogger<ChapterProcessingService>.Instance), _taskQueue,
+            NullLogger<LibraryIntegrityChecker>.Instance, _options);
+
+        bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
+
+        // Should have moved file and created chapter entity
+        Assert.True(changed);
+        Assert.Equal(1, await ctx.Chapters.CountAsync(TestContext.Current.CancellationToken));
+        
+        var createdChapter = await ctx.Chapters.Include(c => c.Manga).FirstAsync(TestContext.Current.CancellationToken);
+        Assert.Equal("Correct Series", createdChapter.Manga.PrimaryTitle);
+        Assert.Equal("Correct Series/Chapter 001.cbz", createdChapter.RelativePath);
+
+        // Verify file was moved to correct location
+        Assert.False(File.Exists(wrongLocationFile));
+        Assert.True(File.Exists(Path.Combine(temp, "Correct Series", "Chapter 001.cbz")));
+
+        // Clean up
+        Directory.Delete(temp, true);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task CheckIntegrity_OrphanedFileWithDuplicate_DeletesOrphanedFile()
+    {
+        using ApplicationDbContext ctx = _db.CreateContext();
+
+        string temp = Directory.CreateTempSubdirectory().FullName;
+        var lib = new Library
+        {
+            Name = "TestLib",
+            NotUpscaledLibraryPath = temp,
+            IngestPath = temp
+        };
+        ctx.Libraries.Add(lib);
+
+        // Create existing manga and chapter entity
+        var manga = new Manga
+        {
+            PrimaryTitle = "Test Series",
+            LibraryId = lib.Id,
+            Library = lib
+        };
+        ctx.MangaSeries.Add(manga);
+        
+        var existingChapter = new Chapter
+        {
+            FileName = "Chapter 001.cbz",
+            RelativePath = "Test Series/Chapter 001.cbz",
+            Manga = manga,
+            MangaId = manga.Id,
+            IsUpscaled = false
+        };
+        ctx.Chapters.Add(existingChapter);
+        await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Create the legitimate file  
+        string legitimateFile = Path.Combine(temp, "Test Series", "Chapter 001.cbz");
+        Directory.CreateDirectory(Path.GetDirectoryName(legitimateFile)!);
+        await File.WriteAllTextAsync(legitimateFile, "legitimate content", TestContext.Current.CancellationToken);
+
+        // Create orphaned duplicate file in wrong location
+        string orphanedFile = Path.Combine(temp, "Wrong Location", "Chapter 001.cbz");
+        Directory.CreateDirectory(Path.GetDirectoryName(orphanedFile)!);
+        await File.WriteAllTextAsync(orphanedFile, "orphaned content", TestContext.Current.CancellationToken);
+
+        var orphanedChapter = new MangaIngestWithUpscaling.Shared.Services.ChapterRecognition.FoundChapter(
+            "Chapter 001.cbz",
+            Path.GetRelativePath(temp, orphanedFile),
+            MangaIngestWithUpscaling.Shared.Services.ChapterRecognition.ChapterStorageType.Cbz,
+            new MangaIngestWithUpscaling.Shared.Services.MetadataHandling.ExtractedMetadata("Test Series", "Chapter 001", "001")
+        );
+
+        _chapterRecognition.FindAllChaptersAt(temp, null, Arg.Any<CancellationToken>())
+            .Returns(new[] { orphanedChapter }.ToAsyncEnumerable());
+
+        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _chapterRecognition, new ChapterProcessingService(ctx, _upscalerJsonHandling, _fileSystem, NullLogger<ChapterProcessingService>.Instance), _taskQueue,
+            NullLogger<LibraryIntegrityChecker>.Instance, _options);
+
+        bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
+
+        // Should have detected and deleted duplicate
+        Assert.True(changed);
+        Assert.Equal(1, await ctx.Chapters.CountAsync(TestContext.Current.CancellationToken)); // Still only one chapter
+
+        // Verify orphaned file was deleted, legitimate file remains
+        Assert.False(File.Exists(orphanedFile));
+        Assert.True(File.Exists(legitimateFile));
+
+        // Clean up
+        Directory.Delete(temp, true);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task CheckIntegrity_OrphanedFileWithMetadataFix_FixesSeriesTitle()
+    {
+        using ApplicationDbContext ctx = _db.CreateContext();
+
+        string temp = Directory.CreateTempSubdirectory().FullName;
+        var lib = new Library
+        {
+            Name = "TestLib",
+            NotUpscaledLibraryPath = temp,
+            IngestPath = temp
+        };
+        ctx.Libraries.Add(lib);
+        await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Create orphaned file with wrong series title in folder structure
+        string orphanedFile = Path.Combine(temp, "Wrong Series Name", "Chapter 001.cbz");
+        Directory.CreateDirectory(Path.GetDirectoryName(orphanedFile)!);
+        await File.WriteAllTextAsync(orphanedFile, "content", TestContext.Current.CancellationToken);
+
+        var testChapter = new MangaIngestWithUpscaling.Shared.Services.ChapterRecognition.FoundChapter(
+            "Chapter 001.cbz",
+            Path.GetRelativePath(temp, orphanedFile),
+            MangaIngestWithUpscaling.Shared.Services.ChapterRecognition.ChapterStorageType.Cbz,
+            new MangaIngestWithUpscaling.Shared.Services.MetadataHandling.ExtractedMetadata("Correct Series", "Chapter 001", "001")
+        );
+
+        _chapterRecognition.FindAllChaptersAt(temp, null, Arg.Any<CancellationToken>())
+            .Returns(new[] { testChapter }.ToAsyncEnumerable());
+
+        // Mock metadata reading to return wrong series title initially
+        var wrongMetadata = new MangaIngestWithUpscaling.Shared.Services.MetadataHandling.ExtractedMetadata("Wrong Series Name", "Chapter 001", "001");
+        _metadata.GetSeriesAndTitleFromComicInfoAsync(Arg.Any<string>())
+            .Returns(wrongMetadata);
+
+        var checker = new LibraryIntegrityChecker(ctx, _factory, _metadata, _chapterRecognition, new ChapterProcessingService(ctx, _upscalerJsonHandling, _fileSystem, NullLogger<ChapterProcessingService>.Instance), _taskQueue,
+            NullLogger<LibraryIntegrityChecker>.Instance, _options);
+
+        bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
+
+        // Should have created chapter with correct series title
+        Assert.True(changed);
+        Assert.Equal(1, await ctx.Chapters.CountAsync(TestContext.Current.CancellationToken));
+        
+        var createdChapter = await ctx.Chapters.Include(c => c.Manga).FirstAsync(TestContext.Current.CancellationToken);
+        Assert.Equal("Correct Series", createdChapter.Manga.PrimaryTitle);
+
+        // Verify metadata was written with corrected series title
+        await _metadata.Received(1).WriteComicInfoAsync(
+            Arg.Any<string>(),
+            Arg.Is<MangaIngestWithUpscaling.Shared.Services.MetadataHandling.ExtractedMetadata>(m => m.Series == "Correct Series"));
+
+        // Clean up
+        Directory.Delete(temp, true);
+    }
+
     private sealed class TestDbContextFactory : IDbContextFactory<ApplicationDbContext>
     {
         private readonly SharedSqliteDb _db;
