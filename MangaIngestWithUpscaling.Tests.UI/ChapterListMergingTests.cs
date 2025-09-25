@@ -29,6 +29,8 @@ namespace MangaIngestWithUpscaling.Tests.UI;
 public class ChapterListMergingTests : TestContext
 {
     private ApplicationDbContext _dbContext = null!;
+    private Microsoft.Data.Sqlite.SqliteConnection _connection = null!;
+    private string _databaseName = string.Empty;
     private IChapterChangedNotifier _subChapterChangedNotifier = null!;
     private IDialogService _subDialogService = null!;
     private IFileSystem _subFileSystem = null!;
@@ -70,25 +72,31 @@ public class ChapterListMergingTests : TestContext
 
     private void SetupDatabase()
     {
-        DbContextOptions<ApplicationDbContext> options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseSqlite("Data Source=:memory:")
-            .Options;
+        // Use a unique in-memory database per test instance but share it across factory-created contexts
+        _databaseName = "chapter_list_tests_" + Guid.NewGuid().ToString("N");
+        string cs = $"Data Source=file:{_databaseName}?mode=memory&cache=shared";
+        _connection = new Microsoft.Data.Sqlite.SqliteConnection(cs);
+        _connection.Open();
 
+        var initOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseSqlite(_connection)
+            .Options;
+        using (var initCtx = new ApplicationDbContext(initOptions))
+        {
+            initCtx.Database.EnsureCreated();
+        }
+
+        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseSqlite(_connection)
+            .Options;
         _dbContext = new ApplicationDbContext(options);
-        _dbContext.Database.OpenConnection();
-        _dbContext.Database.EnsureCreated();
     }
 
     private void RegisterServices()
     {
         Services.AddMudServices();
-        Services.AddSingleton(_dbContext);
-        // Register a factory matching production usage so components depending on IDbContextFactory work in tests
-        var dbContextFactory = Substitute.For<IDbContextFactory<ApplicationDbContext>>();
-        dbContextFactory.CreateDbContext().Returns(_dbContext);
-        dbContextFactory.CreateDbContextAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult(_dbContext));
-        dbContextFactory.CreateDbContextAsync().Returns(Task.FromResult(_dbContext));
-        Services.AddSingleton(dbContextFactory);
+        Services.AddSingleton(_dbContext); // legacy direct injections
+        Services.AddDbContextFactory<ApplicationDbContext>(builder => builder.UseSqlite(_connection));
         Services.AddSingleton(_subMergeCoordinator);
         Services.AddSingleton(_subRevertService);
         Services.AddSingleton(_subMetadataHandler);
