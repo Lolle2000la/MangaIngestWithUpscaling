@@ -287,6 +287,10 @@
                 Snackbar.Add($"Failed to revert {failureCount} merged chapters. Check the logs for more information.", Severity.Error);
             }
 
+            // Reload manga data to ensure fresh chapter list from database
+            await ReloadMangaDataAsync();
+            await LoadChapters();
+
             // Update merge possibilities cache after revert operations
             await UpdateMergePossibilitiesAsync();
         }
@@ -368,6 +372,10 @@
             await UpdateMergePossibilitiesAsync();
 
             Snackbar.Add($"Successfully reverted merged chapter and restored {restoredChapters.Count} individual parts.", Severity.Success);
+            
+            // Reload manga data to ensure fresh chapter list from database
+            await ReloadMangaDataAsync();
+            await LoadChapters();
 
             // Final UI refresh to ensure all button states are correct
             StateHasChanged();
@@ -627,22 +635,7 @@
 
     protected override async Task OnInitializedAsync()
     {
-        await using var context = await DbContextFactory.CreateDbContextAsync();
-        
-        // Load the manga with all necessary related data
-        var loadedManga = await context.MangaSeries
-            .Include(m => m.Chapters)
-            .Include(m => m.Library)
-            .ThenInclude(l => l.UpscalerProfile)
-            .Include(m => m.UpscalerProfilePreference)
-            .FirstOrDefaultAsync(m => m.Id == Manga.Id);
-
-        if (loadedManga != null)
-        {
-            // Update the Manga reference with loaded data
-            Manga = loadedManga;
-        }
-
+        await ReloadMangaDataAsync();
         await LoadChapters();
 
         // Set up the reactive binding BEFORE updating merge cache so UI elements exist
@@ -673,6 +666,25 @@
                 });
             }
         }, TaskScheduler.FromCurrentSynchronizationContext());
+    }
+
+    private async Task ReloadMangaDataAsync()
+    {
+        await using var context = await DbContextFactory.CreateDbContextAsync();
+        
+        // Load the manga with all necessary related data
+        var loadedManga = await context.MangaSeries
+            .Include(m => m.Chapters)
+            .Include(m => m.Library)
+            .ThenInclude(l => l.UpscalerProfile)
+            .Include(m => m.UpscalerProfilePreference)
+            .FirstOrDefaultAsync(m => m.Id == Manga.Id);
+
+        if (loadedManga != null)
+        {
+            // Update the Manga reference with loaded data
+            Manga = loadedManga;
+        }
     }
 
     private async Task<bool> LoadChapters()
@@ -1017,66 +1029,17 @@
                 return;
             }
 
-            int totalProcessedChapters = 0;
-
-            // Update UI: Remove original chapters and add merged chapters
-            foreach (var mergeInfo in completedMerges)
-            {
-                // Remove ALL the original chapters from the UI (we'll add the updated merged chapter below)
-                var originalChapterIds = chaptersToMerge.Select(c => c.Id).ToHashSet();
-
-                var itemsToRemove = chapterItems.Where(ci => originalChapterIds.Contains(ci.Chapter.Id)).ToList();
-                foreach (var item in itemsToRemove)
-                {
-                    chapters.Remove(item);
-                    totalProcessedChapters++;
-                }
-
-                // Find the merged chapter from the database - it should be the FIRST chapter from the original set 
-                // (as per ChapterMergeCoordinator.UpdateDatabaseForMergeAsync which keeps the first and removes the rest)
-                var primaryChapterId = chaptersToMerge.First().Id;
-
-                await using var context = await DbContextFactory.CreateDbContextAsync();
-                var mergedChapter = await context.Chapters.FindAsync(primaryChapterId);
-                if (mergedChapter != null)
-                {
-                    // Reload the chapter to get updated data
-                    await context.Entry(mergedChapter).ReloadAsync();
-
-                    var extractedMetadata = await MetadataHandler.GetSeriesAndTitleFromComicInfoAsync(
-                        Path.Combine(Manga.Library.NotUpscaledLibraryPath, mergedChapter.RelativePath));
-
-                    // Properly determine if the chapter is merged by checking the database
-                    var isMerged = await ChapterMergeRevertService.CanRevertChapterAsync(mergedChapter);
-
-                    chapters.Add(new ChapterItem
-                    {
-                        Chapter = mergedChapter,
-                        ExtractedMetadata = extractedMetadata,
-                        NewTitle = extractedMetadata?.ChapterTitle ?? string.Empty,
-                        NewFileName = Path.GetFileNameWithoutExtension(mergedChapter.FileName),
-                        IsMerged = isMerged
-                    });
-
-                    try
-                    {
-                        await ChapterChangedNotifier.Notify(mergedChapter, false);
-                        if (mergedChapter.IsUpscaled)
-                        {
-                            await ChapterChangedNotifier.Notify(mergedChapter, true);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.LogError(ex, "Failed to notify connected service of chapter change for merged chapter {ChapterId}", mergedChapter.Id);
-                        Snackbar.Add($"Failed to notify connected service of chapter change for {mergedChapter.FileName}. Check the logs for more information.", Severity.Error);
-                    }
-                }
-            }
+            int totalProcessedChapters = completedMerges.Sum(merge => merge.OriginalParts.Count);
 
             var message = completedMerges.Count == 1
                 ? $"Successfully merged {totalProcessedChapters} chapters into 1 group."
                 : $"Successfully merged {totalProcessedChapters} chapters into {completedMerges.Count} groups.";
+
+            // Reload manga data to reflect changes from merge operations
+            await ReloadMangaDataAsync();
+            
+            // Reload chapters with updated manga data
+            await LoadChapters();
 
             // Clear merge cache to ensure fresh recalculation
             InvalidateMergePossibilitiesCache();
