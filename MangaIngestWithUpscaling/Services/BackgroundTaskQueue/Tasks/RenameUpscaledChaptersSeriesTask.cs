@@ -69,6 +69,6 @@ public class RenameUpscaledChaptersSeriesTask : BaseTask
 
         var metadataChange = services.GetRequiredService<IMangaMetadataChanger>();
 
-        metadataChange.ApplyMangaTitleToUpscaled(chapter, NewTitle, origChapterPath);
+        await metadataChange.ApplyMangaTitleToUpscaledAsync(chapter, NewTitle, origChapterPath);
     }
 }
