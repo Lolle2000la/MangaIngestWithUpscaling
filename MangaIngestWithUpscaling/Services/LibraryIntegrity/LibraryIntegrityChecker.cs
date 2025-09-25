@@ -290,13 +290,14 @@ public class LibraryIntegrityChecker(
             }
         }
 
-        var metadata = metadataHandling.GetSeriesAndTitleFromComicInfo(chapter.NotUpscaledFullPath);
+        ExtractedMetadata metadata =
+            await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(chapter.NotUpscaledFullPath);
         if (!CheckMetadata(metadata, out var correctedMetadata))
         {
             logger.LogWarning(
                 "Metadata of chapter {chapterFileName} ({chapterId}) of {seriesTitle} is incorrect. Correcting.",
                 chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
-            metadataHandling.WriteComicInfo(chapter.NotUpscaledFullPath, correctedMetadata);
+            await metadataHandling.WriteComicInfoAsync(chapter.NotUpscaledFullPath, correctedMetadata);
             return IntegrityCheckResult.Corrected;
         }
 
@@ -370,15 +371,16 @@ public class LibraryIntegrityChecker(
             }
 
 
-            if (metadataHandling.PagesEqual(chapter.NotUpscaledFullPath, chapter.UpscaledFullPath))
+            if (await metadataHandling.PagesEqualAsync(chapter.NotUpscaledFullPath, chapter.UpscaledFullPath))
             {
-                var metadata = metadataHandling.GetSeriesAndTitleFromComicInfo(chapter.UpscaledFullPath);
+                ExtractedMetadata metadata =
+                    await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(chapter.UpscaledFullPath);
                 if (!CheckMetadata(metadata, out var correctedMetadata))
                 {
                     logger.LogWarning(
                         "Metadata of upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle} is incorrect. Correcting.",
                         chapter.FileName, chapter.Id, chapter.Manga.PrimaryTitle);
-                    metadataHandling.WriteComicInfo(chapter.UpscaledFullPath, correctedMetadata);
+                    await metadataHandling.WriteComicInfoAsync(chapter.UpscaledFullPath, correctedMetadata);
                 }
 
                 if (chapter.IsUpscaled)
@@ -397,7 +399,8 @@ public class LibraryIntegrityChecker(
             {
                 // Analyze the differences to see if repair is possible
                 PageDifferenceResult differences =
-                    metadataHandling.AnalyzePageDifferences(chapter.NotUpscaledFullPath, chapter.UpscaledFullPath);
+                    await metadataHandling.AnalyzePageDifferencesAsync(chapter.NotUpscaledFullPath,
+                        chapter.UpscaledFullPath);
 
                 if (differences.CanRepair)
                 {
@@ -459,7 +462,8 @@ public class LibraryIntegrityChecker(
             {
                 // Try to analyze differences one more time in case the exception was from something else
                 PageDifferenceResult differences =
-                    metadataHandling.AnalyzePageDifferences(chapter.NotUpscaledFullPath, chapter.UpscaledFullPath);
+                    await metadataHandling.AnalyzePageDifferencesAsync(chapter.NotUpscaledFullPath,
+                        chapter.UpscaledFullPath);
 
                 if (differences.CanRepair && chapter.Manga?.EffectiveUpscalerProfile != null)
                 {

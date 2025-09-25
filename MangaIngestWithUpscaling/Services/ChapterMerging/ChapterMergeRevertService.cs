@@ -286,7 +286,7 @@ public class ChapterMergeRevertService(
                 string upscaledChapterPath = Path.Combine(upscaledSeriesDirectory, upscaledRestoredChapter.FileName);
 
                 // Add upscaler.json to the upscaled chapter
-                await using ZipArchive archive = ZipFile.Open(upscaledChapterPath, ZipArchiveMode.Update);
+                await using ZipArchive archive = await ZipFile.OpenAsync(upscaledChapterPath, ZipArchiveMode.Update, cancellationToken);
                 await upscalerJsonHandlingService.WriteUpscalerJsonAsync(archive, originalChapter.UpscalerProfile!,
                     cancellationToken);
             }

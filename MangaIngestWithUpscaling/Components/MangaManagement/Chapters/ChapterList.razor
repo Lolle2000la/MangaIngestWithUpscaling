@@ -331,7 +331,7 @@
             // Add the restored chapters to the UI
             foreach (var restoredChapter in restoredChapters)
             {
-                var extractedMetadata = MetadataHandler.GetSeriesAndTitleFromComicInfo(
+                var extractedMetadata = await MetadataHandler.GetSeriesAndTitleFromComicInfoAsync(
                     Path.Combine(Manga.Library.NotUpscaledLibraryPath, restoredChapter.RelativePath));
 
                 chapters.Add(new ChapterItem
@@ -711,7 +711,7 @@
                     continue;
                 }
 
-                var extractedMetadata = MetadataHandler.GetSeriesAndTitleFromComicInfo(Path.Combine(Manga.Library.NotUpscaledLibraryPath, chapter.RelativePath));
+                var extractedMetadata = await MetadataHandler.GetSeriesAndTitleFromComicInfoAsync(Path.Combine(Manga.Library.NotUpscaledLibraryPath, chapter.RelativePath));
                 chapter.UpscalerProfile = await loadProfile;
 
                 // Check if this chapter is a merged chapter
@@ -1043,7 +1043,7 @@
                     // Reload the chapter to get updated data
                     await context.Entry(mergedChapter).ReloadAsync();
 
-                    var extractedMetadata = MetadataHandler.GetSeriesAndTitleFromComicInfo(
+                    var extractedMetadata = await MetadataHandler.GetSeriesAndTitleFromComicInfoAsync(
                         Path.Combine(Manga.Library.NotUpscaledLibraryPath, mergedChapter.RelativePath));
 
                     // Properly determine if the chapter is merged by checking the database
@@ -1190,7 +1190,7 @@
                 if (existingItem != null)
                 {
                     // Update the existing item
-                    var extractedMetadata = MetadataHandler.GetSeriesAndTitleFromComicInfo(
+                    var extractedMetadata = await MetadataHandler.GetSeriesAndTitleFromComicInfoAsync(
                         Path.Combine(Manga.Library.NotUpscaledLibraryPath, mergedChapter.RelativePath));
 
                     existingItem.ExtractedMetadata = extractedMetadata;

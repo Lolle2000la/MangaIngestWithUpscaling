@@ -468,9 +468,8 @@ public partial class ChapterPartMerger(
                             ChapterNumber = chapterNumber,
                             Metadata = chapterPart.Metadata,
                             PageNames = new List<string>(), // Will be populated when actually processing the file
-                            StartPageIndex =
-                                0, // Will be set by the coordinator when actually adding to the merged file
-                            EndPageIndex = 0 // Will be set by the coordinator when actually adding to the merged file
+                            StartPageIndex = 0, // Will be set by the coordinator when actually adding to the merged file
+                            EndPageIndex = 0  // Will be set by the coordinator when actually adding to the merged file
                         });
                     }
 
@@ -660,7 +659,7 @@ public partial class ChapterPartMerger(
             }
 
             // Update the merged CBZ's ComicInfo.xml with the target metadata
-            metadataHandling.WriteComicInfo(tempMergedFilePath, targetMetadata);
+            await metadataHandling.WriteComicInfoAsync(tempMergedFilePath, targetMetadata);
 
             // Ensure the output directory exists
             Directory.CreateDirectory(outputPath);
@@ -785,7 +784,7 @@ public partial class ChapterPartMerger(
                     else
                     {
                         // Fallback to generating ComicInfo.xml from basic metadata (backward compatibility)
-                        metadataHandling.WriteComicInfo(partArchive, originalPart.Metadata);
+                        await metadataHandling.WriteComicInfoAsync(partArchive, originalPart.Metadata);
                         logger.LogDebug(
                             "Generated ComicInfo.xml from basic metadata for {FileName} (legacy compatibility)",
                             originalPart.FileName);

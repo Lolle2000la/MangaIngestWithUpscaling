@@ -1166,13 +1166,13 @@ public class ComicInfoPreservationTests : IDisposable
             };
 
             // Configure metadata handler to return the original ComicInfo.xml content
-            metadataHandler.GetSeriesAndTitleFromComicInfo(file1)
-                .Returns(new ExtractedMetadata("Test Series", "Chapter 5.1", "5.1"));
-            metadataHandler.GetSeriesAndTitleFromComicInfo(file2)
-                .Returns(new ExtractedMetadata("Test Series", "Chapter 5.2", "5.2"));
+            metadataHandler.GetSeriesAndTitleFromComicInfoAsync(file1)
+                .Returns(Task.FromResult(new ExtractedMetadata("Test Series", "Chapter 5.1", "5.1")));
+            metadataHandler.GetSeriesAndTitleFromComicInfoAsync(file2)
+                .Returns(Task.FromResult(new ExtractedMetadata("Test Series", "Chapter 5.2", "5.2")));
 
             // Configure metadata handler to write merged ComicInfo.xml
-            metadataHandler.When(x => x.WriteComicInfo(Arg.Any<ZipArchive>(), Arg.Any<ExtractedMetadata>()))
+            metadataHandler.When(x => x.WriteComicInfoAsync(Arg.Any<ZipArchive>(), Arg.Any<ExtractedMetadata>()))
                 .Do(callInfo =>
                 {
                     var archive = callInfo.Arg<ZipArchive>();
@@ -1286,7 +1286,7 @@ public class ComicInfoPreservationTests : IDisposable
             };
 
             // Configure metadata handler for legacy fallback
-            metadataHandler.When(x => x.WriteComicInfo(Arg.Any<ZipArchive>(), Arg.Any<ExtractedMetadata>()))
+            metadataHandler.When(x => x.WriteComicInfoAsync(Arg.Any<ZipArchive>(), Arg.Any<ExtractedMetadata>()))
                 .Do(callInfo =>
                 {
                     var archive = callInfo.Arg<ZipArchive>();
@@ -1310,7 +1310,9 @@ public class ComicInfoPreservationTests : IDisposable
             Assert.Equal(2, restoredChapters.Count);
 
             // Verify metadata handler was called for legacy fallback
-            metadataHandler.Received(2).WriteComicInfo(Arg.Any<ZipArchive>(), Arg.Any<ExtractedMetadata>());
+#pragma warning disable CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
+            metadataHandler.Received(2).WriteComicInfoAsync(Arg.Any<ZipArchive>(), Arg.Any<ExtractedMetadata>());
+#pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
 
             var restoredFile1 = Path.Combine(tempDir, "Chapter 5.1.cbz");
             var restoredFile2 = Path.Combine(tempDir, "Chapter 5.2.cbz");
@@ -1490,10 +1492,11 @@ public class UpscaledChapterHandlingTests : IDisposable
             CreateTestCbzFile(Path.GetDirectoryName(upscaledMergedChapterPath)!, "Chapter 5.cbz", 6);
 
             // Add upscaler.json to upscaled file
-            await using (ZipArchive archive = ZipFile.Open(upscaledMergedChapterPath, ZipArchiveMode.Update))
+            await using (ZipArchive archive = await ZipFile.OpenAsync(upscaledMergedChapterPath, ZipArchiveMode.Update,
+                             TestContext.Current.CancellationToken))
             {
                 var upscalerEntry = archive.CreateEntry("upscaler.json");
-                await using Stream stream = upscalerEntry.Open();
+                await using Stream stream = await upscalerEntry.OpenAsync(TestContext.Current.CancellationToken);
                 await using var writer = new StreamWriter(stream);
                 await writer.WriteAsync("""{"profile": "Test Profile", "scale": 2}""");
             }

@@ -24,7 +24,7 @@ public class MangaMetadataChanger(
     IChapterChangedNotifier chapterChangedNotifier) : IMangaMetadataChanger
 {
     /// <inheritdoc/>
-    public void ApplyMangaTitleToUpscaled(Chapter chapter, string newTitle, string origChapterPath)
+    public async Task ApplyMangaTitleToUpscaledAsync(Chapter chapter, string newTitle, string origChapterPath)
     {
         if (!fileSystem.FileExists(origChapterPath))
         {
@@ -42,7 +42,7 @@ public class MangaMetadataChanger(
             throw new InvalidOperationException("Upscaled library path not set.");
         }
 
-        UpdateChapterTitle(newTitle, origChapterPath);
+        await UpdateChapterTitle(newTitle, origChapterPath);
 
         // Move chapter to the correct directory with the new title
         var newChapterPath = Path.Combine(
@@ -133,7 +133,7 @@ public class MangaMetadataChanger(
             ExtractedMetadata? existingMetadata = null;
             try
             {
-                existingMetadata = metadataHandling.GetSeriesAndTitleFromComicInfo(currentChapterPath);
+                existingMetadata = await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(currentChapterPath);
             }
             catch (Exception ex)
             {
@@ -234,7 +234,7 @@ public class MangaMetadataChanger(
                 }
 
                 // Update metadata in the source file before moving
-                metadataHandling.WriteComicInfo(operation.CurrentPath,
+                await metadataHandling.WriteComicInfoAsync(operation.CurrentPath,
                     operation.ExistingMetadata with { Series = newTitle });
 
                 // Move the main chapter file
@@ -253,11 +253,12 @@ public class MangaMetadataChanger(
                         }
 
                         // Update metadata in upscaled file before moving
-                        metadataHandling.WriteComicInfo(operation.CurrentUpscaledPath,
-                            metadataHandling.GetSeriesAndTitleFromComicInfo(operation.CurrentUpscaledPath) with
-                            {
-                                Series = newTitle
-                            });
+                        await metadataHandling.WriteComicInfoAsync(operation.CurrentUpscaledPath,
+                            await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(operation.CurrentUpscaledPath)
+                                with
+                                {
+                                    Series = newTitle
+                                });
 
                         // Move the upscaled file
                         fileSystem.Move(operation.CurrentUpscaledPath, operation.NewUpscaledPath);
@@ -321,8 +322,8 @@ public class MangaMetadataChanger(
 
         try
         {
-            metadataHandling.WriteComicInfo(managedChapter.NotUpscaledFullPath,
-                metadataHandling.GetSeriesAndTitleFromComicInfo(managedChapter.NotUpscaledFullPath) with
+            await metadataHandling.WriteComicInfoAsync(managedChapter.NotUpscaledFullPath,
+                await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(managedChapter.NotUpscaledFullPath) with
                 {
                     ChapterTitle = newTitle
                 });
@@ -335,8 +336,8 @@ public class MangaMetadataChanger(
                     return;
                 }
 
-                metadataHandling.WriteComicInfo(managedChapter.UpscaledFullPath,
-                    metadataHandling.GetSeriesAndTitleFromComicInfo(managedChapter.UpscaledFullPath) with
+                await metadataHandling.WriteComicInfoAsync(managedChapter.UpscaledFullPath,
+                    await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(managedChapter.UpscaledFullPath) with
                     {
                         ChapterTitle = newTitle
                     });
@@ -354,7 +355,7 @@ public class MangaMetadataChanger(
         }
     }
 
-    private void UpdateChapterTitle(string newTitle, string origChapterPath)
+    private async Task UpdateChapterTitle(string newTitle, string origChapterPath)
     {
         if (!fileSystem.FileExists(origChapterPath))
         {
@@ -362,9 +363,9 @@ public class MangaMetadataChanger(
             return;
         }
 
-        var metadata = metadataHandling.GetSeriesAndTitleFromComicInfo(origChapterPath);
+        ExtractedMetadata metadata = await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(origChapterPath);
         var newMetadata = metadata with { Series = newTitle };
-        metadataHandling.WriteComicInfo(origChapterPath, newMetadata);
+        await metadataHandling.WriteComicInfoAsync(origChapterPath, newMetadata);
     }
 
     private class ChapterRenameOperation

@@ -135,7 +135,7 @@ public class MangaJaNaiUpscaler(
 
         if (File.Exists(outputPath))
         {
-            if (metadataHandling.PagesEqual(inputPath, outputPath))
+            if (await metadataHandling.PagesEqualAsync(inputPath, outputPath))
             {
                 logger.LogInformation(
                     "The target to upscale is seemingly already upscaled, so we will accept this as is.\n\n" +

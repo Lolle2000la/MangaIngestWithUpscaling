@@ -10,12 +10,12 @@ public static class CbzCleanupHelpers
     /// Removes a specific image by name from a CBZ archive.
     /// Returns true if the image was found and removed.
     /// </summary>
-    public static bool TryRemoveImageByName(string cbzPath, string imageName, ILogger? logger = null)
+    public static async Task<bool> TryRemoveImageByNameAsync(string cbzPath, string imageName, ILogger? logger = null)
     {
         try
         {
             if (!File.Exists(cbzPath)) return false;
-            using var archive = ZipFile.Open(cbzPath, ZipArchiveMode.Update);
+            await using ZipArchive archive = await ZipFile.OpenAsync(cbzPath, ZipArchiveMode.Update);
 
             var entry = archive.GetEntry(imageName);
             if (entry == null)
@@ -47,12 +47,13 @@ public static class CbzCleanupHelpers
     /// This is useful when the file extension might have changed after processing (e.g., upscaling).
     /// Returns true if the image was found and removed.
     /// </summary>
-    public static bool TryRemoveImageByBaseName(string cbzPath, string imageName, ILogger? logger = null)
+    public static async Task<bool> TryRemoveImageByBaseNameAsync(string cbzPath, string imageName,
+        ILogger? logger = null)
     {
         try
         {
             if (!File.Exists(cbzPath)) return false;
-            using var archive = ZipFile.Open(cbzPath, ZipArchiveMode.Update);
+            await using ZipArchive archive = await ZipFile.OpenAsync(cbzPath, ZipArchiveMode.Update);
 
             // Get the base name without extension from the original image
             var baseNameWithoutExt = Path.GetFileNameWithoutExtension(imageName);
