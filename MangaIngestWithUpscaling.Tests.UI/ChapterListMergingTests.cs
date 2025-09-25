@@ -83,6 +83,12 @@ public class ChapterListMergingTests : TestContext
     {
         Services.AddMudServices();
         Services.AddSingleton(_dbContext);
+        // Register a factory matching production usage so components depending on IDbContextFactory work in tests
+        var dbContextFactory = Substitute.For<IDbContextFactory<ApplicationDbContext>>();
+        dbContextFactory.CreateDbContext().Returns(_dbContext);
+        dbContextFactory.CreateDbContextAsync(Arg.Any<CancellationToken>()).Returns(Task.FromResult(_dbContext));
+        dbContextFactory.CreateDbContextAsync().Returns(Task.FromResult(_dbContext));
+        Services.AddSingleton(dbContextFactory);
         Services.AddSingleton(_subMergeCoordinator);
         Services.AddSingleton(_subRevertService);
         Services.AddSingleton(_subMetadataHandler);
@@ -331,11 +337,7 @@ public class ChapterListMergingTests : TestContext
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing)
-        {
-            _dbContext?.Database.CloseConnection();
-            _dbContext?.Dispose();
-        }
+        // disposing the db here will be too soon, causing problems in async tests
 
         base.Dispose(disposing);
     }
