@@ -8,6 +8,7 @@ using MangaIngestWithUpscaling.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
+using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -22,6 +23,7 @@ public partial class LibraryIntegrityChecker(
     IMetadataHandlingService metadataHandling,
     IChapterInIngestRecognitionService chapterRecognitionService,
     IUpscalerJsonHandlingService upscalerJsonHandlingService,
+    IFileSystem fileSystem,
     ITaskQueue taskQueue,
     ILogger<LibraryIntegrityChecker> logger,
     IOptions<IntegrityCheckerConfig> configOptions) : ILibraryIntegrityChecker
@@ -659,7 +661,6 @@ public partial class LibraryIntegrityChecker(
         {
             // Check if a chapter entity already exists for this canonical path
             var existingChapter = await dbContext.Chapters
-                .AsNoTracking()
                 .Include(c => c.Manga)
                 .Where(c => c.Manga.LibraryId == library.Id)
                 .FirstOrDefaultAsync(c => c.RelativePath == group.CanonicalRelativePath, cancellationToken);
@@ -669,6 +670,11 @@ public partial class LibraryIntegrityChecker(
                 // This is an orphaned chapter - create a chapter entity for it
                 anyChanges = await CreateChapterEntityForOrphanedChapterGroup(library, group, cancellationToken) || anyChanges;
             }
+            else if (group.UpscaledChapter != null && !existingChapter.IsUpscaled)
+            {
+                // We found an upscaled file for an existing chapter that's not marked as upscaled
+                anyChanges = await HandleUpscaledFileForExistingChapter(library, group, existingChapter, cancellationToken) || anyChanges;
+            }
         }
 
         return anyChanges;
@@ -676,6 +682,7 @@ public partial class LibraryIntegrityChecker(
 
     /// <summary>
     /// Groups found chapters by their canonical path, combining original and upscaled variants.
+    /// Also detects upscaled files by upscaler.json and handles file movement.
     /// </summary>
     private async Task<List<ChapterGroup>> GroupChaptersByCanonicalPath(
         List<(FoundChapter Chapter, bool IsFromUpscaledPath)> allFoundChapters,
@@ -704,17 +711,31 @@ public partial class LibraryIntegrityChecker(
             }
             else
             {
-                // Check if this is actually an upscaled file in the non-upscaled path (has _upscaled in path)
-                if (IsUpscaledChapterRegex().IsMatch(chapter.RelativePath))
+                // Check if this file has upscaler.json (which means it's actually upscaled)
+                string fullPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
+                var upscalerProfileDto = await upscalerJsonHandlingService.ReadUpscalerJsonAsync(fullPath, cancellationToken);
+                
+                if (upscalerProfileDto != null)
                 {
+                    // This is an upscaled file with upscaler.json - it should be moved to upscaled folder
                     group.UpscaledChapter = chapter;
-                    // Try to extract upscaler profile
-                    string fullPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
-                    group.UpscalerProfileDto = await upscalerJsonHandlingService.ReadUpscalerJsonAsync(fullPath, cancellationToken);
+                    group.UpscalerProfileDto = upscalerProfileDto;
+                    group.RequiresFileMovement = true; // Mark for movement
+                    group.SourcePath = fullPath;
                 }
                 else
                 {
-                    group.OriginalChapter = chapter;
+                    // Check if this is actually an upscaled file in the non-upscaled path (has _upscaled in path)
+                    if (IsUpscaledChapterRegex().IsMatch(chapter.RelativePath))
+                    {
+                        group.UpscaledChapter = chapter;
+                        group.RequiresFileMovement = true; // Mark for movement
+                        group.SourcePath = fullPath;
+                    }
+                    else
+                    {
+                        group.OriginalChapter = chapter;
+                    }
                 }
             }
         }
@@ -733,11 +754,34 @@ public partial class LibraryIntegrityChecker(
 
     /// <summary>
     /// Creates a chapter entity for an orphaned chapter group, handling both original and upscaled variants.
+    /// Only processes upscaled files when there's a matching original file and handles file movement.
     /// </summary>
     private async Task<bool> CreateChapterEntityForOrphanedChapterGroup(Library library, ChapterGroup group, CancellationToken cancellationToken)
     {
         try
         {
+            // Check if this is an upscaled-only group (no original file)
+            if (group.OriginalChapter == null && group.UpscaledChapter != null)
+            {
+                // Check if there's an existing chapter entity that could be the original
+                var existingOriginalChapter = await dbContext.Chapters
+                    .Include(c => c.Manga)
+                    .Where(c => c.Manga.LibraryId == library.Id)
+                    .FirstOrDefaultAsync(c => c.RelativePath == group.CanonicalRelativePath && !c.IsUpscaled, cancellationToken);
+
+                if (existingOriginalChapter == null)
+                {
+                    logger.LogWarning("Found upscaled orphan file '{FileName}' without matching original file. Skipping until original is found.",
+                        group.UpscaledChapter.FileName);
+                    return false; // Don't process upscaled files without original
+                }
+                else
+                {
+                    // We have an existing original chapter, just need to mark it as upscaled and handle file movement
+                    return await HandleUpscaledFileForExistingChapter(library, group, existingOriginalChapter, cancellationToken);
+                }
+            }
+
             // Use the original chapter's metadata if available, otherwise use upscaled chapter's metadata
             var chapterToUse = group.OriginalChapter ?? group.UpscaledChapter;
             if (chapterToUse == null)
@@ -764,6 +808,12 @@ public partial class LibraryIntegrityChecker(
                 
                 logger.LogInformation("Created new manga series '{SeriesTitle}' in library '{LibraryName}' for orphaned chapter '{FileName}'",
                     chapterToUse.Metadata.Series, library.Name, chapterToUse.FileName);
+            }
+
+            // Handle file movement if required (upscaled file in wrong location)
+            if (group.RequiresFileMovement && group.UpscaledChapter != null && !string.IsNullOrEmpty(library.UpscaledLibraryPath))
+            {
+                MoveUpscaledFileToCorrectLocation(library, group, cancellationToken);
             }
 
             // Create the chapter entity - use original chapter info if available, otherwise upscaled
@@ -804,6 +854,81 @@ public partial class LibraryIntegrityChecker(
             logger.LogError(ex, "Failed to create chapter entity for orphaned chapter group with canonical path '{CanonicalPath}'",
                 group.CanonicalRelativePath);
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Handles the case where we found an upscaled orphan file and there's already an existing original chapter.
+    /// </summary>
+    private async Task<bool> HandleUpscaledFileForExistingChapter(Library library, ChapterGroup group, Chapter existingChapter, CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Handle file movement if required
+            if (group.RequiresFileMovement && group.UpscaledChapter != null && !string.IsNullOrEmpty(library.UpscaledLibraryPath))
+            {
+                MoveUpscaledFileToCorrectLocation(library, group, cancellationToken);
+            }
+
+            // Update the existing chapter to mark it as upscaled
+            existingChapter.IsUpscaled = true;
+
+            // Set upscaler profile if we extracted one from the upscaled file
+            if (group.UpscalerProfileDto != null)
+            {
+                var upscalerProfile = await FindOrCreateUpscalerProfile(group.UpscalerProfileDto, cancellationToken);
+                if (upscalerProfile != null)
+                {
+                    existingChapter.UpscalerProfileId = upscalerProfile.Id;
+                }
+            }
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            logger.LogInformation("Updated existing chapter entity '{FileName}' to mark as upscaled (Library: '{LibraryName}')",
+                existingChapter.FileName, library.Name);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to update existing chapter entity for upscaled file with canonical path '{CanonicalPath}'",
+                group.CanonicalRelativePath);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Moves an upscaled file from the normal library path to the upscaled library path.
+    /// </summary>
+    private void MoveUpscaledFileToCorrectLocation(Library library, ChapterGroup group, CancellationToken cancellationToken)
+    {
+        if (group.UpscaledChapter == null || group.SourcePath == null || string.IsNullOrEmpty(library.UpscaledLibraryPath))
+            return;
+
+        try
+        {
+            // Construct target path in upscaled library
+            string targetPath = Path.Combine(library.UpscaledLibraryPath, group.CanonicalRelativePath);
+            string targetDirectory = Path.GetDirectoryName(targetPath)!;
+
+            // Create target directory if it doesn't exist
+            if (!Directory.Exists(targetDirectory))
+            {
+                Directory.CreateDirectory(targetDirectory);
+            }
+
+            // Move the file
+            fileSystem.Move(group.SourcePath, targetPath);
+
+            logger.LogInformation("Moved upscaled file from '{SourcePath}' to '{TargetPath}' in library '{LibraryName}'",
+                group.SourcePath, targetPath, library.Name);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to move upscaled file from '{SourcePath}' to upscaled library path in library '{LibraryName}'",
+                group.SourcePath, library.Name);
+            throw; // Re-throw to indicate the operation failed
         }
     }
 
@@ -859,6 +984,8 @@ public partial class LibraryIntegrityChecker(
         public FoundChapter? OriginalChapter { get; set; }
         public FoundChapter? UpscaledChapter { get; set; }
         public UpscalerProfileJsonDto? UpscalerProfileDto { get; set; }
+        public bool RequiresFileMovement { get; set; }
+        public string? SourcePath { get; set; }
     }
 
     private enum IntegrityCheckResult
