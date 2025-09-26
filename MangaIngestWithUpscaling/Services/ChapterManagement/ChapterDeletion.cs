@@ -8,7 +8,12 @@ namespace MangaIngestWithUpscaling.Services.ChapterManagement;
 public class ChapterDeletion(ILogger<ChapterDeletion> logger) : IChapterDeletion
 {
     /// <inheritdoc/>
-    public void DeleteChapter(ApplicationDbContext context, Chapter chapter, bool deleteNormal, bool deleteUpscaled)
+    public void DeleteChapter(
+        ApplicationDbContext context,
+        Chapter chapter,
+        bool deleteNormal,
+        bool deleteUpscaled
+    )
     {
         var normalPath = Path.Combine(
             chapter.Manga.Library.NotUpscaledLibraryPath,
@@ -48,7 +53,12 @@ public class ChapterDeletion(ILogger<ChapterDeletion> logger) : IChapterDeletion
     }
 
     /// <inheritdoc/>
-    public void DeleteManga(ApplicationDbContext context, Manga manga, bool deleteNormal, bool deleteUpscaled)
+    public void DeleteManga(
+        ApplicationDbContext context,
+        Manga manga,
+        bool deleteNormal,
+        bool deleteUpscaled
+    )
     {
         foreach (var chapter in manga.Chapters)
         {

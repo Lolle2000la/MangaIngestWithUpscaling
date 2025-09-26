@@ -99,7 +99,9 @@ public static class TestDatabaseHelper
             return new ApplicationDbContext(_options);
         }
 
-        public Task<ApplicationDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
+        public Task<ApplicationDbContext> CreateDbContextAsync(
+            CancellationToken cancellationToken = default
+        )
         {
             return Task.FromResult(CreateDbContext());
         }
