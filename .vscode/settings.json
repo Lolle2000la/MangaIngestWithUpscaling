@@ -4,5 +4,5 @@
     },
     "[xml]": {
         "editor.defaultFormatter": "csharpier.csharpier-vscode"
-    },
+    }
 }
