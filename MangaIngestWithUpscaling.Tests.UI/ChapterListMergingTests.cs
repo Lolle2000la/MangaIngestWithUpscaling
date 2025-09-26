@@ -94,8 +94,8 @@ public class ChapterListMergingTests : TestContext
         _dbContext.Database.OpenConnection();
         _dbContext.Database.EnsureCreated();
 
-        Services.AddDbContextFactory<ApplicationDbContext>(options =>
-            options.UseSqlite(
+        Services.AddDbContextFactory<ApplicationDbContext>(o =>
+            o.UseSqlite(
                 connectionStringBuilder.ToString(),
                 sqlite =>
                 {
@@ -201,7 +201,7 @@ public class ChapterListMergingTests : TestContext
     public async Task ChapterList_ShouldRenderChapters()
     {
         // Arrange
-        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+        (Manga manga, Library _, List<Chapter> _) = await CreateTestDataAsync();
 
         // Setup merge coordinator to return no merge possibilities initially
         var mergeInfo = new MergeActionInfo();
@@ -228,7 +228,7 @@ public class ChapterListMergingTests : TestContext
     public async Task ChapterList_WithMergePossibilities_ShouldEnableMergeButton()
     {
         // Arrange
-        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+        (Manga manga, Library _, List<Chapter> chapters) = await CreateTestDataAsync();
 
         // Setup merge coordinator to return merge possibilities
         var mergeInfo = new MergeActionInfo
@@ -264,7 +264,7 @@ public class ChapterListMergingTests : TestContext
     public async Task ChapterList_WithMergedChapter_ShouldShowRevertButton()
     {
         // Arrange
-        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+        (Manga manga, Library _, List<Chapter> chapters) = await CreateTestDataAsync();
 
         // Create a merged chapter info record
         var mergedChapterInfo = new MergedChapterInfo
@@ -322,7 +322,7 @@ public class ChapterListMergingTests : TestContext
     public async Task PerformMerge_ShouldCallMergeCoordinator()
     {
         // Arrange
-        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+        (Manga manga, Library _, List<Chapter> chapters) = await CreateTestDataAsync();
 
         var mergeInfo = new MergeActionInfo
         {
@@ -364,7 +364,7 @@ public class ChapterListMergingTests : TestContext
 
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         _subMergeCoordinator
-            .MergeSelectedChaptersAsync(_dbContext, Arg.Any<bool>())
+            .MergeSelectedChaptersAsync(_dbContext, Arg.Any<List<Chapter>>(), Arg.Any<bool>())
             .Returns(completedMerges);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
@@ -399,8 +399,8 @@ public class ChapterListMergingTests : TestContext
     {
         if (disposing)
         {
-            _dbContext?.Database.CloseConnection();
-            _dbContext?.Dispose();
+            _dbContext.Database.CloseConnection();
+            _dbContext.Dispose();
         }
 
         base.Dispose(disposing);
@@ -410,7 +410,7 @@ public class ChapterListMergingTests : TestContext
     public async Task ChapterList_AfterMerge_ShouldShowOnlyRevertButtonNotBoth()
     {
         // Arrange - This tests the bug fix for both merge and revert buttons being shown simultaneously
-        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+        (Manga manga, Library _, List<Chapter> chapters) = await CreateTestDataAsync();
 
         // Create a merged chapter (simulating the state after a successful merge)
         var mergedChapterInfo = new MergedChapterInfo
@@ -500,7 +500,7 @@ public class ChapterListMergingTests : TestContext
     public async Task ChapterList_AfterRevert_ShouldRestoreMergeButtonsOnParts()
     {
         // Arrange - This tests the bug fix for missing merge buttons after revert
-        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+        (Manga manga, Library _, List<Chapter> chapters) = await CreateTestDataAsync();
 
         // Test the scenario where individual chapters should be mergeable
         // Setup merge coordinator to indicate chapters can be merged
@@ -555,7 +555,7 @@ public class ChapterListMergingTests : TestContext
     public async Task ChapterList_MergePossibilitiesCache_ShouldInvalidateAfterOperations()
     {
         // Arrange - Test that merge possibilities are properly calculated
-        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+        (Manga manga, Library _, List<Chapter> chapters) = await CreateTestDataAsync();
 
         var mergeInfo = new MergeActionInfo
         {
@@ -598,7 +598,7 @@ public class ChapterListMergingTests : TestContext
     public async Task ChapterList_IndividualChapterButtons_ShouldShowCorrectActionsBasedOnState()
     {
         // Arrange - Test individual chapter row buttons
-        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+        (Manga manga, Library _, List<Chapter> chapters) = await CreateTestDataAsync();
 
         // Set up one merged chapter and one regular chapter
         var mergedChapterInfo = new MergedChapterInfo
@@ -695,7 +695,7 @@ public class ChapterListMergingTests : TestContext
     public async Task ChapterList_ActualUImerge_ShouldDisplayCorrectMergedChapterElement()
     {
         // Arrange - Test that the correct merged chapter element is displayed after triggering actual UI merge action
-        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+        (Manga manga, Library _, List<Chapter> chapters) = await CreateTestDataAsync();
 
         // Setup chapters so they can be merged (Chapter 1.1 and 1.2)
         chapters[0].FileName = "Chapter 1.1.cbz";
@@ -750,8 +750,13 @@ public class ChapterListMergingTests : TestContext
         };
 
         _subMergeCoordinator
-            .MergeSelectedChaptersAsync(_dbContext, Arg.Any<bool>(), Arg.Any<CancellationToken>())
-            .Returns(callInfo =>
+            .MergeSelectedChaptersAsync(
+                _dbContext,
+                Arg.Any<List<Chapter>>(),
+                Arg.Any<bool>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(_ =>
             {
                 // Simulate the actual merge operation by updating the database
                 // Update first chapter to be the merged chapter
@@ -819,9 +824,10 @@ public class ChapterListMergingTests : TestContext
         Assert.NotNull(initialChapter12); // Chapter 1.2 should be visible initially
 
         // Step 2: Find and click the merge button for Chapter 1.1
-        IEnumerable<IElement> mergeButtons = component
+        IElement[] mergeButtons = component
             .FindAll("button")
-            .Where(btn => btn.GetAttribute("title")?.Contains("Merge this chapter") == true);
+            .Where(btn => btn.GetAttribute("title")?.Contains("Merge this chapter") == true)
+            .ToArray();
 
         Assert.True(mergeButtons.Any(), "Should find merge buttons in the component");
 
@@ -857,7 +863,7 @@ public class ChapterListMergingTests : TestContext
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         await _subMergeCoordinator
             .Received(1)
-            .MergeSelectedChaptersAsync(_dbContext, Arg.Any<bool>());
+            .MergeSelectedChaptersAsync(_dbContext, Arg.Any<List<Chapter>>(), Arg.Any<bool>());
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // 4. Verify that the dialog was shown for latest chapter confirmation
