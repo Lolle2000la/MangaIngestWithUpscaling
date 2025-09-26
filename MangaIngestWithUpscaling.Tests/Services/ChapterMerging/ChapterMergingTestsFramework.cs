@@ -972,7 +972,6 @@ public class ChapterMergeRevertServiceTests : IDisposable
 
         // Create service under test
         _revertService = new ChapterMergeRevertService(
-            _dbContext,
             _mockChapterPartMerger,
             null!,
             null!,
@@ -1014,6 +1013,7 @@ public class ChapterMergeRevertServiceTests : IDisposable
 
         // Act
         bool canRevert = await _revertService.CanRevertChapterAsync(
+            _dbContext,
             mergedChapter,
             TestContext.Current.CancellationToken
         );
@@ -1033,6 +1033,7 @@ public class ChapterMergeRevertServiceTests : IDisposable
 
         // Act
         bool canRevert = await _revertService.CanRevertChapterAsync(
+            _dbContext,
             normalChapter,
             TestContext.Current.CancellationToken
         );
@@ -1067,6 +1068,7 @@ public class ChapterMergeRevertServiceTests : IDisposable
 
         // Act
         MergedChapterInfo? result = await _revertService.GetMergeInfoAsync(
+            _dbContext,
             mergedChapter,
             TestContext.Current.CancellationToken
         );
@@ -1090,6 +1092,7 @@ public class ChapterMergeRevertServiceTests : IDisposable
 
         // Act
         MergedChapterInfo? result = await _revertService.GetMergeInfoAsync(
+            _dbContext,
             normalChapter,
             TestContext.Current.CancellationToken
         );
@@ -1755,7 +1758,6 @@ public class UpscaledChapterHandlingTests : IDisposable
 
             var chapterPartMerger = new ChapterPartMerger(metadataHandler, partMergerLogger);
             var revertService = new ChapterMergeRevertService(
-                context,
                 chapterPartMerger,
                 chapterChangedNotifier,
                 upscalerJsonService,
@@ -1765,6 +1767,7 @@ public class UpscaledChapterHandlingTests : IDisposable
 
             // Act - Revert the merged chapter
             List<Chapter> restoredChapters = await revertService.RevertMergedChapterAsync(
+                _testDb.Context,
                 chapter,
                 TestContext.Current.CancellationToken
             );
@@ -1894,7 +1897,6 @@ public class UpscaledChapterHandlingTests : IDisposable
 
             var chapterPartMerger = new ChapterPartMerger(metadataHandler, partMergerLogger);
             var revertService = new ChapterMergeRevertService(
-                context,
                 chapterPartMerger,
                 chapterChangedNotifier,
                 upscalerJsonService,
@@ -1904,6 +1906,7 @@ public class UpscaledChapterHandlingTests : IDisposable
 
             // Act - Revert the merged chapter
             List<Chapter> restoredChapters = await revertService.RevertMergedChapterAsync(
+                _testDb.Context,
                 chapter,
                 TestContext.Current.CancellationToken
             );
@@ -2529,7 +2532,6 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         var taskQueue = Substitute.For<ITaskQueue>();
 
         var revertService = new ChapterMergeRevertService(
-            context,
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -2641,6 +2643,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
 
         // Act
         var result = await revertService.RevertMergedChapterAsync(
+            _testDb.Context,
             chapter,
             TestContext.Current.CancellationToken
         );
@@ -2675,7 +2678,6 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         var taskQueue2 = Substitute.For<ITaskQueue>();
 
         var revertService = new ChapterMergeRevertService(
-            context,
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -2792,6 +2794,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
 
         // Act
         var result = await revertService.RevertMergedChapterAsync(
+            _testDb.Context,
             chapter,
             TestContext.Current.CancellationToken
         );
@@ -2824,7 +2827,6 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         var taskQueue = Substitute.For<ITaskQueue>();
 
         var revertService = new ChapterMergeRevertService(
-            context,
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -2918,6 +2920,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
 
         // Act
         var restored = await revertService.RevertMergedChapterAsync(
+            _testDb.Context,
             chapter,
             TestContext.Current.CancellationToken
         );
@@ -2962,7 +2965,6 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         var taskQueue = Substitute.For<ITaskQueue>();
 
         var revertService = new ChapterMergeRevertService(
-            context,
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -3003,6 +3005,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         // Act + Assert
         await Assert.ThrowsAsync<FileNotFoundException>(async () =>
             await revertService.RevertMergedChapterAsync(
+                _testDb.Context,
                 chapter,
                 TestContext.Current.CancellationToken
             )
@@ -3022,7 +3025,6 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         var taskQueue = Substitute.For<ITaskQueue>();
 
         var revertService = new ChapterMergeRevertService(
-            context,
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -3086,6 +3088,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
 
         // Act
         var restored = await revertService.RevertMergedChapterAsync(
+            _testDb.Context,
             chapter,
             TestContext.Current.CancellationToken
         );
@@ -3109,7 +3112,6 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         var taskQueue = Substitute.For<ITaskQueue>();
 
         var revertService = new ChapterMergeRevertService(
-            context,
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -3186,6 +3188,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
 
         // Act: First run should succeed
         var restoredFirst = await revertService.RevertMergedChapterAsync(
+            _testDb.Context,
             chapter,
             TestContext.Current.CancellationToken
         );
@@ -3194,6 +3197,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         // Act + Assert: Second run should throw because merge info was removed with the chapter (cascade delete)
         var ex2 = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await revertService.RevertMergedChapterAsync(
+                _testDb.Context,
                 chapter,
                 TestContext.Current.CancellationToken
             )
@@ -3222,7 +3226,6 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
             .Do(_ => throw new InvalidOperationException("Queue failure"));
 
         var revertService = new ChapterMergeRevertService(
-            context,
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -3308,6 +3311,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         // Act + Assert
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await revertService.RevertMergedChapterAsync(
+                _testDb.Context,
                 chapter,
                 TestContext.Current.CancellationToken
             )
@@ -3343,7 +3347,6 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         var taskQueue = new TaskQueue(scopeFactory, Substitute.For<ILogger<TaskQueue>>());
 
         var revertService = new ChapterMergeRevertService(
-            context,
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -3440,6 +3443,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
 
         // Act
         List<Chapter> restored = await revertService.RevertMergedChapterAsync(
+            _testDb.Context,
             merged,
             TestContext.Current.CancellationToken
         );
@@ -3472,7 +3476,6 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         var taskQueue = Substitute.For<ITaskQueue>();
 
         var revertService = new ChapterMergeRevertService(
-            context,
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -3587,6 +3590,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
 
         // Act
         var restored = await revertService.RevertMergedChapterAsync(
+            _testDb.Context,
             chapterA,
             TestContext.Current.CancellationToken
         );
