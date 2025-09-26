@@ -19,6 +19,7 @@ using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using MudBlazor;
 using MudBlazor.Services;
@@ -71,14 +72,37 @@ public class ChapterListMergingTests : TestContext
 
     private void SetupDatabase()
     {
+        SqliteConnectionStringBuilder connectionStringBuilder = new SqliteConnectionStringBuilder
+        {
+            DataSource = Guid.NewGuid().ToString(),
+            Cache = SqliteCacheMode.Shared,
+            Mode = SqliteOpenMode.Memory,
+        };
+
         DbContextOptions<ApplicationDbContext> options =
             new DbContextOptionsBuilder<ApplicationDbContext>()
-                .UseSqlite("Data Source=:memory:")
+                .UseSqlite(
+                    connectionStringBuilder.ToString(),
+                    sqlite =>
+                    {
+                        sqlite.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+                    }
+                )
                 .Options;
 
         _dbContext = new ApplicationDbContext(options);
         _dbContext.Database.OpenConnection();
         _dbContext.Database.EnsureCreated();
+
+        Services.AddDbContextFactory<ApplicationDbContext>(options =>
+            options.UseSqlite(
+                connectionStringBuilder.ToString(),
+                sqlite =>
+                {
+                    sqlite.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+                }
+            )
+        );
     }
 
     private void RegisterServices()
