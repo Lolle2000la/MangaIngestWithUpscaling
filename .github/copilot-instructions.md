@@ -81,10 +81,11 @@ dotnet run --project MangaIngestWithUpscaling
    # Must complete without errors in ~23 seconds
    ```
 
-2. **Format Check:**
+2. **Format Code:**
    ```bash
-   dotnet format --verify-no-changes MangaIngestWithUpscaling.sln
-   # Check for formatting issues (will show many existing issues - this is normal)
+   dotnet csharpier format MangaIngestWithUpscaling*/ # Or even just the modified files
+   # Only ever commit formatted code
+   # Note that the submodule are rightly excluded from the glob pattern above
    ```
 
 3. **Application Startup Test:**
@@ -182,10 +183,10 @@ dotnet build MangaIngestWithUpscaling.Shared/
 ### Code Formatting
 ```bash
 # Check formatting without changes
-dotnet format --verify-no-changes MangaIngestWithUpscaling.sln
+dotnet csharpier check MangaIngestWithUpscaling*/
 
 # Apply formatting fixes
-dotnet format MangaIngestWithUpscaling.sln
+dotnet csharpier format MangaIngestWithUpscaling*/
 ```
 
 ### Database Operations
