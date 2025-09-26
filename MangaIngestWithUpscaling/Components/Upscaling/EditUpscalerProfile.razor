@@ -13,6 +13,33 @@
     <MudCardContent>
         <UpscalerProfileForm @bind-Profile="Profile"
                              @bind-IsValid="IsValid"/>
+        
+        @if (existingProfile is not null)
+        {
+            <MudDivider Style="margin: 24px 0;" />
+            <MudText Typo="Typo.h6" Class="mb-3">Profile Information</MudText>
+            <MudGrid Spacing="2">
+                <MudItem md="6" xs="12">
+                    <MudTextField Label="Originally Created"
+                                  Value="@existingProfile.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")"
+                                  ReadOnly="true"
+                                  Variant="Variant.Outlined"
+                                  HelperText="When this profile was first created"/>
+                </MudItem>
+                <MudItem md="6" xs="12">
+                    <MudTextField Label="Last Modified"
+                                  Value="@existingProfile.ModifiedAt.ToString("yyyy-MM-dd HH:mm:ss")"
+                                  ReadOnly="true"
+                                  Variant="Variant.Outlined"
+                                  HelperText="When this profile was last modified"/>
+                </MudItem>
+            </MudGrid>
+            <MudAlert Severity="Severity.Info" Variant="Variant.Text" Class="mt-3">
+                <MudText Typo="Typo.body2">
+                    Note: Since profiles are immutable, saving creates a new profile with the current timestamp while preserving the original creation date.
+                </MudText>
+            </MudAlert>
+        }
     </MudCardContent>
     <MudCardActions>
         <MudSpacer/>
@@ -74,6 +101,10 @@
             return;
         }
 
+        // Preserve the original creation date for the new profile
+        Profile.CreatedAt = existingProfile.CreatedAt;
+        Profile.ModifiedAt = DateTime.UtcNow;
+        
         DbContext.UpscalerProfiles.Add(Profile);
         existingProfile.Deleted = true;
         await DbContext.SaveChangesAsync();
