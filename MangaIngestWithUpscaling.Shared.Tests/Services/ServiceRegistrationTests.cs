@@ -22,8 +22,11 @@ public class ServiceRegistrationTests
         // Check for some expected service types without trying to construct them
         var serviceTypes = services.Select(s => s.ServiceType).ToList();
 
-        // Should include various shared services 
-        Assert.Contains(serviceTypes, t => t.Namespace?.StartsWith("MangaIngestWithUpscaling.Shared") == true);
+        // Should include various shared services
+        Assert.Contains(
+            serviceTypes,
+            t => t.Namespace?.StartsWith("MangaIngestWithUpscaling.Shared") == true
+        );
     }
 
     [Fact]
@@ -51,7 +54,10 @@ public class ServiceRegistrationTests
         // Assert
         // Verify that auto-registration worked by checking for services
         List<ServiceDescriptor> descriptors = services
-            .Where(s => s.ServiceType.Namespace?.StartsWith("MangaIngestWithUpscaling.Shared") == true).ToList();
+            .Where(s =>
+                s.ServiceType.Namespace?.StartsWith("MangaIngestWithUpscaling.Shared") == true
+            )
+            .ToList();
 
         // Should have registered several services from the Shared assembly
         Assert.NotEmpty(descriptors);

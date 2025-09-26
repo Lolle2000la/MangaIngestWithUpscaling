@@ -12,8 +12,12 @@ public interface IImageResizeService
     /// <param name="maxDimension">Maximum width or height dimension</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>A disposable wrapper that automatically cleans up the temporary file when disposed</returns>
-    Task<TempResizedCbz> CreateResizedTempCbzAsync(string inputCbzPath, int maxDimension, CancellationToken cancellationToken);
-    
+    Task<TempResizedCbz> CreateResizedTempCbzAsync(
+        string inputCbzPath,
+        int maxDimension,
+        CancellationToken cancellationToken
+    );
+
     /// <summary>
     /// Cleans up temporary files created by CreateResizedTempCbzAsync
     /// </summary>

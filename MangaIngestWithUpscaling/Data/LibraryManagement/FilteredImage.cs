@@ -61,7 +61,11 @@ public class FilteredImage
     /// <summary>
     /// Number of times this filtered image has been found and removed
     /// </summary>
-    public int OccurrenceCount { get => _occurrenceCount; set => _occurrenceCount = value; }
+    public int OccurrenceCount
+    {
+        get => _occurrenceCount;
+        set => _occurrenceCount = value;
+    }
 
     /// <summary>
     /// Last time this filter was applied/matched

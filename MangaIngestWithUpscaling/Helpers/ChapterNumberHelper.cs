@@ -19,12 +19,12 @@ public static partial class ChapterNumberHelper
         {
             string mainNumber = match.Groups["num"].Value;
             string subNumber = match.Groups["subnum"].Value;
-            
+
             if (!string.IsNullOrEmpty(subNumber))
             {
                 return $"{mainNumber}.{subNumber}";
             }
-            
+
             return mainNumber;
         }
 
@@ -70,7 +70,8 @@ public static partial class ChapterNumberHelper
                | (?:บทที่|အခန်း)
                \s*(?<num>\d+)(?:[.-](?<subnum>\d+))?
                ",
-        RegexOptions.IgnoreCase | RegexOptions.IgnorePatternWhitespace)]
+        RegexOptions.IgnoreCase | RegexOptions.IgnorePatternWhitespace
+    )]
     public static partial Regex ChapterNumberRegex();
 
     /// <summary>

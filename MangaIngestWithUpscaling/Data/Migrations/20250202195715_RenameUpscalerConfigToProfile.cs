@@ -12,51 +12,58 @@ namespace MangaIngestWithUpscaling.Migrations
         {
             migrationBuilder.DropForeignKey(
                 name: "FK_Chapters_UpscalerConfigs_UpscalerConfigId",
-                table: "Chapters");
+                table: "Chapters"
+            );
 
             migrationBuilder.DropForeignKey(
                 name: "FK_Libraries_UpscalerConfigs_UpscalerConfigId",
-                table: "Libraries");
+                table: "Libraries"
+            );
 
             migrationBuilder.DropForeignKey(
                 name: "FK_UpscalingQueueEntries_UpscalerConfigs_UpscalerConfigId",
-                table: "UpscalingQueueEntries");
+                table: "UpscalingQueueEntries"
+            );
 
             // Rename the existing table instead of dropping it
-            migrationBuilder.RenameTable(
-                name: "UpscalerConfigs",
-                newName: "UpscalerProfiles");
+            migrationBuilder.RenameTable(name: "UpscalerConfigs", newName: "UpscalerProfiles");
 
             // Rename columns in dependent tables
             migrationBuilder.RenameColumn(
                 name: "UpscalerConfigId",
                 table: "UpscalingQueueEntries",
-                newName: "UpscalerProfileId");
+                newName: "UpscalerProfileId"
+            );
 
             migrationBuilder.RenameIndex(
                 name: "IX_UpscalingQueueEntries_UpscalerConfigId",
                 table: "UpscalingQueueEntries",
-                newName: "IX_UpscalingQueueEntries_UpscalerProfileId");
+                newName: "IX_UpscalingQueueEntries_UpscalerProfileId"
+            );
 
             migrationBuilder.RenameColumn(
                 name: "UpscalerConfigId",
                 table: "Libraries",
-                newName: "UpscalerProfileId");
+                newName: "UpscalerProfileId"
+            );
 
             migrationBuilder.RenameIndex(
                 name: "IX_Libraries_UpscalerConfigId",
                 table: "Libraries",
-                newName: "IX_Libraries_UpscalerProfileId");
+                newName: "IX_Libraries_UpscalerProfileId"
+            );
 
             migrationBuilder.RenameColumn(
                 name: "UpscalerConfigId",
                 table: "Chapters",
-                newName: "UpscalerProfileId");
+                newName: "UpscalerProfileId"
+            );
 
             migrationBuilder.RenameIndex(
                 name: "IX_Chapters_UpscalerConfigId",
                 table: "Chapters",
-                newName: "IX_Chapters_UpscalerProfileId");
+                newName: "IX_Chapters_UpscalerProfileId"
+            );
 
             // Recreate foreign keys pointing to the renamed table
             migrationBuilder.AddForeignKey(
@@ -64,14 +71,16 @@ namespace MangaIngestWithUpscaling.Migrations
                 table: "Chapters",
                 column: "UpscalerProfileId",
                 principalTable: "UpscalerProfiles",
-                principalColumn: "Id");
+                principalColumn: "Id"
+            );
 
             migrationBuilder.AddForeignKey(
                 name: "FK_Libraries_UpscalerProfiles_UpscalerProfileId",
                 table: "Libraries",
                 column: "UpscalerProfileId",
                 principalTable: "UpscalerProfiles",
-                principalColumn: "Id");
+                principalColumn: "Id"
+            );
 
             migrationBuilder.AddForeignKey(
                 name: "FK_UpscalingQueueEntries_UpscalerProfiles_UpscalerProfileId",
@@ -79,7 +88,8 @@ namespace MangaIngestWithUpscaling.Migrations
                 column: "UpscalerProfileId",
                 principalTable: "UpscalerProfiles",
                 principalColumn: "Id",
-                onDelete: ReferentialAction.Cascade);
+                onDelete: ReferentialAction.Cascade
+            );
         }
 
         /// <inheritdoc />
@@ -87,51 +97,58 @@ namespace MangaIngestWithUpscaling.Migrations
         {
             migrationBuilder.DropForeignKey(
                 name: "FK_Chapters_UpscalerProfiles_UpscalerProfileId",
-                table: "Chapters");
+                table: "Chapters"
+            );
 
             migrationBuilder.DropForeignKey(
                 name: "FK_Libraries_UpscalerProfiles_UpscalerProfileId",
-                table: "Libraries");
+                table: "Libraries"
+            );
 
             migrationBuilder.DropForeignKey(
                 name: "FK_UpscalingQueueEntries_UpscalerProfiles_UpscalerProfileId",
-                table: "UpscalingQueueEntries");
+                table: "UpscalingQueueEntries"
+            );
 
             // Rename the table back to the original name
-            migrationBuilder.RenameTable(
-                name: "UpscalerProfiles",
-                newName: "UpscalerConfigs");
+            migrationBuilder.RenameTable(name: "UpscalerProfiles", newName: "UpscalerConfigs");
 
             // Revert column names in dependent tables
             migrationBuilder.RenameColumn(
                 name: "UpscalerProfileId",
                 table: "UpscalingQueueEntries",
-                newName: "UpscalerConfigId");
+                newName: "UpscalerConfigId"
+            );
 
             migrationBuilder.RenameIndex(
                 name: "IX_UpscalingQueueEntries_UpscalerProfileId",
                 table: "UpscalingQueueEntries",
-                newName: "IX_UpscalingQueueEntries_UpscalerConfigId");
+                newName: "IX_UpscalingQueueEntries_UpscalerConfigId"
+            );
 
             migrationBuilder.RenameColumn(
                 name: "UpscalerProfileId",
                 table: "Libraries",
-                newName: "UpscalerConfigId");
+                newName: "UpscalerConfigId"
+            );
 
             migrationBuilder.RenameIndex(
                 name: "IX_Libraries_UpscalerProfileId",
                 table: "Libraries",
-                newName: "IX_Libraries_UpscalerConfigId");
+                newName: "IX_Libraries_UpscalerConfigId"
+            );
 
             migrationBuilder.RenameColumn(
                 name: "UpscalerProfileId",
                 table: "Chapters",
-                newName: "UpscalerConfigId");
+                newName: "UpscalerConfigId"
+            );
 
             migrationBuilder.RenameIndex(
                 name: "IX_Chapters_UpscalerProfileId",
                 table: "Chapters",
-                newName: "IX_Chapters_UpscalerConfigId");
+                newName: "IX_Chapters_UpscalerConfigId"
+            );
 
             // Re-add original foreign keys
             migrationBuilder.AddForeignKey(
@@ -139,14 +156,16 @@ namespace MangaIngestWithUpscaling.Migrations
                 table: "Chapters",
                 column: "UpscalerConfigId",
                 principalTable: "UpscalerConfigs",
-                principalColumn: "Id");
+                principalColumn: "Id"
+            );
 
             migrationBuilder.AddForeignKey(
                 name: "FK_Libraries_UpscalerConfigs_UpscalerConfigId",
                 table: "Libraries",
                 column: "UpscalerConfigId",
                 principalTable: "UpscalerConfigs",
-                principalColumn: "Id");
+                principalColumn: "Id"
+            );
 
             migrationBuilder.AddForeignKey(
                 name: "FK_UpscalingQueueEntries_UpscalerConfigs_UpscalerConfigId",
@@ -154,7 +173,8 @@ namespace MangaIngestWithUpscaling.Migrations
                 column: "UpscalerConfigId",
                 principalTable: "UpscalerConfigs",
                 principalColumn: "Id",
-                onDelete: ReferentialAction.Cascade);
+                onDelete: ReferentialAction.Cascade
+            );
         }
     }
 }

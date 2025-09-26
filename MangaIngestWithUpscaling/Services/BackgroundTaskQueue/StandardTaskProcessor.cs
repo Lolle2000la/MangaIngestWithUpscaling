@@ -1,13 +1,14 @@
-﻿using MangaIngestWithUpscaling.Data;
+﻿using System.Threading.Channels;
+using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
-using System.Threading.Channels;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 
 public class StandardTaskProcessor(
     TaskQueue taskQueue,
     IServiceScopeFactory scopeFactory,
-    ILogger<StandardTaskProcessor> logger) : BackgroundService
+    ILogger<StandardTaskProcessor> logger
+) : BackgroundService
 {
     private readonly Lock _lock = new();
     private readonly TimeSpan _progressDebounce = TimeSpan.FromMilliseconds(250);
@@ -43,7 +44,9 @@ public class StandardTaskProcessor(
             var task = await _reader.ReadAsync(stoppingToken);
             using (_lock.EnterScope())
             {
-                currentStoppingToken = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                currentStoppingToken = CancellationTokenSource.CreateLinkedTokenSource(
+                    stoppingToken
+                );
                 currentTask = task;
             }
 

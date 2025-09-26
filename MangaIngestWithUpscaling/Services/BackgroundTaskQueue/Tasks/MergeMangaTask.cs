@@ -21,7 +21,6 @@ public class MergeMangaTask : BaseTask
 
     public override string TaskFriendlyName => MergeMessage;
 
-
     public int IntoMangaId { get; set; }
 
     public List<int> ToMerge { get; set; }
@@ -30,31 +29,45 @@ public class MergeMangaTask : BaseTask
 
     public override int RetryFor { get; set; } = 1;
 
-    public override async Task ProcessAsync(IServiceProvider services, CancellationToken cancellationToken)
+    public override async Task ProcessAsync(
+        IServiceProvider services,
+        CancellationToken cancellationToken
+    )
     {
         var merger = services.GetRequiredService<IMangaMerger>();
         var dbContext = services.GetRequiredService<ApplicationDbContext>();
         var logger = services.GetRequiredService<ILogger<MergeMangaTask>>();
         var into = await dbContext.MangaSeries.FindAsync(IntoMangaId, cancellationToken);
-        var toMerge = await dbContext.MangaSeries.Where(m => ToMerge.Contains(m.Id)).ToListAsync(cancellationToken);
+        var toMerge = await dbContext
+            .MangaSeries.Where(m => ToMerge.Contains(m.Id))
+            .ToListAsync(cancellationToken);
 
         if (into == null)
         {
-            logger.LogCritical("Could not find manga to merge into with the id of {IntoMangaId}", IntoMangaId);
+            logger.LogCritical(
+                "Could not find manga to merge into with the id of {IntoMangaId}",
+                IntoMangaId
+            );
             return;
         }
 
         if (toMerge.Count == 0)
         {
-            logger.LogCritical("Could not find any of the mangas to merge into {IntoMangaId}: {ToMerge}", IntoMangaId,
-                ToMerge);
+            logger.LogCritical(
+                "Could not find any of the mangas to merge into {IntoMangaId}: {ToMerge}",
+                IntoMangaId,
+                ToMerge
+            );
             return;
         }
 
         if (toMerge.Count != ToMerge.Count)
         {
-            logger.LogWarning("Could not find some of the mangas to merge into {IntoMangaId}: {ToMergeMissing}",
-                IntoMangaId, ToMerge.Where(t => !toMerge.Select(m => m.Id).Contains(t)));
+            logger.LogWarning(
+                "Could not find some of the mangas to merge into {IntoMangaId}: {ToMergeMissing}",
+                IntoMangaId,
+                ToMerge.Where(t => !toMerge.Select(m => m.Id).Contains(t))
+            );
         }
 
         await merger.MergeAsync(into, toMerge, cancellationToken);

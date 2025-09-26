@@ -6,4 +6,4 @@ public record PythonEnvironment(
     string PythonExecutablePath,
     string DesiredWorkindDirectory,
     GpuBackend InstalledBackend
-    );
+);

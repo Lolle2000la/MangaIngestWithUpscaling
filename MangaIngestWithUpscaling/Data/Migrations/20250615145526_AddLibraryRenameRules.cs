@@ -14,13 +14,14 @@ namespace MangaIngestWithUpscaling.Migrations
                 name: "LibraryRenameRules",
                 columns: table => new
                 {
-                    Id = table.Column<int>(type: "INTEGER", nullable: false)
+                    Id = table
+                        .Column<int>(type: "INTEGER", nullable: false)
                         .Annotation("Sqlite:Autoincrement", true),
                     LibraryId = table.Column<int>(type: "INTEGER", nullable: false),
                     Pattern = table.Column<string>(type: "TEXT", nullable: false),
                     PatternType = table.Column<string>(type: "TEXT", nullable: false),
                     TargetField = table.Column<string>(type: "TEXT", nullable: false),
-                    Replacement = table.Column<string>(type: "TEXT", nullable: false)
+                    Replacement = table.Column<string>(type: "TEXT", nullable: false),
                 },
                 constraints: table =>
                 {
@@ -30,20 +31,22 @@ namespace MangaIngestWithUpscaling.Migrations
                         column: x => x.LibraryId,
                         principalTable: "Libraries",
                         principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
-                });
+                        onDelete: ReferentialAction.Cascade
+                    );
+                }
+            );
 
             migrationBuilder.CreateIndex(
                 name: "IX_LibraryRenameRules_LibraryId",
                 table: "LibraryRenameRules",
-                column: "LibraryId");
+                column: "LibraryId"
+            );
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropTable(
-                name: "LibraryRenameRules");
+            migrationBuilder.DropTable(name: "LibraryRenameRules");
         }
     }
 }

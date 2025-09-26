@@ -11,7 +11,8 @@ namespace MangaIngestWithUpscaling.Services.ChapterMerging;
 /// <param name="MergeInformation">Information about merges performed for database tracking</param>
 public record ChapterMergeResult(
     List<FoundChapter> ProcessedChapters,
-    List<MergeInfo> MergeInformation);
+    List<MergeInfo> MergeInformation
+);
 
 /// <summary>
 ///     Information about a merge operation
@@ -22,7 +23,8 @@ public record ChapterMergeResult(
 public record MergeInfo(
     FoundChapter MergedChapter,
     List<OriginalChapterPart> OriginalParts,
-    string BaseChapterNumber);
+    string BaseChapterNumber
+);
 
 public interface IChapterPartMerger
 {
@@ -47,7 +49,8 @@ public interface IChapterPartMerger
         string seriesTitle,
         HashSet<string> existingChapterNumbers,
         Func<FoundChapter, string>? getActualFilePath = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default
+    );
 
     /// <summary>
     /// Processes existing chapters from the database to identify and merge chapter parts.
@@ -69,7 +72,8 @@ public interface IChapterPartMerger
         HashSet<string> existingChapterNumbers,
         HashSet<int> excludeMergedChapterIds,
         HashSet<string> existingMergedBaseNumbers,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default
+    );
 
     /// <summary>
     ///     Groups chapters by their base number and identifies chapter parts that should be merged
@@ -79,7 +83,8 @@ public interface IChapterPartMerger
     /// <returns>Dictionary where key is the base chapter number and value is list of chapter parts to merge</returns>
     Dictionary<string, List<FoundChapter>> GroupChapterPartsForMerging(
         IEnumerable<FoundChapter> chapters,
-        Func<string, bool> isLastChapter);
+        Func<string, bool> isLastChapter
+    );
 
     /// <summary>
     /// Groups chapters that can be added to existing merged chapters.
@@ -92,7 +97,8 @@ public interface IChapterPartMerger
     Dictionary<string, List<FoundChapter>> GroupChaptersForAdditionToExistingMerged(
         IEnumerable<FoundChapter> chapters,
         HashSet<string> existingMergedBaseNumbers,
-        Func<string, bool> isLastChapter);
+        Func<string, bool> isLastChapter
+    );
 
     /// <summary>
     ///     Merges multiple chapter parts into a single CBZ file
@@ -104,14 +110,18 @@ public interface IChapterPartMerger
     /// <param name="targetMetadata">The target metadata for the merged chapter</param>
     /// <param name="getActualFilePath">Function to get the actual file path for a chapter (to handle renamed vs original paths)</param>
     /// <returns>Information about the merged chapter and original parts for reverting</returns>
-    Task<(FoundChapter mergedChapter, List<OriginalChapterPart> originalParts)> MergeChapterPartsAsync(
+    Task<(
+        FoundChapter mergedChapter,
+        List<OriginalChapterPart> originalParts
+    )> MergeChapterPartsAsync(
         List<FoundChapter> chapterParts,
         string basePath,
         string outputPath,
         string baseChapterNumber,
         ExtractedMetadata targetMetadata,
         Func<FoundChapter, string>? getActualFilePath = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default
+    );
 
     /// <summary>
     ///     Restores original chapter parts from a merged chapter
@@ -124,5 +134,6 @@ public interface IChapterPartMerger
         string mergedChapterPath,
         List<OriginalChapterPart> originalParts,
         string outputDirectory,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default
+    );
 }

@@ -18,8 +18,11 @@ public interface ILibraryIntegrityChecker
     /// <param name="library">The library to check.</param>
     /// <param name="progress">Progress reporter (units: chapters).</param>
     /// <param name="cancellationToken"></param>
-    Task<bool> CheckIntegrity(Library library, IProgress<IntegrityProgress> progress,
-        CancellationToken? cancellationToken = null);
+    Task<bool> CheckIntegrity(
+        Library library,
+        IProgress<IntegrityProgress> progress,
+        CancellationToken? cancellationToken = null
+    );
 
     /// <summary>
     /// Checks the integrity of a manga series. Will check all of its chapters one-by-one.
@@ -35,8 +38,11 @@ public interface ILibraryIntegrityChecker
     /// <param name="manga">The manga series to check.</param>
     /// <param name="progress">Progress reporter (units: chapters).</param>
     /// <param name="cancellationToken"></param>
-    Task<bool> CheckIntegrity(Manga manga, IProgress<IntegrityProgress> progress,
-        CancellationToken? cancellationToken = null);
+    Task<bool> CheckIntegrity(
+        Manga manga,
+        IProgress<IntegrityProgress> progress,
+        CancellationToken? cancellationToken = null
+    );
 
     /// <summary>
     /// Checks the integrity of a chapter.
@@ -52,8 +58,11 @@ public interface ILibraryIntegrityChecker
     /// <param name="chapter">The chapter to check.</param>
     /// <param name="progress">Progress reporter (units: chapters, current: chapter index).</param>
     /// <param name="cancellationToken"></param>
-    Task<bool> CheckIntegrity(Chapter chapter, IProgress<IntegrityProgress> progress,
-        CancellationToken? cancellationToken = null);
+    Task<bool> CheckIntegrity(
+        Chapter chapter,
+        IProgress<IntegrityProgress> progress,
+        CancellationToken? cancellationToken = null
+    );
 
     /// <summary>
     /// Checks the integrity of all libraries.
@@ -67,5 +76,8 @@ public interface ILibraryIntegrityChecker
     /// </summary>
     /// <param name="progress">Progress reporter (units: chapters).</param>
     /// <param name="cancellationToken"></param>
-    Task<bool> CheckIntegrity(IProgress<IntegrityProgress> progress, CancellationToken? cancellationToken = null);
+    Task<bool> CheckIntegrity(
+        IProgress<IntegrityProgress> progress,
+        CancellationToken? cancellationToken = null
+    );
 }

@@ -1,15 +1,18 @@
-using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
-using Microsoft.Extensions.Logging;
 using System.IO.Compression;
 using System.Text.Json;
+using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using Microsoft.Extensions.Logging;
 
 namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 
 [RegisterScoped]
-public class UpscalerJsonHandlingService(ILogger<UpscalerJsonHandlingService> logger) : IUpscalerJsonHandlingService
+public class UpscalerJsonHandlingService(ILogger<UpscalerJsonHandlingService> logger)
+    : IUpscalerJsonHandlingService
 {
-    public async Task<UpscalerProfileJsonDto?> ReadUpscalerJsonAsync(string cbzFilePath,
-        CancellationToken cancellationToken)
+    public async Task<UpscalerProfileJsonDto?> ReadUpscalerJsonAsync(
+        string cbzFilePath,
+        CancellationToken cancellationToken
+    )
     {
         if (!cbzFilePath.EndsWith(".cbz", StringComparison.OrdinalIgnoreCase))
         {
@@ -18,7 +21,10 @@ public class UpscalerJsonHandlingService(ILogger<UpscalerJsonHandlingService> lo
 
         try
         {
-            await using ZipArchive archive = await ZipFile.OpenReadAsync(cbzFilePath, cancellationToken);
+            await using ZipArchive archive = await ZipFile.OpenReadAsync(
+                cbzFilePath,
+                cancellationToken
+            );
             ZipArchiveEntry? upscalerJsonEntry = archive.GetEntry("upscaler.json");
             if (upscalerJsonEntry != null)
             {
@@ -26,7 +32,8 @@ public class UpscalerJsonHandlingService(ILogger<UpscalerJsonHandlingService> lo
                 UpscalerProfileJsonDto? upscalerProfileDto = await JsonSerializer.DeserializeAsync(
                     stream,
                     UpscalerJsonContext.Default.UpscalerProfileJsonDto,
-                    cancellationToken);
+                    cancellationToken
+                );
                 return upscalerProfileDto;
             }
         }
@@ -38,15 +45,25 @@ public class UpscalerJsonHandlingService(ILogger<UpscalerJsonHandlingService> lo
         return null;
     }
 
-    public async Task WriteUpscalerJsonAsync(string cbzFilePath, UpscalerProfile profile,
-        CancellationToken cancellationToken)
+    public async Task WriteUpscalerJsonAsync(
+        string cbzFilePath,
+        UpscalerProfile profile,
+        CancellationToken cancellationToken
+    )
     {
-        await using ZipArchive archive = await ZipFile.OpenAsync(cbzFilePath, ZipArchiveMode.Update, cancellationToken);
+        await using ZipArchive archive = await ZipFile.OpenAsync(
+            cbzFilePath,
+            ZipArchiveMode.Update,
+            cancellationToken
+        );
         await WriteUpscalerJsonAsync(archive, profile, cancellationToken);
     }
 
-    public async Task WriteUpscalerJsonAsync(ZipArchive archive, UpscalerProfile profile,
-        CancellationToken cancellationToken)
+    public async Task WriteUpscalerJsonAsync(
+        ZipArchive archive,
+        UpscalerProfile profile,
+        CancellationToken cancellationToken
+    )
     {
         var upscalerJson = new UpscalerProfileJsonDto
         {
@@ -54,10 +71,13 @@ public class UpscalerJsonHandlingService(ILogger<UpscalerJsonHandlingService> lo
             UpscalerMethod = profile.UpscalerMethod,
             ScalingFactor = (int)profile.ScalingFactor,
             CompressionFormat = profile.CompressionFormat,
-            Quality = profile.Quality
+            Quality = profile.Quality,
         };
 
-        string jsonString = JsonSerializer.Serialize(upscalerJson, UpscalerJsonContext.Default.UpscalerProfileJsonDto);
+        string jsonString = JsonSerializer.Serialize(
+            upscalerJson,
+            UpscalerJsonContext.Default.UpscalerProfileJsonDto
+        );
 
         // For Update mode, delete existing entry first
         if (archive.Mode != ZipArchiveMode.Create)

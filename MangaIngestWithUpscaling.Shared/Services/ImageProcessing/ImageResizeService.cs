@@ -1,8 +1,8 @@
+using System.IO.Compression;
 using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using Microsoft.Extensions.Logging;
 using NetVips;
-using System.IO.Compression;
 
 namespace MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
 
@@ -21,8 +21,11 @@ public class ImageResizeService : IImageResizeService
         _fileSystem = fileSystem;
     }
 
-    public async Task<TempResizedCbz> CreateResizedTempCbzAsync(string inputCbzPath, int maxDimension,
-        CancellationToken cancellationToken)
+    public async Task<TempResizedCbz> CreateResizedTempCbzAsync(
+        string inputCbzPath,
+        int maxDimension,
+        CancellationToken cancellationToken
+    )
     {
         if (!File.Exists(inputCbzPath))
         {
@@ -31,7 +34,10 @@ public class ImageResizeService : IImageResizeService
 
         if (maxDimension <= 0)
         {
-            throw new ArgumentException("Maximum dimension must be greater than 0", nameof(maxDimension));
+            throw new ArgumentException(
+                "Maximum dimension must be greater than 0",
+                nameof(maxDimension)
+            );
         }
 
         // Create temporary directory for processing
@@ -45,8 +51,11 @@ public class ImageResizeService : IImageResizeService
         {
             Directory.CreateDirectory(tempDir);
 
-            _logger.LogInformation("Resizing images in {InputPath} to max dimension {MaxDimension}", inputCbzPath,
-                maxDimension);
+            _logger.LogInformation(
+                "Resizing images in {InputPath} to max dimension {MaxDimension}",
+                inputCbzPath,
+                maxDimension
+            );
 
             // Extract CBZ to temporary directory
             ZipFile.ExtractToDirectory(inputCbzPath, tempDir);
@@ -83,22 +92,33 @@ public class ImageResizeService : IImageResizeService
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to clean up temporary file: {TempFilePath}", tempFilePath);
+            _logger.LogWarning(
+                ex,
+                "Failed to clean up temporary file: {TempFilePath}",
+                tempFilePath
+            );
         }
     }
 
-    private async Task ProcessImagesInDirectory(string directory, int maxDimension, CancellationToken cancellationToken)
+    private async Task ProcessImagesInDirectory(
+        string directory,
+        int maxDimension,
+        CancellationToken cancellationToken
+    )
     {
-        var imageFiles = Directory.GetFiles(directory, "*", SearchOption.AllDirectories)
+        var imageFiles = Directory
+            .GetFiles(directory, "*", SearchOption.AllDirectories)
             .Where(f => SupportedImageExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
             .ToList();
 
         _logger.LogDebug("Found {Count} image files to process", imageFiles.Count);
 
-        await Parallel.ForEachAsync(imageFiles,
+        await Parallel.ForEachAsync(
+            imageFiles,
             new ParallelOptions
             {
-                MaxDegreeOfParallelism = Environment.ProcessorCount, CancellationToken = cancellationToken
+                MaxDegreeOfParallelism = Environment.ProcessorCount,
+                CancellationToken = cancellationToken,
             },
             (imagePath, ct) =>
             {
@@ -112,10 +132,15 @@ public class ImageResizeService : IImageResizeService
                     _logger.LogWarning(ex, "Failed to resize image: {ImagePath}", imagePath);
                     return ValueTask.CompletedTask; // Continue processing other images even if one fails
                 }
-            });
+            }
+        );
     }
 
-    private void ResizeImageIfNeeded(string imagePath, int maxDimension, CancellationToken cancellationToken)
+    private void ResizeImageIfNeeded(
+        string imagePath,
+        int maxDimension,
+        CancellationToken cancellationToken
+    )
     {
         // Load image using NetVips
         using var image = Image.NewFromFile(imagePath);
@@ -123,16 +148,26 @@ public class ImageResizeService : IImageResizeService
         // Check if resizing is needed
         if (image.Width <= maxDimension && image.Height <= maxDimension)
         {
-            _logger.LogDebug("Image {ImagePath} ({Width}x{Height}) is already within bounds, skipping resize",
-                imagePath, image.Width, image.Height);
+            _logger.LogDebug(
+                "Image {ImagePath} ({Width}x{Height}) is already within bounds, skipping resize",
+                imagePath,
+                image.Width,
+                image.Height
+            );
             return;
         }
 
         // Calculate new dimensions while maintaining aspect ratio
         var (newWidth, newHeight) = CalculateNewDimensions(image.Width, image.Height, maxDimension);
 
-        _logger.LogDebug("Resizing image {ImagePath} from {OriginalWidth}x{OriginalHeight} to {NewWidth}x{NewHeight}",
-            imagePath, image.Width, image.Height, newWidth, newHeight);
+        _logger.LogDebug(
+            "Resizing image {ImagePath} from {OriginalWidth}x{OriginalHeight} to {NewWidth}x{NewHeight}",
+            imagePath,
+            image.Width,
+            image.Height,
+            newWidth,
+            newHeight
+        );
 
         // Resize the image
         var resizedImage = image.Resize((double)newWidth / image.Width);
@@ -141,8 +176,11 @@ public class ImageResizeService : IImageResizeService
         resizedImage.WriteToFile(imagePath);
     }
 
-    private static (int width, int height) CalculateNewDimensions(int originalWidth, int originalHeight,
-        int maxDimension)
+    private static (int width, int height) CalculateNewDimensions(
+        int originalWidth,
+        int originalHeight,
+        int maxDimension
+    )
     {
         if (originalWidth <= maxDimension && originalHeight <= maxDimension)
         {

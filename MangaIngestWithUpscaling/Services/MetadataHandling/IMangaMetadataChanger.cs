@@ -20,8 +20,12 @@ public interface IMangaMetadataChanger
     /// <param name="cancellationToken">The token to cancel the operation.</param>
     /// <exception cref="TitleAlreadyUsedException">Indicates that the title has already been used.</exception>
     /// <returns></returns>
-    Task<RenameResult> ChangeMangaTitle(Manga manga, string newTitle, bool addOldToAlternative = true,
-        CancellationToken cancellationToken = default);
+    Task<RenameResult> ChangeMangaTitle(
+        Manga manga,
+        string newTitle,
+        bool addOldToAlternative = true,
+        CancellationToken cancellationToken = default
+    );
 
     /// <summary>
     /// Updates the title of a upscaled chapter file and moves it to the correct directory.
@@ -45,5 +49,7 @@ public interface IMangaMetadataChanger
 
 public enum RenameResult
 {
-    Ok, Merged, Cancelled
+    Ok,
+    Merged,
+    Cancelled,
 }

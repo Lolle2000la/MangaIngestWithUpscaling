@@ -1,9 +1,9 @@
-﻿using MangaIngestWithUpscaling.Data;
+﻿using System.Threading.Channels;
+using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using Microsoft.Extensions.Options;
 using Open.ChannelExtensions;
-using System.Threading.Channels;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 
@@ -11,7 +11,8 @@ public class UpscaleTaskProcessor(
     TaskQueue taskQueue,
     IServiceScopeFactory scopeFactory,
     IOptions<UpscalerConfig> upscalerConfig,
-    ILogger<UpscaleTaskProcessor> logger) : BackgroundService
+    ILogger<UpscaleTaskProcessor> logger
+) : BackgroundService
 {
     private readonly Lock _lock = new();
     private readonly TimeSpan _progressDebounce = TimeSpan.FromMilliseconds(250);
@@ -51,10 +52,14 @@ public class UpscaleTaskProcessor(
         serviceStoppingToken = stoppingToken;
 
         // Merge the rerouted and regular upscale channels into a single reader using Open.ChannelExtensions
-        var merged = Channel.CreateBounded<PersistedTask>(new BoundedChannelOptions(1)
-        {
-            SingleReader = true, SingleWriter = false, AllowSynchronousContinuations = true
-        });
+        var merged = Channel.CreateBounded<PersistedTask>(
+            new BoundedChannelOptions(1)
+            {
+                SingleReader = true,
+                SingleWriter = false,
+                AllowSynchronousContinuations = true,
+            }
+        );
 
         // Start piping both sources into the merged channel (will complete when sources complete)
         _ = _reroutedReader.PipeTo(merged, stoppingToken);
@@ -74,7 +79,9 @@ public class UpscaleTaskProcessor(
 
             using (_lock.EnterScope())
             {
-                currentStoppingToken = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                currentStoppingToken = CancellationTokenSource.CreateLinkedTokenSource(
+                    stoppingToken
+                );
                 currentTask = task;
             }
 

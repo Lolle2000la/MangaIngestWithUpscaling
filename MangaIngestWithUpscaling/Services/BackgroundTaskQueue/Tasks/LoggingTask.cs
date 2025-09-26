@@ -7,7 +7,10 @@ public class LoggingTask : BaseTask
 
     public override int RetryFor { get; set; } = 1;
 
-    public override async Task ProcessAsync(IServiceProvider services, CancellationToken cancellationToken)
+    public override async Task ProcessAsync(
+        IServiceProvider services,
+        CancellationToken cancellationToken
+    )
     {
         var logger = services.GetRequiredService<ILogger<LoggingTask>>();
         logger.LogInformation(Message);

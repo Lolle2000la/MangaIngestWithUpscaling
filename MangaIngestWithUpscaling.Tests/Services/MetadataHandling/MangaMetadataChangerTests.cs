@@ -43,7 +43,7 @@ public class MangaMetadataChangerTests : IDisposable
         _mockFileSystem = Substitute.For<IFileSystem>();
         _mockChapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
         _mockDbContextFactory = Substitute.For<IDbContextFactory<ApplicationDbContext>>();
-        
+
         // Set up the factory to return our test context
         _mockDbContextFactory.CreateDbContext().Returns(_dbContext);
 
@@ -86,21 +86,34 @@ public class MangaMetadataChangerTests : IDisposable
 
         var chapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(chapterPath)!);
-        await File.WriteAllTextAsync(chapterPath, "dummy content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            chapterPath,
+            "dummy content",
+            TestContext.Current.CancellationToken
+        );
 
         var newTitle = "New Title";
-        var newChapterPath = Path.Combine(library.NotUpscaledLibraryPath,
-            PathEscaper.EscapeFileName(newTitle), PathEscaper.EscapeFileName(chapter.FileName));
+        var newChapterPath = Path.Combine(
+            library.NotUpscaledLibraryPath,
+            PathEscaper.EscapeFileName(newTitle),
+            PathEscaper.EscapeFileName(chapter.FileName)
+        );
         var metadata = new ExtractedMetadata("Original Title", "Chapter 1", "1");
 
         // Set up mocks - source file exists, target doesn't
         _mockFileSystem.FileExists(chapterPath).Returns(true);
         _mockFileSystem.FileExists(newChapterPath).Returns(false);
-        _mockMetadataHandling.GetSeriesAndTitleFromComicInfoAsync(chapterPath).Returns(Task.FromResult(metadata));
+        _mockMetadataHandling
+            .GetSeriesAndTitleFromComicInfoAsync(chapterPath)
+            .Returns(Task.FromResult(metadata));
 
         // Act
-        var result = await _metadataChanger.ChangeMangaTitle(manga, newTitle, addOldToAlternative: true,
-            cancellationToken: TestContext.Current.CancellationToken);
+        var result = await _metadataChanger.ChangeMangaTitle(
+            manga,
+            newTitle,
+            addOldToAlternative: true,
+            cancellationToken: TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.Equal(RenameResult.Ok, result);
@@ -111,9 +124,11 @@ public class MangaMetadataChangerTests : IDisposable
 
         // Verify metadata was updated
 #pragma warning disable CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
-        _mockMetadataHandling.Received(1).WriteComicInfoAsync(chapterPath,
+        _mockMetadataHandling
+            .Received(1)
+            .WriteComicInfoAsync(chapterPath,
 #pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
-            Arg.Is<ExtractedMetadata>(m => m.Series == newTitle));
+                Arg.Is<ExtractedMetadata>(m => m.Series == newTitle));
 
         // Verify file operations
         _mockFileSystem.Received().CreateDirectory(Arg.Any<string>());
@@ -137,23 +152,33 @@ public class MangaMetadataChangerTests : IDisposable
         await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Mock dialog service to return true for merge consent
-        _mockDialogService.ShowMessageBox(
+        _mockDialogService
+            .ShowMessageBox(
                 "Merge into existing manga of same name?",
                 "The title you are trying to rename to already has an existing entry. Do you want to merge this manga into the existing one?",
                 "Merge",
-                cancelText: "Cancel")
+                cancelText: "Cancel"
+            )
             .Returns(Task.FromResult<bool?>(true));
 
         // Act
-        var result = await _metadataChanger.ChangeMangaTitle(currentManga, "Existing Title",
-            cancellationToken: TestContext.Current.CancellationToken);
+        var result = await _metadataChanger.ChangeMangaTitle(
+            currentManga,
+            "Existing Title",
+            cancellationToken: TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.Equal(RenameResult.Merged, result);
 
         // Verify merge task was enqueued
-        await _mockTaskQueue.Received(1).EnqueueAsync(
-            Arg.Is<MergeMangaTask>(t => t.IntoMangaId == existingManga.Id && t.ToMerge.Contains(currentManga.Id)));
+        await _mockTaskQueue
+            .Received(1)
+            .EnqueueAsync(
+                Arg.Is<MergeMangaTask>(t =>
+                    t.IntoMangaId == existingManga.Id && t.ToMerge.Contains(currentManga.Id)
+                )
+            );
     }
 
     [Fact]
@@ -170,16 +195,21 @@ public class MangaMetadataChangerTests : IDisposable
         await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Mock dialog service to return false for merge consent
-        _mockDialogService.ShowMessageBox(
+        _mockDialogService
+            .ShowMessageBox(
                 Arg.Any<string>(),
                 Arg.Any<string>(),
                 Arg.Any<string>(),
-                cancelText: Arg.Any<string>())
+                cancelText: Arg.Any<string>()
+            )
             .Returns(Task.FromResult<bool?>(false));
 
         // Act
-        var result = await _metadataChanger.ChangeMangaTitle(currentManga, "Existing Title",
-            cancellationToken: TestContext.Current.CancellationToken);
+        var result = await _metadataChanger.ChangeMangaTitle(
+            currentManga,
+            "Existing Title",
+            cancellationToken: TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.Equal(RenameResult.Cancelled, result);
@@ -207,11 +237,21 @@ public class MangaMetadataChangerTests : IDisposable
 
         Directory.CreateDirectory(Path.GetDirectoryName(notUpscaledPath)!);
         Directory.CreateDirectory(Path.GetDirectoryName(upscaledPath)!);
-        await File.WriteAllTextAsync(notUpscaledPath, "dummy content", TestContext.Current.CancellationToken);
-        await File.WriteAllTextAsync(upscaledPath, "dummy upscaled content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            notUpscaledPath,
+            "dummy content",
+            TestContext.Current.CancellationToken
+        );
+        await File.WriteAllTextAsync(
+            upscaledPath,
+            "dummy upscaled content",
+            TestContext.Current.CancellationToken
+        );
 
         var metadata = new ExtractedMetadata("Test Manga", "Old Chapter Title", "1");
-        _mockMetadataHandling.GetSeriesAndTitleFromComicInfoAsync(Arg.Any<string>()).Returns(Task.FromResult(metadata));
+        _mockMetadataHandling
+            .GetSeriesAndTitleFromComicInfoAsync(Arg.Any<string>())
+            .Returns(Task.FromResult(metadata));
 
         var newTitle = "New Chapter Title";
 
@@ -221,10 +261,18 @@ public class MangaMetadataChangerTests : IDisposable
         // Assert
         // Verify both files were updated
 #pragma warning disable CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
-        _mockMetadataHandling.Received(1).WriteComicInfoAsync(notUpscaledPath,
-            Arg.Is<ExtractedMetadata>(m => m.ChapterTitle == newTitle));
-        _mockMetadataHandling.Received(1).WriteComicInfoAsync(upscaledPath,
-            Arg.Is<ExtractedMetadata>(m => m.ChapterTitle == newTitle));
+        _mockMetadataHandling
+            .Received(1)
+            .WriteComicInfoAsync(
+                notUpscaledPath,
+                Arg.Is<ExtractedMetadata>(m => m.ChapterTitle == newTitle)
+            );
+        _mockMetadataHandling
+            .Received(1)
+            .WriteComicInfoAsync(
+                upscaledPath,
+                Arg.Is<ExtractedMetadata>(m => m.ChapterTitle == newTitle)
+            );
 #pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
     }
 
@@ -244,10 +292,16 @@ public class MangaMetadataChangerTests : IDisposable
 
         var notUpscaledPath = chapter.NotUpscaledFullPath;
         Directory.CreateDirectory(Path.GetDirectoryName(notUpscaledPath)!);
-        await File.WriteAllTextAsync(notUpscaledPath, "dummy content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            notUpscaledPath,
+            "dummy content",
+            TestContext.Current.CancellationToken
+        );
 
         var metadata = new ExtractedMetadata("Test Manga", "Old Chapter Title", "1");
-        _mockMetadataHandling.GetSeriesAndTitleFromComicInfoAsync(notUpscaledPath).Returns(Task.FromResult(metadata));
+        _mockMetadataHandling
+            .GetSeriesAndTitleFromComicInfoAsync(notUpscaledPath)
+            .Returns(Task.FromResult(metadata));
 
         var newTitle = "New Chapter Title";
 
@@ -257,11 +311,17 @@ public class MangaMetadataChangerTests : IDisposable
         // Assert
         // Verify only not-upscaled file was updated
 #pragma warning disable CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
-        _mockMetadataHandling.Received(1).WriteComicInfoAsync(notUpscaledPath,
-            Arg.Is<ExtractedMetadata>(m => m.ChapterTitle == newTitle));
+        _mockMetadataHandling
+            .Received(1)
+            .WriteComicInfoAsync(
+                notUpscaledPath,
+                Arg.Is<ExtractedMetadata>(m => m.ChapterTitle == newTitle)
+            );
 
         // Verify no other WriteComicInfo calls were made
-        _mockMetadataHandling.Received(1).WriteComicInfoAsync(Arg.Any<string>(), Arg.Any<ExtractedMetadata>());
+        _mockMetadataHandling
+            .Received(1)
+            .WriteComicInfoAsync(Arg.Any<string>(), Arg.Any<ExtractedMetadata>());
 #pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
     }
 
@@ -279,7 +339,8 @@ public class MangaMetadataChangerTests : IDisposable
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            _metadataChanger.ApplyMangaTitleToUpscaledAsync(chapter, newTitle, nonExistentPath));
+            _metadataChanger.ApplyMangaTitleToUpscaledAsync(chapter, newTitle, nonExistentPath)
+        );
 
         Assert.Contains("Chapter file not found", exception.Message);
     }
@@ -295,7 +356,7 @@ public class MangaMetadataChangerTests : IDisposable
             FileName = "chapter1.cbz",
             RelativePath = "Test Manga/chapter1.cbz",
             Manga = null!, // Null manga
-            IsUpscaled = true
+            IsUpscaled = true,
         };
 
         var chapterPath = Path.Combine(_tempDir, "chapter1.cbz");
@@ -307,7 +368,8 @@ public class MangaMetadataChangerTests : IDisposable
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentNullException>(() =>
-            _metadataChanger.ApplyMangaTitleToUpscaledAsync(chapter, newTitle, chapterPath));
+            _metadataChanger.ApplyMangaTitleToUpscaledAsync(chapter, newTitle, chapterPath)
+        );
 
         Assert.Contains("Chapter manga or library not found", exception.Message);
     }
@@ -331,11 +393,18 @@ public class MangaMetadataChangerTests : IDisposable
         var chapter1Path = Path.Combine(library.NotUpscaledLibraryPath, chapter1.RelativePath);
         var chapter2Path = Path.Combine(library.NotUpscaledLibraryPath, chapter2.RelativePath);
         var newTitle = "New Title";
-        var newChapter2Path = Path.Combine(library.NotUpscaledLibraryPath,
-            PathEscaper.EscapeFileName(newTitle), PathEscaper.EscapeFileName(chapter2.FileName));
+        var newChapter2Path = Path.Combine(
+            library.NotUpscaledLibraryPath,
+            PathEscaper.EscapeFileName(newTitle),
+            PathEscaper.EscapeFileName(chapter2.FileName)
+        );
 
         Directory.CreateDirectory(Path.GetDirectoryName(chapter2Path)!);
-        await File.WriteAllTextAsync(chapter2Path, "dummy content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            chapter2Path,
+            "dummy content",
+            TestContext.Current.CancellationToken
+        );
 
         var metadata = new ExtractedMetadata("Original Title", "Chapter 2", "2");
 
@@ -343,11 +412,16 @@ public class MangaMetadataChangerTests : IDisposable
         _mockFileSystem.FileExists(chapter1Path).Returns(false);
         _mockFileSystem.FileExists(chapter2Path).Returns(true);
         _mockFileSystem.FileExists(newChapter2Path).Returns(false);
-        _mockMetadataHandling.GetSeriesAndTitleFromComicInfoAsync(chapter2Path).Returns(Task.FromResult(metadata));
+        _mockMetadataHandling
+            .GetSeriesAndTitleFromComicInfoAsync(chapter2Path)
+            .Returns(Task.FromResult(metadata));
 
         // Act
-        var result = await _metadataChanger.ChangeMangaTitle(manga, newTitle,
-            cancellationToken: TestContext.Current.CancellationToken);
+        var result = await _metadataChanger.ChangeMangaTitle(
+            manga,
+            newTitle,
+            cancellationToken: TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.Equal(RenameResult.Ok, result);
@@ -358,9 +432,13 @@ public class MangaMetadataChangerTests : IDisposable
 
         // Verify chapter2 was processed
 #pragma warning disable CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
-        _mockMetadataHandling.Received(1).WriteComicInfoAsync(chapter2Path,
+        _mockMetadataHandling
+            .Received(1)
+            .WriteComicInfoAsync(
+                chapter2Path,
 #pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
-            Arg.Is<ExtractedMetadata>(m => m.Series == newTitle));
+                Arg.Is<ExtractedMetadata>(m => m.Series == newTitle)
+            );
     }
 
     [Fact]
@@ -380,27 +458,44 @@ public class MangaMetadataChangerTests : IDisposable
         // Create source file
         var chapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(chapterPath)!);
-        await File.WriteAllTextAsync(chapterPath, "dummy content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            chapterPath,
+            "dummy content",
+            TestContext.Current.CancellationToken
+        );
 
         // Create conflicting target file
         var newTitle = "New Title";
-        var targetPath = Path.Combine(library.NotUpscaledLibraryPath,
-            PathEscaper.EscapeFileName(newTitle), PathEscaper.EscapeFileName(chapter.FileName));
+        var targetPath = Path.Combine(
+            library.NotUpscaledLibraryPath,
+            PathEscaper.EscapeFileName(newTitle),
+            PathEscaper.EscapeFileName(chapter.FileName)
+        );
         Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
-        await File.WriteAllTextAsync(targetPath, "existing content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            targetPath,
+            "existing content",
+            TestContext.Current.CancellationToken
+        );
 
         var metadata = new ExtractedMetadata("Original Title", "Chapter 1", "1");
 
         // Set up mocks - both source and target files exist (conflict)
         _mockFileSystem.FileExists(chapterPath).Returns(true);
         _mockFileSystem.FileExists(targetPath).Returns(true); // This should cause conflict
-        _mockMetadataHandling.GetSeriesAndTitleFromComicInfoAsync(chapterPath).Returns(Task.FromResult(metadata));
+        _mockMetadataHandling
+            .GetSeriesAndTitleFromComicInfoAsync(chapterPath)
+            .Returns(Task.FromResult(metadata));
 
         var originalTitle = manga.PrimaryTitle;
 
         // Act
-        var result = await _metadataChanger.ChangeMangaTitle(manga, newTitle, addOldToAlternative: true,
-            cancellationToken: TestContext.Current.CancellationToken);
+        var result = await _metadataChanger.ChangeMangaTitle(
+            manga,
+            newTitle,
+            addOldToAlternative: true,
+            cancellationToken: TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.Equal(RenameResult.Cancelled, result);
@@ -414,12 +509,15 @@ public class MangaMetadataChangerTests : IDisposable
         _mockFileSystem.DidNotReceive().Move(Arg.Any<string>(), Arg.Any<string>());
 
         // Verify warning was logged about file conflict
-        _mockLogger.Received().Log(
-            LogLevel.Warning,
-            Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("already exists")),
-            Arg.Any<Exception>(),
-            Arg.Any<Func<object, Exception?, string>>());
+        _mockLogger
+            .Received()
+            .Log(
+                LogLevel.Warning,
+                Arg.Any<EventId>(),
+                Arg.Is<object>(o => o.ToString()!.Contains("already exists")),
+                Arg.Any<Exception>(),
+                Arg.Any<Func<object, Exception?, string>>()
+            );
     }
 
     [Fact]
@@ -446,8 +544,12 @@ public class MangaMetadataChangerTests : IDisposable
         var originalTitle = manga.PrimaryTitle;
 
         // Act
-        var result = await _metadataChanger.ChangeMangaTitle(manga, newTitle, addOldToAlternative: true,
-            cancellationToken: TestContext.Current.CancellationToken);
+        var result = await _metadataChanger.ChangeMangaTitle(
+            manga,
+            newTitle,
+            addOldToAlternative: true,
+            cancellationToken: TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.Equal(RenameResult.Ok, result);
@@ -457,12 +559,15 @@ public class MangaMetadataChangerTests : IDisposable
         Assert.Contains(manga.OtherTitles, t => t.Title == originalTitle);
 
         // Verify warning was logged for missing file
-        _mockLogger.Received().Log(
-            LogLevel.Warning,
-            Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("not found")),
-            Arg.Any<Exception>(),
-            Arg.Any<Func<object, Exception?, string>>());
+        _mockLogger
+            .Received()
+            .Log(
+                LogLevel.Warning,
+                Arg.Any<EventId>(),
+                Arg.Is<object>(o => o.ToString()!.Contains("not found")),
+                Arg.Any<Exception>(),
+                Arg.Any<Func<object, Exception?, string>>()
+            );
 
         // Verify no file operations were performed due to missing source
         _mockFileSystem.DidNotReceive().CreateDirectory(Arg.Any<string>());
@@ -485,19 +590,28 @@ public class MangaMetadataChangerTests : IDisposable
 
         var chapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
         var newTitle = "New Title";
-        var newChapterPath = Path.Combine(library.NotUpscaledLibraryPath,
-            PathEscaper.EscapeFileName(newTitle), PathEscaper.EscapeFileName(chapter.FileName));
+        var newChapterPath = Path.Combine(
+            library.NotUpscaledLibraryPath,
+            PathEscaper.EscapeFileName(newTitle),
+            PathEscaper.EscapeFileName(chapter.FileName)
+        );
 
         var metadata = new ExtractedMetadata("Original Title", "Chapter 1", "1");
 
         // Set up mocks - source file exists, target doesn't
         _mockFileSystem.FileExists(chapterPath).Returns(true);
         _mockFileSystem.FileExists(newChapterPath).Returns(false);
-        _mockMetadataHandling.GetSeriesAndTitleFromComicInfoAsync(chapterPath).Returns(Task.FromResult(metadata));
+        _mockMetadataHandling
+            .GetSeriesAndTitleFromComicInfoAsync(chapterPath)
+            .Returns(Task.FromResult(metadata));
 
         // Act
-        var result = await _metadataChanger.ChangeMangaTitle(manga, newTitle, addOldToAlternative: true,
-            cancellationToken: TestContext.Current.CancellationToken);
+        var result = await _metadataChanger.ChangeMangaTitle(
+            manga,
+            newTitle,
+            addOldToAlternative: true,
+            cancellationToken: TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.Equal(RenameResult.Ok, result);
@@ -508,9 +622,11 @@ public class MangaMetadataChangerTests : IDisposable
 
         // Verify metadata was updated
 #pragma warning disable CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
-        _mockMetadataHandling.Received(1).WriteComicInfoAsync(chapterPath,
+        _mockMetadataHandling
+            .Received(1)
+            .WriteComicInfoAsync(chapterPath,
 #pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
-            Arg.Is<ExtractedMetadata>(m => m.Series == newTitle));
+                Arg.Is<ExtractedMetadata>(m => m.Series == newTitle));
     }
 
     [Fact]
@@ -529,8 +645,11 @@ public class MangaMetadataChangerTests : IDisposable
 
         var chapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
         var newTitle = "New Title";
-        var newChapterPath = Path.Combine(library.NotUpscaledLibraryPath,
-            PathEscaper.EscapeFileName(newTitle), PathEscaper.EscapeFileName(chapter.FileName));
+        var newChapterPath = Path.Combine(
+            library.NotUpscaledLibraryPath,
+            PathEscaper.EscapeFileName(newTitle),
+            PathEscaper.EscapeFileName(chapter.FileName)
+        );
 
         var metadata = new ExtractedMetadata("Original Title", "Chapter 1", "1");
         var originalTitle = manga.PrimaryTitle;
@@ -538,11 +657,17 @@ public class MangaMetadataChangerTests : IDisposable
         // Set up mocks - both source and target files exist (conflict)
         _mockFileSystem.FileExists(chapterPath).Returns(true);
         _mockFileSystem.FileExists(newChapterPath).Returns(true); // This should cause conflict
-        _mockMetadataHandling.GetSeriesAndTitleFromComicInfoAsync(chapterPath).Returns(Task.FromResult(metadata));
+        _mockMetadataHandling
+            .GetSeriesAndTitleFromComicInfoAsync(chapterPath)
+            .Returns(Task.FromResult(metadata));
 
         // Act
-        var result = await _metadataChanger.ChangeMangaTitle(manga, newTitle, addOldToAlternative: true,
-            cancellationToken: TestContext.Current.CancellationToken);
+        var result = await _metadataChanger.ChangeMangaTitle(
+            manga,
+            newTitle,
+            addOldToAlternative: true,
+            cancellationToken: TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.Equal(RenameResult.Cancelled, result);
@@ -557,7 +682,9 @@ public class MangaMetadataChangerTests : IDisposable
 
         // Verify NO metadata updates were attempted
 #pragma warning disable CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
-        _mockMetadataHandling.DidNotReceive().WriteComicInfoAsync(Arg.Any<string>(), Arg.Any<ExtractedMetadata>());
+        _mockMetadataHandling
+            .DidNotReceive()
+            .WriteComicInfoAsync(Arg.Any<string>(), Arg.Any<ExtractedMetadata>());
 #pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
     }
 
@@ -578,10 +705,16 @@ public class MangaMetadataChangerTests : IDisposable
         var chapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
         var upscaledPath = Path.Combine(library.UpscaledLibraryPath!, chapter.RelativePath);
         var newTitle = "New Title";
-        var newChapterPath = Path.Combine(library.NotUpscaledLibraryPath,
-            PathEscaper.EscapeFileName(newTitle), PathEscaper.EscapeFileName(chapter.FileName));
-        var newUpscaledPath = Path.Combine(library.UpscaledLibraryPath!,
-            PathEscaper.EscapeFileName(newTitle), PathEscaper.EscapeFileName(chapter.FileName));
+        var newChapterPath = Path.Combine(
+            library.NotUpscaledLibraryPath,
+            PathEscaper.EscapeFileName(newTitle),
+            PathEscaper.EscapeFileName(chapter.FileName)
+        );
+        var newUpscaledPath = Path.Combine(
+            library.UpscaledLibraryPath!,
+            PathEscaper.EscapeFileName(newTitle),
+            PathEscaper.EscapeFileName(chapter.FileName)
+        );
 
         var metadata = new ExtractedMetadata("Original Title", "Chapter 1", "1");
 
@@ -590,11 +723,17 @@ public class MangaMetadataChangerTests : IDisposable
         _mockFileSystem.FileExists(upscaledPath).Returns(true);
         _mockFileSystem.FileExists(newChapterPath).Returns(false);
         _mockFileSystem.FileExists(newUpscaledPath).Returns(false);
-        _mockMetadataHandling.GetSeriesAndTitleFromComicInfoAsync(Arg.Any<string>()).Returns(Task.FromResult(metadata));
+        _mockMetadataHandling
+            .GetSeriesAndTitleFromComicInfoAsync(Arg.Any<string>())
+            .Returns(Task.FromResult(metadata));
 
         // Act
-        var result = await _metadataChanger.ChangeMangaTitle(manga, newTitle, addOldToAlternative: true,
-            cancellationToken: TestContext.Current.CancellationToken);
+        var result = await _metadataChanger.ChangeMangaTitle(
+            manga,
+            newTitle,
+            addOldToAlternative: true,
+            cancellationToken: TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.Equal(RenameResult.Ok, result);
@@ -606,10 +745,15 @@ public class MangaMetadataChangerTests : IDisposable
 
         // Verify metadata was updated for both files
 #pragma warning disable CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
-        _mockMetadataHandling.Received(1).WriteComicInfoAsync(chapterPath,
-            Arg.Is<ExtractedMetadata>(m => m.Series == newTitle));
-        _mockMetadataHandling.Received(1).WriteComicInfoAsync(upscaledPath,
-            Arg.Is<ExtractedMetadata>(m => m.Series == newTitle));
+        _mockMetadataHandling
+            .Received(1)
+            .WriteComicInfoAsync(chapterPath, Arg.Is<ExtractedMetadata>(m => m.Series == newTitle));
+        _mockMetadataHandling
+            .Received(1)
+            .WriteComicInfoAsync(
+                upscaledPath,
+                Arg.Is<ExtractedMetadata>(m => m.Series == newTitle)
+            );
 #pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
     }
 
@@ -630,8 +774,11 @@ public class MangaMetadataChangerTests : IDisposable
         var chapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
         var upscaledPath = Path.Combine(library.UpscaledLibraryPath!, chapter.RelativePath);
         var newTitle = "New Title";
-        var newUpscaledPath = Path.Combine(library.UpscaledLibraryPath!,
-            PathEscaper.EscapeFileName(newTitle), PathEscaper.EscapeFileName(chapter.FileName));
+        var newUpscaledPath = Path.Combine(
+            library.UpscaledLibraryPath!,
+            PathEscaper.EscapeFileName(newTitle),
+            PathEscaper.EscapeFileName(chapter.FileName)
+        );
 
         var metadata = new ExtractedMetadata("Original Title", "Chapter 1", "1");
         var originalTitle = manga.PrimaryTitle;
@@ -640,11 +787,17 @@ public class MangaMetadataChangerTests : IDisposable
         _mockFileSystem.FileExists(chapterPath).Returns(true);
         _mockFileSystem.FileExists(upscaledPath).Returns(true);
         _mockFileSystem.FileExists(newUpscaledPath).Returns(true); // Conflict in upscaled file
-        _mockMetadataHandling.GetSeriesAndTitleFromComicInfoAsync(chapterPath).Returns(Task.FromResult(metadata));
+        _mockMetadataHandling
+            .GetSeriesAndTitleFromComicInfoAsync(chapterPath)
+            .Returns(Task.FromResult(metadata));
 
         // Act
-        var result = await _metadataChanger.ChangeMangaTitle(manga, newTitle, addOldToAlternative: true,
-            cancellationToken: TestContext.Current.CancellationToken);
+        var result = await _metadataChanger.ChangeMangaTitle(
+            manga,
+            newTitle,
+            addOldToAlternative: true,
+            cancellationToken: TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.Equal(RenameResult.Cancelled, result);
@@ -658,7 +811,9 @@ public class MangaMetadataChangerTests : IDisposable
 
         // Verify NO metadata updates were attempted
 #pragma warning disable CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
-        _mockMetadataHandling.DidNotReceive().WriteComicInfoAsync(Arg.Any<string>(), Arg.Any<ExtractedMetadata>());
+        _mockMetadataHandling
+            .DidNotReceive()
+            .WriteComicInfoAsync(Arg.Any<string>(), Arg.Any<ExtractedMetadata>());
 #pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
     }
 
@@ -675,7 +830,7 @@ public class MangaMetadataChangerTests : IDisposable
             Id = 1,
             Name = "Test Library",
             NotUpscaledLibraryPath = notUpscaledPath,
-            UpscaledLibraryPath = upscaledPath
+            UpscaledLibraryPath = upscaledPath,
         };
     }
 
@@ -688,7 +843,7 @@ public class MangaMetadataChangerTests : IDisposable
             Library = library,
             LibraryId = library.Id,
             Chapters = new List<Chapter>(),
-            OtherTitles = new List<MangaAlternativeTitle>()
+            OtherTitles = new List<MangaAlternativeTitle>(),
         };
     }
 
@@ -702,7 +857,7 @@ public class MangaMetadataChangerTests : IDisposable
             RelativePath = relativePath,
             Manga = manga,
             MangaId = manga.Id,
-            IsUpscaled = isUpscaled
+            IsUpscaled = isUpscaled,
         };
     }
 }

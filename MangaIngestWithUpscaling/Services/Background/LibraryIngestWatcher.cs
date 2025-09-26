@@ -1,9 +1,9 @@
-﻿using MangaIngestWithUpscaling.Data;
+﻿using System.Reactive.Disposables;
+using System.Reactive.Linq;
+using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using Microsoft.EntityFrameworkCore;
-using System.Reactive.Disposables;
-using System.Reactive.Linq;
 
 namespace MangaIngestWithUpscaling.Services.Background;
 
@@ -13,7 +13,8 @@ public class LibraryIngestWatcher : BackgroundService
 
     private readonly List<IDisposable> fileSystemWatchers = new();
 
-    public LibraryIngestWatcher(IServiceScopeFactory serviceScopeFactory) => _serviceScopeFactory = serviceScopeFactory;
+    public LibraryIngestWatcher(IServiceScopeFactory serviceScopeFactory) =>
+        _serviceScopeFactory = serviceScopeFactory;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -42,25 +43,35 @@ public class LibraryIngestWatcher : BackgroundService
                     {
                         EnableRaisingEvents = true,
                         IncludeSubdirectories = true,
-                        Filters = { "*.cbz", "ComicInfo.xml" }
+                        Filters = { "*.cbz", "ComicInfo.xml" },
                     };
 
                     var compositeDisposable = new CompositeDisposable();
                     compositeDisposable.Add(watcher);
 
-                    Observable.FromEventPattern<FileSystemEventHandler, FileSystemEventArgs>(
+                    Observable
+                        .FromEventPattern<FileSystemEventHandler, FileSystemEventArgs>(
                             h => watcher.Created += h,
-                            h => watcher.Created -= h)
+                            h => watcher.Created -= h
+                        )
                         .Throttle(TimeSpan.FromSeconds(15))
                         .Subscribe(async e =>
                         {
                             // process the new file
                             using var scope = _serviceScopeFactory.CreateScope();
-                            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                            var dbContext =
+                                scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
                             var taskQueue = scope.ServiceProvider.GetRequiredService<ITaskQueue>();
                             // ensure the library still exists
-                            if (await dbContext.Libraries.AnyAsync(l => l.Id == library.Id, stoppingToken))
-                                await taskQueue.EnqueueAsync(new ScanIngestTask() { LibraryId = library.Id });
+                            if (
+                                await dbContext.Libraries.AnyAsync(
+                                    l => l.Id == library.Id,
+                                    stoppingToken
+                                )
+                            )
+                                await taskQueue.EnqueueAsync(
+                                    new ScanIngestTask() { LibraryId = library.Id }
+                                );
                         })
                         .DisposeWith(compositeDisposable);
 

@@ -16,26 +16,30 @@ public partial class ImproveLibraryColumns : Migration
             type: "TEXT",
             nullable: true,
             oldClrType: typeof(string),
-            oldType: "TEXT");
+            oldType: "TEXT"
+        );
 
         migrationBuilder.AddColumn<string>(
             name: "Name",
             table: "Libraries",
             type: "TEXT",
             nullable: false,
-            defaultValue: "");
+            defaultValue: ""
+        );
 
         migrationBuilder.AddColumn<int>(
             name: "UpscalerConfigId",
             table: "Libraries",
             type: "INTEGER",
             nullable: false,
-            defaultValue: 0);
+            defaultValue: 0
+        );
 
         migrationBuilder.CreateIndex(
             name: "IX_Libraries_UpscalerConfigId",
             table: "Libraries",
-            column: "UpscalerConfigId");
+            column: "UpscalerConfigId"
+        );
 
         migrationBuilder.AddForeignKey(
             name: "FK_Libraries_UpscalerConfigs_UpscalerConfigId",
@@ -43,7 +47,8 @@ public partial class ImproveLibraryColumns : Migration
             column: "UpscalerConfigId",
             principalTable: "UpscalerConfigs",
             principalColumn: "Id",
-            onDelete: ReferentialAction.Cascade);
+            onDelete: ReferentialAction.Cascade
+        );
     }
 
     /// <inheritdoc />
@@ -51,19 +56,14 @@ public partial class ImproveLibraryColumns : Migration
     {
         migrationBuilder.DropForeignKey(
             name: "FK_Libraries_UpscalerConfigs_UpscalerConfigId",
-            table: "Libraries");
+            table: "Libraries"
+        );
 
-        migrationBuilder.DropIndex(
-            name: "IX_Libraries_UpscalerConfigId",
-            table: "Libraries");
+        migrationBuilder.DropIndex(name: "IX_Libraries_UpscalerConfigId", table: "Libraries");
 
-        migrationBuilder.DropColumn(
-            name: "Name",
-            table: "Libraries");
+        migrationBuilder.DropColumn(name: "Name", table: "Libraries");
 
-        migrationBuilder.DropColumn(
-            name: "UpscalerConfigId",
-            table: "Libraries");
+        migrationBuilder.DropColumn(name: "UpscalerConfigId", table: "Libraries");
 
         migrationBuilder.AlterColumn<string>(
             name: "UpscaledLibraryPath",
@@ -73,6 +73,7 @@ public partial class ImproveLibraryColumns : Migration
             defaultValue: "",
             oldClrType: typeof(string),
             oldType: "TEXT",
-            oldNullable: true);
+            oldNullable: true
+        );
     }
 }

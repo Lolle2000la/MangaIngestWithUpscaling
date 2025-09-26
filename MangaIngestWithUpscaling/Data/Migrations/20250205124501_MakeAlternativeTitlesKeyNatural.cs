@@ -12,20 +12,21 @@ namespace MangaIngestWithUpscaling.Migrations
         {
             migrationBuilder.DropPrimaryKey(
                 name: "PK_MangaAlternativeTitles",
-                table: "MangaAlternativeTitles");
+                table: "MangaAlternativeTitles"
+            );
 
             migrationBuilder.DropIndex(
                 name: "IX_MangaAlternativeTitles_MangaId",
-                table: "MangaAlternativeTitles");
+                table: "MangaAlternativeTitles"
+            );
 
-            migrationBuilder.DropColumn(
-                name: "Id",
-                table: "MangaAlternativeTitles");
+            migrationBuilder.DropColumn(name: "Id", table: "MangaAlternativeTitles");
 
             migrationBuilder.AddPrimaryKey(
                 name: "PK_MangaAlternativeTitles",
                 table: "MangaAlternativeTitles",
-                columns: new[] { "MangaId", "Title" });
+                columns: new[] { "MangaId", "Title" }
+            );
         }
 
         /// <inheritdoc />
@@ -33,25 +34,30 @@ namespace MangaIngestWithUpscaling.Migrations
         {
             migrationBuilder.DropPrimaryKey(
                 name: "PK_MangaAlternativeTitles",
-                table: "MangaAlternativeTitles");
+                table: "MangaAlternativeTitles"
+            );
 
-            migrationBuilder.AddColumn<int>(
-                name: "Id",
-                table: "MangaAlternativeTitles",
-                type: "INTEGER",
-                nullable: false,
-                defaultValue: 0)
+            migrationBuilder
+                .AddColumn<int>(
+                    name: "Id",
+                    table: "MangaAlternativeTitles",
+                    type: "INTEGER",
+                    nullable: false,
+                    defaultValue: 0
+                )
                 .Annotation("Sqlite:Autoincrement", true);
 
             migrationBuilder.AddPrimaryKey(
                 name: "PK_MangaAlternativeTitles",
                 table: "MangaAlternativeTitles",
-                column: "Id");
+                column: "Id"
+            );
 
             migrationBuilder.CreateIndex(
                 name: "IX_MangaAlternativeTitles_MangaId",
                 table: "MangaAlternativeTitles",
-                column: "MangaId");
+                column: "MangaId"
+            );
         }
     }
 }

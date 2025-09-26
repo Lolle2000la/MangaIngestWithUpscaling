@@ -17,7 +17,8 @@ public class PerceptualHashMigrationService
     public PerceptualHashMigrationService(
         ApplicationDbContext dbContext,
         IImageFilterService imageFilterService,
-        ILogger<PerceptualHashMigrationService> logger)
+        ILogger<PerceptualHashMigrationService> logger
+    )
     {
         _dbContext = dbContext;
         _imageFilterService = imageFilterService;
@@ -28,13 +29,20 @@ public class PerceptualHashMigrationService
     /// Updates existing filtered images that don't have perceptual hashes
     /// This method reconstructs the perceptual hash from the thumbnail image
     /// </summary>
-    public async Task UpdateExistingFilteredImagesAsync(CancellationToken cancellationToken = default)
+    public async Task UpdateExistingFilteredImagesAsync(
+        CancellationToken cancellationToken = default
+    )
     {
-        var filteredImagesWithoutPerceptualHash = await _dbContext.FilteredImages
-            .Where(f => !f.PerceptualHash.HasValue && !string.IsNullOrEmpty(f.ThumbnailBase64))
+        var filteredImagesWithoutPerceptualHash = await _dbContext
+            .FilteredImages.Where(f =>
+                !f.PerceptualHash.HasValue && !string.IsNullOrEmpty(f.ThumbnailBase64)
+            )
             .ToListAsync(cancellationToken);
 
-        _logger.LogInformation("Found {Count} filtered images without perceptual hashes", filteredImagesWithoutPerceptualHash.Count);
+        _logger.LogInformation(
+            "Found {Count} filtered images without perceptual hashes",
+            filteredImagesWithoutPerceptualHash.Count
+        );
 
         var updated = 0;
         foreach (var filteredImage in filteredImagesWithoutPerceptualHash)
@@ -54,20 +62,29 @@ public class PerceptualHashMigrationService
                 filteredImage.PerceptualHash = perceptualHash;
                 updated++;
 
-                _logger.LogDebug("Updated perceptual hash for {FileName}: {PerceptualHash}",
-                    filteredImage.OriginalFileName, perceptualHash);
+                _logger.LogDebug(
+                    "Updated perceptual hash for {FileName}: {PerceptualHash}",
+                    filteredImage.OriginalFileName,
+                    perceptualHash
+                );
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to calculate perceptual hash for {FileName}",
-                    filteredImage.OriginalFileName);
+                _logger.LogWarning(
+                    ex,
+                    "Failed to calculate perceptual hash for {FileName}",
+                    filteredImage.OriginalFileName
+                );
             }
         }
 
         if (updated > 0)
         {
             await _dbContext.SaveChangesAsync(cancellationToken);
-            _logger.LogInformation("Updated {UpdatedCount} filtered images with perceptual hashes", updated);
+            _logger.LogInformation(
+                "Updated {UpdatedCount} filtered images with perceptual hashes",
+                updated
+            );
         }
     }
 }

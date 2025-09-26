@@ -1,8 +1,8 @@
+using System.Text.RegularExpressions;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.LibraryFiltering;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
-using System.Text.RegularExpressions;
 
 namespace MangaIngestWithUpscaling.Tests.Services.LibraryFiltering;
 
@@ -43,7 +43,7 @@ public class LibraryFilteringServiceTests
                 LibraryFilterPatternType.Contains,
                 LibraryFilterTargetField.MangaTitle,
                 FilterAction.Exclude
-            )
+            ),
         };
 
         // Act
@@ -58,7 +58,11 @@ public class LibraryFilteringServiceTests
     public void FilterChapter_WithExcludeRuleNoMatch_ShouldReturnFalse()
     {
         // Arrange
-        var chapter = CreateTestFoundChapter("One Piece", "Chapter 1", "/manga/onepiece/chapter1.cbz");
+        var chapter = CreateTestFoundChapter(
+            "One Piece",
+            "Chapter 1",
+            "/manga/onepiece/chapter1.cbz"
+        );
         var rules = new List<LibraryFilterRule>
         {
             CreateTestLibraryFilterRule(
@@ -66,7 +70,7 @@ public class LibraryFilteringServiceTests
                 LibraryFilterPatternType.Contains,
                 LibraryFilterTargetField.MangaTitle,
                 FilterAction.Exclude
-            )
+            ),
         };
 
         // Act
@@ -81,7 +85,11 @@ public class LibraryFilteringServiceTests
     public void FilterChapter_WithIncludeRuleMatch_ShouldReturnFalse()
     {
         // Arrange
-        var chapter = CreateTestFoundChapter("One Piece", "Chapter 1", "/manga/onepiece/chapter1.cbz");
+        var chapter = CreateTestFoundChapter(
+            "One Piece",
+            "Chapter 1",
+            "/manga/onepiece/chapter1.cbz"
+        );
         var rules = new List<LibraryFilterRule>
         {
             CreateTestLibraryFilterRule(
@@ -89,7 +97,7 @@ public class LibraryFilteringServiceTests
                 LibraryFilterPatternType.Contains,
                 LibraryFilterTargetField.MangaTitle,
                 FilterAction.Include
-            )
+            ),
         };
 
         // Act
@@ -112,7 +120,7 @@ public class LibraryFilteringServiceTests
                 LibraryFilterPatternType.Contains,
                 LibraryFilterTargetField.MangaTitle,
                 FilterAction.Include
-            )
+            ),
         };
 
         // Act
@@ -127,7 +135,11 @@ public class LibraryFilteringServiceTests
     public void FilterChapter_WithRegexPattern_ShouldMatchCorrectly()
     {
         // Arrange
-        var chapter = CreateTestFoundChapter("One Piece", "Chapter 001", "/manga/onepiece/chapter001.cbz");
+        var chapter = CreateTestFoundChapter(
+            "One Piece",
+            "Chapter 001",
+            "/manga/onepiece/chapter001.cbz"
+        );
         var rules = new List<LibraryFilterRule>
         {
             CreateTestLibraryFilterRule(
@@ -135,7 +147,7 @@ public class LibraryFilteringServiceTests
                 LibraryFilterPatternType.Regex,
                 LibraryFilterTargetField.ChapterTitle,
                 FilterAction.Exclude
-            )
+            ),
         };
 
         // Act
@@ -150,7 +162,11 @@ public class LibraryFilteringServiceTests
     public void FilterChapter_WithInvalidRegexPattern_ShouldThrowException()
     {
         // Arrange
-        var chapter = CreateTestFoundChapter("One Piece", "Chapter 1", "/manga/onepiece/chapter1.cbz");
+        var chapter = CreateTestFoundChapter(
+            "One Piece",
+            "Chapter 1",
+            "/manga/onepiece/chapter1.cbz"
+        );
         var rules = new List<LibraryFilterRule>
         {
             CreateTestLibraryFilterRule(
@@ -158,7 +174,7 @@ public class LibraryFilteringServiceTests
                 LibraryFilterPatternType.Regex,
                 LibraryFilterTargetField.ChapterTitle,
                 FilterAction.Exclude
-            )
+            ),
         };
 
         // Act & Assert
@@ -170,7 +186,11 @@ public class LibraryFilteringServiceTests
     public void FilterChapter_WithFilePathTarget_ShouldMatchPath()
     {
         // Arrange
-        var chapter = CreateTestFoundChapter("One Piece", "Chapter 1", "/manga/onepiece/special/chapter1.cbz");
+        var chapter = CreateTestFoundChapter(
+            "One Piece",
+            "Chapter 1",
+            "/manga/onepiece/special/chapter1.cbz"
+        );
         var rules = new List<LibraryFilterRule>
         {
             CreateTestLibraryFilterRule(
@@ -178,7 +198,7 @@ public class LibraryFilteringServiceTests
                 LibraryFilterPatternType.Contains,
                 LibraryFilterTargetField.FilePath,
                 FilterAction.Exclude
-            )
+            ),
         };
 
         // Act
@@ -201,7 +221,7 @@ public class LibraryFilteringServiceTests
                 LibraryFilterPatternType.Contains,
                 LibraryFilterTargetField.MangaTitle,
                 FilterAction.Exclude
-            )
+            ),
         };
 
         // Act
@@ -224,7 +244,7 @@ public class LibraryFilteringServiceTests
                 LibraryFilterPatternType.Contains,
                 LibraryFilterTargetField.ChapterTitle,
                 FilterAction.Exclude
-            )
+            ),
         };
 
         // Act
@@ -239,7 +259,11 @@ public class LibraryFilteringServiceTests
     public void FilterChapter_WithMixedRules_ExcludeTakesPrecedence()
     {
         // Arrange
-        var chapter = CreateTestFoundChapter("One Piece", "Chapter 1", "/manga/onepiece/chapter1.cbz");
+        var chapter = CreateTestFoundChapter(
+            "One Piece",
+            "Chapter 1",
+            "/manga/onepiece/chapter1.cbz"
+        );
         var rules = new List<LibraryFilterRule>
         {
             CreateTestLibraryFilterRule(
@@ -253,7 +277,7 @@ public class LibraryFilteringServiceTests
                 LibraryFilterPatternType.Contains,
                 LibraryFilterTargetField.ChapterTitle,
                 FilterAction.Exclude
-            )
+            ),
         };
 
         // Act
@@ -268,7 +292,11 @@ public class LibraryFilteringServiceTests
     public void FilterChapter_WithMultipleIncludeRules_OneMatchShouldPass()
     {
         // Arrange
-        var chapter = CreateTestFoundChapter("One Piece", "Chapter 1", "/manga/onepiece/chapter1.cbz");
+        var chapter = CreateTestFoundChapter(
+            "One Piece",
+            "Chapter 1",
+            "/manga/onepiece/chapter1.cbz"
+        );
         var rules = new List<LibraryFilterRule>
         {
             CreateTestLibraryFilterRule(
@@ -282,7 +310,7 @@ public class LibraryFilteringServiceTests
                 LibraryFilterPatternType.Contains,
                 LibraryFilterTargetField.MangaTitle,
                 FilterAction.Include
-            )
+            ),
         };
 
         // Act
@@ -297,7 +325,11 @@ public class LibraryFilteringServiceTests
     public void FilterChapter_WithInvalidTargetField_ShouldThrowNotImplementedException()
     {
         // Arrange
-        var chapter = CreateTestFoundChapter("One Piece", "Chapter 1", "/manga/onepiece/chapter1.cbz");
+        var chapter = CreateTestFoundChapter(
+            "One Piece",
+            "Chapter 1",
+            "/manga/onepiece/chapter1.cbz"
+        );
         var rules = new List<LibraryFilterRule>
         {
             CreateTestLibraryFilterRule(
@@ -305,7 +337,7 @@ public class LibraryFilteringServiceTests
                 patternType: LibraryFilterPatternType.Contains,
                 targetField: (LibraryFilterTargetField)999, // Invalid enum value
                 action: FilterAction.Exclude
-            )
+            ),
         };
 
         // Act & Assert
@@ -317,7 +349,11 @@ public class LibraryFilteringServiceTests
     public void FilterChapter_WithInvalidPatternType_ShouldThrowNotImplementedException()
     {
         // Arrange
-        var chapter = CreateTestFoundChapter("One Piece", "Chapter 1", "/manga/onepiece/chapter1.cbz");
+        var chapter = CreateTestFoundChapter(
+            "One Piece",
+            "Chapter 1",
+            "/manga/onepiece/chapter1.cbz"
+        );
         var rules = new List<LibraryFilterRule>
         {
             CreateTestLibraryFilterRule(
@@ -325,7 +361,7 @@ public class LibraryFilteringServiceTests
                 patternType: (LibraryFilterPatternType)999, // Invalid enum value
                 targetField: LibraryFilterTargetField.MangaTitle,
                 action: FilterAction.Exclude
-            )
+            ),
         };
 
         // Act & Assert
@@ -333,10 +369,11 @@ public class LibraryFilteringServiceTests
     }
 
     private static LibraryFilterRule CreateTestLibraryFilterRule(
-        string pattern, 
-        LibraryFilterPatternType patternType, 
-        LibraryFilterTargetField targetField, 
-        FilterAction action)
+        string pattern,
+        LibraryFilterPatternType patternType,
+        LibraryFilterTargetField targetField,
+        FilterAction action
+    )
     {
         return new LibraryFilterRule
         {
@@ -344,17 +381,22 @@ public class LibraryFilteringServiceTests
             PatternType = patternType,
             TargetField = targetField,
             Action = action,
-            Library = new Library { Id = 1, Name = "Test Library", IngestPath = "/test" }
+            Library = new Library
+            {
+                Id = 1,
+                Name = "Test Library",
+                IngestPath = "/test",
+            },
         };
     }
 
-    private static FoundChapter CreateTestFoundChapter(string? seriesTitle, string? chapterTitle, string relativePath)
+    private static FoundChapter CreateTestFoundChapter(
+        string? seriesTitle,
+        string? chapterTitle,
+        string relativePath
+    )
     {
-        var metadata = new ExtractedMetadata(
-            seriesTitle ?? "Default Series",
-            chapterTitle,
-            null
-        );
+        var metadata = new ExtractedMetadata(seriesTitle ?? "Default Series", chapterTitle, null);
 
         return new FoundChapter(
             Path.GetFileName(relativePath),

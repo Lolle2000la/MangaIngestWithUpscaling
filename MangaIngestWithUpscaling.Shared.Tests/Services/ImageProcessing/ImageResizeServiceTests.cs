@@ -23,19 +23,30 @@ public class ImageResizeServiceTests
     [InlineData(-1)]
     [InlineData(-100)]
     [Trait("Category", "Unit")]
-    public async Task CreateResizedTempCbzAsync_InvalidMaxDimension_ShouldThrowArgumentException(int maxDimension)
+    public async Task CreateResizedTempCbzAsync_InvalidMaxDimension_ShouldThrowArgumentException(
+        int maxDimension
+    )
     {
         // Arrange
         var tempInputPath = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}.cbz");
 
         // Create a temporary file to pass the file existence check
-        await File.WriteAllTextAsync(tempInputPath, "dummy content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            tempInputPath,
+            "dummy content",
+            TestContext.Current.CancellationToken
+        );
 
         try
         {
             // Act & Assert
             var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
-                _service.CreateResizedTempCbzAsync(tempInputPath, maxDimension, TestContext.Current.CancellationToken));
+                _service.CreateResizedTempCbzAsync(
+                    tempInputPath,
+                    maxDimension,
+                    TestContext.Current.CancellationToken
+                )
+            );
 
             Assert.Equal("maxDimension", exception.ParamName);
             Assert.Contains("Maximum dimension must be greater than 0", exception.Message);
@@ -58,7 +69,12 @@ public class ImageResizeServiceTests
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<FileNotFoundException>(() =>
-            _service.CreateResizedTempCbzAsync(nonExistentPath, maxDimension, TestContext.Current.CancellationToken));
+            _service.CreateResizedTempCbzAsync(
+                nonExistentPath,
+                maxDimension,
+                TestContext.Current.CancellationToken
+            )
+        );
 
         Assert.Contains(nonExistentPath, exception.Message);
     }

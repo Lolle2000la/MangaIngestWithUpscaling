@@ -1,5 +1,5 @@
-﻿using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
-using System.IO.Compression;
+﻿using System.IO.Compression;
+using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 
 namespace MangaIngestWithUpscaling.Shared.Services.CbzConversion;
 
@@ -8,7 +8,8 @@ public class CbzConverter : ICbzConverter
 {
     public FoundChapter ConvertToCbz(FoundChapter chapter, string foundIn)
     {
-        if (chapter.StorageType == ChapterStorageType.Cbz) return chapter;
+        if (chapter.StorageType == ChapterStorageType.Cbz)
+            return chapter;
 
         if (chapter.StorageType == ChapterStorageType.Folder)
         {
@@ -20,7 +21,7 @@ public class CbzConverter : ICbzConverter
             {
                 StorageType = ChapterStorageType.Cbz,
                 RelativePath = newRelativePath,
-                FileName = Path.GetFileName(cbzPath)
+                FileName = Path.GetFileName(cbzPath),
             };
         }
 

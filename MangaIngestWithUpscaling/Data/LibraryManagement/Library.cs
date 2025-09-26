@@ -1,6 +1,6 @@
-﻿using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.ComponentModel.DataAnnotations.Schema;
+using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 
 namespace MangaIngestWithUpscaling.Data.LibraryManagement;
 
@@ -38,21 +38,29 @@ public class Library
 
         Library other = (Library)obj;
 
-        return Id == other.Id &&
-               Name == other.Name &&
-               IngestPath == other.IngestPath &&
-               NotUpscaledLibraryPath == other.NotUpscaledLibraryPath &&
-               UpscaledLibraryPath == other.UpscaledLibraryPath &&
-               KavitaConfig == other.KavitaConfig &&
-               UpscaleOnIngest == other.UpscaleOnIngest &&
-               MergeChapterParts == other.MergeChapterParts &&
-               UpscalerProfileId == other.UpscalerProfileId;
+        return Id == other.Id
+            && Name == other.Name
+            && IngestPath == other.IngestPath
+            && NotUpscaledLibraryPath == other.NotUpscaledLibraryPath
+            && UpscaledLibraryPath == other.UpscaledLibraryPath
+            && KavitaConfig == other.KavitaConfig
+            && UpscaleOnIngest == other.UpscaleOnIngest
+            && MergeChapterParts == other.MergeChapterParts
+            && UpscalerProfileId == other.UpscalerProfileId;
     }
 
     public override int GetHashCode()
     {
-        return HashCode.Combine(Id, Name, IngestPath, NotUpscaledLibraryPath, UpscaledLibraryPath, KavitaConfig,
-            UpscaleOnIngest, HashCode.Combine(MergeChapterParts, UpscalerProfile));
+        return HashCode.Combine(
+            Id,
+            Name,
+            IngestPath,
+            NotUpscaledLibraryPath,
+            UpscaledLibraryPath,
+            KavitaConfig,
+            UpscaleOnIngest,
+            HashCode.Combine(MergeChapterParts, UpscalerProfile)
+        );
     }
 }
 

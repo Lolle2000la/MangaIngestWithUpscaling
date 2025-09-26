@@ -22,7 +22,8 @@ public class TaskQueueTests : IDisposable
         // Setup in-memory database
         var services = new ServiceCollection();
         services.AddDbContext<ApplicationDbContext>(options =>
-            options.UseInMemoryDatabase($"TestDb_{Guid.NewGuid()}"));
+            options.UseInMemoryDatabase($"TestDb_{Guid.NewGuid()}")
+        );
 
         _mockQueueCleanup = Substitute.For<IQueueCleanup>();
         services.AddScoped<IQueueCleanup>(_ => _mockQueueCleanup);
@@ -33,7 +34,10 @@ public class TaskQueueTests : IDisposable
 
         _mockLogger = Substitute.For<ILogger<TaskQueue>>();
 
-        _taskQueue = new TaskQueue(serviceProvider.GetRequiredService<IServiceScopeFactory>(), _mockLogger);
+        _taskQueue = new TaskQueue(
+            serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+            _mockLogger
+        );
     }
 
     public void Dispose()
@@ -51,12 +55,13 @@ public class TaskQueueTests : IDisposable
             Id = 1,
             Order = 1,
             Status = PersistedTaskStatus.Pending,
-            Data = new UpscaleTask { ChapterId = 1, UpscalerProfileId = 1 }
+            Data = new UpscaleTask { ChapterId = 1, UpscalerProfileId = 1 },
         };
 
         // Act & Assert
         Exception? exception = await Record.ExceptionAsync(() =>
-            _taskQueue.SendToLocalUpscaleAsync(task, CancellationToken.None).AsTask());
+            _taskQueue.SendToLocalUpscaleAsync(task, CancellationToken.None).AsTask()
+        );
         Assert.Null(exception);
     }
 
@@ -94,8 +99,9 @@ public class TaskQueueTests : IDisposable
     public async Task ReplayPendingOrFailed_ShouldCompleteSuccessfully()
     {
         // Act & Assert - This method handles database operations, should not throw
-        Exception? exception =
-            await Record.ExceptionAsync(() => _taskQueue.ReplayPendingOrFailed(CancellationToken.None));
+        Exception? exception = await Record.ExceptionAsync(() =>
+            _taskQueue.ReplayPendingOrFailed(CancellationToken.None)
+        );
         Assert.Null(exception);
     }
 
@@ -119,7 +125,9 @@ public class TaskQueueTests : IDisposable
     public async Task StartAsync_ShouldCompleteSuccessfully()
     {
         // Act & Assert - StartAsync calls ReplayPendingOrFailed and should complete
-        Exception? exception = await Record.ExceptionAsync(() => _taskQueue.StartAsync(CancellationToken.None));
+        Exception? exception = await Record.ExceptionAsync(() =>
+            _taskQueue.StartAsync(CancellationToken.None)
+        );
         Assert.Null(exception);
     }
 
@@ -163,7 +171,7 @@ public class TaskQueueTests : IDisposable
             Id = 999, // Non-existent ID
             Order = 1,
             Status = PersistedTaskStatus.Failed,
-            Data = new UpscaleTask { ChapterId = 1, UpscalerProfileId = 1 }
+            Data = new UpscaleTask { ChapterId = 1, UpscalerProfileId = 1 },
         };
 
         // Act & Assert - Should throw exception when trying to update non-existent entity

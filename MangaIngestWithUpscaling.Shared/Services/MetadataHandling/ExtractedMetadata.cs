@@ -9,7 +9,6 @@ namespace MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 /// <param name="ChapterTitle">The title of the chapter, usually something like "Chapter 1" or "第１話".</param>
 public partial record ExtractedMetadata(string Series, string? ChapterTitle, string? Number)
 {
-
     /// <summary>
     /// Checks if the metadata is correct and corrects it if possible.
     /// </summary>
@@ -31,10 +30,15 @@ public partial record ExtractedMetadata(string Series, string? ChapterTitle, str
             }
         }
 
-        return this with { Number = correctedNumber };
+        return this with
+        {
+            Number = correctedNumber,
+        };
     }
 
-    [GeneratedRegex(@"(?:Chapter\s*(?'num'\d+\.?\d*)|第(?'num'\d+\.?\d*)(?:話|章)(?:(?:-|ー|－)(?'subnum'\d*))?|Kapitel\s*(?'num'\d+\.?\d*))")]
+    [GeneratedRegex(
+        @"(?:Chapter\s*(?'num'\d+\.?\d*)|第(?'num'\d+\.?\d*)(?:話|章)(?:(?:-|ー|－)(?'subnum'\d*))?|Kapitel\s*(?'num'\d+\.?\d*))"
+    )]
     private static partial Regex ChapterNumExtract();
 
     private bool TryExtractChapterNumber(out decimal chapterNum)

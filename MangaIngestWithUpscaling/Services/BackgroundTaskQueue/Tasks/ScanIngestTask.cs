@@ -12,11 +12,17 @@ public class ScanIngestTask : BaseTask
 
     public override int RetryFor { get; set; } = 3;
 
-    public override async Task ProcessAsync(IServiceProvider services, CancellationToken cancellationToken)
+    public override async Task ProcessAsync(
+        IServiceProvider services,
+        CancellationToken cancellationToken
+    )
     {
         var logger = services.GetRequiredService<ILogger<ScanIngestTask>>();
         var dbContext = services.GetRequiredService<ApplicationDbContext>();
-        var library = await dbContext.Libraries.FindAsync([LibraryId], cancellationToken: cancellationToken);
+        var library = await dbContext.Libraries.FindAsync(
+            [LibraryId],
+            cancellationToken: cancellationToken
+        );
         var ingestProcessor = services.GetRequiredService<IIngestProcessor>();
 
         if (library == null)

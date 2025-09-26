@@ -8,7 +8,9 @@ public static class ImageConstants
     /// <summary>
     /// File extensions for supported image formats
     /// </summary>
-    public static readonly HashSet<string> SupportedImageExtensions = new(StringComparer.OrdinalIgnoreCase)
+    public static readonly HashSet<string> SupportedImageExtensions = new(
+        StringComparer.OrdinalIgnoreCase
+    )
     {
         ".jpg",
         ".jpeg",
@@ -17,13 +19,15 @@ public static class ImageConstants
         ".bmp",
         ".tiff",
         ".tif",
-        ".avif"
+        ".avif",
     };
 
     /// <summary>
     /// MIME type mappings for supported image formats
     /// </summary>
-    public static readonly Dictionary<string, string> MimeTypeMapping = new(StringComparer.OrdinalIgnoreCase)
+    public static readonly Dictionary<string, string> MimeTypeMapping = new(
+        StringComparer.OrdinalIgnoreCase
+    )
     {
         { ".jpg", "image/jpeg" },
         { ".jpeg", "image/jpeg" },
@@ -32,7 +36,7 @@ public static class ImageConstants
         { ".bmp", "image/bmp" },
         { ".tiff", "image/tiff" },
         { ".tif", "image/tiff" },
-        { ".avif", "image/avif" }
+        { ".avif", "image/avif" },
     };
 
     /// <summary>

@@ -16,7 +16,8 @@ public interface IRepairService
         PageDifferenceResult differences,
         string originalPath,
         string upscaledPath,
-        ILogger logger);
+        ILogger logger
+    );
 
     /// <summary>
     /// Merges upscaled missing pages back into the upscaled directory and creates the final CBZ.
@@ -29,7 +30,8 @@ public interface IRepairService
     Task<string> CreateMissingPagesBatch(
         string inputDir,
         ILogger logger,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default
+    );
 
     /// <summary>
     /// Processes batch upscaled results and extracts them to the output directory.
@@ -40,5 +42,6 @@ public interface IRepairService
         int expectedPageCount,
         IProgress<UpscaleProgress> progress,
         ILogger logger,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default
+    );
 }

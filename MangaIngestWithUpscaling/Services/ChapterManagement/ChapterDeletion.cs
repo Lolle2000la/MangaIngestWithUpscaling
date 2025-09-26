@@ -6,8 +6,10 @@ using Microsoft.EntityFrameworkCore;
 namespace MangaIngestWithUpscaling.Services.ChapterManagement;
 
 [RegisterScoped]
-public class ChapterDeletion(IDbContextFactory<ApplicationDbContext> dbContextFactory,
-    ILogger<ChapterDeletion> logger) : IChapterDeletion
+public class ChapterDeletion(
+    IDbContextFactory<ApplicationDbContext> dbContextFactory,
+    ILogger<ChapterDeletion> logger
+) : IChapterDeletion
 {
     /// <inheritdoc/>
     public void DeleteChapter(Chapter chapter, bool deleteNormal, bool deleteUpscaled)
@@ -18,9 +20,17 @@ public class ChapterDeletion(IDbContextFactory<ApplicationDbContext> dbContextFa
     }
 
     /// <inheritdoc/>
-    public void DeleteChapter(ApplicationDbContext context, Chapter chapter, bool deleteNormal, bool deleteUpscaled)
+    public void DeleteChapter(
+        ApplicationDbContext context,
+        Chapter chapter,
+        bool deleteNormal,
+        bool deleteUpscaled
+    )
     {
-        var normalPath = Path.Combine(chapter.Manga.Library.NotUpscaledLibraryPath, chapter.RelativePath);
+        var normalPath = Path.Combine(
+            chapter.Manga.Library.NotUpscaledLibraryPath,
+            chapter.RelativePath
+        );
         if (deleteNormal && File.Exists(normalPath))
         {
             File.Delete(normalPath);
@@ -30,9 +40,16 @@ public class ChapterDeletion(IDbContextFactory<ApplicationDbContext> dbContextFa
                 FileSystemHelpers.DeleteIfEmpty(normalDir, logger);
             }
         }
-        if (deleteUpscaled && chapter.IsUpscaled && !string.IsNullOrEmpty(chapter.Manga.Library.UpscaledLibraryPath))
+        if (
+            deleteUpscaled
+            && chapter.IsUpscaled
+            && !string.IsNullOrEmpty(chapter.Manga.Library.UpscaledLibraryPath)
+        )
         {
-            var upscaledPath = Path.Combine(chapter.Manga.Library.UpscaledLibraryPath, chapter.RelativePath);
+            var upscaledPath = Path.Combine(
+                chapter.Manga.Library.UpscaledLibraryPath,
+                chapter.RelativePath
+            );
             if (File.Exists(upscaledPath))
             {
                 File.Delete(upscaledPath);
@@ -56,7 +73,12 @@ public class ChapterDeletion(IDbContextFactory<ApplicationDbContext> dbContextFa
     }
 
     /// <inheritdoc/>
-    public void DeleteManga(ApplicationDbContext context, Manga manga, bool deleteNormal, bool deleteUpscaled)
+    public void DeleteManga(
+        ApplicationDbContext context,
+        Manga manga,
+        bool deleteNormal,
+        bool deleteUpscaled
+    )
     {
         foreach (var chapter in manga.Chapters)
         {

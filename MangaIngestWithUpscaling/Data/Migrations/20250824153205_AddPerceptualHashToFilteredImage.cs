@@ -14,15 +14,14 @@ namespace MangaIngestWithUpscaling.Migrations
                 name: "PerceptualHash",
                 table: "FilteredImages",
                 type: "TEXT",
-                nullable: true);
+                nullable: true
+            );
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropColumn(
-                name: "PerceptualHash",
-                table: "FilteredImages");
+            migrationBuilder.DropColumn(name: "PerceptualHash", table: "FilteredImages");
         }
     }
 }

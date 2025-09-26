@@ -1,14 +1,15 @@
-﻿using MangaIngestWithUpscaling.Data;
+﻿using System.Threading.Channels;
+using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using Microsoft.EntityFrameworkCore;
-using System.Threading.Channels;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 
 public interface ITaskQueue
 {
-    Task EnqueueAsync<T>(T taskData) where T : BaseTask;
+    Task EnqueueAsync<T>(T taskData)
+        where T : BaseTask;
     Task RetryAsync(PersistedTask task);
     Task ReorderTaskAsync(PersistedTask task, int newOrder);
     Task RemoveTaskAsync(PersistedTask task);
@@ -43,7 +44,10 @@ public class TaskQueue : ITaskQueue, IHostedService
         _logger = logger;
 
         // Create bounded channels to control concurrency
-        var channelOptions = new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.Wait };
+        var channelOptions = new BoundedChannelOptions(1)
+        {
+            FullMode = BoundedChannelFullMode.Wait,
+        };
         _standardChannel = Channel.CreateBounded<PersistedTask>(channelOptions);
         _upscaleChannel = Channel.CreateBounded<PersistedTask>(channelOptions);
         // Reroute channel is unbounded: it's fed only by DistributedUpscaleTaskProcessor and consumed by the local UpscaleTaskProcessor
@@ -53,17 +57,19 @@ public class TaskQueue : ITaskQueue, IHostedService
         // NOTE: SortedSet considers items equal when comparer returns 0 and will drop duplicates.
         //       Comparing only by Order collapses many tasks into one when orders match.
         //       Use Order, then Id as a tiebreaker to preserve all tasks with the same Order.
-        Comparer<PersistedTask> comparer = Comparer<PersistedTask>.Create((a, b) =>
-        {
-            int byOrder = a.Order.CompareTo(b.Order);
-            if (byOrder != 0)
+        Comparer<PersistedTask> comparer = Comparer<PersistedTask>.Create(
+            (a, b) =>
             {
-                return byOrder;
-            }
+                int byOrder = a.Order.CompareTo(b.Order);
+                if (byOrder != 0)
+                {
+                    return byOrder;
+                }
 
-            // Id is unique per task (DB identity). This stabilizes ordering and avoids duplicate suppression.
-            return a.Id.CompareTo(b.Id);
-        });
+                // Id is unique per task (DB identity). This stabilizes ordering and avoids duplicate suppression.
+                return a.Id.CompareTo(b.Id);
+            }
+        );
         _standardTasks = new SortedSet<PersistedTask>(comparer);
         _upscaleTasks = new SortedSet<PersistedTask>(comparer);
     }
@@ -77,8 +83,18 @@ public class TaskQueue : ITaskQueue, IHostedService
         await ReplayPendingOrFailed(cancellationToken);
 
         // Start background processing
-        _ = ProcessChannelAsync(_standardChannel, _standardTasks, _standardTasksLock, cancellationToken);
-        _ = ProcessChannelAsync(_upscaleChannel, _upscaleTasks, _upscaleTasksLock, cancellationToken);
+        _ = ProcessChannelAsync(
+            _standardChannel,
+            _standardTasks,
+            _standardTasksLock,
+            cancellationToken
+        );
+        _ = ProcessChannelAsync(
+            _upscaleChannel,
+            _upscaleTasks,
+            _upscaleTasksLock,
+            cancellationToken
+        );
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
@@ -100,7 +116,8 @@ public class TaskQueue : ITaskQueue, IHostedService
         }
     }
 
-    public async Task EnqueueAsync<T>(T taskData) where T : BaseTask
+    public async Task EnqueueAsync<T>(T taskData)
+        where T : BaseTask
     {
         using IServiceScope scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -140,10 +157,12 @@ public class TaskQueue : ITaskQueue, IHostedService
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         // Determine which set to modify
-        (SortedSet<PersistedTask> tasks, object lockObj) =
-            task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask
-                ? (_upscaleTasks, _upscaleTasksLock)
-                : (_standardTasks, _standardTasksLock);
+        (SortedSet<PersistedTask> tasks, object lockObj) = task.Data
+            is UpscaleTask
+                or RenameUpscaledChaptersSeriesTask
+                or RepairUpscaleTask
+            ? (_upscaleTasks, _upscaleTasksLock)
+            : (_standardTasks, _standardTasksLock);
 
         lock (lockObj)
         {
@@ -160,8 +179,9 @@ public class TaskQueue : ITaskQueue, IHostedService
         }
 
         // Fetch the task from the database to ensure we have the latest version
-        PersistedTask? existingTask = await dbContext.PersistedTasks
-            .FirstOrDefaultAsync(t => t.Id == task.Id);
+        PersistedTask? existingTask = await dbContext.PersistedTasks.FirstOrDefaultAsync(t =>
+            t.Id == task.Id
+        );
 
         if (existingTask == null)
         {
@@ -176,13 +196,17 @@ public class TaskQueue : ITaskQueue, IHostedService
         TaskEnqueuedOrChanged?.Invoke(existingTask);
     }
 
-    public async Task MoveToFrontAsync(PersistedTask task, CancellationToken cancellationToken = default)
+    public async Task MoveToFrontAsync(
+        PersistedTask task,
+        CancellationToken cancellationToken = default
+    )
     {
         // Compute global minimum order from DB to ensure consistent ordering
         using IServiceScope scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        int minOrder = await dbContext.PersistedTasks.MinAsync(t => (int?)t.Order, cancellationToken) ?? 0;
+        int minOrder =
+            await dbContext.PersistedTasks.MinAsync(t => (int?)t.Order, cancellationToken) ?? 0;
         int newOrder = minOrder - 1;
         await ReorderTaskAsync(task, newOrder);
     }
@@ -195,10 +219,12 @@ public class TaskQueue : ITaskQueue, IHostedService
         dbContext.PersistedTasks.Remove(task);
         await dbContext.SaveChangesAsync();
 
-        (SortedSet<PersistedTask> tasks, object lockObj) =
-            task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask
-                ? (_upscaleTasks, _upscaleTasksLock)
-                : (_standardTasks, _standardTasksLock);
+        (SortedSet<PersistedTask> tasks, object lockObj) = task.Data
+            is UpscaleTask
+                or RenameUpscaledChaptersSeriesTask
+                or RepairUpscaleTask
+            ? (_upscaleTasks, _upscaleTasksLock)
+            : (_standardTasks, _standardTasksLock);
 
         lock (lockObj)
         {
@@ -220,10 +246,12 @@ public class TaskQueue : ITaskQueue, IHostedService
         dbContext.Update(task);
         await dbContext.SaveChangesAsync();
 
-        (SortedSet<PersistedTask> tasks, object lockObj) =
-            task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask
-                ? (_upscaleTasks, _upscaleTasksLock)
-                : (_standardTasks, _standardTasksLock);
+        (SortedSet<PersistedTask> tasks, object lockObj) = task.Data
+            is UpscaleTask
+                or RenameUpscaledChaptersSeriesTask
+                or RepairUpscaleTask
+            ? (_upscaleTasks, _upscaleTasksLock)
+            : (_standardTasks, _standardTasksLock);
 
         lock (lockObj)
         {
@@ -239,11 +267,13 @@ public class TaskQueue : ITaskQueue, IHostedService
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         // Only consider Pending and retryable Failed tasks here; we will explicitly recover stranded Processing elsewhere
-        var pendingTasks = await dbContext.PersistedTasks
-            .OrderBy(t => t.Order)
+        var pendingTasks = await dbContext
+            .PersistedTasks.OrderBy(t => t.Order)
             .AsAsyncEnumerable()
-            .Where(t => t.Status == PersistedTaskStatus.Pending
-                        || (t.Status == PersistedTaskStatus.Failed && t.RetryCount < t.Data.RetryFor))
+            .Where(t =>
+                t.Status == PersistedTaskStatus.Pending
+                || (t.Status == PersistedTaskStatus.Failed && t.RetryCount < t.Data.RetryFor)
+            )
             .ToListAsync(cancellationToken);
 
         // Load tasks into sorted sets
@@ -263,7 +293,10 @@ public class TaskQueue : ITaskQueue, IHostedService
     }
 
     // Send tasks that must be handled locally (e.g., Repair/Rename upscaled) directly to the local UpscaleTaskProcessor
-    public ValueTask SendToLocalUpscaleAsync(PersistedTask task, CancellationToken cancellationToken = default)
+    public ValueTask SendToLocalUpscaleAsync(
+        PersistedTask task,
+        CancellationToken cancellationToken = default
+    )
     {
         return _reroutedUpscaleChannel.Writer.WriteAsync(task, cancellationToken);
     }
@@ -275,7 +308,8 @@ public class TaskQueue : ITaskQueue, IHostedService
         Channel<PersistedTask> channel,
         SortedSet<PersistedTask> tasks,
         object lockObj,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
         while (!cancellationToken.IsCancellationRequested)
         {

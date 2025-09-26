@@ -12,7 +12,8 @@ public partial class ImproveLibraryColumnsFurther : Migration
     {
         migrationBuilder.DropForeignKey(
             name: "FK_Libraries_UpscalerConfigs_UpscalerConfigId",
-            table: "Libraries");
+            table: "Libraries"
+        );
 
         migrationBuilder.AlterColumn<int>(
             name: "UpscalerConfigId",
@@ -20,14 +21,16 @@ public partial class ImproveLibraryColumnsFurther : Migration
             type: "INTEGER",
             nullable: true,
             oldClrType: typeof(int),
-            oldType: "INTEGER");
+            oldType: "INTEGER"
+        );
 
         migrationBuilder.AddForeignKey(
             name: "FK_Libraries_UpscalerConfigs_UpscalerConfigId",
             table: "Libraries",
             column: "UpscalerConfigId",
             principalTable: "UpscalerConfigs",
-            principalColumn: "Id");
+            principalColumn: "Id"
+        );
     }
 
     /// <inheritdoc />
@@ -35,7 +38,8 @@ public partial class ImproveLibraryColumnsFurther : Migration
     {
         migrationBuilder.DropForeignKey(
             name: "FK_Libraries_UpscalerConfigs_UpscalerConfigId",
-            table: "Libraries");
+            table: "Libraries"
+        );
 
         migrationBuilder.AlterColumn<int>(
             name: "UpscalerConfigId",
@@ -45,7 +49,8 @@ public partial class ImproveLibraryColumnsFurther : Migration
             defaultValue: 0,
             oldClrType: typeof(int),
             oldType: "INTEGER",
-            oldNullable: true);
+            oldNullable: true
+        );
 
         migrationBuilder.AddForeignKey(
             name: "FK_Libraries_UpscalerConfigs_UpscalerConfigId",
@@ -53,6 +58,7 @@ public partial class ImproveLibraryColumnsFurther : Migration
             column: "UpscalerConfigId",
             principalTable: "UpscalerConfigs",
             principalColumn: "Id",
-            onDelete: ReferentialAction.Cascade);
+            onDelete: ReferentialAction.Cascade
+        );
     }
 }

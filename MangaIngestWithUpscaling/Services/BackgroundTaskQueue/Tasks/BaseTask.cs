@@ -12,7 +12,10 @@ namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 [JsonDerivedType(typeof(UpscaleTask), nameof(UpscaleTask))]
 [JsonDerivedType(typeof(RepairUpscaleTask), nameof(RepairUpscaleTask))]
 [JsonDerivedType(typeof(ScanIngestTask), nameof(ScanIngestTask))]
-[JsonDerivedType(typeof(RenameUpscaledChaptersSeriesTask), nameof(RenameUpscaledChaptersSeriesTask))]
+[JsonDerivedType(
+    typeof(RenameUpscaledChaptersSeriesTask),
+    nameof(RenameUpscaledChaptersSeriesTask)
+)]
 [JsonDerivedType(typeof(LibraryIntegrityCheckTask), nameof(LibraryIntegrityCheckTask))]
 [JsonDerivedType(typeof(MergeMangaTask), nameof(MergeMangaTask))]
 [JsonDerivedType(typeof(ApplyImageFiltersTask), nameof(ApplyImageFiltersTask))]
@@ -22,7 +25,6 @@ public class BaseTask
     public virtual string TaskFriendlyName { get; } = "Unknown Task";
 
     public virtual int RetryFor { get; set; } = 0;
-
 
     [NotMapped]
     [JsonIgnore]

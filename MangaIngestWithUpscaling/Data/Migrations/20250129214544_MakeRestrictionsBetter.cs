@@ -14,35 +14,35 @@ namespace MangaIngestWithUpscaling.Migrations
                 name: "IX_MangaSeries_PrimaryTitle",
                 table: "MangaSeries",
                 column: "PrimaryTitle",
-                unique: true);
+                unique: true
+            );
 
             migrationBuilder.CreateIndex(
                 name: "IX_MangaAlternativeTitles_Title",
                 table: "MangaAlternativeTitles",
                 column: "Title",
-                unique: true);
+                unique: true
+            );
 
             migrationBuilder.CreateIndex(
                 name: "IX_Chapters_RelativePath_MangaId",
                 table: "Chapters",
                 columns: new[] { "RelativePath", "MangaId" },
-                unique: true);
+                unique: true
+            );
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropIndex(
-                name: "IX_MangaSeries_PrimaryTitle",
-                table: "MangaSeries");
+            migrationBuilder.DropIndex(name: "IX_MangaSeries_PrimaryTitle", table: "MangaSeries");
 
             migrationBuilder.DropIndex(
                 name: "IX_MangaAlternativeTitles_Title",
-                table: "MangaAlternativeTitles");
+                table: "MangaAlternativeTitles"
+            );
 
-            migrationBuilder.DropIndex(
-                name: "IX_Chapters_RelativePath_MangaId",
-                table: "Chapters");
+            migrationBuilder.DropIndex(name: "IX_Chapters_RelativePath_MangaId", table: "Chapters");
         }
     }
 }
