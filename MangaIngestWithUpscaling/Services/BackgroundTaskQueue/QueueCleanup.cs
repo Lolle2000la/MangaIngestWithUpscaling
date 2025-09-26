@@ -5,13 +5,12 @@ using Microsoft.EntityFrameworkCore;
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 
 [RegisterScoped]
-public class QueueCleanup(ApplicationDbContext dbContext, ILogger<QueueCleanup> _logger)
-    : IQueueCleanup
+public class QueueCleanup(ILogger<QueueCleanup> _logger) : IQueueCleanup
 {
-    public async Task CleanupAsync()
+    public async Task CleanupAsync(ApplicationDbContext context)
     {
         // Existing cleanup code...
-        var oldTasks = await dbContext
+        var oldTasks = await context
             .PersistedTasks.Where(t => t.Status == PersistedTaskStatus.Completed)
             .OrderByDescending(t => t.CreatedAt)
             .Skip(100)
@@ -20,7 +19,7 @@ public class QueueCleanup(ApplicationDbContext dbContext, ILogger<QueueCleanup> 
         if (oldTasks.Count > 25)
             _logger.LogInformation("Cleaning up {TaskCount} old tasks.", oldTasks.Count);
 
-        dbContext.PersistedTasks.RemoveRange(oldTasks);
-        await dbContext.SaveChangesAsync();
+        context.PersistedTasks.RemoveRange(oldTasks);
+        await context.SaveChangesAsync();
     }
 }

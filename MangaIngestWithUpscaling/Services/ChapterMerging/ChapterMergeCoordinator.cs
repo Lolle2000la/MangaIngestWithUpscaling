@@ -22,6 +22,7 @@ public class ChapterMergeCoordinator(
 ) : IChapterMergeCoordinator
 {
     public async Task ProcessExistingChapterPartsForMergingAsync(
+        ApplicationDbContext dbContext1,
         Manga manga,
         CancellationToken cancellationToken = default
     )
@@ -172,6 +173,7 @@ public class ChapterMergeCoordinator(
     }
 
     public async Task UpdateDatabaseForMergeAsync(
+        ApplicationDbContext dbContext1,
         MergeInfo mergeInfo,
         List<Chapter> originalChapters,
         CancellationToken cancellationToken = default
@@ -228,6 +230,7 @@ public class ChapterMergeCoordinator(
     }
 
     public async Task MergeChaptersAsync(
+        ApplicationDbContext dbContext1,
         List<Chapter> chapters,
         Library library,
         CancellationToken cancellationToken = default
@@ -285,7 +288,7 @@ public class ChapterMergeCoordinator(
             );
 
             // Update database records to reflect the merge
-            await UpdateDatabaseForMergeAsync(mergeInfo, chapters, cancellationToken);
+            await UpdateDatabaseForMergeAsync(dbContext, mergeInfo, chapters, cancellationToken);
 
             // Handle upscale task management with information about partial merging
             await upscaleTaskManager.HandleUpscaleTaskManagementAsync(
@@ -307,6 +310,7 @@ public class ChapterMergeCoordinator(
     }
 
     public async Task<List<MergeInfo>> MergeSelectedChaptersAsync(
+        ApplicationDbContext context,
         List<Chapter> selectedChapters,
         bool includeLatestChapters = false,
         CancellationToken cancellationToken = default
@@ -415,7 +419,12 @@ public class ChapterMergeCoordinator(
                 }
 
                 // Update database for the merge
-                await UpdateDatabaseForMergeAsync(mergeInfo, originalChapters, cancellationToken);
+                await UpdateDatabaseForMergeAsync(
+                    dbContext,
+                    mergeInfo,
+                    originalChapters,
+                    cancellationToken
+                );
 
                 // Delete original chapter part files after successful merging
                 DeleteOriginalChapterPartFiles(mergeInfo, library);
@@ -464,6 +473,7 @@ public class ChapterMergeCoordinator(
     }
 
     public async Task<Dictionary<string, List<Chapter>>> GetValidMergeGroupsAsync(
+        ApplicationDbContext dbContext1,
         List<Chapter> selectedChapters,
         bool includeLatestChapters = false,
         CancellationToken cancellationToken = default
@@ -510,6 +520,7 @@ public class ChapterMergeCoordinator(
     }
 
     public async Task<bool> CanChapterBeAddedToExistingMergedAsync(
+        ApplicationDbContext dbContext1,
         Chapter chapter,
         CancellationToken cancellationToken = default
     )
@@ -553,6 +564,7 @@ public class ChapterMergeCoordinator(
     }
 
     public async Task<MergeActionInfo> GetPossibleMergeActionsAsync(
+        ApplicationDbContext dbContext1,
         List<Chapter> chapters,
         bool includeLatestChapters = false,
         CancellationToken cancellationToken = default
@@ -683,6 +695,7 @@ public class ChapterMergeCoordinator(
     }
 
     public async Task<bool> IsChapterPartAlreadyMergedAsync(
+        ApplicationDbContext dbContext1,
         string chapterFileName,
         Manga manga,
         CancellationToken cancellationToken = default
@@ -1674,7 +1687,12 @@ public class ChapterMergeCoordinator(
         );
 
         // Update database records to reflect the merge
-        await UpdateDatabaseForMergeAsync(mergeInfo, originalChapters, cancellationToken);
+        await UpdateDatabaseForMergeAsync(
+            dbContext,
+            mergeInfo,
+            originalChapters,
+            cancellationToken
+        );
 
         // Handle upscale task management with information about partial merging
         await upscaleTaskManager.HandleUpscaleTaskManagementAsync(

@@ -2,7 +2,7 @@
 @using MangaIngestWithUpscaling.Components.Libraries.Filters
 @using MangaIngestWithUpscaling.Components.Libraries
 @using Microsoft.EntityFrameworkCore.Query
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 
 <MudDialog>
     <TitleContent>Edit & Preview Rename Rules</TitleContent>

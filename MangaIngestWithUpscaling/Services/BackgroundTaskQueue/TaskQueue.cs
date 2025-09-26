@@ -148,7 +148,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         TaskEnqueuedOrChanged?.Invoke(taskItem);
 
         var queueCleanup = scope.ServiceProvider.GetRequiredService<IQueueCleanup>();
-        await queueCleanup.CleanupAsync();
+        await queueCleanup.CleanupAsync(dbContext);
     }
 
     public async Task ReorderTaskAsync(PersistedTask task, int newOrder)

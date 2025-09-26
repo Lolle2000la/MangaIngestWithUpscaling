@@ -383,6 +383,7 @@ public partial class IngestProcessor(
                 // Check if this chapter part has already been merged and skip if so
                 if (
                     await chapterMergeCoordinator.IsChapterPartAlreadyMergedAsync(
+                        dbContext,
                         renamedChapter.FileName,
                         seriesEntity,
                         cancellationToken
@@ -708,6 +709,7 @@ public partial class IngestProcessor(
         foreach (Manga seriesEntity in processedSeriesEntities)
         {
             await chapterMergeCoordinator.ProcessExistingChapterPartsForMergingAsync(
+                dbContext,
                 seriesEntity,
                 cancellationToken
             );

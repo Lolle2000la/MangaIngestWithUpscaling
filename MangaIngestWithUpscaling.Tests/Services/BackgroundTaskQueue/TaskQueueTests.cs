@@ -76,7 +76,7 @@ public class TaskQueueTests : IDisposable
         await _taskQueue.EnqueueAsync(upscaleTask);
 
         // Assert - Cleanup should be called when enqueueing tasks
-        await _mockQueueCleanup.Received(1).CleanupAsync();
+        await _mockQueueCleanup.Received(1).CleanupAsync(Arg.Any<ApplicationDbContext>());
     }
 
     [Fact]
@@ -91,7 +91,7 @@ public class TaskQueueTests : IDisposable
         Assert.Null(exception);
 
         // Verify cleanup was called
-        await _mockQueueCleanup.Received(1).CleanupAsync();
+        await _mockQueueCleanup.Received(1).CleanupAsync(Arg.Any<ApplicationDbContext>());
     }
 
     [Fact]

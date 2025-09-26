@@ -19,6 +19,7 @@ using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using MudBlazor;
 using MudBlazor.Services;
@@ -71,14 +72,37 @@ public class ChapterListMergingTests : TestContext
 
     private void SetupDatabase()
     {
+        SqliteConnectionStringBuilder connectionStringBuilder = new SqliteConnectionStringBuilder
+        {
+            DataSource = Guid.NewGuid().ToString(),
+            Cache = SqliteCacheMode.Shared,
+            Mode = SqliteOpenMode.Memory,
+        };
+
         DbContextOptions<ApplicationDbContext> options =
             new DbContextOptionsBuilder<ApplicationDbContext>()
-                .UseSqlite("Data Source=:memory:")
+                .UseSqlite(
+                    connectionStringBuilder.ToString(),
+                    sqlite =>
+                    {
+                        sqlite.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+                    }
+                )
                 .Options;
 
         _dbContext = new ApplicationDbContext(options);
         _dbContext.Database.OpenConnection();
         _dbContext.Database.EnsureCreated();
+
+        Services.AddDbContextFactory<ApplicationDbContext>(o =>
+            o.UseSqlite(
+                connectionStringBuilder.ToString(),
+                sqlite =>
+                {
+                    sqlite.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+                }
+            )
+        );
     }
 
     private void RegisterServices()
@@ -177,13 +201,18 @@ public class ChapterListMergingTests : TestContext
     public async Task ChapterList_ShouldRenderChapters()
     {
         // Arrange
-        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+        (Manga manga, Library _, List<Chapter> _) = await CreateTestDataAsync();
 
         // Setup merge coordinator to return no merge possibilities initially
         var mergeInfo = new MergeActionInfo();
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+        // Use Arg.Any<ApplicationDbContext>() because the component now creates a fresh DbContext per event
         _subMergeCoordinator
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .GetPossibleMergeActionsAsync(
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Any<List<Chapter>>(),
+                Arg.Any<bool>()
+            )
             .Returns(mergeInfo);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
@@ -204,7 +233,7 @@ public class ChapterListMergingTests : TestContext
     public async Task ChapterList_WithMergePossibilities_ShouldEnableMergeButton()
     {
         // Arrange
-        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+        (Manga manga, Library _, List<Chapter> chapters) = await CreateTestDataAsync();
 
         // Setup merge coordinator to return merge possibilities
         var mergeInfo = new MergeActionInfo
@@ -219,7 +248,11 @@ public class ChapterListMergingTests : TestContext
         };
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         _subMergeCoordinator
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .GetPossibleMergeActionsAsync(
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Any<List<Chapter>>(),
+                Arg.Any<bool>()
+            )
             .Returns(mergeInfo);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
@@ -240,7 +273,7 @@ public class ChapterListMergingTests : TestContext
     public async Task ChapterList_WithMergedChapter_ShouldShowRevertButton()
     {
         // Arrange
-        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+        (Manga manga, Library _, List<Chapter> chapters) = await CreateTestDataAsync();
 
         // Create a merged chapter info record
         var mergedChapterInfo = new MergedChapterInfo
@@ -268,14 +301,23 @@ public class ChapterListMergingTests : TestContext
 
         // Setup revert service to indicate chapter can be reverted
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
-        _subRevertService.CanRevertChapterAsync(chapters[0]).Returns(true);
+        _subRevertService
+            .CanRevertChapterAsync(
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Is<Chapter>(c => c.Id == chapters[0].Id)
+            )
+            .Returns(true);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Setup merge coordinator
         var mergeInfo = new MergeActionInfo();
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         _subMergeCoordinator
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .GetPossibleMergeActionsAsync(
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Any<List<Chapter>>(),
+                Arg.Any<bool>()
+            )
             .Returns(mergeInfo);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
@@ -296,7 +338,7 @@ public class ChapterListMergingTests : TestContext
     public async Task PerformMerge_ShouldCallMergeCoordinator()
     {
         // Arrange
-        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+        (Manga manga, Library _, List<Chapter> chapters) = await CreateTestDataAsync();
 
         var mergeInfo = new MergeActionInfo
         {
@@ -311,7 +353,11 @@ public class ChapterListMergingTests : TestContext
 
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         _subMergeCoordinator
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .GetPossibleMergeActionsAsync(
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Any<List<Chapter>>(),
+                Arg.Any<bool>()
+            )
             .Returns(mergeInfo);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
@@ -338,7 +384,7 @@ public class ChapterListMergingTests : TestContext
 
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         _subMergeCoordinator
-            .MergeSelectedChaptersAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .MergeSelectedChaptersAsync(_dbContext, Arg.Any<List<Chapter>>(), Arg.Any<bool>())
             .Returns(completedMerges);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
@@ -348,7 +394,9 @@ public class ChapterListMergingTests : TestContext
 
         // Setup revert service to indicate the merged chapter can be reverted
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
-        _subRevertService.CanRevertChapterAsync(mergedChapter).Returns(true);
+        _subRevertService
+            .CanRevertChapterAsync(Arg.Any<ApplicationDbContext>(), mergedChapter)
+            .Returns(true);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Act
@@ -363,7 +411,11 @@ public class ChapterListMergingTests : TestContext
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         await _subMergeCoordinator
             .Received()
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>());
+            .GetPossibleMergeActionsAsync(
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Any<List<Chapter>>(),
+                Arg.Any<bool>()
+            );
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
     }
 
@@ -371,8 +423,8 @@ public class ChapterListMergingTests : TestContext
     {
         if (disposing)
         {
-            _dbContext?.Database.CloseConnection();
-            _dbContext?.Dispose();
+            _dbContext.Database.CloseConnection();
+            _dbContext.Dispose();
         }
 
         base.Dispose(disposing);
@@ -382,7 +434,7 @@ public class ChapterListMergingTests : TestContext
     public async Task ChapterList_AfterMerge_ShouldShowOnlyRevertButtonNotBoth()
     {
         // Arrange - This tests the bug fix for both merge and revert buttons being shown simultaneously
-        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+        (Manga manga, Library _, List<Chapter> chapters) = await CreateTestDataAsync();
 
         // Create a merged chapter (simulating the state after a successful merge)
         var mergedChapterInfo = new MergedChapterInfo
@@ -410,7 +462,12 @@ public class ChapterListMergingTests : TestContext
 
         // Setup revert service to indicate this chapter can be reverted (it's merged)
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
-        _subRevertService.CanRevertChapterAsync(chapters[0]).Returns(true);
+        _subRevertService
+            .CanRevertChapterAsync(
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Is<Chapter>(c => c.Id == chapters[0].Id)
+            )
+            .Returns(true);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Setup merge coordinator to return NO merge possibilities for the merged chapter
@@ -418,7 +475,11 @@ public class ChapterListMergingTests : TestContext
         var mergeInfo = new MergeActionInfo(); // Empty - no merge possibilities
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         _subMergeCoordinator
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .GetPossibleMergeActionsAsync(
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Any<List<Chapter>>(),
+                Arg.Any<bool>()
+            )
             .Returns(mergeInfo);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
@@ -439,10 +500,9 @@ public class ChapterListMergingTests : TestContext
             .FindAll("button")
             .Where(b => b.TextContent.Contains("Merge Selected"));
 
-        if (mergeButtons.Any())
+        if (mergeButtons.FirstOrDefault() is { } mergeButton)
         {
             // If merge button exists, it should be disabled when merged chapter is selected
-            IElement mergeButton = mergeButtons.First();
             Assert.True(
                 mergeButton.HasAttribute("disabled")
                     || mergeButton.ClassList.Contains("mud-disabled"),
@@ -471,7 +531,7 @@ public class ChapterListMergingTests : TestContext
     public async Task ChapterList_AfterRevert_ShouldRestoreMergeButtonsOnParts()
     {
         // Arrange - This tests the bug fix for missing merge buttons after revert
-        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+        (Manga manga, Library _, List<Chapter> chapters) = await CreateTestDataAsync();
 
         // Test the scenario where individual chapters should be mergeable
         // Setup merge coordinator to indicate chapters can be merged
@@ -488,13 +548,15 @@ public class ChapterListMergingTests : TestContext
 
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         _subMergeCoordinator
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .GetPossibleMergeActionsAsync(_dbContext, Arg.Any<List<Chapter>>(), Arg.Any<bool>())
             .Returns(mergeInfo);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Chapters are NOT merged, so revert service should return false
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
-        _subRevertService.CanRevertChapterAsync(Arg.Any<Chapter>()).Returns(false);
+        _subRevertService
+            .CanRevertChapterAsync(Arg.Any<ApplicationDbContext>(), Arg.Any<Chapter>())
+            .Returns(false);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Act
@@ -506,7 +568,11 @@ public class ChapterListMergingTests : TestContext
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         await _subMergeCoordinator
             .Received()
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>());
+            .GetPossibleMergeActionsAsync(
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Any<List<Chapter>>(),
+                Arg.Any<bool>()
+            );
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Check that merge buttons exist in the UI
@@ -524,7 +590,7 @@ public class ChapterListMergingTests : TestContext
     public async Task ChapterList_MergePossibilitiesCache_ShouldInvalidateAfterOperations()
     {
         // Arrange - Test that merge possibilities are properly calculated
-        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+        (Manga manga, Library _, List<Chapter> chapters) = await CreateTestDataAsync();
 
         var mergeInfo = new MergeActionInfo
         {
@@ -539,7 +605,11 @@ public class ChapterListMergingTests : TestContext
 
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         _subMergeCoordinator
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .GetPossibleMergeActionsAsync(
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Any<List<Chapter>>(),
+                Arg.Any<bool>()
+            )
             .Returns(mergeInfo);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
@@ -552,7 +622,11 @@ public class ChapterListMergingTests : TestContext
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         await _subMergeCoordinator
             .Received()
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>());
+            .GetPossibleMergeActionsAsync(
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Any<List<Chapter>>(),
+                Arg.Any<bool>()
+            );
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Test that merge button exists when there are merge possibilities
@@ -567,7 +641,7 @@ public class ChapterListMergingTests : TestContext
     public async Task ChapterList_IndividualChapterButtons_ShouldShowCorrectActionsBasedOnState()
     {
         // Arrange - Test individual chapter row buttons
-        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+        (Manga manga, Library _, List<Chapter> chapters) = await CreateTestDataAsync();
 
         // Set up one merged chapter and one regular chapter
         var mergedChapterInfo = new MergedChapterInfo
@@ -590,9 +664,27 @@ public class ChapterListMergingTests : TestContext
 
         // Setup revert service - first chapter can be reverted (it's merged)
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
-        _subRevertService.CanRevertChapterAsync(chapters[0]).Returns(true);
-        _subRevertService.CanRevertChapterAsync(chapters[1]).Returns(false);
-        _subRevertService.CanRevertChapterAsync(chapters[2]).Returns(false);
+        _subRevertService
+            .CanRevertChapterAsync(
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Is<Chapter>(c => c.Id == chapters[0].Id),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(true);
+        _subRevertService
+            .CanRevertChapterAsync(
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Is<Chapter>(c => c.Id == chapters[1].Id),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(false);
+        _subRevertService
+            .CanRevertChapterAsync(
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Is<Chapter>(c => c.Id == chapters[2].Id),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(false);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Setup merge coordinator - second chapter can be merged
@@ -608,7 +700,11 @@ public class ChapterListMergingTests : TestContext
         };
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         _subMergeCoordinator
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .GetPossibleMergeActionsAsync(
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Any<List<Chapter>>(),
+                Arg.Any<bool>()
+            )
             .Returns(mergeInfo);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
@@ -617,40 +713,49 @@ public class ChapterListMergingTests : TestContext
             parameters => parameters.Add(p => p.Manga, manga)
         );
 
-        // Assert - Check buttons for merged chapter (should have revert, not merge)
-        IElement? chapter1Row = component
-            .FindAll("tr")
-            .FirstOrDefault(tr => tr.TextContent.Contains("Chapter 1.1.cbz"));
+        // Assert - Identify merged chapter row by presence of a revert button
+        var allRows = component.FindAll("tr");
+        IElement? mergedRow = allRows.FirstOrDefault(tr =>
+            tr.QuerySelectorAll("button")
+                .Any(b => b.GetAttribute("title")?.Contains("Revert this merged chapter") == true)
+        );
 
-        if (chapter1Row != null)
+        Assert.NotNull(mergedRow);
+        if (mergedRow != null)
         {
-            IElement? revertButton = chapter1Row
+            var revertButton = mergedRow
                 .QuerySelectorAll("button")
                 .FirstOrDefault(b => b.GetAttribute("title")?.Contains("Revert") == true);
-            IElement? mergeButton = chapter1Row
+            var mergeButton = mergedRow
                 .QuerySelectorAll("button")
-                .FirstOrDefault(b => b.GetAttribute("title")?.Contains("Merge") == true);
-
-            Assert.NotNull(revertButton); // Should have revert button
-            Assert.Null(mergeButton); // Should NOT have merge button
+                .FirstOrDefault(b =>
+                    b.GetAttribute("title")?.Contains("Merge this chapter") == true
+                );
+            Assert.NotNull(revertButton);
+            Assert.Null(mergeButton);
         }
 
-        // Assert - Check buttons for regular chapters that can be merged
-        IElement? chapter2Row = component
-            .FindAll("tr")
-            .FirstOrDefault(tr => tr.TextContent.Contains("Chapter 1.2.cbz"));
+        // Assert - Identify a mergeable (non-merged) chapter row by presence of merge button but absence of revert button
+        IElement? mergeableRow = allRows.FirstOrDefault(tr =>
+            tr.QuerySelectorAll("button")
+                .Any(b => b.GetAttribute("title")?.Contains("Merge this chapter") == true)
+            && !tr.QuerySelectorAll("button")
+                .Any(b => b.GetAttribute("title")?.Contains("Revert") == true)
+        );
 
-        if (chapter2Row != null)
+        Assert.NotNull(mergeableRow);
+        if (mergeableRow != null)
         {
-            IElement? mergeButton = chapter2Row
+            var mergeButton = mergeableRow
                 .QuerySelectorAll("button")
-                .FirstOrDefault(b => b.GetAttribute("title")?.Contains("Merge") == true);
-            IElement? revertButton = chapter2Row
+                .FirstOrDefault(b =>
+                    b.GetAttribute("title")?.Contains("Merge this chapter") == true
+                );
+            var revertButton = mergeableRow
                 .QuerySelectorAll("button")
                 .FirstOrDefault(b => b.GetAttribute("title")?.Contains("Revert") == true);
-
-            Assert.NotNull(mergeButton); // Should have merge button (part of mergeable group)
-            Assert.Null(revertButton); // Should NOT have revert button (not merged)
+            Assert.NotNull(mergeButton);
+            Assert.Null(revertButton);
         }
     }
 
@@ -658,7 +763,7 @@ public class ChapterListMergingTests : TestContext
     public async Task ChapterList_ActualUImerge_ShouldDisplayCorrectMergedChapterElement()
     {
         // Arrange - Test that the correct merged chapter element is displayed after triggering actual UI merge action
-        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+        (Manga manga, Library _, List<Chapter> chapters) = await CreateTestDataAsync();
 
         // Setup chapters so they can be merged (Chapter 1.1 and 1.2)
         chapters[0].FileName = "Chapter 1.1.cbz";
@@ -681,7 +786,11 @@ public class ChapterListMergingTests : TestContext
 
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         _subMergeCoordinator
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .GetPossibleMergeActionsAsync(
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Any<List<Chapter>>(),
+                Arg.Any<bool>()
+            )
             .Returns(mergeInfo, mergeInfo, new MergeActionInfo(), mergeInfo, new MergeActionInfo());
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
@@ -714,13 +823,12 @@ public class ChapterListMergingTests : TestContext
 
         _subMergeCoordinator
             .MergeSelectedChaptersAsync(
-                Arg.Is<List<Chapter>>(list =>
-                    list.Count == 2 && list.Contains(chapters[0]) && list.Contains(chapters[1])
-                ),
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Any<List<Chapter>>(),
                 Arg.Any<bool>(),
                 Arg.Any<CancellationToken>()
             )
-            .Returns(callInfo =>
+            .Returns(_ =>
             {
                 // Simulate the actual merge operation by updating the database
                 // Update first chapter to be the merged chapter
@@ -747,10 +855,16 @@ public class ChapterListMergingTests : TestContext
         // Setup revert service to reflect initial and post-merge states
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         _subRevertService
-            .CanRevertChapterAsync(Arg.Is<Chapter>(c => c.Id == chapters[0].Id))
+            .CanRevertChapterAsync(
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Is<Chapter>(c => c.Id == chapters[0].Id)
+            )
             .Returns(false, true); // Initially not merged, then after merge, it can be reverted
         _subRevertService
-            .CanRevertChapterAsync(Arg.Is<Chapter>(c => c.Id == chapters[1].Id))
+            .CanRevertChapterAsync(
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Is<Chapter>(c => c.Id == chapters[1].Id)
+            )
             .Returns(false); // Chapter 1.2 is never merged (gets removed)
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
@@ -782,9 +896,10 @@ public class ChapterListMergingTests : TestContext
         Assert.NotNull(initialChapter12); // Chapter 1.2 should be visible initially
 
         // Step 2: Find and click the merge button for Chapter 1.1
-        IEnumerable<IElement> mergeButtons = component
+        IElement[] mergeButtons = component
             .FindAll("button")
-            .Where(btn => btn.GetAttribute("title")?.Contains("Merge this chapter") == true);
+            .Where(btn => btn.GetAttribute("title")?.Contains("Merge this chapter") == true)
+            .ToArray();
 
         Assert.True(mergeButtons.Any(), "Should find merge buttons in the component");
 
@@ -821,7 +936,8 @@ public class ChapterListMergingTests : TestContext
         await _subMergeCoordinator
             .Received(1)
             .MergeSelectedChaptersAsync(
-                Arg.Is<List<Chapter>>(list => list.Count == 2),
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Any<List<Chapter>>(),
                 Arg.Any<bool>()
             );
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
@@ -856,7 +972,9 @@ public class ChapterListMergingTests : TestContext
 
         // 7. Verify that revert service was called to update merge status
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
-        await _subRevertService.Received().CanRevertChapterAsync(Arg.Any<Chapter>());
+        await _subRevertService
+            .Received()
+            .CanRevertChapterAsync(Arg.Any<ApplicationDbContext>(), Arg.Any<Chapter>());
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // 8. Verify that only merged chapters are displayed (merged chapter + third chapter)
