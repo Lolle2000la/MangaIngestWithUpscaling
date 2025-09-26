@@ -391,7 +391,11 @@ public class ChapterListMergingTests : TestContext
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         await _subMergeCoordinator
             .Received()
-            .GetPossibleMergeActionsAsync(_dbContext, Arg.Any<List<Chapter>>(), Arg.Any<bool>());
+            .GetPossibleMergeActionsAsync(
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Any<List<Chapter>>(),
+                Arg.Any<bool>()
+            );
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
     }
 
@@ -537,7 +541,11 @@ public class ChapterListMergingTests : TestContext
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         await _subMergeCoordinator
             .Received()
-            .GetPossibleMergeActionsAsync(_dbContext, Arg.Any<List<Chapter>>(), Arg.Any<bool>());
+            .GetPossibleMergeActionsAsync(
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Any<List<Chapter>>(),
+                Arg.Any<bool>()
+            );
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Check that merge buttons exist in the UI
@@ -583,7 +591,11 @@ public class ChapterListMergingTests : TestContext
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         await _subMergeCoordinator
             .Received()
-            .GetPossibleMergeActionsAsync(_dbContext, Arg.Any<List<Chapter>>(), Arg.Any<bool>());
+            .GetPossibleMergeActionsAsync(
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Any<List<Chapter>>(),
+                Arg.Any<bool>()
+            );
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Test that merge button exists when there are merge possibilities
