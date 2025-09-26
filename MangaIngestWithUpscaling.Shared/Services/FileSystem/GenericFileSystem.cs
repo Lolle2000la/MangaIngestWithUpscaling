@@ -18,4 +18,10 @@ public class GenericFileSystem : IFileSystem
     {
         File.Move(sourceFileName, destFileName);
     }
+
+    /// <inheritdoc/>
+    public bool FileExists(string path)
+    {
+        return File.Exists(path);
+    }
 }

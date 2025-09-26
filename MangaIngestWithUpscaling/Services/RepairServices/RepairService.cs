@@ -162,12 +162,18 @@ public class RepairService : IRepairService
         );
 
         // Package all missing images into a single CBZ (entry names are the original basenames)
-        using (ZipArchive archive = ZipFile.Open(tempBatchInputCbz, ZipArchiveMode.Create))
+        await using (
+            ZipArchive archive = await ZipFile.OpenAsync(
+                tempBatchInputCbz,
+                ZipArchiveMode.Create,
+                cancellationToken
+            )
+        )
         {
             foreach (string file in imageFiles)
             {
                 string entryName = Path.GetFileName(file);
-                archive.CreateEntryFromFile(file, entryName);
+                await archive.CreateEntryFromFileAsync(file, entryName, cancellationToken);
             }
         }
 
@@ -191,7 +197,9 @@ public class RepairService : IRepairService
 
         // Extract all upscaled images to the output directory
         int extracted = 0;
-        using (ZipArchive outArchive = ZipFile.OpenRead(batchOutputCbz))
+        await using (
+            ZipArchive outArchive = await ZipFile.OpenReadAsync(batchOutputCbz, cancellationToken)
+        )
         {
             foreach (ZipArchiveEntry entry in outArchive.Entries)
             {

@@ -21,11 +21,14 @@ public class UpscalerJsonHandlingService(ILogger<UpscalerJsonHandlingService> lo
 
         try
         {
-            using ZipArchive archive = ZipFile.OpenRead(cbzFilePath);
+            await using ZipArchive archive = await ZipFile.OpenReadAsync(
+                cbzFilePath,
+                cancellationToken
+            );
             ZipArchiveEntry? upscalerJsonEntry = archive.GetEntry("upscaler.json");
             if (upscalerJsonEntry != null)
             {
-                await using Stream stream = upscalerJsonEntry.Open();
+                await using Stream stream = await upscalerJsonEntry.OpenAsync(cancellationToken);
                 UpscalerProfileJsonDto? upscalerProfileDto = await JsonSerializer.DeserializeAsync(
                     stream,
                     UpscalerJsonContext.Default.UpscalerProfileJsonDto,
@@ -48,10 +51,12 @@ public class UpscalerJsonHandlingService(ILogger<UpscalerJsonHandlingService> lo
         CancellationToken cancellationToken
     )
     {
-        using (ZipArchive archive = ZipFile.Open(cbzFilePath, ZipArchiveMode.Update))
-        {
-            await WriteUpscalerJsonAsync(archive, profile, cancellationToken);
-        }
+        await using ZipArchive archive = await ZipFile.OpenAsync(
+            cbzFilePath,
+            ZipArchiveMode.Update,
+            cancellationToken
+        );
+        await WriteUpscalerJsonAsync(archive, profile, cancellationToken);
     }
 
     public async Task WriteUpscalerJsonAsync(
@@ -82,7 +87,7 @@ public class UpscalerJsonHandlingService(ILogger<UpscalerJsonHandlingService> lo
         }
 
         ZipArchiveEntry entry = archive.CreateEntry("upscaler.json");
-        await using Stream stream = entry.Open();
+        await using Stream stream = await entry.OpenAsync(cancellationToken);
         await using var writer = new StreamWriter(stream);
         await writer.WriteAsync(jsonString);
     }

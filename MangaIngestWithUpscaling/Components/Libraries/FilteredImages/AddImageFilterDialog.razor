@@ -284,6 +284,11 @@
 
                 filteredImage = await ImageFilterService.CreateFilteredImageFromBytesAsync(
                     imageBytes, selectedFile.Name, Library, description);
+                if (filteredImage != null)
+                {
+                    // Ensure description is persisted regardless of service behavior
+                    filteredImage.Description = description;
+                }
             }
             else if (!string.IsNullOrEmpty(selectedCbzImageName) && !string.IsNullOrEmpty(cbzPath))
             {
@@ -295,6 +300,8 @@
                 // Log the content hash for debugging
                 if (filteredImage != null)
                 {
+                    // Ensure description is persisted regardless of service behavior
+                    filteredImage.Description = description;
                     Logger.LogInformation("Generated content hash for {ImageName}: {ContentHash}", selectedCbzImageName, filteredImage.ContentHash);
                 }
             }

@@ -185,7 +185,9 @@ public class MangaJaNaiUpscalerTests : IDisposable
             });
 
         // Mock metadata handling to avoid actual metadata operations
-        _mockMetadataHandling.PagesEqual(Arg.Any<string>(), Arg.Any<string>()).Returns(false);
+        _mockMetadataHandling
+            .PagesEqualAsync(Arg.Any<string>(), Arg.Any<string>())
+            .Returns(Task.FromResult(false));
 
         var cancellationToken = CancellationToken.None;
 
@@ -235,7 +237,9 @@ public class MangaJaNaiUpscalerTests : IDisposable
         };
 
         // Mock metadata handling to return true for pages equal (already upscaled)
-        _mockMetadataHandling.PagesEqual(inputPath, outputPath).Returns(true);
+        _mockMetadataHandling
+            .PagesEqualAsync(inputPath, outputPath)
+            .Returns(Task.FromResult(true));
 
         var cancellationToken = CancellationToken.None;
 
@@ -291,7 +295,9 @@ public class MangaJaNaiUpscalerTests : IDisposable
         cts.Cancel(); // Cancel immediately
 
         // Mock metadata handling
-        _mockMetadataHandling.PagesEqual(Arg.Any<string>(), Arg.Any<string>()).Returns(false);
+        _mockMetadataHandling
+            .PagesEqualAsync(Arg.Any<string>(), Arg.Any<string>())
+            .Returns(Task.FromResult(false));
 
         // Mock Python service to throw on cancellation
         _mockPythonService
@@ -329,7 +335,9 @@ public class MangaJaNaiUpscalerTests : IDisposable
         };
 
         // Mock metadata handling
-        _mockMetadataHandling.PagesEqual(Arg.Any<string>(), Arg.Any<string>()).Returns(false);
+        _mockMetadataHandling
+            .PagesEqualAsync(Arg.Any<string>(), Arg.Any<string>())
+            .Returns(Task.FromResult(false));
 
         // Mock image resize service to return a temp file
         string tempResizedPath = Path.Combine(_tempDir, "temp_resized.cbz");

@@ -1,4 +1,5 @@
 @using MangaIngestWithUpscaling.Data.LibraryManagement
+@inject ApplicationDbContext DbContext
 
 <MudDialog>
     <TitleContent>Edit Image Filter</TitleContent>
@@ -56,10 +57,32 @@
 </MudDialog>
 
 @code {
-    [CascadingParameter] private IDialogReference? DialogReference { get; set; }
+    [CascadingParameter] private IMudDialogInstance DialogReference { get; set; } = null!;
     [Parameter] public FilteredImage FilteredImage { get; set; } = null!;
 
-    private void Submit() => DialogReference?.Close(DialogResult.Ok(true));
+    private async Task Submit()
+    {
+        try
+        {
+            // Ensure the description update is persisted even if the entity is detached
+            var entry = DbContext.Entry(FilteredImage);
+            if (entry.State == EntityState.Detached)
+            {
+                DbContext.Attach(FilteredImage);
+                entry = DbContext.Entry(FilteredImage);
+            }
+
+            // Mark only the Description property as modified
+            entry.Property(nameof(FilteredImage.Description)).IsModified = true;
+            await DbContext.SaveChangesAsync();
+
+            DialogReference.Close(DialogResult.Ok(true));
+        }
+        catch
+        {
+            DialogReference.Close(DialogResult.Cancel());
+        }
+    }
     private void Cancel() => DialogReference?.Close(DialogResult.Cancel());
 
     private static string FormatFileSize(long bytes)

@@ -188,7 +188,7 @@ public class MangaJaNaiUpscaler(
 
         if (File.Exists(outputPath))
         {
-            if (metadataHandling.PagesEqual(inputPath, outputPath))
+            if (await metadataHandling.PagesEqualAsync(inputPath, outputPath))
             {
                 logger.LogInformation(
                     "The target to upscale is seemingly already upscaled, so we will accept this as is.\n\n"
@@ -421,7 +421,7 @@ public class MangaJaNaiUpscaler(
                 return true;
             }
 
-            using FileStream stream = File.OpenRead(filePath);
+            await using FileStream stream = File.OpenRead(filePath);
             byte[] hash = await sha256.ComputeHashAsync(stream, cancellationToken);
             string hashString = Convert.ToHexStringLower(hash);
             if (hashString != expectedHash)
@@ -499,7 +499,7 @@ public class MangaJaNaiUpscaler(
                 );
             }
 
-            using FileStream stream = File.OpenRead(filePath);
+            await using FileStream stream = File.OpenRead(filePath);
             byte[] hash = await sha256.ComputeHashAsync(stream, cancellationToken);
             string hashString = Convert.ToHexStringLower(hash);
             if (hashString != expectedHash)

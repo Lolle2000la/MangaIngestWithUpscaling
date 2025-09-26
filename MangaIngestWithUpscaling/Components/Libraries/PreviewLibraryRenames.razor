@@ -305,7 +305,7 @@
                                        .AsAsyncEnumerable().WithCancellation(cancellationToken))
                     {
                         cancellationToken.ThrowIfCancellationRequested();
-                        var meta = metadataHandlingService.GetSeriesAndTitleFromComicInfo(chapter.NotUpscaledFullPath);
+                        var meta = await metadataHandlingService.GetSeriesAndTitleFromComicInfoAsync(chapter.NotUpscaledFullPath);
                         var original = new FoundChapter(chapter.FileName, chapter.RelativePath, ChapterStorageType.Cbz, meta);
                         var renamed = renamingService.ApplyRenameRules(original, Library.RenameRules);
                         if (renamed.FileName != chapter.FileName)
