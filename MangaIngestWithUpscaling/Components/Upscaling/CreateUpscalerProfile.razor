@@ -1,7 +1,7 @@
 ﻿@page "/upscaling/profiles/create"
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject NavigationManager NavigationManager
 
 <PageTitle>Create Upscaler Profile</PageTitle>
@@ -37,8 +37,9 @@
 
     private async Task OnCreateLibrary()
     {
-        DbContext.UpscalerProfiles.Add(Profile);
-        await DbContext.SaveChangesAsync();
+        await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+        dbContext.UpscalerProfiles.Add(Profile);
+        await dbContext.SaveChangesAsync();
         NavigationManager.NavigateTo("/upscaling/profiles");
     }
 }
