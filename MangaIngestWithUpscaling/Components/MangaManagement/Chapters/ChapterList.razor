@@ -117,7 +117,7 @@
             {
                 <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward"
                                Color="Color.Primary" Variant="Variant.Text"
-                               OnClick="@(() => UpscaleChapter(context.Chapter))"
+                               OnClick="@(() => UpscaleChapterInline(context.Chapter))"
                                title="Upscale this chapter."/>
             }
             else
@@ -181,7 +181,7 @@
             {
                 <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward"
                                Color="Color.Primary" Variant="Variant.Text"
-                               OnClick="@(() => UpscaleChapter(context.Chapter))"
+                               OnClick="@(() => UpscaleChapterInline(context.Chapter))"
                                title="Upscale this chapter."/>
             }
             else
@@ -216,9 +216,10 @@
         if (result == true)
         {
             var chaptersToDelete = selectedChapters.ToList();
+            await using var dbContext = await DbContextFactory.CreateDbContextAsync();
             foreach (var c in chaptersToDelete)
             {
-                await DeleteChapter(c.Chapter);
+                await DeleteChapter(dbContext, c.Chapter);
             }
         }
     }
@@ -226,9 +227,10 @@
     private async Task UpscaleSelectedChapters()
     {
         var chaptersToUpscale = selectedChapters.Where(c => !c.Chapter.IsUpscaled).ToList();
+        await using var dbContext = await DbContextFactory.CreateDbContextAsync();
         foreach (var c in chaptersToUpscale)
         {
-            await UpscaleChapter(c.Chapter);
+            await UpscaleChapter(dbContext, c.Chapter);
         }
     }
 
@@ -238,9 +240,10 @@
         if (result == true)
         {
             var chaptersToProcess = selectedChapters.ToList();
+            await using var dbContext = await DbContextFactory.CreateDbContextAsync();
             foreach (var c in chaptersToProcess)
             {
-                await DeleteUpscaled(c.Chapter);
+                await DeleteUpscaled(dbContext, c.Chapter);
             }
         }
     }
@@ -266,7 +269,7 @@
         {
             int successCount = 0;
             int failureCount = 0;
-            
+
             await using var dbContext = await DbContextFactory.CreateDbContextAsync();
 
             foreach (var chapterItem in mergedChapters)
@@ -303,12 +306,13 @@
         var result = await DialogService.ShowMessageBox("Delete Chapter", "Are you sure you want to delete this chapter?", yesText: "Yes", cancelText: "No");
         if (result == true)
         {
-            await DeleteChapter(chapter);
+            await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+            await DeleteChapter(dbContext, chapter);
         }
     }
 
     private async Task RevertMergedChapterConfirm(
-        ApplicationDbContext dbContext,Chapter chapter)
+        ApplicationDbContext dbContext, Chapter chapter)
     {
         var result = await DialogService.ShowMessageBox(
             "Revert Merged Chapter",
@@ -323,7 +327,7 @@
     }
 
     private async Task RevertMergedChapter(
-        ApplicationDbContext dbContext,Chapter chapter)
+        ApplicationDbContext dbContext, Chapter chapter)
     {
         try
         {
@@ -390,6 +394,7 @@
     private async Task OnChapterMetadataCommit(ChapterItem? chapter)
     {
         if (chapter == null) return;
+        await using var dbContext = await DbContextFactory.CreateDbContextAsync();
 
         if (chapter.ExtractedMetadata?.ChapterTitle != chapter.NewTitle)
         {
@@ -402,7 +407,7 @@
 
         if (Path.GetFileNameWithoutExtension(chapter.Chapter.FileName) != chapter.NewFileName)
         {
-            if (!await RenameChapterFile(chapter.Chapter, chapter.NewFileName + ".cbz"))
+            if (!await RenameChapterFile(dbContext, chapter.Chapter, chapter.NewFileName + ".cbz"))
             {
                 chapter.NewFileName = Path.GetFileNameWithoutExtension(chapter.Chapter.FileName);
             }
@@ -417,9 +422,9 @@
         chapter.NewFileName = Path.GetFileNameWithoutExtension(chapter.Chapter.FileName);
     }
 
-    private async Task DeleteChapter(Chapter chapter)
+    private async Task DeleteChapter(ApplicationDbContext dbContext, Chapter chapter)
     {
-        await DeleteUpscaled(chapter);
+        await DeleteUpscaled(dbContext, chapter);
 
         string toDelete = Path.Combine(Manga.Library.NotUpscaledLibraryPath, chapter.RelativePath);
 
@@ -438,9 +443,7 @@
             Snackbar.Add($"Failed to delete {chapter.FileName}. Check the logs for more information.", Severity.Error);
         }
 
-        await using var dbContext = await DbContextFactory.CreateDbContextAsync();
-        
-        // Find the chapter in the new context
+        // Find the chapter in the provided context
         var chapterToDelete = await dbContext.Chapters.FindAsync(chapter.Id);
         if (chapterToDelete != null)
         {
@@ -454,22 +457,20 @@
         InvalidateMergePossibilitiesCache();
     }
 
-    private async Task UpscaleChapter(Chapter chapter)
+    private async Task UpscaleChapter(ApplicationDbContext dbContext, Chapter chapter)
     {
         if (chapter.IsUpscaled)
         {
             return;
         }
 
-        await using var dbContext = await DbContextFactory.CreateDbContextAsync();
-        
         // Reload manga with necessary relationships
         var mangaWithRelations = await dbContext.MangaSeries
             .Include(m => m.Library)
             .ThenInclude(l => l.UpscalerProfile)
             .Include(m => m.UpscalerProfilePreference)
             .FirstOrDefaultAsync(m => m.Id == Manga.Id);
-            
+
         if (mangaWithRelations?.EffectiveUpscalerProfile == null)
         {
             Snackbar.Add("Upscaler profile not set for this library/manga.", Severity.Error);
@@ -480,16 +481,24 @@
             new UpscaleTask(chapter));
     }
 
+    // Entry point helper for per-row button (creates DbContext then calls internal method)
+    private async Task UpscaleChapterInline(Chapter chapter)
+    {
+        await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+        await UpscaleChapter(dbContext, chapter);
+    }
+
     private async Task DeleteUpscaledConfirm(Chapter chapter)
     {
         var result = await DialogService.ShowMessageBox("Delete Upscaled Chapter", "Are you sure you want to delete the upscaled version of this chapter?", yesText: "Yes", cancelText: "No");
         if (result == true)
         {
-            await DeleteUpscaled(chapter);
+            await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+            await DeleteUpscaled(dbContext, chapter);
         }
     }
 
-    private async Task DeleteUpscaled(Chapter chapter)
+    private async Task DeleteUpscaled(ApplicationDbContext dbContext, Chapter chapter)
     {
         if (!chapter.IsUpscaled)
         {
@@ -520,9 +529,7 @@
 
         chapter.IsUpscaled = false;
 
-        await using var dbContext = await DbContextFactory.CreateDbContextAsync();
-        
-        // Update the chapter in the new context
+        // Update the chapter in the provided context
         var chapterToUpdate = await dbContext.Chapters.FindAsync(chapter.Id);
         if (chapterToUpdate != null)
         {
@@ -531,7 +538,7 @@
         }
     }
 
-    private async Task<bool> RenameChapterFile(Chapter chapter, string newFileName)
+    private async Task<bool> RenameChapterFile(ApplicationDbContext dbContext, Chapter chapter, string newFileName)
     {
         // Check if the new name contains invalid characters
         if (newFileName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
@@ -597,8 +604,7 @@
         {
             chapter.RelativePath = targetRelativePath;
             chapter.FileName = newFileName;
-            
-            await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+
             var chapterToUpdate = await dbContext.Chapters.FindAsync(chapter.Id);
             if (chapterToUpdate != null)
             {
@@ -606,7 +612,7 @@
                 chapterToUpdate.FileName = newFileName;
                 await dbContext.SaveChangesAsync();
             }
-            
+
             _ = ChapterChangedNotifier.Notify(chapter, false);
             if (chapter.IsUpscaled)
             {
@@ -648,7 +654,7 @@
     protected override async Task OnInitializedAsync()
     {
         await using var dbContext = await DbContextFactory.CreateDbContextAsync();
-        
+
         // Instead of using DbContext.Entry for lazy loading, we'll ensure the data is loaded in LoadChapters()
         await LoadChapters(dbContext);
 
@@ -687,14 +693,14 @@
     {
         bool loadingFailed = false;
         chapters.Clear();
-        
+
         // Load manga with all necessary relationships using the factory
         var mangaWithChapters = await dbContext.MangaSeries
             .Include(m => m.Chapters)
             .ThenInclude(c => c.UpscalerProfile)
             .Include(m => m.Library)
             .FirstOrDefaultAsync(m => m.Id == Manga.Id);
-            
+
         if (mangaWithChapters?.Chapters == null)
         {
             Logger.LogWarning("Chapters is null in LoadChapters for Manga ID {MangaId}.", Manga.Id);
@@ -900,7 +906,7 @@
             Snackbar.Add("No non-merged chapters selected for merging.", Severity.Warning);
             return;
         }
-        
+
         await using var dbContext = await DbContextFactory.CreateDbContextAsync();
 
         // Get possible merge actions for the selected chapters
@@ -1009,20 +1015,18 @@
 
         if (mergeType == "addition to existing merged chapter")
         {
-            await PerformAdditionToExistingMerged(chaptersToMerge, baseNumber);
+            await PerformAdditionToExistingMerged(dbContext, chaptersToMerge, baseNumber);
         }
         else
         {
-            await PerformMergeOperation(chaptersToMerge, includeLatest);
+            await PerformMergeOperation(dbContext, chaptersToMerge, includeLatest);
         }
     }
 
-    private async Task PerformMergeOperation(List<Chapter> chaptersToMerge, bool includeLatestChapters)
+    private async Task PerformMergeOperation(ApplicationDbContext dbContext, List<Chapter> chaptersToMerge, bool includeLatestChapters)
     {
         try
         {
-            await using var dbContext = await DbContextFactory.CreateDbContextAsync();
-            
             var completedMerges = await ChapterMergeCoordinator.MergeSelectedChaptersAsync(dbContext, chaptersToMerge, includeLatestChapters);
 
             if (!completedMerges.Any())
@@ -1049,7 +1053,7 @@
                 // Find the merged chapter from the database - it should be the FIRST chapter from the original set 
                 // (as per ChapterMergeCoordinator.UpdateDatabaseForMergeAsync which keeps the first and removes the rest)
                 var primaryChapterId = chaptersToMerge.First().Id;
-                
+
                 var mergedChapter = await dbContext.Chapters.FindAsync(primaryChapterId);
                 if (mergedChapter != null)
                 {
@@ -1058,12 +1062,18 @@
                         .Include(c => c.UpscalerProfile)
                         .FirstOrDefaultAsync(c => c.Id == primaryChapterId);
 
+                    var notUpscaledPath = Manga?.Library?.NotUpscaledLibraryPath;
+                    var relativePath = mergedChapter!.RelativePath; // assert non-null (inside null-checked scope)
+                    if (string.IsNullOrEmpty(notUpscaledPath) || string.IsNullOrEmpty(relativePath))
+                    {
+                        continue; // Skip if paths are not available
+                    }
+
                     var extractedMetadata = await MetadataHandler.GetSeriesAndTitleFromComicInfoAsync(
-                        Path.Combine(Manga.Library.NotUpscaledLibraryPath, mergedChapter.RelativePath));
+                        Path.Combine(notUpscaledPath!, relativePath!));
 
                     // Properly determine if the chapter is merged by checking the database
-                    await using var dbContextForMerge = await DbContextFactory.CreateDbContextAsync();
-                    var isMerged = await ChapterMergeRevertService.CanRevertChapterAsync(dbContextForMerge, mergedChapter);
+                    var isMerged = await ChapterMergeRevertService.CanRevertChapterAsync(dbContext, mergedChapter);
 
                     chapters.Add(new ChapterItem
                     {
@@ -1125,14 +1135,14 @@
             // Handle new merges first
             foreach (var (baseNumber, chapterList) in mergeActions.NewMergeGroups)
             {
-                await PerformMergeOperation(chapterList, includeLatestChapters);
+                await PerformMergeOperation(dbContext, chapterList, includeLatestChapters);
                 totalNewMerges++;
             }
 
             // Handle additions to existing merged chapters
             foreach (var (baseNumber, chapterList) in mergeActions.AdditionsToExistingMerged)
             {
-                await PerformAdditionToExistingMerged(chapterList, baseNumber);
+                await PerformAdditionToExistingMerged(dbContext, chapterList, baseNumber);
                 totalAdditions++;
             }
 
@@ -1165,12 +1175,10 @@
         }
     }
 
-    private async Task PerformAdditionToExistingMerged(List<Chapter> chaptersToAdd, string baseNumber)
+    private async Task PerformAdditionToExistingMerged(ApplicationDbContext dbContext, List<Chapter> chaptersToAdd, string baseNumber)
     {
         try
         {
-            await using var dbContext = await DbContextFactory.CreateDbContextAsync();
-            
             // Use the chapter merging coordinator to add chapters to existing merged chapter
             await ChapterMergeCoordinator.ProcessExistingChapterPartsForMergingAsync(dbContext, Manga);
 
@@ -1195,7 +1203,7 @@
                 var reloadedChapter = await dbContext.Chapters
                     .Include(c => c.UpscalerProfile)
                     .FirstOrDefaultAsync(c => c.Id == mergedChapter.Id);
-                    
+
                 if (reloadedChapter != null)
                 {
                     mergedChapter = reloadedChapter;
