@@ -319,7 +319,8 @@
     {
         try
         {
-            var restoredChapters = await ChapterMergeRevertService.RevertMergedChapterAsync(chapter);
+            await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+            var restoredChapters = await ChapterMergeRevertService.RevertMergedChapterAsync(dbContext, chapter);
 
             // Remove the merged chapter from the UI
             var chapterItem = chapterItems.FirstOrDefault(ci => ci.Chapter.Id == chapter.Id);
@@ -720,7 +721,7 @@
                 chapter.UpscalerProfile = await loadProfile;
 
                 // Check if this chapter is a merged chapter
-                var isMerged = await ChapterMergeRevertService.CanRevertChapterAsync(chapter);
+                var isMerged = await ChapterMergeRevertService.CanRevertChapterAsync(dbContext, chapter);
 
                 Logger.LogDebug("LoadChapters: Chapter {FileName} (ID: {ChapterId}) - IsMerged: {IsMerged}",
                     chapter.FileName, chapter.Id, isMerged);
@@ -1054,7 +1055,8 @@
                         Path.Combine(Manga.Library.NotUpscaledLibraryPath, mergedChapter.RelativePath));
 
                     // Properly determine if the chapter is merged by checking the database
-                    var isMerged = await ChapterMergeRevertService.CanRevertChapterAsync(mergedChapter);
+                    await using var dbContextForMerge = await DbContextFactory.CreateDbContextAsync();
+                    var isMerged = await ChapterMergeRevertService.CanRevertChapterAsync(dbContextForMerge, mergedChapter);
 
                     chapters.Add(new ChapterItem
                     {

@@ -14,7 +14,6 @@ namespace MangaIngestWithUpscaling.Services.ChapterMerging;
 
 [RegisterScoped]
 public class ChapterMergeRevertService(
-    ApplicationDbContext dbContext,
     IChapterPartMerger chapterPartMerger,
     IChapterChangedNotifier chapterChangedNotifier,
     IUpscalerJsonHandlingService upscalerJsonHandlingService,
@@ -23,11 +22,12 @@ public class ChapterMergeRevertService(
 ) : IChapterMergeRevertService
 {
     public async Task<List<Chapter>> RevertMergedChapterAsync(
+        ApplicationDbContext context,
         Chapter chapter,
         CancellationToken cancellationToken = default
     )
     {
-        MergedChapterInfo? mergeInfo = await GetMergeInfoAsync(chapter, cancellationToken);
+        MergedChapterInfo? mergeInfo = await GetMergeInfoAsync(context, chapter, cancellationToken);
         if (mergeInfo == null)
         {
             throw new InvalidOperationException(
@@ -36,14 +36,14 @@ public class ChapterMergeRevertService(
         }
 
         // Load chapter dependencies
-        if (!dbContext.Entry(chapter).Reference(c => c.Manga).IsLoaded)
+        if (!context.Entry(chapter).Reference(c => c.Manga).IsLoaded)
         {
-            await dbContext.Entry(chapter).Reference(c => c.Manga).LoadAsync(cancellationToken);
+            await context.Entry(chapter).Reference(c => c.Manga).LoadAsync(cancellationToken);
         }
 
-        if (!dbContext.Entry(chapter.Manga).Reference(m => m.Library).IsLoaded)
+        if (!context.Entry(chapter.Manga).Reference(m => m.Library).IsLoaded)
         {
-            await dbContext
+            await context
                 .Entry(chapter.Manga)
                 .Reference(m => m.Library)
                 .LoadAsync(cancellationToken);
@@ -61,7 +61,7 @@ public class ChapterMergeRevertService(
         }
 
         // If a partial upscaling repair task was scheduled for this merged chapter, cancel it now to avoid wasted work
-        await CancelPendingRepairTaskForChapterAsync(chapter.Id, cancellationToken);
+        await CancelPendingRepairTaskForChapterAsync(context, chapter.Id, cancellationToken);
 
         try
         {
@@ -96,6 +96,7 @@ public class ChapterMergeRevertService(
 
             // Clean up any existing chapters with the same filenames to avoid constraint violations
             await CleanupExistingChaptersAsync(
+                context,
                 restoredChapters,
                 chapter.MangaId,
                 chapter.IsUpscaled,
@@ -122,7 +123,7 @@ public class ChapterMergeRevertService(
                     UpscalerProfile = chapter.UpscalerProfile,
                 };
 
-                dbContext.Chapters.Add(chapterEntity);
+                context.Chapters.Add(chapterEntity);
                 restoredChapterEntities.Add(chapterEntity);
 
                 // Notify about the new chapter
@@ -130,7 +131,7 @@ public class ChapterMergeRevertService(
             }
 
             // Remove the merged chapter (but keep merge info for upscaled restoration)
-            dbContext.Chapters.Remove(chapter);
+            context.Chapters.Remove(chapter);
 
             // Delete the merged chapter file
             File.Delete(mergedChapterPath);
@@ -139,7 +140,7 @@ public class ChapterMergeRevertService(
             FileSystemHelpers.DeleteIfEmpty(Path.GetDirectoryName(mergedChapterPath)!, logger);
 
             // Save regular chapters first
-            await dbContext.SaveChangesAsync(cancellationToken);
+            await context.SaveChangesAsync(cancellationToken);
 
             // Now create upscaled versions if needed
             if (chapter.IsUpscaled && chapter.UpscalerProfile != null)
@@ -169,20 +170,22 @@ public class ChapterMergeRevertService(
     }
 
     public async Task<bool> CanRevertChapterAsync(
+        ApplicationDbContext context,
         Chapter chapter,
         CancellationToken cancellationToken = default
     )
     {
-        MergedChapterInfo? mergeInfo = await GetMergeInfoAsync(chapter, cancellationToken);
+        MergedChapterInfo? mergeInfo = await GetMergeInfoAsync(context, chapter, cancellationToken);
         return mergeInfo != null;
     }
 
     public async Task<MergedChapterInfo?> GetMergeInfoAsync(
+        ApplicationDbContext context,
         Chapter chapter,
         CancellationToken cancellationToken = default
     )
     {
-        return await dbContext.MergedChapterInfos.FirstOrDefaultAsync(
+        return await context.MergedChapterInfos.FirstOrDefaultAsync(
             m => m.ChapterId == chapter.Id,
             cancellationToken
         );
@@ -492,6 +495,7 @@ public class ChapterMergeRevertService(
     }
 
     private async Task CleanupExistingChaptersAsync(
+        ApplicationDbContext context,
         List<FoundChapter> restoredChapters,
         int mangaId,
         bool shouldCleanupUpscaledToo,
@@ -502,7 +506,7 @@ public class ChapterMergeRevertService(
         HashSet<string> fileNamesToRestore = restoredChapters.Select(rc => rc.FileName).ToHashSet();
 
         // Find any existing chapters with the same filenames for this manga
-        List<Chapter> existingChapters = await dbContext
+        List<Chapter> existingChapters = await context
             .Chapters.Where(c => c.MangaId == mangaId && fileNamesToRestore.Contains(c.FileName))
             .ToListAsync(cancellationToken);
 
@@ -515,12 +519,13 @@ public class ChapterMergeRevertService(
             );
 
             // Remove existing chapters
-            dbContext.Chapters.RemoveRange(existingChapters);
-            await dbContext.SaveChangesAsync(cancellationToken);
+            context.Chapters.RemoveRange(existingChapters);
+            await context.SaveChangesAsync(cancellationToken);
         }
     }
 
     private async Task CancelPendingRepairTaskForChapterAsync(
+        ApplicationDbContext context,
         int chapterId,
         CancellationToken cancellationToken
     )
@@ -528,7 +533,7 @@ public class ChapterMergeRevertService(
         try
         {
             // Load pending tasks and filter in-memory for the specific RepairUpscaleTask bound to this chapter
-            var pending = await dbContext
+            var pending = await context
                 .PersistedTasks.Where(t => t.Status == PersistedTaskStatus.Pending)
                 .ToListAsync(cancellationToken);
 
