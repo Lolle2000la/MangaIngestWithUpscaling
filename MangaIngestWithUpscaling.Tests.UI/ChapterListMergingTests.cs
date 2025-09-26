@@ -207,7 +207,7 @@ public class ChapterListMergingTests : TestContext
         var mergeInfo = new MergeActionInfo();
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         _subMergeCoordinator
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .GetPossibleMergeActionsAsync(_dbContext, Arg.Any<List<Chapter>>(), Arg.Any<bool>())
             .Returns(mergeInfo);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
@@ -243,7 +243,7 @@ public class ChapterListMergingTests : TestContext
         };
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         _subMergeCoordinator
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .GetPossibleMergeActionsAsync(_dbContext, Arg.Any<List<Chapter>>(), Arg.Any<bool>())
             .Returns(mergeInfo);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
@@ -301,7 +301,7 @@ public class ChapterListMergingTests : TestContext
         var mergeInfo = new MergeActionInfo();
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         _subMergeCoordinator
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .GetPossibleMergeActionsAsync(_dbContext, Arg.Any<List<Chapter>>(), Arg.Any<bool>())
             .Returns(mergeInfo);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
@@ -337,7 +337,7 @@ public class ChapterListMergingTests : TestContext
 
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         _subMergeCoordinator
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .GetPossibleMergeActionsAsync(_dbContext, Arg.Any<List<Chapter>>(), Arg.Any<bool>())
             .Returns(mergeInfo);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
@@ -364,7 +364,7 @@ public class ChapterListMergingTests : TestContext
 
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         _subMergeCoordinator
-            .MergeSelectedChaptersAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .MergeSelectedChaptersAsync(_dbContext, Arg.Any<bool>())
             .Returns(completedMerges);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
@@ -391,7 +391,7 @@ public class ChapterListMergingTests : TestContext
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         await _subMergeCoordinator
             .Received()
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>());
+            .GetPossibleMergeActionsAsync(_dbContext, Arg.Any<List<Chapter>>(), Arg.Any<bool>());
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
     }
 
@@ -448,7 +448,7 @@ public class ChapterListMergingTests : TestContext
         var mergeInfo = new MergeActionInfo(); // Empty - no merge possibilities
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         _subMergeCoordinator
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .GetPossibleMergeActionsAsync(_dbContext, Arg.Any<List<Chapter>>(), Arg.Any<bool>())
             .Returns(mergeInfo);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
@@ -469,10 +469,9 @@ public class ChapterListMergingTests : TestContext
             .FindAll("button")
             .Where(b => b.TextContent.Contains("Merge Selected"));
 
-        if (mergeButtons.Any())
+        if (mergeButtons.FirstOrDefault() is { } mergeButton)
         {
             // If merge button exists, it should be disabled when merged chapter is selected
-            IElement mergeButton = mergeButtons.First();
             Assert.True(
                 mergeButton.HasAttribute("disabled")
                     || mergeButton.ClassList.Contains("mud-disabled"),
@@ -518,7 +517,7 @@ public class ChapterListMergingTests : TestContext
 
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         _subMergeCoordinator
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .GetPossibleMergeActionsAsync(_dbContext, Arg.Any<List<Chapter>>(), Arg.Any<bool>())
             .Returns(mergeInfo);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
@@ -538,7 +537,7 @@ public class ChapterListMergingTests : TestContext
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         await _subMergeCoordinator
             .Received()
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>());
+            .GetPossibleMergeActionsAsync(_dbContext, Arg.Any<List<Chapter>>(), Arg.Any<bool>());
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Check that merge buttons exist in the UI
@@ -571,7 +570,7 @@ public class ChapterListMergingTests : TestContext
 
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         _subMergeCoordinator
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .GetPossibleMergeActionsAsync(_dbContext, Arg.Any<List<Chapter>>(), Arg.Any<bool>())
             .Returns(mergeInfo);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
@@ -584,7 +583,7 @@ public class ChapterListMergingTests : TestContext
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         await _subMergeCoordinator
             .Received()
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>());
+            .GetPossibleMergeActionsAsync(_dbContext, Arg.Any<List<Chapter>>(), Arg.Any<bool>());
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Test that merge button exists when there are merge possibilities
@@ -646,7 +645,7 @@ public class ChapterListMergingTests : TestContext
         };
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         _subMergeCoordinator
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .GetPossibleMergeActionsAsync(_dbContext, Arg.Any<List<Chapter>>(), Arg.Any<bool>())
             .Returns(mergeInfo);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
@@ -719,7 +718,7 @@ public class ChapterListMergingTests : TestContext
 
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         _subMergeCoordinator
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .GetPossibleMergeActionsAsync(_dbContext, Arg.Any<List<Chapter>>(), Arg.Any<bool>())
             .Returns(mergeInfo, mergeInfo, new MergeActionInfo(), mergeInfo, new MergeActionInfo());
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
@@ -751,13 +750,7 @@ public class ChapterListMergingTests : TestContext
         };
 
         _subMergeCoordinator
-            .MergeSelectedChaptersAsync(
-                Arg.Is<List<Chapter>>(list =>
-                    list.Count == 2 && list.Contains(chapters[0]) && list.Contains(chapters[1])
-                ),
-                Arg.Any<bool>(),
-                Arg.Any<CancellationToken>()
-            )
+            .MergeSelectedChaptersAsync(_dbContext, Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(callInfo =>
             {
                 // Simulate the actual merge operation by updating the database
@@ -864,10 +857,7 @@ public class ChapterListMergingTests : TestContext
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         await _subMergeCoordinator
             .Received(1)
-            .MergeSelectedChaptersAsync(
-                Arg.Is<List<Chapter>>(list => list.Count == 2),
-                Arg.Any<bool>()
-            );
+            .MergeSelectedChaptersAsync(_dbContext, Arg.Any<bool>());
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // 4. Verify that the dialog was shown for latest chapter confirmation
