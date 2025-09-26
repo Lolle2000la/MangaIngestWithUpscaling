@@ -15,15 +15,14 @@ namespace MangaIngestWithUpscaling.Migrations
                 table: "PersistedTasks",
                 type: "INTEGER",
                 nullable: false,
-                defaultValue: 0);
+                defaultValue: 0
+            );
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropColumn(
-                name: "Order",
-                table: "PersistedTasks");
+            migrationBuilder.DropColumn(name: "Order", table: "PersistedTasks");
         }
     }
 }

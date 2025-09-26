@@ -15,7 +15,8 @@ namespace MangaIngestWithUpscaling.Migrations
                 name: "FilteredImages",
                 columns: table => new
                 {
-                    Id = table.Column<int>(type: "INTEGER", nullable: false)
+                    Id = table
+                        .Column<int>(type: "INTEGER", nullable: false)
                         .Annotation("Sqlite:Autoincrement", true),
                     LibraryId = table.Column<int>(type: "INTEGER", nullable: false),
                     OriginalFileName = table.Column<string>(type: "TEXT", nullable: false),
@@ -26,7 +27,7 @@ namespace MangaIngestWithUpscaling.Migrations
                     Description = table.Column<string>(type: "TEXT", nullable: true),
                     ContentHash = table.Column<string>(type: "TEXT", nullable: true),
                     OccurrenceCount = table.Column<int>(type: "INTEGER", nullable: false),
-                    LastMatchedAt = table.Column<DateTime>(type: "TEXT", nullable: true)
+                    LastMatchedAt = table.Column<DateTime>(type: "TEXT", nullable: true),
                 },
                 constraints: table =>
                 {
@@ -36,40 +37,46 @@ namespace MangaIngestWithUpscaling.Migrations
                         column: x => x.LibraryId,
                         principalTable: "Libraries",
                         principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
-                });
+                        onDelete: ReferentialAction.Cascade
+                    );
+                }
+            );
 
             migrationBuilder.CreateIndex(
                 name: "IX_FilteredImages_ContentHash",
                 table: "FilteredImages",
-                column: "ContentHash");
+                column: "ContentHash"
+            );
 
             migrationBuilder.CreateIndex(
                 name: "IX_FilteredImages_DateAdded",
                 table: "FilteredImages",
-                column: "DateAdded");
+                column: "DateAdded"
+            );
 
             migrationBuilder.CreateIndex(
                 name: "IX_FilteredImages_LibraryId",
                 table: "FilteredImages",
-                column: "LibraryId");
+                column: "LibraryId"
+            );
 
             migrationBuilder.CreateIndex(
                 name: "IX_FilteredImages_LibraryId_OriginalFileName",
                 table: "FilteredImages",
-                columns: new[] { "LibraryId", "OriginalFileName" });
+                columns: new[] { "LibraryId", "OriginalFileName" }
+            );
 
             migrationBuilder.CreateIndex(
                 name: "IX_FilteredImages_OccurrenceCount",
                 table: "FilteredImages",
-                column: "OccurrenceCount");
+                column: "OccurrenceCount"
+            );
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropTable(
-                name: "FilteredImages");
+            migrationBuilder.DropTable(name: "FilteredImages");
         }
     }
 }

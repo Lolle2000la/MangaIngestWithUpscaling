@@ -24,7 +24,11 @@ public interface IImageFilterService
     /// <param name="filters">List of filtered images to apply</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Result containing information about filtered images</returns>
-    Task<ImageFilterResult> ApplyFiltersToChapterAsync(string cbzPath, IEnumerable<FilteredImage> filters, CancellationToken cancellationToken = default);
+    Task<ImageFilterResult> ApplyFiltersToChapterAsync(
+        string cbzPath,
+        IEnumerable<FilteredImage> filters,
+        CancellationToken cancellationToken = default
+    );
 
     /// <summary>
     /// Applies the specified image filters to both original and upscaled CBZ chapter files.
@@ -35,7 +39,12 @@ public interface IImageFilterService
     /// <param name="filters">List of filtered images to apply</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Result containing information about filtered images</returns>
-    Task<ImageFilterResult> ApplyFiltersToChapterAsync(string originalCbzPath, string? upscaledCbzPath, IEnumerable<FilteredImage> filters, CancellationToken cancellationToken = default);
+    Task<ImageFilterResult> ApplyFiltersToChapterAsync(
+        string originalCbzPath,
+        string? upscaledCbzPath,
+        IEnumerable<FilteredImage> filters,
+        CancellationToken cancellationToken = default
+    );
 
     /// <summary>
     /// Creates a filtered image entry from an image file, including thumbnail generation
@@ -45,7 +54,12 @@ public interface IImageFilterService
     /// <param name="description">Optional description</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>The created FilteredImage entity</returns>
-    Task<FilteredImage> CreateFilteredImageFromFileAsync(string imagePath, Library library, string? description = null, CancellationToken cancellationToken = default);
+    Task<FilteredImage> CreateFilteredImageFromFileAsync(
+        string imagePath,
+        Library library,
+        string? description = null,
+        CancellationToken cancellationToken = default
+    );
 
     /// <summary>
     /// Creates a filtered image entry from an image within a CBZ file
@@ -56,7 +70,13 @@ public interface IImageFilterService
     /// <param name="description">Optional description</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>The created FilteredImage entity</returns>
-    Task<FilteredImage> CreateFilteredImageFromCbzAsync(string cbzPath, string imageEntryName, Library library, string? description = null, CancellationToken cancellationToken = default);
+    Task<FilteredImage> CreateFilteredImageFromCbzAsync(
+        string cbzPath,
+        string imageEntryName,
+        Library library,
+        string? description = null,
+        CancellationToken cancellationToken = default
+    );
 
     /// <summary>
     /// Creates a filtered image entry from raw image bytes
@@ -67,7 +87,13 @@ public interface IImageFilterService
     /// <param name="mimeType">MIME type of the image</param>
     /// <param name="description">Optional description</param>
     /// <returns>The created FilteredImage entity</returns>
-    Task<FilteredImage> CreateFilteredImageFromBytesAsync(byte[] imageBytes, string fileName, Library library, string? mimeType = null, string? description = null);
+    Task<FilteredImage> CreateFilteredImageFromBytesAsync(
+        byte[] imageBytes,
+        string fileName,
+        Library library,
+        string? mimeType = null,
+        string? description = null
+    );
 
     /// <summary>
     /// Generates a thumbnail for display purposes

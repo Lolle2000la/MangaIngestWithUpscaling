@@ -1,4 +1,5 @@
-﻿using MangaIngestWithUpscaling.Data;
+﻿using System.Threading.Channels;
+using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
@@ -10,20 +11,25 @@ using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using System.Threading.Channels;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 
 public class DistributedUpscaleTaskProcessor(
     TaskQueue taskQueue,
     IServiceScopeFactory scopeFactory,
-    IOptions<UpscalerConfig> upscalerConfig) : BackgroundService
+    IOptions<UpscalerConfig> upscalerConfig
+) : BackgroundService
 {
     private readonly Lock _lock = new();
     private readonly ChannelReader<PersistedTask> _reader = taskQueue.UpscaleReader;
 
-    private readonly Channel<(TaskCompletionSource<PersistedTask>, CancellationToken)> _taskRequests =
-        Channel.CreateUnbounded<(TaskCompletionSource<PersistedTask>, CancellationToken)>();
+    private readonly Channel<(
+        TaskCompletionSource<PersistedTask>,
+        CancellationToken
+    )> _taskRequests = Channel.CreateUnbounded<(
+        TaskCompletionSource<PersistedTask>,
+        CancellationToken
+    )>();
 
     // Store remote repair state separately from the task itself
     private readonly Dictionary<int, RemoteRepairState> remoteRepairStates = new();
@@ -47,7 +53,10 @@ public class DistributedUpscaleTaskProcessor(
 
         using (_lock.EnterScope())
         {
-            if (runningTasks.TryGetValue(checkAgainst.Id, out var currentTask) && currentTask.Id == checkAgainst.Id)
+            if (
+                runningTasks.TryGetValue(checkAgainst.Id, out var currentTask)
+                && currentTask.Id == checkAgainst.Id
+            )
             {
                 currentTask.Status = PersistedTaskStatus.Canceled;
                 _ = StatusChanged?.Invoke(currentTask);
@@ -60,8 +69,9 @@ public class DistributedUpscaleTaskProcessor(
             }
         }
 
-
-        PersistedTask? task = await dbContext.PersistedTasks.FirstOrDefaultAsync(t => t.Id == checkAgainst.Id);
+        PersistedTask? task = await dbContext.PersistedTasks.FirstOrDefaultAsync(t =>
+            t.Id == checkAgainst.Id
+        );
         if (task == null)
         {
             return; // Task not found in the database, nothing to do
@@ -75,70 +85,90 @@ public class DistributedUpscaleTaskProcessor(
     {
         serviceStoppingToken = stoppingToken;
 
-        _ = Task.Run(async () =>
-        {
-            var cleanDeadTasksTimer = new PeriodicTimer(TimeSpan.FromSeconds(10));
-            while (!stoppingToken.IsCancellationRequested &&
-                   await cleanDeadTasksTimer.WaitForNextTickAsync(stoppingToken))
+        _ = Task.Run(
+            async () =>
             {
-                List<PersistedTask> deadTasksToRequeue;
-                using (_lock.EnterScope())
+                var cleanDeadTasksTimer = new PeriodicTimer(TimeSpan.FromSeconds(10));
+                while (
+                    !stoppingToken.IsCancellationRequested
+                    && await cleanDeadTasksTimer.WaitForNextTickAsync(stoppingToken)
+                )
                 {
-                    var deadTasks = runningTasks.Where(x =>
-                            x.Value.Status == PersistedTaskStatus.Processing
-                            && x.Value.LastKeepAlive.AddMinutes(1) < DateTime.UtcNow)
-                        .ToList();
-
-                    if (deadTasks.Count == 0)
+                    List<PersistedTask> deadTasksToRequeue;
+                    using (_lock.EnterScope())
                     {
-                        continue;
+                        var deadTasks = runningTasks
+                            .Where(x =>
+                                x.Value.Status == PersistedTaskStatus.Processing
+                                && x.Value.LastKeepAlive.AddMinutes(1) < DateTime.UtcNow
+                            )
+                            .ToList();
+
+                        if (deadTasks.Count == 0)
+                        {
+                            continue;
+                        }
+
+                        deadTasksToRequeue = new List<PersistedTask>(deadTasks.Count);
+                        foreach (var (taskId, task) in deadTasks)
+                        {
+                            deadTasksToRequeue.Add(task);
+                            runningTasks.Remove(taskId);
+                        }
                     }
 
-                    deadTasksToRequeue = new List<PersistedTask>(deadTasks.Count);
-                    foreach (var (taskId, task) in deadTasks)
+                    using (IServiceScope scope = scopeFactory.CreateScope())
                     {
-                        deadTasksToRequeue.Add(task);
-                        runningTasks.Remove(taskId);
+                        var logger = scope.ServiceProvider.GetRequiredService<
+                            ILogger<DistributedUpscaleTaskProcessor>
+                        >();
+                        logger.LogInformation(
+                            "Re-enqueuing {count} dead tasks.",
+                            deadTasksToRequeue.Count
+                        );
+                    }
+
+                    foreach (PersistedTask task in deadTasksToRequeue)
+                    {
+                        using IServiceScope scope2 = scopeFactory.CreateScope();
+                        var db2 = scope2.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                        // Re-check the current status in DB to avoid re-enqueueing tasks that already completed or were cancelled
+                        PersistedTask? current = await db2
+                            .PersistedTasks.AsNoTracking()
+                            .FirstOrDefaultAsync(t => t.Id == task.Id, stoppingToken);
+                        if (current is null)
+                        {
+                            continue;
+                        }
+
+                        if (
+                            current.Status == PersistedTaskStatus.Completed
+                            || current.Status == PersistedTaskStatus.Canceled
+                        )
+                        {
+                            // Already finalized; do not re-enqueue
+                            continue;
+                        }
+
+                        await taskQueue.RetryAsync(task);
+                        _ = StatusChanged?.Invoke(task);
                     }
                 }
-
-                using (IServiceScope scope = scopeFactory.CreateScope())
-                {
-                    var logger = scope.ServiceProvider.GetRequiredService<ILogger<DistributedUpscaleTaskProcessor>>();
-                    logger.LogInformation("Re-enqueuing {count} dead tasks.", deadTasksToRequeue.Count);
-                }
-
-                foreach (PersistedTask task in deadTasksToRequeue)
-                {
-                    using IServiceScope scope2 = scopeFactory.CreateScope();
-                    var db2 = scope2.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-                    // Re-check the current status in DB to avoid re-enqueueing tasks that already completed or were cancelled
-                    PersistedTask? current = await db2.PersistedTasks.AsNoTracking()
-                        .FirstOrDefaultAsync(t => t.Id == task.Id, stoppingToken);
-                    if (current is null)
-                    {
-                        continue;
-                    }
-
-                    if (current.Status == PersistedTaskStatus.Completed ||
-                        current.Status == PersistedTaskStatus.Canceled)
-                    {
-                        // Already finalized; do not re-enqueue
-                        continue;
-                    }
-
-                    await taskQueue.RetryAsync(task);
-                    _ = StatusChanged?.Invoke(task);
-                }
-            }
-        }, stoppingToken);
+            },
+            stoppingToken
+        );
 
         while (!stoppingToken.IsCancellationRequested)
         {
             (TaskCompletionSource<PersistedTask> tcs, CancellationToken cancelToken) =
                 await _taskRequests.Reader.ReadAsync(stoppingToken);
-            var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, cancelToken);
-            using CancellationTokenRegistration registration = linkedCts.Token.Register(() => tcs.TrySetCanceled());
+            var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+                stoppingToken,
+                cancelToken
+            );
+            using CancellationTokenRegistration registration = linkedCts.Token.Register(() =>
+                tcs.TrySetCanceled()
+            );
             if (tcs.Task.IsCanceled)
             {
                 continue;
@@ -153,11 +183,14 @@ public class DistributedUpscaleTaskProcessor(
 
                     using (IServiceScope scope = scopeFactory.CreateScope())
                     {
-                        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-                        var logger =
-                            scope.ServiceProvider.GetRequiredService<ILogger<DistributedUpscaleTaskProcessor>>();
+                        var dbContext =
+                            scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                        var logger = scope.ServiceProvider.GetRequiredService<
+                            ILogger<DistributedUpscaleTaskProcessor>
+                        >();
 
-                        PersistedTask? taskFromDb = await dbContext.PersistedTasks.AsNoTracking()
+                        PersistedTask? taskFromDb = await dbContext
+                            .PersistedTasks.AsNoTracking()
                             .FirstOrDefaultAsync(t => t.Id == task.Id, linkedCts.Token);
 
                         // A task should only be processed if it's in the "Pending" state.
@@ -168,7 +201,9 @@ public class DistributedUpscaleTaskProcessor(
                             {
                                 logger.LogInformation(
                                     "Skipping task {taskId} as it is no longer pending (current status: {status}).",
-                                    task.Id, taskFromDb.Status);
+                                    task.Id,
+                                    taskFromDb.Status
+                                );
                             }
 
                             continue; // Skip this task and try to get the next one from the channel.
@@ -179,18 +214,24 @@ public class DistributedUpscaleTaskProcessor(
                     if (task.Data is RepairUpscaleTask repairTask)
                     {
                         using IServiceScope scope = scopeFactory.CreateScope();
-                        var logger = scope.ServiceProvider
-                            .GetRequiredService<ILogger<DistributedUpscaleTaskProcessor>>();
+                        var logger = scope.ServiceProvider.GetRequiredService<
+                            ILogger<DistributedUpscaleTaskProcessor>
+                        >();
 
                         if (upscalerConfig.Value.RemoteOnly)
                         {
                             // In remote-only mode, prepare the repair task for remote delegation
                             logger.LogDebug(
                                 "Preparing RepairUpscaleTask {taskId} for remote delegation.",
-                                task.Id);
+                                task.Id
+                            );
 
-                            bool prepared = await PrepareRepairTaskForRemote(repairTask, task, scope.ServiceProvider,
-                                linkedCts.Token);
+                            bool prepared = await PrepareRepairTaskForRemote(
+                                repairTask,
+                                task,
+                                scope.ServiceProvider,
+                                linkedCts.Token
+                            );
                             if (!prepared)
                             {
                                 // If preparation failed, skip this task
@@ -205,7 +246,8 @@ public class DistributedUpscaleTaskProcessor(
                             // In local mode, reroute to UpscaleTaskProcessor as before
                             logger.LogDebug(
                                 "Rerouting RepairUpscaleTask {taskId} to local UpscaleTaskProcessor for local processing.",
-                                task.Id);
+                                task.Id
+                            );
 
                             await taskQueue.SendToLocalUpscaleAsync(task, linkedCts.Token);
                             continue;
@@ -216,11 +258,14 @@ public class DistributedUpscaleTaskProcessor(
                     if (task.Data is RenameUpscaledChaptersSeriesTask)
                     {
                         using IServiceScope scope = scopeFactory.CreateScope();
-                        var logger = scope.ServiceProvider
-                            .GetRequiredService<ILogger<DistributedUpscaleTaskProcessor>>();
+                        var logger = scope.ServiceProvider.GetRequiredService<
+                            ILogger<DistributedUpscaleTaskProcessor>
+                        >();
                         logger.LogDebug(
                             "Rerouting task {taskId} ({taskType}) to local UpscaleTaskProcessor and continuing to search.",
-                            task.Id, task.Data.GetType().Name);
+                            task.Id,
+                            task.Data.GetType().Name
+                        );
 
                         await taskQueue.SendToLocalUpscaleAsync(task, linkedCts.Token);
                         continue;
@@ -230,15 +275,20 @@ public class DistributedUpscaleTaskProcessor(
                     {
                         // Check if the target chapter file still exists before giving the task to the worker
                         using IServiceScope scope = scopeFactory.CreateScope();
-                        var logger =
-                            scope.ServiceProvider.GetRequiredService<ILogger<DistributedUpscaleTaskProcessor>>();
-                        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-                        Chapter? chapter = await dbContext.Chapters
-                            .Include(t => t.Manga)
+                        var logger = scope.ServiceProvider.GetRequiredService<
+                            ILogger<DistributedUpscaleTaskProcessor>
+                        >();
+                        var dbContext =
+                            scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                        Chapter? chapter = await dbContext
+                            .Chapters.Include(t => t.Manga)
                             .ThenInclude(t => t.Library)
                             .ThenInclude(t => t.UpscalerProfile)
                             .Include(t => t.UpscalerProfile)
-                            .FirstOrDefaultAsync(c => c.Id == upscaleData.ChapterId, linkedCts.Token);
+                            .FirstOrDefaultAsync(
+                                c => c.Id == upscaleData.ChapterId,
+                                linkedCts.Token
+                            );
                         if (chapter == null || !File.Exists(chapter.NotUpscaledFullPath))
                         {
                             // Chapter no longer exists, mark task as failed
@@ -246,7 +296,10 @@ public class DistributedUpscaleTaskProcessor(
                             task.ProcessedAt = DateTime.UtcNow;
                             _ = StatusChanged?.Invoke(task);
 
-                            logger.LogWarning("Skipping task {taskId} because chapter file is missing.", task.Id);
+                            logger.LogWarning(
+                                "Skipping task {taskId} because chapter file is missing.",
+                                task.Id
+                            );
                             continue;
                         }
 
@@ -256,8 +309,10 @@ public class DistributedUpscaleTaskProcessor(
                             task.Status = PersistedTaskStatus.Completed;
                             task.ProcessedAt = DateTime.UtcNow;
                             _ = StatusChanged?.Invoke(task);
-                            logger.LogInformation("Skipping task {taskId} because chapter is already upscaled.",
-                                task.Id);
+                            logger.LogInformation(
+                                "Skipping task {taskId} because chapter is already upscaled.",
+                                task.Id
+                            );
                             continue;
                         }
 
@@ -266,7 +321,12 @@ public class DistributedUpscaleTaskProcessor(
                         {
                             var metadataHandling =
                                 scope.ServiceProvider.GetRequiredService<IMetadataHandlingService>();
-                            if (metadataHandling.PagesEqual(chapter.NotUpscaledFullPath, chapter.UpscaledFullPath))
+                            if (
+                                metadataHandling.PagesEqual(
+                                    chapter.NotUpscaledFullPath,
+                                    chapter.UpscaledFullPath
+                                )
+                            )
                             {
                                 task.Status = PersistedTaskStatus.Completed;
                                 task.ProcessedAt = DateTime.UtcNow;
@@ -274,7 +334,8 @@ public class DistributedUpscaleTaskProcessor(
                                 _ = StatusChanged?.Invoke(task);
                                 logger.LogInformation(
                                     "Skipping task {taskId} because target file already exists and is equal.",
-                                    task.Id);
+                                    task.Id
+                                );
                                 continue;
                             }
                         }
@@ -304,12 +365,19 @@ public class DistributedUpscaleTaskProcessor(
 
     public async Task<PersistedTask?> GetTask(CancellationToken stoppingToken)
     {
-        var tcs = new TaskCompletionSource<PersistedTask>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var tcs = new TaskCompletionSource<PersistedTask>(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
         await _taskRequests.Writer.WriteAsync((tcs, stoppingToken), stoppingToken);
 
         using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, timeoutCts.Token);
-        using CancellationTokenRegistration registration = linkedCts.Token.Register(() => tcs.TrySetCanceled());
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+            stoppingToken,
+            timeoutCts.Token
+        );
+        using CancellationTokenRegistration registration = linkedCts.Token.Register(() =>
+            tcs.TrySetCanceled()
+        );
 
         try
         {
@@ -321,8 +389,10 @@ public class DistributedUpscaleTaskProcessor(
             using (IServiceScope scope = scopeFactory.CreateScope())
             {
                 var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-                PersistedTask? taskFromDb =
-                    await dbContext.PersistedTasks.FirstOrDefaultAsync(t => t.Id == task.Id, stoppingToken);
+                PersistedTask? taskFromDb = await dbContext.PersistedTasks.FirstOrDefaultAsync(
+                    t => t.Id == task.Id,
+                    stoppingToken
+                );
                 if (taskFromDb != null)
                 {
                     taskFromDb.Status = PersistedTaskStatus.Processing;
@@ -367,7 +437,13 @@ public class DistributedUpscaleTaskProcessor(
     ///     Applies progress updates coming from a remote worker to the running task, if any.
     ///     Backward-compatible usage via optional fields: only provided values are applied.
     /// </summary>
-    public void ApplyProgress(int taskId, int? total, int? current, string? statusMessage, string? phase)
+    public void ApplyProgress(
+        int taskId,
+        int? total,
+        int? current,
+        string? statusMessage,
+        string? phase
+    )
     {
         using (_lock.EnterScope())
         {
@@ -409,7 +485,9 @@ public class DistributedUpscaleTaskProcessor(
     {
         using (_lock.EnterScope())
         {
-            return remoteRepairStates.TryGetValue(taskId, out RemoteRepairState? state) ? state : null;
+            return remoteRepairStates.TryGetValue(taskId, out RemoteRepairState? state)
+                ? state
+                : null;
         }
     }
 
@@ -424,7 +502,9 @@ public class DistributedUpscaleTaskProcessor(
 
         using IServiceScope scope = scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        PersistedTask? dbTask = await dbContext.PersistedTasks.FirstOrDefaultAsync(t => t.Id == taskId);
+        PersistedTask? dbTask = await dbContext.PersistedTasks.FirstOrDefaultAsync(t =>
+            t.Id == taskId
+        );
         if (dbTask == null)
         {
             return;
@@ -433,7 +513,11 @@ public class DistributedUpscaleTaskProcessor(
         bool repairSuccess = true;
         if (dbTask.Data is RepairUpscaleTask repairTask)
         {
-            repairSuccess = await HandleRepairTaskCompletion(repairTask, dbTask, scope.ServiceProvider);
+            repairSuccess = await HandleRepairTaskCompletion(
+                repairTask,
+                dbTask,
+                scope.ServiceProvider
+            );
         }
 
         if (repairSuccess)
@@ -449,8 +533,11 @@ public class DistributedUpscaleTaskProcessor(
     ///     Handles the completion of a repair task by merging the upscaled missing pages back into the original CBZ.
     ///     Returns true if the repair was completed successfully, false otherwise.
     /// </summary>
-    private async Task<bool> HandleRepairTaskCompletion(RepairUpscaleTask repairTask, PersistedTask persistedTask,
-        IServiceProvider services)
+    private async Task<bool> HandleRepairTaskCompletion(
+        RepairUpscaleTask repairTask,
+        PersistedTask persistedTask,
+        IServiceProvider services
+    )
     {
         var logger = services.GetRequiredService<ILogger<DistributedUpscaleTaskProcessor>>();
         var dbContext = services.GetRequiredService<ApplicationDbContext>();
@@ -459,21 +546,27 @@ public class DistributedUpscaleTaskProcessor(
 
         try
         {
-            Chapter? chapter = await dbContext.Chapters
-                .Include(c => c.Manga)
+            Chapter? chapter = await dbContext
+                .Chapters.Include(c => c.Manga)
                 .ThenInclude(m => m.Library)
                 .FirstOrDefaultAsync(c => c.Id == repairTask.ChapterId);
 
             if (chapter == null)
             {
-                logger.LogError("Chapter {chapterId} not found for repair task {taskId}", repairTask.ChapterId,
-                    persistedTask.Id);
+                logger.LogError(
+                    "Chapter {chapterId} not found for repair task {taskId}",
+                    repairTask.ChapterId,
+                    persistedTask.Id
+                );
                 return false;
             }
 
             if (chapter.UpscaledFullPath == null)
             {
-                logger.LogError("Upscaled path not set for chapter {chapterId}", repairTask.ChapterId);
+                logger.LogError(
+                    "Upscaled path not set for chapter {chapterId}",
+                    repairTask.ChapterId
+                );
                 return false;
             }
 
@@ -483,7 +576,10 @@ public class DistributedUpscaleTaskProcessor(
             {
                 if (!remoteRepairStates.TryGetValue(persistedTask.Id, out repairState))
                 {
-                    logger.LogError("No repair state found for repair task {taskId}", persistedTask.Id);
+                    logger.LogError(
+                        "No repair state found for repair task {taskId}",
+                        persistedTask.Id
+                    );
                     return false;
                 }
             }
@@ -492,29 +588,42 @@ public class DistributedUpscaleTaskProcessor(
             string originalPath = chapter.NotUpscaledFullPath;
             string upscaledPath = chapter.UpscaledFullPath;
 
-            PageDifferenceResult differences = metadataHandling.AnalyzePageDifferences(originalPath, upscaledPath);
+            PageDifferenceResult differences = metadataHandling.AnalyzePageDifferences(
+                originalPath,
+                upscaledPath
+            );
             if (differences.AreEqual)
             {
                 logger.LogInformation(
                     "Chapter \"{chapterFileName}\" of {seriesTitle} no longer needs repair, marking as completed",
-                    chapter.FileName, chapter.Manga.PrimaryTitle);
+                    chapter.FileName,
+                    chapter.Manga.PrimaryTitle
+                );
                 // Clean up repair state since repair is no longer needed
                 CleanupRepairFiles(persistedTask.Id, logger);
                 return true;
             }
 
             // Verify the upscaled missing pages file exists
-            if (string.IsNullOrEmpty(repairState.UpscaledMissingPagesCbzPath) ||
-                !File.Exists(repairState.UpscaledMissingPagesCbzPath))
+            if (
+                string.IsNullOrEmpty(repairState.UpscaledMissingPagesCbzPath)
+                || !File.Exists(repairState.UpscaledMissingPagesCbzPath)
+            )
             {
-                logger.LogError("Upscaled missing pages CBZ not found for repair task {taskId}: {path}",
-                    persistedTask.Id, repairState.UpscaledMissingPagesCbzPath);
+                logger.LogError(
+                    "Upscaled missing pages CBZ not found for repair task {taskId}: {path}",
+                    persistedTask.Id,
+                    repairState.UpscaledMissingPagesCbzPath
+                );
                 return false;
             }
 
             if (repairState.RepairContext is null)
             {
-                logger.LogError("No RepairContext found for repair task {taskId}", persistedTask.Id);
+                logger.LogError(
+                    "No RepairContext found for repair task {taskId}",
+                    persistedTask.Id
+                );
                 return false;
             }
 
@@ -529,14 +638,20 @@ public class DistributedUpscaleTaskProcessor(
 
                 logger.LogInformation(
                     "Successfully completed remote repair of chapter \"{chapterFileName}\" of {seriesTitle}",
-                    chapter.FileName, chapter.Manga.PrimaryTitle);
+                    chapter.FileName,
+                    chapter.Manga.PrimaryTitle
+                );
 
                 var chapterChangedNotifier = services.GetRequiredService<IChapterChangedNotifier>();
                 _ = chapterChangedNotifier.Notify(chapter, true);
 
                 // Apply any title changes that happened in the meantime
                 var metadataChanger = services.GetRequiredService<IMangaMetadataChanger>();
-                metadataChanger.ApplyMangaTitleToUpscaled(chapter, chapter.Manga.PrimaryTitle, upscaledPath);
+                metadataChanger.ApplyMangaTitleToUpscaled(
+                    chapter,
+                    chapter.Manga.PrimaryTitle,
+                    upscaledPath
+                );
 
                 return true;
             }
@@ -575,26 +690,38 @@ public class DistributedUpscaleTaskProcessor(
                 }
                 catch (Exception ex)
                 {
-                    logger.LogDebug(ex, "RepairContext dispose threw, continuing cleanup for task {taskId}", taskId);
+                    logger.LogDebug(
+                        ex,
+                        "RepairContext dispose threw, continuing cleanup for task {taskId}",
+                        taskId
+                    );
                 }
 
                 remoteRepairStates.Remove(taskId);
             }
 
-            if (!string.IsNullOrEmpty(repairState.PreparedMissingPagesCbzPath) &&
-                File.Exists(repairState.PreparedMissingPagesCbzPath))
+            if (
+                !string.IsNullOrEmpty(repairState.PreparedMissingPagesCbzPath)
+                && File.Exists(repairState.PreparedMissingPagesCbzPath)
+            )
             {
                 File.Delete(repairState.PreparedMissingPagesCbzPath);
-                logger.LogDebug("Cleaned up prepared missing pages CBZ: {path}",
-                    repairState.PreparedMissingPagesCbzPath);
+                logger.LogDebug(
+                    "Cleaned up prepared missing pages CBZ: {path}",
+                    repairState.PreparedMissingPagesCbzPath
+                );
             }
 
-            if (!string.IsNullOrEmpty(repairState.UpscaledMissingPagesCbzPath) &&
-                File.Exists(repairState.UpscaledMissingPagesCbzPath))
+            if (
+                !string.IsNullOrEmpty(repairState.UpscaledMissingPagesCbzPath)
+                && File.Exists(repairState.UpscaledMissingPagesCbzPath)
+            )
             {
                 File.Delete(repairState.UpscaledMissingPagesCbzPath);
-                logger.LogDebug("Cleaned up upscaled missing pages CBZ: {path}",
-                    repairState.UpscaledMissingPagesCbzPath);
+                logger.LogDebug(
+                    "Cleaned up upscaled missing pages CBZ: {path}",
+                    repairState.UpscaledMissingPagesCbzPath
+                );
             }
         }
         catch (Exception ex)
@@ -607,10 +734,16 @@ public class DistributedUpscaleTaskProcessor(
     {
         using (IServiceScope scope = scopeFactory.CreateScope())
         {
-            var logger = scope.ServiceProvider.GetRequiredService<ILogger<DistributedUpscaleTaskProcessor>>();
+            var logger = scope.ServiceProvider.GetRequiredService<
+                ILogger<DistributedUpscaleTaskProcessor>
+            >();
             if (!string.IsNullOrEmpty(errorMessage))
             {
-                logger.LogWarning("Task {taskId} failed on remote worker: {errorMessage}", taskId, errorMessage);
+                logger.LogWarning(
+                    "Task {taskId} failed on remote worker: {errorMessage}",
+                    taskId,
+                    errorMessage
+                );
             }
         }
 
@@ -626,7 +759,9 @@ public class DistributedUpscaleTaskProcessor(
 
         using IServiceScope dbScope = scopeFactory.CreateScope();
         var dbContext = dbScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        PersistedTask? localTask = await dbContext.PersistedTasks.FirstOrDefaultAsync(t => t.Id == taskId);
+        PersistedTask? localTask = await dbContext.PersistedTasks.FirstOrDefaultAsync(t =>
+            t.Id == taskId
+        );
         if (localTask == null)
         {
             return; // Task not found in the database, nothing to do
@@ -646,7 +781,8 @@ public class DistributedUpscaleTaskProcessor(
         RepairUpscaleTask repairTask,
         PersistedTask persistedTask,
         IServiceProvider services,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
         var logger = services.GetRequiredService<ILogger<DistributedUpscaleTaskProcessor>>();
         var dbContext = services.GetRequiredService<ApplicationDbContext>();
@@ -654,46 +790,63 @@ public class DistributedUpscaleTaskProcessor(
         try
         {
             // Load chapter and upscaler profile
-            Chapter? chapter = await dbContext.Chapters
-                .Include(c => c.Manga)
+            Chapter? chapter = await dbContext
+                .Chapters.Include(c => c.Manga)
                 .ThenInclude(m => m.Library)
                 .ThenInclude(l => l.UpscalerProfile)
                 .Include(c => c.UpscalerProfile)
                 .FirstOrDefaultAsync(c => c.Id == repairTask.ChapterId, cancellationToken);
 
-            UpscalerProfile? upscalerProfile = chapter?.UpscalerProfile ??
-                                               await dbContext.UpscalerProfiles.FirstOrDefaultAsync(
-                                                   c => c.Id == repairTask.UpscalerProfileId, cancellationToken);
+            UpscalerProfile? upscalerProfile =
+                chapter?.UpscalerProfile
+                ?? await dbContext.UpscalerProfiles.FirstOrDefaultAsync(
+                    c => c.Id == repairTask.UpscalerProfileId,
+                    cancellationToken
+                );
 
             if (chapter == null || upscalerProfile == null)
             {
                 logger.LogError(
                     "Chapter ({chapterPath}) or upscaler profile ({profileName}, id: {profileId}) not found",
-                    chapter?.RelativePath ?? "Not found", upscalerProfile?.Name ?? "Not found",
-                    repairTask.UpscalerProfileId);
+                    chapter?.RelativePath ?? "Not found",
+                    upscalerProfile?.Name ?? "Not found",
+                    repairTask.UpscalerProfileId
+                );
                 return false;
             }
 
             if (chapter.UpscaledFullPath == null)
             {
-                logger.LogError("Upscaled library path of library {libraryName} ({libraryId}) not set",
-                    chapter.Manga?.Library?.Name ?? "Unknown", chapter.Manga?.Library?.Id);
+                logger.LogError(
+                    "Upscaled library path of library {libraryName} ({libraryId}) not set",
+                    chapter.Manga?.Library?.Name ?? "Unknown",
+                    chapter.Manga?.Library?.Id
+                );
                 return false;
             }
 
             string upscaleTargetPath = chapter.UpscaledFullPath;
             string currentStoragePath = chapter.NotUpscaledFullPath;
 
-            logger.LogInformation("Preparing remote repair of chapter \"{chapterFileName}\" of {seriesTitle}",
-                chapter.FileName, chapter.Manga.PrimaryTitle);
+            logger.LogInformation(
+                "Preparing remote repair of chapter \"{chapterFileName}\" of {seriesTitle}",
+                chapter.FileName,
+                chapter.Manga.PrimaryTitle
+            );
 
             var metadataHandling = services.GetRequiredService<IMetadataHandlingService>();
-            var differences = metadataHandling.AnalyzePageDifferences(currentStoragePath, upscaleTargetPath);
+            var differences = metadataHandling.AnalyzePageDifferences(
+                currentStoragePath,
+                upscaleTargetPath
+            );
 
             if (differences.AreEqual)
             {
-                logger.LogInformation("Chapter \"{chapterFileName}\" of {seriesTitle} no longer needs repair",
-                    chapter.FileName, chapter.Manga.PrimaryTitle);
+                logger.LogInformation(
+                    "Chapter \"{chapterFileName}\" of {seriesTitle} no longer needs repair",
+                    chapter.FileName,
+                    chapter.Manga.PrimaryTitle
+                );
 
                 // Mark as completed and don't delegate to remote workers
                 persistedTask.Status = PersistedTaskStatus.Completed;
@@ -707,7 +860,9 @@ public class DistributedUpscaleTaskProcessor(
             {
                 logger.LogWarning(
                     "Chapter \"{chapterFileName}\" of {seriesTitle} cannot be repaired - will fall back to full re-upscale",
-                    chapter.FileName, chapter.Manga.PrimaryTitle);
+                    chapter.FileName,
+                    chapter.Manga.PrimaryTitle
+                );
 
                 // Fall back to full upscale by creating a regular UpscaleTask and enqueuing it
                 var fallbackTask = new UpscaleTask(chapter, upscalerProfile);
@@ -723,8 +878,12 @@ public class DistributedUpscaleTaskProcessor(
 
             // Prepare the repair context for remote processing
             var repairService = services.GetRequiredService<IRepairService>();
-            RepairContext repairContext =
-                repairService.PrepareRepairContext(differences, currentStoragePath, upscaleTargetPath, logger);
+            RepairContext repairContext = repairService.PrepareRepairContext(
+                differences,
+                currentStoragePath,
+                upscaleTargetPath,
+                logger
+            );
 
             if (differences.MissingPages.Count > 0)
             {
@@ -733,7 +892,7 @@ public class DistributedUpscaleTaskProcessor(
                 {
                     PreparedMissingPagesCbzPath = repairContext.MissingPagesCbz,
                     UpscaledMissingPagesCbzPath = repairContext.UpscaledMissingCbz,
-                    RepairContext = repairContext
+                    RepairContext = repairContext,
                 };
 
                 using (_lock.EnterScope())
@@ -747,8 +906,10 @@ public class DistributedUpscaleTaskProcessor(
                 persistedTask.Data.Progress.ProgressUnit = "pages";
                 _ = StatusChanged?.Invoke(persistedTask);
 
-                logger.LogInformation("Prepared {missingCount} missing pages for remote upscaling",
-                    differences.MissingPages.Count);
+                logger.LogInformation(
+                    "Prepared {missingCount} missing pages for remote upscaling",
+                    differences.MissingPages.Count
+                );
 
                 // Task is ready to be delegated to remote workers
                 return true;
@@ -764,14 +925,20 @@ public class DistributedUpscaleTaskProcessor(
                 await dbContext.SaveChangesAsync(cancellationToken);
                 _ = StatusChanged?.Invoke(persistedTask);
 
-                logger.LogInformation("Completed repair with no missing pages (only removed {extraCount} extra pages)",
-                    differences.ExtraPages.Count);
+                logger.LogInformation(
+                    "Completed repair with no missing pages (only removed {extraCount} extra pages)",
+                    differences.ExtraPages.Count
+                );
                 return false;
             }
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to prepare repair task {TaskId} for remote processing", persistedTask.Id);
+            logger.LogError(
+                ex,
+                "Failed to prepare repair task {TaskId} for remote processing",
+                persistedTask.Id
+            );
             return false;
         }
     }

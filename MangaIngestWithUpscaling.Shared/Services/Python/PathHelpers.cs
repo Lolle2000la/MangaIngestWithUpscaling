@@ -2,7 +2,6 @@
 
 internal static class PathHelpers
 {
-
     public static bool ExistsOnPath(string fileName)
     {
         return GetFullPath(fileName) != null;

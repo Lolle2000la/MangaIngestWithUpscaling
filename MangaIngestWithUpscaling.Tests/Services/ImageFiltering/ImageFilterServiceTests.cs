@@ -1,9 +1,9 @@
+using System.IO.Compression;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.ImageFiltering;
 using Microsoft.Extensions.Logging;
 using NetVips;
 using NSubstitute;
-using System.IO.Compression;
 
 namespace MangaIngestWithUpscaling.Tests.Services.ImageFiltering;
 
@@ -45,8 +45,11 @@ public class ImageFilterServiceTests : IDisposable
         var filters = new List<FilteredImage>();
 
         // Act
-        var result =
-            await _service.ApplyFiltersToChapterAsync(nonExistentPath, filters, TestContext.Current.CancellationToken);
+        var result = await _service.ApplyFiltersToChapterAsync(
+            nonExistentPath,
+            filters,
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.Contains($"Original CBZ file not found: {nonExistentPath}", result.ErrorMessages);
@@ -62,11 +65,18 @@ public class ImageFilterServiceTests : IDisposable
         var filters = new List<FilteredImage>();
 
         // Act
-        var result = await _service.ApplyFiltersToChapterAsync(_testCbzPath, nonExistentUpscaledPath, filters,
-            TestContext.Current.CancellationToken);
+        var result = await _service.ApplyFiltersToChapterAsync(
+            _testCbzPath,
+            nonExistentUpscaledPath,
+            filters,
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
-        Assert.Contains($"Upscaled CBZ file not found: {nonExistentUpscaledPath}", result.ErrorMessages);
+        Assert.Contains(
+            $"Upscaled CBZ file not found: {nonExistentUpscaledPath}",
+            result.ErrorMessages
+        );
         Assert.Equal(0, result.FilteredCount);
     }
 
@@ -78,8 +88,11 @@ public class ImageFilterServiceTests : IDisposable
         var filters = new List<FilteredImage>();
 
         // Act
-        var result =
-            await _service.ApplyFiltersToChapterAsync(_testCbzPath, filters, TestContext.Current.CancellationToken);
+        var result = await _service.ApplyFiltersToChapterAsync(
+            _testCbzPath,
+            filters,
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.Equal(0, result.FilteredCount);
@@ -94,12 +107,20 @@ public class ImageFilterServiceTests : IDisposable
         // Arrange
         var filters = new List<FilteredImage>
         {
-            new() { OriginalFileName = "nonexistent.jpg", ContentHash = "somehash", Library = CreateTestLibrary() }
+            new()
+            {
+                OriginalFileName = "nonexistent.jpg",
+                ContentHash = "somehash",
+                Library = CreateTestLibrary(),
+            },
         };
 
         // Act
-        var result =
-            await _service.ApplyFiltersToChapterAsync(_testCbzPath, filters, TestContext.Current.CancellationToken);
+        var result = await _service.ApplyFiltersToChapterAsync(
+            _testCbzPath,
+            filters,
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.Empty(result.ErrorMessages);
@@ -277,8 +298,13 @@ public class ImageFilterServiceTests : IDisposable
         const string description = "Test description";
 
         // Act
-        FilteredImage result =
-            await _service.CreateFilteredImageFromBytesAsync(imageBytes, fileName, library, mimeType, description);
+        FilteredImage result = await _service.CreateFilteredImageFromBytesAsync(
+            imageBytes,
+            fileName,
+            library,
+            mimeType,
+            description
+        );
 
         // Assert
         Assert.NotNull(result);
@@ -302,7 +328,11 @@ public class ImageFilterServiceTests : IDisposable
         var library = CreateTestLibrary();
 
         // Act
-        var result = await _service.CreateFilteredImageFromBytesAsync(imageBytes, fileName, library);
+        var result = await _service.CreateFilteredImageFromBytesAsync(
+            imageBytes,
+            fileName,
+            library
+        );
 
         // Assert
         Assert.NotNull(result);
@@ -319,8 +349,12 @@ public class ImageFilterServiceTests : IDisposable
 
         // Act & Assert
         await Assert.ThrowsAsync<FileNotFoundException>(() =>
-            _service.CreateFilteredImageFromFileAsync(nonExistentPath, library,
-                cancellationToken: TestContext.Current.CancellationToken));
+            _service.CreateFilteredImageFromFileAsync(
+                nonExistentPath,
+                library,
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
     }
 
     [Fact]
@@ -331,8 +365,12 @@ public class ImageFilterServiceTests : IDisposable
         var library = CreateTestLibrary();
 
         // Act
-        var result = await _service.CreateFilteredImageFromFileAsync(_testImagePath, library, "Test description",
-            TestContext.Current.CancellationToken);
+        var result = await _service.CreateFilteredImageFromFileAsync(
+            _testImagePath,
+            library,
+            "Test description",
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.NotNull(result);
@@ -353,8 +391,13 @@ public class ImageFilterServiceTests : IDisposable
 
         // Act & Assert
         await Assert.ThrowsAsync<FileNotFoundException>(() =>
-            _service.CreateFilteredImageFromCbzAsync(nonExistentPath, "image.jpg", library,
-                cancellationToken: TestContext.Current.CancellationToken));
+            _service.CreateFilteredImageFromCbzAsync(
+                nonExistentPath,
+                "image.jpg",
+                library,
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
     }
 
     [Fact]
@@ -366,8 +409,13 @@ public class ImageFilterServiceTests : IDisposable
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
-            _service.CreateFilteredImageFromCbzAsync(_testCbzPath, "nonexistent.jpg", library,
-                cancellationToken: TestContext.Current.CancellationToken));
+            _service.CreateFilteredImageFromCbzAsync(
+                _testCbzPath,
+                "nonexistent.jpg",
+                library,
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
 
         Assert.Contains("not found in CBZ file", exception.Message);
     }
@@ -380,9 +428,13 @@ public class ImageFilterServiceTests : IDisposable
         var library = CreateTestLibrary();
 
         // Act
-        FilteredImage result =
-            await _service.CreateFilteredImageFromCbzAsync(_testCbzPath, "test_image.jpg", library, "Test description",
-                TestContext.Current.CancellationToken);
+        FilteredImage result = await _service.CreateFilteredImageFromCbzAsync(
+            _testCbzPath,
+            "test_image.jpg",
+            library,
+            "Test description",
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.NotNull(result);
@@ -451,11 +503,29 @@ public class ImageFilterServiceTests : IDisposable
         jpeg.AddRange(new byte[] { 0xFF, 0xD8 });
 
         // APP0 marker (JFIF)
-        jpeg.AddRange(new byte[]
-        {
-            0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x48, 0x00, 0x48, 0x00,
-            0x00
-        });
+        jpeg.AddRange(
+            new byte[]
+            {
+                0xFF,
+                0xE0,
+                0x00,
+                0x10,
+                0x4A,
+                0x46,
+                0x49,
+                0x46,
+                0x00,
+                0x01,
+                0x01,
+                0x01,
+                0x00,
+                0x48,
+                0x00,
+                0x48,
+                0x00,
+                0x00,
+            }
+        );
 
         // DQT marker (quantization table)
         jpeg.AddRange(new byte[] { 0xFF, 0xDB, 0x00, 0x43, 0x00 });
@@ -470,18 +540,70 @@ public class ImageFilterServiceTests : IDisposable
         jpeg.AddRange(qtable);
 
         // SOF0 marker (start of frame)
-        jpeg.AddRange(new byte[]
-        {
-            0xFF, 0xC0, 0x00, 0x11, 0x08, 0x00, 0x20, 0x00, 0x20, 0x01, 0x01, 0x11, 0x00, 0x02, 0x11, 0x01, 0x03,
-            0x11, 0x01
-        });
+        jpeg.AddRange(
+            new byte[]
+            {
+                0xFF,
+                0xC0,
+                0x00,
+                0x11,
+                0x08,
+                0x00,
+                0x20,
+                0x00,
+                0x20,
+                0x01,
+                0x01,
+                0x11,
+                0x00,
+                0x02,
+                0x11,
+                0x01,
+                0x03,
+                0x11,
+                0x01,
+            }
+        );
 
         // DHT marker (Huffman table) - simplified
-        jpeg.AddRange(new byte[]
-        {
-            0xFF, 0xC4, 0x00, 0x1A, 0x00, 0x00, 0x01, 0x05, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B
-        });
+        jpeg.AddRange(
+            new byte[]
+            {
+                0xFF,
+                0xC4,
+                0x00,
+                0x1A,
+                0x00,
+                0x00,
+                0x01,
+                0x05,
+                0x01,
+                0x01,
+                0x01,
+                0x01,
+                0x01,
+                0x01,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x01,
+                0x02,
+                0x03,
+                0x04,
+                0x05,
+                0x06,
+                0x07,
+                0x08,
+                0x09,
+                0x0A,
+                0x0B,
+            }
+        );
 
         // SOS marker (start of scan)
         jpeg.AddRange(new byte[] { 0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x00, 0x3F, 0x00 });
@@ -507,6 +629,11 @@ public class ImageFilterServiceTests : IDisposable
 
     private static Library CreateTestLibrary()
     {
-        return new Library { Id = 1, Name = "Test Library", IngestPath = "/test/path" };
+        return new Library
+        {
+            Id = 1,
+            Name = "Test Library",
+            IngestPath = "/test/path",
+        };
     }
 }

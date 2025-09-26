@@ -14,13 +14,15 @@ namespace MangaIngestWithUpscaling.Migrations
                 name: "KavitaConfig_NotUpscaledMountPoint",
                 table: "Libraries",
                 type: "TEXT",
-                nullable: true);
+                nullable: true
+            );
 
             migrationBuilder.AddColumn<string>(
                 name: "KavitaConfig_UpscaledMountPoint",
                 table: "Libraries",
                 type: "TEXT",
-                nullable: true);
+                nullable: true
+            );
         }
 
         /// <inheritdoc />
@@ -28,11 +30,13 @@ namespace MangaIngestWithUpscaling.Migrations
         {
             migrationBuilder.DropColumn(
                 name: "KavitaConfig_NotUpscaledMountPoint",
-                table: "Libraries");
+                table: "Libraries"
+            );
 
             migrationBuilder.DropColumn(
                 name: "KavitaConfig_UpscaledMountPoint",
-                table: "Libraries");
+                table: "Libraries"
+            );
         }
     }
 }

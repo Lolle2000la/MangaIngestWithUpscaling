@@ -3,9 +3,8 @@ using Microsoft.Extensions.Options;
 
 namespace MangaIngestWithUpscaling.Services.Integrations.Kavita;
 
-public class KavitaClient(
-    HttpClient client,
-    IOptions<KavitaConfiguration> configuration) : IKavitaClient
+public class KavitaClient(HttpClient client, IOptions<KavitaConfiguration> configuration)
+    : IKavitaClient
 {
     /// <inheritdoc />
     public async Task ScanFolder(string folderPath)
@@ -15,8 +14,10 @@ public class KavitaClient(
             throw new InvalidOperationException("Kavita API key is not configured.");
         }
 
-        await client.PostAsJsonAsync("/api/Library/scan-folder",
-            new ScanFolderRequest { ApiKey = configuration.Value.ApiKey, FolderPath = folderPath });
+        await client.PostAsJsonAsync(
+            "/api/Library/scan-folder",
+            new ScanFolderRequest { ApiKey = configuration.Value.ApiKey, FolderPath = folderPath }
+        );
     }
 }
 

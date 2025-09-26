@@ -1,3 +1,5 @@
+using System.Data.SQLite;
+using System.Security.Claims;
 using MangaIngestWithUpscaling.Api;
 using MangaIngestWithUpscaling.Api.Auth;
 using MangaIngestWithUpscaling.Components;
@@ -23,12 +25,9 @@ using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using MudBlazor.Services;
 using MudBlazor.Translations;
 using Serilog;
-using System.Data.SQLite;
-using System.Security.Claims;
 
 // Configure the HTTP client factory to use HTTP/2 for unencrypted connections
 AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
-
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -43,59 +42,69 @@ if (!builder.Environment.IsDevelopment())
         });
 
         options.ListenAnyIP(8080);
-        options.ListenAnyIP(8081, listenOptions =>
-        {
-            // fallback to allow HTTP/2 only, necessary for gRPC
-            listenOptions.Protocols = HttpProtocols.Http2;
-        });
+        options.ListenAnyIP(
+            8081,
+            listenOptions =>
+            {
+                // fallback to allow HTTP/2 only, necessary for gRPC
+                listenOptions.Protocols = HttpProtocols.Http2;
+            }
+        );
     });
 }
-
 
 builder.Configuration.AddEnvironmentVariables("Ingest_");
 
 builder.RegisterConfig(); // Register the configuration classes
 
-string connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ??
-                          throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+string connectionString =
+    builder.Configuration.GetConnectionString("DefaultConnection")
+    ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
 
 SQLiteConnectionStringBuilder sqliteConnectionStringBuilder = new(connectionString);
 
-var loggingConnectionString = builder.Configuration.GetConnectionString("LoggingConnection") ?? "Data Source=logs.db";
+var loggingConnectionString =
+    builder.Configuration.GetConnectionString("LoggingConnection") ?? "Data Source=logs.db";
 
-var loggingConnectionReadOnlyStringBuilder = new SQLiteConnectionStringBuilder(loggingConnectionString);
+var loggingConnectionReadOnlyStringBuilder = new SQLiteConnectionStringBuilder(
+    loggingConnectionString
+);
 var loggingConnectionReadOnlyString = loggingConnectionReadOnlyStringBuilder.ConnectionString;
 
 //Log.Logger = new LoggerConfiguration()
 //    .ReadFrom.Configuration(builder.Configuration)
 //    .CreateLogger();
 
-builder.Services.AddSerilog((services, lc) => lc
-    .ReadFrom.Configuration(builder.Configuration)
-    .ReadFrom.Services(services)
-    .Enrich.FromLogContext()
-    .WriteTo.Console()
-    .WriteTo.SQLite(
-        Path.GetFullPath(loggingConnectionReadOnlyStringBuilder.DataSource),
-        tableName: "Logs",
-        retentionPeriod: TimeSpan.FromDays(7)));
+builder.Services.AddSerilog(
+    (services, lc) =>
+        lc
+            .ReadFrom.Configuration(builder.Configuration)
+            .ReadFrom.Services(services)
+            .Enrich.FromLogContext()
+            .WriteTo.Console()
+            .WriteTo.SQLite(
+                Path.GetFullPath(loggingConnectionReadOnlyStringBuilder.DataSource),
+                tableName: "Logs",
+                retentionPeriod: TimeSpan.FromDays(7)
+            )
+);
 
 // Configure Forwarded Headers
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
-    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto |
-                               ForwardedHeaders.XForwardedHost;
+    options.ForwardedHeaders =
+        ForwardedHeaders.XForwardedFor
+        | ForwardedHeaders.XForwardedProto
+        | ForwardedHeaders.XForwardedHost;
     // If the proxy isn't on localhost from the app container's perspective
     options.KnownProxies.Clear();
     options.KnownIPNetworks.Clear();
 });
 
 // Add services to the container.
-builder.Services.AddRazorComponents()
-    .AddInteractiveServerComponents();
+builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 
 builder.Services.AddGrpc();
-
 
 builder.Services.AddMudServices();
 builder.Services.AddMudTranslations();
@@ -107,7 +116,10 @@ builder.Services.AddLocalization();
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddScoped<IdentityUserAccessor>();
 builder.Services.AddScoped<IdentityRedirectManager>();
-builder.Services.AddScoped<AuthenticationStateProvider, IdentityRevalidatingAuthenticationStateProvider>();
+builder.Services.AddScoped<
+    AuthenticationStateProvider,
+    IdentityRevalidatingAuthenticationStateProvider
+>();
 
 // Configure Authentication
 var authBuilder = builder.Services.AddAuthentication(options =>
@@ -126,7 +138,8 @@ authBuilder.AddIdentityCookies();
 // Conditionally add OIDC authentication
 if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
 {
-    authBuilder.AddOpenIdConnect(OpenIdConnectDefaults.AuthenticationScheme,
+    authBuilder.AddOpenIdConnect(
+        OpenIdConnectDefaults.AuthenticationScheme,
         options => // Use the constant for scheme name, "OIDC"
         {
             builder.Configuration.GetSection("OIDC").Bind(options);
@@ -143,21 +156,27 @@ if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
                 OnRedirectToIdentityProvider = ctx =>
                 {
                     // Ensure redirect URIs use HTTPS when behind a reverse proxy
-                    if (ctx.Request.Headers.ContainsKey("X-Forwarded-Proto") &&
-                        ctx.Request.Headers["X-Forwarded-Proto"].ToString().Contains("https"))
+                    if (
+                        ctx.Request.Headers.ContainsKey("X-Forwarded-Proto")
+                        && ctx.Request.Headers["X-Forwarded-Proto"].ToString().Contains("https")
+                    )
                     {
-                        ctx.ProtocolMessage.RedirectUri =
-                            ctx.ProtocolMessage.RedirectUri?.Replace("http://", "https://");
+                        ctx.ProtocolMessage.RedirectUri = ctx.ProtocolMessage.RedirectUri?.Replace(
+                            "http://",
+                            "https://"
+                        );
                     }
 
                     return Task.CompletedTask;
                 },
                 OnTokenValidated = async ctx =>
                 {
-                    var signInManager = ctx.HttpContext.RequestServices
-                        .GetRequiredService<SignInManager<ApplicationUser>>();
-                    var userManager =
-                        ctx.HttpContext.RequestServices.GetRequiredService<UserManager<ApplicationUser>>();
+                    var signInManager = ctx.HttpContext.RequestServices.GetRequiredService<
+                        SignInManager<ApplicationUser>
+                    >();
+                    var userManager = ctx.HttpContext.RequestServices.GetRequiredService<
+                        UserManager<ApplicationUser>
+                    >();
 
                     if (ctx.Principal == null)
                     {
@@ -165,9 +184,12 @@ if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
                         return;
                     }
 
-                    string? emailClaim = ctx.Principal.FindFirstValue(ClaimTypes.Email) ??
-                                         ctx.Principal.FindFirstValue("email");
-                    string? nameIdentifier = ctx.Principal.FindFirstValue(ClaimTypes.NameIdentifier);
+                    string? emailClaim =
+                        ctx.Principal.FindFirstValue(ClaimTypes.Email)
+                        ?? ctx.Principal.FindFirstValue("email");
+                    string? nameIdentifier = ctx.Principal.FindFirstValue(
+                        ClaimTypes.NameIdentifier
+                    );
 
                     if (emailClaim != null && nameIdentifier != null)
                     {
@@ -176,28 +198,42 @@ if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
                         {
                             user = new ApplicationUser
                             {
-                                UserName = emailClaim, Email = emailClaim, EmailConfirmed = true
+                                UserName = emailClaim,
+                                Email = emailClaim,
+                                EmailConfirmed = true,
                             };
                             IdentityResult createUserResult = await userManager.CreateAsync(user);
                             if (!createUserResult.Succeeded)
                             {
                                 ctx.Fail(
-                                    $"Failed to create user: {string.Join(", ", createUserResult.Errors.Select(e => e.Description))}");
+                                    $"Failed to create user: {string.Join(", ", createUserResult.Errors.Select(e => e.Description))}"
+                                );
                                 return;
                             }
                         }
 
-                        var externalLoginInfo = new UserLoginInfo(ctx.Scheme.Name, nameIdentifier, ctx.Scheme.Name);
+                        var externalLoginInfo = new UserLoginInfo(
+                            ctx.Scheme.Name,
+                            nameIdentifier,
+                            ctx.Scheme.Name
+                        );
                         IList<UserLoginInfo> logins = await userManager.GetLoginsAsync(user);
-                        if (!logins.Any(l =>
-                                l.LoginProvider == externalLoginInfo.LoginProvider &&
-                                l.ProviderKey == externalLoginInfo.ProviderKey))
+                        if (
+                            !logins.Any(l =>
+                                l.LoginProvider == externalLoginInfo.LoginProvider
+                                && l.ProviderKey == externalLoginInfo.ProviderKey
+                            )
+                        )
                         {
-                            IdentityResult addLoginResult = await userManager.AddLoginAsync(user, externalLoginInfo);
+                            IdentityResult addLoginResult = await userManager.AddLoginAsync(
+                                user,
+                                externalLoginInfo
+                            );
                             if (!addLoginResult.Succeeded)
                             {
                                 ctx.Fail(
-                                    $"Failed to add OIDC login to user: {string.Join(", ", addLoginResult.Errors.Select(e => e.Description))}");
+                                    $"Failed to add OIDC login to user: {string.Join(", ", addLoginResult.Errors.Select(e => e.Description))}"
+                                );
                                 return;
                             }
                         }
@@ -209,24 +245,34 @@ if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
                         ctx.Fail("Email or NameIdentifier claim not found.");
                         return;
                     }
-                }
+                },
             };
-        });
+        }
+    );
 }
 
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
-    options.UseSqlite(connectionString, builder =>
-    {
-        builder.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
-    }));
+    options.UseSqlite(
+        connectionString,
+        builder =>
+        {
+            builder.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+        }
+    )
+);
 builder.Services.AddDbContext<LoggingDbContext>(options =>
-    options.UseSqlite(loggingConnectionReadOnlyString, builder =>
-    {
-        builder.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
-    }));
+    options.UseSqlite(
+        loggingConnectionReadOnlyString,
+        builder =>
+        {
+            builder.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+        }
+    )
+);
 builder.Services.AddDatabaseDeveloperPageExceptionFilter();
 
-builder.Services.AddIdentityCore<ApplicationUser>(options =>
+builder
+    .Services.AddIdentityCore<ApplicationUser>(options =>
     {
         options.SignIn.RequireConfirmedAccount = false;
         options.SignIn.RequireConfirmedEmail = false;
@@ -236,7 +282,8 @@ builder.Services.AddIdentityCore<ApplicationUser>(options =>
     .AddSignInManager()
     .AddDefaultTokenProviders();
 
-builder.Services.AddDataProtection()
+builder
+    .Services.AddDataProtection()
     .PersistKeysToDbContext<ApplicationDbContext>()
     .SetApplicationName("manga-ingest-with-upscaling");
 
@@ -251,7 +298,6 @@ builder.Services.AddAuthorization(options =>
             .Build();
     }
 });
-
 
 // Add the services used by the app
 builder.Services.RegisterAppServices();
@@ -268,8 +314,9 @@ using (var scope = app.Services.CreateScope())
 
     // Create database backup before .NET 10 upgrade if this is the first time
     var dbPath = Path.GetFullPath(sqliteConnectionStringBuilder.DataSource);
-    string dbDirectory = Path.GetDirectoryName(dbPath) ??
-                         throw new InvalidOperationException("Unable to determine database directory");
+    string dbDirectory =
+        Path.GetDirectoryName(dbPath)
+        ?? throw new InvalidOperationException("Unable to determine database directory");
     var upgradeMarkerFile = Path.Combine(dbDirectory, ".net10-upgrade-complete");
 
     if (!File.Exists(upgradeMarkerFile) && File.Exists(dbPath))
@@ -278,7 +325,10 @@ using (var scope = app.Services.CreateScope())
         {
             var backupPath = dbPath + ".bak";
             File.Copy(dbPath, backupPath, overwrite: false);
-            logger.LogInformation("Created database backup at {BackupPath} before .NET 10 upgrade", backupPath);
+            logger.LogInformation(
+                "Created database backup at {BackupPath} before .NET 10 upgrade",
+                backupPath
+            );
 
             // Also backup the logging database if it exists
             var loggingDbPath = Path.GetFullPath(loggingConnectionReadOnlyStringBuilder.DataSource);
@@ -286,13 +336,18 @@ using (var scope = app.Services.CreateScope())
             {
                 var loggingBackupPath = loggingDbPath + ".bak";
                 File.Copy(loggingDbPath, loggingBackupPath, overwrite: false);
-                logger.LogInformation("Created logging database backup at {BackupPath}", loggingBackupPath);
+                logger.LogInformation(
+                    "Created logging database backup at {BackupPath}",
+                    loggingBackupPath
+                );
             }
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex,
-                "Failed to create database backup before .NET 10 upgrade. Continuing with migration...");
+            logger.LogWarning(
+                ex,
+                "Failed to create database backup before .NET 10 upgrade. Continuing with migration..."
+            );
         }
     }
 
@@ -304,30 +359,41 @@ using (var scope = app.Services.CreateScope())
         // Mark the .NET 10 upgrade as complete
         try
         {
-            await File.WriteAllTextAsync(upgradeMarkerFile,
-                $"Upgrade completed on {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+            await File.WriteAllTextAsync(
+                upgradeMarkerFile,
+                $"Upgrade completed on {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC"
+            );
             logger.LogDebug("Marked .NET 10 upgrade as complete");
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Failed to create upgrade marker file, but migration completed successfully");
+            logger.LogWarning(
+                ex,
+                "Failed to create upgrade marker file, but migration completed successfully"
+            );
         }
 
         // reset any tasks that were "Processing" (e.g. during a crash) back to "Pending"
-        await dbContext.PersistedTasks.Where(task => task.Status == PersistedTaskStatus.Processing)
+        await dbContext
+            .PersistedTasks.Where(task => task.Status == PersistedTaskStatus.Processing)
             .ExecuteUpdateAsync(s =>
-                s.SetProperty(p => p.Status, p => PersistedTaskStatus.Pending));
+                s.SetProperty(p => p.Status, p => PersistedTaskStatus.Pending)
+            );
 
         // Validate and upgrade existing merged chapter records for backward compatibility
         try
         {
-            var backwardCompatibilityService = scope.ServiceProvider.GetRequiredService<MangaIngestWithUpscaling.Services.ChapterMerging.IBackwardCompatibilityService>();
+            var backwardCompatibilityService =
+                scope.ServiceProvider.GetRequiredService<MangaIngestWithUpscaling.Services.ChapterMerging.IBackwardCompatibilityService>();
             await backwardCompatibilityService.ValidateAndUpgradeExistingRecordsAsync();
             logger.LogDebug("Backward compatibility validation completed successfully.");
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Backward compatibility validation failed, but application will continue. Some merge functionality may be affected for existing records.");
+            logger.LogWarning(
+                ex,
+                "Backward compatibility validation failed, but application will continue. Some merge functionality may be affected for existing records."
+            );
         }
     }
     catch (Exception ex)
@@ -341,7 +407,8 @@ using (var scope = app.Services.CreateScope())
     if (upscalerConfig.Value.RemoteOnly)
     {
         logger.LogInformation(
-            "Upscaler is configured to run only on the remote worker, skipping local environment preparation.");
+            "Upscaler is configured to run only on the remote worker, skipping local environment preparation."
+        );
     }
     else
     {
@@ -349,7 +416,8 @@ using (var scope = app.Services.CreateScope())
         if (!pythonService.IsPythonInstalled())
         {
             logger.LogError(
-                "Python is not installed on the system. Please install Python 3.6 or newer and ensure it is available on the system PATH.");
+                "Python is not installed on the system. Please install Python 3.6 or newer and ensure it is available on the system PATH."
+            );
         }
         else
         {
@@ -357,13 +425,16 @@ using (var scope = app.Services.CreateScope())
 
             Directory.CreateDirectory(upscalerConfig.Value.PythonEnvironmentDirectory);
 
-            PythonEnvironment environment =
-                await pythonService.PreparePythonEnvironment(upscalerConfig.Value.PythonEnvironmentDirectory,
-                    upscalerConfig.Value.PreferredGpuBackend, upscalerConfig.Value.ForceAcceptExistingEnvironment);
+            PythonEnvironment environment = await pythonService.PreparePythonEnvironment(
+                upscalerConfig.Value.PythonEnvironmentDirectory,
+                upscalerConfig.Value.PreferredGpuBackend,
+                upscalerConfig.Value.ForceAcceptExistingEnvironment
+            );
             PythonService.Environment = environment;
 
             logger.LogInformation(
-                $"Python environment prepared at {environment.PythonExecutablePath} with {environment.InstalledBackend} backend");
+                $"Python environment prepared at {environment.PythonExecutablePath} with {environment.InstalledBackend} backend"
+            );
         }
 
         // Download the models once at startup instead of on every usage
@@ -372,10 +443,11 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
-app.UseRequestLocalization(new RequestLocalizationOptions()
-    .AddSupportedCultures(new[] { "en-US", "de-DE", "ja" })
-    .AddSupportedUICultures(new[] { "en-US", "de-DE", "ja" }));
-
+app.UseRequestLocalization(
+    new RequestLocalizationOptions()
+        .AddSupportedCultures(new[] { "en-US", "de-DE", "ja" })
+        .AddSupportedUICultures(new[] { "en-US", "de-DE", "ja" })
+);
 
 app.UseAuthentication();
 app.UseAuthorization();
@@ -395,13 +467,11 @@ else
 // For self hosted apps https redirection doesn't work all too well, so we disable it
 //app.UseHttpsRedirection();
 
-
 app.UseAntiforgery();
 
 app.MapApiEndpoints();
 app.MapStaticAssets();
-app.MapRazorComponents<App>()
-    .AddInteractiveServerRenderMode();
+app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 
 // Add additional endpoints required by the Identity /Account Razor components.
 // Only map these if OIDC is NOT enabled, or map them conditionally
@@ -413,13 +483,22 @@ if (!app.Configuration.GetValue<bool>("OIDC:Enabled"))
 // Add OIDC Logout Endpoint if OIDC is enabled
 if (app.Configuration.GetValue<bool>("OIDC:Enabled"))
 {
-    app.MapPost("/Account/LogoutOidc",
-        async (HttpContext context, SignInManager<ApplicationUser> signInManager, string? returnUrl) =>
-        {
-            await signInManager.SignOutAsync();
-            await context.SignOutAsync(OpenIdConnectDefaults.AuthenticationScheme,
-                new AuthenticationProperties { RedirectUri = returnUrl ?? "/" });
-        }).RequireAuthorization();
+    app.MapPost(
+            "/Account/LogoutOidc",
+            async (
+                HttpContext context,
+                SignInManager<ApplicationUser> signInManager,
+                string? returnUrl
+            ) =>
+            {
+                await signInManager.SignOutAsync();
+                await context.SignOutAsync(
+                    OpenIdConnectDefaults.AuthenticationScheme,
+                    new AuthenticationProperties { RedirectUri = returnUrl ?? "/" }
+                );
+            }
+        )
+        .RequireAuthorization();
 }
 
 app.Run();

@@ -13,7 +13,8 @@ namespace MangaIngestWithUpscaling.Migrations
             migrationBuilder.CreateIndex(
                 name: "IX_FilteredImages_PerceptualHash",
                 table: "FilteredImages",
-                column: "PerceptualHash");
+                column: "PerceptualHash"
+            );
         }
 
         /// <inheritdoc />
@@ -21,7 +22,8 @@ namespace MangaIngestWithUpscaling.Migrations
         {
             migrationBuilder.DropIndex(
                 name: "IX_FilteredImages_PerceptualHash",
-                table: "FilteredImages");
+                table: "FilteredImages"
+            );
         }
     }
 }

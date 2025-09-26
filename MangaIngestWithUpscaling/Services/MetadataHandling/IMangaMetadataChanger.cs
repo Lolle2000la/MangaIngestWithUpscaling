@@ -20,7 +20,13 @@ public interface IMangaMetadataChanger
     /// <param name="cancellationToken">The token to cancel the operation.</param>
     /// <exception cref="TitleAlreadyUsedException">Indicates that the title has already been used.</exception>
     /// <returns></returns>
-    Task<RenameResult> ChangeMangaTitle(Manga manga, string newTitle, bool addOldToAlternative = true, CancellationToken cancellationToken = default);
+    Task<RenameResult> ChangeMangaTitle(
+        Manga manga,
+        string newTitle,
+        bool addOldToAlternative = true,
+        CancellationToken cancellationToken = default
+    );
+
     /// <summary>
     /// Updates the title of a upscaled chapter file and moves it to the correct directory.
     /// </summary>
@@ -32,6 +38,7 @@ public interface IMangaMetadataChanger
     /// If the upscaling takes too long, then the metadata might be stale and not reflect the current state of the manga series.
     /// </remarks>
     void ApplyMangaTitleToUpscaled(Chapter chapter, string newTitle, string origChapterPath);
+
     /// <summary>
     /// Changes the title of a chapter in the ComicInfo.xml metadata file.
     /// </summary>
@@ -42,5 +49,7 @@ public interface IMangaMetadataChanger
 
 public enum RenameResult
 {
-    Ok, Merged, Cancelled
+    Ok,
+    Merged,
+    Cancelled,
 }

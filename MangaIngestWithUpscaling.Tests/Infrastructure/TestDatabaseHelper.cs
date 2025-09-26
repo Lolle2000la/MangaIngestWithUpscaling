@@ -31,11 +31,19 @@ public static class TestDatabaseHelper
 
             var options = new DbContextOptionsBuilder<ApplicationDbContext>()
                 .UseSqlite(_connection)
-                .ConfigureWarnings(warnings => warnings.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.AmbientTransactionWarning))
+                .ConfigureWarnings(warnings =>
+                    warnings.Ignore(
+                        Microsoft
+                            .EntityFrameworkCore
+                            .Diagnostics
+                            .RelationalEventId
+                            .AmbientTransactionWarning
+                    )
+                )
                 .Options;
 
             Context = new ApplicationDbContext(options);
-            
+
             // Create the database schema
             Context.Database.EnsureCreated();
         }

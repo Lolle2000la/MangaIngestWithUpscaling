@@ -11,5 +11,9 @@ public interface IMangaLibraryMover
     /// <param name="targetLibrary">The library to move the manga to.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The task.</returns>
-    Task MoveMangaAsync(Manga manga, Library targetLibrary, CancellationToken cancellationToken = default);
+    Task MoveMangaAsync(
+        Manga manga,
+        Library targetLibrary,
+        CancellationToken cancellationToken = default
+    );
 }

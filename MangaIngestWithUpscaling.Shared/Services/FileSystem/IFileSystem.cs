@@ -8,11 +8,13 @@ public interface IFileSystem
     /// <param name="sourceFileName">The file to be moved.</param>
     /// <param name="destFileName">The file moved.</param>
     void Move(string sourceFileName, string destFileName);
+
     /// <summary>
     /// Creates a directory at the specified path with the necessary permissions.
     /// </summary>
     /// <param name="path">The path to the directory(s) to create.</param>
     void CreateDirectory(string path);
+
     /// <summary>
     /// Applies the necessary permissions to the specified path to either the parent directory or the configured parent.
     /// </summary>

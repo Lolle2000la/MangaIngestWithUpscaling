@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
@@ -11,7 +12,6 @@ using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.Extensions.Logging;
 using NetVips;
 using NSubstitute;
-using System.IO.Compression;
 
 namespace MangaIngestWithUpscaling.Tests.Services.ChapterMerging;
 
@@ -31,7 +31,10 @@ public class ChapterNumberHelperTests
     [InlineData("Cap. 8.7.cbz", "8.7")]
     [InlineData("Capítulo 12.1.cbz", "12.1")]
     [InlineData("Chương 4.3.cbz", "4.3")]
-    public void ExtractChapterNumber_WithVariousFormats_ShouldExtractCorrectly(string fileName, string expectedNumber)
+    public void ExtractChapterNumber_WithVariousFormats_ShouldExtractCorrectly(
+        string fileName,
+        string expectedNumber
+    )
     {
         // Act
         var result = ChapterNumberHelper.ExtractChapterNumber(fileName);
@@ -46,7 +49,10 @@ public class ChapterNumberHelperTests
     [InlineData("Ch. 10.cbz", "10")]
     [InlineData("Episode 15.cbz", "15")]
     [InlineData("第23話.cbz", "23")]
-    public void ExtractChapterNumber_WithWholeNumbers_ShouldExtractCorrectly(string fileName, string expectedNumber)
+    public void ExtractChapterNumber_WithWholeNumbers_ShouldExtractCorrectly(
+        string fileName,
+        string expectedNumber
+    )
     {
         // Act
         var result = ChapterNumberHelper.ExtractChapterNumber(fileName);
@@ -78,7 +84,10 @@ public class ChapterNumberHelperTests
     [InlineData("123.456", "123")]
     [InlineData("7", "7")]
     [InlineData("42.0", "42")]
-    public void ExtractBaseChapterNumber_WithValidNumbers_ShouldExtractBase(string chapterNumber, string expectedBase)
+    public void ExtractBaseChapterNumber_WithValidNumbers_ShouldExtractBase(
+        string chapterNumber,
+        string expectedBase
+    )
     {
         // This tests the concept of extracting base numbers, which would be part of the chapter merging logic
         // Since ExtractBaseChapterNumber is private, we test the concept through the public API
@@ -111,11 +120,10 @@ public class ChapterNumberHelperTests
             { "Manga Title - Chapter 123.45.cbz", "123.45" },
             { "[Group] Series Name Ch.67.8 [Quality].cbz", "67.8" },
             { "Title_Vol01_Ch015.5.cbz", "015.5" },
-
             // Invalid cases
             { "Volume 1.cbz", "1" }, // Will extract the "1" from Volume
             { "No numbers here.cbz", null },
-            { "Just-dashes-and.dots.cbz", null }
+            { "Just-dashes-and.dots.cbz", null },
         };
 
         foreach (var testCase in testCases)
@@ -165,11 +173,13 @@ public class ChapterPartMergerTests : IDisposable
     [InlineData("10.1", "10.2", "10", "10")] // With whole number
     [InlineData("2.1", "2.2", "2.3", "2.4", "2")] // Four parts
     public void GroupChapterPartsForMerging_WithConsecutiveChapterParts_ShouldGroupCorrectly(
-        params string[] chapterNumbers)
+        params string[] chapterNumbers
+    )
     {
         // Arrange
         var baseNumber = chapterNumbers.Last();
-        var chapters = chapterNumbers.Take(chapterNumbers.Length - 1)
+        var chapters = chapterNumbers
+            .Take(chapterNumbers.Length - 1)
             .Select(num => CreateFoundChapter($"Chapter {num}.cbz", num))
             .ToList();
 
@@ -188,7 +198,8 @@ public class ChapterPartMergerTests : IDisposable
     [InlineData("10.1", "10.4")] // Missing 10.2, 10.3
     [InlineData("2.2", "2.4")] // Missing 2.1, 2.3
     public void GroupChapterPartsForMerging_WithNonConsecutiveChapterParts_ShouldNotGroup(
-        params string[] chapterNumbers)
+        params string[] chapterNumbers
+    )
     {
         // Arrange
         var chapters = chapterNumbers
@@ -209,11 +220,15 @@ public class ChapterPartMergerTests : IDisposable
         // Arrange
         var chapters = new List<FoundChapter>
         {
-            CreateFoundChapter("Chapter 7.1.cbz", "7.1"), CreateFoundChapter("Chapter 7.2.cbz", "7.2")
+            CreateFoundChapter("Chapter 7.1.cbz", "7.1"),
+            CreateFoundChapter("Chapter 7.2.cbz", "7.2"),
         };
 
         // Act
-        var result = _chapterPartMerger.GroupChapterPartsForMerging(chapters, baseNumber => baseNumber == "7");
+        var result = _chapterPartMerger.GroupChapterPartsForMerging(
+            chapters,
+            baseNumber => baseNumber == "7"
+        );
 
         // Assert
         Assert.Empty(result); // Should be excluded because 7 is the latest chapter
@@ -245,7 +260,7 @@ public class ChapterPartMergerTests : IDisposable
             CreateFoundChapter("Chapter 5.1.cbz", "5.1"), // Single, should not group
             CreateFoundChapter("Chapter 7.1.cbz", "7.1"),
             CreateFoundChapter("Chapter 7.2.cbz", "7.2"),
-            CreateFoundChapter("Chapter 7.3.cbz", "7.3") // These should group
+            CreateFoundChapter("Chapter 7.3.cbz", "7.3"), // These should group
         };
 
         // Act
@@ -270,13 +285,17 @@ public class ChapterPartMergerTests : IDisposable
         // Arrange
         var chapters = new List<FoundChapter>
         {
-            CreateFoundChapter("Chapter 2.3.cbz", "2.3"), CreateFoundChapter("Chapter 5.4.cbz", "5.4")
+            CreateFoundChapter("Chapter 2.3.cbz", "2.3"),
+            CreateFoundChapter("Chapter 5.4.cbz", "5.4"),
         };
         var existingMergedBaseNumbers = new HashSet<string> { "2", "5" };
 
         // Act
         var result = _chapterPartMerger.GroupChaptersForAdditionToExistingMerged(
-            chapters, existingMergedBaseNumbers, _ => false);
+            chapters,
+            existingMergedBaseNumbers,
+            _ => false
+        );
 
         // Assert
         Assert.Equal(2, result.Count);
@@ -296,13 +315,16 @@ public class ChapterPartMergerTests : IDisposable
         var chapters = new List<FoundChapter>
         {
             CreateFoundChapter("Chapter 3.1.cbz", "3.1"), // 3 is not in existing merged
-            CreateFoundChapter("Chapter 4.2.cbz", "4.2") // 4 is not in existing merged
+            CreateFoundChapter("Chapter 4.2.cbz", "4.2"), // 4 is not in existing merged
         };
         var existingMergedBaseNumbers = new HashSet<string> { "2", "5" };
 
         // Act
         var result = _chapterPartMerger.GroupChaptersForAdditionToExistingMerged(
-            chapters, existingMergedBaseNumbers, _ => false);
+            chapters,
+            existingMergedBaseNumbers,
+            _ => false
+        );
 
         // Assert
         Assert.Empty(result);
@@ -318,7 +340,10 @@ public class ChapterPartMergerTests : IDisposable
 
         // Act
         var result = _chapterPartMerger.GroupChaptersForAdditionToExistingMerged(
-            chapters, existingMergedBaseNumbers, baseNumber => baseNumber == "2"); // 2 is latest
+            chapters,
+            existingMergedBaseNumbers,
+            baseNumber => baseNumber == "2"
+        ); // 2 is latest
 
         // Assert
         Assert.Empty(result); // Should be excluded because 2 is the latest chapter
@@ -331,13 +356,16 @@ public class ChapterPartMergerTests : IDisposable
         // Arrange
         var chapters = new List<FoundChapter>
         {
-            CreateFoundChapter("Chapter 2.cbz", "2") // Whole number, not a part
+            CreateFoundChapter("Chapter 2.cbz", "2"), // Whole number, not a part
         };
         var existingMergedBaseNumbers = new HashSet<string> { "2" };
 
         // Act
         var result = _chapterPartMerger.GroupChaptersForAdditionToExistingMerged(
-            chapters, existingMergedBaseNumbers, _ => false);
+            chapters,
+            existingMergedBaseNumbers,
+            _ => false
+        );
 
         // Assert
         Assert.Empty(result); // Whole numbers should not be added to existing merged chapters
@@ -354,7 +382,8 @@ public class ChapterPartMergerTests : IDisposable
         // Arrange
         var chapters = new List<FoundChapter>
         {
-            CreateFoundChapter("Chapter 1.1.cbz", "1.1"), CreateFoundChapter("Chapter 1.2.cbz", "1.2")
+            CreateFoundChapter("Chapter 1.1.cbz", "1.1"),
+            CreateFoundChapter("Chapter 1.2.cbz", "1.2"),
         };
 
         CreateTestCbzFiles(chapters);
@@ -363,8 +392,14 @@ public class ChapterPartMergerTests : IDisposable
 
         // Act
         (FoundChapter mergedChapter, List<OriginalChapterPart> originalParts) result =
-            await _chapterPartMerger.MergeChapterPartsAsync(chapters, _tempDir, _tempDir, "1", targetMetadata,
-                cancellationToken: TestContext.Current.CancellationToken);
+            await _chapterPartMerger.MergeChapterPartsAsync(
+                chapters,
+                _tempDir,
+                _tempDir,
+                "1",
+                targetMetadata,
+                cancellationToken: TestContext.Current.CancellationToken
+            );
 
         // Assert
         Assert.NotNull(result.mergedChapter);
@@ -377,7 +412,9 @@ public class ChapterPartMergerTests : IDisposable
         using var fileStream = new FileStream(mergedFilePath, FileMode.Open);
         using var archive = new ZipArchive(fileStream, ZipArchiveMode.Read);
 
-        var imageEntries = archive.Entries.Where(e => e.Name.EndsWith(".jpg") || e.Name.EndsWith(".png")).ToList();
+        var imageEntries = archive
+            .Entries.Where(e => e.Name.EndsWith(".jpg") || e.Name.EndsWith(".png"))
+            .ToList();
         Assert.Equal(6, imageEntries.Count); // 3 pages from each chapter
     }
 
@@ -395,7 +432,7 @@ public class ChapterPartMergerTests : IDisposable
                 PageNames = new List<string> { "001.jpg", "002.jpg", "003.jpg" },
                 StartPageIndex = 0,
                 EndPageIndex = 2,
-                Metadata = new ExtractedMetadata("Test Series", "Chapter 2.1", "2.1")
+                Metadata = new ExtractedMetadata("Test Series", "Chapter 2.1", "2.1"),
             },
             new()
             {
@@ -404,19 +441,24 @@ public class ChapterPartMergerTests : IDisposable
                 PageNames = new List<string> { "004.jpg", "005.jpg", "006.jpg" },
                 StartPageIndex = 3,
                 EndPageIndex = 5,
-                Metadata = new ExtractedMetadata("Test Series", "Chapter 2.2", "2.2")
-            }
+                Metadata = new ExtractedMetadata("Test Series", "Chapter 2.2", "2.2"),
+            },
         };
 
         // Create merged file with test images
         var mergedFilePath = Path.Combine(_tempDir, "Chapter 2.cbz");
-        CreateMergedTestCbzFile(mergedFilePath,
-            new[] { "001.jpg", "002.jpg", "003.jpg", "004.jpg", "005.jpg", "006.jpg" });
+        CreateMergedTestCbzFile(
+            mergedFilePath,
+            new[] { "001.jpg", "002.jpg", "003.jpg", "004.jpg", "005.jpg", "006.jpg" }
+        );
 
         // Act
-        List<FoundChapter> restoredChapters = await _chapterPartMerger.RestoreChapterPartsAsync(mergedFilePath,
+        List<FoundChapter> restoredChapters = await _chapterPartMerger.RestoreChapterPartsAsync(
+            mergedFilePath,
             originalParts,
-            _tempDir, TestContext.Current.CancellationToken);
+            _tempDir,
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.Equal(2, restoredChapters.Count);
@@ -443,11 +485,31 @@ public class ChapterPartMergerTests : IDisposable
         // Arrange - Test different page naming conventions in merged files
         var testCases = new[]
         {
-            new { Description = "3-digit padding", PageNames = new[] { "001.jpg", "002.jpg", "003.jpg" } },
-            new { Description = "2-digit padding", PageNames = new[] { "01.jpg", "02.jpg", "03.jpg" } },
-            new { Description = "1-digit padding", PageNames = new[] { "1.jpg", "2.jpg", "3.jpg" } },
-            new { Description = "mixed formats", PageNames = new[] { "page1.jpg", "img_02.png", "003.jpeg" } },
-            new { Description = "4-digit standard", PageNames = new[] { "0000.jpg", "0001.jpg", "0002.jpg" } }
+            new
+            {
+                Description = "3-digit padding",
+                PageNames = new[] { "001.jpg", "002.jpg", "003.jpg" },
+            },
+            new
+            {
+                Description = "2-digit padding",
+                PageNames = new[] { "01.jpg", "02.jpg", "03.jpg" },
+            },
+            new
+            {
+                Description = "1-digit padding",
+                PageNames = new[] { "1.jpg", "2.jpg", "3.jpg" },
+            },
+            new
+            {
+                Description = "mixed formats",
+                PageNames = new[] { "page1.jpg", "img_02.png", "003.jpeg" },
+            },
+            new
+            {
+                Description = "4-digit standard",
+                PageNames = new[] { "0000.jpg", "0001.jpg", "0002.jpg" },
+            },
         };
 
         foreach (var testCase in testCases)
@@ -463,30 +525,41 @@ public class ChapterPartMergerTests : IDisposable
                     PageNames = testCase.PageNames.ToList(),
                     StartPageIndex = 0,
                     EndPageIndex = testCase.PageNames.Length - 1,
-                    Metadata = new ExtractedMetadata("Test Series", "Chapter 3.1", "3.1")
-                }
+                    Metadata = new ExtractedMetadata("Test Series", "Chapter 3.1", "3.1"),
+                },
             };
 
             // Create merged file with the specific naming convention
-            var mergedFilePath = Path.Combine(_tempDir, $"merged_{testCase.Description.Replace(" ", "_")}.cbz");
+            var mergedFilePath = Path.Combine(
+                _tempDir,
+                $"merged_{testCase.Description.Replace(" ", "_")}.cbz"
+            );
             CreateMergedTestCbzFileWithCustomNames(mergedFilePath, testCase.PageNames);
 
             // Act
-            List<FoundChapter> restoredChapters = await _chapterPartMerger.RestoreChapterPartsAsync(mergedFilePath,
+            List<FoundChapter> restoredChapters = await _chapterPartMerger.RestoreChapterPartsAsync(
+                mergedFilePath,
                 originalParts,
-                _tempDir, TestContext.Current.CancellationToken);
+                _tempDir,
+                TestContext.Current.CancellationToken
+            );
 
             // Assert
             Assert.Single(restoredChapters);
             var restoredPath = Path.Combine(_tempDir, "Chapter 3.1.cbz");
-            Assert.True(File.Exists(restoredPath), $"Restored file should exist for {testCase.Description}");
+            Assert.True(
+                File.Exists(restoredPath),
+                $"Restored file should exist for {testCase.Description}"
+            );
 
             // Verify the restored file has all pages
             VerifyRestoredChapterPageCount(restoredPath, testCase.PageNames.Length);
 
             // Clean up for next iteration
-            if (File.Exists(restoredPath)) File.Delete(restoredPath);
-            if (File.Exists(mergedFilePath)) File.Delete(mergedFilePath);
+            if (File.Exists(restoredPath))
+                File.Delete(restoredPath);
+            if (File.Exists(mergedFilePath))
+                File.Delete(mergedFilePath);
         }
     }
 
@@ -507,7 +580,7 @@ public class ChapterPartMergerTests : IDisposable
                 PageNames = new List<string> { "cover.jpg", "page1.jpg" },
                 StartPageIndex = 0,
                 EndPageIndex = 1,
-                Metadata = new ExtractedMetadata("Test Series", "Chapter 4.1", "4.1")
+                Metadata = new ExtractedMetadata("Test Series", "Chapter 4.1", "4.1"),
             },
             new()
             {
@@ -516,22 +589,29 @@ public class ChapterPartMergerTests : IDisposable
                 PageNames = new List<string> { "start.png", "middle.png", "end.png" },
                 StartPageIndex = 2,
                 EndPageIndex = 4,
-                Metadata = new ExtractedMetadata("Test Series", "Chapter 4.2", "4.2")
-            }
+                Metadata = new ExtractedMetadata("Test Series", "Chapter 4.2", "4.2"),
+            },
         };
 
         // Create merged file with non-standard naming that doesn't follow numeric patterns
         var mergedFilePath = Path.Combine(_tempDir, "Chapter 4 Merged.cbz");
         string[] nonStandardPageNames = new[]
         {
-            "titlepage.jpg", "story_01.png", "battle_scene.jpg", "conclusion.png", "credits.jpg"
+            "titlepage.jpg",
+            "story_01.png",
+            "battle_scene.jpg",
+            "conclusion.png",
+            "credits.jpg",
         };
         CreateMergedTestCbzFileWithCustomNames(mergedFilePath, nonStandardPageNames);
 
         // Act
-        List<FoundChapter> restoredChapters = await _chapterPartMerger.RestoreChapterPartsAsync(mergedFilePath,
+        List<FoundChapter> restoredChapters = await _chapterPartMerger.RestoreChapterPartsAsync(
+            mergedFilePath,
             originalParts,
-            _tempDir, TestContext.Current.CancellationToken);
+            _tempDir,
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.Equal(2, restoredChapters.Count);
@@ -557,17 +637,22 @@ public class ChapterPartMergerTests : IDisposable
                 PageNames = new List<string> { "opening_scene.jpg", "character_intro.png" },
                 StartPageIndex = 0,
                 EndPageIndex = 1,
-                Metadata = new ExtractedMetadata("Test Series", "Chapter 5.1", "5.1")
+                Metadata = new ExtractedMetadata("Test Series", "Chapter 5.1", "5.1"),
             },
             new()
             {
                 FileName = "Chapter 5.2.cbz",
                 ChapterNumber = "5.2",
-                PageNames = new List<string> { "action_begins.jpg", "battle_page_01.png", "climax_moment.jpg" },
+                PageNames = new List<string>
+                {
+                    "action_begins.jpg",
+                    "battle_page_01.png",
+                    "climax_moment.jpg",
+                },
                 StartPageIndex = 2,
                 EndPageIndex = 4,
-                Metadata = new ExtractedMetadata("Test Series", "Chapter 5.2", "5.2")
-            }
+                Metadata = new ExtractedMetadata("Test Series", "Chapter 5.2", "5.2"),
+            },
         };
 
         // Create merged file with completely descriptive names that should sort naturally
@@ -578,14 +663,17 @@ public class ChapterPartMergerTests : IDisposable
             "b_character_intro.png", // Natural alphabetical sorting
             "c_action_begins.jpg", // Descriptive but orderable
             "d_battle_page_main.png", // No numbers, just names
-            "e_climax_final.jpg" // Natural conclusion
+            "e_climax_final.jpg", // Natural conclusion
         };
         CreateMergedTestCbzFileWithCustomNames(mergedFilePath, descriptivePageNames);
 
         // Act
-        List<FoundChapter> restoredChapters = await _chapterPartMerger.RestoreChapterPartsAsync(mergedFilePath,
+        List<FoundChapter> restoredChapters = await _chapterPartMerger.RestoreChapterPartsAsync(
+            mergedFilePath,
             originalParts,
-            _tempDir, TestContext.Current.CancellationToken);
+            _tempDir,
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.Equal(2, restoredChapters.Count);
@@ -610,7 +698,7 @@ public class ChapterPartMergerTests : IDisposable
                 PageNames = new List<string> { "cover.jpg", "p2.png" },
                 StartPageIndex = 0,
                 EndPageIndex = 1,
-                Metadata = new ExtractedMetadata("Test Series", "Chapter 6.1", "6.1")
+                Metadata = new ExtractedMetadata("Test Series", "Chapter 6.1", "6.1"),
             },
             new()
             {
@@ -619,8 +707,8 @@ public class ChapterPartMergerTests : IDisposable
                 PageNames = new List<string> { "Page003.jpg", "scan_4.png", "final_page.jpg" },
                 StartPageIndex = 2,
                 EndPageIndex = 4,
-                Metadata = new ExtractedMetadata("Test Series", "Chapter 6.2", "6.2")
-            }
+                Metadata = new ExtractedMetadata("Test Series", "Chapter 6.2", "6.2"),
+            },
         };
 
         // Create merged file with mixed naming conventions
@@ -631,14 +719,17 @@ public class ChapterPartMergerTests : IDisposable
             "p2.png", // Short with number
             "Page003.jpg", // Mixed case with padding
             "scan_4.png", // Underscore separator
-            "final_page.jpg" // Descriptive name
+            "final_page.jpg", // Descriptive name
         };
         CreateMergedTestCbzFileWithCustomNames(mergedFilePath, mixedPageNames);
 
         // Act
-        List<FoundChapter> restoredChapters = await _chapterPartMerger.RestoreChapterPartsAsync(mergedFilePath,
+        List<FoundChapter> restoredChapters = await _chapterPartMerger.RestoreChapterPartsAsync(
+            mergedFilePath,
             originalParts,
-            _tempDir, TestContext.Current.CancellationToken);
+            _tempDir,
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.Equal(2, restoredChapters.Count);
@@ -656,7 +747,12 @@ public class ChapterPartMergerTests : IDisposable
             fileName,
             fileName, // Relative path same as filename for test
             ChapterStorageType.Cbz,
-            new ExtractedMetadata("Test Series", Path.GetFileNameWithoutExtension(fileName), chapterNumber));
+            new ExtractedMetadata(
+                "Test Series",
+                Path.GetFileNameWithoutExtension(fileName),
+                chapterNumber
+            )
+        );
     }
 
     private void CreateTestCbzFiles(List<FoundChapter> chapters)
@@ -730,7 +826,7 @@ public class ChapterPartMergerTests : IDisposable
                 1 => Image.Black(32, 32) + 128, // Gray
                 2 => Image.Black(32, 32) + 200, // Light gray
                 3 => Image.Black(32, 32) + 50, // Dark gray
-                _ => Image.Black(32, 32) + (variant * 30 % 255)
+                _ => Image.Black(32, 32) + (variant * 30 % 255),
             };
 
             // Convert to JPEG bytes
@@ -741,8 +837,28 @@ public class ChapterPartMergerTests : IDisposable
             // Fallback: create a minimal valid JPEG
             byte[] jpegHeader = new byte[]
             {
-                0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x48,
-                0x00, 0x48, 0x00, 0x00, 0xFF, 0xD9
+                0xFF,
+                0xD8,
+                0xFF,
+                0xE0,
+                0x00,
+                0x10,
+                0x4A,
+                0x46,
+                0x49,
+                0x46,
+                0x00,
+                0x01,
+                0x01,
+                0x01,
+                0x00,
+                0x48,
+                0x00,
+                0x48,
+                0x00,
+                0x00,
+                0xFF,
+                0xD9,
             };
             return jpegHeader;
         }
@@ -753,10 +869,13 @@ public class ChapterPartMergerTests : IDisposable
         using var fileStream = new FileStream(filePath, FileMode.Open);
         using var archive = new ZipArchive(fileStream, ZipArchiveMode.Read);
 
-        var imageEntries = archive.Entries.Where(e =>
-            e.Name.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
-            e.Name.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase) ||
-            e.Name.EndsWith(".png", StringComparison.OrdinalIgnoreCase)).ToList();
+        var imageEntries = archive
+            .Entries.Where(e =>
+                e.Name.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase)
+                || e.Name.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)
+                || e.Name.EndsWith(".png", StringComparison.OrdinalIgnoreCase)
+            )
+            .ToList();
         Assert.Equal(expectedPageCount, imageEntries.Count);
     }
 
@@ -769,7 +888,10 @@ public class ChapterPartMergerTests : IDisposable
     {
         // Arrange
         string mergedFile = Path.Combine(_tempDir, "legacy_merged_chapter.cbz");
-        CreateMergedTestCbzFile(mergedFile, new[] { "0000.jpg", "0001.jpg", "0002.jpg", "0003.jpg" });
+        CreateMergedTestCbzFile(
+            mergedFile,
+            new[] { "0000.jpg", "0001.jpg", "0002.jpg", "0003.jpg" }
+        );
 
         // Create legacy-style OriginalChapterParts without PageNames (simulating old records)
         var legacyOriginalParts = new List<OriginalChapterPart>
@@ -781,7 +903,7 @@ public class ChapterPartMergerTests : IDisposable
                 StartPageIndex = 0,
                 EndPageIndex = 1,
                 PageNames = new List<string>(), // Empty - simulating legacy record
-                Metadata = new ExtractedMetadata("Test Chapter 20.1", null, null)
+                Metadata = new ExtractedMetadata("Test Chapter 20.1", null, null),
             },
             new()
             {
@@ -790,13 +912,17 @@ public class ChapterPartMergerTests : IDisposable
                 StartPageIndex = 2,
                 EndPageIndex = 3,
                 PageNames = new List<string>(), // Empty - simulating legacy record
-                Metadata = new ExtractedMetadata("Test Chapter 20.2", null, null)
-            }
+                Metadata = new ExtractedMetadata("Test Chapter 20.2", null, null),
+            },
         };
 
         // Act
-        List<FoundChapter> restoredChapters = await _chapterPartMerger.RestoreChapterPartsAsync(mergedFile,
-            legacyOriginalParts, _tempDir, TestContext.Current.CancellationToken);
+        List<FoundChapter> restoredChapters = await _chapterPartMerger.RestoreChapterPartsAsync(
+            mergedFile,
+            legacyOriginalParts,
+            _tempDir,
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.Equal(2, restoredChapters.Count);
@@ -842,7 +968,8 @@ public class ChapterMergeRevertServiceTests : IDisposable
             _mockChapterPartMerger,
             null!,
             null!,
-            mockLogger);
+            mockLogger
+        );
 
         // Create test data
         _testLibrary = CreateTestLibrary();
@@ -869,7 +996,7 @@ public class ChapterMergeRevertServiceTests : IDisposable
             ChapterId = mergedChapter.Id,
             Chapter = mergedChapter,
             MergedChapterNumber = "8",
-            OriginalParts = new List<OriginalChapterPart>()
+            OriginalParts = new List<OriginalChapterPart>(),
         };
 
         _dbContext.Chapters.Add(mergedChapter);
@@ -877,8 +1004,10 @@ public class ChapterMergeRevertServiceTests : IDisposable
         await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Act
-        bool canRevert =
-            await _revertService.CanRevertChapterAsync(mergedChapter, TestContext.Current.CancellationToken);
+        bool canRevert = await _revertService.CanRevertChapterAsync(
+            mergedChapter,
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.True(canRevert);
@@ -894,8 +1023,10 @@ public class ChapterMergeRevertServiceTests : IDisposable
         await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Act
-        bool canRevert =
-            await _revertService.CanRevertChapterAsync(normalChapter, TestContext.Current.CancellationToken);
+        bool canRevert = await _revertService.CanRevertChapterAsync(
+            normalChapter,
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.False(canRevert);
@@ -910,7 +1041,7 @@ public class ChapterMergeRevertServiceTests : IDisposable
         var originalParts = new List<OriginalChapterPart>
         {
             new() { FileName = "Chapter 10.1.cbz", ChapterNumber = "10.1" },
-            new() { FileName = "Chapter 10.2.cbz", ChapterNumber = "10.2" }
+            new() { FileName = "Chapter 10.2.cbz", ChapterNumber = "10.2" },
         };
 
         var mergedChapterInfo = new MergedChapterInfo
@@ -918,7 +1049,7 @@ public class ChapterMergeRevertServiceTests : IDisposable
             ChapterId = mergedChapter.Id,
             Chapter = mergedChapter,
             MergedChapterNumber = "10",
-            OriginalParts = originalParts
+            OriginalParts = originalParts,
         };
 
         _dbContext.Chapters.Add(mergedChapter);
@@ -926,8 +1057,10 @@ public class ChapterMergeRevertServiceTests : IDisposable
         await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Act
-        MergedChapterInfo? result =
-            await _revertService.GetMergeInfoAsync(mergedChapter, TestContext.Current.CancellationToken);
+        MergedChapterInfo? result = await _revertService.GetMergeInfoAsync(
+            mergedChapter,
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.NotNull(result);
@@ -947,8 +1080,10 @@ public class ChapterMergeRevertServiceTests : IDisposable
         await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Act
-        MergedChapterInfo? result =
-            await _revertService.GetMergeInfoAsync(normalChapter, TestContext.Current.CancellationToken);
+        MergedChapterInfo? result = await _revertService.GetMergeInfoAsync(
+            normalChapter,
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         Assert.Null(result);
@@ -964,7 +1099,7 @@ public class ChapterMergeRevertServiceTests : IDisposable
             Name = "Test Library",
             NotUpscaledLibraryPath = "/test/not_upscaled",
             UpscaledLibraryPath = "/test/upscaled",
-            IngestPath = "/test/ingest"
+            IngestPath = "/test/ingest",
         };
     }
 
@@ -976,7 +1111,7 @@ public class ChapterMergeRevertServiceTests : IDisposable
             PrimaryTitle = title,
             Library = library,
             LibraryId = library.Id,
-            Chapters = new List<Chapter>()
+            Chapters = new List<Chapter>(),
         };
     }
 
@@ -988,7 +1123,7 @@ public class ChapterMergeRevertServiceTests : IDisposable
             FileName = fileName,
             RelativePath = Path.Combine(manga.PrimaryTitle, fileName),
             Manga = manga,
-            MangaId = manga.Id
+            MangaId = manga.Id,
         };
     }
 
@@ -1011,32 +1146,27 @@ public class ChapterNumberExtractionIntegrationTests
             { "One Piece - Chapter 1050.cbz", "1050" },
             { "Attack on Titan Ch. 139.cbz", "139" },
             { "My Hero Academia Chapter 350.5.cbz", "350.5" },
-
             // Sub-chapters (most important for this PR)
             { "Naruto Chapter 700.1.cbz", "700.1" },
             { "Demon Slayer Ch 204.2.cbz", "204.2" },
             { "One Piece Chapter 1000.3.cbz", "1000.3" },
-
             // Group releases with complex naming
             { "[MangaStream] One Piece - Chapter 1050 [720p].cbz", "1050" },
             { "[VIZ] My Hero Academia Ch.350.5 [Digital].cbz", "350.5" },
             { "Tokyo Ghoul:re Chapter 179.5 [MS].cbz", "179.5" },
-
             // International formats
             { "ワンピース 第1050話.cbz", "1050" },
             { "진격의 거인 제139화.cbz", "139" },
             { "我的英雄学院 第350.5话.cbz", "350.5" },
-
             // Edge cases that should work
             { "Chapter_105.1_Final.cbz", "105.1" },
             { "Ch105-2.cbz", "105.2" }, // Regex interprets dash as decimal point
             { "Episode 24.5 Special.cbz", "24.5" },
-
             // Cases that should return null or numbers
             { "Volume 1.cbz", "1" }, // Will extract the "1" from Volume
             { "Extras.cbz", null },
             { "Credits and Thanks.cbz", null },
-            { "Cover Art.cbz", null }
+            { "Cover Art.cbz", null },
         };
 
         foreach (var example in realWorldExamples)
@@ -1047,7 +1177,8 @@ public class ChapterNumberExtractionIntegrationTests
             // Assert with detailed message for debugging
             Assert.True(
                 result == example.Value,
-                $"Expected '{example.Value}' but got '{result}' for filename: '{example.Key}'");
+                $"Expected '{example.Value}' but got '{result}' for filename: '{example.Key}'"
+            );
         }
     }
 
@@ -1057,8 +1188,10 @@ public class ChapterNumberExtractionIntegrationTests
     [InlineData("350.5", "350")]
     [InlineData("1000.2", "1000")]
     [InlineData("42", "42")]
-    public void BaseChapterNumberExtraction_WithSubChapters_ShouldExtractCorrectBase(string chapterNumber,
-        string expectedBase)
+    public void BaseChapterNumberExtraction_WithSubChapters_ShouldExtractCorrectBase(
+        string chapterNumber,
+        string expectedBase
+    )
     {
         // This tests the critical functionality for determining which chapters can be merged
 
@@ -1112,58 +1245,79 @@ public class ComicInfoPreservationTests : IDisposable
 
             // Create test CBZ files with complete ComicInfo.xml
             var originalComicInfo1 = """
-                                     <?xml version="1.0" encoding="utf-8"?>
-                                     <ComicInfo>
-                                         <Series>Test Series</Series>
-                                         <Number>5.1</Number>
-                                         <Title>Part One</Title>
-                                         <Summary>This is a detailed summary of the chapter with plot details.</Summary>
-                                         <Writer>Test Author</Writer>
-                                         <Penciller>Test Artist</Penciller>
-                                         <Genre>Action, Adventure</Genre>
-                                         <CommunityRating>5</CommunityRating>
-                                         <Tags>Manga, Shonen, Test</Tags>
-                                         <LanguageISO>en</LanguageISO>
-                                         <PageCount>3</PageCount>
-                                     </ComicInfo>
-                                     """;
+                <?xml version="1.0" encoding="utf-8"?>
+                <ComicInfo>
+                    <Series>Test Series</Series>
+                    <Number>5.1</Number>
+                    <Title>Part One</Title>
+                    <Summary>This is a detailed summary of the chapter with plot details.</Summary>
+                    <Writer>Test Author</Writer>
+                    <Penciller>Test Artist</Penciller>
+                    <Genre>Action, Adventure</Genre>
+                    <CommunityRating>5</CommunityRating>
+                    <Tags>Manga, Shonen, Test</Tags>
+                    <LanguageISO>en</LanguageISO>
+                    <PageCount>3</PageCount>
+                </ComicInfo>
+                """;
 
             var originalComicInfo2 = """
-                                     <?xml version="1.0" encoding="utf-8"?>
-                                     <ComicInfo>
-                                         <Series>Test Series</Series>
-                                         <Number>5.2</Number>
-                                         <Title>Part Two</Title>
-                                         <Summary>This is another detailed summary with different content.</Summary>
-                                         <Writer>Test Author</Writer>
-                                         <Penciller>Test Artist</Penciller>
-                                         <Genre>Action, Adventure</Genre>
-                                         <CommunityRating>4</CommunityRating>
-                                         <Tags>Manga, Shonen, Test</Tags>
-                                         <LanguageISO>en</LanguageISO>
-                                         <PageCount>3</PageCount>
-                                     </ComicInfo>
-                                     """;
+                <?xml version="1.0" encoding="utf-8"?>
+                <ComicInfo>
+                    <Series>Test Series</Series>
+                    <Number>5.2</Number>
+                    <Title>Part Two</Title>
+                    <Summary>This is another detailed summary with different content.</Summary>
+                    <Writer>Test Author</Writer>
+                    <Penciller>Test Artist</Penciller>
+                    <Genre>Action, Adventure</Genre>
+                    <CommunityRating>4</CommunityRating>
+                    <Tags>Manga, Shonen, Test</Tags>
+                    <LanguageISO>en</LanguageISO>
+                    <PageCount>3</PageCount>
+                </ComicInfo>
+                """;
 
-            var file1 = CreateTestCbzFileWithComicInfo(tempDir, "Chapter 5.1.cbz", 3, originalComicInfo1);
-            var file2 = CreateTestCbzFileWithComicInfo(tempDir, "Chapter 5.2.cbz", 3, originalComicInfo2);
+            var file1 = CreateTestCbzFileWithComicInfo(
+                tempDir,
+                "Chapter 5.1.cbz",
+                3,
+                originalComicInfo1
+            );
+            var file2 = CreateTestCbzFileWithComicInfo(
+                tempDir,
+                "Chapter 5.2.cbz",
+                3,
+                originalComicInfo2
+            );
 
             var foundChapters = new List<FoundChapter>
             {
-                new("Chapter 5.1.cbz", file1, ChapterStorageType.Cbz,
-                    new ExtractedMetadata("Test Series", "Chapter 5.1", "5.1")),
-                new("Chapter 5.2.cbz", file2, ChapterStorageType.Cbz,
-                    new ExtractedMetadata("Test Series", "Chapter 5.2", "5.2"))
+                new(
+                    "Chapter 5.1.cbz",
+                    file1,
+                    ChapterStorageType.Cbz,
+                    new ExtractedMetadata("Test Series", "Chapter 5.1", "5.1")
+                ),
+                new(
+                    "Chapter 5.2.cbz",
+                    file2,
+                    ChapterStorageType.Cbz,
+                    new ExtractedMetadata("Test Series", "Chapter 5.2", "5.2")
+                ),
             };
 
             // Configure metadata handler to return the original ComicInfo.xml content
-            metadataHandler.GetSeriesAndTitleFromComicInfo(file1)
+            metadataHandler
+                .GetSeriesAndTitleFromComicInfo(file1)
                 .Returns(new ExtractedMetadata("Test Series", "Chapter 5.1", "5.1"));
-            metadataHandler.GetSeriesAndTitleFromComicInfo(file2)
+            metadataHandler
+                .GetSeriesAndTitleFromComicInfo(file2)
                 .Returns(new ExtractedMetadata("Test Series", "Chapter 5.2", "5.2"));
 
             // Configure metadata handler to write merged ComicInfo.xml
-            metadataHandler.When(x => x.WriteComicInfo(Arg.Any<ZipArchive>(), Arg.Any<ExtractedMetadata>()))
+            metadataHandler
+                .When(x => x.WriteComicInfo(Arg.Any<ZipArchive>(), Arg.Any<ExtractedMetadata>()))
                 .Do(callInfo =>
                 {
                     var archive = callInfo.Arg<ZipArchive>();
@@ -1171,21 +1325,29 @@ public class ComicInfoPreservationTests : IDisposable
                     var entry = archive.CreateEntry("ComicInfo.xml");
                     using var stream = entry.Open();
                     using var writer = new StreamWriter(stream);
-                    writer.Write($"""
-                                  <?xml version="1.0" encoding="utf-8"?>
-                                  <ComicInfo>
-                                      <Series>{metadata.Series}</Series>
-                                      <Number>{metadata.Number}</Number>
-                                      <Title>{metadata.ChapterTitle}</Title>
-                                  </ComicInfo>
-                                  """);
+                    writer.Write(
+                        $"""
+                        <?xml version="1.0" encoding="utf-8"?>
+                        <ComicInfo>
+                            <Series>{metadata.Series}</Series>
+                            <Number>{metadata.Number}</Number>
+                            <Title>{metadata.ChapterTitle}</Title>
+                        </ComicInfo>
+                        """
+                    );
                 });
 
             // Act - Merge the chapters
             var targetMetadata = new ExtractedMetadata("Test Series", "Chapter 5", "5");
             (FoundChapter mergedChapter, List<OriginalChapterPart> originalParts) mergeInfo =
-                await merger.MergeChapterPartsAsync(foundChapters, tempDir, tempDir, "5", targetMetadata,
-                    cancellationToken: TestContext.Current.CancellationToken);
+                await merger.MergeChapterPartsAsync(
+                    foundChapters,
+                    tempDir,
+                    tempDir,
+                    "5",
+                    targetMetadata,
+                    cancellationToken: TestContext.Current.CancellationToken
+                );
 
             // Verify merge info contains original ComicInfo.xml
             Assert.NotNull(mergeInfo.originalParts);
@@ -1212,9 +1374,12 @@ public class ComicInfoPreservationTests : IDisposable
             File.Delete(file2);
 
             // Act - Restore the chapters
-            List<FoundChapter> restoredChapters = await merger.RestoreChapterPartsAsync(mergedFile,
-                mergeInfo.originalParts, tempDir,
-                TestContext.Current.CancellationToken);
+            List<FoundChapter> restoredChapters = await merger.RestoreChapterPartsAsync(
+                mergedFile,
+                mergeInfo.originalParts,
+                tempDir,
+                TestContext.Current.CancellationToken
+            );
 
             // Assert - Verify restored ComicInfo.xml content
             Assert.Equal(2, restoredChapters.Count);
@@ -1273,11 +1438,12 @@ public class ComicInfoPreservationTests : IDisposable
                     Metadata = new ExtractedMetadata("Test Series", "Chapter 5.2", "5.2"),
                     PageNames = new List<string> { "0003.jpg", "0004.jpg", "0005.jpg" },
                     // Note: OriginalComicInfoXml is null (legacy record)
-                }
+                },
             };
 
             // Configure metadata handler for legacy fallback
-            metadataHandler.When(x => x.WriteComicInfo(Arg.Any<ZipArchive>(), Arg.Any<ExtractedMetadata>()))
+            metadataHandler
+                .When(x => x.WriteComicInfo(Arg.Any<ZipArchive>(), Arg.Any<ExtractedMetadata>()))
                 .Do(callInfo =>
                 {
                     var archive = callInfo.Arg<ZipArchive>();
@@ -1286,22 +1452,28 @@ public class ComicInfoPreservationTests : IDisposable
                     using var stream = entry.Open();
                     using var writer = new StreamWriter(stream);
                     writer.Write(
-                        $"<ComicInfo><Series>{metadata.Series}</Series><Number>{metadata.Number}</Number></ComicInfo>");
+                        $"<ComicInfo><Series>{metadata.Series}</Series><Number>{metadata.Number}</Number></ComicInfo>"
+                    );
                 });
 
-            // Wait a moment to ensure file handles are released  
+            // Wait a moment to ensure file handles are released
             await Task.Delay(100, TestContext.Current.CancellationToken);
 
             // Act - Restore with legacy records
-            List<FoundChapter> restoredChapters = await merger.RestoreChapterPartsAsync(mergedFile, legacyParts,
+            List<FoundChapter> restoredChapters = await merger.RestoreChapterPartsAsync(
+                mergedFile,
+                legacyParts,
                 tempDir,
-                TestContext.Current.CancellationToken);
+                TestContext.Current.CancellationToken
+            );
 
             // Assert - Verify fallback behavior
             Assert.Equal(2, restoredChapters.Count);
 
             // Verify metadata handler was called for legacy fallback
-            metadataHandler.Received(2).WriteComicInfo(Arg.Any<ZipArchive>(), Arg.Any<ExtractedMetadata>());
+            metadataHandler
+                .Received(2)
+                .WriteComicInfo(Arg.Any<ZipArchive>(), Arg.Any<ExtractedMetadata>());
 
             var restoredFile1 = Path.Combine(tempDir, "Chapter 5.1.cbz");
             var restoredFile2 = Path.Combine(tempDir, "Chapter 5.2.cbz");
@@ -1320,7 +1492,12 @@ public class ComicInfoPreservationTests : IDisposable
         }
     }
 
-    private string CreateTestCbzFileWithComicInfo(string directory, string fileName, int pageCount, string comicInfoXml)
+    private string CreateTestCbzFileWithComicInfo(
+        string directory,
+        string fileName,
+        int pageCount,
+        string comicInfoXml
+    )
     {
         var filePath = Path.Combine(directory, fileName);
         using var archive = ZipFile.Open(filePath, ZipArchiveMode.Create);
@@ -1362,7 +1539,11 @@ public class ComicInfoPreservationTests : IDisposable
         Assert.Contains("Tags", actualComicInfo);
     }
 
-    private void VerifyComicInfoBasicContent(string cbzFilePath, string expectedSeries, string expectedNumber)
+    private void VerifyComicInfoBasicContent(
+        string cbzFilePath,
+        string expectedSeries,
+        string expectedNumber
+    )
     {
         using var archive = ZipFile.OpenRead(cbzFilePath);
         var comicInfoEntry = archive.GetEntry("ComicInfo.xml");
@@ -1437,7 +1618,7 @@ public class UpscaledChapterHandlingTests : IDisposable
         {
             Name = "Test Library",
             NotUpscaledLibraryPath = Path.GetTempPath(),
-            UpscaledLibraryPath = Path.Combine(Path.GetTempPath(), "upscaled")
+            UpscaledLibraryPath = Path.Combine(Path.GetTempPath(), "upscaled"),
         };
 
         var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
@@ -1448,7 +1629,7 @@ public class UpscaledChapterHandlingTests : IDisposable
             UpscalerMethod = UpscalerMethod.MangaJaNai,
             ScalingFactor = ScaleFactor.TwoX,
             CompressionFormat = CompressionFormat.Png,
-            Quality = 85
+            Quality = 85,
         };
 
         context.Libraries.Add(library);
@@ -1457,7 +1638,10 @@ public class UpscaledChapterHandlingTests : IDisposable
         await context.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Create temporary directories
-        var notUpscaledDir = Path.Combine(Path.GetTempPath(), "test_not_upscaled_" + Guid.NewGuid());
+        var notUpscaledDir = Path.Combine(
+            Path.GetTempPath(),
+            "test_not_upscaled_" + Guid.NewGuid()
+        );
         var upscaledDir = Path.Combine(Path.GetTempPath(), "test_upscaled_" + Guid.NewGuid());
         Directory.CreateDirectory(notUpscaledDir);
         Directory.CreateDirectory(upscaledDir);
@@ -1470,7 +1654,11 @@ public class UpscaledChapterHandlingTests : IDisposable
 
             // Create merged chapter with upscaled version
             var mergedChapterPath = Path.Combine(notUpscaledDir, "Test Manga", "Chapter 5.cbz");
-            var upscaledMergedChapterPath = Path.Combine(upscaledDir, "Test Manga", "Chapter 5.cbz");
+            var upscaledMergedChapterPath = Path.Combine(
+                upscaledDir,
+                "Test Manga",
+                "Chapter 5.cbz"
+            );
 
             Directory.CreateDirectory(Path.GetDirectoryName(mergedChapterPath)!);
 
@@ -1478,7 +1666,11 @@ public class UpscaledChapterHandlingTests : IDisposable
             CreateTestCbzFile(Path.GetDirectoryName(mergedChapterPath)!, "Chapter 5.cbz", 6);
 
             // Create upscaled merged file (simulating upscaler output)
-            CreateTestCbzFile(Path.GetDirectoryName(upscaledMergedChapterPath)!, "Chapter 5.cbz", 6);
+            CreateTestCbzFile(
+                Path.GetDirectoryName(upscaledMergedChapterPath)!,
+                "Chapter 5.cbz",
+                6
+            );
 
             // Add upscaler.json to upscaled file
             using (var archive = ZipFile.Open(upscaledMergedChapterPath, ZipArchiveMode.Update))
@@ -1495,7 +1687,7 @@ public class UpscaledChapterHandlingTests : IDisposable
                 RelativePath = Path.Combine("Test Manga", "Chapter 5.cbz"),
                 Manga = manga,
                 IsUpscaled = true,
-                UpscalerProfile = upscalerProfile
+                UpscalerProfile = upscalerProfile,
             };
 
             var mergeInfo = new MergedChapterInfo
@@ -1509,7 +1701,7 @@ public class UpscaledChapterHandlingTests : IDisposable
                         StartPageIndex = 0,
                         EndPageIndex = 2,
                         Metadata = new ExtractedMetadata("Test Manga", "Chapter 5.1", "5.1"),
-                        PageNames = new List<string> { "0000.jpg", "0001.jpg", "0002.jpg" }
+                        PageNames = new List<string> { "0000.jpg", "0001.jpg", "0002.jpg" },
                     },
                     new()
                     {
@@ -1517,9 +1709,9 @@ public class UpscaledChapterHandlingTests : IDisposable
                         StartPageIndex = 3,
                         EndPageIndex = 5,
                         Metadata = new ExtractedMetadata("Test Manga", "Chapter 5.2", "5.2"),
-                        PageNames = new List<string> { "0003.jpg", "0004.jpg", "0005.jpg" }
-                    }
-                }
+                        PageNames = new List<string> { "0003.jpg", "0004.jpg", "0005.jpg" },
+                    },
+                },
             };
 
             context.Chapters.Add(chapter);
@@ -1535,11 +1727,18 @@ public class UpscaledChapterHandlingTests : IDisposable
 
             var chapterPartMerger = new ChapterPartMerger(metadataHandler, partMergerLogger);
             var revertService = new ChapterMergeRevertService(
-                context, chapterPartMerger, chapterChangedNotifier, upscalerJsonService, logger);
+                context,
+                chapterPartMerger,
+                chapterChangedNotifier,
+                upscalerJsonService,
+                logger
+            );
 
             // Act - Revert the merged chapter
-            List<Chapter> restoredChapters =
-                await revertService.RevertMergedChapterAsync(chapter, TestContext.Current.CancellationToken);
+            List<Chapter> restoredChapters = await revertService.RevertMergedChapterAsync(
+                chapter,
+                TestContext.Current.CancellationToken
+            );
 
             // Assert - Verify both regular and upscaled parts were restored
             Assert.Equal(2, restoredChapters.Count);
@@ -1557,16 +1756,22 @@ public class UpscaledChapterHandlingTests : IDisposable
             Assert.False(File.Exists(upscaledMergedChapterPath));
 
             // Verify upscaler.json was added to restored upscaled parts
-            _ = upscalerJsonService.Received(2).WriteUpscalerJsonAsync(
-                Arg.Any<ZipArchive>(),
-                Arg.Is<UpscalerProfile>(p => p.Name == "Test Profile"),
-                Arg.Any<CancellationToken>());
+            _ = upscalerJsonService
+                .Received(2)
+                .WriteUpscalerJsonAsync(
+                    Arg.Any<ZipArchive>(),
+                    Arg.Is<UpscalerProfile>(p => p.Name == "Test Profile"),
+                    Arg.Any<CancellationToken>()
+                );
 
             // Verify database state
             var remainingChapters = context.Chapters.Where(c => c.MangaId == manga.Id).ToList();
             Assert.Equal(2, remainingChapters.Count);
             Assert.All(remainingChapters, c => Assert.True(c.IsUpscaled));
-            Assert.All(remainingChapters, c => Assert.Equal(upscalerProfile.Id, c.UpscalerProfileId));
+            Assert.All(
+                remainingChapters,
+                c => Assert.Equal(upscalerProfile.Id, c.UpscalerProfileId)
+            );
         }
         finally
         {
@@ -1593,7 +1798,7 @@ public class UpscaledChapterHandlingTests : IDisposable
         {
             Name = "Test Library",
             NotUpscaledLibraryPath = Path.GetTempPath(),
-            UpscaledLibraryPath = null // No upscaled path
+            UpscaledLibraryPath = null, // No upscaled path
         };
 
         var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
@@ -1619,7 +1824,7 @@ public class UpscaledChapterHandlingTests : IDisposable
                 FileName = "Chapter 5.cbz",
                 RelativePath = Path.Combine("Test Manga", "Chapter 5.cbz"),
                 Manga = manga,
-                IsUpscaled = false
+                IsUpscaled = false,
             };
 
             var mergeInfo = new MergedChapterInfo
@@ -1633,7 +1838,7 @@ public class UpscaledChapterHandlingTests : IDisposable
                         StartPageIndex = 0,
                         EndPageIndex = 2,
                         Metadata = new ExtractedMetadata("Test Manga", "Chapter 5.1", "5.1"),
-                        PageNames = new List<string> { "0000.jpg", "0001.jpg", "0002.jpg" }
+                        PageNames = new List<string> { "0000.jpg", "0001.jpg", "0002.jpg" },
                     },
                     new()
                     {
@@ -1641,9 +1846,9 @@ public class UpscaledChapterHandlingTests : IDisposable
                         StartPageIndex = 3,
                         EndPageIndex = 5,
                         Metadata = new ExtractedMetadata("Test Manga", "Chapter 5.2", "5.2"),
-                        PageNames = new List<string> { "0003.jpg", "0004.jpg", "0005.jpg" }
-                    }
-                }
+                        PageNames = new List<string> { "0003.jpg", "0004.jpg", "0005.jpg" },
+                    },
+                },
             };
 
             context.Chapters.Add(chapter);
@@ -1659,11 +1864,18 @@ public class UpscaledChapterHandlingTests : IDisposable
 
             var chapterPartMerger = new ChapterPartMerger(metadataHandler, partMergerLogger);
             var revertService = new ChapterMergeRevertService(
-                context, chapterPartMerger, chapterChangedNotifier, upscalerJsonService, logger);
+                context,
+                chapterPartMerger,
+                chapterChangedNotifier,
+                upscalerJsonService,
+                logger
+            );
 
             // Act - Revert the merged chapter
-            List<Chapter> restoredChapters =
-                await revertService.RevertMergedChapterAsync(chapter, TestContext.Current.CancellationToken);
+            List<Chapter> restoredChapters = await revertService.RevertMergedChapterAsync(
+                chapter,
+                TestContext.Current.CancellationToken
+            );
 
             // Assert - Verify only regular parts were restored
             Assert.Equal(2, restoredChapters.Count);
@@ -1676,8 +1888,13 @@ public class UpscaledChapterHandlingTests : IDisposable
             Assert.False(File.Exists(mergedChapterPath));
 
             // Verify no upscaler.json calls were made
-            _ = upscalerJsonService.DidNotReceive().WriteUpscalerJsonAsync(
-                Arg.Any<ZipArchive>(), Arg.Any<UpscalerProfile>(), Arg.Any<CancellationToken>());
+            _ = upscalerJsonService
+                .DidNotReceive()
+                .WriteUpscalerJsonAsync(
+                    Arg.Any<ZipArchive>(),
+                    Arg.Any<UpscalerProfile>(),
+                    Arg.Any<CancellationToken>()
+                );
 
             // Verify database state
             var remainingChapters = context.Chapters.Where(c => c.MangaId == manga.Id).ToList();

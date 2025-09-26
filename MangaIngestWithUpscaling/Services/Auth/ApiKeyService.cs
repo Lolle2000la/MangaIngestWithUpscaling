@@ -1,5 +1,5 @@
-﻿using MangaIngestWithUpscaling.Data;
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
+using MangaIngestWithUpscaling.Data;
 
 namespace MangaIngestWithUpscaling.Services.Auth;
 
@@ -25,7 +25,7 @@ public class ApiKeyService : IApiKeyService
             Key = GenerateApiKey(),
             UserId = userId,
             Expiration = DateTime.UtcNow.AddYears(1),
-            IsActive = true
+            IsActive = true,
         };
 
         _context.ApiKeys.Add(apiKey);

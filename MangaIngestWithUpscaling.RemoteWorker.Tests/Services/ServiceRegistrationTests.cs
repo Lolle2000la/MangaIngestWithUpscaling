@@ -18,7 +18,9 @@ public class ServiceRegistrationTests
         services.RegisterRemoteWorkerServices();
 
         // Assert
-        var hostedServiceDescriptors = services.Where(s => s.ServiceType == typeof(IHostedService)).ToList();
+        var hostedServiceDescriptors = services
+            .Where(s => s.ServiceType == typeof(IHostedService))
+            .ToList();
 
         Assert.NotEmpty(hostedServiceDescriptors);
 
@@ -40,7 +42,10 @@ public class ServiceRegistrationTests
         // Assert
         // Verify that shared services were registered by checking for a known shared service
         List<ServiceDescriptor> descriptors = services
-            .Where(s => s.ServiceType.Namespace?.StartsWith("MangaIngestWithUpscaling.Shared") == true).ToList();
+            .Where(s =>
+                s.ServiceType.Namespace?.StartsWith("MangaIngestWithUpscaling.Shared") == true
+            )
+            .ToList();
 
         // Should have registered several services from the Shared assembly
         Assert.NotEmpty(descriptors);

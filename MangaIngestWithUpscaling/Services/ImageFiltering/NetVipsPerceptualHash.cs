@@ -1,7 +1,7 @@
-using NetVips;
 using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using NetVips;
 
 namespace MangaIngestWithUpscaling.Services.ImageFiltering;
 
@@ -47,7 +47,9 @@ public class NetVipsPerceptualHash
         {
             // The forceful resize should prevent this, but as a safeguard,
             // we handle cases where VIPS might fail to produce a 64x64 image.
-            logger.LogError("Warning: Image processing did not result in a 64x64 pixel map. Skipping hash.");
+            logger.LogError(
+                "Warning: Image processing did not result in a 64x64 pixel map. Skipping hash."
+            );
             return 0;
         }
 
@@ -160,7 +162,12 @@ public class NetVipsPerceptualHash
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void Dct1D_SIMD(ReadOnlySpan<double> valuesRaw, double[,] coefficients, int ci, int limit = SIZE)
+    private static void Dct1D_SIMD(
+        ReadOnlySpan<double> valuesRaw,
+        double[,] coefficients,
+        int ci,
+        int limit = SIZE
+    )
     {
         int stride = Vector<double>.Count;
         var vectors = new Vector<double>[valuesRaw.Length / stride];

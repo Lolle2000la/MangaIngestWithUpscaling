@@ -14,19 +14,22 @@ namespace MangaIngestWithUpscaling.Migrations
                 name: "UpscalerProfilePreferenceId",
                 table: "MangaSeries",
                 type: "INTEGER",
-                nullable: true);
+                nullable: true
+            );
 
             migrationBuilder.CreateIndex(
                 name: "IX_MangaSeries_UpscalerProfilePreferenceId",
                 table: "MangaSeries",
-                column: "UpscalerProfilePreferenceId");
+                column: "UpscalerProfilePreferenceId"
+            );
 
             migrationBuilder.AddForeignKey(
                 name: "FK_MangaSeries_UpscalerProfiles_UpscalerProfilePreferenceId",
                 table: "MangaSeries",
                 column: "UpscalerProfilePreferenceId",
                 principalTable: "UpscalerProfiles",
-                principalColumn: "Id");
+                principalColumn: "Id"
+            );
         }
 
         /// <inheritdoc />
@@ -34,15 +37,15 @@ namespace MangaIngestWithUpscaling.Migrations
         {
             migrationBuilder.DropForeignKey(
                 name: "FK_MangaSeries_UpscalerProfiles_UpscalerProfilePreferenceId",
-                table: "MangaSeries");
+                table: "MangaSeries"
+            );
 
             migrationBuilder.DropIndex(
                 name: "IX_MangaSeries_UpscalerProfilePreferenceId",
-                table: "MangaSeries");
+                table: "MangaSeries"
+            );
 
-            migrationBuilder.DropColumn(
-                name: "UpscalerProfilePreferenceId",
-                table: "MangaSeries");
+            migrationBuilder.DropColumn(name: "UpscalerProfilePreferenceId", table: "MangaSeries");
         }
     }
 }

@@ -7,7 +7,7 @@ public enum GpuBackend
     CUDA_12_8,
     ROCm,
     XPU,
-    CPU
+    CPU,
 }
 
 public record UpscalerConfig
@@ -35,22 +35,24 @@ public record UpscalerConfig
     public bool UseFp16 { get; set; } = true;
     public bool UseCPU { get; set; } = false;
 
-    public string ModelsDirectory { get; set; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "MangaIngestWithUpscaling",
-        "Models"
-    );
+    public string ModelsDirectory { get; set; } =
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "MangaIngestWithUpscaling",
+            "Models"
+        );
 
-    public string PythonEnvironmentDirectory { get; set; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "MangaIngestWithUpscaling",
-        "Python-Env"
-    );
+    public string PythonEnvironmentDirectory { get; set; } =
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "MangaIngestWithUpscaling",
+            "Python-Env"
+        );
 
     public TimeSpan UpscaleTimeout { get; set; } = TimeSpan.FromMinutes(1);
 
     /// <summary>
-    ///     Maximum dimension (width or height) for images before upscaling. 
+    ///     Maximum dimension (width or height) for images before upscaling.
     ///     Images larger than this will be resized to fit within this boundary while maintaining aspect ratio.
     ///     Set to null or 0 to disable this feature.
     /// </summary>

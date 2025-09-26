@@ -1,9 +1,9 @@
+using System.Runtime.InteropServices;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using Microsoft.Extensions.Logging;
 using Silk.NET.Maths;
 using Silk.NET.OpenGL;
 using Silk.NET.Windowing;
-using System.Runtime.InteropServices;
 
 namespace MangaIngestWithUpscaling.Shared.Services.GPU;
 
@@ -28,8 +28,12 @@ public class GpuDetectionService(ILogger<GpuDetectionService> logger) : IGpuDete
         try
         {
             var gpuInfo = await GetGpuInfoAsync();
-            logger.LogInformation("Detected GPU: {Vendor} - {Renderer}, recommended backend: {Backend}",
-                gpuInfo.Vendor, gpuInfo.Renderer, gpuInfo.RecommendedBackend);
+            logger.LogInformation(
+                "Detected GPU: {Vendor} - {Renderer}, recommended backend: {Backend}",
+                gpuInfo.Vendor,
+                gpuInfo.Renderer,
+                gpuInfo.RecommendedBackend
+            );
             return gpuInfo.RecommendedBackend;
         }
         catch (Exception ex)
@@ -96,22 +100,26 @@ public class GpuDetectionService(ILogger<GpuDetectionService> logger) : IGpuDete
         var rendererLower = renderer?.ToLowerInvariant() ?? "";
 
         // Check for NVIDIA
-        if (vendorLower.Contains("nvidia") ||
-            rendererLower.Contains("nvidia") ||
-            rendererLower.Contains("geforce") ||
-            rendererLower.Contains("quadro") ||
-            rendererLower.Contains("tesla"))
+        if (
+            vendorLower.Contains("nvidia")
+            || rendererLower.Contains("nvidia")
+            || rendererLower.Contains("geforce")
+            || rendererLower.Contains("quadro")
+            || rendererLower.Contains("tesla")
+        )
         {
             logger.LogInformation("NVIDIA GPU detected via OpenGL");
             return GpuBackend.CUDA;
         }
 
         // Check for AMD
-        if (vendorLower.Contains("amd") ||
-            vendorLower.Contains("ati") ||
-            rendererLower.Contains("radeon") ||
-            rendererLower.Contains("amd") ||
-            rendererLower.Contains("ati"))
+        if (
+            vendorLower.Contains("amd")
+            || vendorLower.Contains("ati")
+            || rendererLower.Contains("radeon")
+            || rendererLower.Contains("amd")
+            || rendererLower.Contains("ati")
+        )
         {
             logger.LogInformation("AMD GPU detected via OpenGL");
             return GpuBackend.ROCm;
@@ -121,18 +129,22 @@ public class GpuDetectionService(ILogger<GpuDetectionService> logger) : IGpuDete
         if (vendorLower.Contains("intel"))
         {
             // Check if it's a discrete Intel GPU (Arc series) that supports XPU
-            if (rendererLower.Contains("arc") ||
-                rendererLower.Contains("xe") ||
-                rendererLower.Contains("dg") ||
-                rendererLower.Contains("xe-hpg") ||
-                rendererLower.Contains("xe-lpg"))
+            if (
+                rendererLower.Contains("arc")
+                || rendererLower.Contains("xe")
+                || rendererLower.Contains("dg")
+                || rendererLower.Contains("xe-hpg")
+                || rendererLower.Contains("xe-lpg")
+            )
             {
                 logger.LogInformation("Intel discrete GPU detected via OpenGL, using XPU backend");
                 return GpuBackend.XPU;
             }
             else
             {
-                logger.LogInformation("Intel integrated GPU detected via OpenGL, using CPU backend for ML");
+                logger.LogInformation(
+                    "Intel integrated GPU detected via OpenGL, using CPU backend for ML"
+                );
                 return GpuBackend.CPU;
             }
         }

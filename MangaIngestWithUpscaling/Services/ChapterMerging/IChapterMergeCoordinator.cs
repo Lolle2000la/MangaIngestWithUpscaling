@@ -11,7 +11,10 @@ public interface IChapterMergeCoordinator
     /// </summary>
     /// <param name="manga">The manga whose chapters should be processed for merging</param>
     /// <param name="cancellationToken">Cancellation token</param>
-    Task ProcessExistingChapterPartsForMergingAsync(Manga manga, CancellationToken cancellationToken = default);
+    Task ProcessExistingChapterPartsForMergingAsync(
+        Manga manga,
+        CancellationToken cancellationToken = default
+    );
 
     /// <summary>
     /// Updates the database records after a successful chapter merge operation.
@@ -21,8 +24,11 @@ public interface IChapterMergeCoordinator
     /// <param name="mergeInfo">Information about the merge operation that was performed</param>
     /// <param name="originalChapters">The original chapter records that were merged</param>
     /// <param name="cancellationToken">Cancellation token</param>
-    Task UpdateDatabaseForMergeAsync(MergeInfo mergeInfo, List<Chapter> originalChapters,
-        CancellationToken cancellationToken = default);
+    Task UpdateDatabaseForMergeAsync(
+        MergeInfo mergeInfo,
+        List<Chapter> originalChapters,
+        CancellationToken cancellationToken = default
+    );
 
     /// <summary>
     /// Performs a complete chapter merging operation for the specified chapters,
@@ -31,7 +37,11 @@ public interface IChapterMergeCoordinator
     /// <param name="chapters">The chapters to merge together</param>
     /// <param name="library">The library containing the chapters</param>
     /// <param name="cancellationToken">Cancellation token</param>
-    Task MergeChaptersAsync(List<Chapter> chapters, Library library, CancellationToken cancellationToken = default);
+    Task MergeChaptersAsync(
+        List<Chapter> chapters,
+        Library library,
+        CancellationToken cancellationToken = default
+    );
 
     /// <summary>
     /// Performs manual chapter merging for selected chapters, with optional latest chapter handling.
@@ -41,7 +51,11 @@ public interface IChapterMergeCoordinator
     /// <param name="includeLatestChapters">Whether to include latest chapters in merging</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Information about completed merge operations</returns>
-    Task<List<MergeInfo>> MergeSelectedChaptersAsync(List<Chapter> selectedChapters, bool includeLatestChapters = false, CancellationToken cancellationToken = default);
+    Task<List<MergeInfo>> MergeSelectedChaptersAsync(
+        List<Chapter> selectedChapters,
+        bool includeLatestChapters = false,
+        CancellationToken cancellationToken = default
+    );
 
     /// <summary>
     /// Validates which of the selected chapters can be merged and groups them appropriately.
@@ -50,7 +64,11 @@ public interface IChapterMergeCoordinator
     /// <param name="includeLatestChapters">Whether to include latest chapters in the validation</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Dictionary of merge groups, where key is base chapter number and value is list of chapters to merge</returns>
-    Task<Dictionary<string, List<Chapter>>> GetValidMergeGroupsAsync(List<Chapter> selectedChapters, bool includeLatestChapters = false, CancellationToken cancellationToken = default);
+    Task<Dictionary<string, List<Chapter>>> GetValidMergeGroupsAsync(
+        List<Chapter> selectedChapters,
+        bool includeLatestChapters = false,
+        CancellationToken cancellationToken = default
+    );
 
     /// <summary>
     /// Checks if a chapter can be added to an existing merged chapter.
@@ -58,7 +76,10 @@ public interface IChapterMergeCoordinator
     /// <param name="chapter">The chapter to check</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>True if the chapter can be added to an existing merged chapter</returns>
-    Task<bool> CanChapterBeAddedToExistingMergedAsync(Chapter chapter, CancellationToken cancellationToken = default);
+    Task<bool> CanChapterBeAddedToExistingMergedAsync(
+        Chapter chapter,
+        CancellationToken cancellationToken = default
+    );
 
     /// <summary>
     /// Gets all possible merge actions for the given chapters, including both new merges and additions to existing merged chapters.
@@ -67,7 +88,11 @@ public interface IChapterMergeCoordinator
     /// <param name="includeLatestChapters">Whether to include latest chapters in the analysis</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Information about all possible merge actions</returns>
-    Task<MergeActionInfo> GetPossibleMergeActionsAsync(List<Chapter> chapters, bool includeLatestChapters = false, CancellationToken cancellationToken = default);
+    Task<MergeActionInfo> GetPossibleMergeActionsAsync(
+        List<Chapter> chapters,
+        bool includeLatestChapters = false,
+        CancellationToken cancellationToken = default
+    );
 
     /// <summary>
     /// Checks if a chapter part has already been merged into another chapter.
@@ -76,7 +101,11 @@ public interface IChapterMergeCoordinator
     /// <param name="manga">The manga containing the chapter</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>True if the chapter part has already been merged</returns>
-    Task<bool> IsChapterPartAlreadyMergedAsync(string chapterFileName, Manga manga, CancellationToken cancellationToken = default);
+    Task<bool> IsChapterPartAlreadyMergedAsync(
+        string chapterFileName,
+        Manga manga,
+        CancellationToken cancellationToken = default
+    );
 }
 
 /// <summary>

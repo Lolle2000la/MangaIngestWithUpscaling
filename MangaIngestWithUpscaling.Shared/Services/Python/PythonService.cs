@@ -1,10 +1,10 @@
-﻿using MangaIngestWithUpscaling.Shared.Configuration;
-using MangaIngestWithUpscaling.Shared.Services.GPU;
-using Microsoft.Extensions.Logging;
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Services.GPU;
+using Microsoft.Extensions.Logging;
 
 namespace MangaIngestWithUpscaling.Shared.Services.Python;
 
@@ -17,7 +17,8 @@ public record EnvironmentState(
 );
 
 [RegisterScoped]
-public class PythonService(ILogger<PythonService> logger, IGpuDetectionService gpuDetectionService) : IPythonService
+public class PythonService(ILogger<PythonService> logger, IGpuDetectionService gpuDetectionService)
+    : IPythonService
 {
     /// <summary>
     ///     Environment version - increment this when Python dependencies change to force environment recreation.
@@ -40,7 +41,9 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
 
     public string? GetPythonExecutablePath()
     {
-        string executableExtension = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : "";
+        string executableExtension = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? ".exe"
+            : "";
 
         if (PathHelpers.ExistsOnPath($"python3.12{executableExtension}"))
         {
@@ -48,23 +51,32 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         }
         else
         {
-            logger.LogCritical("Python 3.12 must be installed on the system in order to use upscaling!");
+            logger.LogCritical(
+                "Python 3.12 must be installed on the system in order to use upscaling!"
+            );
             return null;
         }
     }
 
     public bool IsPythonInstalled()
     {
-        string executableExtension = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : "";
-        return PathHelpers.ExistsOnPath($"python{executableExtension}") ||
-               PathHelpers.ExistsOnPath($"python3{executableExtension}");
+        string executableExtension = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? ".exe"
+            : "";
+        return PathHelpers.ExistsOnPath($"python{executableExtension}")
+            || PathHelpers.ExistsOnPath($"python3{executableExtension}");
     }
 
-    public async Task<PythonEnvironment> PreparePythonEnvironment(string desiredDirectory,
-        GpuBackend preferredBackend = GpuBackend.Auto, bool forceAcceptExisting = false)
+    public async Task<PythonEnvironment> PreparePythonEnvironment(
+        string desiredDirectory,
+        GpuBackend preferredBackend = GpuBackend.Auto,
+        bool forceAcceptExisting = false
+    )
     {
         // Determine the actual backend to use
-        var targetBackend = forceAcceptExisting ? GpuBackend.CPU : await DetermineTargetBackend(preferredBackend);
+        var targetBackend = forceAcceptExisting
+            ? GpuBackend.CPU
+            : await DetermineTargetBackend(preferredBackend);
 
         // create a virtual environment in a writable but permanent location
         var environmentPath = Path.GetFullPath(desiredDirectory);
@@ -73,27 +85,34 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         var relPythonPath = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) switch
         {
             true => Path.Combine(environmentPath, "Scripts", "python3.12.exe"),
-            false => Path.Combine(environmentPath, "bin", "python3.12")
+            false => Path.Combine(environmentPath, "bin", "python3.12"),
         };
 
         var relPythonBin = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) switch
         {
             true => "python3.12.exe",
-            false => "python3.12"
+            false => "python3.12",
         };
 
         string assemblyDir = AppContext.BaseDirectory;
         string backendSrcDirectory = Path.Combine(assemblyDir, "backend", "src");
 
         // Check if environment needs to be created or recreated
-        bool needsRecreation =
-            await ShouldRecreateEnvironment(environmentStatePath, targetBackend, relPythonPath, forceAcceptExisting);
+        bool needsRecreation = await ShouldRecreateEnvironment(
+            environmentStatePath,
+            targetBackend,
+            relPythonPath,
+            forceAcceptExisting
+        );
 
         GpuBackend actualBackend = targetBackend;
 
         if (needsRecreation)
         {
-            logger.LogInformation("Creating/recreating Python environment with {Backend} backend", targetBackend);
+            logger.LogInformation(
+                "Creating/recreating Python environment with {Backend} backend",
+                targetBackend
+            );
 
             // Remove existing environment if it exists
             if (Directory.Exists(environmentPath))
@@ -102,28 +121,43 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
             }
 
             await CreateVirtualEnvironment(relPythonBin, environmentPath);
-            await InstallPythonPackages(relPythonPath, backendSrcDirectory, targetBackend, environmentPath);
+            await InstallPythonPackages(
+                relPythonPath,
+                backendSrcDirectory,
+                targetBackend,
+                environmentPath
+            );
             await SaveEnvironmentState(environmentStatePath, targetBackend, relPythonPath);
         }
         else
         {
             if (forceAcceptExisting)
             {
-                logger.LogInformation("Force accepting existing Python environment (backend detection bypassed)");
+                logger.LogInformation(
+                    "Force accepting existing Python environment (backend detection bypassed)"
+                );
                 // When forcing acceptance, use the preferred backend or fall back to CPU as the safest default
-                actualBackend = preferredBackend != GpuBackend.Auto ? preferredBackend : GpuBackend.CPU;
+                actualBackend =
+                    preferredBackend != GpuBackend.Auto ? preferredBackend : GpuBackend.CPU;
             }
             else
             {
-                logger.LogInformation("Using existing Python environment with {Backend} backend", targetBackend);
+                logger.LogInformation(
+                    "Using existing Python environment with {Backend} backend",
+                    targetBackend
+                );
             }
         }
 
         return new PythonEnvironment(relPythonPath, backendSrcDirectory, actualBackend);
     }
 
-    public Task<string> RunPythonScript(string script, string arguments, CancellationToken? cancellationToken = null,
-        TimeSpan? timout = null)
+    public Task<string> RunPythonScript(
+        string script,
+        string arguments,
+        CancellationToken? cancellationToken = null,
+        TimeSpan? timout = null
+    )
     {
         if (Environment == null)
         {
@@ -138,33 +172,62 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         string script,
         string arguments,
         CancellationToken? cancellationToken = null,
-        TimeSpan? timeout = null)
+        TimeSpan? timeout = null
+    )
     {
         var sb = new StringBuilder();
-        await RunPythonScriptStreaming(environment, script, arguments, line =>
-        {
-            sb.AppendLine(line);
-            return Task.CompletedTask;
-        }, cancellationToken, timeout);
+        await RunPythonScriptStreaming(
+            environment,
+            script,
+            arguments,
+            line =>
+            {
+                sb.AppendLine(line);
+                return Task.CompletedTask;
+            },
+            cancellationToken,
+            timeout
+        );
         return sb.ToString();
     }
 
-    public Task RunPythonScriptStreaming(string script, string arguments, Func<string, Task> onStdout,
-        CancellationToken? cancellationToken = null, TimeSpan? timeout = null)
+    public Task RunPythonScriptStreaming(
+        string script,
+        string arguments,
+        Func<string, Task> onStdout,
+        CancellationToken? cancellationToken = null,
+        TimeSpan? timeout = null
+    )
     {
         if (Environment == null)
         {
             throw new InvalidOperationException(
-                "Python environment is not prepared. Call PreparePythonEnvironment first.");
+                "Python environment is not prepared. Call PreparePythonEnvironment first."
+            );
         }
 
-        return RunPythonScriptStreaming(Environment, script, arguments, onStdout, cancellationToken, timeout);
+        return RunPythonScriptStreaming(
+            Environment,
+            script,
+            arguments,
+            onStdout,
+            cancellationToken,
+            timeout
+        );
     }
 
-    public async Task RunPythonScriptStreaming(PythonEnvironment environment, string script, string arguments,
-        Func<string, Task> onStdout, CancellationToken? cancellationToken = null, TimeSpan? timeout = null)
+    public async Task RunPythonScriptStreaming(
+        PythonEnvironment environment,
+        string script,
+        string arguments,
+        Func<string, Task> onStdout,
+        CancellationToken? cancellationToken = null,
+        TimeSpan? timeout = null
+    )
     {
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken ?? CancellationToken.None);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken ?? CancellationToken.None
+        );
 
         var startInfo = new ProcessStartInfo
         {
@@ -176,7 +239,7 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
             UseShellExecute = false,
             CreateNoWindow = true,
             StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8
+            StandardErrorEncoding = Encoding.UTF8,
         };
 
         using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
@@ -203,7 +266,10 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
                 }
 
                 updateActivity();
-                try { await onStdout(e.Data); }
+                try
+                {
+                    await onStdout(e.Data);
+                }
                 catch
                 {
                     /* swallow to avoid crashing reader */
@@ -235,7 +301,10 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
                 await Task.Delay(200, cts.Token);
                 if (timeout.HasValue && DateTime.UtcNow - lastActivity > timeout.Value)
                 {
-                    try { process.Kill(true); }
+                    try
+                    {
+                        process.Kill(true);
+                    }
                     catch { }
 
                     string err;
@@ -244,8 +313,9 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
                         err = errorBuilder.ToString();
                     }
 
-                    throw new TimeoutException($"Python process timed out after {timeout.Value} of no output:\n" +
-                                               $"{err}");
+                    throw new TimeoutException(
+                        $"Python process timed out after {timeout.Value} of no output:\n" + $"{err}"
+                    );
                 }
             }
 
@@ -260,8 +330,9 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
                     err = errorBuilder.ToString();
                 }
 
-                throw new InvalidOperationException($"Python process exited with code {process.ExitCode}:\n" +
-                                                    $"{err}");
+                throw new InvalidOperationException(
+                    $"Python process exited with code {process.ExitCode}:\n" + $"{err}"
+                );
             }
         }
         finally
@@ -286,13 +357,19 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
 
             if (outputHandler is not null)
             {
-                try { process.OutputDataReceived -= outputHandler; }
+                try
+                {
+                    process.OutputDataReceived -= outputHandler;
+                }
                 catch { }
             }
 
             if (errorHandler is not null)
             {
-                try { process.ErrorDataReceived -= errorHandler; }
+                try
+                {
+                    process.ErrorDataReceived -= errorHandler;
+                }
                 catch { }
             }
         }
@@ -312,7 +389,10 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         try
         {
             var detectedBackend = await gpuDetectionService.DetectOptimalBackendAsync();
-            logger.LogInformation("GPU detection completed, selected backend: {Backend}", detectedBackend);
+            logger.LogInformation(
+                "GPU detection completed, selected backend: {Backend}",
+                detectedBackend
+            );
             return detectedBackend;
         }
         catch (Exception ex)
@@ -322,13 +402,20 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         }
     }
 
-    private async Task<bool> ShouldRecreateEnvironment(string environmentStatePath, GpuBackend targetBackend,
-        string pythonPath, bool forceAcceptExisting = false)
+    private async Task<bool> ShouldRecreateEnvironment(
+        string environmentStatePath,
+        GpuBackend targetBackend,
+        string pythonPath,
+        bool forceAcceptExisting = false
+    )
     {
         // If force accept is enabled and Python executable exists, accept the environment as-is
         if (forceAcceptExisting && File.Exists(pythonPath))
         {
-            logger.LogInformation("Force accepting existing Python environment at {PythonPath}", pythonPath);
+            logger.LogInformation(
+                "Force accepting existing Python environment at {PythonPath}",
+                pythonPath
+            );
             return false;
         }
 
@@ -347,8 +434,10 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         try
         {
             var stateJson = await File.ReadAllTextAsync(environmentStatePath);
-            EnvironmentState? state =
-                JsonSerializer.Deserialize(stateJson, PythonServiceJsonContext.Default.EnvironmentState);
+            EnvironmentState? state = JsonSerializer.Deserialize(
+                stateJson,
+                PythonServiceJsonContext.Default.EnvironmentState
+            );
 
             if (state == null)
             {
@@ -358,8 +447,11 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
             // If the backend has changed, we need to recreate
             if (state.InstalledBackend != targetBackend)
             {
-                logger.LogInformation("Backend changed from {OldBackend} to {NewBackend}, recreating environment",
-                    state.InstalledBackend, targetBackend);
+                logger.LogInformation(
+                    "Backend changed from {OldBackend} to {NewBackend}, recreating environment",
+                    state.InstalledBackend,
+                    targetBackend
+                );
                 return true;
             }
 
@@ -368,7 +460,9 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
             {
                 logger.LogInformation(
                     "Environment version changed from {OldVersion} to {NewVersion}, recreating environment",
-                    state.EnvironmentVersion, ENVIRONMENT_VERSION);
+                    state.EnvironmentVersion,
+                    ENVIRONMENT_VERSION
+                );
                 return true;
             }
 
@@ -398,7 +492,9 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
 
         string? line;
 
-        while (!process.HasExited && (line = await process.StandardOutput.ReadLineAsync()) is not null)
+        while (
+            !process.HasExited && (line = await process.StandardOutput.ReadLineAsync()) is not null
+        )
         {
             if (!string.IsNullOrEmpty(line))
             {
@@ -411,51 +507,63 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         if (process.ExitCode != 0)
         {
             throw new InvalidOperationException(
-                $"Failed to create virtual environment:\n\n {await process.StandardError.ReadToEndAsync()}");
+                $"Failed to create virtual environment:\n\n {await process.StandardError.ReadToEndAsync()}"
+            );
         }
     }
 
-    private async Task InstallPythonPackages(string pythonPath, string backendSrcDirectory, GpuBackend targetBackend,
-        string environmentPath)
+    private async Task InstallPythonPackages(
+        string pythonPath,
+        string backendSrcDirectory,
+        GpuBackend targetBackend,
+        string environmentPath
+    )
     {
         // First, upgrade pip and install wheel
-        await RunPipCommand(pythonPath, "install -U pip wheel --no-warn-script-location", environmentPath);
+        await RunPipCommand(
+            pythonPath,
+            "install -U pip wheel --no-warn-script-location",
+            environmentPath
+        );
 
         // Install PyTorch and all other packages in a single command with appropriate backend
         string packagesCommand = targetBackend switch
         {
             GpuBackend.CUDA =>
-                "install torch==2.7.1 torchvision==0.22.1 --extra-index-url https://download.pytorch.org/whl/cu118 " +
-                "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
-                "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
-                "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 --no-warn-script-location",
+                "install torch==2.7.1 torchvision==0.22.1 --extra-index-url https://download.pytorch.org/whl/cu118 "
+                    + "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 "
+                    + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
+                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 --no-warn-script-location",
             GpuBackend.CUDA_12_8 =>
-                "install torch==2.8.0 torchvision==0.23.0 --extra-index-url https://download.pytorch.org/whl/cu128 " +
-                "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
-                "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
-                "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 --no-warn-script-location",
+                "install torch==2.8.0 torchvision==0.23.0 --extra-index-url https://download.pytorch.org/whl/cu128 "
+                    + "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 "
+                    + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
+                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 --no-warn-script-location",
             GpuBackend.ROCm =>
-                "install torch==2.8.0 torchvision==0.23.0 --extra-index-url https://download.pytorch.org/whl/rocm6.4 " +
-                "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
-                "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
-                "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 --no-warn-script-location",
+                "install torch==2.8.0 torchvision==0.23.0 --extra-index-url https://download.pytorch.org/whl/rocm6.4 "
+                    + "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 "
+                    + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
+                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 --no-warn-script-location",
             GpuBackend.XPU =>
-                "install torch==2.8.0 torchvision==0.23.0 --extra-index-url https://download.pytorch.org/whl/xpu " +
-                "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
-                "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
-                "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 --no-warn-script-location",
+                "install torch==2.8.0 torchvision==0.23.0 --extra-index-url https://download.pytorch.org/whl/xpu "
+                    + "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 "
+                    + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
+                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 --no-warn-script-location",
             GpuBackend.CPU =>
-                "install torch==2.8.0 torchvision==0.23.0 --extra-index-url https://download.pytorch.org/whl/cpu " +
-                "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
-                "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
-                "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 --no-warn-script-location",
-            _ => "install torch==2.8.0 torchvision==0.23.0 " +
-                 "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 " +
-                 "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 " +
-                 "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 --no-warn-script-location"
+                "install torch==2.8.0 torchvision==0.23.0 --extra-index-url https://download.pytorch.org/whl/cpu "
+                    + "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 "
+                    + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
+                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 --no-warn-script-location",
+            _ => "install torch==2.8.0 torchvision==0.23.0 "
+                + "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 "
+                + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
+                + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 --no-warn-script-location",
         };
 
-        logger.LogInformation("Installing PyTorch and dependencies with {Backend} backend", targetBackend);
+        logger.LogInformation(
+            "Installing PyTorch and dependencies with {Backend} backend",
+            targetBackend
+        );
         await RunPipCommand(pythonPath, packagesCommand, environmentPath);
     }
 
@@ -485,7 +593,9 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
 
         process.Start();
         string? line;
-        while (!process.HasExited && (line = await process.StandardOutput.ReadLineAsync()) is not null)
+        while (
+            !process.HasExited && (line = await process.StandardOutput.ReadLineAsync()) is not null
+        )
         {
             if (!string.IsNullOrEmpty(line))
             {
@@ -499,11 +609,16 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         {
             var errorOutput = await process.StandardError.ReadToEndAsync();
             throw new InvalidOperationException(
-                $"Failed to run pip command '{pipArgs}':\n\n {errorOutput}");
+                $"Failed to run pip command '{pipArgs}':\n\n {errorOutput}"
+            );
         }
     }
 
-    private async Task SaveEnvironmentState(string environmentStatePath, GpuBackend installedBackend, string pythonPath)
+    private async Task SaveEnvironmentState(
+        string environmentStatePath,
+        GpuBackend installedBackend,
+        string pythonPath
+    )
     {
         try
         {
@@ -521,11 +636,17 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
                 ENVIRONMENT_VERSION
             );
 
-            string json = JsonSerializer.Serialize(state, PythonServiceJsonContext.Default.EnvironmentState);
+            string json = JsonSerializer.Serialize(
+                state,
+                PythonServiceJsonContext.Default.EnvironmentState
+            );
             await File.WriteAllTextAsync(environmentStatePath, json);
 
-            logger.LogInformation("Saved environment state with {Backend} backend, version {Version}", installedBackend,
-                ENVIRONMENT_VERSION);
+            logger.LogInformation(
+                "Saved environment state with {Backend} backend, version {Version}",
+                installedBackend,
+                ENVIRONMENT_VERSION
+            );
         }
         catch (Exception ex)
         {

@@ -21,13 +21,16 @@ public class LibraryIntegrityCheckTask : BaseTask
 
     public int LibraryId { get; set; }
 
-    public override async Task ProcessAsync(IServiceProvider services, CancellationToken cancellationToken)
+    public override async Task ProcessAsync(
+        IServiceProvider services,
+        CancellationToken cancellationToken
+    )
     {
         var integrityChecker = services.GetRequiredService<ILibraryIntegrityChecker>();
         var dbContext = services.GetRequiredService<ApplicationDbContext>();
 
-        var library = await dbContext.Libraries
-            .Include(l => l.MangaSeries)
+        var library = await dbContext
+            .Libraries.Include(l => l.MangaSeries)
             .ThenInclude(m => m.Chapters)
             .ThenInclude(c => c.UpscalerProfile)
             .Include(l => l.UpscalerProfile)

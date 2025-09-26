@@ -8,7 +8,9 @@ namespace MangaIngestWithUpscaling.Services.Background;
 public class PeriodicIngestWatcher : BackgroundService
 {
     private readonly IServiceScopeFactory _serviceScopeFactory;
-    public PeriodicIngestWatcher(IServiceScopeFactory serviceScopeFactory) => _serviceScopeFactory = serviceScopeFactory;
+
+    public PeriodicIngestWatcher(IServiceScopeFactory serviceScopeFactory) =>
+        _serviceScopeFactory = serviceScopeFactory;
 
     private List<Library> libraries = [];
 
@@ -46,7 +48,8 @@ public class PeriodicIngestWatcher : BackgroundService
             if (!this.libraries.SequenceEqual(newLibraries))
             {
                 this.libraries = newLibraries;
-                var ingestWatcher = scope.ServiceProvider.GetRequiredService<LibraryIngestWatcher>();
+                var ingestWatcher =
+                    scope.ServiceProvider.GetRequiredService<LibraryIngestWatcher>();
                 ingestWatcher.NotifyLibrariesHaveChanged();
             }
         }

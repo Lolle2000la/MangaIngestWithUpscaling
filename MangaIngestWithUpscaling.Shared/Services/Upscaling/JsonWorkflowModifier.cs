@@ -38,7 +38,9 @@ public static class JsonWorkflowModifier
         JsonObject? workflow = valuesArray
             .Where(n => n != null)
             .Select(n => n!.AsObject())
-            .FirstOrDefault(obj => obj["WorkflowName"]?.GetValue<string>() == "Upscale Manga (Default)");
+            .FirstOrDefault(obj =>
+                obj["WorkflowName"]?.GetValue<string>() == "Upscale Manga (Default)"
+            );
         if (workflow == null)
             throw new Exception("Workflow 'Upscale Manga (Default)' not found.");
 
@@ -78,7 +80,10 @@ public static class JsonWorkflowModifier
 
         // Write the modified JSON to a temporary file.
         string tempFilePath = Path.GetTempFileName();
-        File.WriteAllText(tempFilePath, rootNode.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        File.WriteAllText(
+            tempFilePath,
+            rootNode.ToJsonString(new JsonSerializerOptions { WriteIndented = true })
+        );
         // rename to .json
         File.Move(tempFilePath, tempFilePath + ".json");
         return tempFilePath + ".json";

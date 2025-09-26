@@ -11,29 +11,39 @@ namespace MangaIngestWithUpscaling.Services.ChapterMerging;
 [RegisterScoped]
 public class BackwardCompatibilityService(
     ApplicationDbContext dbContext,
-    ILogger<BackwardCompatibilityService> logger) : IBackwardCompatibilityService
+    ILogger<BackwardCompatibilityService> logger
+) : IBackwardCompatibilityService
 {
     /// <summary>
     /// Validates and ensures existing merged chapter records are compatible with enhanced functionality
     /// </summary>
-    public async Task ValidateAndUpgradeExistingRecordsAsync(CancellationToken cancellationToken = default)
+    public async Task ValidateAndUpgradeExistingRecordsAsync(
+        CancellationToken cancellationToken = default
+    )
     {
-        logger.LogInformation("Starting backward compatibility validation for existing merged chapter records");
+        logger.LogInformation(
+            "Starting backward compatibility validation for existing merged chapter records"
+        );
 
         // Get all existing merged chapter records
-        List<MergedChapterInfo> existingRecords = await dbContext.MergedChapterInfos
-            .Include(m => m.Chapter)
+        List<MergedChapterInfo> existingRecords = await dbContext
+            .MergedChapterInfos.Include(m => m.Chapter)
             .ThenInclude(c => c.Manga)
             .ThenInclude(m => m.Library)
             .ToListAsync(cancellationToken);
 
         if (!existingRecords.Any())
         {
-            logger.LogInformation("No existing merged chapter records found - no compatibility validation needed");
+            logger.LogInformation(
+                "No existing merged chapter records found - no compatibility validation needed"
+            );
             return;
         }
 
-        logger.LogInformation("Found {RecordCount} existing merged chapter records to validate", existingRecords.Count);
+        logger.LogInformation(
+            "Found {RecordCount} existing merged chapter records to validate",
+            existingRecords.Count
+        );
 
         int validatedCount = 0;
         int upgradeCount = 0;
@@ -52,8 +62,13 @@ public class BackwardCompatibilityService(
             }
             catch (Exception ex)
             {
-                string issue = $"Failed to validate record for chapter {record.Chapter.FileName}: {ex.Message}";
-                logger.LogWarning(ex, "Backward compatibility validation failed for chapter {ChapterFile}", record.Chapter.FileName);
+                string issue =
+                    $"Failed to validate record for chapter {record.Chapter.FileName}: {ex.Message}";
+                logger.LogWarning(
+                    ex,
+                    "Backward compatibility validation failed for chapter {ChapterFile}",
+                    record.Chapter.FileName
+                );
                 issues.Add(issue);
             }
         }
@@ -62,30 +77,45 @@ public class BackwardCompatibilityService(
         if (upgradeCount > 0)
         {
             await dbContext.SaveChangesAsync(cancellationToken);
-            logger.LogInformation("Upgraded {UpgradeCount} merged chapter records for enhanced compatibility", upgradeCount);
+            logger.LogInformation(
+                "Upgraded {UpgradeCount} merged chapter records for enhanced compatibility",
+                upgradeCount
+            );
         }
 
-        logger.LogInformation("Backward compatibility validation complete: {ValidatedCount} validated, {UpgradeCount} upgraded, {IssueCount} issues",
-            validatedCount, upgradeCount, issues.Count);
+        logger.LogInformation(
+            "Backward compatibility validation complete: {ValidatedCount} validated, {UpgradeCount} upgraded, {IssueCount} issues",
+            validatedCount,
+            upgradeCount,
+            issues.Count
+        );
 
         if (issues.Any())
         {
-            logger.LogWarning("Compatibility validation issues detected: {Issues}", string.Join("; ", issues));
+            logger.LogWarning(
+                "Compatibility validation issues detected: {Issues}",
+                string.Join("; ", issues)
+            );
         }
     }
 
     /// <summary>
     /// Validates a single merged chapter record and upgrades it if necessary
     /// </summary>
-    private async Task<bool> ValidateAndUpgradeRecordAsync(MergedChapterInfo record, CancellationToken cancellationToken)
+    private async Task<bool> ValidateAndUpgradeRecordAsync(
+        MergedChapterInfo record,
+        CancellationToken cancellationToken
+    )
     {
         bool wasUpgraded = false;
 
         // Validate that OriginalParts is properly populated
         if (record.OriginalParts == null || !record.OriginalParts.Any())
         {
-            logger.LogWarning("Merged chapter {ChapterFile} has no original parts - this may cause issues with reversion",
-                record.Chapter.FileName);
+            logger.LogWarning(
+                "Merged chapter {ChapterFile} has no original parts - this may cause issues with reversion",
+                record.Chapter.FileName
+            );
             return false;
         }
 
@@ -110,7 +140,7 @@ public class BackwardCompatibilityService(
 
         // Check for overlapping or inconsistent page ranges
         var sortedParts = record.OriginalParts.OrderBy(p => p.StartPageIndex).ToList();
-        
+
         for (int i = 0; i < sortedParts.Count; i++)
         {
             var part = sortedParts[i];
@@ -118,8 +148,12 @@ public class BackwardCompatibilityService(
             // Validate that EndPageIndex >= StartPageIndex
             if (part.EndPageIndex < part.StartPageIndex)
             {
-                logger.LogWarning("Fixing invalid page range for part {PartFileName}: {StartPage}-{EndPage}",
-                    part.FileName, part.StartPageIndex, part.EndPageIndex);
+                logger.LogWarning(
+                    "Fixing invalid page range for part {PartFileName}: {StartPage}-{EndPage}",
+                    part.FileName,
+                    part.StartPageIndex,
+                    part.EndPageIndex
+                );
                 part.EndPageIndex = part.StartPageIndex + Math.Max(0, part.PageNames.Count - 1);
                 wasFixed = true;
             }
@@ -130,8 +164,11 @@ public class BackwardCompatibilityService(
                 var previousPart = sortedParts[i - 1];
                 if (part.StartPageIndex <= previousPart.EndPageIndex)
                 {
-                    logger.LogWarning("Fixing overlapping page ranges between {PrevPart} and {CurrentPart}",
-                        previousPart.FileName, part.FileName);
+                    logger.LogWarning(
+                        "Fixing overlapping page ranges between {PrevPart} and {CurrentPart}",
+                        previousPart.FileName,
+                        part.FileName
+                    );
                     part.StartPageIndex = previousPart.EndPageIndex + 1;
                     part.EndPageIndex = part.StartPageIndex + Math.Max(0, part.PageNames.Count - 1);
                     wasFixed = true;
@@ -147,11 +184,17 @@ public class BackwardCompatibilityService(
     /// </summary>
     private Task<bool> ValidateChapterFileExistsAsync(MergedChapterInfo record)
     {
-        string chapterPath = Path.Combine(record.Chapter.Manga.Library.NotUpscaledLibraryPath, record.Chapter.RelativePath);
-        
+        string chapterPath = Path.Combine(
+            record.Chapter.Manga.Library.NotUpscaledLibraryPath,
+            record.Chapter.RelativePath
+        );
+
         if (!File.Exists(chapterPath))
         {
-            logger.LogWarning("Merged chapter file no longer exists: {ChapterPath} - reversion may not work properly", chapterPath);
+            logger.LogWarning(
+                "Merged chapter file no longer exists: {ChapterPath} - reversion may not work properly",
+                chapterPath
+            );
             // We don't "fix" this automatically since it requires user intervention
             // Just log the issue for user awareness
         }
@@ -171,14 +214,18 @@ public class BackwardCompatibilityService(
             // Ensure PageNames is populated - critical for enhanced restoration
             if (part.PageNames == null || !part.PageNames.Any())
             {
-                logger.LogWarning("Original part {PartFileName} has no page names - generating default names", part.FileName);
-                
+                logger.LogWarning(
+                    "Original part {PartFileName} has no page names - generating default names",
+                    part.FileName
+                );
+
                 // Generate default page names based on page range
                 int pageCount = part.EndPageIndex - part.StartPageIndex + 1;
-                part.PageNames = Enumerable.Range(0, pageCount)
+                part.PageNames = Enumerable
+                    .Range(0, pageCount)
                     .Select(i => $"{i:D4}.jpg") // Use 4-digit format compatible with enhanced restoration
                     .ToList();
-                
+
                 upgraded = true;
             }
 
@@ -186,14 +233,19 @@ public class BackwardCompatibilityService(
             // The restoration process will fall back to generating ComicInfo.xml from basic metadata
             if (string.IsNullOrEmpty(part.OriginalComicInfoXml))
             {
-                logger.LogDebug("Legacy record part {PartFileName} has no OriginalComicInfoXml - will use metadata fallback during restoration",
-                    part.FileName);
+                logger.LogDebug(
+                    "Legacy record part {PartFileName} has no OriginalComicInfoXml - will use metadata fallback during restoration",
+                    part.FileName
+                );
             }
 
             // Ensure ChapterNumber is populated - needed for enhanced merge detection
             if (string.IsNullOrEmpty(part.ChapterNumber))
             {
-                logger.LogWarning("Original part {PartFileName} has no chapter number - this may affect merge detection", part.FileName);
+                logger.LogWarning(
+                    "Original part {PartFileName} has no chapter number - this may affect merge detection",
+                    part.FileName
+                );
                 // We can't automatically fix this without risking incorrect data
                 // Log for user awareness
             }

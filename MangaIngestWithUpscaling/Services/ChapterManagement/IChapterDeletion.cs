@@ -11,6 +11,7 @@ public interface IChapterDeletion
     /// <param name="deleteNormal">Whether to delete the normal version of the chapter.</param>
     /// <param name="deleteUpscaled">Whether to delete the upscaled version of the chapter.</param>
     void DeleteChapter(Chapter chapter, bool deleteNormal, bool deleteUpscaled);
+
     /// <summary>
     /// Deletes a manga from the library, optionally deleting all chapters.
     /// </summary>

@@ -1,13 +1,13 @@
-﻿using MangaIngestWithUpscaling.Shared.Constants;
-using Microsoft.Extensions.Logging;
-using System.IO.Compression;
+﻿using System.IO.Compression;
 using System.Xml.Linq;
+using MangaIngestWithUpscaling.Shared.Constants;
+using Microsoft.Extensions.Logging;
 
 namespace MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 
 [RegisterScoped]
-public class MetadataHandlingService(
-    ILogger<MetadataHandlingService> logger) : IMetadataHandlingService
+public class MetadataHandlingService(ILogger<MetadataHandlingService> logger)
+    : IMetadataHandlingService
 {
     public ExtractedMetadata GetSeriesAndTitleFromComicInfo(string file)
     {
@@ -76,11 +76,11 @@ public class MetadataHandlingService(
         return new ExtractedMetadata(series, title, number);
     }
 
-
     /// <inheritdoc/>
     public bool PagesEqual(string? file1, string? file2)
     {
-        if (string.IsNullOrEmpty(file1) || string.IsNullOrEmpty(file2)) return false;
+        if (string.IsNullOrEmpty(file1) || string.IsNullOrEmpty(file2))
+            return false;
 
         if (!file1.EndsWith(".cbz") || !file2.EndsWith(".cbz"))
         {
@@ -92,16 +92,22 @@ public class MetadataHandlingService(
             using var archive1 = ZipFile.OpenRead(file1);
             using var archive2 = ZipFile.OpenRead(file2);
 
-            var files1 = archive1.Entries
-                .Where(e => ImageConstants.IsSupportedImageExtension(
-                    Path.GetExtension(e.FullName).ToLowerInvariant()))
+            var files1 = archive1
+                .Entries.Where(e =>
+                    ImageConstants.IsSupportedImageExtension(
+                        Path.GetExtension(e.FullName).ToLowerInvariant()
+                    )
+                )
                 .Select(e => Path.GetFileNameWithoutExtension(e.FullName)) // upscaled images can have different formats
                 .OrderBy(e => e)
                 .ToList();
 
-            var files2 = archive2.Entries
-                .Where(e => ImageConstants.IsSupportedImageExtension(
-                    Path.GetExtension(e.FullName).ToLowerInvariant()))
+            var files2 = archive2
+                .Entries.Where(e =>
+                    ImageConstants.IsSupportedImageExtension(
+                        Path.GetExtension(e.FullName).ToLowerInvariant()
+                    )
+                )
                 .Select(e => Path.GetFileNameWithoutExtension(e.FullName))
                 .OrderBy(e => e)
                 .ToList();
@@ -115,16 +121,23 @@ public class MetadataHandlingService(
         }
         catch (InvalidDataException ex)
         {
-            logger.LogError(ex, "The format of one of the following two archives is invalid.\n" +
-                                "Tried to compare \"{file1}\" to \"{file2}\"",
-                file1, file2);
+            logger.LogError(
+                ex,
+                "The format of one of the following two archives is invalid.\n"
+                    + "Tried to compare \"{file1}\" to \"{file2}\"",
+                file1,
+                file2
+            );
             return false;
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to compare cbz files.\n\n" +
-                                "Tried to compare \"{file1}\" to \"{file2}\"",
-                file1, file2);
+            logger.LogError(
+                ex,
+                "Failed to compare cbz files.\n\n" + "Tried to compare \"{file1}\" to \"{file2}\"",
+                file1,
+                file2
+            );
             return false;
         }
     }
@@ -145,16 +158,22 @@ public class MetadataHandlingService(
             using var originalArchive = ZipFile.OpenRead(originalFile);
             using var upscaledArchive = ZipFile.OpenRead(upscaledFile);
 
-            var originalPages = originalArchive.Entries
-                .Where(e => ImageConstants.IsSupportedImageExtension(
-                    Path.GetExtension(e.FullName).ToLowerInvariant()))
+            var originalPages = originalArchive
+                .Entries.Where(e =>
+                    ImageConstants.IsSupportedImageExtension(
+                        Path.GetExtension(e.FullName).ToLowerInvariant()
+                    )
+                )
                 .Select(e => Path.GetFileNameWithoutExtension(e.FullName))
                 .OrderBy(e => e)
                 .ToList();
 
-            var upscaledPages = upscaledArchive.Entries
-                .Where(e => ImageConstants.IsSupportedImageExtension(
-                    Path.GetExtension(e.FullName).ToLowerInvariant()))
+            var upscaledPages = upscaledArchive
+                .Entries.Where(e =>
+                    ImageConstants.IsSupportedImageExtension(
+                        Path.GetExtension(e.FullName).ToLowerInvariant()
+                    )
+                )
                 .Select(e => Path.GetFileNameWithoutExtension(e.FullName))
                 .OrderBy(e => e)
                 .ToList();
@@ -166,16 +185,24 @@ public class MetadataHandlingService(
         }
         catch (InvalidDataException ex)
         {
-            logger.LogError(ex, "The format of one of the following two archives is invalid.\n" +
-                                "Tried to analyze differences between \"{originalFile}\" and \"{upscaledFile}\"",
-                originalFile, upscaledFile);
+            logger.LogError(
+                ex,
+                "The format of one of the following two archives is invalid.\n"
+                    + "Tried to analyze differences between \"{originalFile}\" and \"{upscaledFile}\"",
+                originalFile,
+                upscaledFile
+            );
             return new PageDifferenceResult([], []);
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to analyze cbz file differences.\n\n" +
-                                "Tried to analyze differences between \"{originalFile}\" and \"{upscaledFile}\"",
-                originalFile, upscaledFile);
+            logger.LogError(
+                ex,
+                "Failed to analyze cbz file differences.\n\n"
+                    + "Tried to analyze differences between \"{originalFile}\" and \"{upscaledFile}\"",
+                originalFile,
+                upscaledFile
+            );
             return new PageDifferenceResult([], []);
         }
     }
@@ -206,9 +233,8 @@ public class MetadataHandlingService(
         metadata = metadata.CheckAndCorrect();
 
         // Check if we can update existing entries (Update mode) or only create new ones (Create mode)
-        ZipArchiveEntry? comicInfoEntry = archive.Mode != ZipArchiveMode.Create
-            ? archive.GetEntry("ComicInfo.xml")
-            : null;
+        ZipArchiveEntry? comicInfoEntry =
+            archive.Mode != ZipArchiveMode.Create ? archive.GetEntry("ComicInfo.xml") : null;
 
         if (comicInfoEntry != null)
         {
@@ -226,7 +252,8 @@ public class MetadataHandlingService(
             ZipArchiveEntry entry = archive.CreateEntry("ComicInfo.xml");
             using Stream stream = entry.Open();
             var document = new XDocument(
-                new XElement("ComicInfo",
+                new XElement(
+                    "ComicInfo",
                     new XElement("Title", metadata.ChapterTitle),
                     new XElement("Series", metadata.Series),
                     new XElement("Number", metadata.Number)

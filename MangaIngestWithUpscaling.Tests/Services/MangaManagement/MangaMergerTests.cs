@@ -79,8 +79,16 @@ public class MangaMergerTests : IDisposable
         var chapter2Path = Path.Combine(library.NotUpscaledLibraryPath, chapter2.RelativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(chapter1Path)!);
         Directory.CreateDirectory(Path.GetDirectoryName(chapter2Path)!);
-        await File.WriteAllTextAsync(chapter1Path, "chapter1 content", TestContext.Current.CancellationToken);
-        await File.WriteAllTextAsync(chapter2Path, "chapter2 content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            chapter1Path,
+            "chapter1 content",
+            TestContext.Current.CancellationToken
+        );
+        await File.WriteAllTextAsync(
+            chapter2Path,
+            "chapter2 content",
+            TestContext.Current.CancellationToken
+        );
 
         var metadata1 = new ExtractedMetadata("Merged Manga", "Chapter 1", "1");
         var metadata2 = new ExtractedMetadata("Merged Manga", "Chapter 2", "2");
@@ -88,7 +96,11 @@ public class MangaMergerTests : IDisposable
         _mockMetadataHandling.GetSeriesAndTitleFromComicInfo(chapter2Path).Returns(metadata2);
 
         // Act
-        await _mangaMerger.MergeAsync(primaryManga, [mergedManga], TestContext.Current.CancellationToken);
+        await _mangaMerger.MergeAsync(
+            primaryManga,
+            [mergedManga],
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         // Verify chapters were transferred to primary manga
@@ -106,9 +118,12 @@ public class MangaMergerTests : IDisposable
         _mockFileSystem.Received(2).Move(Arg.Any<string>(), Arg.Any<string>());
 
         // Verify metadata updates
-        _mockMetadataHandling.Received(2).WriteComicInfo(
-            Arg.Any<string>(),
-            Arg.Is<ExtractedMetadata>(m => m.Series == "Primary Manga"));
+        _mockMetadataHandling
+            .Received(2)
+            .WriteComicInfo(
+                Arg.Any<string>(),
+                Arg.Is<ExtractedMetadata>(m => m.Series == "Primary Manga")
+            );
 
         // Verify notifications
         await _mockChapterChangedNotifier.Received(2).Notify(Arg.Any<Chapter>(), false);
@@ -134,23 +149,35 @@ public class MangaMergerTests : IDisposable
         var upscaledChapterPath = Path.Combine(library.UpscaledLibraryPath!, chapter.RelativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(chapterPath)!);
         Directory.CreateDirectory(Path.GetDirectoryName(upscaledChapterPath)!);
-        await File.WriteAllTextAsync(chapterPath, "chapter content", TestContext.Current.CancellationToken);
-        await File.WriteAllTextAsync(upscaledChapterPath, "upscaled chapter content",
-            TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            chapterPath,
+            "chapter content",
+            TestContext.Current.CancellationToken
+        );
+        await File.WriteAllTextAsync(
+            upscaledChapterPath,
+            "upscaled chapter content",
+            TestContext.Current.CancellationToken
+        );
 
         var metadata = new ExtractedMetadata("Merged Manga", "Chapter 1", "1");
         _mockMetadataHandling.GetSeriesAndTitleFromComicInfo(chapterPath).Returns(metadata);
 
         // Act
-        await _mangaMerger.MergeAsync(primaryManga, [mergedManga], TestContext.Current.CancellationToken);
+        await _mangaMerger.MergeAsync(
+            primaryManga,
+            [mergedManga],
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         // Verify chapter was transferred
         Assert.Contains(chapter, primaryManga.Chapters);
 
         // Verify upscaled file was processed
-        _mockMetadataChanger.Received(1).ApplyMangaTitleToUpscaled(
-            chapter, "Primary Manga", upscaledChapterPath);
+        _mockMetadataChanger
+            .Received(1)
+            .ApplyMangaTitleToUpscaled(chapter, "Primary Manga", upscaledChapterPath);
     }
 
     [Fact]
@@ -172,22 +199,33 @@ public class MangaMergerTests : IDisposable
         // Only create file for chapter2
         var chapter2Path = Path.Combine(library.NotUpscaledLibraryPath, chapter2.RelativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(chapter2Path)!);
-        await File.WriteAllTextAsync(chapter2Path, "chapter2 content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            chapter2Path,
+            "chapter2 content",
+            TestContext.Current.CancellationToken
+        );
 
         var metadata2 = new ExtractedMetadata("Merged Manga", "Chapter 2", "2");
         _mockMetadataHandling.GetSeriesAndTitleFromComicInfo(chapter2Path).Returns(metadata2);
 
         // Act
-        await _mangaMerger.MergeAsync(primaryManga, [mergedManga], TestContext.Current.CancellationToken);
+        await _mangaMerger.MergeAsync(
+            primaryManga,
+            [mergedManga],
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         // Verify warning was logged for missing chapter
-        _mockLogger.Received().Log(
-            LogLevel.Warning,
-            Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("does not exist")),
-            Arg.Any<Exception>(),
-            Arg.Any<Func<object, Exception?, string>>());
+        _mockLogger
+            .Received()
+            .Log(
+                LogLevel.Warning,
+                Arg.Any<EventId>(),
+                Arg.Is<object>(o => o.ToString()!.Contains("does not exist")),
+                Arg.Any<Exception>(),
+                Arg.Any<Func<object, Exception?, string>>()
+            );
 
         // Verify merged manga was NOT removed (since not all chapters could be moved)
         Assert.Contains(mergedManga, _dbContext.MangaSeries);
@@ -214,27 +252,46 @@ public class MangaMergerTests : IDisposable
         // Create source file
         var sourcePath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
-        await File.WriteAllTextAsync(sourcePath, "chapter content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            sourcePath,
+            "chapter content",
+            TestContext.Current.CancellationToken
+        );
 
-        // Create conflicting target file  
-        var targetPath = Path.Combine(library.NotUpscaledLibraryPath, "Primary Manga", "chapter1.cbz");
+        // Create conflicting target file
+        var targetPath = Path.Combine(
+            library.NotUpscaledLibraryPath,
+            "Primary Manga",
+            "chapter1.cbz"
+        );
         Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
-        await File.WriteAllTextAsync(targetPath, "existing content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            targetPath,
+            "existing content",
+            TestContext.Current.CancellationToken
+        );
 
         var metadata = new ExtractedMetadata("Merged Manga", "Chapter 1", "1");
         _mockMetadataHandling.GetSeriesAndTitleFromComicInfo(sourcePath).Returns(metadata);
 
         // Act
-        await _mangaMerger.MergeAsync(primaryManga, [mergedManga], TestContext.Current.CancellationToken);
+        await _mangaMerger.MergeAsync(
+            primaryManga,
+            [mergedManga],
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         // Verify warning was logged for conflicting file (this confirms conflict was detected)
-        _mockLogger.Received().Log(
-            LogLevel.Warning,
-            Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("already exists")),
-            Arg.Any<Exception>(),
-            Arg.Any<Func<object, Exception?, string>>());
+        _mockLogger
+            .Received()
+            .Log(
+                LogLevel.Warning,
+                Arg.Any<EventId>(),
+                Arg.Is<object>(o => o.ToString()!.Contains("already exists")),
+                Arg.Any<Exception>(),
+                Arg.Any<Func<object, Exception?, string>>()
+            );
 
         // Note: Not asserting manga existence since path escaping might affect the exact target path
         // The key assertion is that the warning was logged, proving conflict detection works
@@ -253,17 +310,25 @@ public class MangaMergerTests : IDisposable
         var mergedManga = CreateTestManga(library, "Merged Manga");
 
         // Add alternative title to merged manga
-        mergedManga.OtherTitles.Add(new MangaAlternativeTitle
-        {
-            Title = "Alternative Title", Manga = mergedManga, MangaId = mergedManga.Id
-        });
+        mergedManga.OtherTitles.Add(
+            new MangaAlternativeTitle
+            {
+                Title = "Alternative Title",
+                Manga = mergedManga,
+                MangaId = mergedManga.Id,
+            }
+        );
 
         await _dbContext.Libraries.AddAsync(library, TestContext.Current.CancellationToken);
         await _dbContext.MangaSeries.AddRangeAsync(primaryManga, mergedManga);
         await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Act
-        await _mangaMerger.MergeAsync(primaryManga, [mergedManga], TestContext.Current.CancellationToken);
+        await _mangaMerger.MergeAsync(
+            primaryManga,
+            [mergedManga],
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         // Verify merged manga was removed
@@ -287,34 +352,50 @@ public class MangaMergerTests : IDisposable
         var mergedManga = CreateTestManga(library, "Merged Manga"); // Different title to avoid unique constraint
 
         // Add existing alternative title to primary manga
-        primaryManga.OtherTitles.Add(new MangaAlternativeTitle
-        {
-            Title = "Primary Existing Title", Manga = primaryManga, MangaId = primaryManga.Id
-        });
+        primaryManga.OtherTitles.Add(
+            new MangaAlternativeTitle
+            {
+                Title = "Primary Existing Title",
+                Manga = primaryManga,
+                MangaId = primaryManga.Id,
+            }
+        );
 
         // Add different alternative title to merged manga (to avoid unique constraint)
-        mergedManga.OtherTitles.Add(new MangaAlternativeTitle
-        {
-            Title = "Merged Existing Title", Manga = mergedManga, MangaId = mergedManga.Id
-        });
+        mergedManga.OtherTitles.Add(
+            new MangaAlternativeTitle
+            {
+                Title = "Merged Existing Title",
+                Manga = mergedManga,
+                MangaId = mergedManga.Id,
+            }
+        );
 
         await _dbContext.Libraries.AddAsync(library, TestContext.Current.CancellationToken);
         await _dbContext.MangaSeries.AddRangeAsync(primaryManga, mergedManga);
         await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Act
-        await _mangaMerger.MergeAsync(primaryManga, [mergedManga], TestContext.Current.CancellationToken);
+        await _mangaMerger.MergeAsync(
+            primaryManga,
+            [mergedManga],
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         // Verify merged manga was removed
         Assert.DoesNotContain(mergedManga, _dbContext.MangaSeries);
 
         // Verify no duplicate titles were added (primary should keep its existing title, merged should add its title)
-        var primaryExistingTitleCount = primaryManga.OtherTitles.Count(t => t.Title == "Primary Existing Title");
+        var primaryExistingTitleCount = primaryManga.OtherTitles.Count(t =>
+            t.Title == "Primary Existing Title"
+        );
         Assert.Equal(1, primaryExistingTitleCount);
 
         // Verify merged manga's title was transferred to primary
-        var mergedTitleCount = primaryManga.OtherTitles.Count(t => t.Title == "Merged Existing Title");
+        var mergedTitleCount = primaryManga.OtherTitles.Count(t =>
+            t.Title == "Merged Existing Title"
+        );
         Assert.Equal(1, mergedTitleCount);
 
         // Verify primary title wasn't added as alternative (same as primary)
@@ -332,7 +413,7 @@ public class MangaMergerTests : IDisposable
             PrimaryTitle = "Primary Manga",
             Library = null!, // Null library - this should cause the service to log an error
             OtherTitles = new List<MangaAlternativeTitle>(),
-            Chapters = new List<Chapter>()
+            Chapters = new List<Chapter>(),
         };
 
         var mergedManga = CreateTestManga(CreateTestLibrary(), "Merged Manga");
@@ -342,16 +423,23 @@ public class MangaMergerTests : IDisposable
         await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Act
-        await _mangaMerger.MergeAsync(primaryManga, [mergedManga], TestContext.Current.CancellationToken);
+        await _mangaMerger.MergeAsync(
+            primaryManga,
+            [mergedManga],
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         // Verify error was logged
-        _mockLogger.Received().Log(
-            LogLevel.Error,
-            Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("must have an associated library")),
-            Arg.Any<Exception>(),
-            Arg.Any<Func<object, Exception?, string>>());
+        _mockLogger
+            .Received()
+            .Log(
+                LogLevel.Error,
+                Arg.Any<EventId>(),
+                Arg.Is<object>(o => o.ToString()!.Contains("must have an associated library")),
+                Arg.Any<Exception>(),
+                Arg.Any<Func<object, Exception?, string>>()
+            );
 
         // Verify no operations occurred
         _mockFileSystem.DidNotReceive().Move(Arg.Any<string>(), Arg.Any<string>());
@@ -370,7 +458,7 @@ public class MangaMergerTests : IDisposable
             Id = 1,
             Name = "Test Library",
             NotUpscaledLibraryPath = notUpscaledPath,
-            UpscaledLibraryPath = upscaledPath
+            UpscaledLibraryPath = upscaledPath,
         };
     }
 
@@ -383,7 +471,7 @@ public class MangaMergerTests : IDisposable
             Library = library,
             LibraryId = library.Id,
             Chapters = new List<Chapter>(),
-            OtherTitles = new List<MangaAlternativeTitle>()
+            OtherTitles = new List<MangaAlternativeTitle>(),
         };
     }
 
@@ -397,7 +485,7 @@ public class MangaMergerTests : IDisposable
             RelativePath = relativePath,
             Manga = manga,
             MangaId = manga.Id,
-            IsUpscaled = isUpscaled
+            IsUpscaled = isUpscaled,
         };
     }
 }

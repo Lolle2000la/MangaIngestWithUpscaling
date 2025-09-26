@@ -16,7 +16,8 @@ public interface IChapterMergeUpscaleTaskManager
         List<Chapter> originalChapters,
         MergeInfo mergeInfo,
         Library library,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default
+    );
 
     /// <summary>
     ///     Checks if chapters can be safely merged considering their upscale status by looking for pending/processing upscale
@@ -27,5 +28,6 @@ public interface IChapterMergeUpscaleTaskManager
     /// <returns>Result indicating if merging is compatible</returns>
     Task<UpscaleCompatibilityResult> CheckUpscaleCompatibilityForMergeAsync(
         List<Chapter> chapters,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default
+    );
 }

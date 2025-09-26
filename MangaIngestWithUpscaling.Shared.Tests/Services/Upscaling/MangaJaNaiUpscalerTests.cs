@@ -1,3 +1,4 @@
+using System.Reflection;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
@@ -8,7 +9,6 @@ using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
-using System.Reflection;
 
 namespace MangaIngestWithUpscaling.Shared.Tests.Services.Upscaling;
 
@@ -36,7 +36,8 @@ public class MangaJaNaiUpscalerTests : IDisposable
         if (TestContext.Current.TestCase is null)
         {
             throw new InvalidOperationException(
-                "TestContext.Current.TestCase is null. Cannot proceed with test setup.");
+                "TestContext.Current.TestCase is null. Cannot proceed with test setup."
+            );
         }
 
         var config = new UpscalerConfig
@@ -46,14 +47,18 @@ public class MangaJaNaiUpscalerTests : IDisposable
             SelectedDeviceIndex = 0,
             RemoteOnly = false,
             PreferredGpuBackend = GpuBackend.Auto,
-            ModelsDirectory = Path.Combine(Path.GetTempPath(),
-                $"upscaler_test_{TestContext.Current.TestCase.TestCaseDisplayName}")
+            ModelsDirectory = Path.Combine(
+                Path.GetTempPath(),
+                $"upscaler_test_{TestContext.Current.TestCase.TestCaseDisplayName}"
+            ),
         };
         _mockConfig = Substitute.For<IOptions<UpscalerConfig>>();
         _mockConfig.Value.Returns(config);
 
-        _tempDir = Path.Combine(Path.GetTempPath(),
-            $"upscaler_test_{TestContext.Current.TestCase.TestCaseDisplayName}");
+        _tempDir = Path.Combine(
+            Path.GetTempPath(),
+            $"upscaler_test_{TestContext.Current.TestCase.TestCaseDisplayName}"
+        );
         Directory.CreateDirectory(_tempDir);
 
         _upscaler = new MangaJaNaiUpscaler(
@@ -92,13 +97,14 @@ public class MangaJaNaiUpscalerTests : IDisposable
             Name = "Test Profile",
             ScalingFactor = ScaleFactor.TwoX,
             CompressionFormat = CompressionFormat.Png,
-            Quality = 80
+            Quality = 80,
         };
         var cancellationToken = CancellationToken.None;
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<FileNotFoundException>(() =>
-            _upscaler.Upscale(inputPath, outputPath, profile, cancellationToken));
+            _upscaler.Upscale(inputPath, outputPath, profile, cancellationToken)
+        );
 
         Assert.Contains("Input file not found", exception.Message);
     }
@@ -112,20 +118,25 @@ public class MangaJaNaiUpscalerTests : IDisposable
         var outputPath = Path.Combine(_tempDir, "output.txt"); // Wrong extension
 
         // Create a dummy input file
-        await File.WriteAllTextAsync(inputPath, "dummy content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            inputPath,
+            "dummy content",
+            TestContext.Current.CancellationToken
+        );
 
         var profile = new UpscalerProfile
         {
             Name = "Test Profile",
             ScalingFactor = ScaleFactor.TwoX,
             CompressionFormat = CompressionFormat.Png,
-            Quality = 80
+            Quality = 80,
         };
         var cancellationToken = CancellationToken.None;
 
         // Act & Assert
         var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
-            _upscaler.Upscale(inputPath, outputPath, profile, cancellationToken));
+            _upscaler.Upscale(inputPath, outputPath, profile, cancellationToken)
+        );
 
         Assert.Contains("Output path must be a cbz file", exception.Message);
     }
@@ -137,14 +148,18 @@ public class MangaJaNaiUpscalerTests : IDisposable
         // Arrange
         var inputPath = Path.Combine(_tempDir, "input.cbz");
         var outputPath = Path.Combine(_tempDir, "output.cbz");
-        await File.WriteAllTextAsync(inputPath, "dummy content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            inputPath,
+            "dummy content",
+            TestContext.Current.CancellationToken
+        );
 
         var profile = new UpscalerProfile
         {
             Name = "Test Profile",
             ScalingFactor = ScaleFactor.TwoX,
             CompressionFormat = CompressionFormat.Png,
-            Quality = 80
+            Quality = 80,
         };
 
         var progressReports = new List<UpscaleProgress>();
@@ -157,7 +172,8 @@ public class MangaJaNaiUpscalerTests : IDisposable
                 Arg.Any<string>(),
                 Arg.Any<Func<string, Task>>(),
                 Arg.Any<CancellationToken>(),
-                Arg.Any<TimeSpan?>())
+                Arg.Any<TimeSpan?>()
+            )
             .Returns(async call =>
             {
                 var onStdout = call.Arg<Func<string, Task>>();
@@ -199,15 +215,23 @@ public class MangaJaNaiUpscalerTests : IDisposable
         // Arrange
         var inputPath = Path.Combine(_tempDir, "input.cbz");
         var outputPath = Path.Combine(_tempDir, "output.cbz");
-        await File.WriteAllTextAsync(inputPath, "dummy content", TestContext.Current.CancellationToken);
-        await File.WriteAllTextAsync(outputPath, "existing output", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            inputPath,
+            "dummy content",
+            TestContext.Current.CancellationToken
+        );
+        await File.WriteAllTextAsync(
+            outputPath,
+            "existing output",
+            TestContext.Current.CancellationToken
+        );
 
         var profile = new UpscalerProfile
         {
             Name = "Test Profile",
             ScalingFactor = ScaleFactor.TwoX,
             CompressionFormat = CompressionFormat.Png,
-            Quality = 80
+            Quality = 80,
         };
 
         // Mock metadata handling to return true for pages equal (already upscaled)
@@ -220,17 +244,23 @@ public class MangaJaNaiUpscalerTests : IDisposable
 
         // Assert
         // Verify that Python service was NOT called since file already exists and pages are equal
-        await _mockPythonService.DidNotReceive().RunPythonScript(
-            Arg.Any<string>(),
-            Arg.Any<string>(),
-            Arg.Any<CancellationToken>(),
-            Arg.Any<TimeSpan?>());
-        await _mockPythonService.DidNotReceive().RunPythonScriptStreaming(
-            Arg.Any<string>(),
-            Arg.Any<string>(),
-            Arg.Any<Func<string, Task>>(),
-            Arg.Any<CancellationToken>(),
-            Arg.Any<TimeSpan?>());
+        await _mockPythonService
+            .DidNotReceive()
+            .RunPythonScript(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<TimeSpan?>()
+            );
+        await _mockPythonService
+            .DidNotReceive()
+            .RunPythonScriptStreaming(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<Func<string, Task>>(),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<TimeSpan?>()
+            );
 
         // Verify output file still exists (wasn't deleted)
         Assert.True(File.Exists(outputPath));
@@ -243,14 +273,18 @@ public class MangaJaNaiUpscalerTests : IDisposable
         // Arrange
         var inputPath = Path.Combine(_tempDir, "input.cbz");
         var outputPath = Path.Combine(_tempDir, "output.cbz");
-        await File.WriteAllTextAsync(inputPath, "dummy content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            inputPath,
+            "dummy content",
+            TestContext.Current.CancellationToken
+        );
 
         var profile = new UpscalerProfile
         {
             Name = "Test Profile",
             ScalingFactor = ScaleFactor.TwoX,
             CompressionFormat = CompressionFormat.Png,
-            Quality = 80
+            Quality = 80,
         };
 
         var cts = new CancellationTokenSource();
@@ -266,7 +300,8 @@ public class MangaJaNaiUpscalerTests : IDisposable
 
         // Act & Assert
         await Assert.ThrowsAsync<TaskCanceledException>(() =>
-            _upscaler.Upscale(inputPath, outputPath, profile, cts.Token));
+            _upscaler.Upscale(inputPath, outputPath, profile, cts.Token)
+        );
     }
 
     [Fact]
@@ -276,7 +311,11 @@ public class MangaJaNaiUpscalerTests : IDisposable
         // Arrange
         var inputPath = Path.Combine(_tempDir, "input.cbz");
         var outputPath = Path.Combine(_tempDir, "output.cbz");
-        await File.WriteAllTextAsync(inputPath, "dummy content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            inputPath,
+            "dummy content",
+            TestContext.Current.CancellationToken
+        );
 
         // Configure max dimension for resizing
         _mockConfig.Value.MaxDimensionBeforeUpscaling = 1024;
@@ -286,7 +325,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
             Name = "Test Profile",
             ScalingFactor = ScaleFactor.TwoX,
             CompressionFormat = CompressionFormat.Png,
-            Quality = 80
+            Quality = 80,
         };
 
         // Mock metadata handling
@@ -294,10 +333,19 @@ public class MangaJaNaiUpscalerTests : IDisposable
 
         // Mock image resize service to return a temp file
         string tempResizedPath = Path.Combine(_tempDir, "temp_resized.cbz");
-        await File.WriteAllTextAsync(tempResizedPath, "temp resized content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            tempResizedPath,
+            "temp resized content",
+            TestContext.Current.CancellationToken
+        );
 
         // Create a real TempResizedCbz instance (but with mock cleanup)
-        _mockImageResize.CreateResizedTempCbzAsync(Arg.Any<string>(), Arg.Any<int>(), Arg.Any<CancellationToken>())
+        _mockImageResize
+            .CreateResizedTempCbzAsync(
+                Arg.Any<string>(),
+                Arg.Any<int>(),
+                Arg.Any<CancellationToken>()
+            )
             .Returns(callInfo =>
             {
                 // Use reflection to create the TempResizedCbz since constructor is internal
@@ -305,8 +353,10 @@ public class MangaJaNaiUpscalerTests : IDisposable
                     BindingFlags.NonPublic | BindingFlags.Instance,
                     null,
                     new[] { typeof(string), typeof(IImageResizeService) },
-                    null);
-                return (TempResizedCbz)constructor!.Invoke(new object[] { tempResizedPath, _mockImageResize });
+                    null
+                );
+                return (TempResizedCbz)
+                    constructor!.Invoke(new object[] { tempResizedPath, _mockImageResize });
             });
 
         var cancellationToken = CancellationToken.None;
@@ -316,14 +366,19 @@ public class MangaJaNaiUpscalerTests : IDisposable
 
         // Assert
         // Verify resize service was called
-        await _mockImageResize.Received(1).CreateResizedTempCbzAsync(inputPath, 1024, cancellationToken);
+        await _mockImageResize
+            .Received(1)
+            .CreateResizedTempCbzAsync(inputPath, 1024, cancellationToken);
 
         // Verify Python service was called
-        await _mockPythonService.Received(1).RunPythonScript(
-            Arg.Any<string>(),
-            Arg.Any<string>(),
-            cancellationToken,
-            Arg.Any<TimeSpan?>());
+        await _mockPythonService
+            .Received(1)
+            .RunPythonScript(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                cancellationToken,
+                Arg.Any<TimeSpan?>()
+            );
     }
 
     [Fact]
@@ -347,9 +402,16 @@ public class MangaJaNaiUpscalerTests : IDisposable
 
         // Act & Assert - This may download models
         var exception = await Record.ExceptionAsync(() =>
-            _upscaler.DownloadModelsIfNecessary(cancellationToken));
+            _upscaler.DownloadModelsIfNecessary(cancellationToken)
+        );
 
         // Should either complete successfully or fail with expected exceptions
-        Assert.True(exception is null or FileNotFoundException or InvalidOperationException or HttpRequestException);
+        Assert.True(
+            exception
+                is null
+                    or FileNotFoundException
+                    or InvalidOperationException
+                    or HttpRequestException
+        );
     }
 }

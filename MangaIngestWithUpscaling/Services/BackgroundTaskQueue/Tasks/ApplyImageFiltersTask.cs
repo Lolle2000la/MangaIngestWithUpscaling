@@ -19,7 +19,10 @@ public class ApplyImageFiltersTask : BaseTask
 
     public override string TaskFriendlyName => $"Apply Image Filters to Library (ID: {LibraryId})";
 
-    public override async Task ProcessAsync(IServiceProvider services, CancellationToken cancellationToken)
+    public override async Task ProcessAsync(
+        IServiceProvider services,
+        CancellationToken cancellationToken
+    )
     {
         using var scope = services.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -27,8 +30,8 @@ public class ApplyImageFiltersTask : BaseTask
         var logger = scope.ServiceProvider.GetRequiredService<ILogger<ApplyImageFiltersTask>>();
 
         // Load the library and its filtered images
-        var library = await dbContext.Libraries
-            .Include(l => l.FilteredImages)
+        var library = await dbContext
+            .Libraries.Include(l => l.FilteredImages)
             .FirstOrDefaultAsync(l => l.Id == LibraryId, cancellationToken);
 
         if (library == null)
@@ -39,16 +42,22 @@ public class ApplyImageFiltersTask : BaseTask
 
         if (!library.FilteredImages.Any())
         {
-            logger.LogInformation("No filtered images configured for library {LibraryName}", library.Name);
+            logger.LogInformation(
+                "No filtered images configured for library {LibraryName}",
+                library.Name
+            );
             return;
         }
 
-        logger.LogInformation("Starting image filter application for library {LibraryName} with {FilterCount} filters",
-            library.Name, library.FilteredImages.Count);
+        logger.LogInformation(
+            "Starting image filter application for library {LibraryName} with {FilterCount} filters",
+            library.Name,
+            library.FilteredImages.Count
+        );
 
         // Get all chapters in the library
-        var chaptersQuery = dbContext.Chapters
-            .Include(c => c.Manga)
+        var chaptersQuery = dbContext
+            .Chapters.Include(c => c.Manga)
             .Where(c => c.Manga.LibraryId == LibraryId);
 
         var totalChapters = await chaptersQuery.CountAsync(cancellationToken);
@@ -58,14 +67,17 @@ public class ApplyImageFiltersTask : BaseTask
         Progress.ProgressUnit = "chapters";
         Progress.Total = totalChapters;
         Progress.Current = 0;
-        Progress.StatusMessage = totalChapters == 0
-            ? "No chapters to process"
-            : $"Processing 0/{totalChapters} chapters";
+        Progress.StatusMessage =
+            totalChapters == 0
+                ? "No chapters to process"
+                : $"Processing 0/{totalChapters} chapters";
 
         int processedChapters = 0;
         int filteredImages = 0;
 
-        await foreach (var chapter in chaptersQuery.AsAsyncEnumerable().WithCancellation(cancellationToken))
+        await foreach (
+            var chapter in chaptersQuery.AsAsyncEnumerable().WithCancellation(cancellationToken)
+        )
         {
             try
             {
@@ -85,21 +97,29 @@ public class ApplyImageFiltersTask : BaseTask
                 // Apply filters to both original and upscaled using the new optimized method
                 if (File.Exists(originalPath))
                 {
-                    var result = await imageFilterService.ApplyFiltersToChapterAsync(originalPath, upscaledPath,
-                        library.FilteredImages, cancellationToken);
+                    var result = await imageFilterService.ApplyFiltersToChapterAsync(
+                        originalPath,
+                        upscaledPath,
+                        library.FilteredImages,
+                        cancellationToken
+                    );
                     filteredImages += result.FilteredCount;
 
                     if (result.FilteredCount > 0)
                     {
-                        var message = upscaledPath != null
-                            ? $"Filtered {result.FilteredCount} images from chapter {chapter.FileName} (both original and upscaled)"
-                            : $"Filtered {result.FilteredCount} images from original chapter {chapter.FileName}";
+                        var message =
+                            upscaledPath != null
+                                ? $"Filtered {result.FilteredCount} images from chapter {chapter.FileName} (both original and upscaled)"
+                                : $"Filtered {result.FilteredCount} images from original chapter {chapter.FileName}";
                         logger.LogInformation(message);
                     }
                 }
                 else
                 {
-                    logger.LogWarning("Original chapter file not found: {OriginalPath}", originalPath);
+                    logger.LogWarning(
+                        "Original chapter file not found: {OriginalPath}",
+                        originalPath
+                    );
                 }
 
                 processedChapters++;
@@ -112,7 +132,10 @@ public class ApplyImageFiltersTask : BaseTask
                 {
                     logger.LogInformation(
                         "Progress: {ProcessedChapters}/{TotalChapters} chapters processed, {FilteredImages} images filtered",
-                        processedChapters, totalChapters, filteredImages);
+                        processedChapters,
+                        totalChapters,
+                        filteredImages
+                    );
                 }
             }
             catch (Exception ex)
@@ -129,9 +152,13 @@ public class ApplyImageFiltersTask : BaseTask
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
-        logger.LogInformation("Completed image filter application for library {LibraryName}. " +
-                              "Processed {ProcessedChapters} chapters, filtered {FilteredImages} images total",
-            library.Name, processedChapters, filteredImages);
+        logger.LogInformation(
+            "Completed image filter application for library {LibraryName}. "
+                + "Processed {ProcessedChapters} chapters, filtered {FilteredImages} images total",
+            library.Name,
+            processedChapters,
+            filteredImages
+        );
 
         // Final progress update
         Progress.Current = processedChapters;

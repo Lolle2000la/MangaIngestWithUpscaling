@@ -1,5 +1,5 @@
-using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using System.ComponentModel.DataAnnotations;
+using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 
 namespace MangaIngestWithUpscaling.Shared.Tests.Data.LibraryManagement;
 
@@ -21,7 +21,7 @@ public class UpscalerProfileTests
             Name = "Test Profile",
             ScalingFactor = ScaleFactor.TwoX,
             CompressionFormat = CompressionFormat.Png,
-            Quality = quality
+            Quality = quality,
         };
 
         var context = new ValidationContext(profile);
@@ -48,7 +48,7 @@ public class UpscalerProfileTests
             Name = "Valid Profile Name",
             ScalingFactor = ScaleFactor.TwoX,
             CompressionFormat = CompressionFormat.Png,
-            Quality = 80
+            Quality = 80,
         };
 
         var context = new ValidationContext(profile);

@@ -5,13 +5,16 @@ using MangaIngestWithUpscaling.Helpers;
 namespace MangaIngestWithUpscaling.Services.ChapterManagement;
 
 [RegisterScoped]
-public class ChapterDeletion(ApplicationDbContext dbContext,
-    ILogger<ChapterDeletion> logger) : IChapterDeletion
+public class ChapterDeletion(ApplicationDbContext dbContext, ILogger<ChapterDeletion> logger)
+    : IChapterDeletion
 {
     /// <inheritdoc/>
     public void DeleteChapter(Chapter chapter, bool deleteNormal, bool deleteUpscaled)
     {
-        var normalPath = Path.Combine(chapter.Manga.Library.NotUpscaledLibraryPath, chapter.RelativePath);
+        var normalPath = Path.Combine(
+            chapter.Manga.Library.NotUpscaledLibraryPath,
+            chapter.RelativePath
+        );
         if (deleteNormal && File.Exists(normalPath))
         {
             File.Delete(normalPath);
@@ -21,9 +24,16 @@ public class ChapterDeletion(ApplicationDbContext dbContext,
                 FileSystemHelpers.DeleteIfEmpty(normalDir, logger);
             }
         }
-        if (deleteUpscaled && chapter.IsUpscaled && !string.IsNullOrEmpty(chapter.Manga.Library.UpscaledLibraryPath))
+        if (
+            deleteUpscaled
+            && chapter.IsUpscaled
+            && !string.IsNullOrEmpty(chapter.Manga.Library.UpscaledLibraryPath)
+        )
         {
-            var upscaledPath = Path.Combine(chapter.Manga.Library.UpscaledLibraryPath, chapter.RelativePath);
+            var upscaledPath = Path.Combine(
+                chapter.Manga.Library.UpscaledLibraryPath,
+                chapter.RelativePath
+            );
             if (File.Exists(upscaledPath))
             {
                 File.Delete(upscaledPath);

@@ -9,10 +9,14 @@ public class UpdatePerceptualHashesTask : BaseTask
 {
     public override string TaskFriendlyName => "Update Perceptual Hashes for Filtered Images";
 
-    public override async Task ProcessAsync(IServiceProvider serviceProvider, CancellationToken cancellationToken)
+    public override async Task ProcessAsync(
+        IServiceProvider serviceProvider,
+        CancellationToken cancellationToken
+    )
     {
         using var scope = serviceProvider.CreateScope();
-        var migrationService = scope.ServiceProvider.GetRequiredService<PerceptualHashMigrationService>();
+        var migrationService =
+            scope.ServiceProvider.GetRequiredService<PerceptualHashMigrationService>();
         await migrationService.UpdateExistingFilteredImagesAsync(cancellationToken);
     }
 }
