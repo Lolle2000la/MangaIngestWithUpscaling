@@ -1,11 +1,12 @@
-using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using System.Text.Json.Serialization;
+using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 
 namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 
-[JsonSourceGenerationOptions(WriteIndented = true, PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
-    PropertyNameCaseInsensitive = true)]
+[JsonSourceGenerationOptions(
+    WriteIndented = true,
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    PropertyNameCaseInsensitive = true
+)]
 [JsonSerializable(typeof(UpscalerProfileJsonDto))]
-internal partial class UpscalerJsonContext : JsonSerializerContext
-{
-}
+internal partial class UpscalerJsonContext : JsonSerializerContext { }

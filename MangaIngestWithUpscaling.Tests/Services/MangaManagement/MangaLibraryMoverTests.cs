@@ -72,7 +72,9 @@ public class MangaLibraryMoverTests : IDisposable
         _mockFileSystem.DidNotReceive().CreateDirectory(Arg.Any<string>());
 
         // Verify no tasks were enqueued
-        await _mockTaskQueue.DidNotReceive().EnqueueAsync(Arg.Any<RenameUpscaledChaptersSeriesTask>());
+        await _mockTaskQueue
+            .DidNotReceive()
+            .EnqueueAsync(Arg.Any<RenameUpscaledChaptersSeriesTask>());
     }
 
     [Fact]
@@ -96,11 +98,23 @@ public class MangaLibraryMoverTests : IDisposable
         var sourcePath2 = Path.Combine(sourceLibrary.NotUpscaledLibraryPath, chapter2.RelativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath1)!);
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath2)!);
-        await File.WriteAllTextAsync(sourcePath1, "chapter1 content", TestContext.Current.CancellationToken);
-        await File.WriteAllTextAsync(sourcePath2, "chapter2 content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            sourcePath1,
+            "chapter1 content",
+            TestContext.Current.CancellationToken
+        );
+        await File.WriteAllTextAsync(
+            sourcePath2,
+            "chapter2 content",
+            TestContext.Current.CancellationToken
+        );
 
         // Act
-        await _libraryMover.MoveMangaAsync(manga, targetLibrary, TestContext.Current.CancellationToken);
+        await _libraryMover.MoveMangaAsync(
+            manga,
+            targetLibrary,
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         // Verify database was updated
@@ -108,10 +122,12 @@ public class MangaLibraryMoverTests : IDisposable
         Assert.Equal(targetLibrary, manga.Library);
 
         // Verify target directories were created
-        _mockFileSystem.Received(1).CreateDirectory(
-            Path.Combine(targetLibrary.NotUpscaledLibraryPath, "Test Manga"));
-        _mockFileSystem.Received(1).CreateDirectory(
-            Path.Combine(targetLibrary.UpscaledLibraryPath!, "Test Manga"));
+        _mockFileSystem
+            .Received(1)
+            .CreateDirectory(Path.Combine(targetLibrary.NotUpscaledLibraryPath, "Test Manga"));
+        _mockFileSystem
+            .Received(1)
+            .CreateDirectory(Path.Combine(targetLibrary.UpscaledLibraryPath!, "Test Manga"));
 
         // Verify files were moved
         _mockFileSystem.Received(2).Move(Arg.Any<string>(), Arg.Any<string>());
@@ -140,27 +156,55 @@ public class MangaLibraryMoverTests : IDisposable
         await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Create test files
-        var sourcePath1 = Path.Combine(sourceLibrary.NotUpscaledLibraryPath, upscaledChapter.RelativePath);
-        var sourcePath2 = Path.Combine(sourceLibrary.NotUpscaledLibraryPath, regularChapter.RelativePath);
-        var upscaledPath = Path.Combine(sourceLibrary.UpscaledLibraryPath!, upscaledChapter.RelativePath);
+        var sourcePath1 = Path.Combine(
+            sourceLibrary.NotUpscaledLibraryPath,
+            upscaledChapter.RelativePath
+        );
+        var sourcePath2 = Path.Combine(
+            sourceLibrary.NotUpscaledLibraryPath,
+            regularChapter.RelativePath
+        );
+        var upscaledPath = Path.Combine(
+            sourceLibrary.UpscaledLibraryPath!,
+            upscaledChapter.RelativePath
+        );
 
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath1)!);
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath2)!);
         Directory.CreateDirectory(Path.GetDirectoryName(upscaledPath)!);
 
-        await File.WriteAllTextAsync(sourcePath1, "chapter1 content", TestContext.Current.CancellationToken);
-        await File.WriteAllTextAsync(sourcePath2, "chapter2 content", TestContext.Current.CancellationToken);
-        await File.WriteAllTextAsync(upscaledPath, "upscaled chapter1 content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            sourcePath1,
+            "chapter1 content",
+            TestContext.Current.CancellationToken
+        );
+        await File.WriteAllTextAsync(
+            sourcePath2,
+            "chapter2 content",
+            TestContext.Current.CancellationToken
+        );
+        await File.WriteAllTextAsync(
+            upscaledPath,
+            "upscaled chapter1 content",
+            TestContext.Current.CancellationToken
+        );
 
         // Act
-        await _libraryMover.MoveMangaAsync(manga, targetLibrary, TestContext.Current.CancellationToken);
+        await _libraryMover.MoveMangaAsync(
+            manga,
+            targetLibrary,
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         // Verify rename task was enqueued for upscaled chapter only
-        await _mockTaskQueue.Received(1).EnqueueAsync(
-            Arg.Is<RenameUpscaledChaptersSeriesTask>(t =>
-                t.ChapterId == upscaledChapter.Id &&
-                t.NewTitle == "Test Manga"));
+        await _mockTaskQueue
+            .Received(1)
+            .EnqueueAsync(
+                Arg.Is<RenameUpscaledChaptersSeriesTask>(t =>
+                    t.ChapterId == upscaledChapter.Id && t.NewTitle == "Test Manga"
+                )
+            );
 
         // Verify only one task was enqueued (not for regular chapter)
         await _mockTaskQueue.Received(1).EnqueueAsync(Arg.Any<RenameUpscaledChaptersSeriesTask>());
@@ -182,20 +226,33 @@ public class MangaLibraryMoverTests : IDisposable
         await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Create only the regular file, not the upscaled one
-        var sourcePath = Path.Combine(sourceLibrary.NotUpscaledLibraryPath, upscaledChapter.RelativePath);
+        var sourcePath = Path.Combine(
+            sourceLibrary.NotUpscaledLibraryPath,
+            upscaledChapter.RelativePath
+        );
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
-        await File.WriteAllTextAsync(sourcePath, "chapter1 content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            sourcePath,
+            "chapter1 content",
+            TestContext.Current.CancellationToken
+        );
         // Upscaled file intentionally missing
 
         // Act
-        await _libraryMover.MoveMangaAsync(manga, targetLibrary, TestContext.Current.CancellationToken);
+        await _libraryMover.MoveMangaAsync(
+            manga,
+            targetLibrary,
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         // Verify warning was logged for missing upscaled file
         _mockLogger.ReceivedWithAnyArgs().LogWarning(default!);
 
         // Verify no rename task was enqueued
-        await _mockTaskQueue.DidNotReceive().EnqueueAsync(Arg.Any<RenameUpscaledChaptersSeriesTask>());
+        await _mockTaskQueue
+            .DidNotReceive()
+            .EnqueueAsync(Arg.Any<RenameUpscaledChaptersSeriesTask>());
     }
 
     [Fact]
@@ -214,24 +271,44 @@ public class MangaLibraryMoverTests : IDisposable
         await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Create test files
-        var sourcePath = Path.Combine(sourceLibrary.NotUpscaledLibraryPath, upscaledChapter.RelativePath);
-        var upscaledPath = Path.Combine(sourceLibrary.UpscaledLibraryPath!, upscaledChapter.RelativePath);
+        var sourcePath = Path.Combine(
+            sourceLibrary.NotUpscaledLibraryPath,
+            upscaledChapter.RelativePath
+        );
+        var upscaledPath = Path.Combine(
+            sourceLibrary.UpscaledLibraryPath!,
+            upscaledChapter.RelativePath
+        );
 
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
         Directory.CreateDirectory(Path.GetDirectoryName(upscaledPath)!);
 
-        await File.WriteAllTextAsync(sourcePath, "chapter1 content", TestContext.Current.CancellationToken);
-        await File.WriteAllTextAsync(upscaledPath, "upscaled chapter1 content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            sourcePath,
+            "chapter1 content",
+            TestContext.Current.CancellationToken
+        );
+        await File.WriteAllTextAsync(
+            upscaledPath,
+            "upscaled chapter1 content",
+            TestContext.Current.CancellationToken
+        );
 
         // Act
-        await _libraryMover.MoveMangaAsync(manga, targetLibrary, TestContext.Current.CancellationToken);
+        await _libraryMover.MoveMangaAsync(
+            manga,
+            targetLibrary,
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         // Verify warning was logged for missing target upscaled library path
         _mockLogger.ReceivedWithAnyArgs().LogWarning(default!);
 
         // Verify no rename task was enqueued
-        await _mockTaskQueue.DidNotReceive().EnqueueAsync(Arg.Any<RenameUpscaledChaptersSeriesTask>());
+        await _mockTaskQueue
+            .DidNotReceive()
+            .EnqueueAsync(Arg.Any<RenameUpscaledChaptersSeriesTask>());
 
         // Verify regular chapter was still moved
         _mockFileSystem.Received(1).Move(Arg.Any<string>(), Arg.Any<string>());
@@ -258,15 +335,28 @@ public class MangaLibraryMoverTests : IDisposable
         var sourcePath2 = Path.Combine(sourceLibrary.NotUpscaledLibraryPath, chapter2.RelativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath1)!);
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath2)!);
-        await File.WriteAllTextAsync(sourcePath1, "chapter1 content", TestContext.Current.CancellationToken);
-        await File.WriteAllTextAsync(sourcePath2, "chapter2 content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            sourcePath1,
+            "chapter1 content",
+            TestContext.Current.CancellationToken
+        );
+        await File.WriteAllTextAsync(
+            sourcePath2,
+            "chapter2 content",
+            TestContext.Current.CancellationToken
+        );
 
         // Mock file system to throw on first move but succeed on second
-        _mockFileSystem.When(x => x.Move(sourcePath1, Arg.Any<string>()))
+        _mockFileSystem
+            .When(x => x.Move(sourcePath1, Arg.Any<string>()))
             .Do(x => throw new IOException("File in use"));
 
         // Act
-        await _libraryMover.MoveMangaAsync(manga, targetLibrary, TestContext.Current.CancellationToken);
+        await _libraryMover.MoveMangaAsync(
+            manga,
+            targetLibrary,
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         // Verify error was logged for failed move
@@ -296,24 +386,42 @@ public class MangaLibraryMoverTests : IDisposable
         await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Create test file
-        var sourcePath = Path.Combine(sourceLibrary.NotUpscaledLibraryPath, upscaledChapter.RelativePath);
+        var sourcePath = Path.Combine(
+            sourceLibrary.NotUpscaledLibraryPath,
+            upscaledChapter.RelativePath
+        );
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
-        await File.WriteAllTextAsync(sourcePath, "chapter1 content", TestContext.Current.CancellationToken);
+        await File.WriteAllTextAsync(
+            sourcePath,
+            "chapter1 content",
+            TestContext.Current.CancellationToken
+        );
 
         // Act
-        await _libraryMover.MoveMangaAsync(manga, targetLibrary, TestContext.Current.CancellationToken);
+        await _libraryMover.MoveMangaAsync(
+            manga,
+            targetLibrary,
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         // Verify that a warning was logged (logging verification with NSubstitute can be complex due to generics)
-        _mockLogger.Received().Log(
-            LogLevel.Warning,
-            Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Upscaled library path not set for library")),
-            Arg.Any<Exception>(),
-            Arg.Any<Func<object, Exception?, string>>());
+        _mockLogger
+            .Received()
+            .Log(
+                LogLevel.Warning,
+                Arg.Any<EventId>(),
+                Arg.Is<object>(o =>
+                    o.ToString()!.Contains("Upscaled library path not set for library")
+                ),
+                Arg.Any<Exception>(),
+                Arg.Any<Func<object, Exception?, string>>()
+            );
 
         // Verify no rename task was enqueued
-        await _mockTaskQueue.DidNotReceive().EnqueueAsync(Arg.Any<RenameUpscaledChaptersSeriesTask>());
+        await _mockTaskQueue
+            .DidNotReceive()
+            .EnqueueAsync(Arg.Any<RenameUpscaledChaptersSeriesTask>());
 
         // Verify regular file was still moved
         _mockFileSystem.Received(1).Move(Arg.Any<string>(), Arg.Any<string>());
@@ -335,7 +443,7 @@ public class MangaLibraryMoverTests : IDisposable
             Id = Random.Shared.Next(1, 10000),
             Name = name,
             NotUpscaledLibraryPath = notUpscaledPath,
-            UpscaledLibraryPath = upscaledPath
+            UpscaledLibraryPath = upscaledPath,
         };
     }
 
@@ -347,7 +455,7 @@ public class MangaLibraryMoverTests : IDisposable
             PrimaryTitle = title,
             Library = library,
             LibraryId = library.Id,
-            Chapters = new List<Chapter>()
+            Chapters = new List<Chapter>(),
         };
     }
 
@@ -361,7 +469,7 @@ public class MangaLibraryMoverTests : IDisposable
             RelativePath = relativePath,
             Manga = manga,
             MangaId = manga.Id,
-            IsUpscaled = isUpscaled
+            IsUpscaled = isUpscaled,
         };
     }
 }

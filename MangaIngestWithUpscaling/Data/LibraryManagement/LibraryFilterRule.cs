@@ -33,7 +33,7 @@ public enum LibraryFilterPatternType
 public enum FilterAction
 {
     Include,
-    Exclude
+    Exclude,
 }
 
 /// <summary>
@@ -41,7 +41,12 @@ public enum FilterAction
 /// </summary>
 public enum LibraryFilterTargetField
 {
-    [Display(Name = "File Path")] FilePath,
-    [Display(Name = "Manga Title")] MangaTitle,
-    [Display(Name = "Chapter Title")] ChapterTitle
+    [Display(Name = "File Path")]
+    FilePath,
+
+    [Display(Name = "Manga Title")]
+    MangaTitle,
+
+    [Display(Name = "Chapter Title")]
+    ChapterTitle,
 }

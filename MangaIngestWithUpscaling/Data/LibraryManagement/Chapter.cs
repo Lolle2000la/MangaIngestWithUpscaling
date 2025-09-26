@@ -1,5 +1,5 @@
-﻿using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
-using System.ComponentModel.DataAnnotations.Schema;
+﻿using System.ComponentModel.DataAnnotations.Schema;
+using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 
 namespace MangaIngestWithUpscaling.Data.LibraryManagement;
 
@@ -21,7 +21,8 @@ public class Chapter
     public UpscalerProfile? UpscalerProfile { get; set; }
 
     [NotMapped]
-    public string NotUpscaledFullPath => Path.Combine(Manga.Library.NotUpscaledLibraryPath, RelativePath);
+    public string NotUpscaledFullPath =>
+        Path.Combine(Manga.Library.NotUpscaledLibraryPath, RelativePath);
 
     [NotMapped]
     public string? UpscaledFullPath

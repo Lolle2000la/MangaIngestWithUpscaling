@@ -1,5 +1,5 @@
-﻿using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
-using System.ComponentModel.DataAnnotations.Schema;
+﻿using System.ComponentModel.DataAnnotations.Schema;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 
 namespace MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 
@@ -27,7 +27,6 @@ public class PersistedTask
         {
             return GetHashCode() == task.GetHashCode();
         }
-
 
         return false;
     }

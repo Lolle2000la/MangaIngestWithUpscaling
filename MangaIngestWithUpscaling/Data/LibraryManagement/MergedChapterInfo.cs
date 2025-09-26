@@ -1,5 +1,5 @@
-using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using System.ComponentModel.DataAnnotations;
+using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 
 namespace MangaIngestWithUpscaling.Data.LibraryManagement;
 
@@ -10,7 +10,8 @@ public class MergedChapterInfo
 {
     public int Id { get; set; }
 
-    [Required] public int ChapterId { get; set; }
+    [Required]
+    public int ChapterId { get; set; }
 
     public Chapter Chapter { get; set; } = default!;
 
@@ -76,17 +77,23 @@ public class OriginalChapterPart
             return false;
         }
 
-        return FileName == other.FileName &&
-               ChapterNumber == other.ChapterNumber &&
-               StartPageIndex == other.StartPageIndex &&
-               EndPageIndex == other.EndPageIndex &&
-               PageNames.SequenceEqual(other.PageNames) &&
-               OriginalComicInfoXml == other.OriginalComicInfoXml;
+        return FileName == other.FileName
+            && ChapterNumber == other.ChapterNumber
+            && StartPageIndex == other.StartPageIndex
+            && EndPageIndex == other.EndPageIndex
+            && PageNames.SequenceEqual(other.PageNames)
+            && OriginalComicInfoXml == other.OriginalComicInfoXml;
     }
 
     public override int GetHashCode()
     {
-        int hash = HashCode.Combine(FileName, ChapterNumber, StartPageIndex, EndPageIndex, OriginalComicInfoXml);
+        int hash = HashCode.Combine(
+            FileName,
+            ChapterNumber,
+            StartPageIndex,
+            EndPageIndex,
+            OriginalComicInfoXml
+        );
         foreach (string pageName in PageNames)
         {
             hash = HashCode.Combine(hash, pageName);

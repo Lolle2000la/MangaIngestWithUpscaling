@@ -33,36 +33,39 @@ public record UpscaledMergeResult
     /// <summary>
     /// Creates a result for no upscaled content
     /// </summary>
-    public static UpscaledMergeResult NoUpscaledContent() => new()
-    {
-        HasUpscaledContent = false,
-        IsPartialMerge = false,
-        UpscaledPartsCount = 0,
-        MissingPartsCount = 0,
-        TotalPartsCount = 0
-    };
+    public static UpscaledMergeResult NoUpscaledContent() =>
+        new()
+        {
+            HasUpscaledContent = false,
+            IsPartialMerge = false,
+            UpscaledPartsCount = 0,
+            MissingPartsCount = 0,
+            TotalPartsCount = 0,
+        };
 
     /// <summary>
     /// Creates a result for complete upscaled merge (all parts had upscaled versions)
     /// </summary>
-    public static UpscaledMergeResult CompleteMerge(int totalParts) => new()
-    {
-        HasUpscaledContent = true,
-        IsPartialMerge = false,
-        UpscaledPartsCount = totalParts,
-        MissingPartsCount = 0,
-        TotalPartsCount = totalParts
-    };
+    public static UpscaledMergeResult CompleteMerge(int totalParts) =>
+        new()
+        {
+            HasUpscaledContent = true,
+            IsPartialMerge = false,
+            UpscaledPartsCount = totalParts,
+            MissingPartsCount = 0,
+            TotalPartsCount = totalParts,
+        };
 
     /// <summary>
     /// Creates a result for partial upscaled merge (some parts had upscaled versions, some didn't)
     /// </summary>
-    public static UpscaledMergeResult PartialMerge(int upscaledParts, int missingParts) => new()
-    {
-        HasUpscaledContent = true,
-        IsPartialMerge = true,
-        UpscaledPartsCount = upscaledParts,
-        MissingPartsCount = missingParts,
-        TotalPartsCount = upscaledParts + missingParts
-    };
+    public static UpscaledMergeResult PartialMerge(int upscaledParts, int missingParts) =>
+        new()
+        {
+            HasUpscaledContent = true,
+            IsPartialMerge = true,
+            UpscaledPartsCount = upscaledParts,
+            MissingPartsCount = missingParts,
+            TotalPartsCount = upscaledParts + missingParts,
+        };
 }

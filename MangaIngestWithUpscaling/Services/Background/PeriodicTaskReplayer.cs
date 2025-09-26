@@ -5,7 +5,9 @@ namespace MangaIngestWithUpscaling.Services.Background;
 public class PeriodicTaskReplayer : BackgroundService
 {
     private readonly IServiceScopeFactory _serviceScopeFactory;
-    public PeriodicTaskReplayer(IServiceScopeFactory serviceScopeFactory) => _serviceScopeFactory = serviceScopeFactory;
+
+    public PeriodicTaskReplayer(IServiceScopeFactory serviceScopeFactory) =>
+        _serviceScopeFactory = serviceScopeFactory;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -14,7 +16,9 @@ public class PeriodicTaskReplayer : BackgroundService
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
             using var scope = _serviceScopeFactory.CreateScope();
-            var logger = scope.ServiceProvider.GetRequiredService<ILogger<PeriodicIntegrityChecker>>();
+            var logger = scope.ServiceProvider.GetRequiredService<
+                ILogger<PeriodicIntegrityChecker>
+            >();
 
             var taskQueue = scope.ServiceProvider.GetRequiredService<TaskQueue>();
             try

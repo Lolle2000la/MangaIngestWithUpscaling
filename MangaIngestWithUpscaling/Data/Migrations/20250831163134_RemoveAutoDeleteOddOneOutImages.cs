@@ -10,9 +10,7 @@ namespace MangaIngestWithUpscaling.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropColumn(
-                name: "AutoDeleteOddOneOutImages",
-                table: "Libraries");
+            migrationBuilder.DropColumn(name: "AutoDeleteOddOneOutImages", table: "Libraries");
         }
 
         /// <inheritdoc />
@@ -23,7 +21,8 @@ namespace MangaIngestWithUpscaling.Migrations
                 table: "Libraries",
                 type: "INTEGER",
                 nullable: false,
-                defaultValue: false);
+                defaultValue: false
+            );
         }
     }
 }

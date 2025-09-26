@@ -1,8 +1,8 @@
-﻿using MudBlazor;
-using ReactiveUI;
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Reactive;
 using System.Reactive.Linq;
+using MudBlazor;
+using ReactiveUI;
 
 namespace MangaIngestWithUpscaling.Components.FileSystem;
 
@@ -60,10 +60,7 @@ public class FolderPickerViewModel : ViewModelBase
     public string? SelectedPath
     {
         get => _selectedPath;
-        set
-        {
-            this.RaiseAndSetIfChanged(ref _selectedPath, value);
-        }
+        set { this.RaiseAndSetIfChanged(ref _selectedPath, value); }
     }
 
     public bool Disabled
@@ -107,20 +104,30 @@ public class FolderPickerViewModel : ViewModelBase
     private void GoToParent()
     {
         var parent = Directory.GetParent(RootDirectory)?.FullName;
-        if (parent != null) RootDirectory = parent;
+        if (parent != null)
+            RootDirectory = parent;
     }
 
-    private DirectoryItem CreateDirectoryItem(string path) => new()
-    {
-        Path = path, Name = Path.GetFileName(path), HasChildren = DirectoryHasSubdirectories(path)
-    };
+    private DirectoryItem CreateDirectoryItem(string path) =>
+        new()
+        {
+            Path = path,
+            Name = Path.GetFileName(path),
+            HasChildren = DirectoryHasSubdirectories(path),
+        };
 
-    private TreeItemData<DirectoryItem> CreateTreeItemData(DirectoryItem item) => new()
-    {
-        Value = item, Text = item.Name, Expandable = item.HasChildren, Selected = item.Path == SelectedPath
-    };
+    private TreeItemData<DirectoryItem> CreateTreeItemData(DirectoryItem item) =>
+        new()
+        {
+            Value = item,
+            Text = item.Name,
+            Expandable = item.HasChildren,
+            Selected = item.Path == SelectedPath,
+        };
 
-    public async Task<IReadOnlyCollection<TreeItemData<DirectoryItem>>> HandleExpand(DirectoryItem item)
+    public async Task<IReadOnlyCollection<TreeItemData<DirectoryItem>>> HandleExpand(
+        DirectoryItem item
+    )
     {
         try
         {
@@ -141,11 +148,13 @@ public class FolderPickerViewModel : ViewModelBase
         }
     }
 
-    public void HandleItemsLoaded(TreeItemData<DirectoryItem> parent,
-        IReadOnlyCollection<TreeItemData<DirectoryItem?>>? children)
+    public void HandleItemsLoaded(
+        TreeItemData<DirectoryItem> parent,
+        IReadOnlyCollection<TreeItemData<DirectoryItem?>>? children
+    )
     {
-        parent.Children = children?
-            .OfType<TreeItemData<DirectoryItem>>() // remove nullable annotation
+        parent.Children = children
+            ?.OfType<TreeItemData<DirectoryItem>>() // remove nullable annotation
             .ToList();
     }
 

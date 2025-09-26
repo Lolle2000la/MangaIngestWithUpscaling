@@ -17,7 +17,8 @@ namespace MangaIngestWithUpscaling.Migrations
                 nullable: true,
                 oldClrType: typeof(string),
                 oldType: "TEXT",
-                oldNullable: true);
+                oldNullable: true
+            );
         }
 
         /// <inheritdoc />
@@ -30,7 +31,8 @@ namespace MangaIngestWithUpscaling.Migrations
                 nullable: true,
                 oldClrType: typeof(ulong),
                 oldType: "INTEGER",
-                oldNullable: true);
+                oldNullable: true
+            );
         }
     }
 }

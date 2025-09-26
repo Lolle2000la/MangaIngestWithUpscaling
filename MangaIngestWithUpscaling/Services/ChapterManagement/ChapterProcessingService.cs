@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
@@ -5,7 +6,6 @@ using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
-using System.Text.RegularExpressions;
 
 namespace MangaIngestWithUpscaling.Services.ChapterManagement;
 
@@ -17,7 +17,8 @@ public partial class ChapterProcessingService(
     ApplicationDbContext dbContext,
     IUpscalerJsonHandlingService upscalerJsonHandlingService,
     IFileSystem fileSystem,
-    ILogger<ChapterProcessingService> logger) : IChapterProcessingService
+    ILogger<ChapterProcessingService> logger
+) : IChapterProcessingService
 {
     /// <summary>
     /// Detects if a chapter file is upscaled based on upscaler.json presence and path patterns.
@@ -26,11 +27,20 @@ public partial class ChapterProcessingService(
     /// <param name="relativePath">Relative path of the chapter file</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>A tuple indicating if the file is upscaled and the upscaler profile DTO if found</returns>
-    public async Task<(bool IsUpscaled, UpscalerProfileJsonDto? UpscalerProfile)> DetectUpscaledFileAsync(
-        string filePath, string relativePath, CancellationToken cancellationToken)
+    public async Task<(
+        bool IsUpscaled,
+        UpscalerProfileJsonDto? UpscalerProfile
+    )> DetectUpscaledFileAsync(
+        string filePath,
+        string relativePath,
+        CancellationToken cancellationToken
+    )
     {
         // First check for upscaler.json - this overrides path-based detection
-        var upscalerProfileDto = await upscalerJsonHandlingService.ReadUpscalerJsonAsync(filePath, cancellationToken);
+        var upscalerProfileDto = await upscalerJsonHandlingService.ReadUpscalerJsonAsync(
+            filePath,
+            cancellationToken
+        );
         if (upscalerProfileDto != null)
         {
             return (true, upscalerProfileDto);
@@ -47,17 +57,21 @@ public partial class ChapterProcessingService(
     /// <param name="dto">The upscaler profile DTO</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>The upscaler profile, or null if creation failed</returns>
-    public async Task<UpscalerProfile?> FindOrCreateUpscalerProfileAsync(UpscalerProfileJsonDto dto, CancellationToken cancellationToken)
+    public async Task<UpscalerProfile?> FindOrCreateUpscalerProfileAsync(
+        UpscalerProfileJsonDto dto,
+        CancellationToken cancellationToken
+    )
     {
         try
         {
             // Try to find an existing profile with matching characteristics
-            var existingProfile = await dbContext.UpscalerProfiles
-                .FirstOrDefaultAsync(p => 
-                    p.Name == dto.Name &&
-                    p.UpscalerMethod == dto.UpscalerMethod &&
-                    (int)p.ScalingFactor == dto.ScalingFactor,
-                    cancellationToken);
+            var existingProfile = await dbContext.UpscalerProfiles.FirstOrDefaultAsync(
+                p =>
+                    p.Name == dto.Name
+                    && p.UpscalerMethod == dto.UpscalerMethod
+                    && (int)p.ScalingFactor == dto.ScalingFactor,
+                cancellationToken
+            );
 
             if (existingProfile != null)
             {
@@ -66,13 +80,20 @@ public partial class ChapterProcessingService(
 
             // For now, we'll just log that we found the profile but not create it automatically
             // as this might require more validation and user approval
-            logger.LogWarning("Upscaler profile '{ProfileName}' not found in database. Manual creation may be required.", dto.Name);
-            
+            logger.LogWarning(
+                "Upscaler profile '{ProfileName}' not found in database. Manual creation may be required.",
+                dto.Name
+            );
+
             return null;
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Error finding or creating upscaler profile for {ProfileName}", dto.Name);
+            logger.LogError(
+                ex,
+                "Error finding or creating upscaler profile for {ProfileName}",
+                dto.Name
+            );
             return null;
         }
     }
@@ -85,16 +106,27 @@ public partial class ChapterProcessingService(
     /// <param name="originalSeriesTitle">The original series title (for alternative titles)</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>The manga series entity</returns>
-    public async Task<Manga> GetOrCreateMangaSeriesAsync(Library library, string seriesTitle, string? originalSeriesTitle, CancellationToken cancellationToken)
+    public async Task<Manga> GetOrCreateMangaSeriesAsync(
+        Library library,
+        string seriesTitle,
+        string? originalSeriesTitle,
+        CancellationToken cancellationToken
+    )
     {
         // Try to find existing series (also considering alternate names)
-        var seriesEntity = await dbContext.MangaSeries
-            .Include(s => s.OtherTitles)
+        var seriesEntity = await dbContext
+            .MangaSeries.Include(s => s.OtherTitles)
             .Include(s => s.Chapters)
             .Include(s => s.UpscalerProfilePreference)
-            .FirstOrDefaultAsync(s => s.LibraryId == library.Id && 
-                (s.PrimaryTitle == seriesTitle || s.OtherTitles.Any(an => an.Title == seriesTitle)),
-                cancellationToken);
+            .FirstOrDefaultAsync(
+                s =>
+                    s.LibraryId == library.Id
+                    && (
+                        s.PrimaryTitle == seriesTitle
+                        || s.OtherTitles.Any(an => an.Title == seriesTitle)
+                    ),
+                cancellationToken
+            );
 
         if (seriesEntity == null)
         {
@@ -104,25 +136,28 @@ public partial class ChapterProcessingService(
                 OtherTitles = new List<MangaAlternativeTitle>(),
                 Library = library,
                 LibraryId = library.Id,
-                Chapters = new List<Chapter>()
+                Chapters = new List<Chapter>(),
             };
 
             // Add original as alternative title if different
-            if (!string.IsNullOrEmpty(originalSeriesTitle) && 
-                !string.Equals(originalSeriesTitle, seriesTitle, StringComparison.Ordinal))
+            if (
+                !string.IsNullOrEmpty(originalSeriesTitle)
+                && !string.Equals(originalSeriesTitle, seriesTitle, StringComparison.Ordinal)
+            )
             {
-                seriesEntity.OtherTitles.Add(new MangaAlternativeTitle
-                {
-                    Manga = seriesEntity, 
-                    Title = originalSeriesTitle
-                });
+                seriesEntity.OtherTitles.Add(
+                    new MangaAlternativeTitle { Manga = seriesEntity, Title = originalSeriesTitle }
+                );
             }
 
             dbContext.MangaSeries.Add(seriesEntity);
             await dbContext.SaveChangesAsync(cancellationToken);
 
-            logger.LogInformation("Created new manga series '{SeriesTitle}' in library '{LibraryName}'",
-                seriesTitle, library.Name);
+            logger.LogInformation(
+                "Created new manga series '{SeriesTitle}' in library '{LibraryName}'",
+                seriesTitle,
+                library.Name
+            );
         }
 
         // Ensure collections are initialized
@@ -139,7 +174,12 @@ public partial class ChapterProcessingService(
     /// <param name="library">The library</param>
     /// <param name="targetRelativePath">Target relative path in upscaled library</param>
     /// <param name="cancellationToken">Cancellation token</param>
-    public void MoveUpscaledFileToLibrary(string sourcePath, Library library, string targetRelativePath, CancellationToken cancellationToken)
+    public void MoveUpscaledFileToLibrary(
+        string sourcePath,
+        Library library,
+        string targetRelativePath,
+        CancellationToken cancellationToken
+    )
     {
         if (string.IsNullOrEmpty(library.UpscaledLibraryPath))
         {
@@ -160,13 +200,21 @@ public partial class ChapterProcessingService(
             // Move the file
             fileSystem.Move(sourcePath, targetPath);
 
-            logger.LogInformation("Moved upscaled file from '{SourcePath}' to '{TargetPath}' in library '{LibraryName}'",
-                sourcePath, targetPath, library.Name);
+            logger.LogInformation(
+                "Moved upscaled file from '{SourcePath}' to '{TargetPath}' in library '{LibraryName}'",
+                sourcePath,
+                targetPath,
+                library.Name
+            );
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to move upscaled file from '{SourcePath}' to upscaled library path in library '{LibraryName}'",
-                sourcePath, library.Name);
+            logger.LogError(
+                ex,
+                "Failed to move upscaled file from '{SourcePath}' to upscaled library path in library '{LibraryName}'",
+                sourcePath,
+                library.Name
+            );
             throw; // Re-throw to indicate the operation failed
         }
     }

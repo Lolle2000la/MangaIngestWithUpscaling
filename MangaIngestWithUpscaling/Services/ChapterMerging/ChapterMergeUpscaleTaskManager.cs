@@ -13,14 +13,16 @@ public class ChapterMergeUpscaleTaskManager(
     ApplicationDbContext dbContext,
     ITaskQueue taskQueue,
     UpscaleTaskProcessor upscaleTaskProcessor,
-    ILogger<ChapterMergeUpscaleTaskManager> logger) : IChapterMergeUpscaleTaskManager
+    ILogger<ChapterMergeUpscaleTaskManager> logger
+) : IChapterMergeUpscaleTaskManager
 {
     public async Task HandleUpscaleTaskManagementAsync(
         List<Chapter> originalChapters,
         MergeInfo mergeInfo,
         Library library,
         UpscaledMergeResult? upscaledMergeResult = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default
+    )
     {
         List<int> chapterIds = originalChapters.Select(c => c.Id).ToList();
 
@@ -30,10 +32,13 @@ public class ChapterMergeUpscaleTaskManager(
         // Use raw SQL to query JSON data for each chapter ID to get all related tasks
         foreach (int chapterId in chapterIds)
         {
-            List<PersistedTask> tasks = (await dbContext.PersistedTasks
-                    .FromSql(
-                        $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(UpscaleTask)} AND Data->>'$.ChapterId' = {chapterId}")
-                    .ToListAsync(cancellationToken))
+            List<PersistedTask> tasks = (
+                await dbContext
+                    .PersistedTasks.FromSql(
+                        $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(UpscaleTask)} AND Data->>'$.ChapterId' = {chapterId}"
+                    )
+                    .ToListAsync(cancellationToken)
+            )
                 .OrderBy(p => p.Status == PersistedTaskStatus.Pending ? 0 : 1)
                 .ToList();
 
@@ -52,8 +57,10 @@ public class ChapterMergeUpscaleTaskManager(
                     // Remove pending tasks from the queue
                     upscaleTaskProcessor.CancelCurrent(task);
                     await taskQueue.RemoveTaskAsync(task);
-                    logger.LogInformation("Removed pending upscale task for chapter {ChapterId} due to chapter merging",
-                        ((UpscaleTask)task.Data).ChapterId);
+                    logger.LogInformation(
+                        "Removed pending upscale task for chapter {ChapterId} due to chapter merging",
+                        ((UpscaleTask)task.Data).ChapterId
+                    );
                     break;
 
                 case PersistedTaskStatus.Processing:
@@ -62,22 +69,28 @@ public class ChapterMergeUpscaleTaskManager(
                     tasksToCancel.Add(task);
                     logger.LogInformation(
                         "Canceled processing upscale task for chapter {ChapterId} due to chapter merging",
-                        ((UpscaleTask)task.Data).ChapterId);
+                        ((UpscaleTask)task.Data).ChapterId
+                    );
                     break;
 
                 case PersistedTaskStatus.Completed:
                     // Remove completed tasks from database
                     tasksToRemove.Add(task);
-                    logger.LogDebug("Removing completed upscale task for chapter {ChapterId} due to chapter merging",
-                        ((UpscaleTask)task.Data).ChapterId);
+                    logger.LogDebug(
+                        "Removing completed upscale task for chapter {ChapterId} due to chapter merging",
+                        ((UpscaleTask)task.Data).ChapterId
+                    );
                     break;
 
                 case PersistedTaskStatus.Failed:
                 case PersistedTaskStatus.Canceled:
                     // Remove failed/canceled tasks from database
                     tasksToRemove.Add(task);
-                    logger.LogDebug("Removing {Status} upscale task for chapter {ChapterId} due to chapter merging",
-                        task.Status, ((UpscaleTask)task.Data).ChapterId);
+                    logger.LogDebug(
+                        "Removing {Status} upscale task for chapter {ChapterId} due to chapter merging",
+                        task.Status,
+                        ((UpscaleTask)task.Data).ChapterId
+                    );
                     break;
             }
         }
@@ -99,8 +112,10 @@ public class ChapterMergeUpscaleTaskManager(
 
                 // Add to removal list since it was successfully canceled
                 tasksToRemove.Add(canceledTask);
-                logger.LogDebug("Successfully canceled and will remove task for chapter {ChapterId}",
-                    ((UpscaleTask)canceledTask.Data).ChapterId);
+                logger.LogDebug(
+                    "Successfully canceled and will remove task for chapter {ChapterId}",
+                    ((UpscaleTask)canceledTask.Data).ChapterId
+                );
             }
         }
 
@@ -112,17 +127,27 @@ public class ChapterMergeUpscaleTaskManager(
                 await taskQueue.RemoveTaskAsync(persistedTask);
             }
 
-            logger.LogInformation("Removed {TaskCount} upscale tasks for chapter merging cleanup", tasksToRemove.Count);
+            logger.LogInformation(
+                "Removed {TaskCount} upscale tasks for chapter merging cleanup",
+                tasksToRemove.Count
+            );
         }
 
         // If library has upscaling enabled and merged chapter should be upscaled,
         // queue an appropriate task for the merged chapter (full upscale or repair)
-        await QueueUpscaleTaskForMergedChapterIfNeeded(originalChapters, mergeInfo, library, upscaledMergeResult, cancellationToken);
+        await QueueUpscaleTaskForMergedChapterIfNeeded(
+            originalChapters,
+            mergeInfo,
+            library,
+            upscaledMergeResult,
+            cancellationToken
+        );
     }
 
     public async Task<UpscaleCompatibilityResult> CheckUpscaleCompatibilityForMergeAsync(
         List<Chapter> chapters,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default
+    )
     {
         // Check if any chapters have pending or in-progress upscale tasks for logging purposes
         List<int> chapterIds = chapters.Select(c => c.Id).ToList();
@@ -132,9 +157,10 @@ public class ChapterMergeUpscaleTaskManager(
         // Use raw SQL to query JSON data for each chapter ID
         foreach (int chapterId in chapterIds)
         {
-            List<PersistedTask> tasks = await dbContext.PersistedTasks
-                .FromSql(
-                    $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(UpscaleTask)} AND Data->>'$.ChapterId' = {chapterId} AND (Status = {(int)PersistedTaskStatus.Pending} OR Status = {(int)PersistedTaskStatus.Processing})")
+            List<PersistedTask> tasks = await dbContext
+                .PersistedTasks.FromSql(
+                    $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(UpscaleTask)} AND Data->>'$.ChapterId' = {chapterId} AND (Status = {(int)PersistedTaskStatus.Pending} OR Status = {(int)PersistedTaskStatus.Processing})"
+                )
                 .ToListAsync(cancellationToken);
 
             pendingTasks.AddRange(tasks);
@@ -148,11 +174,14 @@ public class ChapterMergeUpscaleTaskManager(
                 .Select(pt => ((UpscaleTask)pt.Data).ChapterId)
                 .ToHashSet();
 
-            List<Chapter> affectedChapters = chapters.Where(c => taskChapterIds.Contains(c.Id)).ToList();
+            List<Chapter> affectedChapters = chapters
+                .Where(c => taskChapterIds.Contains(c.Id))
+                .ToList();
 
             logger.LogInformation(
                 "Merging chapters with pending/processing upscale tasks - these will be canceled/removed: {ChapterNames}",
-                string.Join(", ", affectedChapters.Select(c => c.FileName)));
+                string.Join(", ", affectedChapters.Select(c => c.FileName))
+            );
         }
 
         // Always allow merging since we now handle task management properly
@@ -164,7 +193,8 @@ public class ChapterMergeUpscaleTaskManager(
         MergeInfo mergeInfo,
         Library library,
         UpscaledMergeResult? upscaledMergeResult,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken
+    )
     {
         if (string.IsNullOrEmpty(library.UpscaledLibraryPath) || library.UpscalerProfile is null)
         {
@@ -173,12 +203,18 @@ public class ChapterMergeUpscaleTaskManager(
 
         Chapter primaryChapter = originalChapters.First();
         await dbContext.Entry(primaryChapter).Reference(x => x.Manga).LoadAsync(cancellationToken);
-        await dbContext.Entry(primaryChapter.Manga).Reference(x => x.Library).LoadAsync(cancellationToken);
-        await dbContext.Entry(primaryChapter.Manga.Library).Reference(x => x.UpscalerProfile)
+        await dbContext
+            .Entry(primaryChapter.Manga)
+            .Reference(x => x.Library)
+            .LoadAsync(cancellationToken);
+        await dbContext
+            .Entry(primaryChapter.Manga.Library)
+            .Reference(x => x.UpscalerProfile)
             .LoadAsync(cancellationToken);
 
-        bool shouldUpscale = (primaryChapter.Manga.ShouldUpscale ?? primaryChapter.Manga.Library.UpscaleOnIngest)
-                             && primaryChapter.Manga.Library.UpscalerProfile != null;
+        bool shouldUpscale =
+            (primaryChapter.Manga.ShouldUpscale ?? primaryChapter.Manga.Library.UpscaleOnIngest)
+            && primaryChapter.Manga.Library.UpscalerProfile != null;
 
         if (shouldUpscale)
         {
@@ -186,21 +222,28 @@ public class ChapterMergeUpscaleTaskManager(
             if (upscaledMergeResult?.IsPartialMerge == true)
             {
                 // Queue a repair task to handle the missing pages
-                var repairTask = new RepairUpscaleTask(primaryChapter, primaryChapter.Manga.Library.UpscalerProfile!);
+                var repairTask = new RepairUpscaleTask(
+                    primaryChapter,
+                    primaryChapter.Manga.Library.UpscalerProfile!
+                );
                 await taskQueue.EnqueueAsync(repairTask);
 
                 logger.LogInformation(
-                    "Queued repair upscale task for partially merged chapter {FileName} (Chapter ID: {ChapterId}) " +
-                    "to complete {MissingCount} missing pages from {ExistingCount} existing upscaled parts",
-                    mergeInfo.MergedChapter.FileName, primaryChapter.Id, 
-                    upscaledMergeResult.MissingPartsCount, upscaledMergeResult.UpscaledPartsCount);
+                    "Queued repair upscale task for partially merged chapter {FileName} (Chapter ID: {ChapterId}) "
+                        + "to complete {MissingCount} missing pages from {ExistingCount} existing upscaled parts",
+                    mergeInfo.MergedChapter.FileName,
+                    primaryChapter.Id,
+                    upscaledMergeResult.MissingPartsCount,
+                    upscaledMergeResult.UpscaledPartsCount
+                );
             }
             else if (upscaledMergeResult?.HasUpscaledContent == true)
             {
                 // Complete merge already happened, no task needed
                 logger.LogDebug(
                     "Complete upscaled merge already processed for chapter {FileName}, no additional task needed",
-                    mergeInfo.MergedChapter.FileName);
+                    mergeInfo.MergedChapter.FileName
+                );
             }
             else
             {
@@ -210,13 +253,17 @@ public class ChapterMergeUpscaleTaskManager(
 
                 logger.LogInformation(
                     "Queued full upscale task for merged chapter {FileName} (Chapter ID: {ChapterId})",
-                    mergeInfo.MergedChapter.FileName, primaryChapter.Id);
+                    mergeInfo.MergedChapter.FileName,
+                    primaryChapter.Id
+                );
             }
         }
         else
         {
-            logger.LogDebug("Upscale task for merged chapter {FileName} skipped - upscaling not needed",
-                mergeInfo.MergedChapter.FileName);
+            logger.LogDebug(
+                "Upscale task for merged chapter {FileName} skipped - upscaling not needed",
+                mergeInfo.MergedChapter.FileName
+            );
         }
     }
 }

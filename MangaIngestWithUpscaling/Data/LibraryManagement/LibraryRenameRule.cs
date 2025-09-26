@@ -24,7 +24,7 @@ public class LibraryRenameRule
 public enum LibraryRenamePatternType
 {
     Regex,
-    Contains
+    Contains,
 }
 
 /// <summary>
@@ -32,7 +32,12 @@ public enum LibraryRenamePatternType
 /// </summary>
 public enum LibraryRenameTargetField
 {
-    [Display(Name = "Series Title")] SeriesTitle,
-    [Display(Name = "File Name")] FileName,
-    [Display(Name = "Chapter Title")] ChapterTitle
+    [Display(Name = "Series Title")]
+    SeriesTitle,
+
+    [Display(Name = "File Name")]
+    FileName,
+
+    [Display(Name = "Chapter Title")]
+    ChapterTitle,
 }

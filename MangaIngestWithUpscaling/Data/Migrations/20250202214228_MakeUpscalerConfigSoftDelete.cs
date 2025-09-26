@@ -15,15 +15,14 @@ namespace MangaIngestWithUpscaling.Migrations
                 table: "UpscalerProfiles",
                 type: "INTEGER",
                 nullable: false,
-                defaultValue: false);
+                defaultValue: false
+            );
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropColumn(
-                name: "Deleted",
-                table: "UpscalerProfiles");
+            migrationBuilder.DropColumn(name: "Deleted", table: "UpscalerProfiles");
         }
     }
 }

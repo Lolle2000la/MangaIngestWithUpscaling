@@ -17,12 +17,13 @@ public partial class Init : Migration
                 Id = table.Column<string>(type: "TEXT", nullable: false),
                 Name = table.Column<string>(type: "TEXT", maxLength: 256, nullable: true),
                 NormalizedName = table.Column<string>(type: "TEXT", maxLength: 256, nullable: true),
-                ConcurrencyStamp = table.Column<string>(type: "TEXT", nullable: true)
+                ConcurrencyStamp = table.Column<string>(type: "TEXT", nullable: true),
             },
             constraints: table =>
             {
                 table.PrimaryKey("PK_AspNetRoles", x => x.Id);
-            });
+            }
+        );
 
         migrationBuilder.CreateTable(
             name: "AspNetUsers",
@@ -30,9 +31,17 @@ public partial class Init : Migration
             {
                 Id = table.Column<string>(type: "TEXT", nullable: false),
                 UserName = table.Column<string>(type: "TEXT", maxLength: 256, nullable: true),
-                NormalizedUserName = table.Column<string>(type: "TEXT", maxLength: 256, nullable: true),
+                NormalizedUserName = table.Column<string>(
+                    type: "TEXT",
+                    maxLength: 256,
+                    nullable: true
+                ),
                 Email = table.Column<string>(type: "TEXT", maxLength: 256, nullable: true),
-                NormalizedEmail = table.Column<string>(type: "TEXT", maxLength: 256, nullable: true),
+                NormalizedEmail = table.Column<string>(
+                    type: "TEXT",
+                    maxLength: 256,
+                    nullable: true
+                ),
                 EmailConfirmed = table.Column<bool>(type: "INTEGER", nullable: false),
                 PasswordHash = table.Column<string>(type: "TEXT", nullable: true),
                 SecurityStamp = table.Column<string>(type: "TEXT", nullable: true),
@@ -42,71 +51,79 @@ public partial class Init : Migration
                 TwoFactorEnabled = table.Column<bool>(type: "INTEGER", nullable: false),
                 LockoutEnd = table.Column<DateTimeOffset>(type: "TEXT", nullable: true),
                 LockoutEnabled = table.Column<bool>(type: "INTEGER", nullable: false),
-                AccessFailedCount = table.Column<int>(type: "INTEGER", nullable: false)
+                AccessFailedCount = table.Column<int>(type: "INTEGER", nullable: false),
             },
             constraints: table =>
             {
                 table.PrimaryKey("PK_AspNetUsers", x => x.Id);
-            });
+            }
+        );
 
         migrationBuilder.CreateTable(
             name: "Libraries",
             columns: table => new
             {
-                Id = table.Column<int>(type: "INTEGER", nullable: false)
+                Id = table
+                    .Column<int>(type: "INTEGER", nullable: false)
                     .Annotation("Sqlite:Autoincrement", true),
                 IngestPath = table.Column<string>(type: "TEXT", nullable: false),
                 NotUpscaledLibraryPath = table.Column<string>(type: "TEXT", nullable: false),
-                UpscaledLibraryPath = table.Column<string>(type: "TEXT", nullable: false)
+                UpscaledLibraryPath = table.Column<string>(type: "TEXT", nullable: false),
             },
             constraints: table =>
             {
                 table.PrimaryKey("PK_Libraries", x => x.Id);
-            });
+            }
+        );
 
         migrationBuilder.CreateTable(
             name: "PersistedTasks",
             columns: table => new
             {
-                Id = table.Column<int>(type: "INTEGER", nullable: false)
+                Id = table
+                    .Column<int>(type: "INTEGER", nullable: false)
                     .Annotation("Sqlite:Autoincrement", true),
                 Data = table.Column<string>(type: "jsonb", nullable: false),
                 Status = table.Column<string>(type: "TEXT", nullable: false),
                 CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false),
                 RetryCount = table.Column<int>(type: "INTEGER", nullable: false),
-                ProcessedAt = table.Column<DateTime>(type: "TEXT", nullable: true)
+                ProcessedAt = table.Column<DateTime>(type: "TEXT", nullable: true),
             },
             constraints: table =>
             {
                 table.PrimaryKey("PK_PersistedTasks", x => x.Id);
-            });
+            }
+        );
 
         migrationBuilder.CreateTable(
             name: "UpscalerConfigs",
             columns: table => new
             {
-                Id = table.Column<int>(type: "INTEGER", nullable: false)
+                Id = table
+                    .Column<int>(type: "INTEGER", nullable: false)
                     .Annotation("Sqlite:Autoincrement", true),
                 Name = table.Column<string>(type: "TEXT", nullable: false),
                 UpscalerMethod = table.Column<string>(type: "TEXT", nullable: false),
                 ScalingFactor = table.Column<string>(type: "TEXT", nullable: false),
                 CompressionFormat = table.Column<string>(type: "TEXT", nullable: false),
-                Quality = table.Column<int>(type: "INTEGER", nullable: false)
+                Quality = table.Column<int>(type: "INTEGER", nullable: false),
             },
             constraints: table =>
             {
                 table.PrimaryKey("PK_UpscalerConfigs", x => x.Id);
-            });
+            }
+        );
 
         migrationBuilder.CreateTable(
             name: "AspNetRoleClaims",
             columns: table => new
             {
-                Id = table.Column<int>(type: "INTEGER", nullable: false)
+                Id = table
+                    .Column<int>(type: "INTEGER", nullable: false)
                     .Annotation("Sqlite:Autoincrement", true),
                 RoleId = table.Column<string>(type: "TEXT", nullable: false),
                 ClaimType = table.Column<string>(type: "TEXT", nullable: true),
-                ClaimValue = table.Column<string>(type: "TEXT", nullable: true)
+                ClaimValue = table.Column<string>(type: "TEXT", nullable: true),
             },
             constraints: table =>
             {
@@ -116,18 +133,21 @@ public partial class Init : Migration
                     column: x => x.RoleId,
                     principalTable: "AspNetRoles",
                     principalColumn: "Id",
-                    onDelete: ReferentialAction.Cascade);
-            });
+                    onDelete: ReferentialAction.Cascade
+                );
+            }
+        );
 
         migrationBuilder.CreateTable(
             name: "AspNetUserClaims",
             columns: table => new
             {
-                Id = table.Column<int>(type: "INTEGER", nullable: false)
+                Id = table
+                    .Column<int>(type: "INTEGER", nullable: false)
                     .Annotation("Sqlite:Autoincrement", true),
                 UserId = table.Column<string>(type: "TEXT", nullable: false),
                 ClaimType = table.Column<string>(type: "TEXT", nullable: true),
-                ClaimValue = table.Column<string>(type: "TEXT", nullable: true)
+                ClaimValue = table.Column<string>(type: "TEXT", nullable: true),
             },
             constraints: table =>
             {
@@ -137,8 +157,10 @@ public partial class Init : Migration
                     column: x => x.UserId,
                     principalTable: "AspNetUsers",
                     principalColumn: "Id",
-                    onDelete: ReferentialAction.Cascade);
-            });
+                    onDelete: ReferentialAction.Cascade
+                );
+            }
+        );
 
         migrationBuilder.CreateTable(
             name: "AspNetUserLogins",
@@ -147,25 +169,30 @@ public partial class Init : Migration
                 LoginProvider = table.Column<string>(type: "TEXT", nullable: false),
                 ProviderKey = table.Column<string>(type: "TEXT", nullable: false),
                 ProviderDisplayName = table.Column<string>(type: "TEXT", nullable: true),
-                UserId = table.Column<string>(type: "TEXT", nullable: false)
+                UserId = table.Column<string>(type: "TEXT", nullable: false),
             },
             constraints: table =>
             {
-                table.PrimaryKey("PK_AspNetUserLogins", x => new { x.LoginProvider, x.ProviderKey });
+                table.PrimaryKey(
+                    "PK_AspNetUserLogins",
+                    x => new { x.LoginProvider, x.ProviderKey }
+                );
                 table.ForeignKey(
                     name: "FK_AspNetUserLogins_AspNetUsers_UserId",
                     column: x => x.UserId,
                     principalTable: "AspNetUsers",
                     principalColumn: "Id",
-                    onDelete: ReferentialAction.Cascade);
-            });
+                    onDelete: ReferentialAction.Cascade
+                );
+            }
+        );
 
         migrationBuilder.CreateTable(
             name: "AspNetUserRoles",
             columns: table => new
             {
                 UserId = table.Column<string>(type: "TEXT", nullable: false),
-                RoleId = table.Column<string>(type: "TEXT", nullable: false)
+                RoleId = table.Column<string>(type: "TEXT", nullable: false),
             },
             constraints: table =>
             {
@@ -175,14 +202,17 @@ public partial class Init : Migration
                     column: x => x.RoleId,
                     principalTable: "AspNetRoles",
                     principalColumn: "Id",
-                    onDelete: ReferentialAction.Cascade);
+                    onDelete: ReferentialAction.Cascade
+                );
                 table.ForeignKey(
                     name: "FK_AspNetUserRoles_AspNetUsers_UserId",
                     column: x => x.UserId,
                     principalTable: "AspNetUsers",
                     principalColumn: "Id",
-                    onDelete: ReferentialAction.Cascade);
-            });
+                    onDelete: ReferentialAction.Cascade
+                );
+            }
+        );
 
         migrationBuilder.CreateTable(
             name: "AspNetUserTokens",
@@ -191,30 +221,41 @@ public partial class Init : Migration
                 UserId = table.Column<string>(type: "TEXT", nullable: false),
                 LoginProvider = table.Column<string>(type: "TEXT", nullable: false),
                 Name = table.Column<string>(type: "TEXT", nullable: false),
-                Value = table.Column<string>(type: "TEXT", nullable: true)
+                Value = table.Column<string>(type: "TEXT", nullable: true),
             },
             constraints: table =>
             {
-                table.PrimaryKey("PK_AspNetUserTokens", x => new { x.UserId, x.LoginProvider, x.Name });
+                table.PrimaryKey(
+                    "PK_AspNetUserTokens",
+                    x => new
+                    {
+                        x.UserId,
+                        x.LoginProvider,
+                        x.Name,
+                    }
+                );
                 table.ForeignKey(
                     name: "FK_AspNetUserTokens_AspNetUsers_UserId",
                     column: x => x.UserId,
                     principalTable: "AspNetUsers",
                     principalColumn: "Id",
-                    onDelete: ReferentialAction.Cascade);
-            });
+                    onDelete: ReferentialAction.Cascade
+                );
+            }
+        );
 
         migrationBuilder.CreateTable(
             name: "LibraryFilterRules",
             columns: table => new
             {
-                Id = table.Column<int>(type: "INTEGER", nullable: false)
+                Id = table
+                    .Column<int>(type: "INTEGER", nullable: false)
                     .Annotation("Sqlite:Autoincrement", true),
                 LibraryId = table.Column<int>(type: "INTEGER", nullable: false),
                 Pattern = table.Column<string>(type: "TEXT", nullable: false),
                 PatternType = table.Column<string>(type: "TEXT", nullable: false),
                 TargetField = table.Column<string>(type: "TEXT", nullable: false),
-                Action = table.Column<string>(type: "TEXT", nullable: false)
+                Action = table.Column<string>(type: "TEXT", nullable: false),
             },
             constraints: table =>
             {
@@ -224,18 +265,21 @@ public partial class Init : Migration
                     column: x => x.LibraryId,
                     principalTable: "Libraries",
                     principalColumn: "Id",
-                    onDelete: ReferentialAction.Cascade);
-            });
+                    onDelete: ReferentialAction.Cascade
+                );
+            }
+        );
 
         migrationBuilder.CreateTable(
             name: "MangaSeries",
             columns: table => new
             {
-                Id = table.Column<int>(type: "INTEGER", nullable: false)
+                Id = table
+                    .Column<int>(type: "INTEGER", nullable: false)
                     .Annotation("Sqlite:Autoincrement", true),
                 PrimaryTitle = table.Column<string>(type: "TEXT", nullable: false),
                 Author = table.Column<string>(type: "TEXT", nullable: false),
-                LibraryId = table.Column<int>(type: "INTEGER", nullable: false)
+                LibraryId = table.Column<int>(type: "INTEGER", nullable: false),
             },
             constraints: table =>
             {
@@ -245,20 +289,23 @@ public partial class Init : Migration
                     column: x => x.LibraryId,
                     principalTable: "Libraries",
                     principalColumn: "Id",
-                    onDelete: ReferentialAction.Cascade);
-            });
+                    onDelete: ReferentialAction.Cascade
+                );
+            }
+        );
 
         migrationBuilder.CreateTable(
             name: "Chapters",
             columns: table => new
             {
-                Id = table.Column<int>(type: "INTEGER", nullable: false)
+                Id = table
+                    .Column<int>(type: "INTEGER", nullable: false)
                     .Annotation("Sqlite:Autoincrement", true),
                 MangaId = table.Column<int>(type: "INTEGER", nullable: false),
                 FileName = table.Column<string>(type: "TEXT", nullable: false),
                 RelativePath = table.Column<string>(type: "TEXT", nullable: false),
                 IsUpscaled = table.Column<bool>(type: "INTEGER", nullable: false),
-                UpscalerConfigId = table.Column<int>(type: "INTEGER", nullable: true)
+                UpscalerConfigId = table.Column<int>(type: "INTEGER", nullable: true),
             },
             constraints: table =>
             {
@@ -268,22 +315,26 @@ public partial class Init : Migration
                     column: x => x.MangaId,
                     principalTable: "MangaSeries",
                     principalColumn: "Id",
-                    onDelete: ReferentialAction.Cascade);
+                    onDelete: ReferentialAction.Cascade
+                );
                 table.ForeignKey(
                     name: "FK_Chapters_UpscalerConfigs_UpscalerConfigId",
                     column: x => x.UpscalerConfigId,
                     principalTable: "UpscalerConfigs",
-                    principalColumn: "Id");
-            });
+                    principalColumn: "Id"
+                );
+            }
+        );
 
         migrationBuilder.CreateTable(
             name: "MangaAlternativeTitles",
             columns: table => new
             {
-                Id = table.Column<int>(type: "INTEGER", nullable: false)
+                Id = table
+                    .Column<int>(type: "INTEGER", nullable: false)
                     .Annotation("Sqlite:Autoincrement", true),
                 Title = table.Column<string>(type: "TEXT", nullable: false),
-                MangaId = table.Column<int>(type: "INTEGER", nullable: false)
+                MangaId = table.Column<int>(type: "INTEGER", nullable: false),
             },
             constraints: table =>
             {
@@ -293,18 +344,21 @@ public partial class Init : Migration
                     column: x => x.MangaId,
                     principalTable: "MangaSeries",
                     principalColumn: "Id",
-                    onDelete: ReferentialAction.Cascade);
-            });
+                    onDelete: ReferentialAction.Cascade
+                );
+            }
+        );
 
         migrationBuilder.CreateTable(
             name: "UpscalingQueueEntries",
             columns: table => new
             {
-                Id = table.Column<int>(type: "INTEGER", nullable: false)
+                Id = table
+                    .Column<int>(type: "INTEGER", nullable: false)
                     .Annotation("Sqlite:Autoincrement", true),
                 ChapterId = table.Column<int>(type: "INTEGER", nullable: false),
                 UpscalerConfigId = table.Column<int>(type: "INTEGER", nullable: false),
-                QueuedAt = table.Column<DateTime>(type: "TEXT", nullable: false)
+                QueuedAt = table.Column<DateTime>(type: "TEXT", nullable: false),
             },
             constraints: table =>
             {
@@ -314,149 +368,154 @@ public partial class Init : Migration
                     column: x => x.ChapterId,
                     principalTable: "Chapters",
                     principalColumn: "Id",
-                    onDelete: ReferentialAction.Cascade);
+                    onDelete: ReferentialAction.Cascade
+                );
                 table.ForeignKey(
                     name: "FK_UpscalingQueueEntries_UpscalerConfigs_UpscalerConfigId",
                     column: x => x.UpscalerConfigId,
                     principalTable: "UpscalerConfigs",
                     principalColumn: "Id",
-                    onDelete: ReferentialAction.Cascade);
-            });
+                    onDelete: ReferentialAction.Cascade
+                );
+            }
+        );
 
         migrationBuilder.CreateIndex(
             name: "IX_AspNetRoleClaims_RoleId",
             table: "AspNetRoleClaims",
-            column: "RoleId");
+            column: "RoleId"
+        );
 
         migrationBuilder.CreateIndex(
             name: "RoleNameIndex",
             table: "AspNetRoles",
             column: "NormalizedName",
-            unique: true);
+            unique: true
+        );
 
         migrationBuilder.CreateIndex(
             name: "IX_AspNetUserClaims_UserId",
             table: "AspNetUserClaims",
-            column: "UserId");
+            column: "UserId"
+        );
 
         migrationBuilder.CreateIndex(
             name: "IX_AspNetUserLogins_UserId",
             table: "AspNetUserLogins",
-            column: "UserId");
+            column: "UserId"
+        );
 
         migrationBuilder.CreateIndex(
             name: "IX_AspNetUserRoles_RoleId",
             table: "AspNetUserRoles",
-            column: "RoleId");
+            column: "RoleId"
+        );
 
         migrationBuilder.CreateIndex(
             name: "EmailIndex",
             table: "AspNetUsers",
-            column: "NormalizedEmail");
+            column: "NormalizedEmail"
+        );
 
         migrationBuilder.CreateIndex(
             name: "UserNameIndex",
             table: "AspNetUsers",
             column: "NormalizedUserName",
-            unique: true);
+            unique: true
+        );
 
         migrationBuilder.CreateIndex(
             name: "IX_Chapters_MangaId",
             table: "Chapters",
-            column: "MangaId");
+            column: "MangaId"
+        );
 
         migrationBuilder.CreateIndex(
             name: "IX_Chapters_UpscalerConfigId",
             table: "Chapters",
-            column: "UpscalerConfigId");
+            column: "UpscalerConfigId"
+        );
 
         migrationBuilder.CreateIndex(
             name: "IX_LibraryFilterRules_LibraryId",
             table: "LibraryFilterRules",
-            column: "LibraryId");
+            column: "LibraryId"
+        );
 
         migrationBuilder.CreateIndex(
             name: "IX_MangaAlternativeTitles_MangaId",
             table: "MangaAlternativeTitles",
-            column: "MangaId");
+            column: "MangaId"
+        );
 
         migrationBuilder.CreateIndex(
             name: "IX_MangaSeries_LibraryId",
             table: "MangaSeries",
-            column: "LibraryId");
+            column: "LibraryId"
+        );
 
         migrationBuilder.CreateIndex(
             name: "IX_PersistedTasks_CreatedAt",
             table: "PersistedTasks",
-            column: "CreatedAt");
+            column: "CreatedAt"
+        );
 
         migrationBuilder.CreateIndex(
             name: "IX_PersistedTasks_ProcessedAt",
             table: "PersistedTasks",
-            column: "ProcessedAt");
+            column: "ProcessedAt"
+        );
 
         migrationBuilder.CreateIndex(
             name: "IX_PersistedTasks_Status",
             table: "PersistedTasks",
-            column: "Status");
+            column: "Status"
+        );
 
         migrationBuilder.CreateIndex(
             name: "IX_UpscalingQueueEntries_ChapterId",
             table: "UpscalingQueueEntries",
-            column: "ChapterId");
+            column: "ChapterId"
+        );
 
         migrationBuilder.CreateIndex(
             name: "IX_UpscalingQueueEntries_UpscalerConfigId",
             table: "UpscalingQueueEntries",
-            column: "UpscalerConfigId");
+            column: "UpscalerConfigId"
+        );
     }
 
     /// <inheritdoc />
     protected override void Down(MigrationBuilder migrationBuilder)
     {
-        migrationBuilder.DropTable(
-            name: "AspNetRoleClaims");
+        migrationBuilder.DropTable(name: "AspNetRoleClaims");
 
-        migrationBuilder.DropTable(
-            name: "AspNetUserClaims");
+        migrationBuilder.DropTable(name: "AspNetUserClaims");
 
-        migrationBuilder.DropTable(
-            name: "AspNetUserLogins");
+        migrationBuilder.DropTable(name: "AspNetUserLogins");
 
-        migrationBuilder.DropTable(
-            name: "AspNetUserRoles");
+        migrationBuilder.DropTable(name: "AspNetUserRoles");
 
-        migrationBuilder.DropTable(
-            name: "AspNetUserTokens");
+        migrationBuilder.DropTable(name: "AspNetUserTokens");
 
-        migrationBuilder.DropTable(
-            name: "LibraryFilterRules");
+        migrationBuilder.DropTable(name: "LibraryFilterRules");
 
-        migrationBuilder.DropTable(
-            name: "MangaAlternativeTitles");
+        migrationBuilder.DropTable(name: "MangaAlternativeTitles");
 
-        migrationBuilder.DropTable(
-            name: "PersistedTasks");
+        migrationBuilder.DropTable(name: "PersistedTasks");
 
-        migrationBuilder.DropTable(
-            name: "UpscalingQueueEntries");
+        migrationBuilder.DropTable(name: "UpscalingQueueEntries");
 
-        migrationBuilder.DropTable(
-            name: "AspNetRoles");
+        migrationBuilder.DropTable(name: "AspNetRoles");
 
-        migrationBuilder.DropTable(
-            name: "AspNetUsers");
+        migrationBuilder.DropTable(name: "AspNetUsers");
 
-        migrationBuilder.DropTable(
-            name: "Chapters");
+        migrationBuilder.DropTable(name: "Chapters");
 
-        migrationBuilder.DropTable(
-            name: "MangaSeries");
+        migrationBuilder.DropTable(name: "MangaSeries");
 
-        migrationBuilder.DropTable(
-            name: "UpscalerConfigs");
+        migrationBuilder.DropTable(name: "UpscalerConfigs");
 
-        migrationBuilder.DropTable(
-            name: "Libraries");
+        migrationBuilder.DropTable(name: "Libraries");
     }
 }

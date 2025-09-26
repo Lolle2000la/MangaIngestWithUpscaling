@@ -19,7 +19,9 @@ public class PythonServiceTests
         _pythonService = new PythonService(_mockLogger, _mockGpuDetection);
     }
 
-    [Theory(Skip = "Will run very long and should only be run when checking if the dependencies are setup correctly.")]
+    [Theory(
+        Skip = "Will run very long and should only be run when checking if the dependencies are setup correctly."
+    )]
     [Trait("Category", "Download")]
     [Trait("Category", "Integration")]
     [InlineData(GpuBackend.Auto)]
@@ -28,7 +30,9 @@ public class PythonServiceTests
     [InlineData(GpuBackend.CUDA_12_8)]
     [InlineData(GpuBackend.ROCm)]
     [InlineData(GpuBackend.XPU)]
-    public async Task PreparePythonEnvironment_WithDifferentBackends_ShouldHandleAllBackendTypes(GpuBackend backend)
+    public async Task PreparePythonEnvironment_WithDifferentBackends_ShouldHandleAllBackendTypes(
+        GpuBackend backend
+    )
     {
         // Arrange
         var tempDir = Path.Combine(Path.GetTempPath(), $"python_test_{Guid.NewGuid()}_{backend}");
@@ -37,7 +41,8 @@ public class PythonServiceTests
         {
             // Act & Assert
             var exception = await Record.ExceptionAsync(() =>
-                _pythonService.PreparePythonEnvironment(tempDir, backend, true));
+                _pythonService.PreparePythonEnvironment(tempDir, backend, true)
+            );
 
             // Should handle all backend types without crashing
             Assert.True(exception is null or FileNotFoundException or InvalidOperationException);
@@ -62,7 +67,12 @@ public class PythonServiceTests
 
         // Act & Assert
         var exception = await Assert.ThrowsAnyAsync<Exception>(() =>
-            _pythonService.RunPythonScript(invalidScript, arguments, TestContext.Current.CancellationToken));
+            _pythonService.RunPythonScript(
+                invalidScript,
+                arguments,
+                TestContext.Current.CancellationToken
+            )
+        );
 
         // Should throw some kind of exception for invalid script
         Assert.NotNull(exception);
@@ -79,8 +89,13 @@ public class PythonServiceTests
 
         // Act & Assert
         var exception = await Assert.ThrowsAnyAsync<Exception>(() =>
-            _pythonService.RunPythonScriptStreaming(invalidScript, arguments, mockCallback,
-                TestContext.Current.CancellationToken));
+            _pythonService.RunPythonScriptStreaming(
+                invalidScript,
+                arguments,
+                mockCallback,
+                TestContext.Current.CancellationToken
+            )
+        );
 
         // Should throw some kind of exception for invalid script
         Assert.NotNull(exception);
@@ -99,7 +114,8 @@ public class PythonServiceTests
 
         // Act & Assert
         var exception = await Assert.ThrowsAnyAsync<Exception>(() =>
-            _pythonService.RunPythonScriptStreaming(script, arguments, mockCallback, cts.Token));
+            _pythonService.RunPythonScriptStreaming(script, arguments, mockCallback, cts.Token)
+        );
 
         // Should throw either OperationCanceledException or another exception due to invalid script
         Assert.NotNull(exception);

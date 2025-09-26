@@ -13,7 +13,8 @@ public sealed class TempResizedCbz : IDisposable
     internal TempResizedCbz(string filePath, IImageResizeService imageResizeService)
     {
         FilePath = filePath ?? throw new ArgumentNullException(nameof(filePath));
-        _imageResizeService = imageResizeService ?? throw new ArgumentNullException(nameof(imageResizeService));
+        _imageResizeService =
+            imageResizeService ?? throw new ArgumentNullException(nameof(imageResizeService));
     }
 
     public void Dispose()

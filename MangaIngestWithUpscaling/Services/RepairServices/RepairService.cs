@@ -1,7 +1,7 @@
+using System.IO.Compression;
 using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
-using System.IO.Compression;
 
 namespace MangaIngestWithUpscaling.Services.RepairServices;
 
@@ -17,7 +17,8 @@ public class RepairService : IRepairService
         PageDifferenceResult differences,
         string originalPath,
         string upscaledPath,
-        ILogger logger)
+        ILogger logger
+    )
     {
         string tempWorkDir = Path.Combine(Path.GetTempPath(), $"manga_repair_{Guid.NewGuid()}");
         string tempOriginalDir = Path.Combine(tempWorkDir, "original");
@@ -38,7 +39,11 @@ public class RepairService : IRepairService
         // Remove extra pages from upscaled version
         foreach (var extraPage in differences.ExtraPages)
         {
-            var extraFiles = Directory.GetFiles(tempUpscaledDir, $"{extraPage}.*", SearchOption.AllDirectories);
+            var extraFiles = Directory.GetFiles(
+                tempUpscaledDir,
+                $"{extraPage}.*",
+                SearchOption.AllDirectories
+            );
             foreach (var file in extraFiles)
             {
                 File.Delete(file);
@@ -49,12 +54,19 @@ public class RepairService : IRepairService
         // Extract missing pages to temporary directory
         foreach (var missingPage in differences.MissingPages)
         {
-            var missingFiles = Directory.GetFiles(tempOriginalDir, $"{missingPage}.*", SearchOption.AllDirectories);
+            var missingFiles = Directory.GetFiles(
+                tempOriginalDir,
+                $"{missingPage}.*",
+                SearchOption.AllDirectories
+            );
             foreach (var file in missingFiles)
             {
                 var destFile = Path.Combine(tempMissingDir, Path.GetFileName(file));
                 File.Copy(file, destFile);
-                logger.LogDebug("Extracted missing page for upscaling: {fileName}", Path.GetFileName(file));
+                logger.LogDebug(
+                    "Extracted missing page for upscaling: {fileName}",
+                    Path.GetFileName(file)
+                );
             }
         }
 
@@ -70,7 +82,7 @@ public class RepairService : IRepairService
             UpscaledDirectory = tempUpscaledDir,
             MissingPagesCbz = tempMissingCbz,
             UpscaledMissingCbz = tempUpscaledMissingCbz,
-            HasMissingPages = differences.MissingPages.Count > 0
+            HasMissingPages = differences.MissingPages.Count > 0,
         };
     }
 
@@ -86,17 +98,26 @@ public class RepairService : IRepairService
             Directory.CreateDirectory(tempUpscaledMissingDir);
 
             // If directory already populated (e.g., local flow already processed results), skip re-extracting
-            bool alreadyPopulated = Directory.EnumerateFileSystemEntries(tempUpscaledMissingDir).Any();
+            bool alreadyPopulated = Directory
+                .EnumerateFileSystemEntries(tempUpscaledMissingDir)
+                .Any();
             if (!alreadyPopulated)
             {
                 // Overwrite any existing files to be safe
-                ZipFile.ExtractToDirectory(context.UpscaledMissingCbz, tempUpscaledMissingDir, true);
+                ZipFile.ExtractToDirectory(
+                    context.UpscaledMissingCbz,
+                    tempUpscaledMissingDir,
+                    true
+                );
             }
 
             // Copy upscaled missing pages back to the upscaled directory
             foreach (var upscaledFile in Directory.GetFiles(tempUpscaledMissingDir))
             {
-                var destFile = Path.Combine(context.UpscaledDirectory, Path.GetFileName(upscaledFile));
+                var destFile = Path.Combine(
+                    context.UpscaledDirectory,
+                    Path.GetFileName(upscaledFile)
+                );
                 File.Copy(upscaledFile, destFile, true);
                 logger.LogDebug("Added repaired page: {fileName}", Path.GetFileName(upscaledFile));
             }
@@ -117,11 +138,15 @@ public class RepairService : IRepairService
     public async Task<string> CreateMissingPagesBatch(
         string inputDir,
         ILogger logger,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default
+    )
     {
         // Get all image files in the input directory
-        var imageFiles = Directory.GetFiles(inputDir)
-            .Where(f => ImageConstants.IsSupportedImageExtension(Path.GetExtension(f).ToLowerInvariant()))
+        var imageFiles = Directory
+            .GetFiles(inputDir)
+            .Where(f =>
+                ImageConstants.IsSupportedImageExtension(Path.GetExtension(f).ToLowerInvariant())
+            )
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase) // stable order
             .ToList();
 
@@ -131,11 +156,19 @@ public class RepairService : IRepairService
             return string.Empty;
         }
 
-        string tempBatchInputCbz = Path.Combine(Path.GetTempPath(), $"temp_missing_batch_{Guid.NewGuid()}.cbz");
+        string tempBatchInputCbz = Path.Combine(
+            Path.GetTempPath(),
+            $"temp_missing_batch_{Guid.NewGuid()}.cbz"
+        );
 
         // Package all missing images into a single CBZ (entry names are the original basenames)
-        await using (ZipArchive archive =
-                     await ZipFile.OpenAsync(tempBatchInputCbz, ZipArchiveMode.Create, cancellationToken))
+        await using (
+            ZipArchive archive = await ZipFile.OpenAsync(
+                tempBatchInputCbz,
+                ZipArchiveMode.Create,
+                cancellationToken
+            )
+        )
         {
             foreach (string file in imageFiles)
             {
@@ -157,20 +190,27 @@ public class RepairService : IRepairService
         int expectedPageCount,
         IProgress<UpscaleProgress> progress,
         ILogger logger,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default
+    )
     {
         Directory.CreateDirectory(outputDir);
 
         // Extract all upscaled images to the output directory
         int extracted = 0;
-        await using (ZipArchive outArchive = await ZipFile.OpenReadAsync(batchOutputCbz, cancellationToken))
+        await using (
+            ZipArchive outArchive = await ZipFile.OpenReadAsync(batchOutputCbz, cancellationToken)
+        )
         {
             foreach (ZipArchiveEntry entry in outArchive.Entries)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
                 // filter only known image extensions
-                if (!ImageConstants.IsSupportedImageExtension(Path.GetExtension(entry.Name).ToLowerInvariant()))
+                if (
+                    !ImageConstants.IsSupportedImageExtension(
+                        Path.GetExtension(entry.Name).ToLowerInvariant()
+                    )
+                )
                 {
                     continue;
                 }
@@ -194,16 +234,22 @@ public class RepairService : IRepairService
                 extracted++;
 
                 // Report coarse-grained progress while extracting results
-                progress.Report(new UpscaleProgress(
-                    expectedPageCount,
-                    Math.Min(extracted, expectedPageCount),
-                    "Upscaling missing pages (batch)",
-                    $"Processed {Math.Min(extracted, expectedPageCount)}/{expectedPageCount} pages"
-                ));
+                progress.Report(
+                    new UpscaleProgress(
+                        expectedPageCount,
+                        Math.Min(extracted, expectedPageCount),
+                        "Upscaling missing pages (batch)",
+                        $"Processed {Math.Min(extracted, expectedPageCount)}/{expectedPageCount} pages"
+                    )
+                );
             }
         }
 
-        logger.LogDebug("Batch upscaled {extracted}/{total} missing pages", extracted, expectedPageCount);
+        logger.LogDebug(
+            "Batch upscaled {extracted}/{total} missing pages",
+            extracted,
+            expectedPageCount
+        );
         await Task.CompletedTask; // Make this truly async if needed in the future
     }
 }

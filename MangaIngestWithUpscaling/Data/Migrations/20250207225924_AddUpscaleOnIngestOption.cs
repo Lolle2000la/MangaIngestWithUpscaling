@@ -15,15 +15,14 @@ namespace MangaIngestWithUpscaling.Migrations
                 table: "Libraries",
                 type: "INTEGER",
                 nullable: false,
-                defaultValue: false);
+                defaultValue: false
+            );
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropColumn(
-                name: "UpscaleOnIngest",
-                table: "Libraries");
+            migrationBuilder.DropColumn(name: "UpscaleOnIngest", table: "Libraries");
         }
     }
 }

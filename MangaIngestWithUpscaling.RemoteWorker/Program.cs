@@ -54,7 +54,11 @@ builder.RegisterConfig();
 
 #if VELOPACK_RELEASE
 VelopackApp.Build().Run();
-var githubSource = new GithubSource("https://github.com/Lolle2000la/MangaIngestWithUpscaling", null, false);
+var githubSource = new GithubSource(
+    "https://github.com/Lolle2000la/MangaIngestWithUpscaling",
+    null,
+    false
+);
 var updateManager = new UpdateManager(githubSource);
 var newVersion = await updateManager.CheckForUpdatesAsync();
 
@@ -62,7 +66,7 @@ if (newVersion != null)
 {
     Console.WriteLine($"New version available: {newVersion.TargetFullRelease.Version}");
     Console.WriteLine($"Release notes: {newVersion.TargetFullRelease.NotesMarkdown}");
-    
+
     await updateManager.DownloadUpdatesAsync(newVersion);
 
     // install new version and restart app
@@ -74,10 +78,13 @@ else
 }
 #endif
 
-builder.Services.Configure<WorkerConfig>(builder.Configuration.GetSection(WorkerConfig.SectionName));
+builder.Services.Configure<WorkerConfig>(
+    builder.Configuration.GetSection(WorkerConfig.SectionName)
+);
 
 // Add services to the container.
 builder.Services.AddGrpc();
+
 // Read config once for client configuration to avoid per-call ServiceProvider usage (prevents disposed-service issues)
 var boundWorkerConfig = new WorkerConfig();
 builder.Configuration.GetSection(WorkerConfig.SectionName).Bind(boundWorkerConfig);
@@ -98,7 +105,6 @@ builder.Services.AddGrpcClient<UpscalingService.UpscalingServiceClient>(o =>
 
 builder.Services.RegisterRemoteWorkerServices();
 
-
 var app = builder.Build();
 
 // Uncomment if the remote worker should at some point expose an API for configuration or status.
@@ -109,7 +115,8 @@ var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
 {
-    var client = scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
+    var client =
+        scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
 
     var testResponse = client.CheckConnection(new Empty());
@@ -120,7 +127,8 @@ using (var scope = app.Services.CreateScope())
     if (!pythonService.IsPythonInstalled())
     {
         logger.LogError(
-            "Python is not installed on the system. Please install Python 3.6 or newer and ensure it is available on the system PATH.");
+            "Python is not installed on the system. Please install Python 3.6 or newer and ensure it is available on the system PATH."
+        );
     }
     else
     {
@@ -130,11 +138,14 @@ using (var scope = app.Services.CreateScope())
 
         PythonEnvironment environment = await pythonService.PreparePythonEnvironment(
             upscalerConfig.Value.PythonEnvironmentDirectory,
-            upscalerConfig.Value.PreferredGpuBackend, upscalerConfig.Value.ForceAcceptExistingEnvironment);
+            upscalerConfig.Value.PreferredGpuBackend,
+            upscalerConfig.Value.ForceAcceptExistingEnvironment
+        );
         PythonService.Environment = environment;
 
         logger.LogInformation(
-            $"Python environment prepared at {environment.PythonExecutablePath} with {environment.InstalledBackend} backend");
+            $"Python environment prepared at {environment.PythonExecutablePath} with {environment.InstalledBackend} backend"
+        );
     }
 
     var upscaler = scope.ServiceProvider.GetRequiredService<IUpscaler>();

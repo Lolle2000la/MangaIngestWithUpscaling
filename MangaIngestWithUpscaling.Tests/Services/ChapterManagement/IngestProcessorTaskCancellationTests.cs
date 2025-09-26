@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
@@ -21,7 +22,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
-using System.IO.Compression;
 
 namespace MangaIngestWithUpscaling.Tests.Services.ChapterManagement;
 
@@ -71,23 +71,51 @@ public class IngestProcessorTaskCancellationTests : IDisposable
         ServiceProvider provider = services.BuildServiceProvider();
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
         var taskQueue = new TaskQueue(scopeFactory, Substitute.For<ILogger<TaskQueue>>());
-        IOptions<UpscalerConfig> upscalerOptions = Options.Create(new UpscalerConfig { RemoteOnly = true });
+        IOptions<UpscalerConfig> upscalerOptions = Options.Create(
+            new UpscalerConfig { RemoteOnly = true }
+        );
         var processorLogger = Substitute.For<ILogger<UpscaleTaskProcessor>>();
-        var processor = new UpscaleTaskProcessor(taskQueue, scopeFactory, upscalerOptions, processorLogger);
+        var processor = new UpscaleTaskProcessor(
+            taskQueue,
+            scopeFactory,
+            upscalerOptions,
+            processorLogger
+        );
 
         // SUT
         var chapterProcessingService = Substitute.For<IChapterProcessingService>();
-        
+
         // Setup mock for DetectUpscaledFileAsync - return false for upscaled and null for profile
-        chapterProcessingService.DetectUpscaledFileAsync(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+        chapterProcessingService
+            .DetectUpscaledFileAsync(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>()
+            )
             .Returns(Task.FromResult((false, (UpscalerProfileJsonDto?)null)));
-        
-        var ingest = new IngestProcessor(db, chapterRecognition, renaming, cbz, logger, taskQueue, metadata, fs,
-            changedNotifier, chapterPartMerger, mergeCoordinator, processor, imageFilter, chapterProcessingService);
+
+        var ingest = new IngestProcessor(
+            db,
+            chapterRecognition,
+            renaming,
+            cbz,
+            logger,
+            taskQueue,
+            metadata,
+            fs,
+            changedNotifier,
+            chapterPartMerger,
+            mergeCoordinator,
+            processor,
+            imageFilter,
+            chapterProcessingService
+        );
 
         // Library and series
-        string tempRoot = Path.Combine(Path.GetTempPath(),
-            "ingest_merge_cancel_" + Guid.NewGuid().ToString("N").Substring(0, 8));
+        string tempRoot = Path.Combine(
+            Path.GetTempPath(),
+            "ingest_merge_cancel_" + Guid.NewGuid().ToString("N").Substring(0, 8)
+        );
         Directory.CreateDirectory(tempRoot);
         var lib = new Library
         {
@@ -102,34 +130,52 @@ public class IngestProcessorTaskCancellationTests : IDisposable
                 Name = "P",
                 ScalingFactor = ScaleFactor.TwoX,
                 CompressionFormat = CompressionFormat.Png,
-                Quality = 80
-            }
+                Quality = 80,
+            },
         };
         Directory.CreateDirectory(lib.NotUpscaledLibraryPath);
         Directory.CreateDirectory(lib.UpscaledLibraryPath!);
         db.Libraries.Add(lib);
-        
+
         // Create manga series for the test
         var manga = new Manga { PrimaryTitle = "Series", Library = lib };
         db.MangaSeries.Add(manga);
         await db.SaveChangesAsync(TestContext.Current.CancellationToken);
-        
+
         // Setup mock for GetOrCreateMangaSeriesAsync - return the existing manga
-        chapterProcessingService.GetOrCreateMangaSeriesAsync(Arg.Any<Library>(), Arg.Any<string>(), Arg.Any<string>(), Arg.Any<CancellationToken>())
+        chapterProcessingService
+            .GetOrCreateMangaSeriesAsync(
+                Arg.Any<Library>(),
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>()
+            )
             .Returns(Task.FromResult(manga));
 
         // Simulate recognition of two parts that will be merged into Chapter 1.cbz
         var meta1 = new ExtractedMetadata("Series", "Chapter 1.1", "1.1");
         var meta2 = new ExtractedMetadata("Series", "Chapter 1.2", "1.2");
-        var in1 = new FoundChapter("Chapter 1.1.cbz", "Series/Chapter 1.1.cbz", ChapterStorageType.Cbz, meta1);
-        var in2 = new FoundChapter("Chapter 1.2.cbz", "Series/Chapter 1.2.cbz", ChapterStorageType.Cbz, meta2);
+        var in1 = new FoundChapter(
+            "Chapter 1.1.cbz",
+            "Series/Chapter 1.1.cbz",
+            ChapterStorageType.Cbz,
+            meta1
+        );
+        var in2 = new FoundChapter(
+            "Chapter 1.2.cbz",
+            "Series/Chapter 1.2.cbz",
+            ChapterStorageType.Cbz,
+            meta2
+        );
 
         // Recognition returns two chapters
-        chapterRecognition.FindAllChaptersAt(lib.IngestPath, lib.FilterRules, Arg.Any<CancellationToken>())
+        chapterRecognition
+            .FindAllChaptersAt(lib.IngestPath, lib.FilterRules, Arg.Any<CancellationToken>())
             .Returns(new List<FoundChapter> { in1, in2 }.ToAsyncEnumerable());
 
         // Renaming keeps names (no changes)
-        renaming.ApplyRenameRules(Arg.Any<FoundChapter>(), lib.RenameRules)
+        renaming
+            .ApplyRenameRules(Arg.Any<FoundChapter>(), lib.RenameRules)
             .Returns(ci => (FoundChapter)ci[0]!);
 
         // cbzConverter returns the same relative path (pretend already CBZ)
@@ -139,42 +185,69 @@ public class IngestProcessorTaskCancellationTests : IDisposable
         // The merger will produce a merge result that merges the two parts
         string seriesDir = Path.Combine(lib.NotUpscaledLibraryPath, "Series");
         Directory.CreateDirectory(seriesDir);
-        var mergedFound = new FoundChapter("Chapter 1.cbz", "Series/Chapter 1.cbz", ChapterStorageType.Cbz,
-            new ExtractedMetadata("Series", "Chapter 1", "1"));
+        var mergedFound = new FoundChapter(
+            "Chapter 1.cbz",
+            "Series/Chapter 1.cbz",
+            ChapterStorageType.Cbz,
+            new ExtractedMetadata("Series", "Chapter 1", "1")
+        );
         // Create a dummy merged file at the expected location so DB step doesn’t throw
-        await using (ZipArchive zip = await ZipFile.OpenAsync(Path.Combine(seriesDir, mergedFound.FileName),
-                         ZipArchiveMode.Create, TestContext.Current.CancellationToken)) { }
+        await using (
+            ZipArchive zip = await ZipFile.OpenAsync(
+                Path.Combine(seriesDir, mergedFound.FileName),
+                ZipArchiveMode.Create,
+                TestContext.Current.CancellationToken
+            )
+        ) { }
 
-        chapterPartMerger.ProcessChapterMergingAsync(
+        chapterPartMerger
+            .ProcessChapterMergingAsync(
                 Arg.Any<List<FoundChapter>>(),
                 Arg.Is(lib.IngestPath),
                 Arg.Is(seriesDir),
                 Arg.Is("Series"),
                 Arg.Any<HashSet<string>>(),
                 Arg.Any<Func<FoundChapter, string>>(),
-                Arg.Any<CancellationToken>())
+                Arg.Any<CancellationToken>()
+            )
             .Returns(ci =>
             {
                 var mi = new MergeInfo(
                     mergedFound,
                     new List<OriginalChapterPart>
                     {
-                        new() { FileName = "Chapter 1.1.cbz", PageNames = new List<string> { "001.jpg" } },
-                        new() { FileName = "Chapter 1.2.cbz", PageNames = new List<string> { "002.jpg" } }
+                        new()
+                        {
+                            FileName = "Chapter 1.1.cbz",
+                            PageNames = new List<string> { "001.jpg" },
+                        },
+                        new()
+                        {
+                            FileName = "Chapter 1.2.cbz",
+                            PageNames = new List<string> { "002.jpg" },
+                        },
                     },
-                    "1");
+                    "1"
+                );
 
-                return new ChapterMergeResult(new List<FoundChapter> { mergedFound }, new List<MergeInfo> { mi });
+                return new ChapterMergeResult(
+                    new List<FoundChapter> { mergedFound },
+                    new List<MergeInfo> { mi }
+                );
             });
 
         // Create two original chapter entities with pre-existing UpscaleTasks that should be removed
         var ch11 = new Chapter
         {
-            FileName = "Chapter 1.1.cbz", RelativePath = Path.Combine("Series", "Chapter 1.1.cbz"), Manga = manga
+            FileName = "Chapter 1.1.cbz",
+            RelativePath = Path.Combine("Series", "Chapter 1.1.cbz"),
+            Manga = manga,
         };
         var ch12 = new Chapter
         {
-            FileName = "Chapter 1.2.cbz", RelativePath = Path.Combine("Series", "Chapter 1.2.cbz"), Manga = manga
+            FileName = "Chapter 1.2.cbz",
+            RelativePath = Path.Combine("Series", "Chapter 1.2.cbz"),
+            Manga = manga,
         };
         db.Chapters.AddRange(ch11, ch12);
         await db.SaveChangesAsync(TestContext.Current.CancellationToken);
@@ -190,10 +263,15 @@ public class IngestProcessorTaskCancellationTests : IDisposable
         IReadOnlyList<PersistedTask> snapshot = taskQueue.GetUpscaleSnapshot();
 
         // No task for original parts
-        Assert.DoesNotContain(snapshot,
-            t => t.Data is UpscaleTask ut && (ut.ChapterId == ch11.Id || ut.ChapterId == ch12.Id));
+        Assert.DoesNotContain(
+            snapshot,
+            t => t.Data is UpscaleTask ut && (ut.ChapterId == ch11.Id || ut.ChapterId == ch12.Id)
+        );
 
         // Exactly one task for the merged chapter
-        Assert.Contains(snapshot, t => t.Data is UpscaleTask ut && ut.ChapterId != ch11.Id && ut.ChapterId != ch12.Id);
+        Assert.Contains(
+            snapshot,
+            t => t.Data is UpscaleTask ut && ut.ChapterId != ch11.Id && ut.ChapterId != ch12.Id
+        );
     }
 }

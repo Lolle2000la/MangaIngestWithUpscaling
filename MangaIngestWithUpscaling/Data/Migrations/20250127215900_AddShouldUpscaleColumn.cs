@@ -14,14 +14,13 @@ public partial class AddShouldUpscaleColumn : Migration
             name: "ShouldUpscale",
             table: "MangaSeries",
             type: "INTEGER",
-            nullable: true);
+            nullable: true
+        );
     }
 
     /// <inheritdoc />
     protected override void Down(MigrationBuilder migrationBuilder)
     {
-        migrationBuilder.DropColumn(
-            name: "ShouldUpscale",
-            table: "MangaSeries");
+        migrationBuilder.DropColumn(name: "ShouldUpscale", table: "MangaSeries");
     }
 }

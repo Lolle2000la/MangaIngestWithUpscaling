@@ -1,9 +1,9 @@
-﻿using MangaIngestWithUpscaling.Data;
+﻿using System.Security.Claims;
+using System.Text.Encodings.Web;
+using MangaIngestWithUpscaling.Data;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using System.Security.Claims;
-using System.Text.Encodings.Web;
 
 namespace MangaIngestWithUpscaling.Api.Auth;
 
@@ -15,7 +15,8 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationS
         IOptionsMonitor<AuthenticationSchemeOptions> options,
         ILoggerFactory logger,
         UrlEncoder encoder,
-        ApplicationDbContext context)
+        ApplicationDbContext context
+    )
         : base(options, logger, encoder)
     {
         _context = context;
@@ -43,8 +44,8 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationS
         if (string.IsNullOrEmpty(apiKeyValue))
             return AuthenticateResult.Fail("Invalid API Key");
 
-        var apiKey = await _context.ApiKeys
-            .Include(k => k.User)
+        var apiKey = await _context
+            .ApiKeys.Include(k => k.User)
             .FirstOrDefaultAsync(k => k.Key == apiKeyValue);
 
         // Use TimeProvider from the base class to get the current UTC time
@@ -60,11 +61,11 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationS
         {
             new Claim(ClaimTypes.NameIdentifier, apiKey.UserId),
             new Claim(ClaimTypes.Name, apiKey.User.UserName!),
-            new Claim("ApiKey", apiKey.Key)
+            new Claim("ApiKey", apiKey.Key),
         };
 
-        var roles = await _context.UserRoles
-            .Where(ur => ur.UserId == apiKey.UserId)
+        var roles = await _context
+            .UserRoles.Where(ur => ur.UserId == apiKey.UserId)
             .Select(ur => ur.RoleId)
             .ToListAsync();
 

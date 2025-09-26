@@ -17,7 +17,10 @@ public interface IChapterProcessingService
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>A tuple indicating if the file is upscaled and the upscaler profile DTO if found</returns>
     Task<(bool IsUpscaled, UpscalerProfileJsonDto? UpscalerProfile)> DetectUpscaledFileAsync(
-        string filePath, string relativePath, CancellationToken cancellationToken);
+        string filePath,
+        string relativePath,
+        CancellationToken cancellationToken
+    );
 
     /// <summary>
     /// Finds an existing upscaler profile or creates a new one based on the DTO.
@@ -25,7 +28,10 @@ public interface IChapterProcessingService
     /// <param name="dto">The upscaler profile DTO</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>The upscaler profile, or null if creation failed</returns>
-    Task<UpscalerProfile?> FindOrCreateUpscalerProfileAsync(UpscalerProfileJsonDto dto, CancellationToken cancellationToken);
+    Task<UpscalerProfile?> FindOrCreateUpscalerProfileAsync(
+        UpscalerProfileJsonDto dto,
+        CancellationToken cancellationToken
+    );
 
     /// <summary>
     /// Finds or creates a manga series entity.
@@ -35,7 +41,12 @@ public interface IChapterProcessingService
     /// <param name="originalSeriesTitle">The original series title (for alternative titles)</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>The manga series entity</returns>
-    Task<Manga> GetOrCreateMangaSeriesAsync(Library library, string seriesTitle, string? originalSeriesTitle, CancellationToken cancellationToken);
+    Task<Manga> GetOrCreateMangaSeriesAsync(
+        Library library,
+        string seriesTitle,
+        string? originalSeriesTitle,
+        CancellationToken cancellationToken
+    );
 
     /// <summary>
     /// Moves an upscaled file to the correct upscaled library location.
@@ -44,5 +55,10 @@ public interface IChapterProcessingService
     /// <param name="library">The library</param>
     /// <param name="targetRelativePath">Target relative path in upscaled library</param>
     /// <param name="cancellationToken">Cancellation token</param>
-    void MoveUpscaledFileToLibrary(string sourcePath, Library library, string targetRelativePath, CancellationToken cancellationToken);
+    void MoveUpscaledFileToLibrary(
+        string sourcePath,
+        Library library,
+        string targetRelativePath,
+        CancellationToken cancellationToken
+    );
 }

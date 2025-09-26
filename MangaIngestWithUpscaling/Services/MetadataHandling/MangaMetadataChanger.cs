@@ -1,4 +1,5 @@
-﻿using MangaIngestWithUpscaling.Data;
+﻿using System.Xml;
+using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
@@ -9,7 +10,6 @@ using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using MudBlazor;
-using System.Xml;
 
 namespace MangaIngestWithUpscaling.Services.MetadataHandling;
 
@@ -21,10 +21,15 @@ public class MangaMetadataChanger(
     ILogger<MangaMetadataChanger> logger,
     ITaskQueue taskQueue,
     IFileSystem fileSystem,
-    IChapterChangedNotifier chapterChangedNotifier) : IMangaMetadataChanger
+    IChapterChangedNotifier chapterChangedNotifier
+) : IMangaMetadataChanger
 {
     /// <inheritdoc/>
-    public async Task ApplyMangaTitleToUpscaledAsync(Chapter chapter, string newTitle, string origChapterPath)
+    public async Task ApplyMangaTitleToUpscaledAsync(
+        Chapter chapter,
+        string newTitle,
+        string origChapterPath
+    )
     {
         if (!fileSystem.FileExists(origChapterPath))
         {
@@ -34,7 +39,8 @@ public class MangaMetadataChanger(
         if (chapter.Manga == null || chapter.Manga.Library == null)
         {
             throw new ArgumentNullException(
-                "Chapter manga or library not found. Please ensure you have loaded it with the chapter.");
+                "Chapter manga or library not found. Please ensure you have loaded it with the chapter."
+            );
         }
 
         if (chapter.Manga.Library.UpscaledLibraryPath == null)
@@ -48,7 +54,8 @@ public class MangaMetadataChanger(
         var newChapterPath = Path.Combine(
             chapter.Manga.Library.UpscaledLibraryPath,
             PathEscaper.EscapeFileName(newTitle),
-            PathEscaper.EscapeFileName(chapter.FileName));
+            PathEscaper.EscapeFileName(chapter.FileName)
+        );
 
         if (fileSystem.FileExists(newChapterPath))
         {
@@ -63,20 +70,30 @@ public class MangaMetadataChanger(
     }
 
     /// <inheritdoc/>
-    public async Task<RenameResult> ChangeMangaTitle(Manga manga, string newTitle, bool addOldToAlternative = true,
-        CancellationToken cancellationToken = default)
+    public async Task<RenameResult> ChangeMangaTitle(
+        Manga manga,
+        string newTitle,
+        bool addOldToAlternative = true,
+        CancellationToken cancellationToken = default
+    )
     {
-        var possibleCurrent = await dbContext.MangaSeries.FirstOrDefaultAsync(m =>
-                m.Id != manga.Id && // prevent accidental self-merge
+        var possibleCurrent = await dbContext.MangaSeries.FirstOrDefaultAsync(
+            m =>
+                m.Id != manga.Id
+                && // prevent accidental self-merge
                 (m.PrimaryTitle == newTitle || m.OtherTitles.Any(t => t.Title == newTitle)),
-            cancellationToken: cancellationToken);
+            cancellationToken: cancellationToken
+        );
 
         if (possibleCurrent != null)
         {
-            bool? consentToMerge = await dialogService.ShowMessageBox("Merge into existing manga of same name?",
-                "The title you are trying to rename to already has an existing entry. " +
-                "Do you want to merge this manga into the existing one?",
-                yesText: "Merge", cancelText: "Cancel");
+            bool? consentToMerge = await dialogService.ShowMessageBox(
+                "Merge into existing manga of same name?",
+                "The title you are trying to rename to already has an existing entry. "
+                    + "Do you want to merge this manga into the existing one?",
+                yesText: "Merge",
+                cancelText: "Cancel"
+            );
             if (consentToMerge == true)
             {
                 await taskQueue.EnqueueAsync(new MergeMangaTask(possibleCurrent, [manga]));
@@ -101,7 +118,9 @@ public class MangaMetadataChanger(
         {
             logger.LogError(
                 "Manga {MangaId} (Title: {PrimaryTitle}) must have an associated library to be renamed. Aborting rename.",
-                manga.Id, manga.PrimaryTitle);
+                manga.Id,
+                manga.PrimaryTitle
+            );
             return RenameResult.Cancelled;
         }
 
@@ -111,22 +130,31 @@ public class MangaMetadataChanger(
 
         foreach (var chapter in manga.Chapters)
         {
-            var currentChapterPath = Path.Combine(manga.Library.NotUpscaledLibraryPath, chapter.RelativePath);
+            var currentChapterPath = Path.Combine(
+                manga.Library.NotUpscaledLibraryPath,
+                chapter.RelativePath
+            );
             if (!fileSystem.FileExists(currentChapterPath))
             {
-                logger.LogWarning("Chapter file not found: {ChapterPath}. Skipping chapter.", currentChapterPath);
+                logger.LogWarning(
+                    "Chapter file not found: {ChapterPath}. Skipping chapter.",
+                    currentChapterPath
+                );
                 continue;
             }
 
             var newChapterPath = Path.Combine(
                 manga.Library.NotUpscaledLibraryPath,
                 PathEscaper.EscapeFileName(newTitle),
-                PathEscaper.EscapeFileName(chapter.FileName));
+                PathEscaper.EscapeFileName(chapter.FileName)
+            );
 
             if (fileSystem.FileExists(newChapterPath))
             {
-                logger.LogWarning("Chapter file already exists at target path: {TargetPath}. Cannot rename manga.",
-                    newChapterPath);
+                logger.LogWarning(
+                    "Chapter file already exists at target path: {TargetPath}. Cannot rename manga.",
+                    newChapterPath
+                );
                 canRenameAllChapters = false;
                 continue;
             }
@@ -135,12 +163,17 @@ public class MangaMetadataChanger(
             ExtractedMetadata? existingMetadata = null;
             try
             {
-                existingMetadata = await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(currentChapterPath);
+                existingMetadata = await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(
+                    currentChapterPath
+                );
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Failed to read metadata from {ChapterPath}. Skipping chapter.",
-                    currentChapterPath);
+                logger.LogError(
+                    ex,
+                    "Failed to read metadata from {ChapterPath}. Skipping chapter.",
+                    currentChapterPath
+                );
                 continue;
             }
 
@@ -148,19 +181,24 @@ public class MangaMetadataChanger(
             string? newUpscaledPath = null;
             if (chapter.IsUpscaled && manga.Library.UpscaledLibraryPath != null)
             {
-                currentUpscaledPath = Path.Combine(manga.Library.UpscaledLibraryPath, chapter.RelativePath);
+                currentUpscaledPath = Path.Combine(
+                    manga.Library.UpscaledLibraryPath,
+                    chapter.RelativePath
+                );
                 if (fileSystem.FileExists(currentUpscaledPath))
                 {
                     newUpscaledPath = Path.Combine(
                         manga.Library.UpscaledLibraryPath,
                         PathEscaper.EscapeFileName(newTitle),
-                        PathEscaper.EscapeFileName(chapter.FileName));
+                        PathEscaper.EscapeFileName(chapter.FileName)
+                    );
 
                     if (fileSystem.FileExists(newUpscaledPath))
                     {
                         logger.LogWarning(
                             "Upscaled chapter file already exists at target path: {TargetPath}. Cannot rename manga.",
-                            newUpscaledPath);
+                            newUpscaledPath
+                        );
                         canRenameAllChapters = false;
                         continue;
                     }
@@ -171,23 +209,30 @@ public class MangaMetadataChanger(
                 }
             }
 
-            renameOperations.Add(new ChapterRenameOperation
-            {
-                Chapter = chapter,
-                CurrentPath = currentChapterPath,
-                NewPath = newChapterPath,
-                CurrentUpscaledPath = currentUpscaledPath,
-                NewUpscaledPath = newUpscaledPath,
-                ExistingMetadata = existingMetadata,
-                NewRelativePath = Path.GetRelativePath(manga.Library.NotUpscaledLibraryPath, newChapterPath)
-            });
+            renameOperations.Add(
+                new ChapterRenameOperation
+                {
+                    Chapter = chapter,
+                    CurrentPath = currentChapterPath,
+                    NewPath = newChapterPath,
+                    CurrentUpscaledPath = currentUpscaledPath,
+                    NewUpscaledPath = newUpscaledPath,
+                    ExistingMetadata = existingMetadata,
+                    NewRelativePath = Path.GetRelativePath(
+                        manga.Library.NotUpscaledLibraryPath,
+                        newChapterPath
+                    ),
+                }
+            );
         }
 
         if (!canRenameAllChapters)
         {
             logger.LogError(
                 "Cannot rename manga {MangaId} ({PrimaryTitle}) due to conflicting target files. Aborting rename.",
-                manga.Id, manga.PrimaryTitle);
+                manga.Id,
+                manga.PrimaryTitle
+            );
             return RenameResult.Cancelled;
         }
 
@@ -195,7 +240,9 @@ public class MangaMetadataChanger(
         {
             logger.LogWarning(
                 "No chapters found to rename for manga {MangaId} ({PrimaryTitle}). Proceeding with title change only.",
-                manga.Id, manga.PrimaryTitle);
+                manga.Id,
+                manga.PrimaryTitle
+            );
         }
 
         // Step 2: Perform database operations in a transaction
@@ -236,8 +283,13 @@ public class MangaMetadataChanger(
                 }
 
                 // Update metadata in the source file before moving
-                await metadataHandling.WriteComicInfoAsync(operation.CurrentPath,
-                    operation.ExistingMetadata with { Series = newTitle });
+                await metadataHandling.WriteComicInfoAsync(
+                    operation.CurrentPath,
+                    operation.ExistingMetadata with
+                    {
+                        Series = newTitle,
+                    }
+                );
 
                 // Move the main chapter file
                 fileSystem.Move(operation.CurrentPath, operation.NewPath);
@@ -255,12 +307,15 @@ public class MangaMetadataChanger(
                         }
 
                         // Update metadata in upscaled file before moving
-                        await metadataHandling.WriteComicInfoAsync(operation.CurrentUpscaledPath,
-                            await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(operation.CurrentUpscaledPath)
-                                with
-                                {
-                                    Series = newTitle
-                                });
+                        await metadataHandling.WriteComicInfoAsync(
+                            operation.CurrentUpscaledPath,
+                            await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(
+                                operation.CurrentUpscaledPath
+                            ) with
+                            {
+                                Series = newTitle,
+                            }
+                        );
 
                         // Move the upscaled file
                         fileSystem.Move(operation.CurrentUpscaledPath, operation.NewUpscaledPath);
@@ -268,9 +323,13 @@ public class MangaMetadataChanger(
                     }
                     catch (Exception ex)
                     {
-                        logger.LogError(ex,
+                        logger.LogError(
+                            ex,
                             "Failed to move upscaled chapter {FileName} from {SourcePath} to {TargetPath}. Database changes have been committed.",
-                            operation.Chapter.FileName, operation.CurrentUpscaledPath, operation.NewUpscaledPath);
+                            operation.Chapter.FileName,
+                            operation.CurrentUpscaledPath,
+                            operation.NewUpscaledPath
+                        );
                     }
                 }
 
@@ -283,16 +342,24 @@ public class MangaMetadataChanger(
             }
             catch (Exception ex)
             {
-                logger.LogError(ex,
+                logger.LogError(
+                    ex,
                     "Failed to move chapter {FileName} from {SourcePath} to {TargetPath}. Database changes have been committed.",
-                    operation.Chapter.FileName, operation.CurrentPath, operation.NewPath);
+                    operation.Chapter.FileName,
+                    operation.CurrentPath,
+                    operation.NewPath
+                );
             }
         }
 
         // Clean up empty subdirectories in library paths
         _ = Task.Run(() =>
         {
-            var pathsToClean = new[] { manga.Library.NotUpscaledLibraryPath, manga.Library.UpscaledLibraryPath }
+            var pathsToClean = new[]
+            {
+                manga.Library.NotUpscaledLibraryPath,
+                manga.Library.UpscaledLibraryPath,
+            }
                 .Where(path => path != null)
                 .Distinct();
 
@@ -313,36 +380,55 @@ public class MangaMetadataChanger(
 
         try
         {
-            await metadataHandling.WriteComicInfoAsync(chapter.NotUpscaledFullPath,
-                await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(chapter.NotUpscaledFullPath) with
+            await metadataHandling.WriteComicInfoAsync(
+                chapter.NotUpscaledFullPath,
+                await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(
+                    chapter.NotUpscaledFullPath
+                ) with
                 {
-                    ChapterTitle = newTitle
-                });
+                    ChapterTitle = newTitle,
+                }
+            );
 
             if (chapter.IsUpscaled)
             {
                 if (chapter.UpscaledFullPath == null)
                 {
-                    logger.LogWarning("Upscaled chapter file not found: {ChapterPath}", chapter.UpscaledFullPath);
+                    logger.LogWarning(
+                        "Upscaled chapter file not found: {ChapterPath}",
+                        chapter.UpscaledFullPath
+                    );
                     return;
                 }
 
-                await metadataHandling.WriteComicInfoAsync(chapter.UpscaledFullPath,
-                    await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(chapter.UpscaledFullPath) with
+                await metadataHandling.WriteComicInfoAsync(
+                    chapter.UpscaledFullPath,
+                    await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(
+                        chapter.UpscaledFullPath
+                    ) with
                     {
-                        ChapterTitle = newTitle
-                    });
+                        ChapterTitle = newTitle,
+                    }
+                );
             }
         }
         catch (XmlException ex)
         {
-            logger.LogWarning(ex, "Error parsing ComicInfo XML for chapter {ChapterId} ({ChapterPath})", chapter.Id,
-                chapter.RelativePath);
+            logger.LogWarning(
+                ex,
+                "Error parsing ComicInfo XML for chapter {ChapterId} ({ChapterPath})",
+                chapter.Id,
+                chapter.RelativePath
+            );
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Error updating metadata for chapter {ChapterId} ({ChapterPath})", chapter.Id,
-                chapter.RelativePath);
+            logger.LogError(
+                ex,
+                "Error updating metadata for chapter {ChapterId} ({ChapterPath})",
+                chapter.Id,
+                chapter.RelativePath
+            );
         }
     }
 
@@ -354,7 +440,9 @@ public class MangaMetadataChanger(
             return;
         }
 
-        ExtractedMetadata metadata = await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(origChapterPath);
+        ExtractedMetadata metadata = await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(
+            origChapterPath
+        );
         var newMetadata = metadata with { Series = newTitle };
         await metadataHandling.WriteComicInfoAsync(origChapterPath, newMetadata);
     }

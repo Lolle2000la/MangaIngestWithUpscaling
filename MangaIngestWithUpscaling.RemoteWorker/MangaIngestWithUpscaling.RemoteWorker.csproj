@@ -1,47 +1,42 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
-
-    <PropertyGroup>
-        <TargetFramework>net10.0</TargetFramework>
-        <Nullable>enable</Nullable>
-        <ImplicitUsings>enable</ImplicitUsings>
-        <InvariantGlobalization>true</InvariantGlobalization>
-        <PublishAot>true</PublishAot>
-        <VelopackRelease>false</VelopackRelease>
-        <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>
-    </PropertyGroup>
-
-    <PropertyGroup Condition="'$(VelopackRelease)'=='true'">
-        <DefineConstants>$(DefineConstants);VELOPACK_RELEASE</DefineConstants>
-    </PropertyGroup>
-
-    <ItemGroup>
-        <Protobuf Include="../MangaIngestWithUpscaling/protos/upscaling-dist.proto" GrpcServices="Client">
-            <Link>Protos\upscaling-dist.proto</Link>
-        </Protobuf>
-    </ItemGroup>
-
-    <ItemGroup>
-        <PackageReference Include="AutoRegisterInject" Version="1.4.1"/>
-        <PackageReference Include="Grpc.AspNetCore" Version="2.71.0"/>
-        <PackageReference Include="Open.ChannelExtensions" Version="9.1.0"/>
-        <PackageReference Include="Velopack" Version="0.0.1298"/>
-    </ItemGroup>
-
-    <ItemGroup>
-        <None Include="../MangaJaNaiConverterGui/MangaJaNaiConverterGui/backend/**">
-            <Link>backend\%(RecursiveDir)%(Filename)%(Extension)</Link>
-            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-        </None>
-    </ItemGroup>
-
-    <ItemGroup>
-        <None Include="../MangaIngestWithUpscaling/appstate2.json">
-            <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-        </None>
-    </ItemGroup>
-
-    <ItemGroup>
-        <ProjectReference Include="..\MangaIngestWithUpscaling.Shared\MangaIngestWithUpscaling.Shared.csproj"/>
-    </ItemGroup>
-
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <PublishAot>true</PublishAot>
+    <VelopackRelease>false</VelopackRelease>
+    <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(VelopackRelease)'=='true'">
+    <DefineConstants>$(DefineConstants);VELOPACK_RELEASE</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <Protobuf
+      Include="../MangaIngestWithUpscaling/protos/upscaling-dist.proto"
+      GrpcServices="Client"
+    >
+      <Link>Protos\upscaling-dist.proto</Link>
+    </Protobuf>
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="AutoRegisterInject" Version="1.4.1" />
+    <PackageReference Include="Grpc.AspNetCore" Version="2.71.0" />
+    <PackageReference Include="Open.ChannelExtensions" Version="9.1.0" />
+    <PackageReference Include="Velopack" Version="0.0.1298" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="../MangaJaNaiConverterGui/MangaJaNaiConverterGui/backend/**">
+      <Link>backend\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="../MangaIngestWithUpscaling/appstate2.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\MangaIngestWithUpscaling.Shared\MangaIngestWithUpscaling.Shared.csproj" />
+  </ItemGroup>
 </Project>

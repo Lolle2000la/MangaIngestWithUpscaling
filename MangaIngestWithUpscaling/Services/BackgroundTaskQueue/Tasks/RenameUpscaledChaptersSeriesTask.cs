@@ -32,19 +32,22 @@ public class RenameUpscaledChaptersSeriesTask : BaseTask
 
     public string NewTitle { get; set; } = string.Empty;
 
-    public override string TaskFriendlyName => $"Changing {ChapterFileName} title attribute to \"{NewTitle}\"";
+    public override string TaskFriendlyName =>
+        $"Changing {ChapterFileName} title attribute to \"{NewTitle}\"";
 
-    public override async Task ProcessAsync(IServiceProvider services, CancellationToken cancellationToken)
+    public override async Task ProcessAsync(
+        IServiceProvider services,
+        CancellationToken cancellationToken
+    )
     {
         var logger = services.GetRequiredService<ILogger<RenameUpscaledChaptersSeriesTask>>();
         var fileSystem = services.GetRequiredService<IFileSystem>();
 
         var dbContext = services.GetRequiredService<ApplicationDbContext>();
-        Chapter? chapter = await dbContext.Chapters
-            .Include(c => c.Manga)
+        Chapter? chapter = await dbContext
+            .Chapters.Include(c => c.Manga)
             .ThenInclude(m => m.Library)
-            .FirstOrDefaultAsync(
-                c => c.Id == ChapterId, cancellationToken);
+            .FirstOrDefaultAsync(c => c.Id == ChapterId, cancellationToken);
 
         if (chapter == null)
         {

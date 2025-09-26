@@ -1,11 +1,11 @@
+using System.Collections.ObjectModel;
+using System.Reactive.Disposables;
 using DynamicData;
 using DynamicData.Binding;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using Microsoft.EntityFrameworkCore;
-using System.Collections.ObjectModel;
-using System.Reactive.Disposables;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 
@@ -28,7 +28,8 @@ public class TaskRegistry : IHostedService, IDisposable
         TaskQueue taskQueue,
         StandardTaskProcessor standardProcessor,
         UpscaleTaskProcessor upscalerProcessor,
-        DistributedUpscaleTaskProcessor distributedUpscaleProcessor)
+        DistributedUpscaleTaskProcessor distributedUpscaleProcessor
+    )
     {
         _scopeFactory = scopeFactory;
         _taskQueue = taskQueue;
@@ -37,21 +38,36 @@ public class TaskRegistry : IHostedService, IDisposable
         _distributedUpscaleProcessor = distributedUpscaleProcessor;
 
         // Standard view: non-upscale tasks, sorted by Order then CreatedAt
-        _tasks.Connect()
-            .Filter(t => t.Data is not UpscaleTask and not RenameUpscaledChaptersSeriesTask and not RepairUpscaleTask)
-            .SortAndBind(out ReadOnlyObservableCollection<PersistedTask> standard,
-                SortExpressionComparer<PersistedTask>.Ascending(x => x.Order)
-                    .ThenByAscending(x => x.CreatedAt))
+        _tasks
+            .Connect()
+            .Filter(t =>
+                t.Data
+                    is not UpscaleTask
+                        and not RenameUpscaledChaptersSeriesTask
+                        and not RepairUpscaleTask
+            )
+            .SortAndBind(
+                out ReadOnlyObservableCollection<PersistedTask> standard,
+                SortExpressionComparer<PersistedTask>
+                    .Ascending(x => x.Order)
+                    .ThenByAscending(x => x.CreatedAt)
+            )
             .Subscribe(_ => { })
             .DisposeWith(_cleanups);
         StandardTasks = standard;
 
         // Upscale view: upscale tasks, sorted by Order then CreatedAt
-        _tasks.Connect()
-            .Filter(t => t.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask)
-            .SortAndBind(out ReadOnlyObservableCollection<PersistedTask> upscale,
-                SortExpressionComparer<PersistedTask>.Ascending(x => x.Order)
-                    .ThenByAscending(x => x.CreatedAt))
+        _tasks
+            .Connect()
+            .Filter(t =>
+                t.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask
+            )
+            .SortAndBind(
+                out ReadOnlyObservableCollection<PersistedTask> upscale,
+                SortExpressionComparer<PersistedTask>
+                    .Ascending(x => x.Order)
+                    .ThenByAscending(x => x.CreatedAt)
+            )
             .Subscribe(_ => { })
             .DisposeWith(_cleanups);
         UpscaleTasks = upscale;
@@ -71,7 +87,9 @@ public class TaskRegistry : IHostedService, IDisposable
         // Initial load of all tasks (pending, processing, completed, failed, canceled)
         using IServiceScope scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        List<PersistedTask> all = await db.PersistedTasks.AsNoTracking().ToListAsync(cancellationToken);
+        List<PersistedTask> all = await db
+            .PersistedTasks.AsNoTracking()
+            .ToListAsync(cancellationToken);
         _tasks.AddOrUpdate(all);
 
         // Subscribe to queue and processor events to keep registry up to date
@@ -117,7 +135,7 @@ public class TaskRegistry : IHostedService, IDisposable
             RetryCount = src.RetryCount,
             ProcessedAt = src.ProcessedAt,
             Order = src.Order,
-            LastKeepAlive = src.LastKeepAlive
+            LastKeepAlive = src.LastKeepAlive,
         };
     }
 }

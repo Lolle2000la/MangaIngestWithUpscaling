@@ -1,6 +1,6 @@
+using System.Text.RegularExpressions;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
-using System.Text.RegularExpressions;
 
 namespace MangaIngestWithUpscaling.Services.LibraryFiltering;
 
@@ -14,7 +14,10 @@ public class LibraryRenamingService : ILibraryRenamingService
         _logger = logger;
     }
 
-    public FoundChapter ApplyRenameRules(FoundChapter chapter, IReadOnlyList<LibraryRenameRule> rules)
+    public FoundChapter ApplyRenameRules(
+        FoundChapter chapter,
+        IReadOnlyList<LibraryRenameRule> rules
+    )
     {
         string fileName = chapter.FileName;
         string relativePath = chapter.RelativePath;
@@ -34,10 +37,11 @@ public class LibraryRenamingService : ILibraryRenamingService
                 LibraryRenameTargetField.SeriesTitle => series,
                 LibraryRenameTargetField.ChapterTitle => chapterTitle,
                 LibraryRenameTargetField.FileName => Path.GetFileNameWithoutExtension(fileName),
-                _ => null
+                _ => null,
             };
 
-            if (currentInput == null) continue;
+            if (currentInput == null)
+                continue;
 
             string result = currentInput; // Default to original input
 
@@ -45,19 +49,27 @@ public class LibraryRenamingService : ILibraryRenamingService
             {
                 result = rule.PatternType switch
                 {
-                    LibraryRenamePatternType.Regex => Regex.Replace(currentInput, rule.Pattern,
-                        rule.Replacement ?? string.Empty),
-                    LibraryRenamePatternType.Contains => currentInput.Replace(rule.Pattern,
-                        rule.Replacement ?? string.Empty),
-                    _ => currentInput
+                    LibraryRenamePatternType.Regex => Regex.Replace(
+                        currentInput,
+                        rule.Pattern,
+                        rule.Replacement ?? string.Empty
+                    ),
+                    LibraryRenamePatternType.Contains => currentInput.Replace(
+                        rule.Pattern,
+                        rule.Replacement ?? string.Empty
+                    ),
+                    _ => currentInput,
                 };
             }
             catch (ArgumentException ex)
             {
                 // Log the error and skip applying this problematic rule for the preview
-                _logger.LogWarning(ex,
+                _logger.LogWarning(
+                    ex,
                     "Invalid pattern or argument in rename rule. Pattern: '{Pattern}', Replacement: '{Replacement}'",
-                    rule.Pattern, rule.Replacement);
+                    rule.Pattern,
+                    rule.Replacement
+                );
                 // result remains currentInput, effectively skipping the rule
             }
 
@@ -77,7 +89,9 @@ public class LibraryRenamingService : ILibraryRenamingService
                         string extension = Path.GetExtension(chapter.RelativePath);
                         fileName = result + extension;
                         string dir = Path.GetDirectoryName(relativePath) ?? string.Empty;
-                        relativePath = string.IsNullOrEmpty(dir) ? fileName : Path.Combine(dir, fileName);
+                        relativePath = string.IsNullOrEmpty(dir)
+                            ? fileName
+                            : Path.Combine(dir, fileName);
                         break;
                 }
             }

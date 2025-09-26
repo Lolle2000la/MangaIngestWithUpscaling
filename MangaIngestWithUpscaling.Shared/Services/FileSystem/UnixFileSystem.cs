@@ -7,15 +7,17 @@ namespace MangaIngestWithUpscaling.Shared.Services.FileSystem;
 
 public class UnixFileSystem(
     IOptions<UnixPermissionsConfig> permissionsConfig,
-    ILogger<UnixFileSystem> logger) : IFileSystem
+    ILogger<UnixFileSystem> logger
+) : IFileSystem
 {
     public ILogger<UnixFileSystem> Logger { get; } = logger;
 
     public void ApplyPermissions(string path)
     {
         path = Path.GetFullPath(path);
-        string? parentDirectory = Path.GetDirectoryName(path) ??
-                                  throw new InvalidOperationException($"Unable to get parent directory for {path}");
+        string? parentDirectory =
+            Path.GetDirectoryName(path)
+            ?? throw new InvalidOperationException($"Unable to get parent directory for {path}");
 
         // Retrieve parent's permissions
         if (Syscall.stat(parentDirectory, out Stat parentStat) != 0)
@@ -39,14 +41,23 @@ public class UnixFileSystem(
             }
             else
             {
-                Logger.LogDebug("User ID and Group ID not set for {path}, using parent's user ID and group ID", path);
+                Logger.LogDebug(
+                    "User ID and Group ID not set for {path}, using parent's user ID and group ID",
+                    path
+                );
                 unixPermissionsConfig.UserId = parentStat.st_uid;
                 unixPermissionsConfig.GroupId = parentStat.st_gid;
             }
         }
 
         // Change the owner and group of the file
-        if (Syscall.chown(path, unixPermissionsConfig.UserId.Value, unixPermissionsConfig.GroupId.Value) != 0)
+        if (
+            Syscall.chown(
+                path,
+                unixPermissionsConfig.UserId.Value,
+                unixPermissionsConfig.GroupId.Value
+            ) != 0
+        )
         {
             Logger.LogError("Unable to change ownership of {path}.", path);
         }
@@ -62,7 +73,8 @@ public class UnixFileSystem(
         }
 
         var pathSegments = path.Split(Path.DirectorySeparatorChar);
-        var dirsInPath = Enumerable.Range(1, pathSegments.Length)
+        var dirsInPath = Enumerable
+            .Range(1, pathSegments.Length)
             .Select(i => Path.Combine(pathSegments.Take(i).ToArray()));
 
         string parentDirectory = Path.GetDirectoryName(path)!;
@@ -106,20 +118,32 @@ public class UnixFileSystem(
             }
             else
             {
-                Logger.LogDebug("User ID and Group ID not set for {path}, using parent's user ID and group ID", path);
+                Logger.LogDebug(
+                    "User ID and Group ID not set for {path}, using parent's user ID and group ID",
+                    path
+                );
                 usedPermissions.UserId = parentStat.st_uid;
                 usedPermissions.GroupId = parentStat.st_gid;
             }
         }
 
-        var newDirsInPath = Path.GetRelativePath(parentDirectory, path).Split(Path.DirectorySeparatorChar);
-        var newSubdirs = Enumerable.Range(1, newDirsInPath.Length)
-            .Select(i => Path.Combine(new[] { parentDirectory }.Concat(newDirsInPath.Take(i).ToArray()).ToArray()));
+        var newDirsInPath = Path.GetRelativePath(parentDirectory, path)
+            .Split(Path.DirectorySeparatorChar);
+        var newSubdirs = Enumerable
+            .Range(1, newDirsInPath.Length)
+            .Select(i =>
+                Path.Combine(
+                    new[] { parentDirectory }.Concat(newDirsInPath.Take(i).ToArray()).ToArray()
+                )
+            );
 
         // Change the owner and group of the new directory
         foreach (var dir in newSubdirs)
         {
-            if (Syscall.chown(dir, usedPermissions.UserId!.Value, usedPermissions.GroupId!.Value) != 0)
+            if (
+                Syscall.chown(dir, usedPermissions.UserId!.Value, usedPermissions.GroupId!.Value)
+                != 0
+            )
             {
                 Logger.LogWarning("Unable to change ownership of {dir}.", dir);
             }
@@ -144,25 +168,36 @@ public class UnixFileSystem(
         {
             if (usedPermissions.UserId is not null)
             {
-                Logger.LogDebug("Group ID not set for {destFileName}, using source's group ID", destFileName);
+                Logger.LogDebug(
+                    "Group ID not set for {destFileName}, using source's group ID",
+                    destFileName
+                );
                 usedPermissions.GroupId = sourceStat.st_gid;
             }
             else if (usedPermissions.GroupId is not null)
             {
-                Logger.LogDebug("User ID not set for {destFileName}, using source's user ID", destFileName);
+                Logger.LogDebug(
+                    "User ID not set for {destFileName}, using source's user ID",
+                    destFileName
+                );
                 usedPermissions.UserId = sourceStat.st_uid;
             }
             else
             {
-                Logger.LogDebug("User ID and Group ID not set for {destFileName}, using source's user ID and group ID",
-                    destFileName);
+                Logger.LogDebug(
+                    "User ID and Group ID not set for {destFileName}, using source's user ID and group ID",
+                    destFileName
+                );
                 usedPermissions.UserId = sourceStat.st_uid;
                 usedPermissions.GroupId = sourceStat.st_gid;
             }
         }
 
         // Change the owner and group of the new file
-        if (Syscall.chown(destFileName, usedPermissions.UserId.Value, usedPermissions.GroupId.Value) != 0)
+        if (
+            Syscall.chown(destFileName, usedPermissions.UserId.Value, usedPermissions.GroupId.Value)
+            != 0
+        )
         {
             Logger.LogWarning("Unable to change ownership of {destFileName}.", destFileName);
         }
