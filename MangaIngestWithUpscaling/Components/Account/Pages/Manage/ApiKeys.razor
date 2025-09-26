@@ -8,7 +8,7 @@
 @inject IdentityUserAccessor UserAccessor
 @inject IdentityRedirectManager RedirectManager
 @inject IApiKeyService ApiKeyService
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 
 <PageTitle>API Key</PageTitle>
 
@@ -52,11 +52,13 @@
         Input ??= new InputModel();
 
         user = await UserAccessor.GetRequiredUserAsync(HttpContext);
-        apiKey = await DbContext.ApiKeys.FirstOrDefaultAsync(k => k.User == user && k.IsActive);
+        
+        await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+        apiKey = await dbContext.ApiKeys.FirstOrDefaultAsync(k => k.User == user && k.IsActive);
 
         if (apiKey == null)
         {
-            apiKey = await ApiKeyService.CreateApiKeyAsync(user.Id);
+            apiKey = await ApiKeyService.CreateApiKeyAsync(dbContext, user.Id);
         }
 
         if (Input == null)
@@ -74,9 +76,17 @@
             return;
         }
 
-        apiKey.IsActive = false;
-        await DbContext.SaveChangesAsync();
-        apiKey = await ApiKeyService.CreateApiKeyAsync(user.Id);
+        await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+        
+        // Reload the API key from the new context
+        var currentApiKey = await dbContext.ApiKeys.FirstOrDefaultAsync(k => k.Id == apiKey.Id);
+        if (currentApiKey != null)
+        {
+            currentApiKey.IsActive = false;
+            await dbContext.SaveChangesAsync();
+        }
+        
+        apiKey = await ApiKeyService.CreateApiKeyAsync(dbContext, user.Id);
 
         await SignInManager.RefreshSignInAsync(user);
         RedirectManager.RedirectToCurrentPage();

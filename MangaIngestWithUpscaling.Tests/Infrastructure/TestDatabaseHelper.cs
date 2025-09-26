@@ -18,6 +18,15 @@ public static class TestDatabaseHelper
         return new TestDbContext();
     }
 
+    /// <summary>
+    /// Creates a DbContextFactory for testing
+    /// </summary>
+    /// <returns>A factory that creates contexts using a shared in-memory database</returns>
+    public static TestDbContextFactory CreateInMemoryDatabaseFactory()
+    {
+        return new TestDbContextFactory();
+    }
+
     public class TestDbContext : IDisposable
     {
         private readonly SqliteConnection _connection;
@@ -51,6 +60,52 @@ public static class TestDatabaseHelper
         public void Dispose()
         {
             Context?.Dispose();
+            _connection?.Close();
+            _connection?.Dispose();
+        }
+    }
+
+    public class TestDbContextFactory : IDbContextFactory<ApplicationDbContext>, IDisposable
+    {
+        private readonly SqliteConnection _connection;
+        private readonly DbContextOptions<ApplicationDbContext> _options;
+
+        public TestDbContextFactory()
+        {
+            // Create shared in-memory SQLite database
+            _connection = new SqliteConnection("DataSource=:memory:");
+            _connection.Open();
+
+            _options = new DbContextOptionsBuilder<ApplicationDbContext>()
+                .UseSqlite(_connection)
+                .ConfigureWarnings(warnings =>
+                    warnings.Ignore(
+                        Microsoft
+                            .EntityFrameworkCore
+                            .Diagnostics
+                            .RelationalEventId
+                            .AmbientTransactionWarning
+                    )
+                )
+                .Options;
+
+            // Create the database schema
+            using var context = new ApplicationDbContext(_options);
+            context.Database.EnsureCreated();
+        }
+
+        public ApplicationDbContext CreateDbContext()
+        {
+            return new ApplicationDbContext(_options);
+        }
+
+        public Task<ApplicationDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(CreateDbContext());
+        }
+
+        public void Dispose()
+        {
             _connection?.Close();
             _connection?.Dispose();
         }
