@@ -25,22 +25,15 @@
                     
                     @if (Library.Id > 0)
                     {
-                        <MudGrid Class="mt-2" Spacing="2">
-                            <MudItem md="6" xs="12">
-                                <MudTextField Label="Created"
-                                              Value="@Library.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss")"
-                                              ReadOnly="true"
-                                              Variant="Variant.Outlined"
-                                              HelperText="When this library was first created"/>
-                            </MudItem>
-                            <MudItem md="6" xs="12">
-                                <MudTextField Label="Last Modified"
-                                              Value="@Library.ModifiedAt.ToString("yyyy-MM-dd HH:mm:ss")"
-                                              ReadOnly="true"
-                                              Variant="Variant.Outlined"
-                                              HelperText="When this library was last modified"/>
-                            </MudItem>
-                        </MudGrid>
+                        <MudDivider Style="margin: 16px 0;" />
+                        <MudStack Row Spacing="4" Class="mt-2">
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                Created: @Library.CreatedAt.ToString("yyyy-MM-dd HH:mm")
+                            </MudText>
+                            <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                Modified: @Library.ModifiedAt.ToString("yyyy-MM-dd HH:mm")
+                            </MudText>
+                        </MudStack>
                     }
                 </MudItem>
 
