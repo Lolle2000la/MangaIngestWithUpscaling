@@ -2,7 +2,7 @@
 @using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.ImageFiltering
 @using MangaIngestWithUpscaling.Shared.Constants
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IImageFilterService ImageFilterService
 @inject ILogger<AddImageFilterDialog> Logger
 
@@ -318,16 +318,20 @@
                 Logger.LogInformation("Saving filtered image to database - OriginalFileName: {OriginalFileName}, ContentHash: {ContentHash}",
                     filteredImage.OriginalFileName, filteredImage.ContentHash);
 
-                // Ensure the Library's FilteredImages collection is loaded
-                if (!DbContext.Entry(Library).Collection(l => l.FilteredImages).IsLoaded)
+                await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+                
+                // Load the library with filtered images
+                var library = await dbContext.Libraries
+                    .Include(l => l.FilteredImages)
+                    .FirstOrDefaultAsync(l => l.Id == Library.Id);
+                
+                if (library != null)
                 {
-                    await DbContext.Entry(Library).Collection(l => l.FilteredImages).LoadAsync();
+                    library.FilteredImages.Add(filteredImage);
+                    dbContext.FilteredImages.Add(filteredImage);
+                    await dbContext.SaveChangesAsync();
+                    Logger.LogInformation("Successfully saved filtered image to database");
                 }
-
-                Library.FilteredImages.Add(filteredImage);
-                DbContext.FilteredImages.Add(filteredImage);
-                await DbContext.SaveChangesAsync();
-                Logger.LogInformation("Successfully saved filtered image to database");
             }
 
             Logger.LogInformation("Closing dialog with success");

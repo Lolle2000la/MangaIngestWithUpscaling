@@ -11,7 +11,7 @@
 @using MangaIngestWithUpscaling.Services.MetadataHandling
 @using MangaIngestWithUpscaling.Shared.Services.FileSystem
 @using MangaIngestWithUpscaling.Shared.Services.MetadataHandling
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IMetadataHandlingService MetadataHandler
 @inject IMangaMetadataChanger MangaMetadataChanger
 @inject ITaskQueue TaskQueue

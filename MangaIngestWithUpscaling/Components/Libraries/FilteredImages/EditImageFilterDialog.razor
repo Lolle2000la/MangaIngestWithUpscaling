@@ -1,5 +1,5 @@
 @using MangaIngestWithUpscaling.Data.LibraryManagement
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 
 <MudDialog>
     <TitleContent>Edit Image Filter</TitleContent>
@@ -64,17 +64,15 @@
     {
         try
         {
-            // Ensure the description update is persisted even if the entity is detached
-            var entry = DbContext.Entry(FilteredImage);
-            if (entry.State == EntityState.Detached)
+            await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+            
+            // Find the filtered image in the new context
+            var filteredImageToUpdate = await dbContext.FilteredImages.FindAsync(FilteredImage.Id);
+            if (filteredImageToUpdate != null)
             {
-                DbContext.Attach(FilteredImage);
-                entry = DbContext.Entry(FilteredImage);
+                filteredImageToUpdate.Description = FilteredImage.Description;
+                await dbContext.SaveChangesAsync();
             }
-
-            // Mark only the Description property as modified
-            entry.Property(nameof(FilteredImage.Description)).IsModified = true;
-            await DbContext.SaveChangesAsync();
 
             DialogReference.Close(DialogResult.Ok(true));
         }
