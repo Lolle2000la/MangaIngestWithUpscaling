@@ -26,6 +26,9 @@ public class Manga
 
     public UpscalerProfile? UpscalerProfilePreference { get; set; }
 
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime ModifiedAt { get; set; } = DateTime.UtcNow;
+
     [NotMapped]
     public UpscalerProfile? EffectiveUpscalerProfile
     {

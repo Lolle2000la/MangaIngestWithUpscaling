@@ -13,6 +13,19 @@
     <MudCardContent>
         <UpscalerProfileForm @bind-Profile="Profile"
                              @bind-IsValid="IsValid"/>
+        
+        @if (existingProfile is not null)
+        {
+            <MudDivider Style="margin: 16px 0;" />
+            <MudStack Row Spacing="4" Class="mt-2">
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    Created: @existingProfile.CreatedAt.ToString("yyyy-MM-dd HH:mm")
+                </MudText>
+                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                    Modified: @existingProfile.ModifiedAt.ToString("yyyy-MM-dd HH:mm")
+                </MudText>
+            </MudStack>
+        }
     </MudCardContent>
     <MudCardActions>
         <MudSpacer/>
@@ -74,6 +87,10 @@
             return;
         }
 
+        // Preserve the original creation date for the new profile
+        Profile.CreatedAt = existingProfile.CreatedAt;
+        Profile.ModifiedAt = DateTime.UtcNow;
+        
         DbContext.UpscalerProfiles.Add(Profile);
         existingProfile.Deleted = true;
         await DbContext.SaveChangesAsync();

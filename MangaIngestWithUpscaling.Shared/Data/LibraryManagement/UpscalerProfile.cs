@@ -20,6 +20,9 @@ public class UpscalerProfile
     /// Whether this profile is deleted. Deleted profiles cannot be selected but might still be referenced by chapters.
     /// </summary>
     public bool Deleted { get; set; } = false;
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime ModifiedAt { get; set; } = DateTime.UtcNow;
 }
 
 public record UpscalerProfileJsonDto

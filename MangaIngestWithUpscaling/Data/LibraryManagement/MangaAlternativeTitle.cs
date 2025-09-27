@@ -9,4 +9,6 @@ public class MangaAlternativeTitle
 
     public int MangaId { get; set; }
     public Manga Manga { get; set; } = default!;
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
