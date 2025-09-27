@@ -1,7 +1,7 @@
-using Microsoft.EntityFrameworkCore;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Tests.Data;
 
@@ -35,7 +35,7 @@ public class EntityTimestampTests : IDisposable
         {
             Name = "Test Library",
             IngestPath = "/test/ingest",
-            NotUpscaledLibraryPath = "/test/notupscaled"
+            NotUpscaledLibraryPath = "/test/notupscaled",
         };
 
         // Act
@@ -58,13 +58,13 @@ public class EntityTimestampTests : IDisposable
         {
             Name = "Test Library",
             IngestPath = "/test/ingest",
-            NotUpscaledLibraryPath = "/test/notupscaled"
+            NotUpscaledLibraryPath = "/test/notupscaled",
         };
         _context.Libraries.Add(library);
         await _context.SaveChangesAsync();
 
         var originalModifiedAt = library.ModifiedAt;
-        
+
         // Wait a moment to ensure time difference
         await Task.Delay(100);
         var beforeModification = DateTime.UtcNow;
@@ -88,7 +88,7 @@ public class EntityTimestampTests : IDisposable
         {
             Name = "Test Library",
             IngestPath = "/test/ingest",
-            NotUpscaledLibraryPath = "/test/notupscaled"
+            NotUpscaledLibraryPath = "/test/notupscaled",
         };
         _context.Libraries.Add(library);
         await _context.SaveChangesAsync();
@@ -98,7 +98,7 @@ public class EntityTimestampTests : IDisposable
         {
             PrimaryTitle = "Test Manga",
             LibraryId = library.Id,
-            Library = library
+            Library = library,
         };
 
         // Act
@@ -121,13 +121,9 @@ public class EntityTimestampTests : IDisposable
         {
             Name = "Test Library",
             IngestPath = "/test/ingest",
-            NotUpscaledLibraryPath = "/test/notupscaled"
+            NotUpscaledLibraryPath = "/test/notupscaled",
         };
-        var manga = new Manga
-        {
-            PrimaryTitle = "Test Manga",
-            Library = library
-        };
+        var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
         _context.Libraries.Add(library);
         _context.MangaSeries.Add(manga);
         await _context.SaveChangesAsync();
@@ -137,7 +133,7 @@ public class EntityTimestampTests : IDisposable
         {
             Title = "Alternative Title",
             MangaId = manga.Id,
-            Manga = manga
+            Manga = manga,
         };
 
         // Act
@@ -158,13 +154,9 @@ public class EntityTimestampTests : IDisposable
         {
             Name = "Test Library",
             IngestPath = "/test/ingest",
-            NotUpscaledLibraryPath = "/test/notupscaled"
+            NotUpscaledLibraryPath = "/test/notupscaled",
         };
-        var manga = new Manga
-        {
-            PrimaryTitle = "Test Manga",
-            Library = library
-        };
+        var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
         _context.Libraries.Add(library);
         _context.MangaSeries.Add(manga);
         await _context.SaveChangesAsync();
@@ -175,7 +167,7 @@ public class EntityTimestampTests : IDisposable
             FileName = "chapter1.cbz",
             RelativePath = "Test Manga/chapter1.cbz",
             MangaId = manga.Id,
-            Manga = manga
+            Manga = manga,
         };
 
         // Act
@@ -200,7 +192,7 @@ public class EntityTimestampTests : IDisposable
             Name = "Test Profile",
             ScalingFactor = ScaleFactor.TwoX,
             CompressionFormat = CompressionFormat.Webp,
-            Quality = 80
+            Quality = 80,
         };
 
         // Act

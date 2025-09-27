@@ -49,7 +49,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     private void UpdateTimestamps()
     {
         var now = DateTime.UtcNow;
-        var entries = ChangeTracker.Entries()
+        var entries = ChangeTracker
+            .Entries()
             .Where(e => e.State == EntityState.Added || e.State == EntityState.Modified);
 
         foreach (var entry in entries)
@@ -79,7 +80,10 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                     profile.CreatedAt = now;
                 profile.ModifiedAt = now;
             }
-            else if (entry.Entity is MangaAlternativeTitle alternativeTitle && entry.State == EntityState.Added)
+            else if (
+                entry.Entity is MangaAlternativeTitle alternativeTitle
+                && entry.State == EntityState.Added
+            )
             {
                 alternativeTitle.CreatedAt = now;
             }
