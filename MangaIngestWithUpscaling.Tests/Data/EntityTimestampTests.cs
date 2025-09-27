@@ -40,7 +40,9 @@ public class EntityTimestampTests : IDisposable
 
         // Act
         _context.Libraries.Add(library);
+#pragma warning disable xUnit1051
         await _context.SaveChangesAsync();
+#pragma warning restore xUnit1051
         var afterCreation = DateTime.UtcNow.AddSeconds(1);
 
         // Assert
@@ -61,17 +63,23 @@ public class EntityTimestampTests : IDisposable
             NotUpscaledLibraryPath = "/test/notupscaled",
         };
         _context.Libraries.Add(library);
+#pragma warning disable xUnit1051
         await _context.SaveChangesAsync();
+#pragma warning restore xUnit1051
 
         var originalModifiedAt = library.ModifiedAt;
 
         // Wait a moment to ensure time difference
+#pragma warning disable xUnit1051
         await Task.Delay(100);
+#pragma warning restore xUnit1051
         var beforeModification = DateTime.UtcNow;
 
         // Act
         library.Name = "Modified Library";
+#pragma warning disable xUnit1051
         await _context.SaveChangesAsync();
+#pragma warning restore xUnit1051
         var afterModification = DateTime.UtcNow.AddSeconds(1);
 
         // Assert
@@ -91,7 +99,9 @@ public class EntityTimestampTests : IDisposable
             NotUpscaledLibraryPath = "/test/notupscaled",
         };
         _context.Libraries.Add(library);
+#pragma warning disable xUnit1051
         await _context.SaveChangesAsync();
+#pragma warning restore xUnit1051
 
         var beforeCreation = DateTime.UtcNow.AddSeconds(-1);
         var manga = new Manga
@@ -103,7 +113,9 @@ public class EntityTimestampTests : IDisposable
 
         // Act
         _context.MangaSeries.Add(manga);
+#pragma warning disable xUnit1051
         await _context.SaveChangesAsync();
+#pragma warning restore xUnit1051
         var afterCreation = DateTime.UtcNow.AddSeconds(1);
 
         // Assert
@@ -126,7 +138,9 @@ public class EntityTimestampTests : IDisposable
         var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
         _context.Libraries.Add(library);
         _context.MangaSeries.Add(manga);
+#pragma warning disable xUnit1051
         await _context.SaveChangesAsync();
+#pragma warning restore xUnit1051
 
         var beforeCreation = DateTime.UtcNow.AddSeconds(-1);
         var alternativeTitle = new MangaAlternativeTitle
@@ -138,7 +152,9 @@ public class EntityTimestampTests : IDisposable
 
         // Act
         _context.MangaAlternativeTitles.Add(alternativeTitle);
+#pragma warning disable xUnit1051
         await _context.SaveChangesAsync();
+#pragma warning restore xUnit1051
         var afterCreation = DateTime.UtcNow.AddSeconds(1);
 
         // Assert
@@ -159,7 +175,9 @@ public class EntityTimestampTests : IDisposable
         var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
         _context.Libraries.Add(library);
         _context.MangaSeries.Add(manga);
+#pragma warning disable xUnit1051
         await _context.SaveChangesAsync();
+#pragma warning restore xUnit1051
 
         var beforeCreation = DateTime.UtcNow.AddSeconds(-1);
         var chapter = new Chapter
@@ -172,7 +190,9 @@ public class EntityTimestampTests : IDisposable
 
         // Act
         _context.Chapters.Add(chapter);
+#pragma warning disable xUnit1051
         await _context.SaveChangesAsync();
+#pragma warning restore xUnit1051
         var afterCreation = DateTime.UtcNow.AddSeconds(1);
 
         // Assert
@@ -197,7 +217,9 @@ public class EntityTimestampTests : IDisposable
 
         // Act
         _context.UpscalerProfiles.Add(profile);
+#pragma warning disable xUnit1051
         await _context.SaveChangesAsync();
+#pragma warning restore xUnit1051
         var afterCreation = DateTime.UtcNow.AddSeconds(1);
 
         // Assert
