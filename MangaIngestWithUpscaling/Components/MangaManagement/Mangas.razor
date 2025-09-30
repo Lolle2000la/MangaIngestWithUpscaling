@@ -164,8 +164,37 @@
 
     private CompositeDisposable disposables = new();
 
+    private bool isFirstLoad = true;
+
     private async Task<TableData<Manga>> GetMangas(TableState state, CancellationToken cancellationToken)
     {
+        // On first load, restore state from query parameters
+        if (isFirstLoad)
+        {
+            isFirstLoad = false;
+            
+            if (PageNumber.HasValue && PageNumber.Value >= 0)
+            {
+                state.Page = PageNumber.Value;
+            }
+            
+            if (PageSizeValue.HasValue && PageSizeValue.Value > 0)
+            {
+                state.PageSize = PageSizeValue.Value;
+            }
+            
+            if (!string.IsNullOrEmpty(SortByColumn))
+            {
+                state.SortLabel = SortByColumn;
+            }
+            
+            if (!string.IsNullOrEmpty(SortDirectionValue) && 
+                Enum.TryParse<SortDirection>(SortDirectionValue, out var sortDir))
+            {
+                state.SortDirection = sortDir;
+            }
+        }
+
         var query = DbContext.MangaSeries
             .Include(x => x.Library)
             .ThenInclude(x => x.UpscalerProfile)

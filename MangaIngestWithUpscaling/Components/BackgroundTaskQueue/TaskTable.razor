@@ -120,6 +120,8 @@
 
     private List<PersistedTask> cachedTasks = new();
 
+    private bool isFirstLoad = true;
+
     protected override void OnParametersSet()
     {
         cachedTasks = new List<PersistedTask>(Tasks);
@@ -132,6 +134,41 @@
 
     private Task<TableData<PersistedTask>> LoadTasks(TableState state, CancellationToken cancellationToken)
     {
+        // On first load, restore state from query parameters
+        if (isFirstLoad)
+        {
+            isFirstLoad = false;
+            
+            var queryParams = HttpUtility.ParseQueryString(new Uri(NavigationManager.Uri).Query);
+            
+            string pageKey = string.IsNullOrEmpty(QueryPrefix) ? "page" : $"{QueryPrefix}_page";
+            string pageSizeKey = string.IsNullOrEmpty(QueryPrefix) ? "pageSize" : $"{QueryPrefix}_pageSize";
+            string sortByKey = string.IsNullOrEmpty(QueryPrefix) ? "sortBy" : $"{QueryPrefix}_sortBy";
+            string sortDirKey = string.IsNullOrEmpty(QueryPrefix) ? "sortDir" : $"{QueryPrefix}_sortDir";
+            
+            if (int.TryParse(queryParams.Get(pageKey), out var page) && page >= 0)
+            {
+                state.Page = page;
+            }
+            
+            if (int.TryParse(queryParams.Get(pageSizeKey), out var pageSize) && pageSize > 0)
+            {
+                state.PageSize = pageSize;
+            }
+            
+            var sortBy = queryParams.Get(sortByKey);
+            if (!string.IsNullOrEmpty(sortBy))
+            {
+                state.SortLabel = sortBy;
+            }
+            
+            var sortDirStr = queryParams.Get(sortDirKey);
+            if (!string.IsNullOrEmpty(sortDirStr) && Enum.TryParse<SortDirection>(sortDirStr, out var sortDir))
+            {
+                state.SortDirection = sortDir;
+            }
+        }
+
         var query = cachedTasks.AsQueryable();
 
         query = state.SortLabel switch
