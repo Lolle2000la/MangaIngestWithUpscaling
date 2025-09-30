@@ -1,5 +1,8 @@
 ﻿@using MangaIngestWithUpscaling.Data.BackgroundTaskQueue
-<MudTable T="PersistedTask" Items="@Tasks" RowsPerPage="10" Elevation="3" Dense="true" @ref="Table">
+@using System.Web
+@inject NavigationManager NavigationManager
+
+<MudTable T="PersistedTask" ServerData="@LoadTasks" RowsPerPage="10" Elevation="3" Dense="true" @ref="Table">
     <ToolBarContent>
         <MudText Typo="Typo.h6">@Title</MudText>
         <MudSpacer/>
@@ -12,23 +15,23 @@
     </ToolBarContent>
     <HeaderContent>
         <MudTh>
-            <MudTableSortLabel InitialDirection="SortDirection.Ascending"
-                               SortBy="new Func<PersistedTask, object>(x => x.Order)">Order
+            <MudTableSortLabel T="PersistedTask" SortLabel="order_field" InitialDirection="SortDirection.Ascending">
+                Order
             </MudTableSortLabel>
         </MudTh>
         <MudTh>
-            <MudTableSortLabel SortBy="new Func<PersistedTask, object>(x => x.Data.TaskFriendlyName)">Name
+            <MudTableSortLabel T="PersistedTask" SortLabel="name_field">Name
             </MudTableSortLabel>
         </MudTh>
         <MudTh>
-            <MudTableSortLabel SortBy="new Func<PersistedTask, object>(x => x.CreatedAt)">Queued At</MudTableSortLabel>
+            <MudTableSortLabel T="PersistedTask" SortLabel="queued_field">Queued At</MudTableSortLabel>
         </MudTh>
         <MudTh>
-            <MudTableSortLabel SortBy="new Func<PersistedTask, object?>(x => x.ProcessedAt)">Finished At
+            <MudTableSortLabel T="PersistedTask" SortLabel="finished_field">Finished At
             </MudTableSortLabel>
         </MudTh>
         <MudTh>
-            <MudTableSortLabel SortBy="new Func<PersistedTask, object>(x => x.Status)">Status</MudTableSortLabel>
+            <MudTableSortLabel T="PersistedTask" SortLabel="status_field">Status</MudTableSortLabel>
         </MudTh>
         <MudTh>Actions</MudTh>
     </HeaderContent>
@@ -104,6 +107,7 @@
 @code {
     [Parameter] public IReadOnlyCollection<PersistedTask> Tasks { get; set; } = [];
     [Parameter] public string Title { get; set; } = "Tasks";
+    [Parameter] public string QueryPrefix { get; set; } = "";
 
     [Parameter] public EventCallback OnClearCompleted { get; set; } = EventCallback.Empty;
     [Parameter] public EventCallback OnClearFailed { get; set; } = EventCallback.Empty;
@@ -114,9 +118,87 @@
 
     private MudTable<PersistedTask> Table { get; set; } = null!;
 
+    private List<PersistedTask> cachedTasks = new();
+
     protected override void OnParametersSet()
     {
-        Tasks = new List<PersistedTask>(Tasks);
+        cachedTasks = new List<PersistedTask>(Tasks);
+    }
+
+    public async Task ReloadData()
+    {
+        await Table.ReloadServerData();
+    }
+
+    private Task<TableData<PersistedTask>> LoadTasks(TableState state, CancellationToken cancellationToken)
+    {
+        var query = cachedTasks.AsQueryable();
+
+        query = state.SortLabel switch
+        {
+            "order_field" => state.SortDirection == SortDirection.Ascending 
+                ? query.OrderBy(x => x.Order) 
+                : query.OrderByDescending(x => x.Order),
+            "name_field" => state.SortDirection == SortDirection.Ascending 
+                ? query.OrderBy(x => x.Data.TaskFriendlyName) 
+                : query.OrderByDescending(x => x.Data.TaskFriendlyName),
+            "queued_field" => state.SortDirection == SortDirection.Ascending 
+                ? query.OrderBy(x => x.CreatedAt) 
+                : query.OrderByDescending(x => x.CreatedAt),
+            "finished_field" => state.SortDirection == SortDirection.Ascending 
+                ? query.OrderBy(x => x.ProcessedAt) 
+                : query.OrderByDescending(x => x.ProcessedAt),
+            "status_field" => state.SortDirection == SortDirection.Ascending 
+                ? query.OrderBy(x => x.Status) 
+                : query.OrderByDescending(x => x.Status),
+            _ => query.OrderBy(x => x.Order)
+        };
+
+        UpdateQueryParameters(state);
+
+        var pagedData = query.Skip(state.Page * state.PageSize).Take(state.PageSize).ToList();
+        return Task.FromResult(new TableData<PersistedTask> { Items = pagedData, TotalItems = cachedTasks.Count });
+    }
+
+    private void UpdateQueryParameters(TableState state)
+    {
+        var queryParams = HttpUtility.ParseQueryString(new Uri(NavigationManager.Uri).Query);
+        
+        string pageKey = string.IsNullOrEmpty(QueryPrefix) ? "page" : $"{QueryPrefix}_page";
+        string pageSizeKey = string.IsNullOrEmpty(QueryPrefix) ? "pageSize" : $"{QueryPrefix}_pageSize";
+        string sortByKey = string.IsNullOrEmpty(QueryPrefix) ? "sortBy" : $"{QueryPrefix}_sortBy";
+        string sortDirKey = string.IsNullOrEmpty(QueryPrefix) ? "sortDir" : $"{QueryPrefix}_sortDir";
+
+        bool needsUpdate = false;
+        
+        if (queryParams.Get(pageKey) != state.Page.ToString())
+        {
+            needsUpdate = true;
+        }
+        if (queryParams.Get(pageSizeKey) != state.PageSize.ToString())
+        {
+            needsUpdate = true;
+        }
+        if (queryParams.Get(sortByKey) != state.SortLabel)
+        {
+            needsUpdate = true;
+        }
+        if (queryParams.Get(sortDirKey) != state.SortDirection.ToString())
+        {
+            needsUpdate = true;
+        }
+
+        if (needsUpdate)
+        {
+            var newUrl = NavigationManager.GetUriWithQueryParameters(new Dictionary<string, object?>
+            {
+                [pageKey] = state.Page,
+                [pageSizeKey] = state.PageSize,
+                [sortByKey] = state.SortLabel,
+                [sortDirKey] = state.SortDirection.ToString()
+            });
+            NavigationManager.NavigateTo(newUrl, forceLoad: false, replace: true);
+        }
     }
 
 }

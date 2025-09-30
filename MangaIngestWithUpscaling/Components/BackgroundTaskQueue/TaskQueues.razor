@@ -20,12 +20,14 @@
 
 <MudGrid>
     <MudItem lg="6" xs="12">
-        <TaskTable Tasks="@standardTasks" Title="Standard Tasks" OnClearCompleted="OnClearCompletedStandardTasks"
+        <TaskTable @ref="standardTaskTable" Tasks="@standardTasks" Title="Standard Tasks" QueryPrefix="std"
+            OnClearCompleted="OnClearCompletedStandardTasks"
             OnClearFailed="OnClearFailedStandardTasks" OnRetryFailed="OnRetryFailed" OnDelete="OnDelete"
             OnCancel="OnCancelStandardTask" OnRunNow="OnRunNow" />
     </MudItem>
     <MudItem lg="6" xs="12">
-        <TaskTable Tasks="@upscaleTasks" Title="Upscaling Tasks" OnClearCompleted="OnClearCompletedUpscaleTasks"
+        <TaskTable @ref="upscaleTaskTable" Tasks="@upscaleTasks" Title="Upscaling Tasks" QueryPrefix="usc"
+            OnClearCompleted="OnClearCompletedUpscaleTasks"
             OnClearFailed="OnClearFailedUpscaleTasks" OnRetryFailed="OnRetryFailed" OnDelete="OnDelete"
             OnCancel="OnCancelUpscaleTask" OnRunNow="OnRunNow" />
     </MudItem>
@@ -34,6 +36,9 @@
 @code {
     private IReadOnlyCollection<PersistedTask> standardTasks => TaskRegistry.StandardTasks;
     private IReadOnlyCollection<PersistedTask> upscaleTasks => TaskRegistry.UpscaleTasks;
+
+    private TaskTable standardTaskTable = null!;
+    private TaskTable upscaleTaskTable = null!;
 
     private async Task OnClearCompletedStandardTasks()
     {
@@ -203,46 +208,58 @@
 
     private async Task OnTaskUpdate(PersistedTask task)
     {
-        await InvokeAsync(() =>
+        await InvokeAsync(async () =>
         {
-            // Registry drives the state; we only trigger UI refresh
             StateHasChanged();
-            return Task.CompletedTask;
+            if (standardTaskTable != null)
+                await standardTaskTable.ReloadData();
+            if (upscaleTaskTable != null)
+                await upscaleTaskTable.ReloadData();
         });
     }
 
     private async Task OnStandardTaskChanged(PersistedTask task)
     {
-        await InvokeAsync(() =>
+        await InvokeAsync(async () =>
         {
-            // Registry drives the state; we only trigger UI refresh
             StateHasChanged();
-            return Task.CompletedTask;
+            if (standardTaskTable != null)
+                await standardTaskTable.ReloadData();
         });
     }
 
     private async Task OnUpscaleTaskChanged(PersistedTask task)
     {
-        await InvokeAsync(() =>
+        await InvokeAsync(async () =>
         {
-            // Registry drives the state; we only trigger UI refresh
             StateHasChanged();
-            return Task.CompletedTask;
+            if (upscaleTaskTable != null)
+                await upscaleTaskTable.ReloadData();
         });
     }
 
     private async Task OnTaskRemoved(PersistedTask task)
     {
-        await InvokeAsync(() =>
+        await InvokeAsync(async () =>
         {
             StateHasChanged();
-            return Task.CompletedTask;
+            if (standardTaskTable != null)
+                await standardTaskTable.ReloadData();
+            if (upscaleTaskTable != null)
+                await upscaleTaskTable.ReloadData();
         });
     }
 
     private void OnRegistryCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
-        _ = InvokeAsync(StateHasChanged);
+        _ = InvokeAsync(async () =>
+        {
+            StateHasChanged();
+            if (standardTaskTable != null)
+                await standardTaskTable.ReloadData();
+            if (upscaleTaskTable != null)
+                await upscaleTaskTable.ReloadData();
+        });
     }
 
     // No local collections; TaskRegistry is the single source of truth.

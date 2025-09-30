@@ -140,6 +140,22 @@
     [SupplyParameterFromQuery(Name = "search")]
     public string SearchString { get; set; } = "";
 
+    [Parameter]
+    [SupplyParameterFromQuery(Name = "page")]
+    public int? PageNumber { get; set; }
+
+    [Parameter]
+    [SupplyParameterFromQuery(Name = "pageSize")]
+    public int? PageSizeValue { get; set; }
+
+    [Parameter]
+    [SupplyParameterFromQuery(Name = "sortBy")]
+    public string? SortByColumn { get; set; }
+
+    [Parameter]
+    [SupplyParameterFromQuery(Name = "sortDir")]
+    public string? SortDirectionValue { get; set; }
+
     private HashSet<Manga> selectedMangas = new();
 
     private MudTable<Manga> table = default!;
@@ -186,6 +202,8 @@
             })
             .DisposeWith(disposables);
 
+        UpdateQueryParameters(state);
+
         try
         {
             var totalItems = await query.CountAsync(cancellationToken: cancellationToken);
@@ -197,6 +215,42 @@
             Snackbar.Add($"Error: {e.Message}", Severity.Error);
             Logger.LogError(e, "Error loading mangas.");
             return new TableData<Manga> { Items = new List<Manga>(), TotalItems = 0 };
+        }
+    }
+
+    private void UpdateQueryParameters(TableState state)
+    {
+        var queryParams = HttpUtility.ParseQueryString(new Uri(NavigationManager.Uri).Query);
+        
+        bool needsUpdate = false;
+        
+        if (queryParams.Get("page") != state.Page.ToString())
+        {
+            needsUpdate = true;
+        }
+        if (queryParams.Get("pageSize") != state.PageSize.ToString())
+        {
+            needsUpdate = true;
+        }
+        if (queryParams.Get("sortBy") != state.SortLabel)
+        {
+            needsUpdate = true;
+        }
+        if (queryParams.Get("sortDir") != state.SortDirection.ToString())
+        {
+            needsUpdate = true;
+        }
+
+        if (needsUpdate)
+        {
+            var newUrl = NavigationManager.GetUriWithQueryParameters(new Dictionary<string, object?>
+            {
+                ["page"] = state.Page,
+                ["pageSize"] = state.PageSize,
+                ["sortBy"] = state.SortLabel,
+                ["sortDir"] = state.SortDirection.ToString()
+            });
+            NavigationManager.NavigateTo(newUrl, forceLoad: false, replace: true);
         }
     }
 
