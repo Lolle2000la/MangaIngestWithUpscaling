@@ -193,4 +193,137 @@ public class CbzConverterTests : IDisposable
 
         Assert.Throws<InvalidOperationException>(() => _converter.ConvertToCbz(chapter, _tempDir));
     }
+
+    [Fact]
+    public void FixImageExtensionsInCbz_CorrectsMismatchedExtensions()
+    {
+        // Create a CBZ with mismatched extensions
+        var tempCbzDir = Path.Combine(_tempDir, "TestChapter");
+        Directory.CreateDirectory(tempCbzDir);
+
+        // Create a WebP file with .jpg extension
+        byte[] webpHeader =
+        [
+            0x52,
+            0x49,
+            0x46,
+            0x46,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x57,
+            0x45,
+            0x42,
+            0x50,
+        ];
+        File.WriteAllBytes(Path.Combine(tempCbzDir, "page001.jpg"), webpHeader);
+
+        // Create a PNG file with .jpg extension
+        byte[] pngHeader = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        File.WriteAllBytes(Path.Combine(tempCbzDir, "page002.jpg"), pngHeader);
+
+        // Create CBZ
+        var cbzPath = Path.Combine(_tempDir, "test.cbz");
+        ZipFile.CreateFromDirectory(tempCbzDir, cbzPath);
+
+        // Fix extensions
+        bool result = _converter.FixImageExtensionsInCbz(cbzPath);
+
+        // Verify corrections were made
+        Assert.True(result);
+
+        // Verify CBZ contents
+        using var archive = ZipFile.OpenRead(cbzPath);
+        var entries = archive.Entries.Select(e => e.FullName).OrderBy(e => e).ToList();
+
+        Assert.Equal(2, entries.Count);
+        Assert.Contains("page001.webp", entries);
+        Assert.Contains("page002.png", entries);
+    }
+
+    [Fact]
+    public void FixImageExtensionsInCbz_ReturnsFalseWhenNoChangesNeeded()
+    {
+        // Create a CBZ with correct extensions
+        var tempCbzDir = Path.Combine(_tempDir, "TestChapter");
+        Directory.CreateDirectory(tempCbzDir);
+
+        // Create a proper JPEG file with .jpg extension
+        byte[] jpegHeader = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
+        File.WriteAllBytes(Path.Combine(tempCbzDir, "page001.jpg"), jpegHeader);
+
+        // Create CBZ
+        var cbzPath = Path.Combine(_tempDir, "test.cbz");
+        ZipFile.CreateFromDirectory(tempCbzDir, cbzPath);
+
+        // Try to fix extensions
+        bool result = _converter.FixImageExtensionsInCbz(cbzPath);
+
+        // No corrections should be made
+        Assert.False(result);
+
+        // Verify CBZ contents unchanged
+        using var archive = ZipFile.OpenRead(cbzPath);
+        var entries = archive.Entries.Select(e => e.FullName).ToList();
+
+        Assert.Single(entries);
+        Assert.Equal("page001.jpg", entries[0]);
+    }
+
+    [Fact]
+    public void FixImageExtensionsInCbz_ThrowsForNonExistentFile()
+    {
+        var nonExistentPath = Path.Combine(_tempDir, "nonexistent.cbz");
+        Assert.Throws<FileNotFoundException>(() =>
+            _converter.FixImageExtensionsInCbz(nonExistentPath)
+        );
+    }
+
+    [Fact]
+    public void FixImageExtensionsInCbz_PreservesNonImageFiles()
+    {
+        // Create a CBZ with image and non-image files
+        var tempCbzDir = Path.Combine(_tempDir, "TestChapter");
+        Directory.CreateDirectory(tempCbzDir);
+
+        // Create a WebP file with .jpg extension
+        byte[] webpHeader =
+        [
+            0x52,
+            0x49,
+            0x46,
+            0x46,
+            0x00,
+            0x00,
+            0x00,
+            0x00,
+            0x57,
+            0x45,
+            0x42,
+            0x50,
+        ];
+        File.WriteAllBytes(Path.Combine(tempCbzDir, "page001.jpg"), webpHeader);
+
+        // Create a non-image file
+        File.WriteAllText(Path.Combine(tempCbzDir, "ComicInfo.xml"), "<ComicInfo></ComicInfo>");
+
+        // Create CBZ
+        var cbzPath = Path.Combine(_tempDir, "test.cbz");
+        ZipFile.CreateFromDirectory(tempCbzDir, cbzPath);
+
+        // Fix extensions
+        bool result = _converter.FixImageExtensionsInCbz(cbzPath);
+
+        // Verify corrections were made
+        Assert.True(result);
+
+        // Verify CBZ contents
+        using var archive = ZipFile.OpenRead(cbzPath);
+        var entries = archive.Entries.Select(e => e.FullName).OrderBy(e => e).ToList();
+
+        Assert.Equal(2, entries.Count);
+        Assert.Contains("ComicInfo.xml", entries);
+        Assert.Contains("page001.webp", entries);
+    }
 }

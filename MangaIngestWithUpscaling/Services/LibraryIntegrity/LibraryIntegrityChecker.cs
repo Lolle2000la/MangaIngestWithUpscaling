@@ -8,6 +8,7 @@ using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.ChapterManagement;
 using MangaIngestWithUpscaling.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Shared.Services.CbzConversion;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
@@ -25,6 +26,7 @@ public partial class LibraryIntegrityChecker(
     IChapterInIngestRecognitionService chapterRecognitionService,
     IChapterProcessingService chapterProcessingService,
     ITaskQueue taskQueue,
+    ICbzConverter cbzConverter,
     ILogger<LibraryIntegrityChecker> logger,
     IOptions<IntegrityCheckerConfig> configOptions
 ) : ILibraryIntegrityChecker
@@ -442,6 +444,32 @@ public partial class LibraryIntegrityChecker(
             }
         }
 
+        // Fix image extensions if needed
+        bool extensionsFixed = false;
+        try
+        {
+            if (cbzConverter.FixImageExtensionsInCbz(chapter.NotUpscaledFullPath))
+            {
+                logger.LogInformation(
+                    "Fixed image file extensions in original chapter {chapterFileName} ({chapterId}) of {seriesTitle}.",
+                    chapter.FileName,
+                    chapter.Id,
+                    chapter.Manga.PrimaryTitle
+                );
+                extensionsFixed = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to fix image extensions in original chapter {chapterFileName} ({chapterId}) of {seriesTitle}. Continuing with other checks.",
+                chapter.FileName,
+                chapter.Id,
+                chapter.Manga.PrimaryTitle
+            );
+        }
+
         ExtractedMetadata metadata = await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(
             chapter.NotUpscaledFullPath
         );
@@ -460,7 +488,7 @@ public partial class LibraryIntegrityChecker(
             return IntegrityCheckResult.Corrected;
         }
 
-        return IntegrityCheckResult.Ok;
+        return extensionsFixed ? IntegrityCheckResult.Corrected : IntegrityCheckResult.Ok;
     }
 
     private async Task<IntegrityCheckResult> CheckUpscaledIntegrity(
@@ -548,6 +576,32 @@ public partial class LibraryIntegrityChecker(
                 return IntegrityCheckResult.Missing;
             }
 
+            // Fix image extensions in upscaled file if needed
+            bool upscaledExtensionsFixed = false;
+            try
+            {
+                if (cbzConverter.FixImageExtensionsInCbz(chapter.UpscaledFullPath))
+                {
+                    logger.LogInformation(
+                        "Fixed image file extensions in upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle}.",
+                        chapter.FileName,
+                        chapter.Id,
+                        chapter.Manga.PrimaryTitle
+                    );
+                    upscaledExtensionsFixed = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(
+                    ex,
+                    "Failed to fix image extensions in upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle}. Continuing with other checks.",
+                    chapter.FileName,
+                    chapter.Id,
+                    chapter.Manga.PrimaryTitle
+                );
+            }
+
             if (
                 await metadataHandling.PagesEqualAsync(
                     chapter.NotUpscaledFullPath,
@@ -559,6 +613,7 @@ public partial class LibraryIntegrityChecker(
                     await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(
                         chapter.UpscaledFullPath
                     );
+                bool metadataCorrected = false;
                 if (!CheckMetadata(metadata, out var correctedMetadata))
                 {
                     logger.LogWarning(
@@ -571,11 +626,14 @@ public partial class LibraryIntegrityChecker(
                         chapter.UpscaledFullPath,
                         correctedMetadata
                     );
+                    metadataCorrected = true;
                 }
 
                 if (chapter.IsUpscaled)
                 {
-                    return IntegrityCheckResult.Ok;
+                    return (upscaledExtensionsFixed || metadataCorrected)
+                        ? IntegrityCheckResult.Corrected
+                        : IntegrityCheckResult.Ok;
                 }
 
                 logger.LogInformation(
