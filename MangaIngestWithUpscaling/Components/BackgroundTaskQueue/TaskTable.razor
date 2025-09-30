@@ -2,7 +2,7 @@
 @using System.Web
 @inject NavigationManager NavigationManager
 
-<MudTable T="PersistedTask" ServerData="@LoadTasks" RowsPerPage="10" Elevation="3" Dense="true" @ref="Table">
+<MudTable T="PersistedTask" ServerData="@LoadTasks" @bind-CurrentPage="currentPage" @bind-RowsPerPage="rowsPerPage" Elevation="3" Dense="true" @ref="Table">
     <ToolBarContent>
         <MudText Typo="Typo.h6">@Title</MudText>
         <MudSpacer/>
@@ -120,11 +120,83 @@
 
     private List<PersistedTask> cachedTasks = new();
 
-    private bool isFirstLoad = true;
+    private int _currentPage = 0;
+    private int _rowsPerPage = 10;
+
+    private int currentPage
+    {
+        get => _currentPage;
+        set
+        {
+            if (_currentPage != value)
+            {
+                _currentPage = value;
+                UpdatePaginationInUrl();
+            }
+        }
+    }
+
+    private int rowsPerPage
+    {
+        get => _rowsPerPage;
+        set
+        {
+            if (_rowsPerPage != value)
+            {
+                _rowsPerPage = value;
+                UpdatePaginationInUrl();
+            }
+        }
+    }
+
+    private void UpdatePaginationInUrl()
+    {
+        var queryParams = HttpUtility.ParseQueryString(new Uri(NavigationManager.Uri).Query);
+        
+        string pageKey = string.IsNullOrEmpty(QueryPrefix) ? "page" : $"{QueryPrefix}_page";
+        string pageSizeKey = string.IsNullOrEmpty(QueryPrefix) ? "pageSize" : $"{QueryPrefix}_pageSize";
+
+        bool needsUpdate = false;
+        
+        if (queryParams.Get(pageKey) != _currentPage.ToString())
+        {
+            needsUpdate = true;
+        }
+        if (queryParams.Get(pageSizeKey) != _rowsPerPage.ToString())
+        {
+            needsUpdate = true;
+        }
+
+        if (needsUpdate)
+        {
+            var newUrl = NavigationManager.GetUriWithQueryParameters(new Dictionary<string, object?>
+            {
+                [pageKey] = _currentPage,
+                [pageSizeKey] = _rowsPerPage
+            });
+            NavigationManager.NavigateTo(newUrl, forceLoad: false, replace: true);
+        }
+    }
 
     protected override void OnParametersSet()
     {
         cachedTasks = new List<PersistedTask>(Tasks);
+        
+        // Initialize table state from query parameters
+        var queryParams = HttpUtility.ParseQueryString(new Uri(NavigationManager.Uri).Query);
+        
+        string pageKey = string.IsNullOrEmpty(QueryPrefix) ? "page" : $"{QueryPrefix}_page";
+        string pageSizeKey = string.IsNullOrEmpty(QueryPrefix) ? "pageSize" : $"{QueryPrefix}_pageSize";
+        
+        if (int.TryParse(queryParams.Get(pageKey), out var page) && page >= 0)
+        {
+            _currentPage = page;
+        }
+        
+        if (int.TryParse(queryParams.Get(pageSizeKey), out var pageSize) && pageSize > 0)
+        {
+            _rowsPerPage = pageSize;
+        }
     }
 
     public async Task ReloadData()
@@ -134,41 +206,6 @@
 
     private Task<TableData<PersistedTask>> LoadTasks(TableState state, CancellationToken cancellationToken)
     {
-        // On first load, restore state from query parameters
-        if (isFirstLoad)
-        {
-            isFirstLoad = false;
-            
-            var queryParams = HttpUtility.ParseQueryString(new Uri(NavigationManager.Uri).Query);
-            
-            string pageKey = string.IsNullOrEmpty(QueryPrefix) ? "page" : $"{QueryPrefix}_page";
-            string pageSizeKey = string.IsNullOrEmpty(QueryPrefix) ? "pageSize" : $"{QueryPrefix}_pageSize";
-            string sortByKey = string.IsNullOrEmpty(QueryPrefix) ? "sortBy" : $"{QueryPrefix}_sortBy";
-            string sortDirKey = string.IsNullOrEmpty(QueryPrefix) ? "sortDir" : $"{QueryPrefix}_sortDir";
-            
-            if (int.TryParse(queryParams.Get(pageKey), out var page) && page >= 0)
-            {
-                state.Page = page;
-            }
-            
-            if (int.TryParse(queryParams.Get(pageSizeKey), out var pageSize) && pageSize > 0)
-            {
-                state.PageSize = pageSize;
-            }
-            
-            var sortBy = queryParams.Get(sortByKey);
-            if (!string.IsNullOrEmpty(sortBy))
-            {
-                state.SortLabel = sortBy;
-            }
-            
-            var sortDirStr = queryParams.Get(sortDirKey);
-            if (!string.IsNullOrEmpty(sortDirStr) && Enum.TryParse<SortDirection>(sortDirStr, out var sortDir))
-            {
-                state.SortDirection = sortDir;
-            }
-        }
-
         var query = cachedTasks.AsQueryable();
 
         query = state.SortLabel switch

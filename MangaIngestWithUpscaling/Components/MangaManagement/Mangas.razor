@@ -24,6 +24,8 @@
           RowEditCancel="@RestoreOnCancel"
           RowEditCommit="async o => await OnCommitEdit(o)"
           @bind-SelectedItems="selectedMangas"
+          @bind-CurrentPage="currentPage"
+          @bind-RowsPerPage="rowsPerPage"
           @ref="table">
     <ToolBarContent>
         <MudGrid>
@@ -156,6 +158,61 @@
     [SupplyParameterFromQuery(Name = "sortDir")]
     public string? SortDirectionValue { get; set; }
 
+    private int _currentPage = 0;
+    private int _rowsPerPage = 10;
+
+    private int currentPage
+    {
+        get => _currentPage;
+        set
+        {
+            if (_currentPage != value)
+            {
+                _currentPage = value;
+                UpdatePaginationInUrl();
+            }
+        }
+    }
+
+    private int rowsPerPage
+    {
+        get => _rowsPerPage;
+        set
+        {
+            if (_rowsPerPage != value)
+            {
+                _rowsPerPage = value;
+                UpdatePaginationInUrl();
+            }
+        }
+    }
+
+    private void UpdatePaginationInUrl()
+    {
+        var queryParams = HttpUtility.ParseQueryString(new Uri(NavigationManager.Uri).Query);
+        
+        bool needsUpdate = false;
+        
+        if (queryParams.Get("page") != _currentPage.ToString())
+        {
+            needsUpdate = true;
+        }
+        if (queryParams.Get("pageSize") != _rowsPerPage.ToString())
+        {
+            needsUpdate = true;
+        }
+
+        if (needsUpdate)
+        {
+            var newUrl = NavigationManager.GetUriWithQueryParameters(new Dictionary<string, object?>
+            {
+                ["page"] = _currentPage,
+                ["pageSize"] = _rowsPerPage
+            });
+            NavigationManager.NavigateTo(newUrl, forceLoad: false, replace: true);
+        }
+    }
+
     private HashSet<Manga> selectedMangas = new();
 
     private MudTable<Manga> table = default!;
@@ -164,37 +221,22 @@
 
     private CompositeDisposable disposables = new();
 
-    private bool isFirstLoad = true;
+    protected override void OnParametersSet()
+    {
+        // Initialize table state from query parameters on first load
+        if (PageNumber.HasValue && PageNumber.Value >= 0)
+        {
+            _currentPage = PageNumber.Value;
+        }
+        
+        if (PageSizeValue.HasValue && PageSizeValue.Value > 0)
+        {
+            _rowsPerPage = PageSizeValue.Value;
+        }
+    }
 
     private async Task<TableData<Manga>> GetMangas(TableState state, CancellationToken cancellationToken)
     {
-        // On first load, restore state from query parameters
-        if (isFirstLoad)
-        {
-            isFirstLoad = false;
-            
-            if (PageNumber.HasValue && PageNumber.Value >= 0)
-            {
-                state.Page = PageNumber.Value;
-            }
-            
-            if (PageSizeValue.HasValue && PageSizeValue.Value > 0)
-            {
-                state.PageSize = PageSizeValue.Value;
-            }
-            
-            if (!string.IsNullOrEmpty(SortByColumn))
-            {
-                state.SortLabel = SortByColumn;
-            }
-            
-            if (!string.IsNullOrEmpty(SortDirectionValue) && 
-                Enum.TryParse<SortDirection>(SortDirectionValue, out var sortDir))
-            {
-                state.SortDirection = sortDir;
-            }
-        }
-
         var query = DbContext.MangaSeries
             .Include(x => x.Library)
             .ThenInclude(x => x.UpscalerProfile)
