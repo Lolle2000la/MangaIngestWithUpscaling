@@ -122,6 +122,10 @@
 
     private int _currentPage = 0;
     private int _rowsPerPage = 10;
+    
+    private string? initialSortLabel = null;
+    private SortDirection initialSortDirection = SortDirection.None;
+    private bool hasAppliedInitialSort = false;
 
     private int currentPage
     {
@@ -187,6 +191,8 @@
         
         string pageKey = string.IsNullOrEmpty(QueryPrefix) ? "page" : $"{QueryPrefix}_page";
         string pageSizeKey = string.IsNullOrEmpty(QueryPrefix) ? "pageSize" : $"{QueryPrefix}_pageSize";
+        string sortByKey = string.IsNullOrEmpty(QueryPrefix) ? "sortBy" : $"{QueryPrefix}_sortBy";
+        string sortDirKey = string.IsNullOrEmpty(QueryPrefix) ? "sortDir" : $"{QueryPrefix}_sortDir";
         
         if (int.TryParse(queryParams.Get(pageKey), out var page) && page >= 0)
         {
@@ -197,6 +203,32 @@
         {
             _rowsPerPage = pageSize;
         }
+        
+        // Store initial sort state from query parameters
+        if (!hasAppliedInitialSort)
+        {
+            var sortBy = queryParams.Get(sortByKey);
+            if (!string.IsNullOrEmpty(sortBy))
+            {
+                initialSortLabel = sortBy;
+            }
+            
+            var sortDirStr = queryParams.Get(sortDirKey);
+            if (!string.IsNullOrEmpty(sortDirStr) && Enum.TryParse<SortDirection>(sortDirStr, out var sortDir))
+            {
+                initialSortDirection = sortDir;
+            }
+        }
+    }
+    
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !hasAppliedInitialSort && initialSortLabel != null && Table != null)
+        {
+            hasAppliedInitialSort = true;
+            // Force table to reload with initial sort state
+            await InvokeAsync(async () => await Table.ReloadServerData());
+        }
     }
 
     public async Task ReloadData()
@@ -206,35 +238,45 @@
 
     private Task<TableData<PersistedTask>> LoadTasks(TableState state, CancellationToken cancellationToken)
     {
+        // Apply initial sort from query parameters if available
+        var sortLabel = state.SortLabel;
+        var sortDirection = state.SortDirection;
+        
+        if (!hasAppliedInitialSort && initialSortLabel != null)
+        {
+            sortLabel = initialSortLabel;
+            sortDirection = initialSortDirection;
+        }
+        
         var query = cachedTasks.AsQueryable();
 
-        query = state.SortLabel switch
+        query = sortLabel switch
         {
-            "order_field" => state.SortDirection == SortDirection.Ascending 
+            "order_field" => sortDirection == SortDirection.Ascending 
                 ? query.OrderBy(x => x.Order) 
                 : query.OrderByDescending(x => x.Order),
-            "name_field" => state.SortDirection == SortDirection.Ascending 
+            "name_field" => sortDirection == SortDirection.Ascending 
                 ? query.OrderBy(x => x.Data.TaskFriendlyName) 
                 : query.OrderByDescending(x => x.Data.TaskFriendlyName),
-            "queued_field" => state.SortDirection == SortDirection.Ascending 
+            "queued_field" => sortDirection == SortDirection.Ascending 
                 ? query.OrderBy(x => x.CreatedAt) 
                 : query.OrderByDescending(x => x.CreatedAt),
-            "finished_field" => state.SortDirection == SortDirection.Ascending 
+            "finished_field" => sortDirection == SortDirection.Ascending 
                 ? query.OrderBy(x => x.ProcessedAt) 
                 : query.OrderByDescending(x => x.ProcessedAt),
-            "status_field" => state.SortDirection == SortDirection.Ascending 
+            "status_field" => sortDirection == SortDirection.Ascending 
                 ? query.OrderBy(x => x.Status) 
                 : query.OrderByDescending(x => x.Status),
             _ => query.OrderBy(x => x.Order)
         };
 
-        UpdateQueryParameters(state);
+        UpdateQueryParameters(state, sortLabel, sortDirection);
 
         var pagedData = query.Skip(state.Page * state.PageSize).Take(state.PageSize).ToList();
         return Task.FromResult(new TableData<PersistedTask> { Items = pagedData, TotalItems = cachedTasks.Count });
     }
 
-    private void UpdateQueryParameters(TableState state)
+    private void UpdateQueryParameters(TableState state, string? sortLabel, SortDirection sortDirection)
     {
         var queryParams = HttpUtility.ParseQueryString(new Uri(NavigationManager.Uri).Query);
         
@@ -253,11 +295,11 @@
         {
             needsUpdate = true;
         }
-        if (queryParams.Get(sortByKey) != state.SortLabel)
+        if (queryParams.Get(sortByKey) != sortLabel)
         {
             needsUpdate = true;
         }
-        if (queryParams.Get(sortDirKey) != state.SortDirection.ToString())
+        if (queryParams.Get(sortDirKey) != sortDirection.ToString())
         {
             needsUpdate = true;
         }
@@ -268,8 +310,8 @@
             {
                 [pageKey] = state.Page,
                 [pageSizeKey] = state.PageSize,
-                [sortByKey] = state.SortLabel,
-                [sortDirKey] = state.SortDirection.ToString()
+                [sortByKey] = sortLabel,
+                [sortDirKey] = sortDirection.ToString()
             });
             NavigationManager.NavigateTo(newUrl, forceLoad: false, replace: true);
         }

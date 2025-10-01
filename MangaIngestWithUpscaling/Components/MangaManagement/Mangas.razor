@@ -220,6 +220,10 @@
     private Manga? mangaBeforeEdit;
 
     private CompositeDisposable disposables = new();
+    
+    private string? initialSortLabel = null;
+    private SortDirection initialSortDirection = SortDirection.None;
+    private bool hasAppliedInitialSort = false;
 
     protected override void OnParametersSet()
     {
@@ -233,10 +237,45 @@
         {
             _rowsPerPage = PageSizeValue.Value;
         }
+        
+        // Store initial sort state from query parameters
+        if (!hasAppliedInitialSort)
+        {
+            if (!string.IsNullOrEmpty(SortByColumn))
+            {
+                initialSortLabel = SortByColumn;
+            }
+            
+            if (!string.IsNullOrEmpty(SortDirectionValue) && 
+                Enum.TryParse<SortDirection>(SortDirectionValue, out var parsedDir))
+            {
+                initialSortDirection = parsedDir;
+            }
+        }
+    }
+    
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !hasAppliedInitialSort && initialSortLabel != null && table != null)
+        {
+            hasAppliedInitialSort = true;
+            // Force table to reload with initial sort state
+            await InvokeAsync(async () => await table.ReloadServerData());
+        }
     }
 
     private async Task<TableData<Manga>> GetMangas(TableState state, CancellationToken cancellationToken)
     {
+        // Apply initial sort from query parameters if available
+        var sortLabel = state.SortLabel;
+        var sortDirection = state.SortDirection;
+        
+        if (!hasAppliedInitialSort && initialSortLabel != null)
+        {
+            sortLabel = initialSortLabel;
+            sortDirection = initialSortDirection;
+        }
+        
         var query = DbContext.MangaSeries
             .Include(x => x.Library)
             .ThenInclude(x => x.UpscalerProfile)
@@ -255,11 +294,11 @@
             query = query.Where(x => x.PrimaryTitle.ToLower().Contains(trimmedSearchString.ToLower()) || x.OtherTitles.Any(s => s.Title.ToLower().Contains(trimmedSearchString.ToLower())));
         }
 
-        query = state.SortLabel switch
+        query = sortLabel switch
         {
-            "library_field" => query.OrderByDirection(state.SortDirection, x => x.Library.Name),
-            "title_field" => query.OrderByDirection(state.SortDirection, x => x.PrimaryTitle),
-            "chapters_field" => query.OrderByDirection(state.SortDirection, x => x.Chapters.Count()),
+            "library_field" => query.OrderByDirection(sortDirection, x => x.Library.Name),
+            "title_field" => query.OrderByDirection(sortDirection, x => x.PrimaryTitle),
+            "chapters_field" => query.OrderByDirection(sortDirection, x => x.Chapters.Count()),
             _ => query
         };
 
@@ -273,7 +312,7 @@
             })
             .DisposeWith(disposables);
 
-        UpdateQueryParameters(state);
+        UpdateQueryParameters(state, sortLabel, sortDirection);
 
         try
         {
@@ -289,7 +328,7 @@
         }
     }
 
-    private void UpdateQueryParameters(TableState state)
+    private void UpdateQueryParameters(TableState state, string? sortLabel, SortDirection sortDirection)
     {
         var queryParams = HttpUtility.ParseQueryString(new Uri(NavigationManager.Uri).Query);
         
@@ -303,11 +342,11 @@
         {
             needsUpdate = true;
         }
-        if (queryParams.Get("sortBy") != state.SortLabel)
+        if (queryParams.Get("sortBy") != sortLabel)
         {
             needsUpdate = true;
         }
-        if (queryParams.Get("sortDir") != state.SortDirection.ToString())
+        if (queryParams.Get("sortDir") != sortDirection.ToString())
         {
             needsUpdate = true;
         }
@@ -318,8 +357,8 @@
             {
                 ["page"] = state.Page,
                 ["pageSize"] = state.PageSize,
-                ["sortBy"] = state.SortLabel,
-                ["sortDir"] = state.SortDirection.ToString()
+                ["sortBy"] = sortLabel,
+                ["sortDir"] = sortDirection.ToString()
             });
             NavigationManager.NavigateTo(newUrl, forceLoad: false, replace: true);
         }
