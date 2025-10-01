@@ -44,6 +44,8 @@ public partial class LibraryIntegrityChecker(
         64
     );
 
+    private readonly bool _fixImageExtensions = configOptions?.Value?.FixImageExtensions ?? false;
+
     /// <inheritdoc/>
     public async Task<bool> CheckIntegrity(CancellationToken? cancellationToken = null)
     {
@@ -444,30 +446,33 @@ public partial class LibraryIntegrityChecker(
             }
         }
 
-        // Fix image extensions if needed
+        // Fix image extensions if needed and enabled in configuration
         bool extensionsFixed = false;
-        try
+        if (_fixImageExtensions)
         {
-            if (cbzConverter.FixImageExtensionsInCbz(chapter.NotUpscaledFullPath))
+            try
             {
-                logger.LogInformation(
-                    "Fixed image file extensions in original chapter {chapterFileName} ({chapterId}) of {seriesTitle}.",
+                if (cbzConverter.FixImageExtensionsInCbz(chapter.NotUpscaledFullPath))
+                {
+                    logger.LogInformation(
+                        "Fixed image file extensions in original chapter {chapterFileName} ({chapterId}) of {seriesTitle}.",
+                        chapter.FileName,
+                        chapter.Id,
+                        chapter.Manga.PrimaryTitle
+                    );
+                    extensionsFixed = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(
+                    ex,
+                    "Failed to fix image extensions in original chapter {chapterFileName} ({chapterId}) of {seriesTitle}. Continuing with other checks.",
                     chapter.FileName,
                     chapter.Id,
                     chapter.Manga.PrimaryTitle
                 );
-                extensionsFixed = true;
             }
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(
-                ex,
-                "Failed to fix image extensions in original chapter {chapterFileName} ({chapterId}) of {seriesTitle}. Continuing with other checks.",
-                chapter.FileName,
-                chapter.Id,
-                chapter.Manga.PrimaryTitle
-            );
         }
 
         ExtractedMetadata metadata = await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(
@@ -576,30 +581,33 @@ public partial class LibraryIntegrityChecker(
                 return IntegrityCheckResult.Missing;
             }
 
-            // Fix image extensions in upscaled file if needed
+            // Fix image extensions in upscaled file if needed and enabled in configuration
             bool upscaledExtensionsFixed = false;
-            try
+            if (_fixImageExtensions)
             {
-                if (cbzConverter.FixImageExtensionsInCbz(chapter.UpscaledFullPath))
+                try
                 {
-                    logger.LogInformation(
-                        "Fixed image file extensions in upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle}.",
+                    if (cbzConverter.FixImageExtensionsInCbz(chapter.UpscaledFullPath))
+                    {
+                        logger.LogInformation(
+                            "Fixed image file extensions in upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle}.",
+                            chapter.FileName,
+                            chapter.Id,
+                            chapter.Manga.PrimaryTitle
+                        );
+                        upscaledExtensionsFixed = true;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(
+                        ex,
+                        "Failed to fix image extensions in upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle}. Continuing with other checks.",
                         chapter.FileName,
                         chapter.Id,
                         chapter.Manga.PrimaryTitle
                     );
-                    upscaledExtensionsFixed = true;
                 }
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(
-                    ex,
-                    "Failed to fix image extensions in upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle}. Continuing with other checks.",
-                    chapter.FileName,
-                    chapter.Id,
-                    chapter.Manga.PrimaryTitle
-                );
             }
 
             if (

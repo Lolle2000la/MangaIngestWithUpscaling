@@ -8,4 +8,10 @@ public class IntegrityCheckerConfig
     ///     Max degree of parallelism for integrity checks. If null or <= 0, defaults to Environment.ProcessorCount.
     /// </summary>
     public int? MaxParallelism { get; set; }
+
+    /// <summary>
+    ///     Whether to automatically fix image file extensions based on their actual image headers during integrity checks.
+    ///     Defaults to false.
+    /// </summary>
+    public bool FixImageExtensions { get; set; } = false;
 }
