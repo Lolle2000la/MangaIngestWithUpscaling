@@ -12,11 +12,6 @@
     </ToolBarContent>
     <HeaderContent>
         <MudTh>
-            <MudTableSortLabel InitialDirection="SortDirection.Ascending"
-                               SortBy="new Func<PersistedTask, object>(x => x.Order)">Order
-            </MudTableSortLabel>
-        </MudTh>
-        <MudTh>
             <MudTableSortLabel SortBy="new Func<PersistedTask, object>(x => x.Data.TaskFriendlyName)">Name
             </MudTableSortLabel>
         </MudTh>
@@ -33,9 +28,6 @@
         <MudTh>Actions</MudTh>
     </HeaderContent>
     <RowTemplate>
-        <MudTd DataLabel="Order">
-            @context.Order
-        </MudTd>
         <MudTd DataLabel="Name">@context.Data.TaskFriendlyName</MudTd>
         <MudTd DataLabel="Queued At">@context.CreatedAt.ToLocalTime()</MudTd>
         <MudTd DataLabel="Finished At">@(context.ProcessedAt is not null ? context.ProcessedAt.Value.ToLocalTime() : "")
