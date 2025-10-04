@@ -36,4 +36,21 @@ public class PersistedTask
     {
         return HashCode.Combine(Id, Status, CreatedAt, ProcessedAt, RetryCount);
     }
+
+    /// <summary>
+    /// Gets the sort priority for the task status.
+    /// Lower values appear first in the UI.
+    /// </summary>
+    public int GetStatusSortPriority()
+    {
+        return Status switch
+        {
+            PersistedTaskStatus.Completed
+            or PersistedTaskStatus.Canceled
+            or PersistedTaskStatus.Failed => 0,
+            PersistedTaskStatus.Processing => 1,
+            PersistedTaskStatus.Pending => 2,
+            _ => 3,
+        };
+    }
 }
