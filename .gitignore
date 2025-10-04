@@ -374,3 +374,6 @@ MangaIngestWithUpscaling/.net10-upgrade-complete
 # test data
 test_data/
 
+*.db
+*.db-shm
+*.db-wal

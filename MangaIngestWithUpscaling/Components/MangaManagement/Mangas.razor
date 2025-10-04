@@ -24,6 +24,8 @@
           RowEditCancel="@RestoreOnCancel"
           RowEditCommit="async o => await OnCommitEdit(o)"
           @bind-SelectedItems="selectedMangas"
+          @bind-CurrentPage="currentPage"
+          @bind-RowsPerPage="rowsPerPage"
           @ref="table">
     <ToolBarContent>
         <MudGrid>
@@ -140,6 +142,77 @@
     [SupplyParameterFromQuery(Name = "search")]
     public string SearchString { get; set; } = "";
 
+    [Parameter]
+    [SupplyParameterFromQuery(Name = "page")]
+    public int? PageNumber { get; set; }
+
+    [Parameter]
+    [SupplyParameterFromQuery(Name = "pageSize")]
+    public int? PageSizeValue { get; set; }
+
+    [Parameter]
+    [SupplyParameterFromQuery(Name = "sortBy")]
+    public string? SortByColumn { get; set; }
+
+    [Parameter]
+    [SupplyParameterFromQuery(Name = "sortDir")]
+    public string? SortDirectionValue { get; set; }
+
+    private int _currentPage = 0;
+    private int _rowsPerPage = 10;
+
+    private int currentPage
+    {
+        get => _currentPage;
+        set
+        {
+            if (_currentPage != value)
+            {
+                _currentPage = value;
+                UpdatePaginationInUrl();
+            }
+        }
+    }
+
+    private int rowsPerPage
+    {
+        get => _rowsPerPage;
+        set
+        {
+            if (_rowsPerPage != value)
+            {
+                _rowsPerPage = value;
+                UpdatePaginationInUrl();
+            }
+        }
+    }
+
+    private void UpdatePaginationInUrl()
+    {
+        var queryParams = HttpUtility.ParseQueryString(new Uri(NavigationManager.Uri).Query);
+        
+        bool needsUpdate = false;
+        
+        if (queryParams.Get("page") != _currentPage.ToString())
+        {
+            needsUpdate = true;
+        }
+        if (queryParams.Get("pageSize") != _rowsPerPage.ToString())
+        {
+            needsUpdate = true;
+        }
+
+        if (needsUpdate)
+        {
+            var newUrl = NavigationManager.GetUriWithQueryParameters(new Dictionary<string, object?>
+            {
+                ["page"] = _currentPage,
+                ["pageSize"] = _rowsPerPage
+            });
+            NavigationManager.NavigateTo(newUrl, forceLoad: false, replace: true);
+        }
+    }
+
     private HashSet<Manga> selectedMangas = new();
 
     private MudTable<Manga> table = default!;
@@ -147,9 +220,62 @@
     private Manga? mangaBeforeEdit;
 
     private CompositeDisposable disposables = new();
+    
+    private string? initialSortLabel = null;
+    private SortDirection initialSortDirection = SortDirection.None;
+    private bool hasAppliedInitialSort = false;
+
+    protected override void OnParametersSet()
+    {
+        // Initialize table state from query parameters on first load
+        if (PageNumber.HasValue && PageNumber.Value >= 0)
+        {
+            _currentPage = PageNumber.Value;
+        }
+        
+        if (PageSizeValue.HasValue && PageSizeValue.Value > 0)
+        {
+            _rowsPerPage = PageSizeValue.Value;
+        }
+        
+        // Store initial sort state from query parameters
+        if (!hasAppliedInitialSort)
+        {
+            if (!string.IsNullOrEmpty(SortByColumn))
+            {
+                initialSortLabel = SortByColumn;
+            }
+            
+            if (!string.IsNullOrEmpty(SortDirectionValue) && 
+                Enum.TryParse<SortDirection>(SortDirectionValue, out var parsedDir))
+            {
+                initialSortDirection = parsedDir;
+            }
+        }
+    }
+    
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !hasAppliedInitialSort && initialSortLabel != null && table != null)
+        {
+            hasAppliedInitialSort = true;
+            // Force table to reload with initial sort state
+            await InvokeAsync(async () => await table.ReloadServerData());
+        }
+    }
 
     private async Task<TableData<Manga>> GetMangas(TableState state, CancellationToken cancellationToken)
     {
+        // Apply initial sort from query parameters if available
+        var sortLabel = state.SortLabel;
+        var sortDirection = state.SortDirection;
+        
+        if (!hasAppliedInitialSort && initialSortLabel != null)
+        {
+            sortLabel = initialSortLabel;
+            sortDirection = initialSortDirection;
+        }
+        
         var query = DbContext.MangaSeries
             .Include(x => x.Library)
             .ThenInclude(x => x.UpscalerProfile)
@@ -168,11 +294,11 @@
             query = query.Where(x => x.PrimaryTitle.ToLower().Contains(trimmedSearchString.ToLower()) || x.OtherTitles.Any(s => s.Title.ToLower().Contains(trimmedSearchString.ToLower())));
         }
 
-        query = state.SortLabel switch
+        query = sortLabel switch
         {
-            "library_field" => query.OrderByDirection(state.SortDirection, x => x.Library.Name),
-            "title_field" => query.OrderByDirection(state.SortDirection, x => x.PrimaryTitle),
-            "chapters_field" => query.OrderByDirection(state.SortDirection, x => x.Chapters.Count()),
+            "library_field" => query.OrderByDirection(sortDirection, x => x.Library.Name),
+            "title_field" => query.OrderByDirection(sortDirection, x => x.PrimaryTitle),
+            "chapters_field" => query.OrderByDirection(sortDirection, x => x.Chapters.Count()),
             _ => query
         };
 
@@ -186,6 +312,8 @@
             })
             .DisposeWith(disposables);
 
+        UpdateQueryParameters(state, sortLabel, sortDirection);
+
         try
         {
             var totalItems = await query.CountAsync(cancellationToken: cancellationToken);
@@ -197,6 +325,42 @@
             Snackbar.Add($"Error: {e.Message}", Severity.Error);
             Logger.LogError(e, "Error loading mangas.");
             return new TableData<Manga> { Items = new List<Manga>(), TotalItems = 0 };
+        }
+    }
+
+    private void UpdateQueryParameters(TableState state, string? sortLabel, SortDirection sortDirection)
+    {
+        var queryParams = HttpUtility.ParseQueryString(new Uri(NavigationManager.Uri).Query);
+        
+        bool needsUpdate = false;
+        
+        if (queryParams.Get("page") != state.Page.ToString())
+        {
+            needsUpdate = true;
+        }
+        if (queryParams.Get("pageSize") != state.PageSize.ToString())
+        {
+            needsUpdate = true;
+        }
+        if (queryParams.Get("sortBy") != sortLabel)
+        {
+            needsUpdate = true;
+        }
+        if (queryParams.Get("sortDir") != sortDirection.ToString())
+        {
+            needsUpdate = true;
+        }
+
+        if (needsUpdate)
+        {
+            var newUrl = NavigationManager.GetUriWithQueryParameters(new Dictionary<string, object?>
+            {
+                ["page"] = state.Page,
+                ["pageSize"] = state.PageSize,
+                ["sortBy"] = sortLabel,
+                ["sortDir"] = sortDirection.ToString()
+            });
+            NavigationManager.NavigateTo(newUrl, forceLoad: false, replace: true);
         }
     }
 
