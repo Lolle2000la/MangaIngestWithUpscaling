@@ -465,6 +465,26 @@ public partial class IngestProcessor(
                             desiredMeta
                         );
                     }
+
+                    // Fix image extensions in CBZ files during ingest
+                    try
+                    {
+                        if (cbzConverter.FixImageExtensionsInCbz(convertedChapterPath))
+                        {
+                            logger.LogInformation(
+                                "Fixed image extensions in CBZ file: {Path}",
+                                convertedChapterPath
+                            );
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(
+                            ex,
+                            "Failed to fix image extensions in CBZ file: {Path}. Continuing with ingest.",
+                            convertedChapterPath
+                        );
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -935,6 +955,26 @@ public partial class IngestProcessor(
                     finalDesiredMetadata
                 );
                 await metadataHandling.WriteComicInfoAsync(cbzPath, finalDesiredMetadata);
+            }
+
+            // Fix image extensions in upscaled CBZ files during ingest
+            try
+            {
+                if (cbzConverter.FixImageExtensionsInCbz(cbzPath))
+                {
+                    logger.LogInformation(
+                        "Fixed image extensions in upscaled CBZ file: {Path}",
+                        cbzPath
+                    );
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(
+                    ex,
+                    "Failed to fix image extensions in upscaled CBZ file: {Path}. Continuing with ingest.",
+                    cbzPath
+                );
             }
 
             // Apply image filters to the upscaled chapter if configured
