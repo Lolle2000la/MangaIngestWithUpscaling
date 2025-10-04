@@ -62,7 +62,7 @@ public class TaskRegistryTests
 
     [Fact]
     [Trait("Category", "Unit")]
-    public void PersistedTask_GetStatusSortPriority_FailedReturnsHighestPriority()
+    public void PersistedTask_GetStatusSortPriority_FailedReturnsLowestPriority()
     {
         // Arrange
         var failedTask = new PersistedTask { Status = PersistedTaskStatus.Failed };
@@ -71,7 +71,7 @@ public class TaskRegistryTests
         int priority = failedTask.GetStatusSortPriority();
 
         // Assert
-        Assert.Equal(3, priority);
+        Assert.Equal(0, priority);
     }
 
     [Fact]
@@ -81,11 +81,36 @@ public class TaskRegistryTests
         // Arrange
         var tasks = new List<PersistedTask>
         {
-            new() { Id = 1, Status = PersistedTaskStatus.Failed, Order = 1 },
-            new() { Id = 2, Status = PersistedTaskStatus.Pending, Order = 2 },
-            new() { Id = 3, Status = PersistedTaskStatus.Processing, Order = 3 },
-            new() { Id = 4, Status = PersistedTaskStatus.Completed, Order = 4 },
-            new() { Id = 5, Status = PersistedTaskStatus.Canceled, Order = 5 },
+            new()
+            {
+                Id = 1,
+                Status = PersistedTaskStatus.Failed,
+                Order = 1,
+            },
+            new()
+            {
+                Id = 2,
+                Status = PersistedTaskStatus.Pending,
+                Order = 2,
+            },
+            new()
+            {
+                Id = 3,
+                Status = PersistedTaskStatus.Processing,
+                Order = 3,
+            },
+            new()
+            {
+                Id = 4,
+                Status = PersistedTaskStatus.Completed,
+                Order = 4,
+            },
+            new()
+            {
+                Id = 5,
+                Status = PersistedTaskStatus.Canceled,
+                Order = 5,
+            },
         };
 
         // Act: Sort by status priority, then by order
@@ -94,11 +119,11 @@ public class TaskRegistryTests
             .ThenBy(t => t.Order)
             .ToList();
 
-        // Assert: Order should be Completed, Canceled, Processing, Pending, Failed
-        Assert.Equal(4, sortedTasks[0].Id); // Completed
-        Assert.Equal(5, sortedTasks[1].Id); // Canceled
-        Assert.Equal(3, sortedTasks[2].Id); // Processing
-        Assert.Equal(2, sortedTasks[3].Id); // Pending
-        Assert.Equal(1, sortedTasks[4].Id); // Failed
+        // Assert: Order should be Failed, Completed, Canceled, Processing, Pending
+        Assert.Equal(1, sortedTasks[0].Id); // Failed
+        Assert.Equal(4, sortedTasks[1].Id); // Completed
+        Assert.Equal(5, sortedTasks[2].Id); // Canceled
+        Assert.Equal(3, sortedTasks[3].Id); // Processing
+        Assert.Equal(2, sortedTasks[4].Id); // Pending
     }
 }

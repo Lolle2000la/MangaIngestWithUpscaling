@@ -45,11 +45,12 @@ public class PersistedTask
     {
         return Status switch
         {
-            PersistedTaskStatus.Completed or PersistedTaskStatus.Canceled => 0,
+            PersistedTaskStatus.Completed
+            or PersistedTaskStatus.Canceled
+            or PersistedTaskStatus.Failed => 0,
             PersistedTaskStatus.Processing => 1,
             PersistedTaskStatus.Pending => 2,
-            PersistedTaskStatus.Failed => 3,
-            _ => 4,
+            _ => 3,
         };
     }
 }
