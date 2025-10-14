@@ -24,25 +24,25 @@
     <PackageReference Include="Grpc.AspNetCore" Version="2.71.0" />
     <PackageReference
       Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore"
-      Version="10.0.0-rc.1.25451.107"
+      Version="10.0.0-rc.2.25502.107"
     />
     <PackageReference
       Include="Microsoft.AspNetCore.Diagnostics.EntityFrameworkCore"
-      Version="10.0.0-rc.1.25451.107"
+      Version="10.0.0-rc.2.25502.107"
     />
     <PackageReference
       Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore"
-      Version="10.0.0-rc.1.25451.107"
+      Version="10.0.0-rc.2.25502.107"
     />
     <PackageReference
       Include="Microsoft.EntityFrameworkCore.Sqlite"
-      Version="10.0.0-rc.1.25451.107"
+      Version="10.0.0-rc.2.25502.107"
     />
     <PackageReference
       Include="Microsoft.EntityFrameworkCore.SqlServer"
-      Version="10.0.0-rc.1.25451.107"
+      Version="10.0.0-rc.2.25502.107"
     />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="10.0.0-rc.1.25451.107">
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="10.0.0-rc.2.25502.107">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
@@ -127,7 +127,7 @@
     />
     <PackageReference
       Include="Microsoft.AspNetCore.Authentication.OpenIdConnect"
-      Version="10.0.0-rc.1.25451.107"
+      Version="10.0.0-rc.2.25502.107"
     />
   </ItemGroup>
   <ItemGroup>
