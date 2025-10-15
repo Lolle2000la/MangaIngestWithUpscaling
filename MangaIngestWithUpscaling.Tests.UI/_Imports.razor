@@ -8,6 +8,10 @@
 @using MudBlazor
 @using MudBlazor.Services
 @using MangaIngestWithUpscaling.Components.MangaManagement.Chapters
+@using MangaIngestWithUpscaling.Components.Libraries
+@using MangaIngestWithUpscaling.Components.Libraries.Dialogs
+@using MangaIngestWithUpscaling.Components.Libraries.FilteredImages
+@using MangaIngestWithUpscaling.Components.Libraries.Filters
 @using MangaIngestWithUpscaling.Data
 @using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.ChapterMerging
@@ -15,8 +19,10 @@
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue
 @using MangaIngestWithUpscaling.Services.Integrations
 @using MangaIngestWithUpscaling.Services.LibraryIntegrity
+@using MangaIngestWithUpscaling.Services.ImageFiltering
 @using MangaIngestWithUpscaling.Shared.Services.FileSystem
 @using MangaIngestWithUpscaling.Shared.Services.MetadataHandling
 @using Microsoft.EntityFrameworkCore
 @using Microsoft.Extensions.Logging
+@using Microsoft.AspNetCore.Components
 @using NSubstitute
