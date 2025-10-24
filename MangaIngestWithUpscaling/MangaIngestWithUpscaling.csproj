@@ -22,17 +22,35 @@
     <PackageReference Include="AutoRegisterInject" Version="1.4.1" />
     <PackageReference Include="DynamicData" Version="9.4.1" />
     <PackageReference Include="Grpc.AspNetCore" Version="2.71.0" />
-    <PackageReference Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" Version="10.0.0-rc.2.25502.107" />
-    <PackageReference Include="Microsoft.AspNetCore.Diagnostics.EntityFrameworkCore" Version="10.0.0-rc.2.25502.107" />
-    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.0-rc.2.25502.107" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.0-rc.2.25502.107" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.0-rc.2.25502.107" />
+    <PackageReference
+      Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore"
+      Version="10.0.0-rc.2.25502.107"
+    />
+    <PackageReference
+      Include="Microsoft.AspNetCore.Diagnostics.EntityFrameworkCore"
+      Version="10.0.0-rc.2.25502.107"
+    />
+    <PackageReference
+      Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore"
+      Version="10.0.0-rc.2.25502.107"
+    />
+    <PackageReference
+      Include="Microsoft.EntityFrameworkCore.Sqlite"
+      Version="10.0.0-rc.2.25502.107"
+    />
+    <PackageReference
+      Include="Microsoft.EntityFrameworkCore.SqlServer"
+      Version="10.0.0-rc.2.25502.107"
+    />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="10.0.0-rc.2.25502.107">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="9.10.0" />
-    <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.22.1" />
+    <PackageReference
+      Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets"
+      Version="1.22.1"
+    />
     <PackageReference Include="Mono.Posix.NETStandard" Version="1.0.0" />
     <PackageReference Include="MudBlazor" Version="8.13.0" />
     <PackageReference Include="MudBlazor.Translations" Version="2.6.0" />
@@ -40,26 +58,77 @@
     <PackageReference Include="PinguApps.Blazor.QRCode" Version="1.1.4" />
     <PackageReference Include="ReactiveUI" Version="22.2.1" />
     <PackageReference Include="ReactiveUI.Blazor" Version="22.2.1" />
-    <PackageReference Include="ReactiveMarbles.ObservableEvents.SourceGenerator" Version="1.3.1" PrivateAssets="all" />
+    <PackageReference
+      Include="ReactiveMarbles.ObservableEvents.SourceGenerator"
+      Version="1.3.1"
+      PrivateAssets="all"
+    />
     <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
     <PackageReference Include="Serilog.Settings.Configuration" Version="9.0.0" />
     <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
     <PackageReference Include="Serilog.Sinks.SQLite" Version="6.0.0" />
     <PackageReference Include="NetVips" Version="3.1.0" />
     <!-- Platform-specific NetVips native libraries -->
-    <PackageReference Include="NetVips.Native.win-x64" Version="8.17.2" Condition="'$(RuntimeIdentifier)' == 'win-x64'" />
-    <PackageReference Include="NetVips.Native.win-x86" Version="8.17.2" Condition="'$(RuntimeIdentifier)' == 'win-x86'" />
-    <PackageReference Include="NetVips.Native.win-arm64" Version="8.17.2" Condition="'$(RuntimeIdentifier)' == 'win-arm64'" />
-    <PackageReference Include="NetVips.Native.linux-x64" Version="8.17.2" Condition="'$(RuntimeIdentifier)' == 'linux-x64'" />
-    <PackageReference Include="NetVips.Native.linux-arm" Version="8.17.2" Condition="'$(RuntimeIdentifier)' == 'linux-arm'" />
-    <PackageReference Include="NetVips.Native.linux-arm64" Version="8.17.2" Condition="'$(RuntimeIdentifier)' == 'linux-arm64'" />
-    <PackageReference Include="NetVips.Native.linux-musl-x64" Version="8.17.2" Condition="'$(RuntimeIdentifier)' == 'linux-musl-x64'" />
-    <PackageReference Include="NetVips.Native.linux-musl-arm64" Version="8.17.2" Condition="'$(RuntimeIdentifier)' == 'linux-musl-arm64'" />
-    <PackageReference Include="NetVips.Native.osx-x64" Version="8.17.2" Condition="'$(RuntimeIdentifier)' == 'osx-x64'" />
-    <PackageReference Include="NetVips.Native.osx-arm64" Version="8.17.2" Condition="'$(RuntimeIdentifier)' == 'osx-arm64'" />
+    <PackageReference
+      Include="NetVips.Native.win-x64"
+      Version="8.17.2"
+      Condition="'$(RuntimeIdentifier)' == 'win-x64'"
+    />
+    <PackageReference
+      Include="NetVips.Native.win-x86"
+      Version="8.17.2"
+      Condition="'$(RuntimeIdentifier)' == 'win-x86'"
+    />
+    <PackageReference
+      Include="NetVips.Native.win-arm64"
+      Version="8.17.2"
+      Condition="'$(RuntimeIdentifier)' == 'win-arm64'"
+    />
+    <PackageReference
+      Include="NetVips.Native.linux-x64"
+      Version="8.17.2"
+      Condition="'$(RuntimeIdentifier)' == 'linux-x64'"
+    />
+    <PackageReference
+      Include="NetVips.Native.linux-arm"
+      Version="8.17.2"
+      Condition="'$(RuntimeIdentifier)' == 'linux-arm'"
+    />
+    <PackageReference
+      Include="NetVips.Native.linux-arm64"
+      Version="8.17.2"
+      Condition="'$(RuntimeIdentifier)' == 'linux-arm64'"
+    />
+    <PackageReference
+      Include="NetVips.Native.linux-musl-x64"
+      Version="8.17.2"
+      Condition="'$(RuntimeIdentifier)' == 'linux-musl-x64'"
+    />
+    <PackageReference
+      Include="NetVips.Native.linux-musl-arm64"
+      Version="8.17.2"
+      Condition="'$(RuntimeIdentifier)' == 'linux-musl-arm64'"
+    />
+    <PackageReference
+      Include="NetVips.Native.osx-x64"
+      Version="8.17.2"
+      Condition="'$(RuntimeIdentifier)' == 'osx-x64'"
+    />
+    <PackageReference
+      Include="NetVips.Native.osx-arm64"
+      Version="8.17.2"
+      Condition="'$(RuntimeIdentifier)' == 'osx-arm64'"
+    />
     <!-- Fallback for AnyCPU builds - includes all platforms -->
-    <PackageReference Include="NetVips.Native" Version="8.17.2" Condition="'$(RuntimeIdentifier)' == '' OR '$(RuntimeIdentifier)' == 'any'" />
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.0-rc.2.25502.107" />
+    <PackageReference
+      Include="NetVips.Native"
+      Version="8.17.2"
+      Condition="'$(RuntimeIdentifier)' == '' OR '$(RuntimeIdentifier)' == 'any'"
+    />
+    <PackageReference
+      Include="Microsoft.AspNetCore.Authentication.OpenIdConnect"
+      Version="10.0.0-rc.2.25502.107"
+    />
   </ItemGroup>
   <ItemGroup>
     <None Include="../MangaJaNaiConverterGui/MangaJaNaiConverterGui/backend/**">
