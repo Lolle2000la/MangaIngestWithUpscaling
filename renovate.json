@@ -11,7 +11,7 @@
     },
     {
       "description": "Bundle all ReactiveUI updates",
-      "matchPackageNames": ["ReactiveUI*"],
+      "matchPackageNames": ["ReactiveUI", "ReactiveUI.Blazor", "ReactiveUI*"],
       "automerge": true
     },
     {
