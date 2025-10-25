@@ -225,7 +225,6 @@
     {
         if (firstRender && !hasAppliedInitialSort && initialSortLabel != null && Table != null)
         {
-            hasAppliedInitialSort = true;
             // Force table to reload with initial sort state
             await InvokeAsync(async () => await Table.ReloadServerData());
         }
@@ -246,6 +245,7 @@
         {
             sortLabel = initialSortLabel;
             sortDirection = initialSortDirection;
+            hasAppliedInitialSort = true; // Mark as applied after using the values
         }
         
         var query = cachedTasks.AsQueryable();

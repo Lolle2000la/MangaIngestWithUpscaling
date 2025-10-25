@@ -258,7 +258,6 @@
     {
         if (firstRender && !hasAppliedInitialSort && initialSortLabel != null && table != null)
         {
-            hasAppliedInitialSort = true;
             // Force table to reload with initial sort state
             await InvokeAsync(async () => await table.ReloadServerData());
         }
@@ -274,6 +273,7 @@
         {
             sortLabel = initialSortLabel;
             sortDirection = initialSortDirection;
+            hasAppliedInitialSort = true; // Mark as applied after using the values
         }
         
         var query = DbContext.MangaSeries
