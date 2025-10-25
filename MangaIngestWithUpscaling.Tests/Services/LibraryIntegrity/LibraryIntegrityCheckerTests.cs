@@ -8,6 +8,7 @@ using MangaIngestWithUpscaling.Services.ChapterManagement;
 using MangaIngestWithUpscaling.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Services.LibraryIntegrity;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Shared.Services.CbzConversion;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
@@ -32,6 +33,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
     private readonly IFileSystem _fileSystem;
     private readonly IOptions<IntegrityCheckerConfig> _options;
     private readonly ITaskQueue _taskQueue;
+    private readonly ICbzConverter _cbzConverter;
 
     public LibraryIntegrityCheckerTests()
     {
@@ -42,6 +44,9 @@ public class LibraryIntegrityCheckerTests : IDisposable
         _upscalerJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();
         _fileSystem = Substitute.For<IFileSystem>();
         _taskQueue = Substitute.For<ITaskQueue>();
+        _cbzConverter = Substitute.For<ICbzConverter>();
+        // Mock FixImageExtensionsInCbz to return false (no changes) by default
+        _cbzConverter.FixImageExtensionsInCbz(Arg.Any<string>()).Returns(false);
         _options = Options.Create(new IntegrityCheckerConfig { MaxParallelism = 1 });
     }
 
@@ -117,6 +122,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
+            _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options
         );
@@ -199,6 +205,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
+            _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options
         );
@@ -263,6 +270,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
+            _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options
         );
@@ -335,6 +343,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
+            _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options
         );
@@ -410,6 +419,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
+            _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options
         );
@@ -510,6 +520,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
+            _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options
         );
@@ -586,6 +597,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
+            _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options
         );
@@ -684,6 +696,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
+            _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options
         );
@@ -750,6 +763,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
+            _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options
         );
@@ -836,6 +850,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
+            _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options
         );
@@ -900,6 +915,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
+            _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options
         );
@@ -990,6 +1006,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
+            _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options
         );
@@ -1113,6 +1130,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
+            _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options
         );
@@ -1231,6 +1249,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
+            _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options
         );
@@ -1333,6 +1352,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
+            _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options
         );
@@ -1456,6 +1476,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
+            _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options
         );
@@ -1533,6 +1554,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
+            _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options
         );
@@ -1638,6 +1660,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
+            _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options
         );
@@ -1718,6 +1741,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
+            _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options
         );

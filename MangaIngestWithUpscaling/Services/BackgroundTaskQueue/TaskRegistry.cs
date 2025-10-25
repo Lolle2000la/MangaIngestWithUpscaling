@@ -37,7 +37,7 @@ public class TaskRegistry : IHostedService, IDisposable
         _upscaleProcessor = upscalerProcessor;
         _distributedUpscaleProcessor = distributedUpscaleProcessor;
 
-        // Standard view: non-upscale tasks, sorted by Order then CreatedAt
+        // Standard view: non-upscale tasks, sorted by status priority, then Order, then CreatedAt
         _tasks
             .Connect()
             .Filter(t =>
@@ -49,14 +49,15 @@ public class TaskRegistry : IHostedService, IDisposable
             .SortAndBind(
                 out ReadOnlyObservableCollection<PersistedTask> standard,
                 SortExpressionComparer<PersistedTask>
-                    .Ascending(x => x.Order)
+                    .Ascending(x => x.GetStatusSortPriority())
+                    .ThenByAscending(x => x.Order)
                     .ThenByAscending(x => x.CreatedAt)
             )
             .Subscribe(_ => { })
             .DisposeWith(_cleanups);
         StandardTasks = standard;
 
-        // Upscale view: upscale tasks, sorted by Order then CreatedAt
+        // Upscale view: upscale tasks, sorted by status priority, then Order, then CreatedAt
         _tasks
             .Connect()
             .Filter(t =>
@@ -65,7 +66,8 @@ public class TaskRegistry : IHostedService, IDisposable
             .SortAndBind(
                 out ReadOnlyObservableCollection<PersistedTask> upscale,
                 SortExpressionComparer<PersistedTask>
-                    .Ascending(x => x.Order)
+                    .Ascending(x => x.GetStatusSortPriority())
+                    .ThenByAscending(x => x.Order)
                     .ThenByAscending(x => x.CreatedAt)
             )
             .Subscribe(_ => { })

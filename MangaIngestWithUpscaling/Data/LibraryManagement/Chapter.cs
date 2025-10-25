@@ -20,6 +20,9 @@ public class Chapter
     public int? UpscalerProfileId { get; set; }
     public UpscalerProfile? UpscalerProfile { get; set; }
 
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime ModifiedAt { get; set; } = DateTime.UtcNow;
+
     [NotMapped]
     public string NotUpscaledFullPath =>
         Path.Combine(Manga.Library.NotUpscaledLibraryPath, RelativePath);

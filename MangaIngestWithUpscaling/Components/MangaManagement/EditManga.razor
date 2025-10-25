@@ -92,6 +92,18 @@
                                 ⚠️ Chapter merging is experimental
                             </MudText>
                         </MudItem>
+
+                        <MudItem xs="12">
+                            <MudDivider Style="margin: 16px 0;" />
+                            <MudStack Row Spacing="4" Class="mt-2">
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                    Created: @manga.CreatedAt.ToString("yyyy-MM-dd HH:mm")
+                                </MudText>
+                                <MudText Typo="Typo.caption" Color="Color.Secondary">
+                                    Modified: @manga.ModifiedAt.ToString("yyyy-MM-dd HH:mm")
+                                </MudText>
+                            </MudStack>
+                        </MudItem>
                     </MudGrid>
                 </MudTabPanel>
 

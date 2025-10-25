@@ -34,6 +34,62 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 
     public DbSet<DataProtectionKey> DataProtectionKeys { get; set; } = null!;
 
+    public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        UpdateTimestamps();
+        return await base.SaveChangesAsync(cancellationToken);
+    }
+
+    public override int SaveChanges()
+    {
+        UpdateTimestamps();
+        return base.SaveChanges();
+    }
+
+    private void UpdateTimestamps()
+    {
+        var now = DateTime.UtcNow;
+        var entries = ChangeTracker
+            .Entries()
+            .Where(e => e.State == EntityState.Added || e.State == EntityState.Modified);
+
+        foreach (var entry in entries)
+        {
+            // Set ModifiedAt for all entities that have this property
+            if (entry.Entity is Chapter chapter)
+            {
+                if (entry.State == EntityState.Added)
+                    chapter.CreatedAt = now;
+                chapter.ModifiedAt = now;
+            }
+            else if (entry.Entity is Manga manga)
+            {
+                if (entry.State == EntityState.Added)
+                    manga.CreatedAt = now;
+                manga.ModifiedAt = now;
+            }
+            else if (entry.Entity is Library library)
+            {
+                if (entry.State == EntityState.Added)
+                    library.CreatedAt = now;
+                library.ModifiedAt = now;
+            }
+            else if (entry.Entity is UpscalerProfile profile)
+            {
+                if (entry.State == EntityState.Added)
+                    profile.CreatedAt = now;
+                profile.ModifiedAt = now;
+            }
+            else if (
+                entry.Entity is MangaAlternativeTitle alternativeTitle
+                && entry.State == EntityState.Added
+            )
+            {
+                alternativeTitle.CreatedAt = now;
+            }
+        }
+    }
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);

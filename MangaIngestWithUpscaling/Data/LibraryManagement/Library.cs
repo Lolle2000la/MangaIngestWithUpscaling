@@ -29,6 +29,9 @@ public class Library
 
     public ObservableCollection<LibraryRenameRule> RenameRules { get; set; } = new();
 
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime ModifiedAt { get; set; } = DateTime.UtcNow;
+
     public override bool Equals(object? obj)
     {
         if (obj == null || GetType() != obj.GetType())
