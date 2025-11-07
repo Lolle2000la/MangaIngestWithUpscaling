@@ -398,6 +398,268 @@ public class MangaJaNaiUpscalerTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task Upscale_WithFormatConversion_ShouldCallImageResizeService()
+    {
+        // Arrange
+        var inputPath = Path.Combine(_tempDir, "input.cbz");
+        var outputPath = Path.Combine(_tempDir, "output.cbz");
+        await File.WriteAllTextAsync(
+            inputPath,
+            "dummy content",
+            TestContext.Current.CancellationToken
+        );
+
+        // Configure format conversion rules only (no resizing)
+        _mockConfig.Value.ImageFormatConversionRules =
+        [
+            new ImageFormatConversionRule
+            {
+                FromFormat = ".png",
+                ToFormat = ".jpg",
+                Quality = 95,
+            },
+        ];
+
+        var profile = new UpscalerProfile
+        {
+            Name = "Test Profile",
+            ScalingFactor = ScaleFactor.TwoX,
+            CompressionFormat = CompressionFormat.Png,
+            Quality = 80,
+        };
+
+        // Mock metadata handling
+        _mockMetadataHandling
+            .PagesEqualAsync(Arg.Any<string>(), Arg.Any<string>())
+            .Returns(Task.FromResult(false));
+
+        // Mock image resize service to return a temp file
+        string tempPreprocessedPath = Path.Combine(_tempDir, "temp_preprocessed.cbz");
+        await File.WriteAllTextAsync(
+            tempPreprocessedPath,
+            "temp preprocessed content",
+            TestContext.Current.CancellationToken
+        );
+
+        // Create a real TempResizedCbz instance (but with mock cleanup)
+        _mockImageResize
+            .CreatePreprocessedTempCbzAsync(
+                Arg.Any<string>(),
+                Arg.Any<ImagePreprocessingOptions>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(callInfo =>
+            {
+                // Use reflection to create the TempResizedCbz since constructor is internal
+                ConstructorInfo? constructor = typeof(TempResizedCbz).GetConstructor(
+                    BindingFlags.NonPublic | BindingFlags.Instance,
+                    null,
+                    new[] { typeof(string), typeof(IImageResizeService) },
+                    null
+                );
+                return (TempResizedCbz)
+                    constructor!.Invoke(new object[] { tempPreprocessedPath, _mockImageResize });
+            });
+
+        var cancellationToken = CancellationToken.None;
+
+        // Act
+        await _upscaler.Upscale(inputPath, outputPath, profile, cancellationToken);
+
+        // Assert
+        // Verify preprocessing service was called with format conversion rules
+        await _mockImageResize
+            .Received(1)
+            .CreatePreprocessedTempCbzAsync(
+                inputPath,
+                Arg.Is<ImagePreprocessingOptions>(opts =>
+                    opts.MaxDimension == null
+                    && opts.FormatConversionRules.Count == 1
+                    && opts.FormatConversionRules[0].FromFormat == ".png"
+                    && opts.FormatConversionRules[0].ToFormat == ".jpg"
+                    && opts.FormatConversionRules[0].Quality == 95
+                ),
+                cancellationToken
+            );
+
+        // Verify Python service was called
+        await _mockPythonService
+            .Received(1)
+            .RunPythonScript(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                cancellationToken,
+                Arg.Any<TimeSpan?>()
+            );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task Upscale_WithBothResizingAndFormatConversion_ShouldCallImageResizeServiceWithBothOptions()
+    {
+        // Arrange
+        var inputPath = Path.Combine(_tempDir, "input.cbz");
+        var outputPath = Path.Combine(_tempDir, "output.cbz");
+        await File.WriteAllTextAsync(
+            inputPath,
+            "dummy content",
+            TestContext.Current.CancellationToken
+        );
+
+        // Configure BOTH max dimension and format conversion rules
+        _mockConfig.Value.MaxDimensionBeforeUpscaling = 2048;
+        _mockConfig.Value.ImageFormatConversionRules =
+        [
+            new ImageFormatConversionRule
+            {
+                FromFormat = ".png",
+                ToFormat = ".jpg",
+                Quality = 98,
+            },
+            new ImageFormatConversionRule { FromFormat = ".webp", ToFormat = ".png" },
+        ];
+
+        var profile = new UpscalerProfile
+        {
+            Name = "Test Profile",
+            ScalingFactor = ScaleFactor.TwoX,
+            CompressionFormat = CompressionFormat.Png,
+            Quality = 80,
+        };
+
+        // Mock metadata handling
+        _mockMetadataHandling
+            .PagesEqualAsync(Arg.Any<string>(), Arg.Any<string>())
+            .Returns(Task.FromResult(false));
+
+        // Mock image resize service to return a temp file
+        string tempPreprocessedPath = Path.Combine(_tempDir, "temp_preprocessed_both.cbz");
+        await File.WriteAllTextAsync(
+            tempPreprocessedPath,
+            "temp preprocessed content",
+            TestContext.Current.CancellationToken
+        );
+
+        // Create a real TempResizedCbz instance (but with mock cleanup)
+        _mockImageResize
+            .CreatePreprocessedTempCbzAsync(
+                Arg.Any<string>(),
+                Arg.Any<ImagePreprocessingOptions>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(callInfo =>
+            {
+                // Use reflection to create the TempResizedCbz since constructor is internal
+                ConstructorInfo? constructor = typeof(TempResizedCbz).GetConstructor(
+                    BindingFlags.NonPublic | BindingFlags.Instance,
+                    null,
+                    new[] { typeof(string), typeof(IImageResizeService) },
+                    null
+                );
+                return (TempResizedCbz)
+                    constructor!.Invoke(new object[] { tempPreprocessedPath, _mockImageResize });
+            });
+
+        var cancellationToken = CancellationToken.None;
+
+        // Act
+        await _upscaler.Upscale(inputPath, outputPath, profile, cancellationToken);
+
+        // Assert
+        // Verify preprocessing service was called with BOTH resizing and format conversion options
+        await _mockImageResize
+            .Received(1)
+            .CreatePreprocessedTempCbzAsync(
+                inputPath,
+                Arg.Is<ImagePreprocessingOptions>(opts =>
+                    opts.MaxDimension == 2048
+                    && opts.FormatConversionRules.Count == 2
+                    && opts.FormatConversionRules[0].FromFormat == ".png"
+                    && opts.FormatConversionRules[0].ToFormat == ".jpg"
+                    && opts.FormatConversionRules[0].Quality == 98
+                    && opts.FormatConversionRules[1].FromFormat == ".webp"
+                    && opts.FormatConversionRules[1].ToFormat == ".png"
+                ),
+                cancellationToken
+            );
+
+        // Verify Python service was called with the preprocessed file
+        await _mockPythonService
+            .Received(1)
+            .RunPythonScript(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                cancellationToken,
+                Arg.Any<TimeSpan?>()
+            );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task Upscale_WithNoPreprocessing_ShouldNotCallImageResizeService()
+    {
+        // Arrange
+        var inputPath = Path.Combine(_tempDir, "input.cbz");
+        var outputPath = Path.Combine(_tempDir, "output.cbz");
+        await File.WriteAllTextAsync(
+            inputPath,
+            "dummy content",
+            TestContext.Current.CancellationToken
+        );
+
+        // Ensure no preprocessing is configured
+        _mockConfig.Value.MaxDimensionBeforeUpscaling = null;
+        _mockConfig.Value.ImageFormatConversionRules = [];
+
+        var profile = new UpscalerProfile
+        {
+            Name = "Test Profile",
+            ScalingFactor = ScaleFactor.TwoX,
+            CompressionFormat = CompressionFormat.Png,
+            Quality = 80,
+        };
+
+        // Mock metadata handling
+        _mockMetadataHandling
+            .PagesEqualAsync(Arg.Any<string>(), Arg.Any<string>())
+            .Returns(Task.FromResult(false));
+
+        var cancellationToken = CancellationToken.None;
+
+        // Act
+        await _upscaler.Upscale(inputPath, outputPath, profile, cancellationToken);
+
+        // Assert
+        // Verify preprocessing service was NOT called
+        await _mockImageResize
+            .DidNotReceive()
+            .CreatePreprocessedTempCbzAsync(
+                Arg.Any<string>(),
+                Arg.Any<ImagePreprocessingOptions>(),
+                Arg.Any<CancellationToken>()
+            );
+
+        await _mockImageResize
+            .DidNotReceive()
+            .CreateResizedTempCbzAsync(
+                Arg.Any<string>(),
+                Arg.Any<int>(),
+                Arg.Any<CancellationToken>()
+            );
+
+        // Verify Python service was called directly with the original input
+        await _mockPythonService
+            .Received(1)
+            .RunPythonScript(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                cancellationToken,
+                Arg.Any<TimeSpan?>()
+            );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void Constructor_ShouldNotThrow()
     {
         // This test validates that the constructor can be called with mocked dependencies
