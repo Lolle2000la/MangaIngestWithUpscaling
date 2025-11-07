@@ -19,6 +19,20 @@ public interface IImageResizeService
     );
 
     /// <summary>
+    /// Creates a temporary CBZ file with images preprocessed according to the provided options
+    /// (resizing and/or format conversion)
+    /// </summary>
+    /// <param name="inputCbzPath">Path to the input CBZ file</param>
+    /// <param name="options">Preprocessing options to apply</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>A disposable wrapper that automatically cleans up the temporary file when disposed</returns>
+    Task<TempResizedCbz> CreatePreprocessedTempCbzAsync(
+        string inputCbzPath,
+        ImagePreprocessingOptions options,
+        CancellationToken cancellationToken
+    );
+
+    /// <summary>
     /// Cleans up temporary files created by CreateResizedTempCbzAsync
     /// </summary>
     /// <param name="tempFilePath">Path to the temporary file to delete</param>

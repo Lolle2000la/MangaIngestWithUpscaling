@@ -204,28 +204,44 @@ public class MangaJaNaiUpscaler(
 
         string actualInputPath = inputPath;
 
-        // Check if we need to resize images before upscaling
-        if (
-            sharedConfig.Value.MaxDimensionBeforeUpscaling.HasValue
-            && sharedConfig.Value.MaxDimensionBeforeUpscaling.Value > 0
-        )
+        // Check if we need to preprocess images before upscaling (resize or format conversion)
+        bool needsPreprocessing =
+            (
+                sharedConfig.Value.MaxDimensionBeforeUpscaling.HasValue
+                && sharedConfig.Value.MaxDimensionBeforeUpscaling.Value > 0
+            )
+            || (
+                sharedConfig.Value.ImageFormatConversionRules != null
+                && sharedConfig.Value.ImageFormatConversionRules.Count > 0
+            );
+
+        if (needsPreprocessing)
         {
+            var preprocessingOptions = new ImagePreprocessingOptions
+            {
+                MaxDimension = sharedConfig.Value.MaxDimensionBeforeUpscaling,
+                FormatConversionRules =
+                    sharedConfig.Value.ImageFormatConversionRules
+                    ?? new List<ImageFormatConversionRule>(),
+            };
+
             logger.LogInformation(
-                "Creating temporary resized CBZ with max dimension {MaxDimension} for {InputPath}",
-                sharedConfig.Value.MaxDimensionBeforeUpscaling.Value,
+                "Creating temporary preprocessed CBZ (max dimension: {MaxDimension}, conversion rules: {RuleCount}) for {InputPath}",
+                preprocessingOptions.MaxDimension?.ToString() ?? "none",
+                preprocessingOptions.FormatConversionRules.Count,
                 inputPath
             );
 
-            using var tempResizedCbz = await imageResizeService.CreateResizedTempCbzAsync(
+            using var tempPreprocessedCbz = await imageResizeService.CreatePreprocessedTempCbzAsync(
                 inputPath,
-                sharedConfig.Value.MaxDimensionBeforeUpscaling.Value,
+                preprocessingOptions,
                 cancellationToken
             );
 
-            actualInputPath = tempResizedCbz.FilePath;
+            actualInputPath = tempPreprocessedCbz.FilePath;
 
             logger.LogInformation(
-                "Using resized temporary file for upscaling: {TempPath}",
+                "Using preprocessed temporary file for upscaling: {TempPath}",
                 actualInputPath
             );
 
