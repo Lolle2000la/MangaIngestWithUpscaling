@@ -218,10 +218,20 @@ public class ImageResizeService : IImageResizeService
 
             string directory = Path.GetDirectoryName(imagePath)!;
             string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(imagePath);
-            string newImagePath = Path.Combine(
+            string baseNewImagePath = Path.Combine(
                 directory,
                 fileNameWithoutExtension + targetExtension
             );
+            string newImagePath = baseNewImagePath;
+            int suffix = 1;
+            while (File.Exists(newImagePath))
+            {
+                newImagePath = Path.Combine(
+                    directory,
+                    $"{fileNameWithoutExtension}_{suffix}{targetExtension}"
+                );
+                suffix++;
+            }
 
             _logger.LogDebug(
                 "Converting image {ImagePath} from {FromFormat} to {ToFormat}",
