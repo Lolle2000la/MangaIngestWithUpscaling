@@ -27,24 +27,37 @@ public class ImageResizeService : IImageResizeService
         CancellationToken cancellationToken
     )
     {
+        return await CreatePreprocessedTempCbzAsync(
+            inputCbzPath,
+            new ImagePreprocessingOptions { MaxDimension = maxDimension },
+            cancellationToken
+        );
+    }
+
+    public async Task<TempResizedCbz> CreatePreprocessedTempCbzAsync(
+        string inputCbzPath,
+        ImagePreprocessingOptions options,
+        CancellationToken cancellationToken
+    )
+    {
         if (!File.Exists(inputCbzPath))
         {
             throw new FileNotFoundException($"Input CBZ file not found: {inputCbzPath}");
         }
 
-        if (maxDimension <= 0)
+        if (options.MaxDimension.HasValue && options.MaxDimension.Value <= 0)
         {
             throw new ArgumentException(
                 "Maximum dimension must be greater than 0",
-                nameof(maxDimension)
+                nameof(options)
             );
         }
 
         // Create temporary directory for processing
-        string tempDir = Path.Combine(Path.GetTempPath(), $"manga_resize_{Guid.NewGuid()}");
+        string tempDir = Path.Combine(Path.GetTempPath(), $"manga_preprocess_{Guid.NewGuid()}");
         string tempCbzPath = Path.Combine(
             Path.GetTempPath(),
-            $"resized_{Guid.NewGuid()}_{Path.GetFileName(inputCbzPath)}"
+            $"preprocessed_{Guid.NewGuid()}_{Path.GetFileName(inputCbzPath)}"
         );
 
         try
@@ -52,21 +65,22 @@ public class ImageResizeService : IImageResizeService
             Directory.CreateDirectory(tempDir);
 
             _logger.LogInformation(
-                "Resizing images in {InputPath} to max dimension {MaxDimension}",
+                "Preprocessing images in {InputPath} (MaxDimension={MaxDimension}, ConversionRules={RuleCount})",
                 inputCbzPath,
-                maxDimension
+                options.MaxDimension?.ToString() ?? "none",
+                options.FormatConversionRules.Count
             );
 
             // Extract CBZ to temporary directory
             ZipFile.ExtractToDirectory(inputCbzPath, tempDir);
 
             // Process all images in the extracted directory
-            await ProcessImagesInDirectory(tempDir, maxDimension, cancellationToken);
+            await ProcessImagesInDirectory(tempDir, options, cancellationToken);
 
-            // Create new CBZ with resized images
+            // Create new CBZ with processed images
             ZipFile.CreateFromDirectory(tempDir, tempCbzPath);
 
-            _logger.LogDebug("Created resized temporary CBZ at {TempPath}", tempCbzPath);
+            _logger.LogDebug("Created preprocessed temporary CBZ at {TempPath}", tempCbzPath);
 
             return new TempResizedCbz(tempCbzPath, this);
         }
@@ -102,7 +116,7 @@ public class ImageResizeService : IImageResizeService
 
     private async Task ProcessImagesInDirectory(
         string directory,
-        int maxDimension,
+        ImagePreprocessingOptions options,
         CancellationToken cancellationToken
     )
     {
@@ -124,32 +138,45 @@ public class ImageResizeService : IImageResizeService
             {
                 try
                 {
-                    ResizeImageIfNeeded(imagePath, maxDimension, ct);
+                    ProcessImage(imagePath, options, ct);
                     return ValueTask.CompletedTask;
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to resize image: {ImagePath}", imagePath);
+                    _logger.LogWarning(ex, "Failed to process image: {ImagePath}", imagePath);
                     return ValueTask.CompletedTask; // Continue processing other images even if one fails
                 }
             }
         );
     }
 
-    private void ResizeImageIfNeeded(
+    private void ProcessImage(
         string imagePath,
-        int maxDimension,
+        ImagePreprocessingOptions options,
         CancellationToken cancellationToken
     )
     {
         // Load image using NetVips
         using var image = Image.NewFromFile(imagePath);
 
-        // Check if resizing is needed
-        if (image.Width <= maxDimension && image.Height <= maxDimension)
+        var needsResize =
+            options.MaxDimension.HasValue
+            && (
+                image.Width > options.MaxDimension.Value
+                || image.Height > options.MaxDimension.Value
+            );
+
+        var currentExtension = Path.GetExtension(imagePath).ToLowerInvariant();
+        var conversionRule = options.FormatConversionRules.FirstOrDefault(r =>
+            r.FromFormat.Equals(currentExtension, StringComparison.OrdinalIgnoreCase)
+        );
+
+        var needsFormatConversion = conversionRule != null;
+
+        if (!needsResize && !needsFormatConversion)
         {
             _logger.LogDebug(
-                "Image {ImagePath} ({Width}x{Height}) is already within bounds, skipping resize",
+                "Image {ImagePath} ({Width}x{Height}) needs no preprocessing, skipping",
                 imagePath,
                 image.Width,
                 image.Height
@@ -157,23 +184,113 @@ public class ImageResizeService : IImageResizeService
             return;
         }
 
-        // Calculate new dimensions while maintaining aspect ratio
-        var (newWidth, newHeight) = CalculateNewDimensions(image.Width, image.Height, maxDimension);
+        Image processedImage = image;
 
-        _logger.LogDebug(
-            "Resizing image {ImagePath} from {OriginalWidth}x{OriginalHeight} to {NewWidth}x{NewHeight}",
-            imagePath,
-            image.Width,
-            image.Height,
-            newWidth,
-            newHeight
-        );
+        // Apply resizing if needed
+        if (needsResize)
+        {
+            var (newWidth, newHeight) = CalculateNewDimensions(
+                image.Width,
+                image.Height,
+                options.MaxDimension!.Value
+            );
 
-        // Resize the image
-        var resizedImage = image.Resize((double)newWidth / image.Width);
+            _logger.LogDebug(
+                "Resizing image {ImagePath} from {OriginalWidth}x{OriginalHeight} to {NewWidth}x{NewHeight}",
+                imagePath,
+                image.Width,
+                image.Height,
+                newWidth,
+                newHeight
+            );
 
-        // Save the resized image back to the same path
-        resizedImage.WriteToFile(imagePath);
+            processedImage = image.Resize((double)newWidth / image.Width);
+        }
+
+        // Apply format conversion if needed
+        if (needsFormatConversion)
+        {
+            string targetExtension = conversionRule!.ToFormat.ToLowerInvariant();
+            if (!targetExtension.StartsWith('.'))
+            {
+                targetExtension = "." + targetExtension;
+            }
+
+            string directory = Path.GetDirectoryName(imagePath)!;
+            string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(imagePath);
+            string newImagePath = Path.Combine(
+                directory,
+                fileNameWithoutExtension + targetExtension
+            );
+
+            _logger.LogDebug(
+                "Converting image {ImagePath} from {FromFormat} to {ToFormat}",
+                imagePath,
+                currentExtension,
+                targetExtension
+            );
+
+            // Save the image with the new format
+            SaveImageWithFormat(
+                processedImage,
+                newImagePath,
+                targetExtension,
+                conversionRule.Quality
+            );
+
+            // Delete the original file
+            if (processedImage != image)
+            {
+                processedImage.Dispose();
+            }
+
+            File.Delete(imagePath);
+        }
+        else
+        {
+            // Save the resized image back to the same path
+            processedImage.WriteToFile(imagePath);
+
+            if (processedImage != image)
+            {
+                processedImage.Dispose();
+            }
+        }
+    }
+
+    private void SaveImageWithFormat(
+        Image image,
+        string outputPath,
+        string targetExtension,
+        int? quality
+    )
+    {
+        switch (targetExtension)
+        {
+            case ".jpg":
+            case ".jpeg":
+                image.Jpegsave(outputPath, q: quality ?? 95);
+                break;
+
+            case ".png":
+                image.Pngsave(outputPath);
+                break;
+
+            case ".webp":
+                image.Webpsave(outputPath, q: quality ?? 95);
+                break;
+
+            case ".avif":
+                image.Heifsave(outputPath, q: quality ?? 95);
+                break;
+
+            case ".bmp":
+            case ".tiff":
+            case ".tif":
+            default:
+                image.WriteToFile(outputPath);
+                break;
+        }
     }
 
     private static (int width, int height) CalculateNewDimensions(

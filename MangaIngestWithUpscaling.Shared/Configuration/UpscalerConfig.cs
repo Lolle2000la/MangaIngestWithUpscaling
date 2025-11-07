@@ -57,4 +57,20 @@ public record UpscalerConfig
     ///     Set to null or 0 to disable this feature.
     /// </summary>
     public int? MaxDimensionBeforeUpscaling { get; set; } = null;
+
+    /// <summary>
+    ///     Optional image format conversion rules to apply during preprocessing.
+    ///     Images matching the FromFormat will be converted to ToFormat before upscaling.
+    ///     This only affects the temporary working copy, not the original files.
+    ///     By default, PNG images are converted to JPG with quality 98 to ensure compatibility with the upscaler.
+    /// </summary>
+    public List<ImageFormatConversionRule> ImageFormatConversionRules { get; set; } =
+    [
+        new ImageFormatConversionRule
+        {
+            FromFormat = ".png",
+            ToFormat = ".jpg",
+            Quality = 98,
+        },
+    ];
 }

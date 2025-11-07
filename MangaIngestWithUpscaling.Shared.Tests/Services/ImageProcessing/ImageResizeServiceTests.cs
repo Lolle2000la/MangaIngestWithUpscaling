@@ -48,7 +48,7 @@ public class ImageResizeServiceTests
                 )
             );
 
-            Assert.Equal("maxDimension", exception.ParamName);
+            Assert.Equal("options", exception.ParamName);
             Assert.Contains("Maximum dimension must be greater than 0", exception.Message);
         }
         finally

@@ -51,6 +51,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
                 Path.GetTempPath(),
                 $"upscaler_test_{TestContext.Current.TestCase.TestCaseDisplayName}"
             ),
+            ImageFormatConversionRules = [],
         };
         _mockConfig = Substitute.For<IOptions<UpscalerConfig>>();
         _mockConfig.Value.Returns(config);
@@ -349,9 +350,9 @@ public class MangaJaNaiUpscalerTests : IDisposable
 
         // Create a real TempResizedCbz instance (but with mock cleanup)
         _mockImageResize
-            .CreateResizedTempCbzAsync(
+            .CreatePreprocessedTempCbzAsync(
                 Arg.Any<string>(),
-                Arg.Any<int>(),
+                Arg.Any<ImagePreprocessingOptions>(),
                 Arg.Any<CancellationToken>()
             )
             .Returns(callInfo =>
@@ -373,10 +374,16 @@ public class MangaJaNaiUpscalerTests : IDisposable
         await _upscaler.Upscale(inputPath, outputPath, profile, cancellationToken);
 
         // Assert
-        // Verify resize service was called
+        // Verify resize service was called with preprocessing options
         await _mockImageResize
             .Received(1)
-            .CreateResizedTempCbzAsync(inputPath, 1024, cancellationToken);
+            .CreatePreprocessedTempCbzAsync(
+                inputPath,
+                Arg.Is<ImagePreprocessingOptions>(opts =>
+                    opts.MaxDimension == 1024 && opts.FormatConversionRules.Count == 0
+                ),
+                cancellationToken
+            );
 
         // Verify Python service was called
         await _mockPythonService
