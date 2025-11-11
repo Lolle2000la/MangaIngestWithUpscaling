@@ -24,7 +24,7 @@
     </PackageReference>
     <PackageReference
       Include="Microsoft.EntityFrameworkCore.Sqlite"
-      Version="10.0.0-rc.2.25502.107"
+      Version="10.0.0"
     />
     <PackageReference Include="MudBlazor" Version="8.14.0" />
     <PackageReference Include="NSubstitute" Version="5.3.0" />

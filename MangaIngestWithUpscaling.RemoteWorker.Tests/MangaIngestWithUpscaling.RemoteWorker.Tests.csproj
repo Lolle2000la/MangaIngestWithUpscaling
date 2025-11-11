@@ -18,7 +18,7 @@
     <PackageReference Include="NSubstitute" Version="5.3.0" />
     <PackageReference
       Include="Microsoft.Extensions.DependencyInjection"
-      Version="10.0.0-rc.2.25502.107"
+      Version="10.0.0"
     />
     <PackageReference Include="Grpc.AspNetCore.Server.ClientFactory" Version="2.71.0" />
   </ItemGroup>
