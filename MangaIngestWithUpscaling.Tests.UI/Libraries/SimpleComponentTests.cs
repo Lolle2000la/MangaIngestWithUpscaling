@@ -17,7 +17,7 @@ using NSubstitute;
 
 namespace MangaIngestWithUpscaling.Tests.UI.Libraries;
 
-public class SimpleComponentTests : TestContext
+public class SimpleComponentTests : BunitContext
 {
     private ApplicationDbContext _dbContext = null!;
     private ITaskQueue _mockTaskQueue = null!;
@@ -95,7 +95,7 @@ public class SimpleComponentTests : TestContext
     public void CreateLibrary_ShouldRenderInitialForm()
     {
         // Act
-        var component = RenderComponent<CreateLibrary>();
+        var component = Render<CreateLibrary>();
 
         // Assert
         Assert.NotNull(component);
@@ -109,7 +109,7 @@ public class SimpleComponentTests : TestContext
     public void Libraries_ShouldRenderEmptyState()
     {
         // Act
-        var component = RenderComponent<MangaIngestWithUpscaling.Components.Libraries.Libraries>();
+        var component = Render<MangaIngestWithUpscaling.Components.Libraries.Libraries>();
 
         // Assert
         Assert.NotNull(component);
@@ -156,7 +156,7 @@ public class SimpleComponentTests : TestContext
         );
 
         // Act
-        var component = RenderComponent<EditLibraryForm>(parameters =>
+        var component = Render<EditLibraryForm>(parameters =>
         {
             parameters.Add(p => p.Library, library);
             parameters.Add(p => p.LibraryChanged, libraryChanged);
@@ -193,7 +193,7 @@ public class SimpleComponentTests : TestContext
         };
 
         // Act
-        var component = RenderComponent<ImagePreviewDialog>(parameters =>
+        var component = Render<ImagePreviewDialog>(parameters =>
             parameters.Add(p => p.FilteredImage, filteredImage)
         );
 
@@ -223,7 +223,7 @@ public class SimpleComponentTests : TestContext
         };
 
         // Act
-        var component = RenderComponent<ImagePreviewDialog>(parameters =>
+        var component = Render<ImagePreviewDialog>(parameters =>
             parameters.Add(p => p.FilteredImage, filteredImage)
         );
 
@@ -251,7 +251,7 @@ public class SimpleComponentTests : TestContext
         };
 
         // Act
-        var component = RenderComponent<ImagePreviewDialog>(parameters =>
+        var component = Render<ImagePreviewDialog>(parameters =>
             parameters.Add(p => p.FilteredImage, filteredImage)
         );
 
@@ -283,7 +283,7 @@ public class SimpleComponentTests : TestContext
         };
 
         // Act
-        var component = RenderComponent<EditImageFilterDialog>(parameters =>
+        var component = Render<EditImageFilterDialog>(parameters =>
             parameters.Add(p => p.FilteredImage, filteredImage)
         );
 
@@ -307,7 +307,7 @@ public class SimpleComponentTests : TestContext
         };
 
         // Act
-        var component = RenderComponent<AddImageFilterDialog>(parameters =>
+        var component = Render<AddImageFilterDialog>(parameters =>
             parameters.Add(p => p.Library, library)
         );
 
@@ -330,7 +330,7 @@ public class SimpleComponentTests : TestContext
         };
 
         // Act
-        var component = RenderComponent<AddImageFilterDialog>(parameters =>
+        var component = Render<AddImageFilterDialog>(parameters =>
             parameters.Add(p => p.Library, library)
         );
 
@@ -365,7 +365,7 @@ public class SimpleComponentTests : TestContext
         };
 
         // Act
-        var component = RenderComponent<PreviewLibraryRenames>(parameters =>
+        var component = Render<PreviewLibraryRenames>(parameters =>
             parameters.Add(p => p.Library, library)
         );
 

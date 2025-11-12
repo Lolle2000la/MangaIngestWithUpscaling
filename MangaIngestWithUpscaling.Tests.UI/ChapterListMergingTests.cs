@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -26,7 +27,7 @@ using NSubstitute;
 
 namespace MangaIngestWithUpscaling.Tests.UI;
 
-public class ChapterListMergingTests : TestContext
+public class ChapterListMergingTests : BunitContext
 {
     private ApplicationDbContext _dbContext = null!;
     private IChapterChangedNotifier _subChapterChangedNotifier = null!;
@@ -770,7 +771,7 @@ public class ChapterListMergingTests : TestContext
         );
 
         // Verify initial state - both individual chapters should be visible
-        IRefreshableElementCollection<IElement> initialRows = component.FindAll("tr");
+        IEnumerable<IElement> initialRows = component.FindAll("tr");
         IElement? initialChapter11 = initialRows.FirstOrDefault(row =>
             row.TextContent.Contains("Chapter 1.1.cbz")
         );
@@ -796,7 +797,7 @@ public class ChapterListMergingTests : TestContext
         // The component should automatically refresh after the merge operation
 
         // Assert - Verify the final state shows the correct merged chapter
-        IRefreshableElementCollection<IElement> finalRows = component.FindAll("tr");
+        IEnumerable<IElement> finalRows = component.FindAll("tr");
 
         // 1. Verify that the merged chapter is now displayed with correct filename
         IElement? mergedChapterRow = finalRows.FirstOrDefault(row =>
@@ -837,7 +838,7 @@ public class ChapterListMergingTests : TestContext
             );
 
         // 5. Verify that the merged chapter shows the correct merged filename
-        IRefreshableElementCollection<IElement> chapterCells = component.FindAll("td");
+        IEnumerable<IElement> chapterCells = component.FindAll("td");
         IEnumerable<IElement> mergedFilenameCells = chapterCells.Where(cell =>
             cell.TextContent.Contains("Chapter 1.cbz")
         );
@@ -910,27 +911,59 @@ public class ChapterListMergingTests : TestContext
     )
         where T : class, IComponent
     {
-        var componentParams = new ComponentParameterCollectionBuilder<T>();
-        parameterBuilder?.Invoke(componentParams);
-        ComponentParameterCollection builtParams = componentParams.Build();
-
-        RenderFragment content = builder =>
+        // In bUnit v2, we use Render directly with a RenderFragment that wraps the component
+        // with the MudPopoverProvider
+        return Render<T>(builder =>
         {
             builder.OpenComponent<MudPopoverProvider>(0);
             builder.OpenComponent<T>(1);
-            foreach (ComponentParameter param in builtParams)
+
+            // Add parameters if provided
+            if (parameterBuilder != null)
             {
-                if (param.Name != null)
+                var paramBuilder = new ComponentParameterCollectionBuilder<T>();
+                parameterBuilder(paramBuilder);
+
+                // Use reflection to access the parameters since ComponentParameterCollectionBuilder
+                // is not directly enumerable in bUnit v2
+                var parametersField = paramBuilder
+                    .GetType()
+                    .GetField(
+                        "_parameters",
+                        System.Reflection.BindingFlags.NonPublic
+                            | System.Reflection.BindingFlags.Instance
+                    );
+
+                if (parametersField != null)
                 {
-                    builder.AddAttribute(2, param.Name, param.Value);
+                    var parameters = parametersField.GetValue(paramBuilder) as IEnumerable;
+                    if (parameters != null)
+                    {
+                        int index = 2;
+                        foreach (var param in parameters)
+                        {
+                            var nameProperty = param.GetType().GetProperty("Name");
+                            var valueProperty = param.GetType().GetProperty("Value");
+
+                            if (nameProperty != null && valueProperty != null)
+                            {
+                                var name = nameProperty.GetValue(param) as string;
+                                var value = valueProperty.GetValue(param);
+
+                                if (name != null)
+                                {
+                                    builder.AddAttribute(index, name, value);
+                                    index++;
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
             builder.CloseComponent();
             builder.CloseComponent();
-        };
-
-        return Render(content).FindComponent<T>();
+        });
     }
 
     #endregion
