@@ -28,8 +28,8 @@ public class BackwardCompatibilityService(
         // Get all existing merged chapter records
         List<MergedChapterInfo> existingRecords = await dbContext
             .MergedChapterInfos.Include(m => m.Chapter)
-            .ThenInclude(c => c.Manga)
-            .ThenInclude(m => m.Library)
+                .ThenInclude(c => c.Manga)
+                    .ThenInclude(m => m.Library)
             .ToListAsync(cancellationToken);
 
         if (!existingRecords.Any())

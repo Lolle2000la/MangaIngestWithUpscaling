@@ -64,10 +64,10 @@ public partial class LibraryIntegrityChecker(
         var libraries = await dbContext
             .Libraries.Include(l => l.UpscalerProfile)
             .Include(l => l.MangaSeries)
-            .ThenInclude(m => m.Chapters)
-            .ThenInclude(c => c.UpscalerProfile)
+                .ThenInclude(m => m.Chapters)
+                    .ThenInclude(c => c.UpscalerProfile)
             .Include(l => l.MangaSeries)
-            .ThenInclude(m => m.OtherTitles)
+                .ThenInclude(m => m.OtherTitles)
             .ToListAsync(ct);
 
         int totalChapters = libraries.SelectMany(l => l.MangaSeries).Sum(m => m.Chapters.Count);
@@ -838,10 +838,10 @@ public partial class LibraryIntegrityChecker(
         // Load the chapter with minimal required relationships for logging and repair decisions
         var chapter = await context
             .Chapters.Include(c => c.Manga)
-            .ThenInclude(m => m.Library)
-            .ThenInclude(l => l.UpscalerProfile)
+                .ThenInclude(m => m.Library)
+                    .ThenInclude(l => l.UpscalerProfile)
             .Include(c => c.Manga)
-            .ThenInclude(m => m.UpscalerProfilePreference)
+                .ThenInclude(m => m.UpscalerProfilePreference)
             .Include(c => c.UpscalerProfile)
             .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
 
@@ -1137,7 +1137,7 @@ public partial class LibraryIntegrityChecker(
         // Look for existing chapters with the same series title (including alternative titles)
         var existingChapters = await dbContext
             .Chapters.Include(c => c.Manga)
-            .ThenInclude(m => m.OtherTitles)
+                .ThenInclude(m => m.OtherTitles)
             .Where(c => c.Manga.LibraryId == library.Id)
             .Where(c =>
                 c.Manga.PrimaryTitle == chapterToUse.Metadata.Series
