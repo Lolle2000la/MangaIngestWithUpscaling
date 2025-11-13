@@ -67,8 +67,8 @@ public class UpscaleTask : BaseTask
 
         Chapter? chapter = await dbContext
             .Chapters.Include(c => c.Manga)
-            .ThenInclude(m => m.Library)
-            .ThenInclude(l => l.UpscalerProfile)
+                .ThenInclude(m => m.Library)
+                    .ThenInclude(l => l.UpscalerProfile)
             .Include(c => c.UpscalerProfile)
             .FirstOrDefaultAsync(c => c.Id == ChapterId, cancellationToken);
         UpscalerProfile? upscalerProfile = await dbContext.UpscalerProfiles.FirstOrDefaultAsync(
