@@ -282,8 +282,8 @@ public class DistributedUpscaleTaskProcessor(
                             scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
                         Chapter? chapter = await dbContext
                             .Chapters.Include(t => t.Manga)
-                            .ThenInclude(t => t.Library)
-                            .ThenInclude(t => t.UpscalerProfile)
+                                .ThenInclude(t => t.Library)
+                                    .ThenInclude(t => t.UpscalerProfile)
                             .Include(t => t.UpscalerProfile)
                             .FirstOrDefaultAsync(
                                 c => c.Id == upscaleData.ChapterId,
@@ -548,7 +548,7 @@ public class DistributedUpscaleTaskProcessor(
         {
             Chapter? chapter = await dbContext
                 .Chapters.Include(c => c.Manga)
-                .ThenInclude(m => m.Library)
+                    .ThenInclude(m => m.Library)
                 .FirstOrDefaultAsync(c => c.Id == repairTask.ChapterId);
 
             if (chapter == null)
@@ -792,8 +792,8 @@ public class DistributedUpscaleTaskProcessor(
             // Load chapter and upscaler profile
             Chapter? chapter = await dbContext
                 .Chapters.Include(c => c.Manga)
-                .ThenInclude(m => m.Library)
-                .ThenInclude(l => l.UpscalerProfile)
+                    .ThenInclude(m => m.Library)
+                        .ThenInclude(l => l.UpscalerProfile)
                 .Include(c => c.UpscalerProfile)
                 .FirstOrDefaultAsync(c => c.Id == repairTask.ChapterId, cancellationToken);
 

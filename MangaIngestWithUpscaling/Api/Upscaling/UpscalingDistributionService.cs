@@ -206,7 +206,7 @@ public partial class UpscalingDistributionService(
         {
             Chapter? chapter = await dbContext
                 .Chapters.Include(chapter => chapter.Manga)
-                .ThenInclude(manga => manga.Library)
+                    .ThenInclude(manga => manga.Library)
                 .FirstOrDefaultAsync(c => c.Id == upscaleTask.ChapterId);
             if (chapter == null)
             {
@@ -293,7 +293,7 @@ public partial class UpscalingDistributionService(
         {
             Chapter? chapter = await dbContext
                 .Chapters.Include(chapter => chapter.Manga)
-                .ThenInclude(manga => manga.Library)
+                    .ThenInclude(manga => manga.Library)
                 .FirstOrDefaultAsync(c => c.Id == upscaleTask.ChapterId);
             if (chapter == null)
             {
@@ -423,7 +423,7 @@ public partial class UpscalingDistributionService(
                 {
                     Chapter? chapter = await dbContext
                         .Chapters.Include(chapter => chapter.Manga)
-                        .ThenInclude(manga => manga.Library)
+                            .ThenInclude(manga => manga.Library)
                         .FirstOrDefaultAsync(c => c.Id == upscaleTask.ChapterId);
 
                     if (chapter == null)

@@ -31,8 +31,8 @@ public class LibraryIntegrityCheckTask : BaseTask
 
         var library = await dbContext
             .Libraries.Include(l => l.MangaSeries)
-            .ThenInclude(m => m.Chapters)
-            .ThenInclude(c => c.UpscalerProfile)
+                .ThenInclude(m => m.Chapters)
+                    .ThenInclude(c => c.UpscalerProfile)
             .Include(l => l.UpscalerProfile)
             .FirstOrDefaultAsync(l => l.Id == LibraryId, cancellationToken);
 
