@@ -13,7 +13,7 @@ using NSubstitute;
 
 namespace MangaIngestWithUpscaling.Tests.UI.Libraries;
 
-public class DialogsTests : TestContext
+public class DialogsTests : BunitContext
 {
     private ApplicationDbContext _dbContext = null!;
 
@@ -77,7 +77,7 @@ public class DialogsTests : TestContext
         };
 
         // Act
-        var component = RenderComponent<LibraryRenameDialog>(parameters =>
+        var component = Render<LibraryRenameDialog>(parameters =>
             parameters.Add(p => p.Library, library)
         );
 
@@ -105,7 +105,7 @@ public class DialogsTests : TestContext
         var mockDialogInstance = Substitute.For<IMudDialogInstance>();
 
         // Act
-        var component = RenderComponent<LibraryRenameDialog>(parameters =>
+        var component = Render<LibraryRenameDialog>(parameters =>
         {
             parameters.Add(p => p.Library, library);
             parameters.AddCascadingValue(mockDialogInstance);
@@ -144,7 +144,7 @@ public class DialogsTests : TestContext
         };
 
         // Act
-        var component = RenderComponent<LibraryRenameDialog>(parameters =>
+        var component = Render<LibraryRenameDialog>(parameters =>
             parameters.Add(p => p.Library, library)
         );
 
@@ -170,7 +170,7 @@ public class DialogsTests : TestContext
         };
 
         // Act
-        var component = RenderComponent<LibraryRenameDialog>(parameters =>
+        var component = Render<LibraryRenameDialog>(parameters =>
             parameters.Add(p => p.Library, library)
         );
 

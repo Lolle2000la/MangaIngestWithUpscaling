@@ -13,7 +13,7 @@ using NSubstitute;
 
 namespace MangaIngestWithUpscaling.Tests.UI.Libraries;
 
-public class FiltersTests : TestContext
+public class FiltersTests : BunitContext
 {
     private ApplicationDbContext _dbContext = null!;
 
@@ -80,7 +80,7 @@ public class FiltersTests : TestContext
         // This tests that component can be instantiated with valid data
         var exception = Record.Exception(() =>
         {
-            var component = RenderComponent<EditLibraryFilterForm>(parameters =>
+            var component = Render<EditLibraryFilterForm>(parameters =>
                 parameters.Add(p => p.FilterRule, filterRule)
             );
             Assert.NotNull(component);
@@ -110,7 +110,7 @@ public class FiltersTests : TestContext
         // Act & Assert - Some MudBlazor components require providers not set up in test context
         var exception = Record.Exception(() =>
         {
-            var component = RenderComponent<EditLibraryFilterForm>(parameters =>
+            var component = Render<EditLibraryFilterForm>(parameters =>
                 parameters.Add(p => p.FilterRule, filterRule)
             );
             Assert.NotNull(component);
@@ -150,7 +150,7 @@ public class FiltersTests : TestContext
         };
 
         // Act
-        var component = RenderComponent<EditLibraryFilters>(parameters =>
+        var component = Render<EditLibraryFilters>(parameters =>
             parameters.Add(p => p.Library, library)
         );
 
@@ -187,7 +187,7 @@ public class FiltersTests : TestContext
         // Act & Assert - Some MudBlazor components require providers not set up in test context
         var exception = Record.Exception(() =>
         {
-            var component = RenderComponent<EditLibraryRenameForm>(parameters =>
+            var component = Render<EditLibraryRenameForm>(parameters =>
             {
                 parameters.Add(p => p.RenameRule, renameRule);
                 parameters.Add(p => p.RulesChanged, mockCallback);
@@ -229,7 +229,7 @@ public class FiltersTests : TestContext
         var mockCallback = EventCallback.Empty;
 
         // Act
-        var component = RenderComponent<EditLibraryRenames>(parameters =>
+        var component = Render<EditLibraryRenames>(parameters =>
         {
             parameters.Add(p => p.Library, library);
             parameters.Add(p => p.RulesChanged, mockCallback);
