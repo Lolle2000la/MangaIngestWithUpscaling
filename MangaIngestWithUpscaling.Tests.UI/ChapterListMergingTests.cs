@@ -911,59 +911,26 @@ public class ChapterListMergingTests : BunitContext
     )
         where T : class, IComponent
     {
-        // In bUnit v2, we use Render directly with a RenderFragment that wraps the component
-        // with the MudPopoverProvider
-        return Render<T>(builder =>
+        // In bUnit v2, create a RenderFragment that wraps the component with MudPopoverProvider
+        // and forwards parameters using AddComponentParameter
+        RenderFragment fragment = builder =>
         {
             builder.OpenComponent<MudPopoverProvider>(0);
-            builder.OpenComponent<T>(1);
-
-            // Add parameters if provided
-            if (parameterBuilder != null)
-            {
-                var paramBuilder = new ComponentParameterCollectionBuilder<T>();
-                parameterBuilder(paramBuilder);
-
-                // Use reflection to access the parameters since ComponentParameterCollectionBuilder
-                // is not directly enumerable in bUnit v2
-                var parametersField = paramBuilder
-                    .GetType()
-                    .GetField(
-                        "_parameters",
-                        System.Reflection.BindingFlags.NonPublic
-                            | System.Reflection.BindingFlags.Instance
-                    );
-
-                if (parametersField != null)
-                {
-                    var parameters = parametersField.GetValue(paramBuilder) as IEnumerable;
-                    if (parameters != null)
-                    {
-                        int index = 2;
-                        foreach (var param in parameters)
-                        {
-                            var nameProperty = param.GetType().GetProperty("Name");
-                            var valueProperty = param.GetType().GetProperty("Value");
-
-                            if (nameProperty != null && valueProperty != null)
-                            {
-                                var name = nameProperty.GetValue(param) as string;
-                                var value = valueProperty.GetValue(param);
-
-                                if (name != null)
-                                {
-                                    builder.AddAttribute(index, name, value);
-                                    index++;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
             builder.CloseComponent();
-            builder.CloseComponent();
-        });
+        };
+
+        // First render the provider
+        Render(fragment);
+
+        // Then render the actual component with parameters
+        if (parameterBuilder != null)
+        {
+            return Render<T>(parameterBuilder);
+        }
+        else
+        {
+            return Render<T>();
+        }
     }
 
     #endregion
