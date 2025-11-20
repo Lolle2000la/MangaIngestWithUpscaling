@@ -36,7 +36,7 @@ jobs:
       TAG: ${{ needs.generate-tag.outputs.tag }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5 
+        uses: actions/checkout@v6 
         with:
           submodules: 'true'
 
@@ -75,7 +75,7 @@ jobs:
       TAG: ${{ needs.generate-tag.outputs.tag }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5 
+        uses: actions/checkout@v6 
         with:
           submodules: 'true'
 
@@ -124,7 +124,7 @@ jobs:
           remove-docker-images: 'true'
 
       - name: Checkout code
-        uses: actions/checkout@v5 
+        uses: actions/checkout@v6 
         with:
           submodules: 'true'
 
@@ -172,7 +172,7 @@ jobs:
           remove-codeql: 'true'
           remove-docker-images: 'true'
       - name: Checkout code
-        uses: actions/checkout@v5 
+        uses: actions/checkout@v6 
         with:
           submodules: 'true'
 
