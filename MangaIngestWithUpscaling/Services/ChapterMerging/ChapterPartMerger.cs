@@ -113,14 +113,17 @@ public partial class ChapterPartMerger(
     /// <summary>
     /// Groups chapters that can be added to existing merged chapters.
     /// This handles individual chapters (like 2.3) that can be added to existing merged chapters (like merged chapter 2).
+    /// Only chapters that would form a consecutive sequence with the already-merged parts are included.
     /// </summary>
     /// <param name="chapters">Chapters to analyze</param>
     /// <param name="existingMergedBaseNumbers">Base numbers of existing merged chapters</param>
+    /// <param name="existingMergedParts">Dictionary mapping base numbers to lists of already-merged chapter numbers (e.g., "1" -> ["1.1", "1.2"])</param>
     /// <param name="isLastChapter">Function to determine if a chapter group is the latest chapter</param>
     /// <returns>Dictionary where key is base chapter number and value is list of chapters to add to existing merged chapter</returns>
     public Dictionary<string, List<FoundChapter>> GroupChaptersForAdditionToExistingMerged(
         IEnumerable<FoundChapter> chapters,
         HashSet<string> existingMergedBaseNumbers,
+        Dictionary<string, List<string>> existingMergedParts,
         Func<string, bool> isLastChapter
     )
     {
@@ -132,6 +135,9 @@ public partial class ChapterPartMerger(
             existingMergedBaseNumbers.Count,
             string.Join(", ", existingMergedBaseNumbers)
         );
+
+        // Group candidate chapters by base number first
+        var candidatesByBase = new Dictionary<string, List<FoundChapter>>();
 
         foreach (FoundChapter chapter in chapters)
         {
@@ -192,18 +198,71 @@ public partial class ChapterPartMerger(
                 continue;
             }
 
-            if (!result.ContainsKey(baseNumber))
+            if (!candidatesByBase.ContainsKey(baseNumber))
             {
-                result[baseNumber] = new List<FoundChapter>();
+                candidatesByBase[baseNumber] = new List<FoundChapter>();
             }
 
-            result[baseNumber].Add(chapter);
+            candidatesByBase[baseNumber].Add(chapter);
             logger.LogDebug(
-                "GroupChaptersForAdditionToExistingMerged: Added {FileName} (chapter {ChapterNumber}) to existing merged base group {BaseNumber}",
+                "GroupChaptersForAdditionToExistingMerged: Added candidate {FileName} (chapter {ChapterNumber}) for base group {BaseNumber}",
                 chapter.FileName,
                 chapterNumber,
                 baseNumber
             );
+        }
+
+        // Now validate consecutive sequences for each base number
+        foreach (var (baseNumber, candidates) in candidatesByBase)
+        {
+            // Get the existing merged parts for this base number
+            if (!existingMergedParts.TryGetValue(baseNumber, out List<string>? mergedParts))
+            {
+                logger.LogDebug(
+                    "GroupChaptersForAdditionToExistingMerged: No existing merged parts info for base {BaseNumber}, skipping validation",
+                    baseNumber
+                );
+                continue;
+            }
+
+            // Combine existing parts with candidates to check for consecutive sequence
+            var allChapters = mergedParts
+                .Select(num => CreateFoundChapter($"Chapter {num}.cbz", num))
+                .Concat(candidates)
+                .ToList();
+
+            // Use GetConsecutiveChapterParts to find the consecutive sequence
+            List<FoundChapter> consecutiveChapters = GetConsecutiveChapterParts(
+                allChapters,
+                baseNumber
+            );
+
+            // Find which candidates are in the consecutive sequence
+            var consecutiveCandidates = candidates
+                .Where(c =>
+                    consecutiveChapters.Any(cc =>
+                        cc.FileName == c.FileName || cc.Metadata.Number == c.Metadata.Number
+                    )
+                )
+                .ToList();
+
+            if (consecutiveCandidates.Any())
+            {
+                result[baseNumber] = consecutiveCandidates;
+                logger.LogDebug(
+                    "GroupChaptersForAdditionToExistingMerged: Will add {Count} consecutive chapters to existing merged base {BaseNumber}",
+                    consecutiveCandidates.Count,
+                    baseNumber
+                );
+            }
+            else if (candidates.Any())
+            {
+                logger.LogDebug(
+                    "GroupChaptersForAdditionToExistingMerged: Rejected {Count} candidates for base {BaseNumber} due to gaps in sequence",
+                    candidates.Count,
+                    baseNumber
+                );
+            }
         }
 
         logger.LogDebug(
@@ -390,6 +449,7 @@ public partial class ChapterPartMerger(
         HashSet<string> existingChapterNumbers,
         HashSet<int> excludeMergedChapterIds,
         HashSet<string> existingMergedBaseNumbers,
+        Dictionary<string, List<string>> existingMergedParts,
         CancellationToken cancellationToken = default
     )
     {
@@ -434,6 +494,7 @@ public partial class ChapterPartMerger(
                 GroupChaptersForAdditionToExistingMerged(
                     chaptersForMerging,
                     existingMergedBaseNumbers,
+                    existingMergedParts,
                     baseNumber => IsLatestChapter(baseNumber, existingChapterNumbers)
                 );
 
@@ -1572,6 +1633,19 @@ public partial class ChapterPartMerger(
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Creates a temporary FoundChapter for internal processing.
+    /// </summary>
+    private static FoundChapter CreateFoundChapter(string fileName, string chapterNumber)
+    {
+        return new FoundChapter(
+            fileName,
+            fileName,
+            ChapterStorageType.Cbz,
+            new ExtractedMetadata("", null, chapterNumber)
+        );
     }
 
     private static bool IsImageFile(string fileName)

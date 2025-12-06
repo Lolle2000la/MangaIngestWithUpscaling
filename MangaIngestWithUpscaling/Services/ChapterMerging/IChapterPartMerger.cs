@@ -63,6 +63,7 @@ public interface IChapterPartMerger
     /// <param name="existingChapterNumbers">Set of all existing chapter numbers</param>
     /// <param name="excludeMergedChapterIds">Set of chapter IDs that are already merged and should be skipped</param>
     /// <param name="existingMergedBaseNumbers">Set of base numbers for existing merged chapters</param>
+    /// <param name="existingMergedParts">Dictionary mapping base numbers to lists of already-merged chapter numbers</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Result containing merge information for database updates</returns>
     Task<ChapterMergeResult> ProcessExistingChapterPartsAsync(
@@ -72,6 +73,7 @@ public interface IChapterPartMerger
         HashSet<string> existingChapterNumbers,
         HashSet<int> excludeMergedChapterIds,
         HashSet<string> existingMergedBaseNumbers,
+        Dictionary<string, List<string>> existingMergedParts,
         CancellationToken cancellationToken = default
     );
 
@@ -89,14 +91,17 @@ public interface IChapterPartMerger
     /// <summary>
     /// Groups chapters that can be added to existing merged chapters.
     /// This handles individual chapters (like 2.3) that can be added to existing merged chapters (like merged chapter 2).
+    /// Only chapters that would form a consecutive sequence with the already-merged parts are included.
     /// </summary>
     /// <param name="chapters">Chapters to analyze</param>
     /// <param name="existingMergedBaseNumbers">Base numbers of existing merged chapters</param>
+    /// <param name="existingMergedParts">Dictionary mapping base numbers to lists of already-merged chapter numbers (e.g., "1" -> ["1.1", "1.2"])</param>
     /// <param name="isLastChapter">Function to determine if a chapter group is the latest chapter</param>
     /// <returns>Dictionary where key is base chapter number and value is list of chapters to add to existing merged chapter</returns>
     Dictionary<string, List<FoundChapter>> GroupChaptersForAdditionToExistingMerged(
         IEnumerable<FoundChapter> chapters,
         HashSet<string> existingMergedBaseNumbers,
+        Dictionary<string, List<string>> existingMergedParts,
         Func<string, bool> isLastChapter
     );
 

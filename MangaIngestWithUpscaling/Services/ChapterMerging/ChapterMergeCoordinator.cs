@@ -63,6 +63,22 @@ public class ChapterMergeCoordinator(
                 .Select(m => m.MergedChapterNumber)
                 .ToHashSetAsync(cancellationToken);
 
+            // Get the actual merged parts for each base number to validate consecutive sequences
+            List<MergedChapterInfo> mergedChapterInfos = await dbContext
+                .MergedChapterInfos.Where(m => seriesChapterIds.Contains(m.ChapterId))
+                .ToListAsync(cancellationToken);
+
+            // Use GroupBy to handle possible duplicate MergedChapterNumber values gracefully
+            Dictionary<string, List<string>> existingMergedParts = mergedChapterInfos
+                .GroupBy(info => info.MergedChapterNumber)
+                .ToDictionary(
+                    g => g.Key,
+                    g =>
+                        g.SelectMany(info => info.OriginalParts.Select(p => p.ChapterNumber))
+                            .Distinct()
+                            .ToList()
+                );
+
             // Process existing chapters to identify and merge eligible chapter parts
             ChapterMergeResult mergeResult =
                 await chapterPartMerger.ProcessExistingChapterPartsAsync(
@@ -72,6 +88,7 @@ public class ChapterMergeCoordinator(
                     allChapterNumbers,
                     mergedChapterIds,
                     existingMergedBaseNumbers,
+                    existingMergedParts,
                     cancellationToken
                 );
 
@@ -254,6 +271,7 @@ public class ChapterMergeCoordinator(
             allChapterNumbers,
             new HashSet<int>(), // No excluded chapters for explicit merges
             new HashSet<string>(), // No existing merged chapters for explicit merges
+            new Dictionary<string, List<string>>(), // No existing merged parts for explicit merges
             cancellationToken
         );
 
@@ -605,6 +623,26 @@ public class ChapterMergeCoordinator(
             string.Join(", ", existingMergedBaseNumbers)
         );
 
+        // Get the actual merged parts for each base number to validate consecutive sequences
+        List<MergedChapterInfo> mergedChapterInfos = await dbContext
+            .MergedChapterInfos.Where(m => seriesChapterIds.Contains(m.ChapterId))
+            .ToListAsync(cancellationToken);
+
+        Dictionary<string, List<string>> existingMergedParts = mergedChapterInfos
+            .GroupBy(info => info.MergedChapterNumber)
+            .ToDictionary(
+                g => g.Key,
+                g =>
+                    g.SelectMany(info => info.OriginalParts.Select(p => p.ChapterNumber))
+                        .Distinct()
+                        .ToList()
+            );
+
+        logger.LogDebug(
+            "GetPossibleMergeActionsAsync: Found {MergedPartsCount} existing merged parts mappings",
+            existingMergedParts.Count
+        );
+
         // Convert chapters to FoundChapter format for processing
         List<FoundChapter> foundChapters = await ConvertChaptersToFoundChapters(chapters);
 
@@ -654,6 +692,7 @@ public class ChapterMergeCoordinator(
             chapterPartMerger.GroupChaptersForAdditionToExistingMerged(
                 foundChapters,
                 existingMergedBaseNumbers,
+                existingMergedParts,
                 latestChapterChecker
             );
 
