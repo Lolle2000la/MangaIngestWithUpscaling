@@ -14,6 +14,9 @@ public partial class ChapterPartMerger(
     ILogger<ChapterPartMerger> logger
 ) : IChapterPartMerger
 {
+    private const decimal ChapterPartIncrement = 0.1m;
+    private const decimal DecimalComparisonTolerance = 0.001m;
+
     public Dictionary<string, List<FoundChapter>> GroupChapterPartsForMerging(
         IEnumerable<FoundChapter> chapters,
         Func<string, bool> isLastChapter
@@ -1285,18 +1288,18 @@ public partial class ChapterPartMerger(
             return new List<FoundChapter>();
         }
 
-        // Extract and parse chapter numbers, creating a mapping back to FoundChapter objects
+        // Extract and parse chapter numbers in a single pass for efficiency
         var chaptersWithNumbers = chapters
-            .Select(chapter => new
+            .Select(chapter =>
             {
-                Chapter = chapter,
-                ChapterNumber = ExtractChapterNumber(chapter),
-            })
-            .Where(x => x.ChapterNumber != null)
-            .Select(x => new
-            {
-                x.Chapter,
-                Number = decimal.TryParse(x.ChapterNumber, out decimal num) ? (decimal?)num : null,
+                string? chapterNum = ExtractChapterNumber(chapter);
+                return new
+                {
+                    Chapter = chapter,
+                    Number = chapterNum != null && decimal.TryParse(chapterNum, out decimal num)
+                        ? (decimal?)num
+                        : null,
+                };
             })
             .Where(x => x.Number.HasValue)
             .OrderBy(x => x.Number!.Value)
@@ -1322,7 +1325,6 @@ public partial class ChapterPartMerger(
         }
 
         var consecutiveChapters = new List<FoundChapter>();
-        bool hasBaseNumber = chaptersWithNumbers.Any(x => x.Number!.Value == baseNum);
 
         // Process each chapter to find the consecutive sequence
         for (int i = 0; i < chaptersWithNumbers.Count; i++)
@@ -1337,7 +1339,7 @@ public partial class ChapterPartMerger(
                     // Starting with base number is valid
                     consecutiveChapters.Add(chaptersWithNumbers[i].Chapter);
                 }
-                else if (currentNumber == baseNum + 0.1m)
+                else if (currentNumber == baseNum + ChapterPartIncrement)
                 {
                     // Starting with .1 is valid
                     consecutiveChapters.Add(chaptersWithNumbers[i].Chapter);
@@ -1352,12 +1354,14 @@ public partial class ChapterPartMerger(
             {
                 // Not the first chapter: check if it's consecutive
                 decimal previousNumber = chaptersWithNumbers[i - 1].Number!.Value;
-                decimal expectedNext;
 
                 if (previousNumber == baseNum)
                 {
                     // After base, can be .1 or .2
-                    if (currentNumber == baseNum + 0.1m || currentNumber == baseNum + 0.2m)
+                    if (
+                        currentNumber == baseNum + ChapterPartIncrement
+                        || currentNumber == baseNum + (ChapterPartIncrement * 2)
+                    )
                     {
                         consecutiveChapters.Add(chaptersWithNumbers[i].Chapter);
                     }
@@ -1370,8 +1374,8 @@ public partial class ChapterPartMerger(
                 else
                 {
                     // After a decimal part, must increment by 0.1
-                    expectedNext = previousNumber + 0.1m;
-                    if (Math.Abs(currentNumber - expectedNext) < 0.001m)
+                    decimal expectedNext = previousNumber + ChapterPartIncrement;
+                    if (Math.Abs(currentNumber - expectedNext) < DecimalComparisonTolerance)
                     {
                         consecutiveChapters.Add(chaptersWithNumbers[i].Chapter);
                     }
@@ -1455,7 +1459,10 @@ public partial class ChapterPartMerger(
                 if (i + 1 < chapterNumbers.Count)
                 {
                     decimal nextNumber = chapterNumbers[i + 1];
-                    if (nextNumber != baseNum + 0.1m && nextNumber != baseNum + 0.2m)
+                    if (
+                        nextNumber != baseNum + ChapterPartIncrement
+                        && nextNumber != baseNum + (ChapterPartIncrement * 2)
+                    )
                     {
                         return false; // Invalid jump from base
                     }
@@ -1476,7 +1483,10 @@ public partial class ChapterPartMerger(
 
                         // But validate it's a reasonable decimal part (.1, .2, etc.)
                         decimal decimalPart = expectedValue - baseNum;
-                        if (decimalPart != 0.1m && decimalPart != 0.2m)
+                        if (
+                            decimalPart != ChapterPartIncrement
+                            && decimalPart != ChapterPartIncrement * 2
+                        )
                         {
                             return false; // Invalid decimal part after base
                         }
@@ -1484,7 +1494,7 @@ public partial class ChapterPartMerger(
                     else
                     {
                         // Subsequent decimals must increment by 0.1
-                        expectedValue = chapterNumbers[i - 1] + 0.1m;
+                        expectedValue = chapterNumbers[i - 1] + ChapterPartIncrement;
                     }
                 }
                 else
@@ -1493,17 +1503,17 @@ public partial class ChapterPartMerger(
                     if (i == 0)
                     {
                         // First number should be base + 0.1
-                        expectedValue = baseNum + 0.1m;
+                        expectedValue = baseNum + ChapterPartIncrement;
                     }
                     else
                     {
                         // Subsequent numbers increment by 0.1
-                        expectedValue = chapterNumbers[i - 1] + 0.1m;
+                        expectedValue = chapterNumbers[i - 1] + ChapterPartIncrement;
                     }
                 }
 
                 // Check if current number matches expected (with floating point tolerance)
-                if (Math.Abs(currentNumber - expectedValue) > 0.001m)
+                if (Math.Abs(currentNumber - expectedValue) > DecimalComparisonTolerance)
                 {
                     return false;
                 }
