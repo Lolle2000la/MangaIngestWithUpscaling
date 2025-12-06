@@ -1338,12 +1338,15 @@ public partial class ChapterPartMerger(
             if (i == 0)
             {
                 // First chapter: validate starting position
-                if (currentNumber == baseNum)
+                if (Math.Abs(currentNumber - baseNum) < DecimalComparisonTolerance)
                 {
                     // Starting with base number is valid
                     consecutiveChapters.Add(chaptersWithNumbers[i].Chapter);
                 }
-                else if (currentNumber == baseNum + ChapterPartIncrement)
+                else if (
+                    Math.Abs(currentNumber - (baseNum + ChapterPartIncrement))
+                    < DecimalComparisonTolerance
+                )
                 {
                     // Starting with .1 is valid
                     consecutiveChapters.Add(chaptersWithNumbers[i].Chapter);
@@ -1359,12 +1362,14 @@ public partial class ChapterPartMerger(
                 // Not the first chapter: check if it's consecutive
                 decimal previousNumber = chaptersWithNumbers[i - 1].Number!.Value;
 
-                if (previousNumber == baseNum)
+                if (Math.Abs(previousNumber - baseNum) < DecimalComparisonTolerance)
                 {
                     // After base, can be .1 or .2
                     if (
-                        Math.Abs(currentNumber - (baseNum + ChapterPartIncrement)) < DecimalComparisonTolerance
-                        || Math.Abs(currentNumber - (baseNum + (ChapterPartIncrement * 2))) < DecimalComparisonTolerance
+                        Math.Abs(currentNumber - (baseNum + ChapterPartIncrement))
+                            < DecimalComparisonTolerance
+                        || Math.Abs(currentNumber - (baseNum + (ChapterPartIncrement * 2)))
+                            < DecimalComparisonTolerance
                     )
                     {
                         consecutiveChapters.Add(chaptersWithNumbers[i].Chapter);

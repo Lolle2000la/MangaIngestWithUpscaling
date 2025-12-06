@@ -461,6 +461,66 @@ public class ChapterPartMergerTests : IDisposable
         Assert.DoesNotContain(mergedChapters, c => c.FileName == "Chapter 5.5.cbz");
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void GroupChapterPartsForMerging_WithDuplicateChapterNumbers_ShouldNotMerge()
+    {
+        // Arrange - duplicate chapter numbers
+        var chapters = new List<FoundChapter>
+        {
+            CreateFoundChapter("Chapter 1.1 v1.cbz", "1.1"),
+            CreateFoundChapter("Chapter 1.1 v2.cbz", "1.1"),
+            CreateFoundChapter("Chapter 1.2.cbz", "1.2"),
+        };
+
+        // Act
+        var result = _chapterPartMerger.GroupChapterPartsForMerging(chapters, _ => false);
+
+        // Assert - Should not merge due to duplicate 1.1
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void GroupChapterPartsForMerging_WithBaseFollowedByDotTwo_ShouldMerge()
+    {
+        // Arrange - Special case: base followed directly by .2
+        var chapters = new List<FoundChapter>
+        {
+            CreateFoundChapter("Chapter 22.cbz", "22"),
+            CreateFoundChapter("Chapter 22.2.cbz", "22.2"),
+            CreateFoundChapter("Chapter 22.3.cbz", "22.3"),
+        };
+
+        // Act
+        var result = _chapterPartMerger.GroupChapterPartsForMerging(chapters, _ => false);
+
+        // Assert
+        Assert.Single(result);
+        Assert.Contains("22", result.Keys);
+        Assert.Equal(3, result["22"].Count);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void GroupChapterPartsForMerging_WithUnorderedInput_ShouldMergeCorrectly()
+    {
+        // Arrange - chapters in non-sequential order
+        var chapters = new List<FoundChapter>
+        {
+            CreateFoundChapter("Chapter 1.3.cbz", "1.3"),
+            CreateFoundChapter("Chapter 1.1.cbz", "1.1"),
+            CreateFoundChapter("Chapter 1.2.cbz", "1.2"),
+        };
+
+        // Act
+        var result = _chapterPartMerger.GroupChapterPartsForMerging(chapters, _ => false);
+
+        // Assert
+        Assert.Single(result);
+        Assert.Equal(3, result["1"].Count);
+    }
+
     #endregion
 
     #region GroupChaptersForAdditionToExistingMerged Tests
