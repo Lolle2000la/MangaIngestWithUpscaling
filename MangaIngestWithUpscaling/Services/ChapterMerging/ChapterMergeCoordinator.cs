@@ -73,7 +73,10 @@ public class ChapterMergeCoordinator(
                 .GroupBy(info => info.MergedChapterNumber)
                 .ToDictionary(
                     g => g.Key,
-                    g => g.SelectMany(info => info.OriginalParts.Select(p => p.ChapterNumber)).Distinct().ToList()
+                    g =>
+                        g.SelectMany(info => info.OriginalParts.Select(p => p.ChapterNumber))
+                            .Distinct()
+                            .ToList()
                 );
 
             // Process existing chapters to identify and merge eligible chapter parts
@@ -629,7 +632,10 @@ public class ChapterMergeCoordinator(
             .GroupBy(info => info.MergedChapterNumber)
             .ToDictionary(
                 g => g.Key,
-                g => g.SelectMany(info => info.OriginalParts.Select(p => p.ChapterNumber)).Distinct().ToList()
+                g =>
+                    g.SelectMany(info => info.OriginalParts.Select(p => p.ChapterNumber))
+                        .Distinct()
+                        .ToList()
             );
 
         logger.LogDebug(
