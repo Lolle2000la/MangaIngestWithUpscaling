@@ -7,6 +7,9 @@
     <PublishAot>true</PublishAot>
     <VelopackRelease>false</VelopackRelease>
     <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>
+    <AllowMissingPrunePackageData>true</AllowMissingPrunePackageData>
+    <RuntimeIdentifiers>linux-x64;win-x64</RuntimeIdentifiers>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">linux-x64</RuntimeIdentifier>
   </PropertyGroup>
   <PropertyGroup Condition="'$(VelopackRelease)'=='true'">
     <DefineConstants>$(DefineConstants);VELOPACK_RELEASE</DefineConstants>
