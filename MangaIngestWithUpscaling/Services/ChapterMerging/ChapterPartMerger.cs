@@ -1274,6 +1274,10 @@ public partial class ChapterPartMerger(
     /// <summary>
     ///     Extracts the longest consecutive sequence of chapter parts from the beginning.
     ///     This allows merging even when there are gaps (e.g., 1.1, 1.2, 1.5 will merge 1.1 and 1.2).
+    ///     Supports flexible sequences:
+    ///     - Starting with base number (e.g., 22, 22.1, 22.2)
+    ///     - Starting with .1 (e.g., 22.1, 22.2, 22.3)
+    ///     - Special case: base followed directly by .2 (e.g., 22, 22.2, 22.3)
     /// </summary>
     /// <param name="chapters">All chapters for a given base number</param>
     /// <param name="baseNumber">The base chapter number</param>
