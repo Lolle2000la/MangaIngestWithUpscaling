@@ -2,6 +2,7 @@
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Shared.Configuration;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Open.ChannelExtensions;
 
@@ -96,9 +97,47 @@ public class UpscaleTaskProcessor(
 
         try
         {
+            // Atomically claim the task by transitioning from Pending to Processing
+            // This prevents race conditions with DistributedUpscaleTaskProcessor
+            PersistedTask? taskFromDb = await dbContext.PersistedTasks.FirstOrDefaultAsync(
+                t => t.Id == task.Id,
+                stoppingToken
+            );
+
+            if (taskFromDb == null)
+            {
+                logger.LogWarning("Task {TaskId} not found in database, skipping", task.Id);
+                return;
+            }
+
+            // Skip if task is not in Pending state (another worker claimed it)
+            if (taskFromDb.Status != PersistedTaskStatus.Pending)
+            {
+                logger.LogInformation(
+                    "Skipping task {TaskId} as it is no longer pending (current status: {Status})",
+                    task.Id,
+                    taskFromDb.Status
+                );
+                return;
+            }
+
+            // Atomically transition to Processing
+            taskFromDb.Status = PersistedTaskStatus.Processing;
+            try
+            {
+                await dbContext.SaveChangesAsync(stoppingToken);
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                logger.LogInformation(
+                    "Task {TaskId} was claimed by another worker (concurrency conflict)",
+                    task.Id
+                );
+                return;
+            }
+
+            // Update the in-memory task status
             task.Status = PersistedTaskStatus.Processing;
-            dbContext.Update(task);
-            await dbContext.SaveChangesAsync(stoppingToken);
             _ = StatusChanged?.Invoke(task);
 
             // Forward progress changes to UI by raising StatusChanged (debounced)

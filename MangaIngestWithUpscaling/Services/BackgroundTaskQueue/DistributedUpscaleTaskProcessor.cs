@@ -181,6 +181,7 @@ public class DistributedUpscaleTaskProcessor(
                 {
                     PersistedTask task = await _reader.ReadAsync(linkedCts.Token);
 
+                    bool taskClaimed = false;
                     using (IServiceScope scope = scopeFactory.CreateScope())
                     {
                         var dbContext =
@@ -189,25 +190,59 @@ public class DistributedUpscaleTaskProcessor(
                             ILogger<DistributedUpscaleTaskProcessor>
                         >();
 
-                        PersistedTask? taskFromDb = await dbContext
-                            .PersistedTasks.AsNoTracking()
-                            .FirstOrDefaultAsync(t => t.Id == task.Id, linkedCts.Token);
+                        // Atomically claim the task by transitioning from Pending to Processing
+                        // This prevents multiple workers from claiming the same task
+                        PersistedTask? taskFromDb =
+                            await dbContext.PersistedTasks.FirstOrDefaultAsync(
+                                t => t.Id == task.Id,
+                                linkedCts.Token
+                            );
+
+                        if (taskFromDb == null)
+                        {
+                            logger.LogWarning(
+                                "Task {taskId} not found in database, skipping.",
+                                task.Id
+                            );
+                            continue; // Skip this task and try to get the next one from the channel.
+                        }
 
                         // A task should only be processed if it's in the "Pending" state.
                         // If it's anything else, another worker has claimed it or it's finalized.
-                        if (taskFromDb == null || taskFromDb.Status != PersistedTaskStatus.Pending)
+                        if (taskFromDb.Status != PersistedTaskStatus.Pending)
                         {
-                            if (taskFromDb != null)
-                            {
-                                logger.LogInformation(
-                                    "Skipping task {taskId} as it is no longer pending (current status: {status}).",
-                                    task.Id,
-                                    taskFromDb.Status
-                                );
-                            }
-
+                            logger.LogInformation(
+                                "Skipping task {taskId} as it is no longer pending (current status: {status}).",
+                                task.Id,
+                                taskFromDb.Status
+                            );
                             continue; // Skip this task and try to get the next one from the channel.
                         }
+
+                        // Atomically transition to Processing - only one worker will succeed
+                        taskFromDb.Status = PersistedTaskStatus.Processing;
+                        try
+                        {
+                            await dbContext.SaveChangesAsync(linkedCts.Token);
+                            taskClaimed = true;
+                            // Update the in-memory task with the new status
+                            task.Status = PersistedTaskStatus.Processing;
+                        }
+                        catch (DbUpdateConcurrencyException)
+                        {
+                            // Another worker claimed this task, skip it
+                            logger.LogInformation(
+                                "Task {taskId} was claimed by another worker (concurrency conflict).",
+                                task.Id
+                            );
+                            continue;
+                        }
+                    }
+
+                    // Only proceed with the task if we successfully claimed it
+                    if (!taskClaimed)
+                    {
+                        continue;
                     }
 
                     // Handle RepairUpscaleTask specially based on remote-only mode
@@ -383,24 +418,8 @@ public class DistributedUpscaleTaskProcessor(
         {
             PersistedTask task = await tcs.Task;
 
-            //
-            // Now that we have a claimed task, update its status in the DB to "Processing"
-            //
-            using (IServiceScope scope = scopeFactory.CreateScope())
-            {
-                var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-                PersistedTask? taskFromDb = await dbContext.PersistedTasks.FirstOrDefaultAsync(
-                    t => t.Id == task.Id,
-                    stoppingToken
-                );
-                if (taskFromDb != null)
-                {
-                    taskFromDb.Status = PersistedTaskStatus.Processing;
-                    await dbContext.SaveChangesAsync(stoppingToken);
-                }
-            }
-
-            task.Status = PersistedTaskStatus.Processing;
+            // Task status has already been atomically updated to "Processing" in ExecuteAsync
+            // before it was passed to us, so we just need to track it locally
             task.LastKeepAlive = DateTime.UtcNow.AddSeconds(5); // Bridge network latency
 
             using (_lock.EnterScope())
