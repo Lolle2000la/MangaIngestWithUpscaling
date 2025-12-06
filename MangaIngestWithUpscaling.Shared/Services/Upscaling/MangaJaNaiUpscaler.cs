@@ -105,6 +105,43 @@ public class MangaJaNaiUpscaler(
                 "4x_MangaJaNai_2048p_V1_ESRGAN_70k.pth",
                 "f70e08c60da372b7207e7348486ea6b498ea8dea6246bb717530a4d45c955b9b"
             },
+            // V3 models
+            {
+                "2x_IllustrationJaNai_V3denoise_FDAT_M_unshuffle_30k_fp16.safetensors",
+                "960c9555f62fb19113e8d808bde5a54b64181b1db417bca1bbda26516e48f108"
+            },
+            {
+                "4x_IllustrationJaNai_V3denoise_DAT2_27k_bf16.safetensors",
+                "430d5e58053be88d250b6ee2c1016a19f919baafb9b6bda0f45c14b54453fb12"
+            },
+            {
+                "4x_IllustrationJaNai_V3denoise_FDAT_M_47k_fp16.safetensors",
+                "a15dfc813b1f1138ca3da06c6cbf530dd1acbff0ba0d4eb97b5c021f3facbf6c"
+            },
+            {
+                "4x_IllustrationJaNai_V3denoise_FDAT_XL_32k_bf16.safetensors",
+                "3099fd76f427ee29513aa91dda02b9c1a54e0f7fdd08b653175655de798562f7"
+            },
+            {
+                "2x_IllustrationJaNai_V3detail_FDAT_M_unshuffle_40k_fp16.safetensors",
+                "8ff2ba0b970e6939f3711077f5260fcded16b8388a939a27f153c687ff5da3e0"
+            },
+            {
+                "4x_IllustrationJaNai_V3detail_DAT2_28k_bf16.safetensors",
+                "eb9faf6a37de81406765e0c99e76ad7dafe67e4877f32e186085ac277a0e6181"
+            },
+            {
+                "4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.safetensors",
+                "87badd2462ec4fe9a4d6a1e971d27cabb17540961ac588a534a7f6e0b9e135cd"
+            },
+            {
+                "4x_IllustrationJaNai_V3detail_FDAT_XL_27k_bf16.safetensors",
+                "fbafec1f5a126c251de8a21e177e5a710ba2e75c7fd88fe989eb8df0508790c9"
+            },
+            {
+                "4x_IllustrationJaNai_V3detail_HAT_L_28k_bf16.safetensors",
+                "38c00c9ff871ae292617ae1127edc150f81c4e0f8f98685e48ff9c9cd87fba3b"
+            },
         };
 
     private readonly (string, string)[] zipsToDownload =
@@ -120,6 +157,14 @@ public class MangaJaNaiUpscaler(
         (
             "https://github.com/the-database/MangaJaNai/releases/download/1.0.0/MangaJaNai_V1_ModelsOnly.zip",
             "5156f4167875bba51a8ed52bd1c794b0d7277f7103f99b397518066e4dda7e55"
+        ),
+        (
+            "https://github.com/the-database/MangaJaNai/releases/download/3.0.0/IllustrationJaNai_V3denoise.zip",
+            "8e799999bcd70db5589b11e5fdfcad331f4d518d28759c9375b80a6a3715c0d6"
+        ),
+        (
+            "https://github.com/the-database/MangaJaNai/releases/download/3.0.0/IllustrationJaNai_V3detail.zip",
+            "bc6dbccf3f28ed2769a2e9a322c8155b133316daf1ab675f41f780a2e4b74550"
         ),
     ];
 
