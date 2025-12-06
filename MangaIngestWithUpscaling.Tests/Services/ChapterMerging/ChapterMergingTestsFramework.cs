@@ -281,6 +281,246 @@ public class ChapterPartMergerTests : IDisposable
         Assert.Equal(3, result["7"].Count);
     }
 
+    [Theory]
+    [Trait("Category", "Unit")]
+    [InlineData("1.1", "1.2", "1.5")] // Gap after 1.2
+    [InlineData("2.1", "2.2", "2.3", "2.7")] // Gap after 2.3
+    [InlineData("3.1", "3.2", "3.5", "3.6")] // Gap after 3.2, another sequence at 3.5-3.6
+    public void GroupChapterPartsForMerging_WithGapInSequence_ShouldMergeConsecutivePartsOnly(
+        params string[] chapterNumbers
+    )
+    {
+        // Arrange
+        var chapters = chapterNumbers
+            .Select(num => CreateFoundChapter($"Chapter {num}.cbz", num))
+            .ToList();
+
+        string baseNumber = chapterNumbers[0].Split('.')[0];
+
+        // Act
+        var result = _chapterPartMerger.GroupChapterPartsForMerging(chapters, _ => false);
+
+        // Assert - Should merge only the consecutive parts from the beginning
+        Assert.Single(result);
+        Assert.Contains(baseNumber, result.Keys);
+
+        // For "1.1", "1.2", "1.5" -> should merge 1.1 and 1.2 (2 chapters)
+        // For "2.1", "2.2", "2.3", "2.7" -> should merge 2.1, 2.2, 2.3 (3 chapters)
+        // For "3.1", "3.2", "3.5", "3.6" -> should merge 3.1, 3.2 (2 chapters)
+        if (chapterNumbers.Length == 3 && chapterNumbers[2] == $"{baseNumber}.5")
+        {
+            Assert.Equal(2, result[baseNumber].Count);
+            Assert.Contains(result[baseNumber], c => c.Metadata.Number == $"{baseNumber}.1");
+            Assert.Contains(result[baseNumber], c => c.Metadata.Number == $"{baseNumber}.2");
+        }
+        else if (chapterNumbers.Length == 4 && chapterNumbers[3] == $"{baseNumber}.7")
+        {
+            Assert.Equal(3, result[baseNumber].Count);
+            Assert.Contains(result[baseNumber], c => c.Metadata.Number == $"{baseNumber}.1");
+            Assert.Contains(result[baseNumber], c => c.Metadata.Number == $"{baseNumber}.2");
+            Assert.Contains(result[baseNumber], c => c.Metadata.Number == $"{baseNumber}.3");
+        }
+        else if (chapterNumbers.Length == 4 && chapterNumbers[2] == $"{baseNumber}.5")
+        {
+            Assert.Equal(2, result[baseNumber].Count);
+            Assert.Contains(result[baseNumber], c => c.Metadata.Number == $"{baseNumber}.1");
+            Assert.Contains(result[baseNumber], c => c.Metadata.Number == $"{baseNumber}.2");
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void GroupChapterPartsForMerging_WithPattern_1_1_1_2_1_5_ShouldMerge_1_1_And_1_2()
+    {
+        // Arrange - This is the exact example from the issue
+        var chapters = new List<FoundChapter>
+        {
+            CreateFoundChapter("Chapter 1.1.cbz", "1.1"),
+            CreateFoundChapter("Chapter 1.2.cbz", "1.2"),
+            CreateFoundChapter("Chapter 1.5.cbz", "1.5"),
+        };
+
+        // Act
+        var result = _chapterPartMerger.GroupChapterPartsForMerging(chapters, _ => false);
+
+        // Assert
+        Assert.Single(result);
+        Assert.Contains("1", result.Keys);
+        Assert.Equal(2, result["1"].Count);
+
+        // Verify it's specifically 1.1 and 1.2 that are grouped
+        var mergedChapters = result["1"];
+        Assert.Contains(mergedChapters, c => c.FileName == "Chapter 1.1.cbz");
+        Assert.Contains(mergedChapters, c => c.FileName == "Chapter 1.2.cbz");
+        Assert.DoesNotContain(mergedChapters, c => c.FileName == "Chapter 1.5.cbz");
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void GroupChapterPartsForMerging_WithPattern_1_1_1_2_1_3_1_5_ShouldMerge_1_1_1_2_1_3()
+    {
+        // Arrange - Second example from the issue
+        var chapters = new List<FoundChapter>
+        {
+            CreateFoundChapter("Chapter 1.1.cbz", "1.1"),
+            CreateFoundChapter("Chapter 1.2.cbz", "1.2"),
+            CreateFoundChapter("Chapter 1.3.cbz", "1.3"),
+            CreateFoundChapter("Chapter 1.5.cbz", "1.5"),
+        };
+
+        // Act
+        var result = _chapterPartMerger.GroupChapterPartsForMerging(chapters, _ => false);
+
+        // Assert
+        Assert.Single(result);
+        Assert.Contains("1", result.Keys);
+        Assert.Equal(3, result["1"].Count);
+
+        // Verify it's 1.1, 1.2, and 1.3
+        var mergedChapters = result["1"];
+        Assert.Contains(mergedChapters, c => c.FileName == "Chapter 1.1.cbz");
+        Assert.Contains(mergedChapters, c => c.FileName == "Chapter 1.2.cbz");
+        Assert.Contains(mergedChapters, c => c.FileName == "Chapter 1.3.cbz");
+        Assert.DoesNotContain(mergedChapters, c => c.FileName == "Chapter 1.5.cbz");
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void GroupChapterPartsForMerging_WithPattern_1_1_Through_1_5_ShouldMergeAll()
+    {
+        // Arrange - Third example from the issue
+        var chapters = new List<FoundChapter>
+        {
+            CreateFoundChapter("Chapter 1.1.cbz", "1.1"),
+            CreateFoundChapter("Chapter 1.2.cbz", "1.2"),
+            CreateFoundChapter("Chapter 1.3.cbz", "1.3"),
+            CreateFoundChapter("Chapter 1.4.cbz", "1.4"),
+            CreateFoundChapter("Chapter 1.5.cbz", "1.5"),
+        };
+
+        // Act
+        var result = _chapterPartMerger.GroupChapterPartsForMerging(chapters, _ => false);
+
+        // Assert
+        Assert.Single(result);
+        Assert.Contains("1", result.Keys);
+        Assert.Equal(5, result["1"].Count);
+
+        // Verify all chapters are included
+        var mergedChapters = result["1"];
+        Assert.Contains(mergedChapters, c => c.FileName == "Chapter 1.1.cbz");
+        Assert.Contains(mergedChapters, c => c.FileName == "Chapter 1.2.cbz");
+        Assert.Contains(mergedChapters, c => c.FileName == "Chapter 1.3.cbz");
+        Assert.Contains(mergedChapters, c => c.FileName == "Chapter 1.4.cbz");
+        Assert.Contains(mergedChapters, c => c.FileName == "Chapter 1.5.cbz");
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void GroupChapterPartsForMerging_WithGapAtStart_ShouldNotMerge()
+    {
+        // Arrange - Starting with a gap (e.g., 1.3, 1.4) should not merge
+        var chapters = new List<FoundChapter>
+        {
+            CreateFoundChapter("Chapter 1.3.cbz", "1.3"),
+            CreateFoundChapter("Chapter 1.4.cbz", "1.4"),
+        };
+
+        // Act
+        var result = _chapterPartMerger.GroupChapterPartsForMerging(chapters, _ => false);
+
+        // Assert - Should not merge because it doesn't start with 1.1 or base 1
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void GroupChapterPartsForMerging_WithBaseAndGap_ShouldMergeConsecutiveOnly()
+    {
+        // Arrange - Pattern: 5, 5.1, 5.2, 5.5 -> should merge 5, 5.1, 5.2
+        var chapters = new List<FoundChapter>
+        {
+            CreateFoundChapter("Chapter 5.cbz", "5"),
+            CreateFoundChapter("Chapter 5.1.cbz", "5.1"),
+            CreateFoundChapter("Chapter 5.2.cbz", "5.2"),
+            CreateFoundChapter("Chapter 5.5.cbz", "5.5"),
+        };
+
+        // Act
+        var result = _chapterPartMerger.GroupChapterPartsForMerging(chapters, _ => false);
+
+        // Assert
+        Assert.Single(result);
+        Assert.Contains("5", result.Keys);
+        Assert.Equal(3, result["5"].Count);
+
+        var mergedChapters = result["5"];
+        Assert.Contains(mergedChapters, c => c.FileName == "Chapter 5.cbz");
+        Assert.Contains(mergedChapters, c => c.FileName == "Chapter 5.1.cbz");
+        Assert.Contains(mergedChapters, c => c.FileName == "Chapter 5.2.cbz");
+        Assert.DoesNotContain(mergedChapters, c => c.FileName == "Chapter 5.5.cbz");
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void GroupChapterPartsForMerging_WithDuplicateChapterNumbers_ShouldNotMerge()
+    {
+        // Arrange - duplicate chapter numbers
+        var chapters = new List<FoundChapter>
+        {
+            CreateFoundChapter("Chapter 1.1 v1.cbz", "1.1"),
+            CreateFoundChapter("Chapter 1.1 v2.cbz", "1.1"),
+            CreateFoundChapter("Chapter 1.2.cbz", "1.2"),
+        };
+
+        // Act
+        var result = _chapterPartMerger.GroupChapterPartsForMerging(chapters, _ => false);
+
+        // Assert - Should not merge due to duplicate 1.1
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void GroupChapterPartsForMerging_WithBaseFollowedByDotTwo_ShouldMerge()
+    {
+        // Arrange - Special case: base followed directly by .2
+        var chapters = new List<FoundChapter>
+        {
+            CreateFoundChapter("Chapter 22.cbz", "22"),
+            CreateFoundChapter("Chapter 22.2.cbz", "22.2"),
+            CreateFoundChapter("Chapter 22.3.cbz", "22.3"),
+        };
+
+        // Act
+        var result = _chapterPartMerger.GroupChapterPartsForMerging(chapters, _ => false);
+
+        // Assert
+        Assert.Single(result);
+        Assert.Contains("22", result.Keys);
+        Assert.Equal(3, result["22"].Count);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void GroupChapterPartsForMerging_WithUnorderedInput_ShouldMergeCorrectly()
+    {
+        // Arrange - chapters in non-sequential order
+        var chapters = new List<FoundChapter>
+        {
+            CreateFoundChapter("Chapter 1.3.cbz", "1.3"),
+            CreateFoundChapter("Chapter 1.1.cbz", "1.1"),
+            CreateFoundChapter("Chapter 1.2.cbz", "1.2"),
+        };
+
+        // Act
+        var result = _chapterPartMerger.GroupChapterPartsForMerging(chapters, _ => false);
+
+        // Assert
+        Assert.Single(result);
+        Assert.Equal(3, result["1"].Count);
+    }
+
     #endregion
 
     #region GroupChaptersForAdditionToExistingMerged Tests
