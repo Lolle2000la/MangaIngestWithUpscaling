@@ -625,10 +625,12 @@ public class ChapterMergeCoordinator(
             .MergedChapterInfos.Where(m => seriesChapterIds.Contains(m.ChapterId))
             .ToListAsync(cancellationToken);
 
-        Dictionary<string, List<string>> existingMergedParts = mergedChapterInfos.ToDictionary(
-            info => info.MergedChapterNumber,
-            info => info.OriginalParts.Select(p => p.ChapterNumber).ToList()
-        );
+        Dictionary<string, List<string>> existingMergedParts = mergedChapterInfos
+            .GroupBy(info => info.MergedChapterNumber)
+            .ToDictionary(
+                g => g.Key,
+                g => g.SelectMany(info => info.OriginalParts.Select(p => p.ChapterNumber)).Distinct().ToList()
+            );
 
         logger.LogDebug(
             "GetPossibleMergeActionsAsync: Found {MergedPartsCount} existing merged parts mappings",
