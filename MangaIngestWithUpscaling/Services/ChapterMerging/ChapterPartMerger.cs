@@ -1363,8 +1363,8 @@ public partial class ChapterPartMerger(
                 {
                     // After base, can be .1 or .2
                     if (
-                        currentNumber == baseNum + ChapterPartIncrement
-                        || currentNumber == baseNum + (ChapterPartIncrement * 2)
+                        Math.Abs(currentNumber - (baseNum + ChapterPartIncrement)) < DecimalComparisonTolerance
+                        || Math.Abs(currentNumber - (baseNum + (ChapterPartIncrement * 2))) < DecimalComparisonTolerance
                     )
                     {
                         consecutiveChapters.Add(chaptersWithNumbers[i].Chapter);
