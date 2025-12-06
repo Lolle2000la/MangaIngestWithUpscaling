@@ -1,4 +1,4 @@
 [submodule "MangaJaNaiConverterGui"]
 	path = MangaJaNaiConverterGui
-	url = https://github.com/Lolle2000la/MangaJaNaiConverterGui.git
-	branch = non-nvidia-support
+	url = https://github.com/the-database/MangaJaNaiConverterGui.git
+	branch = main
