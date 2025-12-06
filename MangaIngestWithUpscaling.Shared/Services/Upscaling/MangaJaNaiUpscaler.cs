@@ -165,7 +165,7 @@ public class MangaJaNaiUpscaler(
         (
             "https://github.com/the-database/MangaJaNai/releases/download/3.0.0/IllustrationJaNai_V3detail.zip",
             "bc6dbccf3f28ed2769a2e9a322c8155b133316daf1ab675f41f780a2e4b74550"
-        )
+        ),
     ];
 
     private static string RunScriptPath =>
