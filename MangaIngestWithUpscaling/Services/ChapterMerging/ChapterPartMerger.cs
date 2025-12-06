@@ -76,9 +76,26 @@ public partial class ChapterPartMerger(
         }
 
         // Only return groups that have more than one part AND have consecutive decimal steps
-        var filteredResult = result
-            .Where(kvp => kvp.Value.Count > 1 && AreConsecutiveChapterParts(kvp.Value, kvp.Key))
-            .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+        // For groups with gaps, extract only the consecutive sequence from the beginning
+        var filteredResult = new Dictionary<string, List<FoundChapter>>();
+
+        foreach (var kvp in result.Where(kvp => kvp.Value.Count > 1))
+        {
+            List<FoundChapter> consecutiveChapters = GetConsecutiveChapterParts(kvp.Value, kvp.Key);
+            if (consecutiveChapters.Count > 1)
+            {
+                filteredResult[kvp.Key] = consecutiveChapters;
+                if (consecutiveChapters.Count < kvp.Value.Count)
+                {
+                    logger.LogDebug(
+                        "GroupChapterPartsForMerging: Found {ConsecutiveCount} consecutive chapters out of {TotalCount} for base {BaseNumber}",
+                        consecutiveChapters.Count,
+                        kvp.Value.Count,
+                        kvp.Key
+                    );
+                }
+            }
+        }
 
         logger.LogDebug(
             "GroupChapterPartsForMerging: Initial groups: {InitialCount}, After filtering: {FilteredCount}. Groups: [{Groups}]",
@@ -1249,6 +1266,125 @@ public partial class ChapterPartMerger(
                         baseChapterNumber
                     )
             );
+    }
+
+    /// <summary>
+    ///     Extracts the longest consecutive sequence of chapter parts from the beginning.
+    ///     This allows merging even when there are gaps (e.g., 1.1, 1.2, 1.5 will merge 1.1 and 1.2).
+    /// </summary>
+    /// <param name="chapters">All chapters for a given base number</param>
+    /// <param name="baseNumber">The base chapter number</param>
+    /// <returns>A list containing only the consecutive chapters from the start</returns>
+    private List<FoundChapter> GetConsecutiveChapterParts(
+        List<FoundChapter> chapters,
+        string baseNumber
+    )
+    {
+        if (chapters.Count < 2)
+        {
+            return new List<FoundChapter>();
+        }
+
+        // Extract and parse chapter numbers, creating a mapping back to FoundChapter objects
+        var chaptersWithNumbers = chapters
+            .Select(chapter => new
+            {
+                Chapter = chapter,
+                ChapterNumber = ExtractChapterNumber(chapter),
+            })
+            .Where(x => x.ChapterNumber != null)
+            .Select(x => new
+            {
+                x.Chapter,
+                Number = decimal.TryParse(x.ChapterNumber, out decimal num) ? (decimal?)num : null,
+            })
+            .Where(x => x.Number.HasValue)
+            .OrderBy(x => x.Number!.Value)
+            .ToList();
+
+        if (chaptersWithNumbers.Count < 2)
+        {
+            return new List<FoundChapter>();
+        }
+
+        // Check for duplicates
+        if (
+            chaptersWithNumbers.Select(x => x.Number!.Value).Distinct().Count()
+            != chaptersWithNumbers.Count
+        )
+        {
+            return new List<FoundChapter>();
+        }
+
+        if (!decimal.TryParse(baseNumber, out decimal baseNum))
+        {
+            return new List<FoundChapter>();
+        }
+
+        var consecutiveChapters = new List<FoundChapter>();
+        bool hasBaseNumber = chaptersWithNumbers.Any(x => x.Number!.Value == baseNum);
+
+        // Process each chapter to find the consecutive sequence
+        for (int i = 0; i < chaptersWithNumbers.Count; i++)
+        {
+            decimal currentNumber = chaptersWithNumbers[i].Number!.Value;
+
+            if (i == 0)
+            {
+                // First chapter: validate starting position
+                if (currentNumber == baseNum)
+                {
+                    // Starting with base number is valid
+                    consecutiveChapters.Add(chaptersWithNumbers[i].Chapter);
+                }
+                else if (currentNumber == baseNum + 0.1m)
+                {
+                    // Starting with .1 is valid
+                    consecutiveChapters.Add(chaptersWithNumbers[i].Chapter);
+                }
+                else
+                {
+                    // Invalid start (e.g., starting with .3)
+                    break;
+                }
+            }
+            else
+            {
+                // Not the first chapter: check if it's consecutive
+                decimal previousNumber = chaptersWithNumbers[i - 1].Number!.Value;
+                decimal expectedNext;
+
+                if (previousNumber == baseNum)
+                {
+                    // After base, can be .1 or .2
+                    if (currentNumber == baseNum + 0.1m || currentNumber == baseNum + 0.2m)
+                    {
+                        consecutiveChapters.Add(chaptersWithNumbers[i].Chapter);
+                    }
+                    else
+                    {
+                        // Gap detected after base number
+                        break;
+                    }
+                }
+                else
+                {
+                    // After a decimal part, must increment by 0.1
+                    expectedNext = previousNumber + 0.1m;
+                    if (Math.Abs(currentNumber - expectedNext) < 0.001m)
+                    {
+                        consecutiveChapters.Add(chaptersWithNumbers[i].Chapter);
+                    }
+                    else
+                    {
+                        // Gap detected
+                        break;
+                    }
+                }
+            }
+        }
+
+        return consecutiveChapters;
     }
 
     /// <summary>
