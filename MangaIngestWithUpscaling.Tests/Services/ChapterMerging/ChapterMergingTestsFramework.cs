@@ -536,11 +536,23 @@ public class ChapterPartMergerTests : IDisposable
             CreateFoundChapter("Chapter 5.4.cbz", "5.4"),
         };
         var existingMergedBaseNumbers = new HashSet<string> { "2", "5" };
+        var existingMergedParts = new Dictionary<string, List<string>>
+        {
+            {
+                "2",
+                new List<string> { "2.1", "2.2" }
+            },
+            {
+                "5",
+                new List<string> { "5.1", "5.2", "5.3" }
+            },
+        };
 
         // Act
         var result = _chapterPartMerger.GroupChaptersForAdditionToExistingMerged(
             chapters,
             existingMergedBaseNumbers,
+            existingMergedParts,
             _ => false
         );
 
@@ -565,11 +577,23 @@ public class ChapterPartMergerTests : IDisposable
             CreateFoundChapter("Chapter 4.2.cbz", "4.2"), // 4 is not in existing merged
         };
         var existingMergedBaseNumbers = new HashSet<string> { "2", "5" };
+        var existingMergedParts = new Dictionary<string, List<string>>
+        {
+            {
+                "2",
+                new List<string> { "2.1" }
+            },
+            {
+                "5",
+                new List<string> { "5.1" }
+            },
+        };
 
         // Act
         var result = _chapterPartMerger.GroupChaptersForAdditionToExistingMerged(
             chapters,
             existingMergedBaseNumbers,
+            existingMergedParts,
             _ => false
         );
 
@@ -584,11 +608,19 @@ public class ChapterPartMergerTests : IDisposable
         // Arrange
         var chapters = new List<FoundChapter> { CreateFoundChapter("Chapter 2.3.cbz", "2.3") };
         var existingMergedBaseNumbers = new HashSet<string> { "2" };
+        var existingMergedParts = new Dictionary<string, List<string>>
+        {
+            {
+                "2",
+                new List<string> { "2.1", "2.2" }
+            },
+        };
 
         // Act
         var result = _chapterPartMerger.GroupChaptersForAdditionToExistingMerged(
             chapters,
             existingMergedBaseNumbers,
+            existingMergedParts,
             baseNumber => baseNumber == "2"
         ); // 2 is latest
 
@@ -606,16 +638,155 @@ public class ChapterPartMergerTests : IDisposable
             CreateFoundChapter("Chapter 2.cbz", "2"), // Whole number, not a part
         };
         var existingMergedBaseNumbers = new HashSet<string> { "2" };
+        var existingMergedParts = new Dictionary<string, List<string>>
+        {
+            {
+                "2",
+                new List<string> { "2.1" }
+            },
+        };
 
         // Act
         var result = _chapterPartMerger.GroupChaptersForAdditionToExistingMerged(
             chapters,
             existingMergedBaseNumbers,
+            existingMergedParts,
             _ => false
         );
 
         // Assert
         Assert.Empty(result); // Whole numbers should not be added to existing merged chapters
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void GroupChaptersForAdditionToExistingMerged_WithGapInSequence_ShouldNotAdd()
+    {
+        // Arrange - This is the bug scenario from the issue:
+        // Merged chapter 1 contains 1.1 and 1.2, then 1.5 should NOT be added due to gap
+        var chapters = new List<FoundChapter>
+        {
+            CreateFoundChapter("Chapter 1.5.cbz", "1.5"), // Gap after 1.2
+        };
+        var existingMergedBaseNumbers = new HashSet<string> { "1" };
+        var existingMergedParts = new Dictionary<string, List<string>>
+        {
+            {
+                "1",
+                new List<string> { "1.1", "1.2" }
+            },
+        };
+
+        // Act
+        var result = _chapterPartMerger.GroupChaptersForAdditionToExistingMerged(
+            chapters,
+            existingMergedBaseNumbers,
+            existingMergedParts,
+            _ => false
+        );
+
+        // Assert
+        Assert.Empty(result); // Should not add 1.5 because there's a gap (missing 1.3 and 1.4)
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void GroupChaptersForAdditionToExistingMerged_WithConsecutiveChapter_ShouldAdd()
+    {
+        // Arrange - Adding 1.3 to existing merge of 1.1 and 1.2 should work
+        var chapters = new List<FoundChapter> { CreateFoundChapter("Chapter 1.3.cbz", "1.3") };
+        var existingMergedBaseNumbers = new HashSet<string> { "1" };
+        var existingMergedParts = new Dictionary<string, List<string>>
+        {
+            {
+                "1",
+                new List<string> { "1.1", "1.2" }
+            },
+        };
+
+        // Act
+        var result = _chapterPartMerger.GroupChaptersForAdditionToExistingMerged(
+            chapters,
+            existingMergedBaseNumbers,
+            existingMergedParts,
+            _ => false
+        );
+
+        // Assert
+        Assert.Single(result);
+        Assert.Contains("1", result.Keys);
+        Assert.Single(result["1"]);
+        Assert.Equal("Chapter 1.3.cbz", result["1"].First().FileName);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void GroupChaptersForAdditionToExistingMerged_WithMultipleConsecutiveChapters_ShouldAddAll()
+    {
+        // Arrange - Adding both 1.3 and 1.4 to existing merge of 1.1 and 1.2
+        var chapters = new List<FoundChapter>
+        {
+            CreateFoundChapter("Chapter 1.3.cbz", "1.3"),
+            CreateFoundChapter("Chapter 1.4.cbz", "1.4"),
+        };
+        var existingMergedBaseNumbers = new HashSet<string> { "1" };
+        var existingMergedParts = new Dictionary<string, List<string>>
+        {
+            {
+                "1",
+                new List<string> { "1.1", "1.2" }
+            },
+        };
+
+        // Act
+        var result = _chapterPartMerger.GroupChaptersForAdditionToExistingMerged(
+            chapters,
+            existingMergedBaseNumbers,
+            existingMergedParts,
+            _ => false
+        );
+
+        // Assert
+        Assert.Single(result);
+        Assert.Contains("1", result.Keys);
+        Assert.Equal(2, result["1"].Count);
+        Assert.Contains(result["1"], c => c.FileName == "Chapter 1.3.cbz");
+        Assert.Contains(result["1"], c => c.FileName == "Chapter 1.4.cbz");
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void GroupChaptersForAdditionToExistingMerged_WithOneConsecutiveOneGap_ShouldAddOnlyConsecutive()
+    {
+        // Arrange - 1.3 is consecutive, but 1.5 has a gap
+        var chapters = new List<FoundChapter>
+        {
+            CreateFoundChapter("Chapter 1.3.cbz", "1.3"),
+            CreateFoundChapter("Chapter 1.5.cbz", "1.5"),
+        };
+        var existingMergedBaseNumbers = new HashSet<string> { "1" };
+        var existingMergedParts = new Dictionary<string, List<string>>
+        {
+            {
+                "1",
+                new List<string> { "1.1", "1.2" }
+            },
+        };
+
+        // Act
+        var result = _chapterPartMerger.GroupChaptersForAdditionToExistingMerged(
+            chapters,
+            existingMergedBaseNumbers,
+            existingMergedParts,
+            _ => false
+        );
+
+        // Assert
+        Assert.Single(result);
+        Assert.Contains("1", result.Keys);
+        Assert.Single(result["1"]);
+        Assert.Equal("Chapter 1.3.cbz", result["1"].First().FileName);
+        // 1.5 should not be included due to gap
     }
 
     #endregion
