@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Reactive.Disposables;
+using System.Reactive.Linq;
 using DynamicData;
 using DynamicData.Binding;
 using MangaIngestWithUpscaling.Data;
@@ -38,6 +39,7 @@ public class TaskRegistry : IHostedService, IDisposable
         _distributedUpscaleProcessor = distributedUpscaleProcessor;
 
         // Standard view: non-upscale tasks, sorted by status priority, then Order, then CreatedAt
+        // Use Throttle to batch rapid updates and reduce excessive re-sorting
         _tasks
             .Connect()
             .Filter(t =>
@@ -46,6 +48,7 @@ public class TaskRegistry : IHostedService, IDisposable
                         and not RenameUpscaledChaptersSeriesTask
                         and not RepairUpscaleTask
             )
+            .Throttle(TimeSpan.FromMilliseconds(100)) // Batch updates within 100ms window
             .SortAndBind(
                 out ReadOnlyObservableCollection<PersistedTask> standard,
                 SortExpressionComparer<PersistedTask>
@@ -58,11 +61,13 @@ public class TaskRegistry : IHostedService, IDisposable
         StandardTasks = standard;
 
         // Upscale view: upscale tasks, sorted by status priority, then Order, then CreatedAt
+        // Use Throttle to batch rapid updates and reduce excessive re-sorting
         _tasks
             .Connect()
             .Filter(t =>
                 t.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask
             )
+            .Throttle(TimeSpan.FromMilliseconds(100)) // Batch updates within 100ms window
             .SortAndBind(
                 out ReadOnlyObservableCollection<PersistedTask> upscale,
                 SortExpressionComparer<PersistedTask>
@@ -115,7 +120,9 @@ public class TaskRegistry : IHostedService, IDisposable
 
     private Task OnTaskChanged(PersistedTask task)
     {
-        _tasks.AddOrUpdate(CloneShallow(task));
+        // Update in-place instead of cloning to preserve object identity
+        // DynamicData will detect the change through the cache update
+        _tasks.AddOrUpdate(task);
         return Task.CompletedTask;
     }
 
@@ -123,22 +130,6 @@ public class TaskRegistry : IHostedService, IDisposable
     {
         _tasks.Remove(task.Id);
         return Task.CompletedTask;
-    }
-
-    private static PersistedTask CloneShallow(PersistedTask src)
-    {
-        // Shallow copy to avoid EF tracking collisions from different DbContexts
-        return new PersistedTask
-        {
-            Id = src.Id,
-            Data = src.Data,
-            Status = src.Status,
-            CreatedAt = src.CreatedAt,
-            RetryCount = src.RetryCount,
-            ProcessedAt = src.ProcessedAt,
-            Order = src.Order,
-            LastKeepAlive = src.LastKeepAlive,
-        };
     }
 }
 

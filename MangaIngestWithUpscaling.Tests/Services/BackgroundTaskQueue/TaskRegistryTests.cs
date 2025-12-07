@@ -126,4 +126,81 @@ public class TaskRegistryTests
         Assert.Equal(3, sortedTasks[3].Id); // Processing
         Assert.Equal(2, sortedTasks[4].Id); // Pending
     }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void PersistedTask_GetHashCode_IsConsistentAcrossPropertyChanges()
+    {
+        // Arrange
+        var task = new PersistedTask
+        {
+            Id = 123,
+            Status = PersistedTaskStatus.Pending,
+            RetryCount = 0,
+            ProcessedAt = null,
+        };
+
+        // Act: Get initial hash code
+        int initialHashCode = task.GetHashCode();
+
+        // Modify mutable properties
+        task.Status = PersistedTaskStatus.Processing;
+        task.RetryCount = 5;
+        task.ProcessedAt = DateTime.UtcNow;
+
+        int afterChangeHashCode = task.GetHashCode();
+
+        // Assert: Hash code should remain the same (based only on immutable Id)
+        Assert.Equal(initialHashCode, afterChangeHashCode);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void PersistedTask_Equals_ComparesById()
+    {
+        // Arrange
+        var task1 = new PersistedTask
+        {
+            Id = 123,
+            Status = PersistedTaskStatus.Pending,
+            RetryCount = 0,
+        };
+
+        var task2 = new PersistedTask
+        {
+            Id = 123,
+            Status = PersistedTaskStatus.Completed,
+            RetryCount = 5,
+        };
+
+        var task3 = new PersistedTask { Id = 456, Status = PersistedTaskStatus.Pending };
+
+        // Act & Assert
+        Assert.True(task1.Equals(task2)); // Same ID
+        Assert.False(task1.Equals(task3)); // Different ID
+        Assert.False(task1.Equals(null)); // Null comparison
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void PersistedTask_HashSet_WorksCorrectlyWithMutableProperties()
+    {
+        // Arrange
+        var task = new PersistedTask
+        {
+            Id = 123,
+            Status = PersistedTaskStatus.Pending,
+            RetryCount = 0,
+        };
+
+        var hashSet = new HashSet<PersistedTask> { task };
+
+        // Act: Modify mutable properties
+        task.Status = PersistedTaskStatus.Processing;
+        task.RetryCount = 5;
+
+        // Assert: Task should still be found in HashSet
+        Assert.Contains(task, hashSet);
+        Assert.Single(hashSet);
+    }
 }
