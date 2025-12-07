@@ -251,6 +251,9 @@ public class TaskQueue : ITaskQueue, IHostedService
         dbContext.PersistedTasks.RemoveRange(taskList);
         await dbContext.SaveChangesAsync();
 
+        // Create HashSet of task IDs for O(1) lookup
+        var taskIdsToRemove = taskList.Select(t => t.Id).ToHashSet();
+
         // Group tasks by their queue type to minimize lock acquisitions
         var standardTasksToRemove = new List<PersistedTask>();
         var upscaleTasksToRemove = new List<PersistedTask>();
@@ -272,12 +275,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         {
             lock (_standardTasksLock)
             {
-                foreach (var task in standardTasksToRemove)
-                {
-                    var toRemove = _standardTasks.FirstOrDefault(t => t.Id == task.Id);
-                    if (toRemove != null)
-                        _standardTasks.Remove(toRemove);
-                }
+                _standardTasks.RemoveWhere(t => taskIdsToRemove.Contains(t.Id));
             }
         }
 
@@ -285,12 +283,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         {
             lock (_upscaleTasksLock)
             {
-                foreach (var task in upscaleTasksToRemove)
-                {
-                    var toRemove = _upscaleTasks.FirstOrDefault(t => t.Id == task.Id);
-                    if (toRemove != null)
-                        _upscaleTasks.Remove(toRemove);
-                }
+                _upscaleTasks.RemoveWhere(t => taskIdsToRemove.Contains(t.Id));
             }
         }
 
