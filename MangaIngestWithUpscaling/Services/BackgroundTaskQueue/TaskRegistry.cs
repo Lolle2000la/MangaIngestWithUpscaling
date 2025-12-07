@@ -24,6 +24,10 @@ public class TaskRegistry : IHostedService, IDisposable
     private readonly SourceCache<PersistedTask, int> _tasks = new(x => x.Id);
     private readonly UpscaleTaskProcessor _upscaleProcessor;
 
+    // Throttle delay for batching rapid task updates before re-sorting
+    // Balance between responsiveness and performance
+    private static readonly TimeSpan UpdateThrottleDelay = TimeSpan.FromMilliseconds(50);
+
     public TaskRegistry(
         IServiceScopeFactory scopeFactory,
         TaskQueue taskQueue,
@@ -48,7 +52,7 @@ public class TaskRegistry : IHostedService, IDisposable
                         and not RenameUpscaledChaptersSeriesTask
                         and not RepairUpscaleTask
             )
-            .Throttle(TimeSpan.FromMilliseconds(100)) // Batch updates within 100ms window
+            .Throttle(UpdateThrottleDelay)
             .SortAndBind(
                 out ReadOnlyObservableCollection<PersistedTask> standard,
                 SortExpressionComparer<PersistedTask>
@@ -67,7 +71,7 @@ public class TaskRegistry : IHostedService, IDisposable
             .Filter(t =>
                 t.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask
             )
-            .Throttle(TimeSpan.FromMilliseconds(100)) // Batch updates within 100ms window
+            .Throttle(UpdateThrottleDelay)
             .SortAndBind(
                 out ReadOnlyObservableCollection<PersistedTask> upscale,
                 SortExpressionComparer<PersistedTask>
