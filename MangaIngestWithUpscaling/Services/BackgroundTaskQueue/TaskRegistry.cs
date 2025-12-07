@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Reactive.Disposables;
+using System.Reactive.Linq;
 using DynamicData;
 using DynamicData.Binding;
 using MangaIngestWithUpscaling.Data;
@@ -23,6 +24,10 @@ public class TaskRegistry : IHostedService, IDisposable
     private readonly SourceCache<PersistedTask, int> _tasks = new(x => x.Id);
     private readonly UpscaleTaskProcessor _upscaleProcessor;
 
+    // Throttle delay for batching rapid task updates before re-sorting
+    // Balance between responsiveness and performance
+    private static readonly TimeSpan UpdateThrottleDelay = TimeSpan.FromMilliseconds(50);
+
     public TaskRegistry(
         IServiceScopeFactory scopeFactory,
         TaskQueue taskQueue,
@@ -38,6 +43,7 @@ public class TaskRegistry : IHostedService, IDisposable
         _distributedUpscaleProcessor = distributedUpscaleProcessor;
 
         // Standard view: non-upscale tasks, sorted by status priority, then Order, then CreatedAt
+        // Use Throttle to batch rapid updates and reduce excessive re-sorting
         _tasks
             .Connect()
             .Filter(t =>
@@ -46,6 +52,7 @@ public class TaskRegistry : IHostedService, IDisposable
                         and not RenameUpscaledChaptersSeriesTask
                         and not RepairUpscaleTask
             )
+            .Throttle(UpdateThrottleDelay)
             .SortAndBind(
                 out ReadOnlyObservableCollection<PersistedTask> standard,
                 SortExpressionComparer<PersistedTask>
@@ -58,11 +65,13 @@ public class TaskRegistry : IHostedService, IDisposable
         StandardTasks = standard;
 
         // Upscale view: upscale tasks, sorted by status priority, then Order, then CreatedAt
+        // Use Throttle to batch rapid updates and reduce excessive re-sorting
         _tasks
             .Connect()
             .Filter(t =>
                 t.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask
             )
+            .Throttle(UpdateThrottleDelay)
             .SortAndBind(
                 out ReadOnlyObservableCollection<PersistedTask> upscale,
                 SortExpressionComparer<PersistedTask>
@@ -115,7 +124,41 @@ public class TaskRegistry : IHostedService, IDisposable
 
     private Task OnTaskChanged(PersistedTask task)
     {
-        _tasks.AddOrUpdate(CloneShallow(task));
+        // Try to get existing cached task to update in-place
+        var existingTask = _tasks.Lookup(task.Id);
+
+        if (existingTask.HasValue)
+        {
+            // Update properties of existing cached task to preserve object identity
+            // This avoids EF tracking collisions while maintaining reference stability
+            var cached = existingTask.Value;
+            cached.Status = task.Status;
+            cached.ProcessedAt = task.ProcessedAt;
+            cached.RetryCount = task.RetryCount;
+            cached.Order = task.Order;
+            cached.LastKeepAlive = task.LastKeepAlive;
+            cached.Data = task.Data;
+
+            // Notify DynamicData that this item was updated by re-adding it
+            _tasks.AddOrUpdate(cached);
+        }
+        else
+        {
+            // First time seeing this task - create untracked copy to avoid EF collisions
+            var untracked = new PersistedTask
+            {
+                Id = task.Id,
+                Data = task.Data,
+                Status = task.Status,
+                CreatedAt = task.CreatedAt,
+                RetryCount = task.RetryCount,
+                ProcessedAt = task.ProcessedAt,
+                Order = task.Order,
+                LastKeepAlive = task.LastKeepAlive,
+            };
+            _tasks.AddOrUpdate(untracked);
+        }
+
         return Task.CompletedTask;
     }
 
@@ -123,22 +166,6 @@ public class TaskRegistry : IHostedService, IDisposable
     {
         _tasks.Remove(task.Id);
         return Task.CompletedTask;
-    }
-
-    private static PersistedTask CloneShallow(PersistedTask src)
-    {
-        // Shallow copy to avoid EF tracking collisions from different DbContexts
-        return new PersistedTask
-        {
-            Id = src.Id,
-            Data = src.Data,
-            Status = src.Status,
-            CreatedAt = src.CreatedAt,
-            RetryCount = src.RetryCount,
-            ProcessedAt = src.ProcessedAt,
-            Order = src.Order,
-            LastKeepAlive = src.LastKeepAlive,
-        };
     }
 }
 

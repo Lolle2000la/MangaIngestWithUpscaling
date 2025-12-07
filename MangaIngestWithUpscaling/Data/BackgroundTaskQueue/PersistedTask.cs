@@ -25,7 +25,7 @@ public class PersistedTask
     {
         if (obj is not null and PersistedTask task)
         {
-            return GetHashCode() == task.GetHashCode();
+            return Id == task.Id;
         }
 
         return false;
@@ -34,7 +34,8 @@ public class PersistedTask
     // override object.GetHashCode
     public override int GetHashCode()
     {
-        return HashCode.Combine(Id, Status, CreatedAt, ProcessedAt, RetryCount);
+        // Only use immutable ID for hash code to ensure consistency in collections
+        return Id.GetHashCode();
     }
 
     /// <summary>
