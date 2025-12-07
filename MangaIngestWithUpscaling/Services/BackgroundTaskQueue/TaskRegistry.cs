@@ -124,9 +124,41 @@ public class TaskRegistry : IHostedService, IDisposable
 
     private Task OnTaskChanged(PersistedTask task)
     {
-        // Update in-place instead of cloning to preserve object identity
-        // DynamicData will detect the change through the cache update
-        _tasks.AddOrUpdate(task);
+        // Try to get existing cached task to update in-place
+        var existingTask = _tasks.Lookup(task.Id);
+
+        if (existingTask.HasValue)
+        {
+            // Update properties of existing cached task to preserve object identity
+            // This avoids EF tracking collisions while maintaining reference stability
+            var cached = existingTask.Value;
+            cached.Status = task.Status;
+            cached.ProcessedAt = task.ProcessedAt;
+            cached.RetryCount = task.RetryCount;
+            cached.Order = task.Order;
+            cached.LastKeepAlive = task.LastKeepAlive;
+            cached.Data = task.Data;
+
+            // Notify DynamicData that this item was updated by re-adding it
+            _tasks.AddOrUpdate(cached);
+        }
+        else
+        {
+            // First time seeing this task - create untracked copy to avoid EF collisions
+            var untracked = new PersistedTask
+            {
+                Id = task.Id,
+                Data = task.Data,
+                Status = task.Status,
+                CreatedAt = task.CreatedAt,
+                RetryCount = task.RetryCount,
+                ProcessedAt = task.ProcessedAt,
+                Order = task.Order,
+                LastKeepAlive = task.LastKeepAlive,
+            };
+            _tasks.AddOrUpdate(untracked);
+        }
+
         return Task.CompletedTask;
     }
 

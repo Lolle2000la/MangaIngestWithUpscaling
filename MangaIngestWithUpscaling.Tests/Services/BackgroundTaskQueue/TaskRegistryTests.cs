@@ -203,4 +203,31 @@ public class TaskRegistryTests
         Assert.Contains(task, hashSet);
         Assert.Single(hashSet);
     }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void PersistedTask_ObjectIdentity_PreservedAcrossUpdates()
+    {
+        // Arrange
+        var task1 = new PersistedTask
+        {
+            Id = 123,
+            Status = PersistedTaskStatus.Pending,
+            RetryCount = 0,
+        };
+
+        var task2 = new PersistedTask
+        {
+            Id = 123,
+            Status = PersistedTaskStatus.Processing,
+            RetryCount = 1,
+        };
+
+        // Act & Assert: Different instances with same ID are equal
+        Assert.True(task1.Equals(task2));
+        Assert.Equal(task1.GetHashCode(), task2.GetHashCode());
+
+        // But they are not the same reference
+        Assert.False(ReferenceEquals(task1, task2));
+    }
 }
