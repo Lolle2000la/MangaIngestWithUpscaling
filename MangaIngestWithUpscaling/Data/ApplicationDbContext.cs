@@ -97,6 +97,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         builder.Entity<Manga>(entity =>
         {
             entity.HasIndex(e => new { e.PrimaryTitle }).IsUnique();
+            entity.HasIndex(e => e.LibraryId);
+            entity.HasIndex(e => e.UpscalerProfilePreferenceId);
         });
 
         builder.Entity<MangaAlternativeTitle>(entity =>
@@ -115,6 +117,9 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         builder.Entity<Chapter>(entity =>
         {
             entity.HasIndex(e => new { e.RelativePath, e.MangaId }).IsUnique();
+            entity.HasIndex(e => e.IsUpscaled);
+            entity.HasIndex(e => e.MangaId);
+            entity.HasIndex(e => e.UpscalerProfileId);
         });
 
         builder.Entity<PersistedTask>(entity =>
@@ -134,6 +139,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasIndex(e => e.Status);
             entity.HasIndex(e => e.CreatedAt);
             entity.HasIndex(e => e.ProcessedAt);
+            entity.HasIndex(e => e.Order);
         });
 
         builder.Entity<LibraryFilterRule>(entity =>
@@ -141,11 +147,13 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.Property(e => e.PatternType).HasConversion<string>();
             entity.Property(e => e.TargetField).HasConversion<string>();
             entity.Property(e => e.Action).HasConversion<string>();
+            entity.HasIndex(e => e.LibraryId);
         });
         builder.Entity<LibraryRenameRule>(entity =>
         {
             entity.Property(e => e.PatternType).HasConversion<string>();
             entity.Property(e => e.TargetField).HasConversion<string>();
+            entity.HasIndex(e => e.LibraryId);
         });
 
         builder.Entity<UpscalerProfile>(entity =>
@@ -154,6 +162,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.Property(e => e.ScalingFactor).HasConversion<string>();
             entity.Property(e => e.CompressionFormat).HasConversion<string>();
             entity.HasQueryFilter(e => !e.Deleted);
+            entity.HasIndex(e => e.Deleted);
+            entity.HasIndex(e => new { e.Id, e.Deleted });
         });
 
         builder.Entity<MergedChapterInfo>(entity =>
@@ -182,6 +192,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 .OnDelete(DeleteBehavior.Cascade);
 
             entity.HasIndex(e => e.ChapterId).IsUnique();
+            entity.HasIndex(e => e.MergedChapterNumber);
         });
 
         builder.Entity<FilteredImage>(entity =>
@@ -198,6 +209,11 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasIndex(e => e.DateAdded);
             entity.HasIndex(e => e.OccurrenceCount);
             entity.HasIndex(e => new { e.LibraryId, e.OriginalFileName });
+        });
+
+        builder.Entity<ApiKey>(entity =>
+        {
+            entity.HasIndex(e => e.Key).IsUnique();
         });
     }
 }

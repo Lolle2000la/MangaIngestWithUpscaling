@@ -17,7 +17,7 @@ namespace MangaIngestWithUpscaling.Migrations
         protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
-            modelBuilder.HasAnnotation("ProductVersion", "10.0.0-rc.1.25451.107");
+            modelBuilder.HasAnnotation("ProductVersion", "10.0.0");
 
             modelBuilder.Entity("MangaIngestWithUpscaling.Data.ApiKey", b =>
                 {
@@ -40,6 +40,9 @@ namespace MangaIngestWithUpscaling.Migrations
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("Key")
+                        .IsUnique();
 
                     b.HasIndex("UserId");
 
@@ -141,6 +144,8 @@ namespace MangaIngestWithUpscaling.Migrations
 
                     b.HasIndex("CreatedAt");
 
+                    b.HasIndex("Order");
+
                     b.HasIndex("ProcessedAt");
 
                     b.HasIndex("Status");
@@ -178,6 +183,8 @@ namespace MangaIngestWithUpscaling.Migrations
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("IsUpscaled");
 
                     b.HasIndex("MangaId");
 
@@ -451,6 +458,8 @@ namespace MangaIngestWithUpscaling.Migrations
                     b.HasIndex("ChapterId")
                         .IsUnique();
 
+                    b.HasIndex("MergedChapterNumber");
+
                     b.ToTable("MergedChapterInfos");
                 });
 
@@ -489,6 +498,10 @@ namespace MangaIngestWithUpscaling.Migrations
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("Deleted");
+
+                    b.HasIndex("Id", "Deleted");
 
                     b.ToTable("UpscalerProfiles");
                 });
