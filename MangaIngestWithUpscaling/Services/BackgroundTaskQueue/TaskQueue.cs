@@ -13,6 +13,7 @@ public interface ITaskQueue
     Task RetryAsync(PersistedTask task);
     Task ReorderTaskAsync(PersistedTask task, int newOrder);
     Task RemoveTaskAsync(PersistedTask task);
+    Task RemoveTasksAsync(IEnumerable<PersistedTask> tasks);
 
     Task ReplayPendingOrFailed(CancellationToken cancellationToken = default);
 
@@ -235,6 +236,69 @@ public class TaskQueue : ITaskQueue, IHostedService
 
         // Notify listeners about the removal
         TaskRemoved?.Invoke(task);
+    }
+
+    public async Task RemoveTasksAsync(IEnumerable<PersistedTask> tasks)
+    {
+        var taskList = tasks.ToList();
+        if (taskList.Count == 0)
+            return;
+
+        using var scope = _scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+        // Remove all tasks from database in a single transaction
+        dbContext.PersistedTasks.RemoveRange(taskList);
+        await dbContext.SaveChangesAsync();
+
+        // Group tasks by their queue type to minimize lock acquisitions
+        var standardTasksToRemove = new List<PersistedTask>();
+        var upscaleTasksToRemove = new List<PersistedTask>();
+
+        foreach (var task in taskList)
+        {
+            if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask)
+            {
+                upscaleTasksToRemove.Add(task);
+            }
+            else
+            {
+                standardTasksToRemove.Add(task);
+            }
+        }
+
+        // Remove from in-memory collections with minimal lock contention
+        if (standardTasksToRemove.Count > 0)
+        {
+            lock (_standardTasksLock)
+            {
+                foreach (var task in standardTasksToRemove)
+                {
+                    var toRemove = _standardTasks.FirstOrDefault(t => t.Id == task.Id);
+                    if (toRemove != null)
+                        _standardTasks.Remove(toRemove);
+                }
+            }
+        }
+
+        if (upscaleTasksToRemove.Count > 0)
+        {
+            lock (_upscaleTasksLock)
+            {
+                foreach (var task in upscaleTasksToRemove)
+                {
+                    var toRemove = _upscaleTasks.FirstOrDefault(t => t.Id == task.Id);
+                    if (toRemove != null)
+                        _upscaleTasks.Remove(toRemove);
+                }
+            }
+        }
+
+        // Notify listeners about each removal
+        foreach (var task in taskList)
+        {
+            TaskRemoved?.Invoke(task);
+        }
     }
 
     public async Task RetryAsync(PersistedTask task)
