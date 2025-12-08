@@ -154,6 +154,15 @@ public class TaskRegistry : IHostedService, IDisposable
 
         if (existingTask.HasValue)
         {
+            // Re-check if task was deleted between initial check and now to prevent TOCTOU race
+            if (_recentlyDeletedTaskIds.ContainsKey(task.Id))
+            {
+                // Task was deleted while we were processing, remove it from cache
+                // This is necessary because the task still exists in cache but was just deleted from DB
+                _tasks.Remove(task.Id);
+                return;
+            }
+
             // Update properties of existing cached task to preserve object identity
             // This avoids EF tracking collisions while maintaining reference stability
             var cached = existingTask.Value;
@@ -181,6 +190,13 @@ public class TaskRegistry : IHostedService, IDisposable
             if (!existsInDb)
             {
                 // Task doesn't exist in database, don't add to cache
+                return;
+            }
+
+            // Re-check if task was deleted after database query to prevent TOCTOU race
+            if (_recentlyDeletedTaskIds.ContainsKey(task.Id))
+            {
+                // Task was deleted while we were checking database, don't add to cache
                 return;
             }
 
