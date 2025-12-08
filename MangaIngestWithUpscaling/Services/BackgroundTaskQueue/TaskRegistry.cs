@@ -27,9 +27,10 @@ public class TaskRegistry : IHostedService, IDisposable
 
     // Track recently deleted task IDs to prevent race condition with status updates
     // Using ConcurrentDictionary for thread-safe access from multiple processors
-    // Value is deletion timestamp for potential cleanup
+    // Value is deletion timestamp for cleanup
     private readonly ConcurrentDictionary<int, DateTime> _recentlyDeletedTaskIds = new();
     private readonly CancellationTokenSource _cleanupCts = new();
+    private readonly Timer _cleanupTimer;
 
     // Throttle delay for batching rapid task updates before re-sorting
     // Balance between responsiveness and performance
@@ -48,6 +49,15 @@ public class TaskRegistry : IHostedService, IDisposable
         _standardProcessor = standardProcessor;
         _upscaleProcessor = upscalerProcessor;
         _distributedUpscaleProcessor = distributedUpscaleProcessor;
+
+        // Setup periodic cleanup timer for deleted task IDs
+        // Runs every 10 seconds to remove entries older than 5 seconds
+        _cleanupTimer = new Timer(
+            CleanupDeletedTaskIds,
+            null,
+            TimeSpan.FromSeconds(10),
+            TimeSpan.FromSeconds(10)
+        );
 
         // Standard view: non-upscale tasks, sorted by status priority, then Order, then CreatedAt
         // Use Throttle to batch rapid updates and reduce excessive re-sorting
@@ -96,6 +106,7 @@ public class TaskRegistry : IHostedService, IDisposable
 
     public void Dispose()
     {
+        _cleanupTimer.Dispose();
         _cleanupCts.Cancel();
         _cleanupCts.Dispose();
         _cleanups.Dispose();
@@ -194,27 +205,25 @@ public class TaskRegistry : IHostedService, IDisposable
         _tasks.Remove(task.Id);
 
         // Track as recently deleted to prevent race condition with status updates
+        // Periodic cleanup timer will remove old entries
         _recentlyDeletedTaskIds.TryAdd(task.Id, DateTime.UtcNow);
 
-        // Clean up old deleted IDs after a delay to prevent memory growth
-        // Tasks deleted more than 5 seconds ago are unlikely to have status updates
-        _ = Task.Run(
-            async () =>
-            {
-                try
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(5), _cleanupCts.Token);
-                    _recentlyDeletedTaskIds.TryRemove(task.Id, out _);
-                }
-                catch (OperationCanceledException)
-                {
-                    // Expected when disposing
-                }
-            },
-            _cleanupCts.Token
-        );
-
         return Task.CompletedTask;
+    }
+
+    private void CleanupDeletedTaskIds(object? state)
+    {
+        // Remove entries older than 5 seconds
+        var cutoff = DateTime.UtcNow.AddSeconds(-5);
+        var keysToRemove = _recentlyDeletedTaskIds
+            .Where(kvp => kvp.Value < cutoff)
+            .Select(kvp => kvp.Key)
+            .ToList();
+
+        foreach (var key in keysToRemove)
+        {
+            _recentlyDeletedTaskIds.TryRemove(key, out _);
+        }
     }
 }
 
