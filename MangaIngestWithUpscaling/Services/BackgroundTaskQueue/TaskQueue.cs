@@ -247,48 +247,51 @@ public class TaskQueue : ITaskQueue, IHostedService
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
+        // Fetch tasks from database to ensure they're tracked and exist
+        var taskIds = taskList.Select(t => t.Id).ToHashSet();
+        var tasksToRemove = await dbContext
+            .PersistedTasks.Where(t => taskIds.Contains(t.Id))
+            .ToListAsync();
+
         // Remove all tasks from database in a single transaction
-        dbContext.PersistedTasks.RemoveRange(taskList);
+        dbContext.PersistedTasks.RemoveRange(tasksToRemove);
         await dbContext.SaveChangesAsync();
 
-        // Create HashSet of task IDs for O(1) lookup
-        var taskIdsToRemove = taskList.Select(t => t.Id).ToHashSet();
+        // Separate tasks by type for efficient removal from correct queues
+        var standardTaskIds = new HashSet<int>();
+        var upscaleTaskIds = new HashSet<int>();
 
-        // Group tasks by their queue type to minimize lock acquisitions
-        var standardTasksToRemove = new List<PersistedTask>();
-        var upscaleTasksToRemove = new List<PersistedTask>();
-
-        foreach (var task in taskList)
+        foreach (var task in tasksToRemove)
         {
             if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask)
             {
-                upscaleTasksToRemove.Add(task);
+                upscaleTaskIds.Add(task.Id);
             }
             else
             {
-                standardTasksToRemove.Add(task);
+                standardTaskIds.Add(task.Id);
             }
         }
 
         // Remove from in-memory collections with minimal lock contention
-        if (standardTasksToRemove.Count > 0)
+        if (standardTaskIds.Count > 0)
         {
             lock (_standardTasksLock)
             {
-                _standardTasks.RemoveWhere(t => taskIdsToRemove.Contains(t.Id));
+                _standardTasks.RemoveWhere(t => standardTaskIds.Contains(t.Id));
             }
         }
 
-        if (upscaleTasksToRemove.Count > 0)
+        if (upscaleTaskIds.Count > 0)
         {
             lock (_upscaleTasksLock)
             {
-                _upscaleTasks.RemoveWhere(t => taskIdsToRemove.Contains(t.Id));
+                _upscaleTasks.RemoveWhere(t => upscaleTaskIds.Contains(t.Id));
             }
         }
 
-        // Notify listeners about each removal
-        foreach (var task in taskList)
+        // Notify listeners about each removal (only for tasks that were actually deleted)
+        foreach (var task in tasksToRemove)
         {
             TaskRemoved?.Invoke(task);
         }

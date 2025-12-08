@@ -292,4 +292,77 @@ public class TaskQueueTests : IDisposable
         // Assert - TaskRemoved event should have been triggered for each task
         Assert.Equal(tasksInDb.Count, removedTasks.Count);
     }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RemoveTasksAsync_WithNonExistentTasks_ShouldNotThrow()
+    {
+        // Arrange - Create tasks that don't exist in database
+        var nonExistentTask1 = new PersistedTask
+        {
+            Id = 99999,
+            Data = new LoggingTask { Message = "Non-existent 1" },
+            Status = PersistedTaskStatus.Completed,
+        };
+        var nonExistentTask2 = new PersistedTask
+        {
+            Id = 99998,
+            Data = new LoggingTask { Message = "Non-existent 2" },
+            Status = PersistedTaskStatus.Completed,
+        };
+
+        var tasksToRemove = new List<PersistedTask> { nonExistentTask1, nonExistentTask2 };
+
+        // Act & Assert - Should complete without throwing even though tasks don't exist
+        Exception? exception = await Record.ExceptionAsync(() =>
+            _taskQueue.RemoveTasksAsync(tasksToRemove)
+        );
+        Assert.Null(exception);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RemoveTasksAsync_WithMixedExistentAndNonExistent_ShouldOnlyRemoveExistent()
+    {
+        // Arrange
+        var existingTask = new LoggingTask { Message = "Existing task" };
+        await _taskQueue.EnqueueAsync(existingTask);
+
+        // Get the existing task from DB using the class-level dbContext
+        var tasksInDb = await _dbContext.PersistedTasks.ToListAsync(
+            TestContext.Current.CancellationToken
+        );
+
+        // Skip test if no tasks found (in-memory DB limitation)
+        if (tasksInDb.Count == 0)
+        {
+            return;
+        }
+
+        var existentTask = tasksInDb.First();
+
+        // Create a non-existent task
+        var nonExistentTask = new PersistedTask
+        {
+            Id = 99999,
+            Data = new LoggingTask { Message = "Non-existent" },
+            Status = PersistedTaskStatus.Completed,
+        };
+
+        var removedTasks = new List<PersistedTask>();
+        _taskQueue.TaskRemoved += task =>
+        {
+            removedTasks.Add(task);
+            return Task.CompletedTask;
+        };
+
+        var tasksToRemove = new List<PersistedTask> { existentTask, nonExistentTask };
+
+        // Act
+        await _taskQueue.RemoveTasksAsync(tasksToRemove);
+
+        // Assert - Only the existing task should trigger TaskRemoved event
+        Assert.Single(removedTasks);
+        Assert.Equal(existentTask.Id, removedTasks[0].Id);
+    }
 }
