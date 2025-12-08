@@ -58,6 +58,10 @@ public class BackwardCompatibilityService(
                 if (wasUpgraded)
                 {
                     upgradeCount++;
+                    // Force EF Core to detect the change in the JSON column
+                    // Since the list reference itself hasn't changed, only its contents,
+                    // the shallow comparison in the ValueComparer might not detect it.
+                    dbContext.Entry(record).Property(p => p.OriginalParts).IsModified = true;
                 }
             }
             catch (Exception ex)
