@@ -29,7 +29,6 @@ public class TaskRegistry : IHostedService, IDisposable
     // Using ConcurrentDictionary for thread-safe access from multiple processors
     // Value is deletion timestamp for cleanup
     private readonly ConcurrentDictionary<int, DateTime> _recentlyDeletedTaskIds = new();
-    private readonly CancellationTokenSource _cleanupCts = new();
     private readonly Timer _cleanupTimer;
 
     // Throttle delay for batching rapid task updates before re-sorting
@@ -107,8 +106,6 @@ public class TaskRegistry : IHostedService, IDisposable
     public void Dispose()
     {
         _cleanupTimer.Dispose();
-        _cleanupCts.Cancel();
-        _cleanupCts.Dispose();
         _cleanups.Dispose();
         _tasks.Dispose();
     }
@@ -174,6 +171,9 @@ public class TaskRegistry : IHostedService, IDisposable
         {
             // First time seeing this task - verify it exists in database before caching
             // This handles the case where OnTaskChanged fires for a task after it was deleted
+            // Note: This check is necessary because we can't distinguish between TaskEnqueuedOrChanged
+            // events (always valid) and processor StatusChanged events (may fire after deletion)
+            // Both use the same handler signature. Could optimize by using separate handlers if needed.
             using var scope = _scopeFactory.CreateScope();
             var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             var existsInDb = await dbContext.PersistedTasks.AnyAsync(t => t.Id == task.Id);
@@ -213,16 +213,24 @@ public class TaskRegistry : IHostedService, IDisposable
 
     private void CleanupDeletedTaskIds(object? state)
     {
-        // Remove entries older than 5 seconds
-        var cutoff = DateTime.UtcNow.AddSeconds(-5);
-        var keysToRemove = _recentlyDeletedTaskIds
-            .Where(kvp => kvp.Value < cutoff)
-            .Select(kvp => kvp.Key)
-            .ToList();
-
-        foreach (var key in keysToRemove)
+        try
         {
-            _recentlyDeletedTaskIds.TryRemove(key, out _);
+            // Remove entries older than 5 seconds
+            var cutoff = DateTime.UtcNow.AddSeconds(-5);
+            var keysToRemove = _recentlyDeletedTaskIds
+                .Where(kvp => kvp.Value < cutoff)
+                .Select(kvp => kvp.Key)
+                .ToList();
+
+            foreach (var key in keysToRemove)
+            {
+                _recentlyDeletedTaskIds.TryRemove(key, out _);
+            }
+        }
+        catch (Exception)
+        {
+            // Silently ignore exceptions to ensure timer continues functioning
+            // Cleanup is not critical and will retry on next timer tick
         }
     }
 }

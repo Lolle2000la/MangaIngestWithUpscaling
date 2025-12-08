@@ -257,9 +257,6 @@ public class TaskQueue : ITaskQueue, IHostedService
         dbContext.PersistedTasks.RemoveRange(tasksToRemove);
         await dbContext.SaveChangesAsync();
 
-        // Use IDs of tasks that were actually deleted
-        var taskIdsToRemove = tasksToRemove.Select(t => t.Id).ToHashSet();
-
         // Separate tasks by type for efficient removal from correct queues
         var standardTaskIds = new HashSet<int>();
         var upscaleTaskIds = new HashSet<int>();
