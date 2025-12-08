@@ -158,6 +158,7 @@ public class TaskRegistry : IHostedService, IDisposable
             if (_recentlyDeletedTaskIds.ContainsKey(task.Id))
             {
                 // Task was deleted while we were processing, remove it from cache
+                // This is necessary because the task still exists in cache but was just deleted from DB
                 _tasks.Remove(task.Id);
                 return;
             }
