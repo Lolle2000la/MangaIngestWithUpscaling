@@ -122,8 +122,21 @@ public class TaskRegistry : IHostedService, IDisposable
         return Task.CompletedTask;
     }
 
-    private Task OnTaskChanged(PersistedTask task)
+    private async Task OnTaskChanged(PersistedTask task)
     {
+        // Verify task still exists in database before updating cache
+        // This prevents race condition where task is updated after being deleted
+        using var scope = _scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var existsInDb = await dbContext.PersistedTasks.AnyAsync(t => t.Id == task.Id);
+
+        if (!existsInDb)
+        {
+            // Task was deleted, ensure it's removed from cache
+            _tasks.Remove(task.Id);
+            return;
+        }
+
         // Try to get existing cached task to update in-place
         var existingTask = _tasks.Lookup(task.Id);
 
@@ -158,8 +171,6 @@ public class TaskRegistry : IHostedService, IDisposable
             };
             _tasks.AddOrUpdate(untracked);
         }
-
-        return Task.CompletedTask;
     }
 
     private Task OnTaskRemoved(PersistedTask task)
