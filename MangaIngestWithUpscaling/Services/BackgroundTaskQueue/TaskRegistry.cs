@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Reactive.Disposables;
 using System.Reactive.Linq;
@@ -25,9 +26,10 @@ public class TaskRegistry : IHostedService, IDisposable
     private readonly UpscaleTaskProcessor _upscaleProcessor;
 
     // Track recently deleted task IDs to prevent race condition with status updates
-    // Using concurrent set for thread-safe access from multiple processors
-    private readonly HashSet<int> _recentlyDeletedTaskIds = new();
-    private readonly object _deletedTasksLock = new();
+    // Using ConcurrentDictionary for thread-safe access from multiple processors
+    // Value is deletion timestamp for potential cleanup
+    private readonly ConcurrentDictionary<int, DateTime> _recentlyDeletedTaskIds = new();
+    private readonly CancellationTokenSource _cleanupCts = new();
 
     // Throttle delay for batching rapid task updates before re-sorting
     // Balance between responsiveness and performance
@@ -94,6 +96,8 @@ public class TaskRegistry : IHostedService, IDisposable
 
     public void Dispose()
     {
+        _cleanupCts.Cancel();
+        _cleanupCts.Dispose();
         _cleanups.Dispose();
         _tasks.Dispose();
     }
@@ -130,14 +134,11 @@ public class TaskRegistry : IHostedService, IDisposable
     private async Task OnTaskChanged(PersistedTask task)
     {
         // Check if task was recently deleted to prevent race condition
-        lock (_deletedTasksLock)
+        if (_recentlyDeletedTaskIds.ContainsKey(task.Id))
         {
-            if (_recentlyDeletedTaskIds.Contains(task.Id))
-            {
-                // Task was deleted, ensure it's removed from cache
-                _tasks.Remove(task.Id);
-                return;
-            }
+            // Task was deleted, ensure it's removed from cache
+            _tasks.Remove(task.Id);
+            return;
         }
 
         // Try to get existing cached task to update in-place
@@ -193,21 +194,25 @@ public class TaskRegistry : IHostedService, IDisposable
         _tasks.Remove(task.Id);
 
         // Track as recently deleted to prevent race condition with status updates
-        lock (_deletedTasksLock)
-        {
-            _recentlyDeletedTaskIds.Add(task.Id);
+        _recentlyDeletedTaskIds.TryAdd(task.Id, DateTime.UtcNow);
 
-            // Clean up old deleted IDs after a delay to prevent memory growth
-            // Tasks deleted more than 5 seconds ago are unlikely to have status updates
-            Task.Run(async () =>
+        // Clean up old deleted IDs after a delay to prevent memory growth
+        // Tasks deleted more than 5 seconds ago are unlikely to have status updates
+        _ = Task.Run(
+            async () =>
             {
-                await Task.Delay(TimeSpan.FromSeconds(5));
-                lock (_deletedTasksLock)
+                try
                 {
-                    _recentlyDeletedTaskIds.Remove(task.Id);
+                    await Task.Delay(TimeSpan.FromSeconds(5), _cleanupCts.Token);
+                    _recentlyDeletedTaskIds.TryRemove(task.Id, out _);
                 }
-            });
-        }
+                catch (OperationCanceledException)
+                {
+                    // Expected when disposing
+                }
+            },
+            _cleanupCts.Token
+        );
 
         return Task.CompletedTask;
     }
