@@ -24,6 +24,11 @@ public class TaskRegistry : IHostedService, IDisposable
     private readonly SourceCache<PersistedTask, int> _tasks = new(x => x.Id);
     private readonly UpscaleTaskProcessor _upscaleProcessor;
 
+    // Track recently deleted task IDs to prevent race condition with status updates
+    // Using concurrent set for thread-safe access from multiple processors
+    private readonly HashSet<int> _recentlyDeletedTaskIds = new();
+    private readonly object _deletedTasksLock = new();
+
     // Throttle delay for batching rapid task updates before re-sorting
     // Balance between responsiveness and performance
     private static readonly TimeSpan UpdateThrottleDelay = TimeSpan.FromMilliseconds(50);
@@ -124,17 +129,15 @@ public class TaskRegistry : IHostedService, IDisposable
 
     private async Task OnTaskChanged(PersistedTask task)
     {
-        // Verify task still exists in database before updating cache
-        // This prevents race condition where task is updated after being deleted
-        using var scope = _scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        var existsInDb = await dbContext.PersistedTasks.AnyAsync(t => t.Id == task.Id);
-
-        if (!existsInDb)
+        // Check if task was recently deleted to prevent race condition
+        lock (_deletedTasksLock)
         {
-            // Task was deleted, ensure it's removed from cache
-            _tasks.Remove(task.Id);
-            return;
+            if (_recentlyDeletedTaskIds.Contains(task.Id))
+            {
+                // Task was deleted, ensure it's removed from cache
+                _tasks.Remove(task.Id);
+                return;
+            }
         }
 
         // Try to get existing cached task to update in-place
@@ -157,6 +160,18 @@ public class TaskRegistry : IHostedService, IDisposable
         }
         else
         {
+            // First time seeing this task - verify it exists in database before caching
+            // This handles the case where OnTaskChanged fires for a task after it was deleted
+            using var scope = _scopeFactory.CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var existsInDb = await dbContext.PersistedTasks.AnyAsync(t => t.Id == task.Id);
+
+            if (!existsInDb)
+            {
+                // Task doesn't exist in database, don't add to cache
+                return;
+            }
+
             // First time seeing this task - create untracked copy to avoid EF collisions
             var untracked = new PersistedTask
             {
@@ -176,6 +191,24 @@ public class TaskRegistry : IHostedService, IDisposable
     private Task OnTaskRemoved(PersistedTask task)
     {
         _tasks.Remove(task.Id);
+
+        // Track as recently deleted to prevent race condition with status updates
+        lock (_deletedTasksLock)
+        {
+            _recentlyDeletedTaskIds.Add(task.Id);
+
+            // Clean up old deleted IDs after a delay to prevent memory growth
+            // Tasks deleted more than 5 seconds ago are unlikely to have status updates
+            Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5));
+                lock (_deletedTasksLock)
+                {
+                    _recentlyDeletedTaskIds.Remove(task.Id);
+                }
+            });
+        }
+
         return Task.CompletedTask;
     }
 }

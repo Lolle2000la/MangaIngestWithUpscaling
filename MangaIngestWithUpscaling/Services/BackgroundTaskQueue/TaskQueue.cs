@@ -260,15 +260,37 @@ public class TaskQueue : ITaskQueue, IHostedService
         // Use IDs of tasks that were actually deleted
         var taskIdsToRemove = tasksToRemove.Select(t => t.Id).ToHashSet();
 
-        // Remove from in-memory collections with minimal lock contention
-        lock (_standardTasksLock)
+        // Separate tasks by type for efficient removal from correct queues
+        var standardTaskIds = new HashSet<int>();
+        var upscaleTaskIds = new HashSet<int>();
+
+        foreach (var task in tasksToRemove)
         {
-            _standardTasks.RemoveWhere(t => taskIdsToRemove.Contains(t.Id));
+            if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask)
+            {
+                upscaleTaskIds.Add(task.Id);
+            }
+            else
+            {
+                standardTaskIds.Add(task.Id);
+            }
         }
 
-        lock (_upscaleTasksLock)
+        // Remove from in-memory collections with minimal lock contention
+        if (standardTaskIds.Count > 0)
         {
-            _upscaleTasks.RemoveWhere(t => taskIdsToRemove.Contains(t.Id));
+            lock (_standardTasksLock)
+            {
+                _standardTasks.RemoveWhere(t => standardTaskIds.Contains(t.Id));
+            }
+        }
+
+        if (upscaleTaskIds.Count > 0)
+        {
+            lock (_upscaleTasksLock)
+            {
+                _upscaleTasks.RemoveWhere(t => upscaleTaskIds.Contains(t.Id));
+            }
         }
 
         // Notify listeners about each removal (only for tasks that were actually deleted)
