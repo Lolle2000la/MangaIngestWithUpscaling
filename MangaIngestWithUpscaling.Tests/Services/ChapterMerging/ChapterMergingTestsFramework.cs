@@ -2563,7 +2563,8 @@ public class PartialUpscalingMergeTests : IDisposable
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddSingleton(context);
-        services.AddScoped<IQueueCleanup, QueueCleanup>();
+        var mockQueueCleanup = Substitute.For<IQueueCleanup>();
+        services.AddScoped<IQueueCleanup>(_ => mockQueueCleanup);
         var provider = services.BuildServiceProvider();
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
         var realQueueForProcessor = new TaskQueue(
@@ -3748,7 +3749,8 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddSingleton(context);
-        services.AddScoped<IQueueCleanup, QueueCleanup>();
+        var mockQueueCleanup = Substitute.For<IQueueCleanup>();
+        services.AddScoped<IQueueCleanup>(_ => mockQueueCleanup);
         ServiceProvider provider = services.BuildServiceProvider();
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
         var taskQueue = new TaskQueue(scopeFactory, Substitute.For<ILogger<TaskQueue>>());
