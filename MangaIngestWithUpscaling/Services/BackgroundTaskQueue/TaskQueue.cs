@@ -228,8 +228,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         var taskToRemove = existingTask ?? task;
         RemoveFromInMemoryCollections(taskToRemove);
 
-        // Notify listeners about the removal
-        // Prefer the tracked entity when present; fall back to the original task if it no longer exists in the database
+        // Notify listeners using the available task instance (tracked if found, original otherwise)
         TaskRemoved?.Invoke(taskToRemove);
     }
 
