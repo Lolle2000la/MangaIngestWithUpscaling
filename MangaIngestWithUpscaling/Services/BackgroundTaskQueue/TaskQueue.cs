@@ -229,7 +229,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         RemoveFromInMemoryCollections(taskToRemove);
 
         // Notify listeners about the removal
-        // Fall back to the original task when the database no longer has a tracked entity
+        // Prefer the tracked entity when present; fall back to the original task if it no longer exists in the database
         TaskRemoved?.Invoke(taskToRemove);
     }
 
@@ -264,7 +264,7 @@ public class TaskQueue : ITaskQueue, IHostedService
             RemoveFromInMemoryCollections(task);
         }
 
-        // Notify listeners about each removal (only for tasks that were actually deleted)
+        // Notify listeners about each removal, including tasks already missing from the database
         foreach (var task in tasksToRemove.Concat(missingTasks))
         {
             TaskRemoved?.Invoke(task);
