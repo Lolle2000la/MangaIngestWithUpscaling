@@ -225,10 +225,12 @@ public class TaskQueue : ITaskQueue, IHostedService
             await dbContext.SaveChangesAsync();
         }
 
-        RemoveFromInMemoryCollections(task.Id);
+        var taskToRemove = existingTask ?? task;
+        RemoveFromInMemoryCollections(taskToRemove);
 
         // Notify listeners about the removal
-        TaskRemoved?.Invoke(existingTask ?? task);
+        // Fall back to the original task when the database no longer has a tracked entity
+        TaskRemoved?.Invoke(taskToRemove);
     }
 
     public async Task RemoveTasksAsync(IEnumerable<PersistedTask> tasks)
@@ -254,12 +256,12 @@ public class TaskQueue : ITaskQueue, IHostedService
 
         foreach (var task in tasksToRemove)
         {
-            RemoveFromInMemoryCollections(task.Id);
+            RemoveFromInMemoryCollections(task);
         }
 
         foreach (var task in missingTasks)
         {
-            RemoveFromInMemoryCollections(task.Id);
+            RemoveFromInMemoryCollections(task);
         }
 
         // Notify listeners about each removal (only for tasks that were actually deleted)
@@ -366,16 +368,26 @@ public class TaskQueue : ITaskQueue, IHostedService
         }
     }
 
-    private void RemoveFromInMemoryCollections(int taskId)
+    private void RemoveFromInMemoryCollections(PersistedTask task)
     {
-        lock (_standardTasksLock)
-        {
-            _standardTasks.RemoveWhere(t => t.Id == taskId);
-        }
+        bool isUpscaleTask = task.Data
+            is UpscaleTask
+                or RenameUpscaledChaptersSeriesTask
+                or RepairUpscaleTask;
 
-        lock (_upscaleTasksLock)
+        if (isUpscaleTask)
         {
-            _upscaleTasks.RemoveWhere(t => t.Id == taskId);
+            lock (_upscaleTasksLock)
+            {
+                _upscaleTasks.RemoveWhere(t => t.Id == task.Id);
+            }
+        }
+        else
+        {
+            lock (_standardTasksLock)
+            {
+                _standardTasks.RemoveWhere(t => t.Id == task.Id);
+            }
         }
     }
 }
