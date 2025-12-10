@@ -382,9 +382,10 @@ public class TaskQueueTests : IDisposable
     public async Task RemoveTaskAsync_WithMissingTask_ShouldNotifyRemoval()
     {
         // Arrange
+        const int ghostTaskId = 4242;
         var ghostTask = new PersistedTask
         {
-            Id = 4242,
+            Id = ghostTaskId,
             Data = new LoggingTask { Message = "ghost" },
             Status = PersistedTaskStatus.Completed,
         };
@@ -401,6 +402,6 @@ public class TaskQueueTests : IDisposable
 
         // Assert
         Assert.Single(removedTasks);
-        Assert.Equal(ghostTask.Id, removedTasks[0].Id);
+        Assert.Equal(ghostTaskId, removedTasks[0].Id);
     }
 }
