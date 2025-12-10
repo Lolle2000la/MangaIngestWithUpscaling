@@ -225,10 +225,11 @@ public class TaskQueue : ITaskQueue, IHostedService
             await dbContext.SaveChangesAsync();
         }
 
-        RemoveFromInMemoryCollections(existingTask ?? task);
+        var notificationTask = existingTask ?? task;
+        RemoveFromInMemoryCollections(notificationTask);
 
         // Notify listeners using the database entity when found; otherwise use the original task instance
-        TaskRemoved?.Invoke(existingTask ?? task);
+        TaskRemoved?.Invoke(notificationTask);
     }
 
     public async Task RemoveTasksAsync(IEnumerable<PersistedTask> tasks)
@@ -263,7 +264,8 @@ public class TaskQueue : ITaskQueue, IHostedService
         }
 
         // Notify listeners about each removal, including tasks already missing from the database
-        foreach (var task in tasksToRemove.Concat(missingTasks))
+        var tasksForNotification = tasksToRemove.Concat(missingTasks).ToList();
+        foreach (var task in tasksForNotification)
         {
             TaskRemoved?.Invoke(task);
         }
