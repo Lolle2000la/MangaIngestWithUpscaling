@@ -225,11 +225,11 @@ public class TaskQueue : ITaskQueue, IHostedService
             await dbContext.SaveChangesAsync();
         }
 
-        var taskToRemove = existingTask ?? task;
-        RemoveFromInMemoryCollections(taskToRemove);
+        var taskForNotification = existingTask ?? task;
+        RemoveFromInMemoryCollections(taskForNotification);
 
         // Notify listeners using the database entity when found; otherwise use the original task instance
-        TaskRemoved?.Invoke(taskToRemove);
+        TaskRemoved?.Invoke(taskForNotification);
     }
 
     public async Task RemoveTasksAsync(IEnumerable<PersistedTask> tasks)
@@ -279,10 +279,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         dbContext.Update(task);
         await dbContext.SaveChangesAsync();
 
-        (SortedSet<PersistedTask> tasks, object lockObj) = task.Data
-            is UpscaleTask
-                or RenameUpscaledChaptersSeriesTask
-                or RepairUpscaleTask
+        (SortedSet<PersistedTask> tasks, object lockObj) = IsUpscaleTaskType(task)
             ? (_upscaleTasks, _upscaleTasksLock)
             : (_standardTasks, _standardTasksLock);
 
@@ -369,12 +366,7 @@ public class TaskQueue : ITaskQueue, IHostedService
 
     private void RemoveFromInMemoryCollections(PersistedTask task)
     {
-        bool isUpscaleTask = task.Data
-            is UpscaleTask
-                or RenameUpscaledChaptersSeriesTask
-                or RepairUpscaleTask;
-
-        if (isUpscaleTask)
+        if (IsUpscaleTaskType(task))
         {
             lock (_upscaleTasksLock)
             {
@@ -388,5 +380,10 @@ public class TaskQueue : ITaskQueue, IHostedService
                 _standardTasks.RemoveWhere(t => t.Id == task.Id);
             }
         }
+    }
+
+    private static bool IsUpscaleTaskType(PersistedTask task)
+    {
+        return task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask;
     }
 }
