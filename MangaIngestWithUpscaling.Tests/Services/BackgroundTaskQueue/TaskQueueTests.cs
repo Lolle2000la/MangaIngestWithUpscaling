@@ -313,16 +313,26 @@ public class TaskQueueTests : IDisposable
 
         var tasksToRemove = new List<PersistedTask> { nonExistentTask1, nonExistentTask2 };
 
+        var removedTasks = new List<PersistedTask>();
+        _taskQueue.TaskRemoved += task =>
+        {
+            removedTasks.Add(task);
+            return Task.CompletedTask;
+        };
+
         // Act & Assert - Should complete without throwing even though tasks don't exist
         Exception? exception = await Record.ExceptionAsync(() =>
             _taskQueue.RemoveTasksAsync(tasksToRemove)
         );
         Assert.Null(exception);
+
+        // All provided tasks should still trigger TaskRemoved to keep registry in sync
+        Assert.Equal(tasksToRemove.Count, removedTasks.Count);
     }
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task RemoveTasksAsync_WithMixedExistentAndNonExistent_ShouldOnlyRemoveExistent()
+    public async Task RemoveTasksAsync_WithMixedExistentAndNonExistent_ShouldRemoveAllFromRegistry()
     {
         // Arrange
         var existingTask = new LoggingTask { Message = "Existing task" };
@@ -361,8 +371,37 @@ public class TaskQueueTests : IDisposable
         // Act
         await _taskQueue.RemoveTasksAsync(tasksToRemove);
 
-        // Assert - Only the existing task should trigger TaskRemoved event
+        // Assert - All tasks should trigger TaskRemoved to clean local registry
+        Assert.Equal(tasksToRemove.Count, removedTasks.Count);
+        Assert.Contains(removedTasks, t => t.Id == existentTask.Id);
+        Assert.Contains(removedTasks, t => t.Id == nonExistentTask.Id);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RemoveTaskAsync_WithMissingTask_ShouldNotifyRemoval()
+    {
+        // Arrange
+        const int ghostTaskId = 4242;
+        var ghostTask = new PersistedTask
+        {
+            Id = ghostTaskId,
+            Data = new LoggingTask { Message = "ghost" },
+            Status = PersistedTaskStatus.Completed,
+        };
+
+        var removedTasks = new List<PersistedTask>();
+        _taskQueue.TaskRemoved += task =>
+        {
+            removedTasks.Add(task);
+            return Task.CompletedTask;
+        };
+
+        // Act
+        await _taskQueue.RemoveTaskAsync(ghostTask);
+
+        // Assert
         Assert.Single(removedTasks);
-        Assert.Equal(existentTask.Id, removedTasks[0].Id);
+        Assert.Equal(ghostTaskId, removedTasks[0].Id);
     }
 }

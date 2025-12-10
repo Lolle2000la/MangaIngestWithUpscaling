@@ -217,25 +217,19 @@ public class TaskQueue : ITaskQueue, IHostedService
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        dbContext.PersistedTasks.Remove(task);
-        await dbContext.SaveChangesAsync();
+        PersistedTask? existingTask = await dbContext.PersistedTasks.FindAsync(task.Id);
 
-        (SortedSet<PersistedTask> tasks, object lockObj) = task.Data
-            is UpscaleTask
-                or RenameUpscaledChaptersSeriesTask
-                or RepairUpscaleTask
-            ? (_upscaleTasks, _upscaleTasksLock)
-            : (_standardTasks, _standardTasksLock);
-
-        lock (lockObj)
+        if (existingTask != null)
         {
-            var toRemove = tasks.FirstOrDefault(t => t.Id == task.Id);
-            if (toRemove != null)
-                tasks.Remove(toRemove);
+            dbContext.PersistedTasks.Remove(existingTask);
+            await dbContext.SaveChangesAsync();
         }
 
-        // Notify listeners about the removal
-        TaskRemoved?.Invoke(task);
+        var notificationTask = existingTask ?? task;
+        RemoveFromInMemoryCollections(notificationTask);
+
+        // Notify listeners using the database entity when found; otherwise use the original task instance
+        TaskRemoved?.Invoke(notificationTask);
     }
 
     public async Task RemoveTasksAsync(IEnumerable<PersistedTask> tasks)
@@ -252,46 +246,26 @@ public class TaskQueue : ITaskQueue, IHostedService
         var tasksToRemove = await dbContext
             .PersistedTasks.Where(t => taskIds.Contains(t.Id))
             .ToListAsync();
+        var existingIds = tasksToRemove.Select(t => t.Id).ToHashSet();
+        var missingTasks = taskList.Where(t => !existingIds.Contains(t.Id)).ToList();
 
         // Remove all tasks from database in a single transaction
         dbContext.PersistedTasks.RemoveRange(tasksToRemove);
         await dbContext.SaveChangesAsync();
 
-        // Separate tasks by type for efficient removal from correct queues
-        var standardTaskIds = new HashSet<int>();
-        var upscaleTaskIds = new HashSet<int>();
-
         foreach (var task in tasksToRemove)
         {
-            if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask)
-            {
-                upscaleTaskIds.Add(task.Id);
-            }
-            else
-            {
-                standardTaskIds.Add(task.Id);
-            }
+            RemoveFromInMemoryCollections(task);
         }
 
-        // Remove from in-memory collections with minimal lock contention
-        if (standardTaskIds.Count > 0)
+        foreach (var task in missingTasks)
         {
-            lock (_standardTasksLock)
-            {
-                _standardTasks.RemoveWhere(t => standardTaskIds.Contains(t.Id));
-            }
+            RemoveFromInMemoryCollections(task);
         }
 
-        if (upscaleTaskIds.Count > 0)
-        {
-            lock (_upscaleTasksLock)
-            {
-                _upscaleTasks.RemoveWhere(t => upscaleTaskIds.Contains(t.Id));
-            }
-        }
-
-        // Notify listeners about each removal (only for tasks that were actually deleted)
-        foreach (var task in tasksToRemove)
+        // Notify listeners about each removal, including tasks already missing from the database
+        var tasksForNotification = tasksToRemove.Concat(missingTasks).ToList();
+        foreach (var task in tasksForNotification)
         {
             TaskRemoved?.Invoke(task);
         }
@@ -306,10 +280,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         dbContext.Update(task);
         await dbContext.SaveChangesAsync();
 
-        (SortedSet<PersistedTask> tasks, object lockObj) = task.Data
-            is UpscaleTask
-                or RenameUpscaledChaptersSeriesTask
-                or RepairUpscaleTask
+        (SortedSet<PersistedTask> tasks, object lockObj) = IsUpscaleTaskType(task)
             ? (_upscaleTasks, _upscaleTasksLock)
             : (_standardTasks, _standardTasksLock);
 
@@ -392,5 +363,28 @@ public class TaskQueue : ITaskQueue, IHostedService
                 await Task.Delay(100, cancellationToken);
             }
         }
+    }
+
+    private void RemoveFromInMemoryCollections(PersistedTask task)
+    {
+        if (IsUpscaleTaskType(task))
+        {
+            lock (_upscaleTasksLock)
+            {
+                _upscaleTasks.RemoveWhere(t => t.Id == task.Id);
+            }
+        }
+        else
+        {
+            lock (_standardTasksLock)
+            {
+                _standardTasks.RemoveWhere(t => t.Id == task.Id);
+            }
+        }
+    }
+
+    private static bool IsUpscaleTaskType(PersistedTask task)
+    {
+        return task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask;
     }
 }
