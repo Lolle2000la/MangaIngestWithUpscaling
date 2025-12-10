@@ -40,7 +40,10 @@
         try
         {
             var completedTasks = standardTasks.Where(x => x.Status == PersistedTaskStatus.Completed).ToList();
-            await TaskQueue.RemoveTasksAsync(completedTasks);
+            foreach (var task in completedTasks)
+            {
+                await TaskQueue.RemoveTaskAsync(task);
+            }
         }
         catch (Exception ex)
         {
@@ -55,7 +58,10 @@
         try
         {
             var failedTasks = standardTasks.Where(x => x.Status == PersistedTaskStatus.Failed).ToList();
-            await TaskQueue.RemoveTasksAsync(failedTasks);
+            foreach (var task in failedTasks)
+            {
+                await TaskQueue.RemoveTaskAsync(task);
+            }
         }
         catch (Exception ex)
         {
@@ -70,7 +76,10 @@
         try
         {
             var completedTasks = upscaleTasks.Where(x => x.Status == PersistedTaskStatus.Completed).ToList();
-            await TaskQueue.RemoveTasksAsync(completedTasks);
+            foreach (var task in completedTasks)
+            {
+                await TaskQueue.RemoveTaskAsync(task);
+            }
         }
         catch (Exception ex)
         {
@@ -85,7 +94,10 @@
         try
         {
             var failedTasks = upscaleTasks.Where(x => x.Status == PersistedTaskStatus.Failed).ToList();
-            await TaskQueue.RemoveTasksAsync(failedTasks);
+            foreach (var task in failedTasks)
+            {
+                await TaskQueue.RemoveTaskAsync(task);
+            }
         }
         catch (Exception ex)
         {

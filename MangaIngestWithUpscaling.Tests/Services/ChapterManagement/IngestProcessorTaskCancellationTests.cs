@@ -67,8 +67,7 @@ public class IngestProcessorTaskCancellationTests : IDisposable
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddSingleton(db);
-        var mockQueueCleanup = Substitute.For<IQueueCleanup>();
-        services.AddScoped<IQueueCleanup>(_ => mockQueueCleanup);
+        services.AddScoped<IQueueCleanup, QueueCleanup>();
         ServiceProvider provider = services.BuildServiceProvider();
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
         var taskQueue = new TaskQueue(scopeFactory, Substitute.For<ILogger<TaskQueue>>());
