@@ -217,9 +217,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        PersistedTask? existingTask = await dbContext.PersistedTasks.FirstOrDefaultAsync(t =>
-            t.Id == task.Id
-        );
+        PersistedTask? existingTask = await dbContext.PersistedTasks.FindAsync(task.Id);
 
         if (existingTask != null)
         {
@@ -247,9 +245,8 @@ public class TaskQueue : ITaskQueue, IHostedService
         var tasksToRemove = await dbContext
             .PersistedTasks.Where(t => taskIds.Contains(t.Id))
             .ToListAsync();
-        var missingTasks = taskList
-            .Where(t => tasksToRemove.All(dbTask => dbTask.Id != t.Id))
-            .ToList();
+        var existingIds = tasksToRemove.Select(t => t.Id).ToHashSet();
+        var missingTasks = taskList.Where(t => !existingIds.Contains(t.Id)).ToList();
 
         // Remove all tasks from database in a single transaction
         dbContext.PersistedTasks.RemoveRange(tasksToRemove);
