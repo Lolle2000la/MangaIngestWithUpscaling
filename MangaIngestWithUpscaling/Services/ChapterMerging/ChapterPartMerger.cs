@@ -527,7 +527,9 @@ public partial class ChapterPartMerger(
                         seriesTitle,
                         GenerateMergedChapterTitle(
                             chapterParts.First().Metadata?.ChapterTitle
-                            ?? Path.GetFileNameWithoutExtension(chapterParts.First().RelativePath),
+                                ?? Path.GetFileNameWithoutExtension(
+                                    chapterParts.First().RelativePath
+                                ),
                             baseNumber
                         ),
                         baseNumber
@@ -648,7 +650,9 @@ public partial class ChapterPartMerger(
                         seriesTitle,
                         GenerateMergedChapterTitle(
                             chapterParts.First().Metadata?.ChapterTitle
-                            ?? Path.GetFileNameWithoutExtension(chapterParts.First().RelativePath),
+                                ?? Path.GetFileNameWithoutExtension(
+                                    chapterParts.First().RelativePath
+                                ),
                             baseNumber
                         ),
                         baseNumber
