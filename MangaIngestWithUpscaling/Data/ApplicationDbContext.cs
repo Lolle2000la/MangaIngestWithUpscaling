@@ -140,6 +140,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity.HasIndex(e => e.CreatedAt);
             entity.HasIndex(e => e.ProcessedAt);
             entity.HasIndex(e => e.Order);
+            entity.HasIndex(e => new { e.Status, e.CreatedAt });
         });
 
         builder.Entity<LibraryFilterRule>(entity =>
