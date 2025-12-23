@@ -129,7 +129,7 @@
     />
   </ItemGroup>
   <ItemGroup>
-    <None Include="../MangaJaNaiConverterGui/MangaJaNaiConverterGui/backend/**">
+    <None Include="../submodules/MangaJaNaiConverterGui/MangaJaNaiConverterGui/backend/**">
       <Link>backend\%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

@@ -4,7 +4,6 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
 	python3 python3-venv wget && \
 	rm -rf /var/lib/apt/lists/*
-COPY ["MangaJaNaiConverterGui/MangaJaNaiConverterGui/backend/", "./backend"]
 # Create a virtual environment and install packages
 RUN python3 -m venv ./pyenv && \
 	./pyenv/bin/python -m pip install --no-cache-dir  -U pip wheel --no-warn-script-location && \

@@ -1,4 +1,4 @@
 [submodule "MangaJaNaiConverterGui"]
-	path = MangaJaNaiConverterGui
+	path = submodules/MangaJaNaiConverterGui
 	url = https://github.com/the-database/MangaJaNaiConverterGui.git
 	branch = main
