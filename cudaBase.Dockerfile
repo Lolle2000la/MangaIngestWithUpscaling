@@ -1,8 +1,8 @@
-FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS base
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
 WORKDIR /app
 # Install the required dependencies for the service
 RUN apt-get update && apt-get install -y \
-	python3 python3.12-venv wget && \
+	python3 python3-venv wget && \
 	rm -rf /var/lib/apt/lists/*
 COPY ["MangaJaNaiConverterGui/MangaJaNaiConverterGui/backend/", "./backend"]
 # Create a virtual environment and install packages

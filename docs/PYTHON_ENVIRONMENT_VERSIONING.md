@@ -16,7 +16,7 @@ Increment the `ENVIRONMENT_VERSION` constant when making any of these changes:
 GpuBackend.CUDA => "install torch==2.7.0 torchvision==0.22.0 --index-url https://download.pytorch.org/whl/cu118"
 
 // NEW - increment ENVIRONMENT_VERSION from 1 to 2
-GpuBackend.CUDA => "install torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu118"
+GpuBackend.CUDA => "install torch==2.9.1 torchvision==0.24.1 --index-url https://download.pytorch.org/whl/cu118"
 ```
 
 ### 2. **Adding new package dependencies**

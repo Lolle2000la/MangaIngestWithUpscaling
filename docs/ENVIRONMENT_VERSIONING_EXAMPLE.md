@@ -35,7 +35,7 @@ GpuBackend.CUDA => "install torch==2.7.0 torchvision==0.22.0 --index-url https:/
 **Step 1: Update dependencies**
 ```csharp
 // Update the torch installation command
-GpuBackend.CUDA => "install torch==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu118"
+GpuBackend.CUDA => "install torch==2.9.1 torchvision==0.24.1 --index-url https://download.pytorch.org/whl/cu118"
 ```
 
 **Step 2: Increment version and document**
@@ -74,8 +74,8 @@ private const int ENVIRONMENT_VERSION = 2; // Changed from 1 to 2
   "CreatedAt": "2025-01-16T09:15:00Z",
   "PythonVersion": "Python 3.12.0",
   "InstalledPackages": [
-    "torch==2.8.0",
-    "torchvision==0.23.0",
+    "torch==2.9.1",
+    "torchvision==0.24.1",
     "numpy==2.2.5",
     "..."
   ],
