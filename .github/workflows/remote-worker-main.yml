@@ -5,26 +5,25 @@ name: .NET Build Remote Worker
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
     paths:
-      - "MangaIngestWithUpscaling.RemoteWorker/**"
-      - "MangaIngestWithUpscaling.Shared/**"
+      - "src/MangaIngestWithUpscaling.RemoteWorker/**"
+      - "src/MangaIngestWithUpscaling.Shared/**"
       - "MangaIngestWithUpscaling.sln"
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v6
-    - name: Setup .NET
-      uses: actions/setup-dotnet@v5
-      with:
-        dotnet-version: 10.0.x
-    - name: Restore dependencies
-      run: dotnet restore MangaIngestWithUpscaling.RemoteWorker.Tests/MangaIngestWithUpscaling.RemoteWorker.Tests.csproj
-    - name: Build
-      run: dotnet build --no-restore MangaIngestWithUpscaling.RemoteWorker.Tests/MangaIngestWithUpscaling.RemoteWorker.Tests.csproj /warnaserror
-    - name: Test
-      run: dotnet test --no-build --verbosity normal MangaIngestWithUpscaling.RemoteWorker.Tests/MangaIngestWithUpscaling.RemoteWorker.Tests.csproj
+      - uses: actions/checkout@v6
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore dependencies
+        run: dotnet restore test/MangaIngestWithUpscaling.RemoteWorker.Tests/MangaIngestWithUpscaling.RemoteWorker.Tests.csproj
+      - name: Build
+        run: dotnet build --no-restore test/MangaIngestWithUpscaling.RemoteWorker.Tests/MangaIngestWithUpscaling.RemoteWorker.Tests.csproj /warnaserror
+      - name: Test
+        run: dotnet test --no-build --verbosity normal test/MangaIngestWithUpscaling.RemoteWorker.Tests/MangaIngestWithUpscaling.RemoteWorker.Tests.csproj

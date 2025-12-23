@@ -42,7 +42,7 @@ dotnet build --no-restore MangaIngestWithUpscaling.sln
 # Build takes ~23s. Set timeout to 120+ seconds.
 
 # 5. Build Remote Worker separately (~1 second)
-dotnet build --no-restore MangaIngestWithUpscaling.RemoteWorker
+dotnet build --no-restore src/MangaIngestWithUpscaling.RemoteWorker
 ```
 
 ### Run the Applications
@@ -51,14 +51,14 @@ dotnet build --no-restore MangaIngestWithUpscaling.RemoteWorker
 ```bash
 # ALWAYS use RemoteOnly mode for development to skip Python ML setup
 export Ingest_Upscaler__RemoteOnly=true
-dotnet run --project MangaIngestWithUpscaling
+dotnet run --project src/MangaIngestWithUpscaling
 # Application starts on: http://localhost:5091 and https://localhost:7211
 # NEVER CANCEL during startup - may take 30-60 seconds for database setup
 ```
 
 **Remote Worker:**
 ```bash
-dotnet run --project MangaIngestWithUpscaling.RemoteWorker
+dotnet run --project src/MangaIngestWithUpscaling.RemoteWorker
 # Requires configuration in appsettings.json with ApiKey and ApiUrl
 ```
 
@@ -67,7 +67,7 @@ dotnet run --project MangaIngestWithUpscaling.RemoteWorker
 # Only use if you need local upscaling (will download PyTorch, takes 2-5 minutes)
 export Ingest_Upscaler__UseCPU=true
 export Ingest_Upscaler__RemoteOnly=false
-dotnet run --project MangaIngestWithUpscaling
+dotnet run --project src/MangaIngestWithUpscaling
 # FIRST RUN WILL TAKE 2-5 MINUTES - NEVER CANCEL
 ```
 
@@ -83,7 +83,7 @@ dotnet run --project MangaIngestWithUpscaling
 
 2. **Format Code:**
    ```bash
-   dotnet csharpier format MangaIngestWithUpscaling*/ # Or even just the modified files
+   dotnet csharpier format src/ test/ # Or even just the modified files
    # Only ever commit formatted code
    # Note that the submodule are rightly excluded from the glob pattern above
    ```
@@ -91,7 +91,7 @@ dotnet run --project MangaIngestWithUpscaling
 3. **Application Startup Test:**
    ```bash
    export Ingest_Upscaler__RemoteOnly=true
-dotnet run --project MangaIngestWithUpscaling
+dotnet run --project src/MangaIngestWithUpscaling
    # Should start and show: "Now listening on: http://localhost:5091"
    ```
 
@@ -102,7 +102,7 @@ dotnet run --project MangaIngestWithUpscaling
 
 5. **Remote Worker Build Test:**
    ```bash
-   dotnet build --no-restore MangaIngestWithUpscaling.RemoteWorker
+   dotnet build --no-restore src/MangaIngestWithUpscaling.RemoteWorker
    # Should complete in ~1 second
    ```
 
@@ -111,7 +111,7 @@ dotnet run --project MangaIngestWithUpscaling
    - All test projects have "Tests" in their name.
    - To run all tests in the solution:
      ```bash
-     dotnet test MangaIngestWithUpscaling.Tests --filter Category!=Download
+     dotnet test test/MangaIngestWithUpscaling.Tests --filter Category!=Download
      ```
      Don't run download tests unless you have a specific reason. They can take very long.
    - If you add new features or make changes that affect logic, consider writing new or updating existing tests.
@@ -133,9 +133,15 @@ dotnet run --project MangaIngestWithUpscaling
 ### Key Directories
 ```
 /
-├── MangaIngestWithUpscaling/          # Main Blazor web application
-├── MangaIngestWithUpscaling.Shared/   # Shared library (models, services)
-├── MangaIngestWithUpscaling.RemoteWorker/ # Remote upscaling worker
+├── src/
+│   ├── MangaIngestWithUpscaling/          # Main Blazor web application
+│   ├── MangaIngestWithUpscaling.Shared/   # Shared library (models, services)
+│   └── MangaIngestWithUpscaling.RemoteWorker/ # Remote upscaling worker
+├── test/
+│   ├── MangaIngestWithUpscaling.Tests/    # Unit tests for main app
+│   ├── MangaIngestWithUpscaling.Shared.Tests/ # Unit tests for shared lib
+│   ├── MangaIngestWithUpscaling.RemoteWorker.Tests/ # Unit tests for worker
+│   └── MangaIngestWithUpscaling.Tests.UI/ # UI tests
 ├── MangaJaNaiConverterGui/            # Git submodule (ML backend files)
 ├── docs/                              # Documentation
 └── .github/workflows/                 # CI/CD pipelines
@@ -175,18 +181,18 @@ dotnet run --project MangaIngestWithUpscaling
 dotnet build MangaIngestWithUpscaling.sln
 
 # Individual projects
-dotnet build MangaIngestWithUpscaling/
-dotnet build MangaIngestWithUpscaling.RemoteWorker/
-dotnet build MangaIngestWithUpscaling.Shared/
+dotnet build src/MangaIngestWithUpscaling/
+dotnet build src/MangaIngestWithUpscaling.RemoteWorker/
+dotnet build src/MangaIngestWithUpscaling.Shared/
 ```
 
 ### Code Formatting
 ```bash
 # Check formatting without changes
-dotnet csharpier check MangaIngestWithUpscaling*/
+dotnet csharpier check src/ test/
 
 # Apply formatting fixes
-dotnet csharpier format MangaIngestWithUpscaling*/
+dotnet csharpier format src/ test/
 ```
 
 ### Database Operations
@@ -198,14 +204,14 @@ The application uses SQLite with Entity Framework Core. Database migrations are 
 
 1. **Fresh Build Test:**
    ```bash
-   git clean -xdf bin/ obj/
+   git clean -xdf # Cleans all untracked files including bin/ and obj/ folders
 dotnet restore && dotnet build
    ```
 
 2. **Application Startup:**
    ```bash
    export Ingest_Upscaler__RemoteOnly=true
-dotnet run --project MangaIngestWithUpscaling
+dotnet run --project src/MangaIngestWithUpscaling
    # Wait for "Now listening on:" message
    ```
 
@@ -221,7 +227,7 @@ dotnet run --project MangaIngestWithUpscaling
 5. **Test Suite (If you made relevant code changes):**
    - Run tests using:
      ```bash
-     dotnet test MangaIngestWithUpscaling.Tests
+     dotnet test test/MangaIngestWithUpscaling.Tests
      ```
    - Add or update tests if your change introduces or modifies features/logic.
 
