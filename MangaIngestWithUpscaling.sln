@@ -1,23 +1,27 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.12.35707.178
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling", "MangaIngestWithUpscaling\MangaIngestWithUpscaling.csproj", "{2EDD7D2B-C351-4C67-ADDB-06DA5D384FCD}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling", "src\MangaIngestWithUpscaling\MangaIngestWithUpscaling.csproj", "{2EDD7D2B-C351-4C67-ADDB-06DA5D384FCD}"
 EndProject
 Project("{E53339B2-1760-4266-BCC7-CA923CBCF16C}") = "docker-compose", "docker-compose.dcproj", "{044FCC04-B2CE-44C7-AA76-45CFAE441E12}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling.Shared", "MangaIngestWithUpscaling.Shared\MangaIngestWithUpscaling.Shared.csproj", "{C931B926-9AB8-46CF-8282-70468A723212}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling.Shared", "src\MangaIngestWithUpscaling.Shared\MangaIngestWithUpscaling.Shared.csproj", "{C931B926-9AB8-46CF-8282-70468A723212}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling.RemoteWorker", "MangaIngestWithUpscaling.RemoteWorker\MangaIngestWithUpscaling.RemoteWorker.csproj", "{7C729037-BDE9-431B-A199-5666C4905B87}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling.RemoteWorker", "src\MangaIngestWithUpscaling.RemoteWorker\MangaIngestWithUpscaling.RemoteWorker.csproj", "{7C729037-BDE9-431B-A199-5666C4905B87}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling.Shared.Tests", "MangaIngestWithUpscaling.Shared.Tests\MangaIngestWithUpscaling.Shared.Tests.csproj", "{A4F5C0D0-6432-4227-8B62-E5E408BF2914}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling.Shared.Tests", "test\MangaIngestWithUpscaling.Shared.Tests\MangaIngestWithUpscaling.Shared.Tests.csproj", "{A4F5C0D0-6432-4227-8B62-E5E408BF2914}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling.Tests", "MangaIngestWithUpscaling.Tests\MangaIngestWithUpscaling.Tests.csproj", "{27E11836-8C61-4BC2-B82D-7ECDB47A9F6C}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling.Tests", "test\MangaIngestWithUpscaling.Tests\MangaIngestWithUpscaling.Tests.csproj", "{27E11836-8C61-4BC2-B82D-7ECDB47A9F6C}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling.RemoteWorker.Tests", "MangaIngestWithUpscaling.RemoteWorker.Tests\MangaIngestWithUpscaling.RemoteWorker.Tests.csproj", "{36121FAD-C040-49AB-AFEA-A351BB588466}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling.RemoteWorker.Tests", "test\MangaIngestWithUpscaling.RemoteWorker.Tests\MangaIngestWithUpscaling.RemoteWorker.Tests.csproj", "{36121FAD-C040-49AB-AFEA-A351BB588466}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling.Tests.UI", "MangaIngestWithUpscaling.Tests.UI\MangaIngestWithUpscaling.Tests.UI.csproj", "{F5E24891-9709-4475-A015-3369CAB6975B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MangaIngestWithUpscaling.Tests.UI", "test\MangaIngestWithUpscaling.Tests.UI\MangaIngestWithUpscaling.Tests.UI.csproj", "{F5E24891-9709-4475-A015-3369CAB6975B}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{11111111-1111-1111-1111-111111111111}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "test", "test", "{22222222-2222-2222-2222-222222222222}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -124,6 +128,15 @@ Global
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{2EDD7D2B-C351-4C67-ADDB-06DA5D384FCD} = {11111111-1111-1111-1111-111111111111}
+		{C931B926-9AB8-46CF-8282-70468A723212} = {11111111-1111-1111-1111-111111111111}
+		{7C729037-BDE9-431B-A199-5666C4905B87} = {11111111-1111-1111-1111-111111111111}
+		{A4F5C0D0-6432-4227-8B62-E5E408BF2914} = {22222222-2222-2222-2222-222222222222}
+		{27E11836-8C61-4BC2-B82D-7ECDB47A9F6C} = {22222222-2222-2222-2222-222222222222}
+		{36121FAD-C040-49AB-AFEA-A351BB588466} = {22222222-2222-2222-2222-222222222222}
+		{F5E24891-9709-4475-A015-3369CAB6975B} = {22222222-2222-2222-2222-222222222222}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {06A01183-B554-46EC-93AC-B484F9BB8346}

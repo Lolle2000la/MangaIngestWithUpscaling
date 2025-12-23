@@ -3,16 +3,16 @@ services:
     image: ${DOCKER_REGISTRY-}mangaingestwithupscaling
     build:
       context: .
-      dockerfile: MangaIngestWithUpscaling/Dockerfile
+      dockerfile: src/MangaIngestWithUpscaling/Dockerfile
     environment:
       - TZ=Etc/UTC
       - Ingest_Upscaler__PythonEnvironmentDirectory=/app/pyenv
       - Ingest_Kavita__BaseUrl=http://kavita:5000
       - Ingest_Kavita__ApiKey=8d5f292a-a1ef-4557-8986-6319ccc80eb9 # Generate your own for your local testing
-      - Ingest_Kavita__Enabled=True # Generate your own for your local testing 
+      - Ingest_Kavita__Enabled=True # Generate your own for your local testing
     ports:
       - 8080:8080
-      - 8081:8081 
+      - 8081:8081
     volumes:
       - ./test_data:/data
       - ./test_data/models:/models
@@ -24,7 +24,7 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-  
+
   # Remote-only variant without ML dependencies
   mangaingestwithupscaling-remote-only:
     image: ${DOCKER_REGISTRY-}mangaingestwithupscaling-remote-only
@@ -35,16 +35,16 @@ services:
       - TZ=Etc/UTC
       - Ingest_Kavita__BaseUrl=http://kavita:5000
       - Ingest_Kavita__ApiKey=8d5f292a-a1ef-4557-8986-6319ccc80eb9 # Generate your own for your local testing
-      - Ingest_Kavita__Enabled=True # Generate your own for your local testing 
+      - Ingest_Kavita__Enabled=True # Generate your own for your local testing
       - Ingest_Upscaler__RemoteOnly=true
     ports:
-      - 8082:8080  # Different port to avoid conflicts
-      - 8083:8081  # Different port to avoid conflicts
+      - 8082:8080 # Different port to avoid conflicts
+      - 8083:8081 # Different port to avoid conflicts
     volumes:
       - ./test_data:/data
     profiles:
-      - remote-only  # Use docker-compose --profile remote-only to run this variant
-  
+      - remote-only # Use docker-compose --profile remote-only to run this variant
+
   kavita:
     image: jvmilazz0/kavita:latest
     container_name: kavita
@@ -52,7 +52,7 @@ services:
       - TZ=Etc/UTC
       - DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=true
     volumes:
-      - ./test_data/kavita/config:/kavita/config 
+      - ./test_data/kavita/config:/kavita/config
       - ./test_data:/test_data
     ports:
       - 5000:5000
