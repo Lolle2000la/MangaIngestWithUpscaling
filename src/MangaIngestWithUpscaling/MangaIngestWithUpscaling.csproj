@@ -13,7 +13,7 @@
   <PropertyGroup>
     <BlazorWebAssemblyLoadAllGlobalizationData>true</BlazorWebAssemblyLoadAllGlobalizationData>
     <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
-    <DockerComposeProjectPath>..\docker-compose.dcproj</DockerComposeProjectPath>
+    <DockerComposeProjectPath>..\..\docker-compose.dcproj</DockerComposeProjectPath>
   </PropertyGroup>
   <ItemGroup>
     <Protobuf Include="protos\upscaling-dist.proto" GrpcServices="Server" />
@@ -129,7 +129,7 @@
     />
   </ItemGroup>
   <ItemGroup>
-    <None Include="../submodules/MangaJaNaiConverterGui/MangaJaNaiConverterGui/backend/**">
+    <None Include="../../submodules/MangaJaNaiConverterGui/MangaJaNaiConverterGui/backend/**">
       <Link>backend\%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

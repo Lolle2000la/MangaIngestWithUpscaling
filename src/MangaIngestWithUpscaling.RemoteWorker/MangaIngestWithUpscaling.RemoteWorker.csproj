@@ -33,7 +33,7 @@
     <PackageReference Include="Velopack" Version="0.0.1298" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="../submodules/MangaJaNaiConverterGui/MangaJaNaiConverterGui/backend/**">
+    <None Include="../../submodules/MangaJaNaiConverterGui/MangaJaNaiConverterGui/backend/**">
       <Link>backend\%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

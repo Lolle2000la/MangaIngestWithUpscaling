@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: | 
+          dotnet-version: |
             9.0.x
             10.0.x
 
@@ -30,8 +30,8 @@ jobs:
       - name: Package with Velopack
         run: |
           $version = "${{ github.event.release.tag_name }}".TrimStart("v")
-          dotnet publish MangaIngestWithUpscaling.RemoteWorker/MangaIngestWithUpscaling.RemoteWorker.csproj -c Release --self-contained -r win-x64 -p:Version=$VERSION -p:VelopackRelease=true -o ./publish
-          vpk pack --packId MangaIngestWithUpscaling.RemoteWorker --packVersion $VERSION --packDir ./publish --icon ./MangaIngestWithUpscaling/wwwroot/favicon.ico --mainExe MangaIngestWithUpscaling.RemoteWorker.exe
+          dotnet publish src/MangaIngestWithUpscaling.RemoteWorker/MangaIngestWithUpscaling.RemoteWorker.csproj -c Release --self-contained -r win-x64 -p:Version=$VERSION -p:VelopackRelease=true -o ./publish
+          vpk pack --packId MangaIngestWithUpscaling.RemoteWorker --packVersion $VERSION --packDir ./publish --icon ./src/MangaIngestWithUpscaling/wwwroot/favicon.ico --mainExe MangaIngestWithUpscaling.RemoteWorker.exe
 
       # - name: Upload Artifacts
       #   uses: actions/upload-artifact@v4
@@ -53,7 +53,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: | 
+          dotnet-version: |
             9.0.x
             10.0.x
 
@@ -67,8 +67,8 @@ jobs:
         run: |
           apt update && apt install -y squashfs-tools  
           VERSION=$(echo ${{ github.event.release.tag_name }} | sed 's/^v//')
-          dotnet publish MangaIngestWithUpscaling.RemoteWorker/MangaIngestWithUpscaling.RemoteWorker.csproj -c Release --self-contained -r linux-x64 -p:Version=$VERSION -p:VelopackRelease=true -o ./publish
-          vpk pack --packId MangaIngestWithUpscaling.RemoteWorker --packVersion $VERSION --packDir ./publish  --icon ./MangaIngestWithUpscaling/wwwroot/favicon.png --mainExe MangaIngestWithUpscaling.RemoteWorker
+          dotnet publish src/MangaIngestWithUpscaling.RemoteWorker/MangaIngestWithUpscaling.RemoteWorker.csproj -c Release --self-contained -r linux-x64 -p:Version=$VERSION -p:VelopackRelease=true -o ./publish
+          vpk pack --packId MangaIngestWithUpscaling.RemoteWorker --packVersion $VERSION --packDir ./publish  --icon ./src/MangaIngestWithUpscaling/wwwroot/favicon.png --mainExe MangaIngestWithUpscaling.RemoteWorker
 
       # - name: Upload Artifacts
       #   uses: actions/upload-artifact@v4

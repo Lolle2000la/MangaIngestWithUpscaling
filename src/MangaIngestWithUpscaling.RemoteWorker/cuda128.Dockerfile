@@ -1,7 +1,7 @@
 # See https://aka.ms/customizecontainer to learn how to customize your debug container and how Visual Studio uses this Dockerfile to build your images for faster debugging.
 
 # This stage is used when running from VS in fast mode (Default for Debug configuration)
-FROM ghcr.io/lolle2000la/manga-ingest-with-upscaling-base:latest-cuda AS base
+FROM ghcr.io/lolle2000la/manga-ingest-with-upscaling-base:latest-cuda-12.8 AS base
 WORKDIR /app
 
 # This stage is used to build the service project
@@ -9,11 +9,11 @@ FROM --platform=$BUILDPLATFORM  mcr.microsoft.com/dotnet/sdk:10.0-noble AS build
 ARG BUILD_CONFIGURATION=Release
 ARG TARGETARCH
 WORKDIR /src
-COPY ["MangaIngestWithUpscaling.RemoteWorker/MangaIngestWithUpscaling.RemoteWorker.csproj", "MangaIngestWithUpscaling.RemoteWorker/"]
-COPY ["MangaIngestWithUpscaling.Shared/MangaIngestWithUpscaling.Shared.csproj", "MangaIngestWithUpscaling.Shared/"]
-RUN dotnet restore "./MangaIngestWithUpscaling.RemoteWorker/MangaIngestWithUpscaling.RemoteWorker.csproj"
+COPY ["src/MangaIngestWithUpscaling.RemoteWorker/MangaIngestWithUpscaling.RemoteWorker.csproj", "src/MangaIngestWithUpscaling.RemoteWorker/"]
+COPY ["src/MangaIngestWithUpscaling.Shared/MangaIngestWithUpscaling.Shared.csproj", "src/MangaIngestWithUpscaling.Shared/"]
+RUN dotnet restore "./src/MangaIngestWithUpscaling.RemoteWorker/MangaIngestWithUpscaling.RemoteWorker.csproj"
 COPY . .
-WORKDIR "/src/MangaIngestWithUpscaling.RemoteWorker"
+WORKDIR "/src/src/MangaIngestWithUpscaling.RemoteWorker"
 RUN dotnet build "./MangaIngestWithUpscaling.RemoteWorker.csproj" -c Release -o /app/build
 
 # This stage is used to publish the service project to be copied to the final stage

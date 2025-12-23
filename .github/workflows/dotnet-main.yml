@@ -5,10 +5,10 @@ name: .NET Build Main
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
     paths:
-      - "MangaIngestWithUpscaling/**"
-      - "MangaIngestWithUpscaling.Shared/**"
+      - "src/MangaIngestWithUpscaling/**"
+      - "src/MangaIngestWithUpscaling.Shared/**"
       - "MangaIngestWithUpscaling.sln"
       - "Dockerfile"
       - "rocm.Dockerfile"
@@ -16,24 +16,23 @@ on:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v6
-      with:
-        submodules: recursive
-    - name: Setup .NET
-      uses: actions/setup-dotnet@v5
-      with:
-        dotnet-version: 10.0.x
-    - name: Restore dependencies
-      run: dotnet restore MangaIngestWithUpscaling.sln
-    - name: Build
-      run: dotnet build --no-restore MangaIngestWithUpscaling.sln /warnaserror
-    - name: Test shared
-      run: dotnet test --no-build --verbosity normal MangaIngestWithUpscaling.Shared.Tests/MangaIngestWithUpscaling.Shared.Tests.csproj
-    - name: Test server
-      run: dotnet test --no-build --verbosity normal MangaIngestWithUpscaling.Tests/MangaIngestWithUpscaling.Tests.csproj
-    - name: Test server UI
-      run: dotnet test --no-build --verbosity normal MangaIngestWithUpscaling.Tests.UI/MangaIngestWithUpscaling.Tests.UI.csproj
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+      - name: Restore dependencies
+        run: dotnet restore MangaIngestWithUpscaling.sln
+      - name: Build
+        run: dotnet build --no-restore MangaIngestWithUpscaling.sln /warnaserror
+      - name: Test shared
+        run: dotnet test --no-build --verbosity normal test/MangaIngestWithUpscaling.Shared.Tests/MangaIngestWithUpscaling.Shared.Tests.csproj
+      - name: Test server
+        run: dotnet test --no-build --verbosity normal test/MangaIngestWithUpscaling.Tests/MangaIngestWithUpscaling.Tests.csproj
+      - name: Test server UI
+        run: dotnet test --no-build --verbosity normal test/MangaIngestWithUpscaling.Tests.UI/MangaIngestWithUpscaling.Tests.UI.csproj

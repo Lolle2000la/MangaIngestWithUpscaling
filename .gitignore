@@ -363,10 +363,10 @@ MigrationBackup/
 FodyWeavers.xsd
 
 # Test db
-MangaIngestWithUpscaling/data.db*
-/MangaIngestWithUpscaling/logs*.db*
-/MangaIngestWithUpscaling.RemoteWorker/appsettings.Development.json
-MangaIngestWithUpscaling/.net10-upgrade-complete
+src/MangaIngestWithUpscaling/data.db*
+src/MangaIngestWithUpscaling/logs*.db*
+src/MangaIngestWithUpscaling.RemoteWorker/appsettings.Development.json
+src/MangaIngestWithUpscaling/.net10-upgrade-complete
 
 # IDEA
 .idea/
