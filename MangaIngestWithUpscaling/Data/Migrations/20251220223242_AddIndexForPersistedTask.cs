@@ -13,7 +13,8 @@ namespace MangaIngestWithUpscaling.Migrations
             migrationBuilder.CreateIndex(
                 name: "IX_PersistedTasks_Status_CreatedAt",
                 table: "PersistedTasks",
-                columns: new[] { "Status", "CreatedAt" });
+                columns: new[] { "Status", "CreatedAt" }
+            );
         }
 
         /// <inheritdoc />
@@ -21,7 +22,8 @@ namespace MangaIngestWithUpscaling.Migrations
         {
             migrationBuilder.DropIndex(
                 name: "IX_PersistedTasks_Status_CreatedAt",
-                table: "PersistedTasks");
+                table: "PersistedTasks"
+            );
         }
     }
 }

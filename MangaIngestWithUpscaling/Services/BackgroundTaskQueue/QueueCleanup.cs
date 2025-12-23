@@ -11,8 +11,8 @@ public class QueueCleanup(ApplicationDbContext dbContext, ILogger<QueueCleanup> 
     public async Task CleanupAsync()
     {
         // In QueueCleanup.cs
-        var cutoffDate = await dbContext.PersistedTasks
-            .Where(t => t.Status == PersistedTaskStatus.Completed)
+        var cutoffDate = await dbContext
+            .PersistedTasks.Where(t => t.Status == PersistedTaskStatus.Completed)
             .OrderByDescending(t => t.CreatedAt)
             .Skip(100)
             .Select(t => t.CreatedAt)
@@ -20,10 +20,12 @@ public class QueueCleanup(ApplicationDbContext dbContext, ILogger<QueueCleanup> 
 
         if (cutoffDate != default)
         {
-            var deletedCount = await dbContext.PersistedTasks
-                .Where(t => t.Status == PersistedTaskStatus.Completed && t.CreatedAt <= cutoffDate)
+            var deletedCount = await dbContext
+                .PersistedTasks.Where(t =>
+                    t.Status == PersistedTaskStatus.Completed && t.CreatedAt <= cutoffDate
+                )
                 .ExecuteDeleteAsync();
-        
+
             if (deletedCount > 0)
                 _logger.LogInformation("Cleaned up {Count} old tasks.", deletedCount);
         }

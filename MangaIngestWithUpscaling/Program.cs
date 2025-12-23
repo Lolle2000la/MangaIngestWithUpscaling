@@ -385,8 +385,8 @@ using (var scope = app.Services.CreateScope())
                 "Failed to create upgrade marker file, but migration completed successfully"
             );
         }
-        
-        if (app.Environment.IsProduction()) 
+
+        if (app.Environment.IsProduction())
         {
             // A quick check to see if vacuum is needed could go here (e.g. checking file size)
             await dbContext.Database.ExecuteSqlRawAsync("VACUUM;");
