@@ -120,21 +120,32 @@ public class SplitProcessingCoordinator(
         return false;
     }
 
-    public async Task<bool> EnqueueDetectionIfPlausibleAsync(int chapterId, CancellationToken cancellationToken = default)
+    public async Task<bool> EnqueueDetectionIfPlausibleAsync(
+        int chapterId,
+        CancellationToken cancellationToken = default
+    )
     {
-        var chapter = await dbContext.Chapters.Include(c => c.Manga).ThenInclude(m => m.Library)
+        var chapter = await dbContext
+            .Chapters.Include(c => c.Manga)
+                .ThenInclude(m => m.Library)
             .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
 
         if (chapter == null || !File.Exists(chapter.NotUpscaledFullPath))
         {
-            logger.LogWarning("Cannot check plausibility for chapter {ChapterId}: File not found.", chapterId);
+            logger.LogWarning(
+                "Cannot check plausibility for chapter {ChapterId}: File not found.",
+                chapterId
+            );
             return false;
         }
 
         if (!HasImplausiblePages(chapter.NotUpscaledFullPath))
         {
             // Update state to Detected/CurrentVersion
-            var state = await dbContext.ChapterSplitProcessingStates.FirstOrDefaultAsync(s => s.ChapterId == chapterId, cancellationToken);
+            var state = await dbContext.ChapterSplitProcessingStates.FirstOrDefaultAsync(
+                s => s.ChapterId == chapterId,
+                cancellationToken
+            );
             if (state == null)
             {
                 state = new ChapterSplitProcessingState { ChapterId = chapterId };
@@ -146,11 +157,16 @@ public class SplitProcessingCoordinator(
             state.ModifiedAt = DateTime.UtcNow;
 
             // Clear any existing findings since we decided there are none
-            var existingFindings = dbContext.StripSplitFindings.Where(f => f.ChapterId == chapterId);
+            var existingFindings = dbContext.StripSplitFindings.Where(f =>
+                f.ChapterId == chapterId
+            );
             dbContext.StripSplitFindings.RemoveRange(existingFindings);
 
             await dbContext.SaveChangesAsync(cancellationToken);
-            logger.LogInformation("Skipping split detection for {Chapter} as no plausible pages were found.", chapter.FileName);
+            logger.LogInformation(
+                "Skipping split detection for {Chapter} as no plausible pages were found.",
+                chapter.FileName
+            );
             return false;
         }
 
