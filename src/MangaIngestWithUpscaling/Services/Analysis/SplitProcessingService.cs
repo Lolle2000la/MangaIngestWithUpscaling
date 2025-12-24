@@ -83,6 +83,25 @@ public class SplitProcessingService(
             detectorVersion,
             results.Count()
         );
+
+        // Check if we should auto-apply
+        var chapter = await dbContext
+            .Chapters.Include(c => c.Manga)
+                .ThenInclude(m => m.Library)
+            .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
+
+        if (chapter?.Manga?.Library?.StripDetectionMode == StripDetectionMode.DetectAndApply)
+        {
+            logger.LogInformation(
+                "Auto-applying splits for chapter {ChapterId} based on library settings.",
+                chapterId
+            );
+            await taskQueue.EnqueueAsync(new ApplySplitsTask(chapterId, detectorVersion));
+
+            // Update status to Processing immediately to reflect the queued task
+            state.Status = SplitProcessingStatus.Processing;
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
     }
 
     public async Task QueueSplitDetectionAsync(int chapterId)

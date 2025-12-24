@@ -2,6 +2,7 @@
 @using MangaIngestWithUpscaling.Components.Libraries.Filters
 @using MangaIngestWithUpscaling.Configuration
 @using MangaIngestWithUpscaling.Data.LibraryManagement
+@using MangaIngestWithUpscaling.Shared.Data.Analysis
 @using Microsoft.Extensions.Options
 @inject ApplicationDbContext DbContext
 @inject IOptions<KavitaConfiguration> KavitaConfig
@@ -134,6 +135,17 @@
                     <MudText Typo="Typo.caption" Color="Color.Warning">
                         ⚠️ Experimental feature - expect potential data loss!
                     </MudText>
+
+                    <MudText Typo="Typo.h5" GutterBottom="true" Class="mt-4">Vertical Strip Detection</MudText>
+                    <MudSelect T="StripDetectionMode" Label="Detection Mode"
+                        HelperText="Configure how vertical strips (webtoons) should be handled."
+                        @bind-Value="Library.StripDetectionMode" @bind-Value:after="OnInputChanged"
+                        Variant="Variant.Outlined">
+                        <MudSelectItem Value="StripDetectionMode.None">Disabled</MudSelectItem>
+                        <MudSelectItem Value="StripDetectionMode.DetectOnly">Detect Only (Manual Review)</MudSelectItem>
+                        <MudSelectItem Value="StripDetectionMode.DetectAndApply">Detect & Apply Automatically
+                        </MudSelectItem>
+                    </MudSelect>
                 </MudItem>
             </MudGrid>
         </MudTabPanel>
