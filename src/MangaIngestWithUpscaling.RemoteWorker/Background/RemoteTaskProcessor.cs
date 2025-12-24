@@ -1,8 +1,10 @@
 ﻿using System.Diagnostics;
+using System.IO.Compression;
 using System.Threading.Channels;
 using Google.Protobuf;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Api.Upscaling;
+using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using CompressionFormat = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat;
 using ScaleFactor = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.ScaleFactor;
@@ -202,7 +204,8 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     prefetchProfile,
                     file,
                     persistentKeepAliveCts,
-                    persistentKeepAliveTask
+                    persistentKeepAliveTask,
+                    resp.TaskType
                 );
                 await _toUpscale.Writer.WriteAsync(fetched, stoppingToken);
 
@@ -244,6 +247,8 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
             scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
         var logger = scope.ServiceProvider.GetRequiredService<ILogger<RemoteTaskProcessor>>();
         var upscaler = scope.ServiceProvider.GetRequiredService<IUpscaler>();
+        var splitDetectionService =
+            scope.ServiceProvider.GetRequiredService<ISplitDetectionService>();
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -271,7 +276,10 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
             // The persistent keep-alive continues running; we just add progress reporting
             // No need to start a separate processing keep-alive loop since the persistent one continues
 
-            string upscaledFile = PrepareTempFile(item.TaskId, "_upscaled");
+            string? upscaledFile = null;
+            string? resultJson = null;
+            string? tempExtractDir = null;
+
             // Progress reporting must not block upscaling: use a bounded channel and a background sender
             var progressChannel = Channel.CreateBounded<UpscaleProgress>(
                 new BoundedChannelOptions(1)
@@ -435,27 +443,53 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 
             try
             {
-                await upscaler.Upscale(
-                    item.DownloadedFile,
-                    upscaledFile,
-                    profile,
-                    progress,
-                    upscalesCts.Token
-                );
-            }
-            catch (NotImplementedException)
-            {
-                await upscaler.Upscale(
-                    item.DownloadedFile,
-                    upscaledFile,
-                    profile,
-                    upscalesCts.Token
-                );
+                if (item.TaskType == TaskType.SplitDetection)
+                {
+                    tempExtractDir = Path.Combine(
+                        Path.GetTempPath(),
+                        $"mangaingest_worker_extract_{item.TaskId}_{Guid.NewGuid()}"
+                    );
+                    Directory.CreateDirectory(tempExtractDir);
+                    ZipFile.ExtractToDirectory(item.DownloadedFile, tempExtractDir);
+
+                    var results = await splitDetectionService.DetectSplitsAsync(
+                        tempExtractDir,
+                        progress,
+                        upscalesCts.Token
+                    );
+                    resultJson = System.Text.Json.JsonSerializer.Serialize(results);
+                }
+                else
+                {
+                    upscaledFile = PrepareTempFile(item.TaskId, "_upscaled");
+                    try
+                    {
+                        await upscaler.Upscale(
+                            item.DownloadedFile,
+                            upscaledFile,
+                            profile,
+                            progress,
+                            upscalesCts.Token
+                        );
+                    }
+                    catch (NotImplementedException)
+                    {
+                        await upscaler.Upscale(
+                            item.DownloadedFile,
+                            upscaledFile,
+                            profile,
+                            upscalesCts.Token
+                        );
+                    }
+                }
             }
             catch (OperationCanceledException)
             {
                 SafeDelete(item.DownloadedFile);
-                SafeDelete(upscaledFile);
+                if (upscaledFile != null)
+                    SafeDelete(upscaledFile);
+                if (tempExtractDir != null && Directory.Exists(tempExtractDir))
+                    Directory.Delete(tempExtractDir, true);
                 _currentTaskId = null;
                 await item.PersistentKeepAliveCts.CancelAsync();
                 try
@@ -494,7 +528,10 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 }
 
                 SafeDelete(item.DownloadedFile);
-                SafeDelete(upscaledFile);
+                if (upscaledFile != null)
+                    SafeDelete(upscaledFile);
+                if (tempExtractDir != null && Directory.Exists(tempExtractDir))
+                    Directory.Delete(tempExtractDir, true);
 
                 _currentTaskId = null;
                 await item.PersistentKeepAliveCts.CancelAsync();
@@ -535,13 +572,19 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 _fetchSignals?.Writer.TryWrite(true);
             }
 
+            // Cleanup temp dir if it exists (should be done in finally usually, but here we are at end of loop)
+            if (tempExtractDir != null && Directory.Exists(tempExtractDir))
+                Directory.Delete(tempExtractDir, true);
+
             await _toUpload.Writer.WriteAsync(
                 new ProcessedItem(
                     item.TaskId,
                     item.DownloadedFile,
                     upscaledFile,
+                    resultJson,
                     item.PersistentKeepAliveCts,
-                    item.PersistentKeepAliveTask
+                    item.PersistentKeepAliveTask,
+                    item.TaskType
                 ),
                 stoppingToken
             );
@@ -579,15 +622,37 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 
             try
             {
-                await UploadFileAndCleanup(
-                    client,
-                    logger,
-                    item.TaskId,
-                    item.UpscaledFile,
-                    item.DownloadedFile,
-                    item.UpscaledFile,
-                    stoppingToken
-                );
+                if (item.TaskType == TaskType.SplitDetection)
+                {
+                    if (item.ResultJson == null)
+                        throw new InvalidOperationException(
+                            "ResultJson is null for detection task"
+                        );
+                    await UploadDetectionResultAndCleanup(
+                        client,
+                        logger,
+                        item.TaskId,
+                        item.ResultJson,
+                        item.DownloadedFile,
+                        stoppingToken
+                    );
+                }
+                else
+                {
+                    if (item.UpscaledFile == null)
+                        throw new InvalidOperationException(
+                            "UpscaledFile is null for upscale task"
+                        );
+                    await UploadFileAndCleanup(
+                        client,
+                        logger,
+                        item.TaskId,
+                        item.UpscaledFile,
+                        item.DownloadedFile,
+                        item.UpscaledFile,
+                        stoppingToken
+                    );
+                }
             }
             catch (OperationCanceledException)
             {
@@ -681,6 +746,31 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     response.TaskId,
                     response.Message
                 );
+            }
+        }
+    }
+
+    private async Task UploadDetectionResultAndCleanup(
+        UpscalingService.UpscalingServiceClient client,
+        ILogger<RemoteTaskProcessor> logger,
+        int taskId,
+        string resultJson,
+        string? downloadedFile,
+        CancellationToken stoppingToken
+    )
+    {
+        try
+        {
+            await client.UploadDetectionResultAsync(
+                new UploadDetectionResultRequest { TaskId = taskId, ResultJson = resultJson },
+                cancellationToken: stoppingToken
+            );
+        }
+        finally
+        {
+            if (downloadedFile != null && File.Exists(downloadedFile))
+            {
+                File.Delete(downloadedFile);
             }
         }
     }
@@ -846,15 +936,18 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
         UpscalerProfile Profile,
         string DownloadedFile,
         CancellationTokenSource PersistentKeepAliveCts,
-        Task PersistentKeepAliveTask
+        Task PersistentKeepAliveTask,
+        TaskType TaskType
     );
 
     private sealed record ProcessedItem(
         int TaskId,
         string DownloadedFile,
-        string UpscaledFile,
+        string? UpscaledFile,
+        string? ResultJson,
         CancellationTokenSource PersistentKeepAliveCts,
-        Task PersistentKeepAliveTask
+        Task PersistentKeepAliveTask,
+        TaskType TaskType
     );
 
     /// <summary>

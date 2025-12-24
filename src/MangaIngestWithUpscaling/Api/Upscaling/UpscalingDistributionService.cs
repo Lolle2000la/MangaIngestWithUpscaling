@@ -1,12 +1,15 @@
-﻿using Google.Protobuf;
+﻿using System.Text.Json;
+using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Services.Analysis;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.Integrations;
+using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
@@ -19,6 +22,7 @@ public partial class UpscalingDistributionService(
     ApplicationDbContext dbContext,
     IFileSystem fileSystem,
     IChapterChangedNotifier chapterChangedNotifier,
+    ISplitProcessingService splitProcessingService,
     ILogger<UpscalingDistributionService> logger
 ) : UpscalingService.UpscalingServiceBase
 {
@@ -81,6 +85,14 @@ public partial class UpscalingDistributionService(
         else if (task.Data is RepairUpscaleTask repairTask)
         {
             upscalerProfileId = repairTask.UpscalerProfileId;
+        }
+        else if (task.Data is DetectSplitCandidatesTask)
+        {
+            return new UpscaleTaskDelegationResponse
+            {
+                TaskId = task.Id,
+                TaskType = TaskType.SplitDetection,
+            };
         }
         else
         {
@@ -323,6 +335,20 @@ public partial class UpscalingDistributionService(
 
             filePath = repairState.PreparedMissingPagesCbzPath;
         }
+        else if (task.Data is DetectSplitCandidatesTask detectTask)
+        {
+            Chapter? chapter = await dbContext
+                .Chapters.Include(chapter => chapter.Manga)
+                    .ThenInclude(manga => manga.Library)
+                .FirstOrDefaultAsync(c => c.Id == detectTask.ChapterId);
+            if (chapter == null)
+            {
+                context.Status = new Status(StatusCode.NotFound, "Chapter not found");
+                return new CbzFileChunk();
+            }
+
+            filePath = chapter.NotUpscaledFullPath;
+        }
         else
         {
             context.Status = new Status(StatusCode.InvalidArgument, "Invalid task type");
@@ -355,6 +381,71 @@ public partial class UpscalingDistributionService(
 
         context.Status = new Status(StatusCode.Internal, "Could not open the file for some reason");
         return new CbzFileChunk();
+    }
+
+    public override async Task<UploadDetectionResultResponse> UploadDetectionResult(
+        UploadDetectionResultRequest request,
+        ServerCallContext context
+    )
+    {
+        try
+        {
+            var task = await dbContext.PersistedTasks.FindAsync(request.TaskId);
+            if (task == null)
+            {
+                return new UploadDetectionResultResponse
+                {
+                    Success = false,
+                    Message = "Task not found",
+                };
+            }
+
+            if (task.Data is not DetectSplitCandidatesTask detectTask)
+            {
+                return new UploadDetectionResultResponse
+                {
+                    Success = false,
+                    Message = "Invalid task type",
+                };
+            }
+
+            // Deserialize results
+            var results = JsonSerializer.Deserialize<List<SplitDetectionResult>>(
+                request.ResultJson
+            );
+            if (results == null)
+            {
+                return new UploadDetectionResultResponse
+                {
+                    Success = false,
+                    Message = "Invalid result JSON",
+                };
+            }
+
+            await splitProcessingService.ProcessDetectionResultsAsync(
+                detectTask.ChapterId,
+                results,
+                detectTask.DetectorVersion,
+                context.CancellationToken
+            );
+
+            await taskProcessor.TaskCompleted(request.TaskId);
+
+            return new UploadDetectionResultResponse
+            {
+                Success = true,
+                Message = "Results processed",
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Error processing detection results for task {TaskId}",
+                request.TaskId
+            );
+            return new UploadDetectionResultResponse { Success = false, Message = ex.Message };
+        }
     }
 
     public override async Task UploadUpscaledCbzFile(

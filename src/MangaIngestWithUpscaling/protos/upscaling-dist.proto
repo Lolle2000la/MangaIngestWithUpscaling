@@ -7,6 +7,22 @@ package manga_ingest_with_upscaling.api.upscaling;
 message UpscaleTaskDelegationResponse {
   int32 task_id = 1; // Task ID of the upscaling task, -1 if none available
   optional UpscalerProfile upscaler_profile = 2; // JSON string of the upscaling configuration used by MangaJaNaiUpscalerGui-cli tool, needs editing.
+  TaskType task_type = 3;
+}
+
+enum TaskType {
+  UPSCALE = 0;
+  SPLIT_DETECTION = 1;
+}
+
+message UploadDetectionResultRequest {
+  int32 task_id = 1;
+  string result_json = 2;
+}
+
+message UploadDetectionResultResponse {
+  bool success = 1;
+  string message = 2;
 }
 
 // Backward-compatible request with optional hints
@@ -72,6 +88,7 @@ service UpscalingService {
   rpc KeepAlive(KeepAliveRequest) returns (KeepAliveResponse);
   rpc CheckConnection(google.protobuf.Empty) returns (CheckConnectionResponse);
   rpc ReportTaskFailed(ReportTaskFailedRequest) returns (google.protobuf.Empty);
+  rpc UploadDetectionResult(UploadDetectionResultRequest) returns (UploadDetectionResultResponse);
 }
 
 // Represents a preconfigured upscaler setting that can be associated with chapters.

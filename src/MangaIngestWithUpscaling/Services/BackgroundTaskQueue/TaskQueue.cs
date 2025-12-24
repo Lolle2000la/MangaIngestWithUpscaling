@@ -130,7 +130,13 @@ public class TaskQueue : ITaskQueue, IHostedService
         await dbContext.SaveChangesAsync();
 
         // Add to the appropriate sorted set
-        if (taskData is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask)
+        if (
+            taskData
+            is UpscaleTask
+                or RenameUpscaledChaptersSeriesTask
+                or RepairUpscaleTask
+                or DetectSplitCandidatesTask
+        )
         {
             lock (_upscaleTasksLock)
             {

@@ -1,5 +1,6 @@
 ﻿using System.Collections.ObjectModel;
 using System.ComponentModel.DataAnnotations.Schema;
+using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 
 namespace MangaIngestWithUpscaling.Data.LibraryManagement;
@@ -22,6 +23,8 @@ public class Library
     public UpscalerProfile? UpscalerProfile { get; set; }
 
     public bool MergeChapterParts { get; set; }
+
+    public StripDetectionMode StripDetectionMode { get; set; }
 
     public List<Manga> MangaSeries { get; set; } = [];
     public List<LibraryFilterRule> FilterRules { get; set; } = [];

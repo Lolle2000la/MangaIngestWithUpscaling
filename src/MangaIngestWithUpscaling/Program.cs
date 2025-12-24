@@ -103,6 +103,7 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 });
 
 // Add services to the container.
+builder.Services.AddControllers();
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 
 builder.Services.AddGrpc();
@@ -490,6 +491,7 @@ else
 app.UseAntiforgery();
 
 app.MapApiEndpoints();
+app.MapControllers();
 app.MapStaticAssets();
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 

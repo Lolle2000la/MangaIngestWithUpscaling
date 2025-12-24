@@ -1,6 +1,7 @@
 ﻿using System.Text.Json;
 using System.Text.RegularExpressions;
 using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.Analysis;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
@@ -11,7 +12,9 @@ using MangaIngestWithUpscaling.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Services.ImageFiltering;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.LibraryFiltering;
+using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.CbzConversion;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
@@ -125,6 +128,7 @@ public partial class IngestProcessor(
             );
 
         List<Chapter> chaptersToUpscale = new();
+        List<Chapter> allProcessedChapters = new();
         List<Task> scans = new();
         var upscalerProfileCache = new Dictionary<UpscalerProfileJsonDto, UpscalerProfile>();
         var processedSeriesEntities = new List<Manga>(); // Track processed series for retroactive merging
@@ -573,6 +577,7 @@ public partial class IngestProcessor(
                 }
 
                 seriesEntity.Chapters.Add(chapterEntity);
+                allProcessedChapters.Add(chapterEntity);
 
                 // Check if this chapter has merge information
                 if (renamedChapter.Metadata.ChapterTitle?.Contains("__MERGE_INFO__") == true)
@@ -666,6 +671,7 @@ public partial class IngestProcessor(
                         );
 
                         seriesEntity.Chapters.Add(mergedChapterEntity);
+                        allProcessedChapters.Add(mergedChapterEntity);
 
                         // Create and save merge info to database
                         var mergedChapterInfo = new MergedChapterInfo
@@ -720,6 +726,30 @@ public partial class IngestProcessor(
         {
             var upscaleTask = new UpscaleTask(chapterTuple);
             await taskQueue.EnqueueAsync(upscaleTask);
+        }
+
+        if (library.StripDetectionMode != StripDetectionMode.None)
+        {
+            foreach (var chapter in allProcessedChapters)
+            {
+                var state = await dbContext.ChapterSplitProcessingStates.FirstOrDefaultAsync(
+                    s => s.ChapterId == chapter.Id,
+                    cancellationToken
+                );
+
+                if (
+                    state == null
+                    || state.LastProcessedDetectorVersion
+                        < SplitDetectionService.CURRENT_DETECTOR_VERSION
+                )
+                {
+                    var detectTask = new DetectSplitCandidatesTask(
+                        chapter.Id,
+                        SplitDetectionService.CURRENT_DETECTOR_VERSION
+                    );
+                    await taskQueue.EnqueueAsync(detectTask);
+                }
+            }
         }
 
         await Task.WhenAll(scans);

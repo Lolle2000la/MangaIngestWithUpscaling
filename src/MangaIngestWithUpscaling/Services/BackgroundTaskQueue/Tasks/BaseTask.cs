@@ -20,6 +20,8 @@ namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 [JsonDerivedType(typeof(MergeMangaTask), nameof(MergeMangaTask))]
 [JsonDerivedType(typeof(ApplyImageFiltersTask), nameof(ApplyImageFiltersTask))]
 [JsonDerivedType(typeof(UpdatePerceptualHashesTask), nameof(UpdatePerceptualHashesTask))]
+[JsonDerivedType(typeof(DetectSplitCandidatesTask), nameof(DetectSplitCandidatesTask))]
+[JsonDerivedType(typeof(ApplySplitsTask), nameof(ApplySplitsTask))]
 public class BaseTask
 {
     public virtual string TaskFriendlyName { get; } = "Unknown Task";
