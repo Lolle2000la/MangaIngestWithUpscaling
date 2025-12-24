@@ -96,8 +96,12 @@ public class SplitProcessingCoordinator(
                     continue;
 
                 using var stream = entry.Open();
+                using var ms = new MemoryStream();
+                stream.CopyTo(ms);
+                ms.Position = 0;
+
                 // Use sequential access for better performance with streams
-                using var image = Image.NewFromStream(stream, access: Enums.Access.Sequential);
+                using var image = Image.NewFromStream(ms, access: Enums.Access.Sequential);
 
                 // Check aspect ratio: Height / Width > 2.4
                 // This suggests a vertical strip (webtoon) that likely needs splitting
