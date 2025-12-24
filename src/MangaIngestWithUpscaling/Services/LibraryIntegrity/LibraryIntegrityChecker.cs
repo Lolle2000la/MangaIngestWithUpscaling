@@ -3,6 +3,7 @@ using MangaIngestWithUpscaling.Configuration;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Services.Analysis;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.ChapterManagement;
@@ -28,7 +29,8 @@ public partial class LibraryIntegrityChecker(
     ITaskQueue taskQueue,
     ICbzConverter cbzConverter,
     ILogger<LibraryIntegrityChecker> logger,
-    IOptions<IntegrityCheckerConfig> configOptions
+    IOptions<IntegrityCheckerConfig> configOptions,
+    ISplitProcessingCoordinator splitProcessingCoordinator
 ) : ILibraryIntegrityChecker
 {
     // Bound concurrency to avoid overloading disk/CPU and to keep services thread-safe
@@ -478,13 +480,36 @@ public partial class LibraryIntegrityChecker(
         ExtractedMetadata metadata = await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(
             chapter.NotUpscaledFullPath
         );
+
+        // Check if split detection is needed
+        if (
+            chapter.Manga?.Library?.StripDetectionMode is { } mode
+            && mode != Shared.Data.Analysis.StripDetectionMode.None
+        )
+        {
+            if (
+                await splitProcessingCoordinator.ShouldProcessAsync(
+                    chapter.Id,
+                    mode,
+                    context,
+                    cancellationToken ?? CancellationToken.None
+                )
+            )
+            {
+                await splitProcessingCoordinator.EnqueueDetectionAsync(
+                    chapter.Id,
+                    cancellationToken ?? CancellationToken.None
+                );
+            }
+        }
+
         if (!CheckMetadata(metadata, out var correctedMetadata))
         {
             logger.LogWarning(
                 "Metadata of chapter {chapterFileName} ({chapterId}) of {seriesTitle} is incorrect. Correcting.",
                 chapter.FileName,
                 chapter.Id,
-                chapter.Manga.PrimaryTitle
+                chapter.Manga?.PrimaryTitle
             );
             await metadataHandling.WriteComicInfoAsync(
                 chapter.NotUpscaledFullPath,

@@ -9,6 +9,7 @@ using AngleSharp.Dom;
 using MangaIngestWithUpscaling.Components.MangaManagement.Chapters;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Services.Analysis;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.ChapterMerging;
 using MangaIngestWithUpscaling.Services.Integrations;
@@ -39,6 +40,8 @@ public class ChapterListMergingTests : BunitContext
     private IMetadataHandlingService _subMetadataHandler = null!;
     private IChapterMergeRevertService _subRevertService = null!;
     private ISnackbar _subSnackbar = null!;
+    private ISplitApplicationService _subSplitApplicationService = null!;
+    private ISplitProcessingService _subSplitProcessingService = null!;
     private ITaskQueue _subTaskQueue = null!;
     private IWebHostEnvironment _subWebHostEnvironment = null!;
 
@@ -61,6 +64,8 @@ public class ChapterListMergingTests : BunitContext
         _subMangaMetadataChanger = Substitute.For<IMangaMetadataChanger>();
         _subWebHostEnvironment = Substitute.For<IWebHostEnvironment>();
         _subSnackbar = Substitute.For<ISnackbar>();
+        _subSplitApplicationService = Substitute.For<ISplitApplicationService>();
+        _subSplitProcessingService = Substitute.For<ISplitProcessingService>();
         _subDialogService = Substitute.For<IDialogService>();
 
         // Setup common mock behaviors
@@ -95,6 +100,8 @@ public class ChapterListMergingTests : BunitContext
         Services.AddSingleton(_subLibraryIntegrityChecker);
         Services.AddSingleton(_subMangaMetadataChanger);
         Services.AddSingleton(_subSnackbar);
+        Services.AddSingleton(_subSplitApplicationService);
+        Services.AddSingleton(_subSplitProcessingService);
         Services.AddSingleton(_subDialogService);
         Services.AddSingleton(_subFileSystem);
 

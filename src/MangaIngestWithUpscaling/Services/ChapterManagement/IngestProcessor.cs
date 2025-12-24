@@ -5,6 +5,7 @@ using MangaIngestWithUpscaling.Data.Analysis;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
+using MangaIngestWithUpscaling.Services.Analysis;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.ChapterMerging;
@@ -39,7 +40,8 @@ public partial class IngestProcessor(
     IChapterMergeCoordinator chapterMergeCoordinator,
     UpscaleTaskProcessor upscaleTaskProcessor,
     IImageFilterService imageFilterService,
-    IChapterProcessingService chapterProcessingService
+    IChapterProcessingService chapterProcessingService,
+    ISplitProcessingCoordinator splitProcessingCoordinator
 ) : IIngestProcessor
 {
     public async Task ProcessAsync(Library library, CancellationToken cancellationToken)
@@ -724,23 +726,11 @@ public partial class IngestProcessor(
 
         foreach (var chapterTuple in chaptersToUpscale)
         {
-            bool deferForSplitDetection = false;
-            if (library.StripDetectionMode != StripDetectionMode.None)
-            {
-                var state = await dbContext.ChapterSplitProcessingStates.FirstOrDefaultAsync(
-                    s => s.ChapterId == chapterTuple.Id,
-                    cancellationToken
-                );
-
-                if (
-                    state == null
-                    || state.LastProcessedDetectorVersion
-                        < SplitDetectionService.CURRENT_DETECTOR_VERSION
-                )
-                {
-                    deferForSplitDetection = true;
-                }
-            }
+            bool deferForSplitDetection = await splitProcessingCoordinator.ShouldProcessAsync(
+                chapterTuple.Id,
+                library.StripDetectionMode,
+                cancellationToken: cancellationToken
+            );
 
             if (!deferForSplitDetection)
             {
@@ -753,22 +743,18 @@ public partial class IngestProcessor(
         {
             foreach (var chapter in allProcessedChapters)
             {
-                var state = await dbContext.ChapterSplitProcessingStates.FirstOrDefaultAsync(
-                    s => s.ChapterId == chapter.Id,
-                    cancellationToken
-                );
-
                 if (
-                    state == null
-                    || state.LastProcessedDetectorVersion
-                        < SplitDetectionService.CURRENT_DETECTOR_VERSION
+                    await splitProcessingCoordinator.ShouldProcessAsync(
+                        chapter.Id,
+                        library.StripDetectionMode,
+                        cancellationToken: cancellationToken
+                    )
                 )
                 {
-                    var detectTask = new DetectSplitCandidatesTask(
+                    await splitProcessingCoordinator.EnqueueDetectionAsync(
                         chapter.Id,
-                        SplitDetectionService.CURRENT_DETECTOR_VERSION
+                        cancellationToken
                     );
-                    await taskQueue.EnqueueAsync(detectTask);
                 }
             }
         }

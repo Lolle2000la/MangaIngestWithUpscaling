@@ -5,6 +5,7 @@ using MangaIngestWithUpscaling.Data.Analysis;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
+using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -117,7 +118,9 @@ public class SplitProcessingService(
 
     public async Task QueueSplitDetectionAsync(int chapterId)
     {
-        await taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(chapterId, 1));
+        await taskQueue.EnqueueAsync(
+            new DetectSplitCandidatesTask(chapterId, SplitDetectionService.CURRENT_DETECTOR_VERSION)
+        );
     }
 
     public async Task<List<StripSplitFinding>> GetSplitFindingsAsync(int chapterId)
