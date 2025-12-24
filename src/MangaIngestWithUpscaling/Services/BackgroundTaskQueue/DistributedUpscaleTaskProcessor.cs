@@ -1,5 +1,6 @@
 ﻿using System.Threading.Channels;
 using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.Analysis;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
@@ -7,8 +8,11 @@ using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Services.RepairServices;
 using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -388,22 +392,79 @@ public class DistributedUpscaleTaskProcessor(
                         {
                             var metadataHandling =
                                 scope.ServiceProvider.GetRequiredService<IMetadataHandlingService>();
+
+                            // Check if splits were just applied
+                            var splitState =
+                                await dbContext.ChapterSplitProcessingStates.FirstOrDefaultAsync(
+                                    s => s.ChapterId == upscaleData.ChapterId,
+                                    linkedCts.Token
+                                );
+
+                            bool splitsJustApplied =
+                                splitState != null
+                                && splitState.Status == SplitProcessingStatus.Applied
+                                && splitState.LastAppliedDetectorVersion
+                                    == SplitDetectionService.CURRENT_DETECTOR_VERSION;
+
                             if (
-                                await metadataHandling.PagesEqualAsync(
+                                splitsJustApplied
+                                || await metadataHandling.PagesEqualAsync(
                                     chapter.NotUpscaledFullPath,
                                     chapter.UpscaledFullPath
                                 )
                             )
                             {
-                                task.Status = PersistedTaskStatus.Completed;
-                                task.ProcessedAt = DateTime.UtcNow;
-                                chapter.IsUpscaled = true;
-                                _ = StatusChanged?.Invoke(task);
-                                logger.LogInformation(
-                                    "Skipping task {taskId} because target file already exists and is equal.",
-                                    task.Id
-                                );
-                                continue;
+                                // Double check pages equality if we relied on split state, just to be safe
+                                if (
+                                    splitsJustApplied
+                                    && !await metadataHandling.PagesEqualAsync(
+                                        chapter.NotUpscaledFullPath,
+                                        chapter.UpscaledFullPath
+                                    )
+                                )
+                                {
+                                    // If pages don't match despite splits being applied, schedule a repair
+                                    UpscalerProfile? profile =
+                                        (
+                                            chapter.UpscalerProfile?.Id
+                                            == upscaleData.UpscalerProfileId
+                                        )
+                                            ? chapter.UpscalerProfile
+                                            : await dbContext.UpscalerProfiles.FirstOrDefaultAsync(
+                                                p => p.Id == upscaleData.UpscalerProfileId,
+                                                linkedCts.Token
+                                            );
+
+                                    if (profile != null)
+                                    {
+                                        logger.LogInformation(
+                                            "Pages do not match for chapter {chapterId} despite splits being applied. Scheduling RepairUpscaleTask.",
+                                            chapter.Id
+                                        );
+                                        var newRepairTask = new RepairUpscaleTask(chapter, profile);
+                                        await taskQueue.EnqueueAsync(newRepairTask);
+
+                                        task.Status = PersistedTaskStatus.Completed;
+                                        task.ProcessedAt = DateTime.UtcNow;
+                                        task.Data.Progress.StatusMessage =
+                                            "Replaced by RepairUpscaleTask due to page mismatch";
+                                        _ = StatusChanged?.Invoke(task);
+                                        continue;
+                                    }
+                                }
+                                else
+                                {
+                                    task.Status = PersistedTaskStatus.Completed;
+                                    task.ProcessedAt = DateTime.UtcNow;
+                                    chapter.IsUpscaled = true;
+                                    _ = StatusChanged?.Invoke(task);
+                                    logger.LogInformation(
+                                        "Skipping task {taskId} because target file already exists and is equal (SplitsApplied: {splitsApplied}).",
+                                        task.Id,
+                                        splitsJustApplied
+                                    );
+                                    continue;
+                                }
                             }
                         }
                     }

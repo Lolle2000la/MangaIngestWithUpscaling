@@ -5,6 +5,7 @@ using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
@@ -123,6 +124,26 @@ public class UpscaleTask : BaseTask
             s => s.ChapterId == ChapterId,
             cancellationToken
         );
+
+        // If splits were just applied, and we have an upscaled file, check if it's valid.
+        // This prevents redundant upscaling if SplitApplicationService already handled the upscaled file.
+        if (
+            splitState != null
+            && splitState.Status == SplitProcessingStatus.Applied
+            && splitState.LastAppliedDetectorVersion
+                == SplitDetectionService.CURRENT_DETECTOR_VERSION
+            && File.Exists(upscaleTargetPath)
+        )
+        {
+            if (await metadataHandling.PagesEqualAsync(currentStoragePath, upscaleTargetPath))
+            {
+                logger.LogInformation(
+                    "Skipping upscale for {Chapter} as splits were just applied and files match.",
+                    chapter.FileName
+                );
+                return;
+            }
+        }
 
         if (
             splitState != null

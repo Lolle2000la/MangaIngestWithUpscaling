@@ -1,11 +1,14 @@
+using System.IO.Compression;
 using AutoRegisterInject;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.Analysis;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using Microsoft.EntityFrameworkCore;
+using NetVips;
 
 namespace MangaIngestWithUpscaling.Services.Analysis;
 
@@ -39,9 +42,77 @@ public class SplitProcessingCoordinator(
             || state.LastProcessedDetectorVersion < SplitDetectionService.CURRENT_DETECTOR_VERSION
         )
         {
+            // Check if the chapter actually needs splitting based on aspect ratio
+            var chapter = await db
+                .Chapters.Include(c => c.Manga)
+                    .ThenInclude(m => m.Library)
+                .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
+
+            if (chapter != null && File.Exists(chapter.NotUpscaledFullPath))
+            {
+                if (!HasImplausiblePages(chapter.NotUpscaledFullPath))
+                {
+                    // No implausible pages found, so we can skip detection
+                    // Update state to prevent re-checking
+                    if (state == null)
+                    {
+                        state = new ChapterSplitProcessingState { ChapterId = chapterId };
+                        db.ChapterSplitProcessingStates.Add(state);
+                    }
+                    else
+                    {
+                        db.ChapterSplitProcessingStates.Attach(state);
+                        db.Entry(state).State = EntityState.Modified;
+                    }
+
+                    state.LastProcessedDetectorVersion =
+                        SplitDetectionService.CURRENT_DETECTOR_VERSION;
+                    state.Status = SplitProcessingStatus.Detected; // Treated as detected with 0 splits
+                    state.ModifiedAt = DateTime.UtcNow;
+
+                    await db.SaveChangesAsync(cancellationToken);
+                    return false;
+                }
+            }
+
             return true;
         }
 
+        return false;
+    }
+
+    private bool HasImplausiblePages(string chapterPath)
+    {
+        try
+        {
+            using var archive = ZipFile.OpenRead(chapterPath);
+            foreach (var entry in archive.Entries)
+            {
+                if (
+                    !ImageConstants.SupportedImageExtensions.Contains(
+                        Path.GetExtension(entry.Name).ToLower()
+                    )
+                )
+                    continue;
+
+                using var stream = entry.Open();
+                // Use sequential access for better performance with streams
+                using var image = Image.NewFromStream(stream, access: Enums.Access.Sequential);
+
+                // Check aspect ratio: Height / Width > 2.4
+                // This suggests a vertical strip (webtoon) that likely needs splitting
+                if ((double)image.Height / image.Width > 2.4)
+                {
+                    return true;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to check aspect ratio for {Path}", chapterPath);
+            // If check fails, assume we should process to be safe
+            return true;
+        }
         return false;
     }
 
