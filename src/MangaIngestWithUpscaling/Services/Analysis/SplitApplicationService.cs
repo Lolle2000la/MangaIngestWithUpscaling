@@ -18,7 +18,6 @@ namespace MangaIngestWithUpscaling.Services.Analysis;
 [RegisterScoped]
 public class SplitApplicationService(
     ApplicationDbContext dbContext,
-    IMetadataHandlingService metadataHandling,
     IUpscaler upscaler,
     IChapterChangedNotifier chapterChangedNotifier,
     ILogger<SplitApplicationService> logger
@@ -315,22 +314,12 @@ public class SplitApplicationService(
         var sourceXml = Path.Combine(sourceDir, "ComicInfo.xml");
         if (File.Exists(sourceXml))
         {
-            var metadata = await metadataHandling.GetSeriesAndTitleFromComicInfoAsync(sourceXml);
-            // Update page count?
-            // The WriteComicInfoAsync might handle it if we pass the directory?
-            // No, WriteComicInfoAsync(string file, ...) writes to a file.
-            // We need to count pages in destDir and update metadata.PageCount?
-            // ExtractedMetadata doesn't seem to have PageCount property exposed for writing usually,
-            // or it's auto-calculated by readers.
-            // But if we want to be correct, we should probably let the system handle it.
-            // For now, let's just copy the metadata we have.
-
-            // Actually, if we change the number of pages, the PageCount in ComicInfo might be wrong.
-            // But usually readers ignore it or recalculate it.
-            // Let's just write the metadata back to the new directory.
-
             var destXml = Path.Combine(destDir, "ComicInfo.xml");
-            await metadataHandling.WriteComicInfoAsync(destXml, metadata);
+            File.Copy(sourceXml, destXml, true);
+
+            // We could update metadata here if needed.
+            // Since the file now exists, WriteComicInfoAsync would work if we wanted to ensure consistency.
+            // For now, simply copying preserves the original metadata including fields we don't track.
         }
     }
 
