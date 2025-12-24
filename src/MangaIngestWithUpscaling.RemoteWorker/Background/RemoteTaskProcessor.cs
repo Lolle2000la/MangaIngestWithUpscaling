@@ -4,6 +4,7 @@ using System.Threading.Channels;
 using Google.Protobuf;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Api.Upscaling;
+using MangaIngestWithUpscaling.RemoteWorker.Configuration;
 using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
@@ -174,10 +175,17 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 if (resp is null || resp.TaskId == -1)
                 {
                     _fetchInProgress = false;
+                    await dispatcherTimer.WaitForNextTickAsync(stoppingToken);
+                    _fetchSignals.Writer.TryWrite(true);
                     continue;
                 }
 
                 int prefetchTaskId = resp.TaskId;
+                logger.LogInformation(
+                    "Received task {TaskId} of type {TaskType} from server.",
+                    prefetchTaskId,
+                    resp.TaskType
+                );
                 UpscalerProfile prefetchProfile = GetProfileFromResponse(resp.UpscalerProfile);
 
                 var persistentKeepAliveCts = CancellationTokenSource.CreateLinkedTokenSource(
@@ -447,6 +455,12 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 
             try
             {
+                logger.LogInformation(
+                    "Starting processing for task {TaskId} ({TaskType})",
+                    item.TaskId,
+                    item.TaskType
+                );
+
                 if (item.TaskType == TaskType.SplitDetection)
                 {
                     tempExtractDir = Path.Combine(
@@ -461,7 +475,10 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                         progress,
                         upscalesCts.Token
                     );
-                    resultJson = System.Text.Json.JsonSerializer.Serialize(results);
+                    resultJson = System.Text.Json.JsonSerializer.Serialize(
+                        results,
+                        WorkerJsonContext.Default.ListSplitDetectionResult
+                    );
                 }
                 else if (item.TaskType == TaskType.ApplySplits)
                 {
@@ -478,9 +495,15 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 
                     ZipFile.ExtractToDirectory(item.DownloadedFile, tempExtractDir);
 
-                    var findings = System.Text.Json.JsonSerializer.Deserialize<
-                        List<SplitFindingDto>
-                    >(item.SplitFindingsJson!);
+                    var findings = System.Text.Json.JsonSerializer.Deserialize(
+                        item.SplitFindingsJson!,
+                        WorkerJsonContext.Default.ListSplitFindingDto
+                    );
+
+                    if (findings == null || findings.Count == 0)
+                    {
+                        logger.LogWarning("No split findings found for task {TaskId}", item.TaskId);
+                    }
 
                     var images = Directory
                         .GetFiles(tempExtractDir)
@@ -493,15 +516,18 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     {
                         var fileNameWithoutExt = Path.GetFileNameWithoutExtension(imagePath);
                         var finding = findings?.FirstOrDefault(f =>
-                            f.PageFileName == fileNameWithoutExt
+                            f.PageFileName.Equals(
+                                fileNameWithoutExt,
+                                StringComparison.OrdinalIgnoreCase
+                            )
                         );
 
                         if (finding != null)
                         {
-                            var result =
-                                System.Text.Json.JsonSerializer.Deserialize<SplitDetectionResult>(
-                                    finding.SplitJson
-                                );
+                            var result = System.Text.Json.JsonSerializer.Deserialize(
+                                finding.SplitJson,
+                                WorkerJsonContext.Default.SplitDetectionResult
+                            );
                             if (result != null && result.Splits.Count > 0)
                             {
                                 splitApplier.ApplySplitsToImage(imagePath, result.Splits, newDir);
@@ -900,9 +926,21 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
     }
 
     private static UpscalerProfile GetProfileFromResponse(
-        Api.Upscaling.UpscalerProfile upscalerProfile
+        Api.Upscaling.UpscalerProfile? upscalerProfile
     )
     {
+        if (upscalerProfile == null)
+        {
+            return new UpscalerProfile
+            {
+                Name = "None",
+                CompressionFormat = CompressionFormat.Webp,
+                Quality = 75,
+                ScalingFactor = ScaleFactor.OneX,
+                UpscalerMethod = UpscalerMethod.MangaJaNai,
+            };
+        }
+
         return new UpscalerProfile
         {
             CompressionFormat = upscalerProfile.CompressionFormat switch

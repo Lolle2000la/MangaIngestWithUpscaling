@@ -24,6 +24,7 @@ public partial class UpscalingDistributionService(
     IFileSystem fileSystem,
     IChapterChangedNotifier chapterChangedNotifier,
     ISplitProcessingService splitProcessingService,
+    ITaskQueue taskQueue,
     ILogger<UpscalingDistributionService> logger
 ) : UpscalingService.UpscalingServiceBase
 {
@@ -690,6 +691,9 @@ public partial class UpscalingDistributionService(
                     Chapter? chapter = await dbContext
                         .Chapters.Include(chapter => chapter.Manga)
                             .ThenInclude(manga => manga.Library)
+                                .ThenInclude(l => l.UpscalerProfile)
+                        .Include(chapter => chapter.Manga)
+                            .ThenInclude(manga => manga.UpscalerProfilePreference)
                         .FirstOrDefaultAsync(c => c.Id == applySplitsTask.ChapterId);
 
                     if (chapter == null)
@@ -747,6 +751,19 @@ public partial class UpscalingDistributionService(
                         }
                     );
                     _ = chapterChangedNotifier.Notify(chapter, false);
+
+                    if (
+                        chapter.Manga.Library.UpscaleOnIngest
+                        && chapter.Manga.ShouldUpscale != false
+                        && chapter.Manga.Library.UpscalerProfileId != null
+                    )
+                    {
+                        await dbContext
+                            .Entry(chapter)
+                            .Reference(c => c.UpscalerProfile)
+                            .LoadAsync();
+                        await taskQueue.EnqueueAsync(new UpscaleTask(chapter));
+                    }
                 }
                 else
                 {

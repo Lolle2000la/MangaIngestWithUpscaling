@@ -724,8 +724,29 @@ public partial class IngestProcessor(
 
         foreach (var chapterTuple in chaptersToUpscale)
         {
-            var upscaleTask = new UpscaleTask(chapterTuple);
-            await taskQueue.EnqueueAsync(upscaleTask);
+            bool deferForSplitDetection = false;
+            if (library.StripDetectionMode != StripDetectionMode.None)
+            {
+                var state = await dbContext.ChapterSplitProcessingStates.FirstOrDefaultAsync(
+                    s => s.ChapterId == chapterTuple.Id,
+                    cancellationToken
+                );
+
+                if (
+                    state == null
+                    || state.LastProcessedDetectorVersion
+                        < SplitDetectionService.CURRENT_DETECTOR_VERSION
+                )
+                {
+                    deferForSplitDetection = true;
+                }
+            }
+
+            if (!deferForSplitDetection)
+            {
+                var upscaleTask = new UpscaleTask(chapterTuple);
+                await taskQueue.EnqueueAsync(upscaleTask);
+            }
         }
 
         if (library.StripDetectionMode != StripDetectionMode.None)

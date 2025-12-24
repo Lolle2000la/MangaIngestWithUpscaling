@@ -123,18 +123,27 @@ using (var scope = app.Services.CreateScope())
     {
         try
         {
-            var testResponse = client.CheckConnection(new Empty(), deadline: DateTime.UtcNow.AddSeconds(5));
+            var testResponse = client.CheckConnection(
+                new Empty(),
+                deadline: DateTime.UtcNow.AddSeconds(5)
+            );
             logger.LogDebug("Connection test response: {Response}", testResponse);
             break;
         }
         catch (RpcException ex)
         {
-            logger.LogWarning("Failed to connect to server: {Message}. Retrying in 5 seconds...", ex.Status.Detail);
+            logger.LogWarning(
+                "Failed to connect to server: {Message}. Retrying in 5 seconds...",
+                ex.Status.Detail
+            );
             await Task.Delay(5000);
         }
         catch (Exception ex)
         {
-            logger.LogWarning("Failed to connect to server: {Message}. Retrying in 5 seconds...", ex.Message);
+            logger.LogWarning(
+                "Failed to connect to server: {Message}. Retrying in 5 seconds...",
+                ex.Message
+            );
             await Task.Delay(5000);
         }
     }

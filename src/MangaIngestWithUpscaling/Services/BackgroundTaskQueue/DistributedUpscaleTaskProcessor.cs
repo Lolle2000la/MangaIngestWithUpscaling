@@ -306,6 +306,38 @@ public class DistributedUpscaleTaskProcessor(
                         continue;
                     }
 
+                    if (task.Data is ApplySplitsTask applySplitsTask)
+                    {
+                        // Check if the chapter exists
+                        using IServiceScope scope = scopeFactory.CreateScope();
+                        var logger = scope.ServiceProvider.GetRequiredService<
+                            ILogger<DistributedUpscaleTaskProcessor>
+                        >();
+                        var dbContext =
+                            scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                        Chapter? chapter = await dbContext
+                            .Chapters.Include(t => t.Manga)
+                                .ThenInclude(t => t.Library)
+                            .FirstOrDefaultAsync(
+                                c => c.Id == applySplitsTask.ChapterId,
+                                linkedCts.Token
+                            );
+
+                        if (chapter == null || !File.Exists(chapter.NotUpscaledFullPath))
+                        {
+                            // Chapter no longer exists, mark task as failed
+                            task.Status = PersistedTaskStatus.Failed;
+                            task.ProcessedAt = DateTime.UtcNow;
+                            _ = StatusChanged?.Invoke(task);
+
+                            logger.LogWarning(
+                                "Skipping ApplySplitsTask {taskId} because chapter file is missing.",
+                                task.Id
+                            );
+                            continue;
+                        }
+                    }
+
                     if (task.Data is UpscaleTask upscaleData)
                     {
                         // Check if the target chapter file still exists before giving the task to the worker

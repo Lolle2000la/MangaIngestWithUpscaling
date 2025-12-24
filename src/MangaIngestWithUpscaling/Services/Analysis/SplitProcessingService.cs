@@ -88,6 +88,7 @@ public class SplitProcessingService(
         var chapter = await dbContext
             .Chapters.Include(c => c.Manga)
                 .ThenInclude(m => m.Library)
+            .Include(c => c.UpscalerProfile)
             .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
 
         if (chapter?.Manga?.Library?.StripDetectionMode == StripDetectionMode.DetectAndApply)
@@ -101,6 +102,16 @@ public class SplitProcessingService(
             // Update status to Processing immediately to reflect the queued task
             state.Status = SplitProcessingStatus.Processing;
             await dbContext.SaveChangesAsync(cancellationToken);
+        }
+        else if (
+            chapter != null
+            && chapter.Manga?.Library?.StripDetectionMode == StripDetectionMode.DetectOnly
+            && chapter.Manga.Library.UpscaleOnIngest
+            && chapter.Manga.ShouldUpscale != false
+            && chapter.Manga.Library.UpscalerProfileId != null
+        )
+        {
+            await taskQueue.EnqueueAsync(new UpscaleTask(chapter));
         }
     }
 
