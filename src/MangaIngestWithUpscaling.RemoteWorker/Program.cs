@@ -119,8 +119,25 @@ using (var scope = app.Services.CreateScope())
         scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
 
-    var testResponse = client.CheckConnection(new Empty());
-    logger.LogDebug("Connection test response: {Response}", testResponse);
+    while (true)
+    {
+        try
+        {
+            var testResponse = client.CheckConnection(new Empty(), deadline: DateTime.UtcNow.AddSeconds(5));
+            logger.LogDebug("Connection test response: {Response}", testResponse);
+            break;
+        }
+        catch (RpcException ex)
+        {
+            logger.LogWarning("Failed to connect to server: {Message}. Retrying in 5 seconds...", ex.Status.Detail);
+            await Task.Delay(5000);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning("Failed to connect to server: {Message}. Retrying in 5 seconds...", ex.Message);
+            await Task.Delay(5000);
+        }
+    }
 
     var pythonService = scope.ServiceProvider.GetRequiredService<IPythonService>();
     var upscalerConfig = scope.ServiceProvider.GetRequiredService<IOptions<UpscalerConfig>>();
