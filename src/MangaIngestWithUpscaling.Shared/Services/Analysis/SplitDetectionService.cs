@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AutoRegisterInject;
+using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Python;
@@ -122,7 +123,10 @@ public class SplitDetectionService(
 
             try
             {
-                var result = JsonSerializer.Deserialize<SplitDetectionResult>(output);
+                var result = JsonSerializer.Deserialize(
+                    output,
+                    SharedJsonContext.Default.SplitDetectionResult
+                );
                 if (result == null)
                 {
                     throw new JsonException("Deserialized result is null");
@@ -136,7 +140,10 @@ public class SplitDetectionService(
                 if (jsonStartIndex >= 0 && jsonEndIndex > jsonStartIndex)
                 {
                     var json = output.Substring(jsonStartIndex, jsonEndIndex - jsonStartIndex + 1);
-                    var result = JsonSerializer.Deserialize<SplitDetectionResult>(json);
+                    var result = JsonSerializer.Deserialize(
+                        json,
+                        SharedJsonContext.Default.SplitDetectionResult
+                    );
                     if (result != null)
                     {
                         return result;

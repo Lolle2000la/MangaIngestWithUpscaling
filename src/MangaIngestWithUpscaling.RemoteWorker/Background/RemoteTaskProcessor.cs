@@ -463,6 +463,10 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 
                 if (item.TaskType == TaskType.SplitDetection)
                 {
+                    logger.LogInformation(
+                        "Executing SplitDetection task {TaskId} on Remote Worker",
+                        item.TaskId
+                    );
                     tempExtractDir = Path.Combine(
                         Path.GetTempPath(),
                         $"mangaingest_worker_extract_{item.TaskId}_{Guid.NewGuid()}"
@@ -500,9 +504,49 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                         WorkerJsonContext.Default.ListSplitFindingDto
                     );
 
-                    if (findings == null || findings.Count == 0)
+                    List<SplitDetectionResult> detectionResults = new();
+                    bool hasValidFindings = false;
+
+                    if (findings != null && findings.Count > 0)
                     {
-                        logger.LogWarning("No split findings found for task {TaskId}", item.TaskId);
+                        // Check if findings contain errors
+                        if (findings.Any(f => f.SplitJson.Contains("\"error\"")))
+                        {
+                            logger.LogDebug(
+                                "Task {TaskId}: Findings contain errors. Will re-run detection locally.",
+                                item.TaskId
+                            );
+                        }
+                        else
+                        {
+                            hasValidFindings = true;
+                            foreach (var finding in findings)
+                            {
+                                var result = System.Text.Json.JsonSerializer.Deserialize(
+                                    finding.SplitJson,
+                                    WorkerJsonContext.Default.SplitDetectionResult
+                                );
+                                if (result != null)
+                                {
+                                    // Ensure image path matches what we expect locally if needed,
+                                    // but usually we match by filename anyway.
+                                    detectionResults.Add(result);
+                                }
+                            }
+                        }
+                    }
+
+                    if (!hasValidFindings)
+                    {
+                        logger.LogDebug(
+                            "Task {TaskId}: Running split detection locally on worker.",
+                            item.TaskId
+                        );
+                        detectionResults = await splitDetectionService.DetectSplitsAsync(
+                            tempExtractDir,
+                            progress,
+                            upscalesCts.Token
+                        );
                     }
 
                     var images = Directory
@@ -512,33 +556,40 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                         )
                         .ToList();
 
+                    logger.LogInformation(
+                        "Task {TaskId}: Found {Count} images in archive.",
+                        item.TaskId,
+                        images.Count
+                    );
+
+                    int appliedCount = 0;
                     foreach (var imagePath in images)
                     {
                         var fileNameWithoutExt = Path.GetFileNameWithoutExtension(imagePath);
-                        var finding = findings?.FirstOrDefault(f =>
-                            f.PageFileName.Equals(
-                                fileNameWithoutExt,
-                                StringComparison.OrdinalIgnoreCase
-                            )
+                        // Match by filename
+                        var result = detectionResults.FirstOrDefault(r =>
+                            Path.GetFileNameWithoutExtension(r.ImagePath)
+                                .Equals(fileNameWithoutExt, StringComparison.OrdinalIgnoreCase)
                         );
 
-                        if (finding != null)
+                        if (result != null && result.Splits.Count > 0)
                         {
-                            var result = System.Text.Json.JsonSerializer.Deserialize(
-                                finding.SplitJson,
-                                WorkerJsonContext.Default.SplitDetectionResult
-                            );
-                            if (result != null && result.Splits.Count > 0)
-                            {
-                                splitApplier.ApplySplitsToImage(imagePath, result.Splits, newDir);
-                                continue;
-                            }
+                            splitApplier.ApplySplitsToImage(imagePath, result.Splits, newDir);
+                            appliedCount++;
                         }
-
-                        // Copy unsplit
-                        var dest = Path.Combine(newDir, Path.GetFileName(imagePath));
-                        File.Copy(imagePath, dest);
+                        else
+                        {
+                            // Copy unsplit
+                            var dest = Path.Combine(newDir, Path.GetFileName(imagePath));
+                            File.Copy(imagePath, dest);
+                        }
                     }
+
+                    logger.LogInformation(
+                        "Task {TaskId}: Applied splits to {Count} images.",
+                        item.TaskId,
+                        appliedCount
+                    );
 
                     // Copy ComicInfo.xml if exists
                     var comicInfo = Path.Combine(tempExtractDir, "ComicInfo.xml");

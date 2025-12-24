@@ -158,7 +158,7 @@ using (var scope = app.Services.CreateScope())
     }
     else
     {
-        logger.LogInformation("Python is installed on the system.");
+        logger.LogDebug("Python is installed on the system.");
 
         Directory.CreateDirectory(upscalerConfig.Value.PythonEnvironmentDirectory);
 
@@ -169,7 +169,7 @@ using (var scope = app.Services.CreateScope())
         );
         PythonService.Environment = environment;
 
-        logger.LogInformation(
+        logger.LogDebug(
             $"Python environment prepared at {environment.PythonExecutablePath} with {environment.InstalledBackend} backend"
         );
     }
