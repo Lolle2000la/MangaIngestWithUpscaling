@@ -3,6 +3,7 @@ using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.Analysis;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.Analysis;
@@ -92,6 +93,27 @@ public partial class UpscalingDistributionService(
             {
                 TaskId = task.Id,
                 TaskType = TaskType.SplitDetection,
+            };
+        }
+        else if (task.Data is ApplySplitsTask applySplitsTask)
+        {
+            var findings = await dbContext
+                .StripSplitFindings.Where(f =>
+                    f.ChapterId == applySplitsTask.ChapterId
+                    && f.DetectorVersion == applySplitsTask.DetectorVersion
+                )
+                .Select(f => new SplitFindingDto
+                {
+                    PageFileName = f.PageFileName,
+                    SplitJson = f.SplitJson,
+                })
+                .ToListAsync(context.CancellationToken);
+
+            return new UpscaleTaskDelegationResponse
+            {
+                TaskId = task.Id,
+                TaskType = TaskType.ApplySplits,
+                SplitFindingsJson = JsonSerializer.Serialize(findings),
             };
         }
         else
@@ -253,6 +275,34 @@ public partial class UpscalingDistributionService(
                 filePath
             );
         }
+        else if (task.Data is DetectSplitCandidatesTask detectTask)
+        {
+            Chapter? chapter = await dbContext
+                .Chapters.Include(chapter => chapter.Manga)
+                    .ThenInclude(manga => manga.Library)
+                .FirstOrDefaultAsync(c => c.Id == detectTask.ChapterId);
+            if (chapter == null)
+            {
+                context.Status = new Status(StatusCode.NotFound, "Chapter not found");
+                return;
+            }
+
+            filePath = chapter.NotUpscaledFullPath;
+        }
+        else if (task.Data is ApplySplitsTask applySplitsTask)
+        {
+            Chapter? chapter = await dbContext
+                .Chapters.Include(chapter => chapter.Manga)
+                    .ThenInclude(manga => manga.Library)
+                .FirstOrDefaultAsync(c => c.Id == applySplitsTask.ChapterId);
+            if (chapter == null)
+            {
+                context.Status = new Status(StatusCode.NotFound, "Chapter not found");
+                return;
+            }
+
+            filePath = chapter.NotUpscaledFullPath;
+        }
         else
         {
             context.Status = new Status(StatusCode.InvalidArgument, "Invalid task type");
@@ -341,6 +391,20 @@ public partial class UpscalingDistributionService(
                 .Chapters.Include(chapter => chapter.Manga)
                     .ThenInclude(manga => manga.Library)
                 .FirstOrDefaultAsync(c => c.Id == detectTask.ChapterId);
+            if (chapter == null)
+            {
+                context.Status = new Status(StatusCode.NotFound, "Chapter not found");
+                return new CbzFileChunk();
+            }
+
+            filePath = chapter.NotUpscaledFullPath;
+        }
+        else if (task.Data is ApplySplitsTask applySplitsTask)
+        {
+            Chapter? chapter = await dbContext
+                .Chapters.Include(chapter => chapter.Manga)
+                    .ThenInclude(manga => manga.Library)
+                .FirstOrDefaultAsync(c => c.Id == applySplitsTask.ChapterId);
             if (chapter == null)
             {
                 context.Status = new Status(StatusCode.NotFound, "Chapter not found");
@@ -620,6 +684,69 @@ public partial class UpscalingDistributionService(
                             TaskId = taskId,
                         }
                     );
+                }
+                else if (task.Data is ApplySplitsTask applySplitsTask)
+                {
+                    Chapter? chapter = await dbContext
+                        .Chapters.Include(chapter => chapter.Manga)
+                            .ThenInclude(manga => manga.Library)
+                        .FirstOrDefaultAsync(c => c.Id == applySplitsTask.ChapterId);
+
+                    if (chapter == null)
+                    {
+                        File.Delete(tempFile);
+                        await responseStream.WriteAsync(
+                            new UploadUpscaledCbzResponse
+                            {
+                                Success = false,
+                                Message = "Chapter not found",
+                                TaskId = taskId,
+                            }
+                        );
+                        continue;
+                    }
+
+                    // Replace original file
+                    if (File.Exists(chapter.NotUpscaledFullPath))
+                    {
+                        File.Delete(chapter.NotUpscaledFullPath);
+                    }
+
+                    fileSystem.Move(tempFile, chapter.NotUpscaledFullPath);
+
+                    // Update state
+                    var state = await dbContext.ChapterSplitProcessingStates.FirstOrDefaultAsync(
+                        s => s.ChapterId == applySplitsTask.ChapterId
+                    );
+
+                    if (state != null)
+                    {
+                        state.Status = SplitProcessingStatus.Applied;
+                        state.LastAppliedDetectorVersion = applySplitsTask.DetectorVersion;
+                    }
+                    else
+                    {
+                        dbContext.ChapterSplitProcessingStates.Add(
+                            new ChapterSplitProcessingState
+                            {
+                                ChapterId = applySplitsTask.ChapterId,
+                                Status = SplitProcessingStatus.Applied,
+                                LastAppliedDetectorVersion = applySplitsTask.DetectorVersion,
+                            }
+                        );
+                    }
+
+                    await dbContext.SaveChangesAsync();
+                    await taskProcessor.TaskCompleted(taskId);
+                    await responseStream.WriteAsync(
+                        new UploadUpscaledCbzResponse
+                        {
+                            Success = true,
+                            Message = "Splits applied",
+                            TaskId = taskId,
+                        }
+                    );
+                    _ = chapterChangedNotifier.Notify(chapter, false);
                 }
                 else
                 {

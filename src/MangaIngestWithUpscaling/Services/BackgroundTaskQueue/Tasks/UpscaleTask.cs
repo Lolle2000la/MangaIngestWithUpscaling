@@ -1,7 +1,9 @@
 ﻿using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.Analysis;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
@@ -114,6 +116,23 @@ public class UpscaleTask : BaseTask
                 );
                 return;
             }
+        }
+
+        // Check if splits are detected but not applied
+        var splitState = await dbContext.ChapterSplitProcessingStates.FirstOrDefaultAsync(
+            s => s.ChapterId == ChapterId,
+            cancellationToken
+        );
+
+        if (
+            splitState != null
+            && splitState.Status == SplitProcessingStatus.Detected
+            && splitState.LastAppliedDetectorVersion < splitState.LastProcessedDetectorVersion
+        )
+        {
+            throw new InvalidOperationException(
+                $"Chapter {chapter.FileName} has pending splits detected. Please apply splits before upscaling."
+            );
         }
 
         var upscaler = services.GetRequiredService<IUpscaler>();

@@ -8,11 +8,13 @@ message UpscaleTaskDelegationResponse {
   int32 task_id = 1; // Task ID of the upscaling task, -1 if none available
   optional UpscalerProfile upscaler_profile = 2; // JSON string of the upscaling configuration used by MangaJaNaiUpscalerGui-cli tool, needs editing.
   TaskType task_type = 3;
+  optional string split_findings_json = 4;
 }
 
 enum TaskType {
   UPSCALE = 0;
   SPLIT_DETECTION = 1;
+  APPLY_SPLITS = 2;
 }
 
 message UploadDetectionResultRequest {

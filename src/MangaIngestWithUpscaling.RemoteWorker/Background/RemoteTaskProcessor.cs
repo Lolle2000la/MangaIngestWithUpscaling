@@ -4,6 +4,8 @@ using System.Threading.Channels;
 using Google.Protobuf;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Api.Upscaling;
+using MangaIngestWithUpscaling.Shared.Constants;
+using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using CompressionFormat = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat;
@@ -205,7 +207,8 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     file,
                     persistentKeepAliveCts,
                     persistentKeepAliveTask,
-                    resp.TaskType
+                    resp.TaskType,
+                    resp.SplitFindingsJson
                 );
                 await _toUpscale.Writer.WriteAsync(fetched, stoppingToken);
 
@@ -249,6 +252,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
         var upscaler = scope.ServiceProvider.GetRequiredService<IUpscaler>();
         var splitDetectionService =
             scope.ServiceProvider.GetRequiredService<ISplitDetectionService>();
+        var splitApplier = scope.ServiceProvider.GetRequiredService<ISplitApplier>();
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -458,6 +462,69 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                         upscalesCts.Token
                     );
                     resultJson = System.Text.Json.JsonSerializer.Serialize(results);
+                }
+                else if (item.TaskType == TaskType.ApplySplits)
+                {
+                    tempExtractDir = Path.Combine(
+                        Path.GetTempPath(),
+                        $"mangaingest_worker_extract_{item.TaskId}_{Guid.NewGuid()}"
+                    );
+                    var newDir = Path.Combine(
+                        Path.GetTempPath(),
+                        $"mangaingest_worker_repack_{item.TaskId}_{Guid.NewGuid()}"
+                    );
+                    Directory.CreateDirectory(tempExtractDir);
+                    Directory.CreateDirectory(newDir);
+
+                    ZipFile.ExtractToDirectory(item.DownloadedFile, tempExtractDir);
+
+                    var findings = System.Text.Json.JsonSerializer.Deserialize<
+                        List<SplitFindingDto>
+                    >(item.SplitFindingsJson!);
+
+                    var images = Directory
+                        .GetFiles(tempExtractDir)
+                        .Where(f =>
+                            ImageConstants.SupportedImageExtensions.Contains(Path.GetExtension(f))
+                        )
+                        .ToList();
+
+                    foreach (var imagePath in images)
+                    {
+                        var fileNameWithoutExt = Path.GetFileNameWithoutExtension(imagePath);
+                        var finding = findings?.FirstOrDefault(f =>
+                            f.PageFileName == fileNameWithoutExt
+                        );
+
+                        if (finding != null)
+                        {
+                            var result =
+                                System.Text.Json.JsonSerializer.Deserialize<SplitDetectionResult>(
+                                    finding.SplitJson
+                                );
+                            if (result != null && result.Splits.Count > 0)
+                            {
+                                splitApplier.ApplySplitsToImage(imagePath, result.Splits, newDir);
+                                continue;
+                            }
+                        }
+
+                        // Copy unsplit
+                        var dest = Path.Combine(newDir, Path.GetFileName(imagePath));
+                        File.Copy(imagePath, dest);
+                    }
+
+                    // Copy ComicInfo.xml if exists
+                    var comicInfo = Path.Combine(tempExtractDir, "ComicInfo.xml");
+                    if (File.Exists(comicInfo))
+                    {
+                        File.Copy(comicInfo, Path.Combine(newDir, "ComicInfo.xml"));
+                    }
+
+                    upscaledFile = PrepareTempFile(item.TaskId, "_split.cbz");
+                    ZipFile.CreateFromDirectory(newDir, upscaledFile);
+
+                    Directory.Delete(newDir, true);
                 }
                 else
                 {
@@ -937,7 +1004,8 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
         string DownloadedFile,
         CancellationTokenSource PersistentKeepAliveCts,
         Task PersistentKeepAliveTask,
-        TaskType TaskType
+        TaskType TaskType,
+        string? SplitFindingsJson = null
     );
 
     private sealed record ProcessedItem(
