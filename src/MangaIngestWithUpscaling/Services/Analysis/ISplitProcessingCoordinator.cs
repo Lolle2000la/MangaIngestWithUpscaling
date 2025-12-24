@@ -34,4 +34,11 @@ public interface ISplitProcessingCoordinator
         IEnumerable<int> chapterIds,
         CancellationToken cancellationToken = default
     );
+
+    /// <summary>
+    /// Checks if the chapter has plausible pages for splitting (aspect ratio check) and enqueues detection if so.
+    /// If not plausible, updates the state to Detected (with 0 splits) and skips the expensive task.
+    /// </summary>
+    /// <returns>True if a task was enqueued, false if it was skipped (completed immediately).</returns>
+    Task<bool> EnqueueDetectionIfPlausibleAsync(int chapterId, CancellationToken cancellationToken = default);
 }

@@ -28,6 +28,7 @@
 @inject IChapterMergeCoordinator ChapterMergeCoordinator
 @inject IWebHostEnvironment WebHostEnvironment
 @inject ISplitProcessingService SplitProcessingService
+@inject ISplitProcessingCoordinator SplitProcessingCoordinator
 
 <MudTable T="ChapterItem" @bind-SelectedItems="selectedChapters" Items="@chapterItems" Dense="true"
     MultiSelection="true" CanCancelEdit="true" RowEditCommit="r => _ = OnChapterMetadataCommit(r as ChapterItem)"
@@ -122,16 +123,27 @@
                     <MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Info" />
                     break;
                 case SplitProcessingStatus.Detected:
-                    <MudMenu ActivationEvent="@MouseEvent.MouseOver" AnchorOrigin="Origin.BottomCenter"
-                        TransformOrigin="Origin.TopCenter">
-                        <ActivatorContent>
-                            <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Filled">Detected</MudChip>
-                        </ActivatorContent>
-                        <ChildContent>
-                            <MudMenuItem OnClick="@(() => ViewSplits(context.Chapter))">View / Edit</MudMenuItem>
-                            <MudMenuItem OnClick="@(() => ApplySplits(context.Chapter))">Apply Splits</MudMenuItem>
-                        </ChildContent>
-                    </MudMenu>
+                    if (context.SplitFindingsCount > 0)
+                    {
+                        <MudMenu ActivationEvent="@MouseEvent.MouseOver" AnchorOrigin="Origin.BottomCenter"
+                            TransformOrigin="Origin.TopCenter">
+                            <ActivatorContent>
+                                <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Filled">Detected</MudChip>
+                            </ActivatorContent>
+                            <ChildContent>
+                                <MudMenuItem OnClick="@(() => ViewSplits(context.Chapter))">View / Edit</MudMenuItem>
+                                <MudMenuItem OnClick="@(() => ApplySplits(context.Chapter))">Apply Splits</MudMenuItem>
+                            </ChildContent>
+                        </MudMenu>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Surface" Variant="Variant.Outlined">No Splits</MudChip>
+                        <MudTooltip Text="Re-detect Splits">
+                            <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small"
+                                OnClick="@(() => DetectSplits(context.Chapter))" />
+                        </MudTooltip>
+                    }
                     break;
                 case SplitProcessingStatus.Applied:
                     <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Filled">Applied</MudChip>
@@ -688,8 +700,14 @@
         }
 
         var splitStates = await DbContext.ChapterSplitProcessingStates
-        .Where(s => s.Chapter.MangaId == Manga.Id)
-        .ToDictionaryAsync(s => s.ChapterId);
+            .Where(s => s.Chapter.MangaId == Manga.Id)
+            .ToDictionaryAsync(s => s.ChapterId);
+
+        var splitFindingsCounts = await DbContext.StripSplitFindings
+            .Where(f => f.Chapter.MangaId == Manga.Id)
+            .GroupBy(f => f.ChapterId)
+            .Select(g => new { ChapterId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.ChapterId, x => x.Count);
 
         foreach (var chapter in Manga.Chapters.ToList()) // ToList() を追加して、コレクションの変更を許可します
         {
@@ -734,7 +752,8 @@
                     NewTitle = extractedMetadata?.ChapterTitle ?? string.Empty,
                     NewFileName = Path.GetFileNameWithoutExtension(chapter.FileName),
                     IsMerged = isMerged,
-                    SplitState = splitStates.GetValueOrDefault(chapter.Id)
+                    SplitState = splitStates.GetValueOrDefault(chapter.Id),
+                    SplitFindingsCount = splitFindingsCounts.GetValueOrDefault(chapter.Id)
                 });
             }
             catch (Exception e)
@@ -1234,25 +1253,18 @@
     {
         try
         {
-            await SplitProcessingService.QueueSplitDetectionAsync(chapter.Id);
-            Snackbar.Add($"Queued split detection for {chapter.FileName}", Severity.Success);
-
-            var item = chapters.Items.FirstOrDefault(ci => ci.Chapter.Id == chapter.Id);
-            if (item != null)
+            bool queued = await SplitProcessingCoordinator.EnqueueDetectionIfPlausibleAsync(chapter.Id);
+            if (queued)
             {
-                item.SplitState = new ChapterSplitProcessingState
-                {
-                    ChapterId = chapter.Id,
-                    Status = SplitProcessingStatus.Pending,
-                    ModifiedAt = DateTime.UtcNow
-                };
-
-                var index = chapters.Items.IndexOf(item);
-                if (index != -1)
-                {
-                    chapters.ReplaceAt(index, item);
-                }
+                Snackbar.Add($"Queued split detection check for {chapter.FileName}", Severity.Success);
             }
+            else
+            {
+                Snackbar.Add($"Split detection completed for {chapter.FileName} (no candidates found)", Severity.Success);
+            }
+
+            // Reload chapters to reflect the new state (either Detected immediately or Pending)
+            await LoadChapters();
         }
         catch (Exception ex)
         {
@@ -1317,6 +1329,7 @@
         public required string NewFileName { get; set; }
         public bool IsMerged { get; set; }
         public ChapterSplitProcessingState? SplitState { get; set; }
+        public int SplitFindingsCount { get; set; }
     }
 
 }
