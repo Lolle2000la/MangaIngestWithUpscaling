@@ -6,6 +6,7 @@ using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
+using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -15,7 +16,8 @@ namespace MangaIngestWithUpscaling.Services.Analysis;
 public class SplitProcessingService(
     ApplicationDbContext dbContext,
     ILogger<SplitProcessingService> logger,
-    ITaskQueue taskQueue
+    ITaskQueue taskQueue,
+    IFileSystem fileSystem
 ) : ISplitProcessingService
 {
     public async Task ProcessDetectionResultAsync(
@@ -89,6 +91,9 @@ public class SplitProcessingService(
         var chapter = await dbContext
             .Chapters.Include(c => c.Manga)
                 .ThenInclude(m => m.Library)
+                    .ThenInclude(l => l.UpscalerProfile)
+            .Include(c => c.Manga)
+                .ThenInclude(m => m.UpscalerProfilePreference)
             .Include(c => c.UpscalerProfile)
             .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
 
@@ -112,7 +117,20 @@ public class SplitProcessingService(
             && chapter.Manga.Library.UpscalerProfileId != null
         )
         {
-            await taskQueue.EnqueueAsync(new UpscaleTask(chapter));
+            if (
+                chapter.IsUpscaled
+                || (
+                    chapter.UpscaledFullPath != null
+                    && fileSystem.FileExists(chapter.UpscaledFullPath)
+                )
+            )
+            {
+                await taskQueue.EnqueueAsync(new RepairUpscaleTask(chapter));
+            }
+            else
+            {
+                await taskQueue.EnqueueAsync(new UpscaleTask(chapter));
+            }
         }
     }
 

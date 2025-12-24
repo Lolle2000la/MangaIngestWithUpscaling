@@ -762,7 +762,21 @@ public partial class UpscalingDistributionService(
                             .Entry(chapter)
                             .Reference(c => c.UpscalerProfile)
                             .LoadAsync();
-                        await taskQueue.EnqueueAsync(new UpscaleTask(chapter));
+
+                        if (
+                            chapter.IsUpscaled
+                            || (
+                                chapter.UpscaledFullPath != null
+                                && fileSystem.FileExists(chapter.UpscaledFullPath)
+                            )
+                        )
+                        {
+                            await taskQueue.EnqueueAsync(new RepairUpscaleTask(chapter));
+                        }
+                        else
+                        {
+                            await taskQueue.EnqueueAsync(new UpscaleTask(chapter));
+                        }
                     }
                 }
                 else
