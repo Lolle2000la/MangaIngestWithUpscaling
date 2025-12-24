@@ -18,7 +18,6 @@ namespace MangaIngestWithUpscaling.Services.Analysis;
 [RegisterScoped]
 public class SplitApplicationService(
     ApplicationDbContext dbContext,
-    IUpscaler upscaler,
     IChapterChangedNotifier chapterChangedNotifier,
     ILogger<SplitApplicationService> logger
 ) : ISplitApplicationService
@@ -158,71 +157,44 @@ public class SplitApplicationService(
 
                     if (splitPagesMap.ContainsKey(fileNameWithoutExt))
                     {
-                        // This page was split in original. We need to upscale the NEW parts.
-                        var newParts = splitPagesMap[fileNameWithoutExt];
+                        // This page was split in original. We need to split the upscaled page too.
+                        // We can calculate the relative split positions.
 
-                        foreach (var partPath in newParts)
+                        var originalFinding = findings.FirstOrDefault(f =>
+                            f.PageFileName == fileNameWithoutExt
+                        );
+                        if (originalFinding != null)
                         {
-                            // Upscale partPath -> newUpscaledDir
-                            // We need to determine the output filename.
-                            // The partPath is in newOriginalDir, e.g. page_001_part1.jpg
-                            // We want page_001_part1.png (or whatever format profile uses)
+                            var result = JsonSerializer.Deserialize<SplitDetectionResult>(
+                                originalFinding.SplitJson
+                            );
+                            if (result != null && result.Splits.Count > 0)
+                            {
+                                // We need to map the split points from original dimensions to upscaled dimensions
+                                // But wait, ApplySplitsToImage takes absolute Y coordinates.
+                                // We need to know the scaling factor.
 
-                            // We can use the upscaler to upscale a single file?
-                            // IUpscaler.Upscale takes inputPath and outputPath (directories or files?)
-                            // Usually it takes directories.
-                            // But we can try to upscale single files if the implementation supports it,
-                            // or we can put them in a temp dir.
+                                using var upscaledImage = Image.NewFromFile(imagePath);
+                                double scaleY =
+                                    (double)upscaledImage.Height / result.OriginalHeight;
 
-                            // Let's assume we need to upscale individually.
-                            // Actually, MangaJaNaiUpscaler.Upscale takes directories.
-                            // So we should gather all split parts that need upscaling into a temp dir,
-                            // upscale them all at once, and then move them to newUpscaledDir.
+                                var upscaledSplits = result
+                                    .Splits.Select(s => new DetectedSplit
+                                    {
+                                        YOriginal = (int)(s.YOriginal * scaleY),
+                                        Confidence = s.Confidence,
+                                    })
+                                    .ToList();
+
+                                ApplySplitsToImage(imagePath, upscaledSplits, newUpscaledDir);
+                                continue;
+                            }
                         }
                     }
-                    else
-                    {
-                        // Copy unsplit image
-                        var destPath = Path.Combine(newUpscaledDir, Path.GetFileName(imagePath));
-                        File.Copy(imagePath, destPath);
-                    }
-                }
 
-                // Gather all new parts to upscale
-                var partsToUpscaleDir = Path.Combine(tempRoot, "parts_to_upscale");
-                var partsUpscaledDir = Path.Combine(tempRoot, "parts_upscaled");
-                Directory.CreateDirectory(partsToUpscaleDir);
-                Directory.CreateDirectory(partsUpscaledDir);
-
-                bool anyToUpscale = false;
-                foreach (var kvp in splitPagesMap)
-                {
-                    foreach (var partPath in kvp.Value)
-                    {
-                        var dest = Path.Combine(partsToUpscaleDir, Path.GetFileName(partPath));
-                        File.Copy(partPath, dest);
-                        anyToUpscale = true;
-                    }
-                }
-
-                if (anyToUpscale)
-                {
-                    // Upscale
-                    var reporter = new Progress<UpscaleProgress>();
-                    await upscaler.Upscale(
-                        partsToUpscaleDir,
-                        partsUpscaledDir,
-                        chapter.UpscalerProfile!,
-                        reporter,
-                        cancellationToken
-                    );
-
-                    // Move upscaled parts to newUpscaledDir
-                    foreach (var file in Directory.GetFiles(partsUpscaledDir))
-                    {
-                        var dest = Path.Combine(newUpscaledDir, Path.GetFileName(file));
-                        File.Move(file, dest);
-                    }
+                    // Copy unsplit image
+                    var destPath = Path.Combine(newUpscaledDir, Path.GetFileName(imagePath));
+                    File.Copy(imagePath, destPath);
                 }
 
                 // Update ComicInfo in newUpscaledDir

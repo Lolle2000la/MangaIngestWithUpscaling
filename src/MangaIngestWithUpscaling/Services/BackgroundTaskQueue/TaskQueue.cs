@@ -136,6 +136,7 @@ public class TaskQueue : ITaskQueue, IHostedService
                 or RenameUpscaledChaptersSeriesTask
                 or RepairUpscaleTask
                 or DetectSplitCandidatesTask
+                or ApplySplitsTask
         )
         {
             lock (_upscaleTasksLock)

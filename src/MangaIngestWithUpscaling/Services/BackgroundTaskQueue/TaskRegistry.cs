@@ -45,6 +45,8 @@ public class TaskRegistry : IHostedService, IDisposable
                     is not UpscaleTask
                         and not RenameUpscaledChaptersSeriesTask
                         and not RepairUpscaleTask
+                        and not DetectSplitCandidatesTask
+                        and not ApplySplitsTask
             )
             .SortAndBind(
                 out ReadOnlyObservableCollection<PersistedTask> standard,
@@ -61,7 +63,12 @@ public class TaskRegistry : IHostedService, IDisposable
         _tasks
             .Connect()
             .Filter(t =>
-                t.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask
+                t.Data
+                    is UpscaleTask
+                        or RenameUpscaledChaptersSeriesTask
+                        or RepairUpscaleTask
+                        or DetectSplitCandidatesTask
+                        or ApplySplitsTask
             )
             .SortAndBind(
                 out ReadOnlyObservableCollection<PersistedTask> upscale,
