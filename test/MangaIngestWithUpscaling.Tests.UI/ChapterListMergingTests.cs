@@ -42,6 +42,7 @@ public class ChapterListMergingTests : BunitContext
     private ISnackbar _subSnackbar = null!;
     private ISplitApplicationService _subSplitApplicationService = null!;
     private ISplitProcessingService _subSplitProcessingService = null!;
+    private ISplitProcessingCoordinator _subSplitProcessingCoordinator = null!;
     private ITaskQueue _subTaskQueue = null!;
     private IWebHostEnvironment _subWebHostEnvironment = null!;
 
@@ -66,6 +67,7 @@ public class ChapterListMergingTests : BunitContext
         _subSnackbar = Substitute.For<ISnackbar>();
         _subSplitApplicationService = Substitute.For<ISplitApplicationService>();
         _subSplitProcessingService = Substitute.For<ISplitProcessingService>();
+        _subSplitProcessingCoordinator = Substitute.For<ISplitProcessingCoordinator>();
         _subDialogService = Substitute.For<IDialogService>();
 
         // Setup common mock behaviors
@@ -102,6 +104,7 @@ public class ChapterListMergingTests : BunitContext
         Services.AddSingleton(_subSnackbar);
         Services.AddSingleton(_subSplitApplicationService);
         Services.AddSingleton(_subSplitProcessingService);
+        Services.AddSingleton(_subSplitProcessingCoordinator);
         Services.AddSingleton(_subDialogService);
         Services.AddSingleton(_subFileSystem);
 
