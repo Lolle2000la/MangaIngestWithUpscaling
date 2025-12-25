@@ -1298,7 +1298,7 @@
         {
             try
             {
-                await SplitApplicationService.ApplySplitsAsync(chapter.Id, 1, CancellationToken.None);
+                await SplitApplicationService.ApplySplitsAsync(chapter.Id, SplitDetectionService.CURRENT_DETECTOR_VERSION, CancellationToken.None);
                 Snackbar.Add($"Queued split application for {chapter.FileName}", Severity.Success);
 
                 var item = chapters.Items.FirstOrDefault(ci => ci.Chapter.Id == chapter.Id);
