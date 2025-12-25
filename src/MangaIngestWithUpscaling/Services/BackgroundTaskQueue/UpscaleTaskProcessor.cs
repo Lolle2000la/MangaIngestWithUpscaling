@@ -12,7 +12,8 @@ public class UpscaleTaskProcessor(
     TaskQueue taskQueue,
     IServiceScopeFactory scopeFactory,
     IOptions<UpscalerConfig> upscalerConfig,
-    ILogger<UpscaleTaskProcessor> logger
+    ILogger<UpscaleTaskProcessor> logger,
+    ITaskPersistenceService taskPersistenceService
 ) : BackgroundService
 {
     private readonly Lock _lock = new();
@@ -92,54 +93,24 @@ public class UpscaleTaskProcessor(
 
     protected async Task ProcessTaskAsync(PersistedTask task, CancellationToken stoppingToken)
     {
+        // Atomically claim the task
+        if (!await taskPersistenceService.ClaimTaskAsync(task.Id, stoppingToken))
+        {
+            logger.LogInformation(
+                "Task {TaskId} could not be claimed (already processed or concurrency conflict)",
+                task.Id
+            );
+            return;
+        }
+
+        // Update the in-memory task status
+        task.Status = PersistedTaskStatus.Processing;
+        _ = StatusChanged?.Invoke(task);
+
         using var scope = scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         try
         {
-            // Atomically claim the task by transitioning from Pending to Processing
-            // This prevents race conditions with DistributedUpscaleTaskProcessor
-            PersistedTask? taskFromDb = await dbContext.PersistedTasks.FirstOrDefaultAsync(
-                t => t.Id == task.Id,
-                stoppingToken
-            );
-
-            if (taskFromDb == null)
-            {
-                logger.LogWarning("Task {TaskId} not found in database, skipping", task.Id);
-                return;
-            }
-
-            // Skip if task is not in Pending state (another worker claimed it)
-            if (taskFromDb.Status != PersistedTaskStatus.Pending)
-            {
-                logger.LogInformation(
-                    "Skipping task {TaskId} as it is no longer pending (current status: {Status})",
-                    task.Id,
-                    taskFromDb.Status
-                );
-                return;
-            }
-
-            // Atomically transition to Processing
-            taskFromDb.Status = PersistedTaskStatus.Processing;
-            try
-            {
-                await dbContext.SaveChangesAsync(stoppingToken);
-            }
-            catch (DbUpdateConcurrencyException)
-            {
-                logger.LogInformation(
-                    "Task {TaskId} was claimed by another worker (concurrency conflict)",
-                    task.Id
-                );
-                return;
-            }
-
-            // Update the in-memory task status
-            task.Status = PersistedTaskStatus.Processing;
-            _ = StatusChanged?.Invoke(task);
-
             // Forward progress changes to UI by raising StatusChanged (debounced)
             var last = DateTime.UtcNow;
             using var progressSubscription = task.Data.Progress.Changed.Subscribe(e =>
@@ -155,13 +126,11 @@ public class UpscaleTaskProcessor(
             await task.Data.ProcessAsync(scope.ServiceProvider, stoppingToken);
             _ = StatusChanged?.Invoke(task);
 
-            taskFromDb.Status = PersistedTaskStatus.Completed;
-            taskFromDb.ProcessedAt = DateTime.UtcNow;
-            await dbContext.SaveChangesAsync(stoppingToken);
+            await taskPersistenceService.CompleteTaskAsync(task.Id);
 
             // Update in-memory task to match
-            task.Status = taskFromDb.Status;
-            task.ProcessedAt = taskFromDb.ProcessedAt;
+            task.Status = PersistedTaskStatus.Completed;
+            task.ProcessedAt = DateTime.UtcNow;
             _ = StatusChanged?.Invoke(task);
         }
         catch (OperationCanceledException)
@@ -170,31 +139,12 @@ public class UpscaleTaskProcessor(
 
             try
             {
-                // Ensure we have a tracked entity to update
-                var trackedTask = dbContext
-                    .ChangeTracker.Entries<PersistedTask>()
-                    .Select(e => e.Entity)
-                    .FirstOrDefault(t => t.Id == task.Id);
+                bool requeue = serviceStoppingToken.IsCancellationRequested;
+                await taskPersistenceService.CancelTaskAsync(task.Id, requeue);
 
-                if (trackedTask == null)
-                {
-                    trackedTask = await dbContext.PersistedTasks.FirstOrDefaultAsync(t =>
-                        t.Id == task.Id
-                    );
-                }
-
-                if (trackedTask != null)
-                {
-                    trackedTask.Status = serviceStoppingToken.IsCancellationRequested
-                        ? PersistedTaskStatus.Pending
-                        : PersistedTaskStatus.Canceled;
-
-                    await dbContext.SaveChangesAsync();
-
-                    // Update in-memory task
-                    task.Status = trackedTask.Status;
-                    StatusChanged?.Invoke(task);
-                }
+                // Update in-memory task
+                task.Status = requeue ? PersistedTaskStatus.Pending : PersistedTaskStatus.Canceled;
+                StatusChanged?.Invoke(task);
             }
             catch (Exception dbEx)
             {
@@ -207,31 +157,12 @@ public class UpscaleTaskProcessor(
 
             try
             {
-                // Ensure we have a tracked entity to update
-                var trackedTask = dbContext
-                    .ChangeTracker.Entries<PersistedTask>()
-                    .Select(e => e.Entity)
-                    .FirstOrDefault(t => t.Id == task.Id);
+                await taskPersistenceService.FailTaskAsync(task.Id);
 
-                if (trackedTask == null)
-                {
-                    trackedTask = await dbContext.PersistedTasks.FirstOrDefaultAsync(t =>
-                        t.Id == task.Id
-                    );
-                }
-
-                if (trackedTask != null)
-                {
-                    trackedTask.Status = PersistedTaskStatus.Failed;
-                    trackedTask.RetryCount++;
-
-                    await dbContext.SaveChangesAsync();
-
-                    // Update in-memory task
-                    task.Status = trackedTask.Status;
-                    task.RetryCount = trackedTask.RetryCount;
-                    StatusChanged?.Invoke(task);
-                }
+                // Update in-memory task
+                task.Status = PersistedTaskStatus.Failed;
+                task.RetryCount++;
+                StatusChanged?.Invoke(task);
             }
             catch (Exception dbEx)
             {

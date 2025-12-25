@@ -76,11 +76,13 @@ public class IngestProcessorTaskCancellationTests : IDisposable
             new UpscalerConfig { RemoteOnly = true }
         );
         var processorLogger = Substitute.For<ILogger<UpscaleTaskProcessor>>();
+        var taskPersistenceService = Substitute.For<ITaskPersistenceService>();
         var processor = new UpscaleTaskProcessor(
             taskQueue,
             scopeFactory,
             upscalerOptions,
-            processorLogger
+            processorLogger,
+            taskPersistenceService
         );
 
         // SUT

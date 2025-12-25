@@ -21,7 +21,8 @@ namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 public class DistributedUpscaleTaskProcessor(
     TaskQueue taskQueue,
     IServiceScopeFactory scopeFactory,
-    IOptions<UpscalerConfig> upscalerConfig
+    IOptions<UpscalerConfig> upscalerConfig,
+    ITaskPersistenceService taskPersistenceService
 ) : BackgroundService
 {
     private readonly Lock _lock = new();
@@ -52,9 +53,6 @@ public class DistributedUpscaleTaskProcessor(
     /// <param name="checkAgainst">The task to check against if it is still the current task. Does so by using the Id.</param>
     public async Task CancelCurrent(PersistedTask checkAgainst)
     {
-        using var scope = scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-
         using (_lock.EnterScope())
         {
             if (
@@ -73,16 +71,7 @@ public class DistributedUpscaleTaskProcessor(
             }
         }
 
-        PersistedTask? task = await dbContext.PersistedTasks.FirstOrDefaultAsync(t =>
-            t.Id == checkAgainst.Id
-        );
-        if (task == null)
-        {
-            return; // Task not found in the database, nothing to do
-        }
-
-        task.Status = PersistedTaskStatus.Canceled;
-        await dbContext.SaveChangesAsync();
+        await taskPersistenceService.CancelTaskAsync(checkAgainst.Id);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -188,55 +177,19 @@ public class DistributedUpscaleTaskProcessor(
                     bool taskClaimed = false;
                     using (IServiceScope scope = scopeFactory.CreateScope())
                     {
-                        var dbContext =
-                            scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
                         var logger = scope.ServiceProvider.GetRequiredService<
                             ILogger<DistributedUpscaleTaskProcessor>
                         >();
 
-                        // Atomically claim the task by transitioning from Pending to Processing
-                        // This prevents multiple workers from claiming the same task
-                        PersistedTask? taskFromDb =
-                            await dbContext.PersistedTasks.FirstOrDefaultAsync(
-                                t => t.Id == task.Id,
-                                linkedCts.Token
-                            );
-
-                        if (taskFromDb == null)
+                        if (await taskPersistenceService.ClaimTaskAsync(task.Id, linkedCts.Token))
                         {
-                            logger.LogWarning(
-                                "Task {taskId} not found in database, skipping.",
-                                task.Id
-                            );
-                            continue; // Skip this task and try to get the next one from the channel.
-                        }
-
-                        // A task should only be processed if it's in the "Pending" state.
-                        // If it's anything else, another worker has claimed it or it's finalized.
-                        if (taskFromDb.Status != PersistedTaskStatus.Pending)
-                        {
-                            logger.LogInformation(
-                                "Skipping task {taskId} as it is no longer pending (current status: {status}).",
-                                task.Id,
-                                taskFromDb.Status
-                            );
-                            continue; // Skip this task and try to get the next one from the channel.
-                        }
-
-                        // Atomically transition to Processing - only one worker will succeed
-                        taskFromDb.Status = PersistedTaskStatus.Processing;
-                        try
-                        {
-                            await dbContext.SaveChangesAsync(linkedCts.Token);
                             taskClaimed = true;
-                            // Update the in-memory task with the new status
                             task.Status = PersistedTaskStatus.Processing;
                         }
-                        catch (DbUpdateConcurrencyException)
+                        else
                         {
-                            // Another worker claimed this task, skip it
                             logger.LogInformation(
-                                "Task {taskId} was claimed by another worker (concurrency conflict).",
+                                "Task {taskId} could not be claimed (already processed or concurrency conflict).",
                                 task.Id
                             );
                             continue;
@@ -634,10 +587,11 @@ public class DistributedUpscaleTaskProcessor(
 
         if (repairSuccess)
         {
+            await taskPersistenceService.CompleteTaskAsync(taskId);
+
             dbTask.ProcessedAt = time;
             dbTask.Status = PersistedTaskStatus.Completed;
             _ = StatusChanged?.Invoke(dbTask);
-            await dbContext.SaveChangesAsync();
         }
     }
 
@@ -869,20 +823,21 @@ public class DistributedUpscaleTaskProcessor(
             }
         }
 
+        await taskPersistenceService.FailTaskAsync(taskId);
+
+        // Fetch the updated task from the database to notify listeners (e.g., UI).
+        // This ensures the UI reflects the 'Failed' status and updated retry count,
+        // even if the task wasn't tracked in the 'runningTasks' dictionary.
         using IServiceScope dbScope = scopeFactory.CreateScope();
         var dbContext = dbScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        PersistedTask? localTask = await dbContext.PersistedTasks.FirstOrDefaultAsync(t =>
-            t.Id == taskId
-        );
-        if (localTask == null)
-        {
-            return; // Task not found in the database, nothing to do
-        }
+        PersistedTask? localTask = await dbContext
+            .PersistedTasks.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.Id == taskId);
 
-        localTask.Status = PersistedTaskStatus.Failed;
-        localTask.RetryCount++;
-        await dbContext.SaveChangesAsync();
-        _ = StatusChanged?.Invoke(localTask);
+        if (localTask != null)
+        {
+            _ = StatusChanged?.Invoke(localTask);
+        }
     }
 
     /// <summary>
@@ -961,9 +916,10 @@ public class DistributedUpscaleTaskProcessor(
                 );
 
                 // Mark as completed and don't delegate to remote workers
+                await taskPersistenceService.CompleteTaskAsync(persistedTask.Id, cancellationToken);
+
                 persistedTask.Status = PersistedTaskStatus.Completed;
                 persistedTask.ProcessedAt = DateTime.UtcNow;
-                await dbContext.SaveChangesAsync(cancellationToken);
                 _ = StatusChanged?.Invoke(persistedTask);
                 return false;
             }
@@ -981,9 +937,10 @@ public class DistributedUpscaleTaskProcessor(
                 await taskQueue.EnqueueAsync(fallbackTask);
 
                 // Mark original repair task as completed since we've handled the fallback
+                await taskPersistenceService.CompleteTaskAsync(persistedTask.Id, cancellationToken);
+
                 persistedTask.Status = PersistedTaskStatus.Completed;
                 persistedTask.ProcessedAt = DateTime.UtcNow;
-                await dbContext.SaveChangesAsync(cancellationToken);
                 _ = StatusChanged?.Invoke(persistedTask);
                 return false;
             }
@@ -1032,9 +989,10 @@ public class DistributedUpscaleTaskProcessor(
                 repairService.MergeRepairResults(repairContext, upscaleTargetPath, logger);
                 repairContext.Dispose();
 
+                await taskPersistenceService.CompleteTaskAsync(persistedTask.Id, cancellationToken);
+
                 persistedTask.Status = PersistedTaskStatus.Completed;
                 persistedTask.ProcessedAt = DateTime.UtcNow;
-                await dbContext.SaveChangesAsync(cancellationToken);
                 _ = StatusChanged?.Invoke(persistedTask);
 
                 logger.LogInformation(
