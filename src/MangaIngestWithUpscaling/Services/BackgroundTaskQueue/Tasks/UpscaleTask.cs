@@ -151,9 +151,20 @@ public class UpscaleTask : BaseTask
             && splitState.LastAppliedDetectorVersion < splitState.LastProcessedDetectorVersion
         )
         {
-            throw new InvalidOperationException(
-                $"Chapter {chapter.FileName} has pending splits detected. Please apply splits before upscaling."
+            // Check if there are actually any findings
+            var hasFindings = await dbContext.StripSplitFindings.AnyAsync(
+                f =>
+                    f.ChapterId == ChapterId
+                    && f.DetectorVersion == splitState.LastProcessedDetectorVersion,
+                cancellationToken
             );
+
+            if (hasFindings)
+            {
+                throw new InvalidOperationException(
+                    $"Chapter {chapter.FileName} has pending splits detected. Please apply splits before upscaling."
+                );
+            }
         }
 
         var upscaler = services.GetRequiredService<IUpscaler>();
