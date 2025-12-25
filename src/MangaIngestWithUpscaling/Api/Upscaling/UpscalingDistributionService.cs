@@ -24,7 +24,7 @@ public partial class UpscalingDistributionService(
     IFileSystem fileSystem,
     IChapterChangedNotifier chapterChangedNotifier,
     ISplitProcessingService splitProcessingService,
-    ITaskQueue taskQueue,
+    ISplitProcessingCoordinator splitProcessingCoordinator,
     ILogger<UpscalingDistributionService> logger
 ) : UpscalingService.UpscalingServiceBase
 {
@@ -718,29 +718,11 @@ public partial class UpscalingDistributionService(
 
                     fileSystem.Move(tempFile, chapter.NotUpscaledFullPath);
 
-                    // Update state
-                    var state = await dbContext.ChapterSplitProcessingStates.FirstOrDefaultAsync(
-                        s => s.ChapterId == applySplitsTask.ChapterId
+                    await splitProcessingCoordinator.OnSplitsAppliedAsync(
+                        applySplitsTask.ChapterId,
+                        applySplitsTask.DetectorVersion
                     );
 
-                    if (state != null)
-                    {
-                        state.Status = SplitProcessingStatus.Applied;
-                        state.LastAppliedDetectorVersion = applySplitsTask.DetectorVersion;
-                    }
-                    else
-                    {
-                        dbContext.ChapterSplitProcessingStates.Add(
-                            new ChapterSplitProcessingState
-                            {
-                                ChapterId = applySplitsTask.ChapterId,
-                                Status = SplitProcessingStatus.Applied,
-                                LastAppliedDetectorVersion = applySplitsTask.DetectorVersion,
-                            }
-                        );
-                    }
-
-                    await dbContext.SaveChangesAsync();
                     await taskProcessor.TaskCompleted(taskId);
                     await responseStream.WriteAsync(
                         new UploadUpscaledCbzResponse
@@ -750,34 +732,6 @@ public partial class UpscalingDistributionService(
                             TaskId = taskId,
                         }
                     );
-                    _ = chapterChangedNotifier.Notify(chapter, false);
-
-                    if (
-                        chapter.Manga.Library.UpscaleOnIngest
-                        && chapter.Manga.ShouldUpscale != false
-                        && chapter.Manga.Library.UpscalerProfileId != null
-                    )
-                    {
-                        await dbContext
-                            .Entry(chapter)
-                            .Reference(c => c.UpscalerProfile)
-                            .LoadAsync();
-
-                        if (
-                            chapter.IsUpscaled
-                            || (
-                                chapter.UpscaledFullPath != null
-                                && fileSystem.FileExists(chapter.UpscaledFullPath)
-                            )
-                        )
-                        {
-                            await taskQueue.EnqueueAsync(new RepairUpscaleTask(chapter));
-                        }
-                        else
-                        {
-                            await taskQueue.EnqueueAsync(new UpscaleTask(chapter));
-                        }
-                    }
                 }
                 else
                 {

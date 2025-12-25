@@ -7,8 +7,10 @@ using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.Analysis;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
+using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -20,6 +22,8 @@ public class SplitProcessingCoordinatorTests : IDisposable
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly ITaskQueue _taskQueue;
+    private readonly IChapterChangedNotifier _chapterChangedNotifier;
+    private readonly IFileSystem _fileSystem;
     private readonly ILogger<SplitProcessingCoordinator> _logger;
     private readonly SplitProcessingCoordinator _coordinator;
 
@@ -34,8 +38,16 @@ public class SplitProcessingCoordinatorTests : IDisposable
         _dbContext.Database.EnsureCreated();
 
         _taskQueue = Substitute.For<ITaskQueue>();
+        _chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
+        _fileSystem = Substitute.For<IFileSystem>();
         _logger = Substitute.For<ILogger<SplitProcessingCoordinator>>();
-        _coordinator = new SplitProcessingCoordinator(_dbContext, _taskQueue, _logger);
+        _coordinator = new SplitProcessingCoordinator(
+            _dbContext,
+            _taskQueue,
+            _chapterChangedNotifier,
+            _fileSystem,
+            _logger
+        );
     }
 
     public void Dispose()

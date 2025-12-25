@@ -4,9 +4,11 @@ using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.Analysis;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
+using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using Microsoft.EntityFrameworkCore;
 using NetVips;
 
@@ -16,6 +18,8 @@ namespace MangaIngestWithUpscaling.Services.Analysis;
 public class SplitProcessingCoordinator(
     ApplicationDbContext dbContext,
     ITaskQueue taskQueue,
+    IChapterChangedNotifier chapterChangedNotifier,
+    IFileSystem fileSystem,
     ILogger<SplitProcessingCoordinator> logger
 ) : ISplitProcessingCoordinator
 {
@@ -185,11 +189,28 @@ public class SplitProcessingCoordinator(
             SplitDetectionService.CURRENT_DETECTOR_VERSION
         );
 
-        var task = new DetectSplitCandidatesTask(
-            chapterId,
-            SplitDetectionService.CURRENT_DETECTOR_VERSION
-        );
-        await taskQueue.EnqueueAsync(task);
+        var chapter = await dbContext
+            .Chapters.Include(c => c.Manga)
+            .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
+
+        if (chapter != null)
+        {
+            await taskQueue.EnqueueAsync(
+                new DetectSplitCandidatesTask(
+                    chapter,
+                    SplitDetectionService.CURRENT_DETECTOR_VERSION
+                )
+            );
+        }
+        else
+        {
+            await taskQueue.EnqueueAsync(
+                new DetectSplitCandidatesTask(
+                    chapterId,
+                    SplitDetectionService.CURRENT_DETECTOR_VERSION
+                )
+            );
+        }
     }
 
     public async Task EnqueueDetectionBatchAsync(
@@ -207,13 +228,99 @@ public class SplitProcessingCoordinator(
             SplitDetectionService.CURRENT_DETECTOR_VERSION
         );
 
+        var chapters = await dbContext
+            .Chapters.Include(c => c.Manga)
+            .Where(c => ids.Contains(c.Id))
+            .ToDictionaryAsync(c => c.Id, cancellationToken);
+
         foreach (var id in ids)
         {
-            var task = new DetectSplitCandidatesTask(
-                id,
-                SplitDetectionService.CURRENT_DETECTOR_VERSION
+            if (chapters.TryGetValue(id, out var chapter))
+            {
+                await taskQueue.EnqueueAsync(
+                    new DetectSplitCandidatesTask(
+                        chapter,
+                        SplitDetectionService.CURRENT_DETECTOR_VERSION
+                    )
+                );
+            }
+            else
+            {
+                await taskQueue.EnqueueAsync(
+                    new DetectSplitCandidatesTask(
+                        id,
+                        SplitDetectionService.CURRENT_DETECTOR_VERSION
+                    )
+                );
+            }
+        }
+    }
+
+    public async Task OnSplitsAppliedAsync(
+        int chapterId,
+        int detectorVersion,
+        CancellationToken cancellationToken = default
+    )
+    {
+        // Update state
+        var state = await dbContext.ChapterSplitProcessingStates.FirstOrDefaultAsync(
+            s => s.ChapterId == chapterId,
+            cancellationToken
+        );
+
+        if (state != null)
+        {
+            state.Status = SplitProcessingStatus.Applied;
+            state.LastAppliedDetectorVersion = detectorVersion;
+        }
+        else
+        {
+            dbContext.ChapterSplitProcessingStates.Add(
+                new ChapterSplitProcessingState
+                {
+                    ChapterId = chapterId,
+                    Status = SplitProcessingStatus.Applied,
+                    LastAppliedDetectorVersion = detectorVersion,
+                }
             );
-            await taskQueue.EnqueueAsync(task);
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        var chapter = await dbContext
+            .Chapters.Include(c => c.Manga)
+                .ThenInclude(m => m.Library)
+                    .ThenInclude(l => l.UpscalerProfile)
+            .Include(c => c.UpscalerProfile)
+            .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
+
+        if (chapter == null)
+            return;
+
+        // Notify change
+        await chapterChangedNotifier.Notify(chapter, false);
+
+        // Schedule subsequent tasks
+        if (
+            chapter.Manga.Library.UpscaleOnIngest
+            && chapter.Manga.ShouldUpscale != false
+            && chapter.Manga.Library.UpscalerProfileId != null
+        )
+        {
+            if (
+                chapter.IsUpscaled
+                || (
+                    chapter.UpscaledFullPath != null
+                    && fileSystem.FileExists(chapter.UpscaledFullPath)
+                )
+            )
+            {
+                await taskQueue.EnqueueAsync(new RepairUpscaleTask(chapter));
+            }
+            else
+            {
+                await taskQueue.EnqueueAsync(new UpscaleTask(chapter));
+            }
         }
     }
 }

@@ -103,7 +103,7 @@ public class SplitProcessingService(
                 "Auto-applying splits for chapter {ChapterId} based on library settings.",
                 chapterId
             );
-            await taskQueue.EnqueueAsync(new ApplySplitsTask(chapterId, detectorVersion));
+            await taskQueue.EnqueueAsync(new ApplySplitsTask(chapter, detectorVersion));
 
             // Update status to Processing immediately to reflect the queued task
             state.Status = SplitProcessingStatus.Processing;
@@ -136,9 +136,28 @@ public class SplitProcessingService(
 
     public async Task QueueSplitDetectionAsync(int chapterId)
     {
-        await taskQueue.EnqueueAsync(
-            new DetectSplitCandidatesTask(chapterId, SplitDetectionService.CURRENT_DETECTOR_VERSION)
-        );
+        var chapter = await dbContext
+            .Chapters.Include(c => c.Manga)
+            .FirstOrDefaultAsync(c => c.Id == chapterId);
+
+        if (chapter != null)
+        {
+            await taskQueue.EnqueueAsync(
+                new DetectSplitCandidatesTask(
+                    chapter,
+                    SplitDetectionService.CURRENT_DETECTOR_VERSION
+                )
+            );
+        }
+        else
+        {
+            await taskQueue.EnqueueAsync(
+                new DetectSplitCandidatesTask(
+                    chapterId,
+                    SplitDetectionService.CURRENT_DETECTOR_VERSION
+                )
+            );
+        }
     }
 
     public async Task<List<StripSplitFinding>> GetSplitFindingsAsync(int chapterId)

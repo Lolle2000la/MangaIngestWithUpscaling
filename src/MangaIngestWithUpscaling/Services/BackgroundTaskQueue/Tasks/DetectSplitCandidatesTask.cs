@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
@@ -13,8 +14,12 @@ public class DetectSplitCandidatesTask : BaseTask
 {
     public int ChapterId { get; set; }
     public int DetectorVersion { get; set; }
+    public string FriendlyEntryName { get; set; } = string.Empty;
 
-    public override string TaskFriendlyName => $"Detecting splits for Chapter {ChapterId}";
+    public override string TaskFriendlyName =>
+        !string.IsNullOrEmpty(FriendlyEntryName)
+            ? FriendlyEntryName
+            : $"Detecting splits for Chapter {ChapterId}";
     public override int RetryFor { get; set; } = 1;
 
     public DetectSplitCandidatesTask() { }
@@ -23,6 +28,14 @@ public class DetectSplitCandidatesTask : BaseTask
     {
         ChapterId = chapterId;
         DetectorVersion = detectorVersion;
+    }
+
+    public DetectSplitCandidatesTask(Chapter chapter, int detectorVersion)
+    {
+        ChapterId = chapter.Id;
+        DetectorVersion = detectorVersion;
+        FriendlyEntryName =
+            $"Detecting splits for {chapter.FileName} of {chapter.Manga?.PrimaryTitle ?? "Unknown"}";
     }
 
     public override async Task ProcessAsync(

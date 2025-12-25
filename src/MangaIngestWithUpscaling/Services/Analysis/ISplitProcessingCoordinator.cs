@@ -44,4 +44,14 @@ public interface ISplitProcessingCoordinator
         int chapterId,
         CancellationToken cancellationToken = default
     );
+
+    /// <summary>
+    /// Handles the completion of split application (either local or remote).
+    /// Updates the processing state, notifies changes, and schedules subsequent upscale/repair tasks if needed.
+    /// </summary>
+    Task OnSplitsAppliedAsync(
+        int chapterId,
+        int detectorVersion,
+        CancellationToken cancellationToken = default
+    );
 }
