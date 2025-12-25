@@ -32,12 +32,15 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
     ///     v7: Did a partial rollback for the standard cuda version for compatibility reasons.
     ///     v8: Updated to torch==2.9.1, torchvision==0.24.1 for latest PyTorch
     ///     v9: Added pillow==11.1.0 for manga-vert-split-nn support
+    ///     v10: Updated to pillow>=12.0.0
+    ///     v11: Added dependencies for manga-vert-split-nn (aim, boto3, clearml, lightning, matplotlib, mlflow, onnx, onnxscript, optuna, pandas, psycopg2-binary, scipy, torchmetrics)
+    ///     v12: Removed unnecessary dependencies for manga-vert-split-nn, relaxed Python version requirement
     ///     When updating dependencies:
     ///     1. Update the package versions in InstallPythonPackages method
     ///     2. Increment this ENVIRONMENT_VERSION constant
     ///     3. Add a comment above describing the changes
     /// </summary>
-    private const int ENVIRONMENT_VERSION = 9;
+    private const int ENVIRONMENT_VERSION = 12;
 
     public static PythonEnvironment? Environment { get; set; }
 
@@ -47,14 +50,18 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
             ? ".exe"
             : "";
 
-        if (PathHelpers.ExistsOnPath($"python3.12{executableExtension}"))
+        if (PathHelpers.ExistsOnPath($"python3{executableExtension}"))
         {
-            return PathHelpers.GetFullPath($"python3.12{executableExtension}");
+            return PathHelpers.GetFullPath($"python3{executableExtension}");
+        }
+        else if (PathHelpers.ExistsOnPath($"python{executableExtension}"))
+        {
+            return PathHelpers.GetFullPath($"python{executableExtension}");
         }
         else
         {
             logger.LogCritical(
-                "Python 3.12 must be installed on the system in order to use upscaling!"
+                "Python 3 must be installed on the system in order to use upscaling!"
             );
             return null;
         }
@@ -86,14 +93,14 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
 
         var relPythonPath = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) switch
         {
-            true => Path.Combine(environmentPath, "Scripts", "python3.12.exe"),
-            false => Path.Combine(environmentPath, "bin", "python3.12"),
+            true => Path.Combine(environmentPath, "Scripts", "python.exe"),
+            false => Path.Combine(environmentPath, "bin", "python"),
         };
 
         var relPythonBin = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) switch
         {
-            true => "python3.12.exe",
-            false => "python3.12",
+            true => "python3.exe",
+            false => "python3",
         };
 
         string assemblyDir = AppContext.BaseDirectory;
@@ -533,33 +540,33 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         {
             GpuBackend.CUDA =>
                 "install torch==2.7.1 torchvision==0.22.1 --extra-index-url https://download.pytorch.org/whl/cu118 "
-                    + "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 "
+                    + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
                     + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow==11.1.0 --no-warn-script-location",
+                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
             GpuBackend.CUDA_12_8 =>
                 "install torch==2.9.1 torchvision==0.24.1 --extra-index-url https://download.pytorch.org/whl/cu128 "
-                    + "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 "
+                    + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
                     + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow==11.1.0 --no-warn-script-location",
+                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
             GpuBackend.ROCm =>
                 "install torch==2.9.1 torchvision==0.24.1 --extra-index-url https://download.pytorch.org/whl/rocm6.4 "
-                    + "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 "
+                    + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
                     + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow==11.1.0 --no-warn-script-location",
+                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
             GpuBackend.XPU =>
                 "install torch==2.9.1 torchvision==0.24.1 --extra-index-url https://download.pytorch.org/whl/xpu "
-                    + "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 "
+                    + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
                     + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow==11.1.0 --no-warn-script-location",
+                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
             GpuBackend.CPU =>
                 "install torch==2.9.1 torchvision==0.24.1 --extra-index-url https://download.pytorch.org/whl/cpu "
-                    + "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 "
+                    + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
                     + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow==11.1.0 --no-warn-script-location",
+                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
             _ => "install torch==2.9.1 torchvision==0.24.1 "
-                + "chainner_ext==0.3.10 numpy==2.2.5 opencv-python-headless==4.11.0.86 "
+                + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
                 + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow==11.1.0 --no-warn-script-location",
+                + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
         };
 
         logger.LogInformation(
