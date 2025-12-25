@@ -19,6 +19,64 @@ namespace MangaIngestWithUpscaling.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.1");
 
+            modelBuilder.Entity("MangaIngestWithUpscaling.Data.Analysis.ChapterSplitProcessingState", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ChapterId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("LastAppliedDetectorVersion")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("LastProcessedDetectorVersion")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("ModifiedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChapterId");
+
+                    b.ToTable("ChapterSplitProcessingStates");
+                });
+
+            modelBuilder.Entity("MangaIngestWithUpscaling.Data.Analysis.StripSplitFinding", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ChapterId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("DetectorVersion")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("PageFileName")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SplitJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ChapterId");
+
+                    b.ToTable("StripSplitFindings");
+                });
+
             modelBuilder.Entity("MangaIngestWithUpscaling.Data.ApiKey", b =>
                 {
                     b.Property<int>("Id")
@@ -281,6 +339,9 @@ namespace MangaIngestWithUpscaling.Migrations
                     b.Property<string>("NotUpscaledLibraryPath")
                         .IsRequired()
                         .HasColumnType("TEXT");
+
+                    b.Property<int>("StripDetectionMode")
+                        .HasColumnType("INTEGER");
 
                     b.Property<bool>("UpscaleOnIngest")
                         .HasColumnType("INTEGER");
@@ -651,6 +712,28 @@ namespace MangaIngestWithUpscaling.Migrations
                     b.HasKey("UserId", "LoginProvider", "Name");
 
                     b.ToTable("AspNetUserTokens", (string)null);
+                });
+
+            modelBuilder.Entity("MangaIngestWithUpscaling.Data.Analysis.ChapterSplitProcessingState", b =>
+                {
+                    b.HasOne("MangaIngestWithUpscaling.Data.LibraryManagement.Chapter", "Chapter")
+                        .WithMany()
+                        .HasForeignKey("ChapterId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Chapter");
+                });
+
+            modelBuilder.Entity("MangaIngestWithUpscaling.Data.Analysis.StripSplitFinding", b =>
+                {
+                    b.HasOne("MangaIngestWithUpscaling.Data.LibraryManagement.Chapter", "Chapter")
+                        .WithMany()
+                        .HasForeignKey("ChapterId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Chapter");
                 });
 
             modelBuilder.Entity("MangaIngestWithUpscaling.Data.ApiKey", b =>

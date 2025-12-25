@@ -2,3 +2,6 @@
 	path = submodules/MangaJaNaiConverterGui
 	url = https://github.com/the-database/MangaJaNaiConverterGui.git
 	branch = main
+[submodule "submodules/manga-vert-split-nn"]
+	path = submodules/manga-vert-split-nn
+	url = https://github.com/lolle2000la/manga-vert-split-nn.git

@@ -1,8 +1,13 @@
 ﻿using System.Diagnostics;
+using System.IO.Compression;
 using System.Threading.Channels;
 using Google.Protobuf;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Api.Upscaling;
+using MangaIngestWithUpscaling.RemoteWorker.Configuration;
+using MangaIngestWithUpscaling.Shared.Constants;
+using MangaIngestWithUpscaling.Shared.Data.Analysis;
+using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using CompressionFormat = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat;
 using ScaleFactor = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.ScaleFactor;
@@ -170,10 +175,17 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 if (resp is null || resp.TaskId == -1)
                 {
                     _fetchInProgress = false;
+                    await dispatcherTimer.WaitForNextTickAsync(stoppingToken);
+                    _fetchSignals.Writer.TryWrite(true);
                     continue;
                 }
 
                 int prefetchTaskId = resp.TaskId;
+                logger.LogInformation(
+                    "Received task {TaskId} of type {TaskType} from server.",
+                    prefetchTaskId,
+                    resp.TaskType
+                );
                 UpscalerProfile prefetchProfile = GetProfileFromResponse(resp.UpscalerProfile);
 
                 var persistentKeepAliveCts = CancellationTokenSource.CreateLinkedTokenSource(
@@ -202,7 +214,9 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     prefetchProfile,
                     file,
                     persistentKeepAliveCts,
-                    persistentKeepAliveTask
+                    persistentKeepAliveTask,
+                    resp.TaskType,
+                    resp.SplitFindingsJson
                 );
                 await _toUpscale.Writer.WriteAsync(fetched, stoppingToken);
 
@@ -244,6 +258,9 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
             scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
         var logger = scope.ServiceProvider.GetRequiredService<ILogger<RemoteTaskProcessor>>();
         var upscaler = scope.ServiceProvider.GetRequiredService<IUpscaler>();
+        var splitDetectionService =
+            scope.ServiceProvider.GetRequiredService<ISplitDetectionService>();
+        var splitApplier = scope.ServiceProvider.GetRequiredService<ISplitApplier>();
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -271,7 +288,10 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
             // The persistent keep-alive continues running; we just add progress reporting
             // No need to start a separate processing keep-alive loop since the persistent one continues
 
-            string upscaledFile = PrepareTempFile(item.TaskId, "_upscaled");
+            string? upscaledFile = null;
+            string? resultJson = null;
+            string? tempExtractDir = null;
+
             // Progress reporting must not block upscaling: use a bounded channel and a background sender
             var progressChannel = Channel.CreateBounded<UpscaleProgress>(
                 new BoundedChannelOptions(1)
@@ -435,27 +455,194 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 
             try
             {
-                await upscaler.Upscale(
-                    item.DownloadedFile,
-                    upscaledFile,
-                    profile,
-                    progress,
-                    upscalesCts.Token
+                logger.LogInformation(
+                    "Starting processing for task {TaskId} ({TaskType})",
+                    item.TaskId,
+                    item.TaskType
                 );
-            }
-            catch (NotImplementedException)
-            {
-                await upscaler.Upscale(
-                    item.DownloadedFile,
-                    upscaledFile,
-                    profile,
-                    upscalesCts.Token
-                );
+
+                if (item.TaskType == TaskType.SplitDetection)
+                {
+                    logger.LogInformation(
+                        "Executing SplitDetection task {TaskId} on Remote Worker",
+                        item.TaskId
+                    );
+                    tempExtractDir = Path.Combine(
+                        Path.GetTempPath(),
+                        $"mangaingest_worker_extract_{item.TaskId}_{Guid.NewGuid()}"
+                    );
+                    Directory.CreateDirectory(tempExtractDir);
+                    ZipFile.ExtractToDirectory(item.DownloadedFile, tempExtractDir);
+
+                    var results = await splitDetectionService.DetectSplitsAsync(
+                        tempExtractDir,
+                        progress,
+                        upscalesCts.Token
+                    );
+                    resultJson = System.Text.Json.JsonSerializer.Serialize(
+                        results,
+                        WorkerJsonContext.Default.ListSplitDetectionResult
+                    );
+                }
+                else if (item.TaskType == TaskType.ApplySplits)
+                {
+                    tempExtractDir = Path.Combine(
+                        Path.GetTempPath(),
+                        $"mangaingest_worker_extract_{item.TaskId}_{Guid.NewGuid()}"
+                    );
+                    var newDir = Path.Combine(
+                        Path.GetTempPath(),
+                        $"mangaingest_worker_repack_{item.TaskId}_{Guid.NewGuid()}"
+                    );
+                    Directory.CreateDirectory(tempExtractDir);
+                    Directory.CreateDirectory(newDir);
+
+                    ZipFile.ExtractToDirectory(item.DownloadedFile, tempExtractDir);
+
+                    var findings = System.Text.Json.JsonSerializer.Deserialize(
+                        item.SplitFindingsJson!,
+                        WorkerJsonContext.Default.ListSplitFindingDto
+                    );
+
+                    List<SplitDetectionResult> detectionResults = new();
+                    bool hasValidFindings = false;
+
+                    if (findings != null && findings.Count > 0)
+                    {
+                        // Check if findings contain errors by deserializing and inspecting the result
+                        if (
+                            findings.Any(f =>
+                            {
+                                var result = System.Text.Json.JsonSerializer.Deserialize(
+                                    f.SplitJson,
+                                    WorkerJsonContext.Default.SplitDetectionResult
+                                );
+                                return result != null && !string.IsNullOrEmpty(result.Error);
+                            })
+                        )
+                        {
+                            logger.LogDebug(
+                                "Task {TaskId}: Findings contain errors. Will re-run detection locally.",
+                                item.TaskId
+                            );
+                        }
+                        else
+                        {
+                            hasValidFindings = true;
+                            foreach (var finding in findings)
+                            {
+                                var result = System.Text.Json.JsonSerializer.Deserialize(
+                                    finding.SplitJson,
+                                    WorkerJsonContext.Default.SplitDetectionResult
+                                );
+                                if (result != null)
+                                {
+                                    // Ensure image path matches what we expect locally if needed,
+                                    // but usually we match by filename anyway.
+                                    detectionResults.Add(result);
+                                }
+                            }
+                        }
+                    }
+
+                    if (!hasValidFindings)
+                    {
+                        logger.LogDebug(
+                            "Task {TaskId}: Running split detection locally on worker.",
+                            item.TaskId
+                        );
+                        detectionResults = await splitDetectionService.DetectSplitsAsync(
+                            tempExtractDir,
+                            progress,
+                            upscalesCts.Token
+                        );
+                    }
+
+                    var images = Directory
+                        .GetFiles(tempExtractDir)
+                        .Where(f =>
+                            ImageConstants.SupportedImageExtensions.Contains(Path.GetExtension(f))
+                        )
+                        .ToList();
+
+                    logger.LogInformation(
+                        "Task {TaskId}: Found {Count} images in archive.",
+                        item.TaskId,
+                        images.Count
+                    );
+
+                    int appliedCount = 0;
+                    foreach (var imagePath in images)
+                    {
+                        var fileNameWithoutExt = Path.GetFileNameWithoutExtension(imagePath);
+                        // Match by filename
+                        var result = detectionResults.FirstOrDefault(r =>
+                            Path.GetFileNameWithoutExtension(r.ImagePath)
+                                .Equals(fileNameWithoutExt, StringComparison.OrdinalIgnoreCase)
+                        );
+
+                        if (result != null && result.Splits.Count > 0)
+                        {
+                            splitApplier.ApplySplitsToImage(imagePath, result.Splits, newDir);
+                            appliedCount++;
+                        }
+                        else
+                        {
+                            // Copy unsplit
+                            var dest = Path.Combine(newDir, Path.GetFileName(imagePath));
+                            File.Copy(imagePath, dest);
+                        }
+                    }
+
+                    logger.LogInformation(
+                        "Task {TaskId}: Applied splits to {Count} images.",
+                        item.TaskId,
+                        appliedCount
+                    );
+
+                    // Copy ComicInfo.xml if exists
+                    var comicInfo = Path.Combine(tempExtractDir, "ComicInfo.xml");
+                    if (File.Exists(comicInfo))
+                    {
+                        File.Copy(comicInfo, Path.Combine(newDir, "ComicInfo.xml"));
+                    }
+
+                    upscaledFile = PrepareTempFile(item.TaskId, "_split.cbz");
+                    ZipFile.CreateFromDirectory(newDir, upscaledFile);
+
+                    Directory.Delete(newDir, true);
+                }
+                else
+                {
+                    upscaledFile = PrepareTempFile(item.TaskId, "_upscaled");
+                    try
+                    {
+                        await upscaler.Upscale(
+                            item.DownloadedFile,
+                            upscaledFile,
+                            profile,
+                            progress,
+                            upscalesCts.Token
+                        );
+                    }
+                    catch (NotImplementedException)
+                    {
+                        await upscaler.Upscale(
+                            item.DownloadedFile,
+                            upscaledFile,
+                            profile,
+                            upscalesCts.Token
+                        );
+                    }
+                }
             }
             catch (OperationCanceledException)
             {
                 SafeDelete(item.DownloadedFile);
-                SafeDelete(upscaledFile);
+                if (upscaledFile != null)
+                    SafeDelete(upscaledFile);
+                if (tempExtractDir != null && Directory.Exists(tempExtractDir))
+                    Directory.Delete(tempExtractDir, true);
                 _currentTaskId = null;
                 await item.PersistentKeepAliveCts.CancelAsync();
                 try
@@ -494,7 +681,10 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 }
 
                 SafeDelete(item.DownloadedFile);
-                SafeDelete(upscaledFile);
+                if (upscaledFile != null)
+                    SafeDelete(upscaledFile);
+                if (tempExtractDir != null && Directory.Exists(tempExtractDir))
+                    Directory.Delete(tempExtractDir, true);
 
                 _currentTaskId = null;
                 await item.PersistentKeepAliveCts.CancelAsync();
@@ -535,13 +725,19 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 _fetchSignals?.Writer.TryWrite(true);
             }
 
+            // Cleanup temp dir if it exists (should be done in finally usually, but here we are at end of loop)
+            if (tempExtractDir != null && Directory.Exists(tempExtractDir))
+                Directory.Delete(tempExtractDir, true);
+
             await _toUpload.Writer.WriteAsync(
                 new ProcessedItem(
                     item.TaskId,
                     item.DownloadedFile,
                     upscaledFile,
+                    resultJson,
                     item.PersistentKeepAliveCts,
-                    item.PersistentKeepAliveTask
+                    item.PersistentKeepAliveTask,
+                    item.TaskType
                 ),
                 stoppingToken
             );
@@ -579,15 +775,37 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 
             try
             {
-                await UploadFileAndCleanup(
-                    client,
-                    logger,
-                    item.TaskId,
-                    item.UpscaledFile,
-                    item.DownloadedFile,
-                    item.UpscaledFile,
-                    stoppingToken
-                );
+                if (item.TaskType == TaskType.SplitDetection)
+                {
+                    if (item.ResultJson == null)
+                        throw new InvalidOperationException(
+                            "ResultJson is null for detection task"
+                        );
+                    await UploadDetectionResultAndCleanup(
+                        client,
+                        logger,
+                        item.TaskId,
+                        item.ResultJson,
+                        item.DownloadedFile,
+                        stoppingToken
+                    );
+                }
+                else
+                {
+                    if (item.UpscaledFile == null)
+                        throw new InvalidOperationException(
+                            "UpscaledFile is null for upscale task"
+                        );
+                    await UploadFileAndCleanup(
+                        client,
+                        logger,
+                        item.TaskId,
+                        item.UpscaledFile,
+                        item.DownloadedFile,
+                        item.UpscaledFile,
+                        stoppingToken
+                    );
+                }
             }
             catch (OperationCanceledException)
             {
@@ -685,6 +903,31 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
         }
     }
 
+    private async Task UploadDetectionResultAndCleanup(
+        UpscalingService.UpscalingServiceClient client,
+        ILogger<RemoteTaskProcessor> logger,
+        int taskId,
+        string resultJson,
+        string? downloadedFile,
+        CancellationToken stoppingToken
+    )
+    {
+        try
+        {
+            await client.UploadDetectionResultAsync(
+                new UploadDetectionResultRequest { TaskId = taskId, ResultJson = resultJson },
+                cancellationToken: stoppingToken
+            );
+        }
+        finally
+        {
+            if (downloadedFile != null && File.Exists(downloadedFile))
+            {
+                File.Delete(downloadedFile);
+            }
+        }
+    }
+
     private async Task UploadFileAndCleanup(
         UpscalingService.UpscalingServiceClient client,
         ILogger<RemoteTaskProcessor> logger,
@@ -743,9 +986,21 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
     }
 
     private static UpscalerProfile GetProfileFromResponse(
-        Api.Upscaling.UpscalerProfile upscalerProfile
+        Api.Upscaling.UpscalerProfile? upscalerProfile
     )
     {
+        if (upscalerProfile == null)
+        {
+            return new UpscalerProfile
+            {
+                Name = "None",
+                CompressionFormat = CompressionFormat.Webp,
+                Quality = 75,
+                ScalingFactor = ScaleFactor.OneX,
+                UpscalerMethod = UpscalerMethod.MangaJaNai,
+            };
+        }
+
         return new UpscalerProfile
         {
             CompressionFormat = upscalerProfile.CompressionFormat switch
@@ -846,15 +1101,19 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
         UpscalerProfile Profile,
         string DownloadedFile,
         CancellationTokenSource PersistentKeepAliveCts,
-        Task PersistentKeepAliveTask
+        Task PersistentKeepAliveTask,
+        TaskType TaskType,
+        string? SplitFindingsJson = null
     );
 
     private sealed record ProcessedItem(
         int TaskId,
         string DownloadedFile,
-        string UpscaledFile,
+        string? UpscaledFile,
+        string? ResultJson,
         CancellationTokenSource PersistentKeepAliveCts,
-        Task PersistentKeepAliveTask
+        Task PersistentKeepAliveTask,
+        TaskType TaskType
     );
 
     /// <summary>

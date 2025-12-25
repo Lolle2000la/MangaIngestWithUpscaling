@@ -2,6 +2,7 @@ using System.IO.Compression;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Services.Analysis;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.ChapterManagement;
@@ -75,11 +76,13 @@ public class IngestProcessorTaskCancellationTests : IDisposable
             new UpscalerConfig { RemoteOnly = true }
         );
         var processorLogger = Substitute.For<ILogger<UpscaleTaskProcessor>>();
+        var taskPersistenceService = Substitute.For<ITaskPersistenceService>();
         var processor = new UpscaleTaskProcessor(
             taskQueue,
             scopeFactory,
             upscalerOptions,
-            processorLogger
+            processorLogger,
+            taskPersistenceService
         );
 
         // SUT
@@ -94,6 +97,7 @@ public class IngestProcessorTaskCancellationTests : IDisposable
             )
             .Returns(Task.FromResult((false, (UpscalerProfileJsonDto?)null)));
 
+        var splitCoordinator = Substitute.For<ISplitProcessingCoordinator>();
         var ingest = new IngestProcessor(
             db,
             chapterRecognition,
@@ -108,7 +112,8 @@ public class IngestProcessorTaskCancellationTests : IDisposable
             mergeCoordinator,
             processor,
             imageFilter,
-            chapterProcessingService
+            chapterProcessingService,
+            splitCoordinator
         );
 
         // Library and series

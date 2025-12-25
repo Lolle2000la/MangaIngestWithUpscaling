@@ -2572,11 +2572,13 @@ public class PartialUpscalingMergeTests : IDisposable
         );
         var upscalerOptions = Options.Create(new UpscalerConfig { RemoteOnly = true });
         var processorLogger = Substitute.For<ILogger<UpscaleTaskProcessor>>();
+        var taskPersistenceService = Substitute.For<ITaskPersistenceService>();
         var processor = new UpscaleTaskProcessor(
             realQueueForProcessor,
             scopeFactory,
             upscalerOptions,
-            processorLogger
+            processorLogger,
+            taskPersistenceService
         );
 
         var realTaskManager = new ChapterMergeUpscaleTaskManager(

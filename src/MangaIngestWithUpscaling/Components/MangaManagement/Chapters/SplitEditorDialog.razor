@@ -1,0 +1,122 @@
+@using MangaIngestWithUpscaling.Data
+@using MangaIngestWithUpscaling.Data.Analysis
+@using MangaIngestWithUpscaling.Services.Analysis
+@using MangaIngestWithUpscaling.Shared.Data.Analysis
+@using System.Text.Json
+@using MudBlazor
+@inject ISplitProcessingService SplitProcessingService
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <DialogContent>
+        <MudContainer MaxWidth="MaxWidth.False" Style="height: 80vh; overflow-y: auto;">
+            @if (_isLoading)
+            {
+                <MudProgressCircular Indeterminate="true" />
+            }
+            else if (_findings == null || !_findings.Any())
+            {
+                <MudText>No split findings found for this chapter.</MudText>
+            }
+            else
+            {
+                <MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-6">
+                    @foreach (var finding in _findings)
+                    {
+                        <MudTabPanel Text="@finding.PageFileName">
+                            <MudStack>
+                                <MudText Typo="Typo.h6">@finding.PageFileName</MudText>
+                                <MudText>Detected Splits: @GetSplitCount(finding)</MudText>
+
+                                <!-- Image Visualization -->
+                                <div style="position: relative; width: 100%; border: 1px solid #ccc;">
+                                    @{
+                                        var result = GetSplitResult(finding);
+                                        var fileName = result != null ? Path.GetFileName(result.ImagePath) : finding.PageFileName;
+                                    }
+                                    @if (result != null)
+                                    {
+                                        <MudImage Src="@($"/api/images/chapter/{ChapterId}/file/{fileName}")" Fluid="true"
+                                            Style="display: block; width: 100%;" />
+
+                                        foreach (var split in result.Splits)
+                                        {
+                                            var top = (double)split.YOriginal / result.OriginalHeight * 100;
+                                            <div style="position: absolute; left: 0; right: 0; top: @(top)%; height: 4px; background-color: rgba(255, 0, 0, 0.7); z-index: 10; cursor: row-resize;"
+                                                title="Split at @split.YOriginal"></div>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <MudText>Failed to parse split data.</MudText>
+                                    }
+                                </div>
+                            </MudStack>
+                        </MudTabPanel>
+                    }
+                </MudTabs>
+            }
+        </MudContainer>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" OnClick="Save">Save</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public int ChapterId { get; set; }
+
+    private bool _isLoading = true;
+    private List<StripSplitFinding> _findings = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        _isLoading = true;
+        try
+        {
+            _findings = await SplitProcessingService.GetSplitFindingsAsync(ChapterId);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to load data: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private SplitDetectionResult? GetSplitResult(StripSplitFinding finding)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<SplitDetectionResult>(finding.SplitJson);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private int GetSplitCount(StripSplitFinding finding)
+    {
+        var result = GetSplitResult(finding);
+        return result?.Splits.Count ?? 0;
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private void Save()
+    {
+        // Return the updated findings to the caller so they can be persisted.
+        MudDialog.Close(DialogResult.Ok(_findings));
+    }
+}

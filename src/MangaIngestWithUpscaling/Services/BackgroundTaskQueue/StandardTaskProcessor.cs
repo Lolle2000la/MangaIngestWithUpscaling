@@ -7,7 +7,8 @@ namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 public class StandardTaskProcessor(
     TaskQueue taskQueue,
     IServiceScopeFactory scopeFactory,
-    ILogger<StandardTaskProcessor> logger
+    ILogger<StandardTaskProcessor> logger,
+    ITaskPersistenceService taskPersistenceService
 ) : BackgroundService
 {
     private readonly Lock _lock = new();
@@ -56,16 +57,23 @@ public class StandardTaskProcessor(
 
     protected async Task ProcessTaskAsync(PersistedTask task, CancellationToken stoppingToken)
     {
+        // Claim the task
+        if (!await taskPersistenceService.ClaimTaskAsync(task.Id, stoppingToken))
+        {
+            logger.LogInformation(
+                "Task {TaskId} could not be claimed (already processed or concurrency conflict)",
+                task.Id
+            );
+            return;
+        }
+
+        task.Status = PersistedTaskStatus.Processing;
+        StatusChanged?.Invoke(task);
+
         using var scope = scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         try
         {
-            task.Status = PersistedTaskStatus.Processing;
-            dbContext.Update(task);
-            await dbContext.SaveChangesAsync(stoppingToken);
-            StatusChanged?.Invoke(task);
-
             // Polymorphic processing based on concrete type, forward debounced progress to UI
             var last = DateTime.UtcNow;
             using var progressSubscription = task.Data.Progress.Changed.Subscribe(_ =>
@@ -81,21 +89,21 @@ public class StandardTaskProcessor(
             await task.Data.ProcessAsync(scope.ServiceProvider, stoppingToken);
             StatusChanged?.Invoke(task);
 
+            await taskPersistenceService.CompleteTaskAsync(task.Id);
+
             task.Status = PersistedTaskStatus.Completed;
             task.ProcessedAt = DateTime.UtcNow;
-            await dbContext.SaveChangesAsync(stoppingToken);
             StatusChanged?.Invoke(task);
         }
         catch (OperationCanceledException)
         {
             logger.LogInformation("Task {TaskId} was canceled", task.Id);
-            // only set to canceled if the cancellation was user requested
-            task.Status = serviceStoppingToken.IsCancellationRequested
-                ? PersistedTaskStatus.Pending
-                : PersistedTaskStatus.Canceled;
+            bool requeue = serviceStoppingToken.IsCancellationRequested;
             try
             {
-                await dbContext.SaveChangesAsync();
+                await taskPersistenceService.CancelTaskAsync(task.Id, requeue);
+
+                task.Status = requeue ? PersistedTaskStatus.Pending : PersistedTaskStatus.Canceled;
                 StatusChanged?.Invoke(task);
             }
             catch (Exception dbEx)
@@ -106,11 +114,12 @@ public class StandardTaskProcessor(
         catch (Exception ex)
         {
             logger.LogError(ex, "Error processing task {TaskId}", task.Id);
-            task.Status = PersistedTaskStatus.Failed;
-            task.RetryCount++;
             try
             {
-                await dbContext.SaveChangesAsync();
+                await taskPersistenceService.FailTaskAsync(task.Id);
+
+                task.Status = PersistedTaskStatus.Failed;
+                task.RetryCount++;
                 StatusChanged?.Invoke(task);
             }
             catch (Exception dbEx)

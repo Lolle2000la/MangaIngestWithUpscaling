@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MangaIngestWithUpscaling.Data.Analysis;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
@@ -31,6 +32,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<ApiKey> ApiKeys { get; set; }
     public DbSet<MergedChapterInfo> MergedChapterInfos { get; set; }
     public DbSet<FilteredImage> FilteredImages { get; set; }
+    public DbSet<StripSplitFinding> StripSplitFindings { get; set; }
+    public DbSet<ChapterSplitProcessingState> ChapterSplitProcessingStates { get; set; }
 
     public DbSet<DataProtectionKey> DataProtectionKeys { get; set; } = null!;
 

@@ -2,6 +2,7 @@ using MangaIngestWithUpscaling.Configuration;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Services.Analysis;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.ChapterManagement;
@@ -34,6 +35,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
     private readonly IOptions<IntegrityCheckerConfig> _options;
     private readonly ITaskQueue _taskQueue;
     private readonly ICbzConverter _cbzConverter;
+    private readonly ISplitProcessingCoordinator _splitCoordinator;
 
     public LibraryIntegrityCheckerTests()
     {
@@ -45,6 +47,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         _fileSystem = Substitute.For<IFileSystem>();
         _taskQueue = Substitute.For<ITaskQueue>();
         _cbzConverter = Substitute.For<ICbzConverter>();
+        _splitCoordinator = Substitute.For<ISplitProcessingCoordinator>();
         // Mock FixImageExtensionsInCbz to return false (no changes) by default
         _cbzConverter.FixImageExtensionsInCbz(Arg.Any<string>()).Returns(false);
         _options = Options.Create(new IntegrityCheckerConfig { MaxParallelism = 1 });
@@ -124,7 +127,8 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            _options
+            _options,
+            _splitCoordinator
         );
 
         bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
@@ -207,7 +211,8 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            _options
+            _options,
+            _splitCoordinator
         );
 
         bool result = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
@@ -272,7 +277,8 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            _options
+            _options,
+            _splitCoordinator
         );
 
         // Act - file does not exist
@@ -345,7 +351,8 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            _options
+            _options,
+            _splitCoordinator
         );
 
         // Act
@@ -421,7 +428,8 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            _options
+            _options,
+            _splitCoordinator
         );
 
         int? total = null;
@@ -522,7 +530,8 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            _options
+            _options,
+            _splitCoordinator
         );
 
         bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
@@ -599,7 +608,8 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            _options
+            _options,
+            _splitCoordinator
         );
 
         bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
@@ -698,7 +708,8 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            _options
+            _options,
+            _splitCoordinator
         );
 
         bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
@@ -765,7 +776,8 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            _options
+            _options,
+            _splitCoordinator
         );
 
         bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
@@ -852,7 +864,8 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            _options
+            _options,
+            _splitCoordinator
         );
 
         bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
@@ -917,7 +930,8 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            _options
+            _options,
+            _splitCoordinator
         );
 
         bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
@@ -1008,7 +1022,8 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            _options
+            _options,
+            _splitCoordinator
         );
 
         bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
@@ -1132,7 +1147,8 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            _options
+            _options,
+            _splitCoordinator
         );
 
         bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
@@ -1251,7 +1267,8 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            _options
+            _options,
+            _splitCoordinator
         );
 
         bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
@@ -1354,7 +1371,8 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            _options
+            _options,
+            _splitCoordinator
         );
 
         bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
@@ -1478,7 +1496,8 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            _options
+            _options,
+            _splitCoordinator
         );
 
         bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
@@ -1556,7 +1575,8 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            _options
+            _options,
+            _splitCoordinator
         );
 
         bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
@@ -1662,7 +1682,8 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            _options
+            _options,
+            _splitCoordinator
         );
 
         bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
@@ -1743,7 +1764,8 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            _options
+            _options,
+            _splitCoordinator
         );
 
         bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
