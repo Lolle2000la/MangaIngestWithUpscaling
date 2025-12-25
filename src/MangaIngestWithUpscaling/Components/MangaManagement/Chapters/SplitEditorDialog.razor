@@ -116,7 +116,7 @@
 
     private void Save()
     {
-        // Save logic would go here (updating findings)
-        MudDialog.Close(DialogResult.Ok(true));
+        // Return the updated findings to the caller so they can be persisted.
+        MudDialog.Close(DialogResult.Ok(_findings));
     }
 }
