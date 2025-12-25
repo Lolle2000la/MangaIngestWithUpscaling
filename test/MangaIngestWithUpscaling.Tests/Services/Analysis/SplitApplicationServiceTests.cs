@@ -12,6 +12,7 @@ using MangaIngestWithUpscaling.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -24,6 +25,7 @@ public class SplitApplicationServiceTests : IDisposable
     private readonly ApplicationDbContext _dbContext;
     private readonly ISplitProcessingCoordinator _coordinator;
     private readonly ISplitApplier _splitApplier;
+    private readonly IUpscaler _upscaler;
     private readonly ILogger<SplitApplicationService> _logger;
     private readonly SplitApplicationService _service;
     private readonly string _tempDir;
@@ -40,9 +42,16 @@ public class SplitApplicationServiceTests : IDisposable
 
         _coordinator = Substitute.For<ISplitProcessingCoordinator>();
         _splitApplier = Substitute.For<ISplitApplier>();
+        _upscaler = Substitute.For<IUpscaler>();
         _logger = Substitute.For<ILogger<SplitApplicationService>>();
 
-        _service = new SplitApplicationService(_dbContext, _coordinator, _splitApplier, _logger);
+        _service = new SplitApplicationService(
+            _dbContext,
+            _coordinator,
+            _splitApplier,
+            _upscaler,
+            _logger
+        );
 
         _tempDir = Path.Combine(Path.GetTempPath(), $"split_test_{Guid.NewGuid()}");
         Directory.CreateDirectory(_tempDir);
@@ -60,7 +69,7 @@ public class SplitApplicationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ApplySplitsAsync_WhenChapterIsUpscaled_DeletesUpscaledVersion()
+    public async Task ApplySplitsAsync_WhenChapterIsUpscaled_UpscalesSplitPagesOnly()
     {
         // Arrange
         var library = new Library
@@ -107,16 +116,16 @@ public class SplitApplicationServiceTests : IDisposable
         _dbContext.Chapters.Add(chapter);
         await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        // Create original CBZ with a test image
+        // Create original CBZ with test images (one will be split, one won't)
         var originalCbzPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(originalCbzPath)!);
-        CreateTestCbz(originalCbzPath, "page1.png");
+        CreateTestCbz(originalCbzPath, "page1.png", "page2.png");
 
-        // Create upscaled CBZ
+        // Create upscaled CBZ with same pages
         var upscaledCbzPath = chapter.UpscaledFullPath!;
-        CreateTestCbz(upscaledCbzPath, "page1.png");
+        CreateTestCbz(upscaledCbzPath, "page1.png", "page2.png");
 
-        // Create split finding
+        // Create split finding for page1 only
         var finding = new StripSplitFinding
         {
             ChapterId = chapter.Id,
@@ -145,21 +154,43 @@ public class SplitApplicationServiceTests : IDisposable
                 var outputDir = callInfo.ArgAt<string>(2);
                 var part1 = Path.Combine(outputDir, "page1_part1.png");
                 var part2 = Path.Combine(outputDir, "page1_part2.png");
-                File.WriteAllText(part1, "dummy");
-                File.WriteAllText(part2, "dummy");
+                File.WriteAllText(part1, "dummy part1");
+                File.WriteAllText(part2, "dummy part2");
                 return new List<string> { part1, part2 };
+            });
+
+        // Configure upscaler to create dummy upscaled CBZ
+        _upscaler
+            .Upscale(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<UpscalerProfile>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(callInfo =>
+            {
+                var outputPath = callInfo.ArgAt<string>(1);
+                // Create a CBZ with upscaled split pages
+                CreateTestCbz(outputPath, "page1_part1.png", "page1_part2.png");
+                return Task.CompletedTask;
             });
 
         // Act
         await _service.ApplySplitsAsync(chapter.Id, 1, TestContext.Current.CancellationToken);
 
         // Assert
-        // Reload chapter from database
-        await _dbContext.Entry(chapter).ReloadAsync(TestContext.Current.CancellationToken);
+        // Verify upscaler was called to upscale the split pages
+        await _upscaler
+            .Received(1)
+            .Upscale(Arg.Any<string>(), Arg.Any<string>(), profile, Arg.Any<CancellationToken>());
 
-        Assert.False(chapter.IsUpscaled, "Chapter should be marked as not upscaled");
-        Assert.Null(chapter.UpscalerProfileId);
-        Assert.False(File.Exists(upscaledCbzPath), "Upscaled CBZ should be deleted");
+        // Verify the upscaled CBZ still exists and has been updated
+        Assert.True(File.Exists(upscaledCbzPath), "Upscaled CBZ should still exist");
+
+        // Chapter should remain upscaled
+        await _dbContext.Entry(chapter).ReloadAsync(TestContext.Current.CancellationToken);
+        Assert.True(chapter.IsUpscaled, "Chapter should still be marked as upscaled");
+        Assert.Equal(profile.Id, chapter.UpscalerProfileId);
 
         // Verify coordinator was notified
         await _coordinator
@@ -252,16 +283,19 @@ public class SplitApplicationServiceTests : IDisposable
             .OnSplitsAppliedAsync(chapter.Id, 1, Arg.Any<CancellationToken>());
     }
 
-    private void CreateTestCbz(string path, string imageName)
+    private void CreateTestCbz(string path, params string[] imageNames)
     {
         var tempExtractDir = Path.Combine(_tempDir, $"extract_{Guid.NewGuid()}");
         Directory.CreateDirectory(tempExtractDir);
 
         try
         {
-            // Create a dummy image file
-            var imagePath = Path.Combine(tempExtractDir, imageName);
-            File.WriteAllText(imagePath, "dummy image content");
+            // Create dummy image files
+            foreach (var imageName in imageNames)
+            {
+                var imagePath = Path.Combine(tempExtractDir, imageName);
+                File.WriteAllText(imagePath, $"dummy image content for {imageName}");
+            }
 
             // Create CBZ (which is just a ZIP file)
             if (File.Exists(path))
