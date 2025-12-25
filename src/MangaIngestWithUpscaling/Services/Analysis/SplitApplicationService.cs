@@ -164,12 +164,12 @@ public class SplitApplicationService(
                 {
                     var fileNameWithoutExt = Path.GetFileNameWithoutExtension(imagePath);
 
-                    if (splitPagesMap.ContainsKey(fileNameWithoutExt))
+                    if (splitPagesMap.TryGetValue(fileNameWithoutExt, out var splitPages))
                     {
                         // This page was split in the original. Instead of trying to split the upscaled
                         // version with coordinate scaling (which doesn't work correctly with
                         // MaxDimensionBeforeUpscaling), we'll upscale the new split pages from the original.
-                        splitPagesToUpscale[fileNameWithoutExt] = splitPagesMap[fileNameWithoutExt];
+                        splitPagesToUpscale[fileNameWithoutExt] = splitPages;
                         // Don't copy this old upscaled page - it will be replaced by split upscaled pages
                     }
                     else
