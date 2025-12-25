@@ -12,6 +12,7 @@
 @using MangaIngestWithUpscaling.Services.MetadataHandling
 @using MangaIngestWithUpscaling.Shared.Services.FileSystem
 @using MangaIngestWithUpscaling.Shared.Services.MetadataHandling
+@using MangaIngestWithUpscaling.Shared.Services.Analysis
 @using MangaIngestWithUpscaling.Data.Analysis
 @inject ISplitApplicationService SplitApplicationService
 @inject ApplicationDbContext DbContext
@@ -1106,8 +1107,8 @@
             }
 
             var message = completedMerges.Count == 1
-            ? $"Successfully merged {totalProcessedChapters} chapters into 1 group."
-            : $"Successfully merged {totalProcessedChapters} chapters into {completedMerges.Count} groups.";
+                        ? $"Successfully merged {totalProcessedChapters} chapters into 1 group."
+                        : $"Successfully merged {totalProcessedChapters} chapters into {completedMerges.Count} groups.";
 
             // Clear merge cache to ensure fresh recalculation
             InvalidateMergePossibilitiesCache();
@@ -1298,7 +1299,8 @@
         {
             try
             {
-                await SplitApplicationService.ApplySplitsAsync(chapter.Id, SplitDetectionService.CURRENT_DETECTOR_VERSION, CancellationToken.None);
+                await SplitApplicationService.ApplySplitsAsync(chapter.Id, SplitDetectionService.CURRENT_DETECTOR_VERSION,
+                    CancellationToken.None);
                 Snackbar.Add($"Queued split application for {chapter.FileName}", Severity.Success);
 
                 var item = chapters.Items.FirstOrDefault(ci => ci.Chapter.Id == chapter.Id);
