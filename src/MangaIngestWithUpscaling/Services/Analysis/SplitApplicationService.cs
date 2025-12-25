@@ -19,7 +19,7 @@ namespace MangaIngestWithUpscaling.Services.Analysis;
 [RegisterScoped]
 public class SplitApplicationService(
     ApplicationDbContext dbContext,
-    IChapterChangedNotifier chapterChangedNotifier,
+    ISplitProcessingCoordinator splitProcessingCoordinator,
     ISplitApplier splitApplier,
     ILogger<SplitApplicationService> logger
 ) : ISplitApplicationService
@@ -54,10 +54,9 @@ public class SplitApplicationService(
                 chapterId,
                 detectorVersion
             );
-            await UpdateStateAsync(
+            await splitProcessingCoordinator.OnSplitsAppliedAsync(
                 chapterId,
                 detectorVersion,
-                SplitProcessingStatus.Applied,
                 cancellationToken
             );
             return;
@@ -218,15 +217,11 @@ public class SplitApplicationService(
                 File.Move(tempUpscaledCbz, chapter.UpscaledFullPath, true);
             }
 
-            await UpdateStateAsync(
+            await splitProcessingCoordinator.OnSplitsAppliedAsync(
                 chapterId,
                 detectorVersion,
-                SplitProcessingStatus.Applied,
                 cancellationToken
             );
-
-            // Notify change
-            await chapterChangedNotifier.Notify(chapter, chapter.IsUpscaled);
         }
         finally
         {
@@ -249,30 +244,6 @@ public class SplitApplicationService(
             // We could update metadata here if needed.
             // Since the file now exists, WriteComicInfoAsync would work if we wanted to ensure consistency.
             // For now, simply copying preserves the original metadata including fields we don't track.
-        }
-    }
-
-    private async Task UpdateStateAsync(
-        int chapterId,
-        int version,
-        SplitProcessingStatus status,
-        CancellationToken cancellationToken
-    )
-    {
-        var state = await dbContext.ChapterSplitProcessingStates.FirstOrDefaultAsync(
-            s => s.ChapterId == chapterId,
-            cancellationToken
-        );
-
-        if (state != null)
-        {
-            state.Status = status;
-            if (status == SplitProcessingStatus.Applied)
-            {
-                state.LastAppliedDetectorVersion = version;
-            }
-            state.ModifiedAt = DateTime.UtcNow;
-            await dbContext.SaveChangesAsync(cancellationToken);
         }
     }
 }
