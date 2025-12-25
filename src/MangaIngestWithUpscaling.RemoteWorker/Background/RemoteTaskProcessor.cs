@@ -509,8 +509,17 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 
                     if (findings != null && findings.Count > 0)
                     {
-                        // Check if findings contain errors
-                        if (findings.Any(f => f.SplitJson.Contains("\"error\"")))
+                        // Check if findings contain errors by deserializing and inspecting the result
+                        if (
+                            findings.Any(f =>
+                            {
+                                var result = System.Text.Json.JsonSerializer.Deserialize(
+                                    f.SplitJson,
+                                    WorkerJsonContext.Default.SplitDetectionResult
+                                );
+                                return result != null && !string.IsNullOrEmpty(result.Error);
+                            })
+                        )
                         {
                             logger.LogDebug(
                                 "Task {TaskId}: Findings contain errors. Will re-run detection locally.",
