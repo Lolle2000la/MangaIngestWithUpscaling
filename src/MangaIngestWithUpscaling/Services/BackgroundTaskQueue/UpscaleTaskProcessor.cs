@@ -155,22 +155,46 @@ public class UpscaleTaskProcessor(
             await task.Data.ProcessAsync(scope.ServiceProvider, stoppingToken);
             _ = StatusChanged?.Invoke(task);
 
-            task.Status = PersistedTaskStatus.Completed;
-            task.ProcessedAt = DateTime.UtcNow;
+            taskFromDb.Status = PersistedTaskStatus.Completed;
+            taskFromDb.ProcessedAt = DateTime.UtcNow;
             await dbContext.SaveChangesAsync(stoppingToken);
+
+            // Update in-memory task to match
+            task.Status = taskFromDb.Status;
+            task.ProcessedAt = taskFromDb.ProcessedAt;
             _ = StatusChanged?.Invoke(task);
         }
         catch (OperationCanceledException)
         {
             logger.LogInformation("Task {TaskId} was canceled", task.Id);
-            // only set to canceled if the cancellation was user requested
-            task.Status = serviceStoppingToken.IsCancellationRequested
-                ? PersistedTaskStatus.Pending
-                : PersistedTaskStatus.Canceled;
+
             try
             {
-                await dbContext.SaveChangesAsync();
-                StatusChanged?.Invoke(task);
+                // Ensure we have a tracked entity to update
+                var trackedTask = dbContext
+                    .ChangeTracker.Entries<PersistedTask>()
+                    .Select(e => e.Entity)
+                    .FirstOrDefault(t => t.Id == task.Id);
+
+                if (trackedTask == null)
+                {
+                    trackedTask = await dbContext.PersistedTasks.FirstOrDefaultAsync(t =>
+                        t.Id == task.Id
+                    );
+                }
+
+                if (trackedTask != null)
+                {
+                    trackedTask.Status = serviceStoppingToken.IsCancellationRequested
+                        ? PersistedTaskStatus.Pending
+                        : PersistedTaskStatus.Canceled;
+
+                    await dbContext.SaveChangesAsync();
+
+                    // Update in-memory task
+                    task.Status = trackedTask.Status;
+                    StatusChanged?.Invoke(task);
+                }
             }
             catch (Exception dbEx)
             {
@@ -180,12 +204,34 @@ public class UpscaleTaskProcessor(
         catch (Exception ex)
         {
             logger.LogError(ex, "Upscale task {TaskId} failed", task.Id);
-            task.Status = PersistedTaskStatus.Failed;
-            task.RetryCount++;
+
             try
             {
-                await dbContext.SaveChangesAsync();
-                StatusChanged?.Invoke(task);
+                // Ensure we have a tracked entity to update
+                var trackedTask = dbContext
+                    .ChangeTracker.Entries<PersistedTask>()
+                    .Select(e => e.Entity)
+                    .FirstOrDefault(t => t.Id == task.Id);
+
+                if (trackedTask == null)
+                {
+                    trackedTask = await dbContext.PersistedTasks.FirstOrDefaultAsync(t =>
+                        t.Id == task.Id
+                    );
+                }
+
+                if (trackedTask != null)
+                {
+                    trackedTask.Status = PersistedTaskStatus.Failed;
+                    trackedTask.RetryCount++;
+
+                    await dbContext.SaveChangesAsync();
+
+                    // Update in-memory task
+                    task.Status = trackedTask.Status;
+                    task.RetryCount = trackedTask.RetryCount;
+                    StatusChanged?.Invoke(task);
+                }
             }
             catch (Exception dbEx)
             {

@@ -749,6 +749,9 @@ public partial class UpscalingDistributionService(
             }
             catch (Exception ex)
             {
+                // Ensure the task is marked as failed so it doesn't get stuck in Processing
+                await taskProcessor.TaskFailed(taskId, ex.Message);
+
                 context.Status = new Status(StatusCode.Internal, ex.Message);
                 await responseStream.WriteAsync(
                     new UploadUpscaledCbzResponse
