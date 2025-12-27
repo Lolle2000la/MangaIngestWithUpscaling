@@ -1,16 +1,20 @@
 ﻿@page "/"
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks
+@using Microsoft.Extensions.Localization
+@using MangaIngestWithUpscaling.Resources
+@using Humanizer
 
+@inject IStringLocalizer<SharedResource> Loc
 @inject ITaskQueue TaskQueue
 @inject IWebHostEnvironment WebHostEnvironment
 
-<PageTitle>Home</PageTitle>
+<PageTitle>@Loc["Home"]</PageTitle>
 
 <MudGrid>
     <MudItem xs="12">
         <MudText Typo="Typo.h3" GutterBottom="true" Class="mb-6">
-            Welcome to Manga Ingest
+            @Loc["WelcomeToMangaIngest"]
         </MudText>
     </MudItem>
 
@@ -19,43 +23,38 @@
         <MudPaper Elevation="2" Class="pa-6">
             <MudText Typo="Typo.h4" GutterBottom="true" Color="Color.Primary">
                 <MudIcon Icon="@Icons.Material.Filled.Rocket" Class="mr-3"/>
-                Quick Start Guide
+                @Loc["QuickStartGuide"]
             </MudText>
             <MudText Typo="Typo.body1" Class="mb-4">
-                Get started with manga ingestion and upscaling in just a few steps:
+                @Loc["GetStartedMessage"]
             </MudText>
 
             <MudTimeline TimelinePosition="TimelinePosition.Left">
                 <MudTimelineItem Color="Color.Primary" Icon="@Icons.Material.Filled.CreateNewFolder">
-                    <MudText Typo="Typo.h6" Class="mb-2">Set up a Library</MudText>
+                    <MudText Typo="Typo.h6" Class="mb-2">@Loc["SetUpLibrary"]</MudText>
                     <MudText Typo="Typo.body2" Class="mb-2">
-                        Create a new library in the
-                        <MudLink Href="libraries" Color="Color.Primary" Underline="Underline.Hover">Libraries</MudLink>
-                        section to define where your manga files will be stored.
+                        @string.Format(Loc["SetUpLibraryDesc"], Loc["Libraries"])
                     </MudText>
                 </MudTimelineItem>
 
                 <MudTimelineItem Color="Color.Secondary" Icon="@Icons.Material.Filled.Upload">
-                    <MudText Typo="Typo.h6" Class="mb-2">Add Manga Files</MudText>
+                    <MudText Typo="Typo.h6" Class="mb-2">@Loc["AddMangaFiles"]</MudText>
                     <MudText Typo="Typo.body2" Class="mb-2">
-                        Add manga files to your configured ingest folder. The system will automatically detect and
-                        process them.
+                        @Loc["AddMangaFilesDesc"]
                     </MudText>
                 </MudTimelineItem>
 
                 <MudTimelineItem Color="Color.Success" Icon="@Icons.Material.Filled.AutoAwesome">
-                    <MudText Typo="Typo.h6" Class="mb-2">Automatic Processing</MudText>
+                    <MudText Typo="Typo.h6" Class="mb-2">@Loc["AutomaticProcessing"]</MudText>
                     <MudText Typo="Typo.body2" Class="mb-2">
-                        Wait for the system to ingest the mangas and chapters. This happens automatically in the
-                        background.
+                        @Loc["AutomaticProcessingDesc"]
                     </MudText>
                 </MudTimelineItem>
 
                 <MudTimelineItem Color="Color.Tertiary" Icon="@Icons.Material.Filled.ImageAspectRatio">
-                    <MudText Typo="Typo.h6" Class="mb-2">Upscale Content</MudText>
+                    <MudText Typo="Typo.h6" Class="mb-2">@Loc["UpscaleContent"]</MudText>
                     <MudText Typo="Typo.body2">
-                        Configure upscaling profiles and let the system enhance your manga images automatically or
-                        on-demand.
+                        @Loc["UpscaleContentDesc"]
                     </MudText>
                 </MudTimelineItem>
             </MudTimeline>
@@ -67,7 +66,7 @@
         <MudPaper Elevation="2" Class="pa-6">
             <MudText Typo="Typo.h5" GutterBottom="true" Color="Color.Primary">
                 <MudIcon Icon="@Icons.Material.Filled.FlashOn" Class="mr-3"/>
-                Quick Actions
+                @Loc["QuickActions"]
             </MudText>
 
             <MudStack Spacing="3">
@@ -77,7 +76,7 @@
                            StartIcon="@Icons.Material.Filled.Add"
                            FullWidth="true"
                            Size="Size.Large">
-                    Create Library
+                    @Loc["CreateLibrary"]
                 </MudButton>
 
                 <MudButton Href="upscaling/profiles"
@@ -86,7 +85,7 @@
                            StartIcon="@Icons.Material.Filled.ImageAspectRatio"
                            FullWidth="true"
                            Size="Size.Large">
-                    Manage Profiles
+                    @Loc["ManageProfiles"]
                 </MudButton>
 
                 <MudButton Href="tasks"
@@ -95,8 +94,14 @@
                            StartIcon="@Icons.Material.Filled.Task"
                            FullWidth="true"
                            Size="Size.Large">
-                    View Tasks
+                    @Loc["ViewTasks"]
                 </MudButton>
+                
+                <MudText Typo="Typo.caption" Align="Align.Center">
+                    @Loc["PendingTask"].Value.ToQuantity(TaskQueue.GetStandardSnapshot().Count + TaskQueue.GetUpscaleSnapshot().Count)
+                </MudText>
+
+
 
                 <MudButton Href="logs"
                            Variant="Variant.Text"

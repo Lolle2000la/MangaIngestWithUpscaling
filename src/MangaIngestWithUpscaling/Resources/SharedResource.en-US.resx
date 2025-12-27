@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="Home" xml:space="preserve">
+    <value>Home</value>
+  </data>
+  <data name="Settings" xml:space="preserve">
+    <value>Settings</value>
+  </data>
+  <data name="Language" xml:space="preserve">
+    <value>Language</value>
+  </data>
+  <data name="PreferredLanguage" xml:space="preserve">
+    <value>Preferred Language</value>
+  </data>
+  <data name="MangaIngestDashboard" xml:space="preserve">
+    <value>Manga Ingest Dashboard</value>
+  </data>
+  <data name="MangaIngestWithUpscaling" xml:space="preserve">
+    <value>Manga Ingest with Upscaling</value>
+  </data>
+  <data name="Libraries" xml:space="preserve">
+    <value>Libraries</value>
+  </data>
+  <data name="UpscaleProfiles" xml:space="preserve">
+    <value>Upscale Profiles</value>
+  </data>
+  <data name="Mangas" xml:space="preserve">
+    <value>Mangas</value>
+  </data>
+  <data name="Tasks" xml:space="preserve">
+    <value>Tasks</value>
+  </data>
+  <data name="Logs" xml:space="preserve">
+    <value>Logs</value>
+  </data>
+  <data name="Logout" xml:space="preserve">
+    <value>Logout</value>
+  </data>
+  <data name="WelcomeToMangaIngest" xml:space="preserve">
+    <value>Welcome to Manga Ingest</value>
+  </data>
+  <data name="QuickStartGuide" xml:space="preserve">
+    <value>Quick Start Guide</value>
+  </data>
+  <data name="GetStartedMessage" xml:space="preserve">
+    <value>Get started with manga ingestion and upscaling in just a few steps:</value>
+  </data>
+  <data name="SetUpLibrary" xml:space="preserve">
+    <value>Set up a Library</value>
+  </data>
+  <data name="SetUpLibraryDesc" xml:space="preserve">
+    <value>Create a new library in the {0} section to define where your manga files will be stored.</value>
+  </data>
+  <data name="AddMangaFiles" xml:space="preserve">
+    <value>Add Manga Files</value>
+  </data>
+  <data name="AddMangaFilesDesc" xml:space="preserve">
+    <value>Add manga files to your configured ingest folder. The system will automatically detect and process them.</value>
+  </data>
+  <data name="AutomaticProcessing" xml:space="preserve">
+    <value>Automatic Processing</value>
+  </data>
+  <data name="AutomaticProcessingDesc" xml:space="preserve">
+    <value>Wait for the system to ingest the mangas and chapters. This happens automatically in the background.</value>
+  </data>
+  <data name="UpscaleContent" xml:space="preserve">
+    <value>Upscale Content</value>
+  </data>
+  <data name="UpscaleContentDesc" xml:space="preserve">
+    <value>Configure upscaling profiles and let the system enhance your manga images automatically or on-demand.</value>
+  </data>
+  <data name="QuickActions" xml:space="preserve">
+    <value>Quick Actions</value>
+  </data>
+  <data name="CreateLibrary" xml:space="preserve">
+    <value>Create Library</value>
+  </data>
+  <data name="ManageProfiles" xml:space="preserve">
+    <value>Manage Profiles</value>
+  </data>
+  <data name="ViewTasks" xml:space="preserve">
+    <value>View Tasks</value>
+  </data>
+  <data name="PendingTask" xml:space="preserve">
+    <value>pending task</value>
+  </data>
+</root>
