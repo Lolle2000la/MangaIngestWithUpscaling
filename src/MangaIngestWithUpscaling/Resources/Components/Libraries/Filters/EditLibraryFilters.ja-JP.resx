@@ -76,4 +76,25 @@
   <data name="Header_Action" xml:space="preserve">
     <value>アクション</value>
   </data>
+  <data name="Enum_PatternType_Regex" xml:space="preserve">
+    <value>正規表現</value>
+  </data>
+  <data name="Enum_PatternType_Contains" xml:space="preserve">
+    <value>含む</value>
+  </data>
+  <data name="Enum_TargetField_FilePath" xml:space="preserve">
+    <value>ファイルパス</value>
+  </data>
+  <data name="Enum_TargetField_MangaTitle" xml:space="preserve">
+    <value>マンガタイトル</value>
+  </data>
+  <data name="Enum_TargetField_ChapterTitle" xml:space="preserve">
+    <value>チャプタータイトル</value>
+  </data>
+  <data name="Enum_Action_Include" xml:space="preserve">
+    <value>含める</value>
+  </data>
+  <data name="Enum_Action_Exclude" xml:space="preserve">
+    <value>除外する</value>
+  </data>
 </root>

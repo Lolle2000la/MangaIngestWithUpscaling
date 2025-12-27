@@ -98,6 +98,96 @@
     <value>Kapitelzusammenführung</value>
   </data>
   <data name="Helper_ChapterMerging" xml:space="preserve">
-    <value>...</value>
+    <value>Ob Kapitelteile zusammengeführt werden sollen</value>
+  </data>
+  <data name="Option_Default" xml:space="preserve">
+    <value>Standard</value>
+  </data>
+  <data name="Option_AlwaysMerge" xml:space="preserve">
+    <value>Immer zusammenführen</value>
+  </data>
+  <data name="Option_NeverMerge" xml:space="preserve">
+    <value>Niemals zusammenführen</value>
+  </data>
+  <data name="Warning_Experimental" xml:space="preserve">
+    <value>Warnung: Diese Funktion ist experimentell</value>
+  </data>
+  <data name="Label_Created" xml:space="preserve">
+    <value>Erstellt:</value>
+  </data>
+  <data name="Label_Modified" xml:space="preserve">
+    <value>Geändert:</value>
+  </data>
+  <data name="Tab_AltTitles" xml:space="preserve">
+    <value>Alternative Titel</value>
+  </data>
+  <data name="Header_AltTitles" xml:space="preserve">
+    <value>Alternative Titel</value>
+  </data>
+  <data name="Body_AltTitles" xml:space="preserve">
+    <value>Verwalten Sie alternative Titel für diesen Manga. Diese Titel können für die Suche verwendet werden.</value>
+  </data>
+  <data name="Header_AddNewTitle" xml:space="preserve">
+    <value>Neuen Titel hinzufügen</value>
+  </data>
+  <data name="Label_AltTitle" xml:space="preserve">
+    <value>Alternativer Titel</value>
+  </data>
+  <data name="Helper_AltTitle" xml:space="preserve">
+    <value>Geben Sie einen alternativen Titel ein</value>
+  </data>
+  <data name="Button_AddTitle" xml:space="preserve">
+    <value>Titel hinzufügen</value>
+  </data>
+  <data name="Header_CurrentTitles" xml:space="preserve">
+    <value>Aktuelle alternative Titel</value>
+  </data>
+  <data name="Text_NoTitles" xml:space="preserve">
+    <value>Noch keine alternativen Titel hinzugefügt.</value>
+  </data>
+  <data name="Text_AddTitlesHelp" xml:space="preserve">
+    <value>Fügen Sie oben alternative Titel hinzu, um die Suche zu erleichtern.</value>
+  </data>
+  <data name="Tooltip_RemoveTitle" xml:space="preserve">
+    <value>Diesen Titel entfernen</value>
+  </data>
+  <data name="Tab_Chapters" xml:space="preserve">
+    <value>Kapitel</value>
+  </data>
+  <data name="Header_ChapterManagement" xml:space="preserve">
+    <value>Kapitelverwaltung</value>
+  </data>
+  <data name="Warning_DeleteChapter" xml:space="preserve">
+    <value>&lt;b&gt;Warnung:&lt;/b&gt; Das Löschen eines Kapitels entfernt es aus der Datenbank und löscht die Dateien von der Festplatte.</value>
+  </data>
+  <data name="Text_CannotUndo" xml:space="preserve">
+    <value>Diese Aktion kann nicht rückgängig gemacht werden.</value>
+  </data>
+  <data name="Text_UnsavedChanges" xml:space="preserve">
+    <value>Sie haben ungespeicherte Änderungen.</value>
+  </data>
+  <data name="Text_NoChanges" xml:space="preserve">
+    <value>Keine Änderungen vorgenommen.</value>
+  </data>
+  <data name="Button_Cancel" xml:space="preserve">
+    <value>Abbrechen</value>
+  </data>
+  <data name="Button_SaveChanges" xml:space="preserve">
+    <value>Änderungen speichern</value>
+  </data>
+  <data name="Error_FormValidation" xml:space="preserve">
+    <value>Bitte beheben Sie die Fehler im Formular.</value>
+  </data>
+  <data name="Error_ChangeTitle" xml:space="preserve">
+    <value>Fehler beim Ändern des Mangatitels.</value>
+  </data>
+  <data name="Success_Update" xml:space="preserve">
+    <value>Manga erfolgreich aktualisiert.</value>
+  </data>
+  <data name="Error_Saving" xml:space="preserve">
+    <value>Fehler beim Speichern des Mangas {0}</value>
+  </data>
+  <data name="Loading" xml:space="preserve">
+    <value>Laden...</value>
   </data>
 </root>

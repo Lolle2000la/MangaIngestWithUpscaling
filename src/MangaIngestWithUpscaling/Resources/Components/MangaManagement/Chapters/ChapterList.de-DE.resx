@@ -100,4 +100,19 @@
   <data name="Tooltip_DeleteUpscaled" xml:space="preserve">
     <value>...</value>
   </data>
+  <data name="Chip_Split" xml:space="preserve">
+    <value>Geteilt</value>
+  </data>
+  <data name="Header_ChapterNumber" xml:space="preserve">
+    <value>Kapitelnummer</value>
+  </data>
+  <data name="Header_VolumeNumber" xml:space="preserve">
+    <value>Bandnummer</value>
+  </data>
+  <data name="Header_PageCount" xml:space="preserve">
+    <value>Seitenanzahl</value>
+  </data>
+  <data name="Button_SplitSelected" xml:space="preserve">
+    <value>Ausgewählte teilen (Experimentell)</value>
+  </data>
 </root>

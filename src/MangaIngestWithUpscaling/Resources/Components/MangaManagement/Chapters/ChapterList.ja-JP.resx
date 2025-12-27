@@ -100,4 +100,19 @@
   <data name="Tooltip_DeleteUpscaled" xml:space="preserve">
     <value>...</value>
   </data>
+  <data name="Chip_Split" xml:space="preserve">
+    <value>分割済み</value>
+  </data>
+  <data name="Header_ChapterNumber" xml:space="preserve">
+    <value>チャプター番号</value>
+  </data>
+  <data name="Header_VolumeNumber" xml:space="preserve">
+    <value>巻数</value>
+  </data>
+  <data name="Header_PageCount" xml:space="preserve">
+    <value>ページ数</value>
+  </data>
+  <data name="Button_SplitSelected" xml:space="preserve">
+    <value>選択したものを分割 (実験的)</value>
+  </data>
 </root>

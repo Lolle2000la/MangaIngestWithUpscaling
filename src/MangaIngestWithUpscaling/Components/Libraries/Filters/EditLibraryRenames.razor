@@ -22,8 +22,8 @@
         </HeaderContent>
         <RowTemplate>
             <MudTd DataLabel="@Loc["Header_Pattern"]">@context.Pattern</MudTd>
-            <MudTd DataLabel="@Loc["Header_PatternType"]">@context.PatternType.GetDisplayName()</MudTd>
-            <MudTd DataLabel="@Loc["Header_TargetField"]">@context.TargetField.GetDisplayName()</MudTd>
+            <MudTd DataLabel="@Loc["Header_PatternType"]">@Loc[$"Enum_PatternType_{context.PatternType}"]</MudTd>
+            <MudTd DataLabel="@Loc["Header_TargetField"]">@Loc[$"Enum_TargetField_{context.TargetField}"]</MudTd>
             <MudTd DataLabel="@Loc["Header_Replacement"]">@context.Replacement</MudTd>
             <MudTd>
                 <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"

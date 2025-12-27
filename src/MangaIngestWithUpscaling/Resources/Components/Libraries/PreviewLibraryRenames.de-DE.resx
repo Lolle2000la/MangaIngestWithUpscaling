@@ -100,4 +100,19 @@
   <data name="Header_OriginalSeriesTitle" xml:space="preserve">
     <value>Originalserientitel</value>
   </data>
+  <data name="Header_NewSeriesTitle" xml:space="preserve">
+    <value>Neuer Serientitel</value>
+  </data>
+  <data name="Panel_IngestChapterTitle" xml:space="preserve">
+    <value>Ingest - Kapiteltitel-Vorschau</value>
+  </data>
+  <data name="Panel_IngestFileName" xml:space="preserve">
+    <value>Ingest - Dateinamen-Vorschau</value>
+  </data>
+  <data name="Header_OriginalFileName" xml:space="preserve">
+    <value>Originaldateiname</value>
+  </data>
+  <data name="Header_NewFileName" xml:space="preserve">
+    <value>Neuer Dateiname</value>
+  </data>
 </root>

@@ -76,4 +76,19 @@
   <data name="Header_Replacement" xml:space="preserve">
     <value>Replacement</value>
   </data>
+  <data name="Enum_PatternType_Regex" xml:space="preserve">
+    <value>Regex</value>
+  </data>
+  <data name="Enum_PatternType_Contains" xml:space="preserve">
+    <value>Contains</value>
+  </data>
+  <data name="Enum_TargetField_SeriesTitle" xml:space="preserve">
+    <value>Series Title</value>
+  </data>
+  <data name="Enum_TargetField_FileName" xml:space="preserve">
+    <value>File Name</value>
+  </data>
+  <data name="Enum_TargetField_ChapterTitle" xml:space="preserve">
+    <value>Chapter Title</value>
+  </data>
 </root>
