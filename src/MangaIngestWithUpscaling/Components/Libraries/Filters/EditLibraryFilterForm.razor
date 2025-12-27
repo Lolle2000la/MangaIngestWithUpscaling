@@ -1,6 +1,5 @@
 ﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
 @using Microsoft.Extensions.Localization
-@using MangaIngestWithUpscaling.Resources
 @inject IStringLocalizer<EditLibraryFilterForm> Loc
 <MudTd DataLabel="@Loc["Label_PatternToMatch"]">
     <MudTextField Immediate="true" Required="true" @bind-Value="FilterRule.Pattern" />

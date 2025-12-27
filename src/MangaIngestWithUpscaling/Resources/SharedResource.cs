@@ -1,3 +1,3 @@
-namespace MangaIngestWithUpscaling.Resources;
+namespace MangaIngestWithUpscaling;
 
 public class SharedResource { }

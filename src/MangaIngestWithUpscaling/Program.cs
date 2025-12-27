@@ -114,7 +114,7 @@ builder.Services.AddMudTranslations();
 builder.Services.RegisterViewModels();
 builder.Services.AddScoped<MangaJaNaiUpscaler>();
 
-builder.Services.AddLocalization();
+builder.Services.AddLocalization(options => options.ResourcesPath = "Resources");
 
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddScoped<IdentityUserAccessor>();
