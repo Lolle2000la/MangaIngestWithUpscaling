@@ -4,6 +4,7 @@
 @using Microsoft.AspNetCore.Identity
 @using MangaIngestWithUpscaling.Data
 @using Microsoft.Extensions.Localization
+@using MangaIngestWithUpscaling.Shared.Helpers
 @using Humanizer
 @using System.Globalization
 
@@ -38,8 +39,8 @@
         else if (recoveryCodesLeft <= 3)
         {
             <div class="alert alert-warning">
-                <strong>@string.Format(Loc["RecoveryCodesLeft"], Loc["Word_RecoveryCode"].Value.ToQuantity(recoveryCodesLeft,
-                            formatProvider: CultureInfo.CurrentUICulture))</strong>
+                <strong>@string.Format(Loc["RecoveryCodesLeft"], Loc["Word_RecoveryCode"].Value.ToLocalizedQuantity(recoveryCodesLeft,
+                            CultureInfo.CurrentUICulture))</strong>
     <p>@((MarkupString)Loc["ShouldGenerateNewCodes"].Value)</p>
 </div>
 }

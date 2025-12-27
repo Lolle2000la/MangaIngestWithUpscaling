@@ -1,5 +1,6 @@
 @using MangaIngestWithUpscaling.Data.LibraryManagement
 @using Microsoft.Extensions.Localization
+@using MangaIngestWithUpscaling.Shared.Helpers
 @using Humanizer
 @using System.Globalization
 @inject IStringLocalizer<ImagePreviewDialog> Loc
@@ -41,7 +42,7 @@
 
                     <MudText Typo="Typo.caption" Color="Color.Secondary">
                         @string.Format(Loc["Text_Occurrences"],
-                        Loc["Word_Occurrence"].Value.ToQuantity(FilteredImage.OccurrenceCount, formatProvider:
+                        Loc["Word_Occurrence"].Value.ToLocalizedQuantity(FilteredImage.OccurrenceCount,
                         CultureInfo.CurrentUICulture))
                     </MudText>
                 </MudStack>

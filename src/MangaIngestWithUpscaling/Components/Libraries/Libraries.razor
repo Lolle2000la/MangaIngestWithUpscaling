@@ -2,6 +2,7 @@
 @using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks
+@using MangaIngestWithUpscaling.Shared.Helpers
 @using Humanizer
 @using System.Globalization
 
@@ -59,16 +60,16 @@
                         <MudSpacer />
                         <MudText Typo="Typo.body2" Color="Color.Surface">
                             @string.Format(Loc["Stats_Libraries"],
-                            Loc["Word_Library"].Value.ToQuantity(LoadedLibraries.Count(), formatProvider:
+                            Loc["Word_Library"].Value.ToLocalizedQuantity(LoadedLibraries.Count(),
                             CultureInfo.CurrentUICulture)) •
-                        @string.Format(Loc["Stats_MangaSeries"],
-                                                Loc["Word_MangaSeries"].Value.ToQuantity(LoadedLibraries.SelectMany(l => l.MangaSeries
-                                                ?? new List<Manga>()).Count(), formatProvider: CultureInfo.CurrentUICulture)) •
-                        @string.Format(Loc["Stats_Chapters"],
-                                                Loc["Word_Chapter"].Value.ToQuantity(LoadedLibraries.SelectMany(l => l.MangaSeries ??
-                                                new List<Manga>()).SelectMany(m => m.Chapters).Count(), formatProvider:
-                                                CultureInfo.CurrentUICulture))
-                    </MudText>
+                            @string.Format(Loc["Stats_MangaSeries"],
+                            Loc["Word_MangaSeries"].Value.ToLocalizedQuantity(LoadedLibraries.SelectMany(l => l.MangaSeries
+                            ?? new List<Manga>()).Count(), CultureInfo.CurrentUICulture)) •
+                            @string.Format(Loc["Stats_Chapters"],
+                            Loc["Word_Chapter"].Value.ToLocalizedQuantity(LoadedLibraries.SelectMany(l => l.MangaSeries ??
+                            new List<Manga>()).SelectMany(m => m.Chapters).Count(),
+                            CultureInfo.CurrentUICulture))
+                        </MudText>
                 </ToolBarContent>
 
                 <HeaderContent>

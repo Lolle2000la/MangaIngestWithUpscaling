@@ -4,6 +4,7 @@
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks
 @using MangaIngestWithUpscaling.Services.ImageFiltering
 @using Microsoft.Extensions.Localization
+@using MangaIngestWithUpscaling.Shared.Helpers
 @using Humanizer
 @using System.Globalization
 
@@ -61,7 +62,7 @@
                             @if (Library.FilteredImages.Any())
                             {
                                 <span>@string.Format(Loc["Text_FilteredImagesCount"],
-                                                                Loc["Word_FilteredImage"].Value.ToQuantity(Library.FilteredImages.Count, formatProvider:
+                                                                Loc["Word_FilteredImage"].Value.ToLocalizedQuantity(Library.FilteredImages.Count,
                                                                 CultureInfo.CurrentUICulture))</span>
                                                 }
                             else

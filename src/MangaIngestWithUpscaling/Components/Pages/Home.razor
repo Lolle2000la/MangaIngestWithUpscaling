@@ -2,7 +2,9 @@
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks
 @using Microsoft.Extensions.Localization
+@using MangaIngestWithUpscaling.Shared.Helpers
 @using Humanizer
+@using System.Globalization
 
 @inject IStringLocalizer<Home> Loc
 @inject ITaskQueue TaskQueue
@@ -85,8 +87,8 @@
                 </MudButton>
 
                 <MudText Typo="Typo.caption" Align="Align.Center">
-                    @Loc["PendingTask"].Value.ToQuantity(TaskQueue.GetStandardSnapshot().Count +
-                                        TaskQueue.GetUpscaleSnapshot().Count)
+                    @Loc["PendingTask"].Value.ToLocalizedQuantity(TaskQueue.GetStandardSnapshot().Count +
+                                        TaskQueue.GetUpscaleSnapshot().Count, CultureInfo.CurrentUICulture)
                 </MudText>
 
 

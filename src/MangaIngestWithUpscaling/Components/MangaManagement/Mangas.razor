@@ -4,6 +4,7 @@
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks
 @using MangaIngestWithUpscaling.Services.MetadataHandling
+@using MangaIngestWithUpscaling.Shared.Helpers
 @using Humanizer
 @using System.Globalization
 @implements IDisposable
@@ -86,7 +87,7 @@
         <MudTd DataLabel="@Loc["Header_Library"]">@context.Library.Name</MudTd>
         <MudTd DataLabel="@Loc["Header_Title"]">@context.PrimaryTitle</MudTd>
         <MudTd DataLabel="@Loc["Header_Chapters"]">@string.Format(Loc["ChapterCount"],
-                        Loc["Word_Chapter"].Value.ToQuantity(context.Chapters.Count(), formatProvider:
+                        Loc["Word_Chapter"].Value.ToLocalizedQuantity(context.Chapters.Count(),
                         CultureInfo.CurrentUICulture), context.Chapters.Count(c => c.IsUpscaled))
         </MudTd>
         <MudTd DataLabel="@Loc["Header_ShouldUpscale"]">@(context.ShouldUpscale is not null ?

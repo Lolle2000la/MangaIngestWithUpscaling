@@ -3,6 +3,7 @@
 @using MangaIngestWithUpscaling.Configuration
 @using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Shared.Data.Analysis
+@using MangaIngestWithUpscaling.Shared.Helpers
 @using Microsoft.Extensions.Options
 @using Humanizer
 @using System.Globalization
@@ -56,7 +57,7 @@
                             <div>
                                 <MudText Typo="Typo.h6" Class="mb-2">
                                     @string.Format(Loc["Warning_LibraryContainsSeries"],
-                                    Loc["Word_Series"].Value.ToQuantity(Library.MangaSeries.Count, formatProvider:
+                                    Loc["Word_Series"].Value.ToLocalizedQuantity(Library.MangaSeries.Count,
                                     CultureInfo.CurrentUICulture))
                             </MudText>
                             <MudText Typo="Typo.body2">

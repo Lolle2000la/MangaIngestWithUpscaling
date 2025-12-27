@@ -15,6 +15,7 @@
 @using MangaIngestWithUpscaling.Shared.Services.Analysis
 @using MangaIngestWithUpscaling.Data.Analysis
 @using Microsoft.Extensions.Localization
+@using MangaIngestWithUpscaling.Shared.Helpers
 @using Humanizer
 @using System.Globalization
 @inject ISplitApplicationService SplitApplicationService
@@ -292,7 +293,7 @@
         var result = await DialogService.ShowMessageBox(
         Loc["Dialog_RevertSelectedMerged_Title"],
         string.Format(Loc["Dialog_RevertSelectedMerged_Content"],
-        Loc["Word_MergedChapter"].Value.ToQuantity(mergedChapters.Count, formatProvider: CultureInfo.CurrentUICulture)),
+        Loc["Word_MergedChapter"].Value.ToLocalizedQuantity(mergedChapters.Count, CultureInfo.CurrentUICulture)),
         SharedLoc["Yes"],
         cancelText: SharedLoc["No"]);
 
