@@ -83,13 +83,22 @@
     <value>Library Overview</value>
   </data>
   <data name="Stats_Libraries" xml:space="preserve">
-    <value>{0} Libraries</value>
+    <value>{0}</value>
   </data>
   <data name="Stats_MangaSeries" xml:space="preserve">
-    <value>{0} Manga Series</value>
+    <value>{0}</value>
   </data>
   <data name="Stats_Chapters" xml:space="preserve">
-    <value>{0} Chapters</value>
+    <value>{0}</value>
+  </data>
+  <data name="Word_Library" xml:space="preserve">
+    <value>library</value>
+  </data>
+  <data name="Word_MangaSeries" xml:space="preserve">
+    <value>manga series</value>
+  </data>
+  <data name="Word_Chapter" xml:space="preserve">
+    <value>chapter</value>
   </data>
   <data name="Header_LibraryName" xml:space="preserve">
     <value>Library Name</value>

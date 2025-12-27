@@ -83,13 +83,22 @@
     <value>ライブラリ概要</value>
   </data>
   <data name="Stats_Libraries" xml:space="preserve">
-    <value>{0} ライブラリ</value>
+    <value>{0}</value>
   </data>
   <data name="Stats_MangaSeries" xml:space="preserve">
-    <value>{0} マンガシリーズ</value>
+    <value>{0}</value>
   </data>
   <data name="Stats_Chapters" xml:space="preserve">
-    <value>{0} チャプター</value>
+    <value>{0}</value>
+  </data>
+  <data name="Word_Library" xml:space="preserve">
+    <value>ライブラリ</value>
+  </data>
+  <data name="Word_MangaSeries" xml:space="preserve">
+    <value>マンガシリーズ</value>
+  </data>
+  <data name="Word_Chapter" xml:space="preserve">
+    <value>チャプター</value>
   </data>
   <data name="Header_LibraryName" xml:space="preserve">
     <value>ライブラリ名</value>
