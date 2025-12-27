@@ -469,7 +469,7 @@ using (var scope = app.Services.CreateScope())
 app.UseAuthentication();
 app.UseAuthorization();
 
-var supportedCultures = new[] { "en-US", "de-DE", "ja-JP", "de", "ja" };
+var supportedCultures = new[] { "en-US", "de-DE", "ja-JP" };
 var localizationOptions = new RequestLocalizationOptions()
     .SetDefaultCulture("en-US")
     .AddSupportedCultures(supportedCultures)
@@ -483,7 +483,7 @@ localizationOptions.RequestCultureProviders.Insert(
         if (user.Identity?.IsAuthenticated == true)
         {
             var localeClaim = user.FindFirst("locale");
-            if (localeClaim != null)
+            if (localeClaim != null && !string.IsNullOrEmpty(localeClaim.Value))
             {
                 return new ProviderCultureResult(localeClaim.Value);
             }

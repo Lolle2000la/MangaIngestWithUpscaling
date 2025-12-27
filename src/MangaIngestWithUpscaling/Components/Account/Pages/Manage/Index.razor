@@ -79,7 +79,7 @@
 
         if (Input.PreferredCulture != user.PreferredCulture)
         {
-            user.PreferredCulture = Input.PreferredCulture;
+            user.PreferredCulture = string.IsNullOrEmpty(Input.PreferredCulture) ? null : Input.PreferredCulture;
             await UserManager.UpdateAsync(user);
         }
 
