@@ -89,7 +89,7 @@
     <value>フィルタリングする画像を選択:</value>
   </data>
   <data name="Label_Description" xml:space="preserve">
-    <value>説明 (オプション)</value>
+    <value>説明 (任意)</value>
   </data>
   <data name="Placeholder_Description" xml:space="preserve">
     <value>なぜこの画像を除外するのですか？</value>

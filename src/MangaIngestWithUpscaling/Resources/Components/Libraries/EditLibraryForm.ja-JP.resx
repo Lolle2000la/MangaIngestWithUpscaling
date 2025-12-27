@@ -104,7 +104,7 @@
     <value>保存パス (そのまま)</value>
   </data>
   <data name="Title_UpscaledLocation" xml:space="preserve">
-    <value>アップスケール保存場所 (オプション)</value>
+    <value>アップスケール後の保存先 (任意)</value>
   </data>
   <data name="Tab_Upscaling" xml:space="preserve">
     <value>アップスケーリング</value>
