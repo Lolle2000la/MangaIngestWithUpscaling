@@ -1,19 +1,17 @@
 ﻿@using MangaIngestWithUpscaling.Helpers
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using Microsoft.Extensions.Localization
-@inject IStringLocalizer<SharedResource> Loc
+@inject IStringLocalizer<UpscalerProfileForm> Loc
 
 <MudForm Model="@Profile" IsValid="@IsValid">
     <MudGrid Spacing="4">
         <MudItem xs="12">
-            <MudTextField Label="@Loc["UpscalerProfile_Name"]" @bind-Value="@Profile.Name"
-                @bind-Value:after="OnInputChanged" Immediate="true" Required="true"
-                HelperText="@Loc["UpscalerProfile_NameHelper"]" />
+            <MudTextField Label="@Loc["Name"]" @bind-Value="@Profile.Name" @bind-Value:after="OnInputChanged"
+                Immediate="true" Required="true" HelperText="@Loc["NameHelper"]" />
         </MudItem>
         <MudItem xs="12" sm="4">
-            <MudSelect Label="@Loc["UpscalerProfile_ScalingFactor"]" @bind-Value="@Profile.ScalingFactor"
-                @bind-Value:after="OnInputChanged" Required="true"
-                HelperText="@Loc["UpscalerProfile_ScalingFactorHelper"]">
+            <MudSelect Label="@Loc["ScalingFactor"]" @bind-Value="@Profile.ScalingFactor"
+                @bind-Value:after="OnInputChanged" Required="true" HelperText="@Loc["ScalingFactorHelper"]">
                 @foreach (ScaleFactor factor in Enum.GetValues(typeof(ScaleFactor)))
                 {
                     <MudSelectItem Value="@factor">@factor.GetDisplayName()</MudSelectItem>
@@ -21,9 +19,8 @@
             </MudSelect>
         </MudItem>
         <MudItem xs="12" sm="4">
-            <MudSelect Label="@Loc["UpscalerProfile_CompressionFormat"]" @bind-Value="@Profile.CompressionFormat"
-                @bind-Value:after="OnInputChanged" Required="true"
-                HelperText="@Loc["UpscalerProfile_CompressionFormatHelper"]">
+            <MudSelect Label="@Loc["CompressionFormat"]" @bind-Value="@Profile.CompressionFormat"
+                @bind-Value:after="OnInputChanged" Required="true" HelperText="@Loc["CompressionFormatHelper"]">
                 @foreach (CompressionFormat format in Enum.GetValues(typeof(CompressionFormat)))
                 {
                     <MudSelectItem Value="@format">@format.GetDisplayName()</MudSelectItem>
@@ -31,9 +28,8 @@
             </MudSelect>
         </MudItem>
         <MudItem xs="12" sm="4">
-            <MudNumericField Label="@Loc["UpscalerProfile_Quality"]" @bind-Value="@Profile.Quality"
-                @bind-Value:after="OnInputChanged" Min="1" Max="100" Step="1" Required="true"
-                HelperText="@Loc["UpscalerProfile_QualityHelper"]" />
+            <MudNumericField Label="@Loc["Quality"]" @bind-Value="@Profile.Quality" @bind-Value:after="OnInputChanged"
+                Min="1" Max="100" Step="1" Required="true" HelperText="@Loc["QualityHelper"]" />
         </MudItem>
     </MudGrid>
 </MudForm>

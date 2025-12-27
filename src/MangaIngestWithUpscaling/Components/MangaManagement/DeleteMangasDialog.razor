@@ -4,24 +4,22 @@
 @using Microsoft.Extensions.Localization
 @inject ApplicationDbContext DbContext
 @inject IChapterDeletion DeletionService
-@inject IStringLocalizer<SharedResource> Loc
+@inject IStringLocalizer<DeleteMangasDialog> Loc
 
 <MudDialog>
     <DialogContent>
         <MudStack>
-            <MudText>@(Mangas.Count > 1 ? string.Format(Loc["DeleteMangasDialog_Title_Multiple"], Mangas.Count) :
-                                string.Format(Loc["DeleteMangasDialog_Title_Single"], Mangas.First().PrimaryTitle))</MudText>
+            <MudText>@(Mangas.Count > 1 ? string.Format(Loc["Title_Multiple"], Mangas.Count) :
+                                string.Format(Loc["Title_Single"], Mangas.First().PrimaryTitle))</MudText>
 
-            <MudCheckBox T="bool" Label="@Loc["DeleteChaptersDialog_Option_Original"]"
-                @bind-Value="DeleteOriginalFiles" />
-            <MudCheckBox T="bool" Label="@Loc["DeleteChaptersDialog_Option_Upscaled"]"
-                @bind-Value="DeleteUpscaledFiles" />
+            <MudCheckBox T="bool" Label="@Loc["Option_Original"]" @bind-Value="DeleteOriginalFiles" />
+            <MudCheckBox T="bool" Label="@Loc["Option_Upscaled"]" @bind-Value="DeleteUpscaledFiles" />
         </MudStack>
     </DialogContent>
     <DialogActions>
-        <MudButton OnClick="Cancel">@Loc["Generic_Cancel"]</MudButton>
+        <MudButton OnClick="Cancel">@Loc["Button_Cancel"]</MudButton>
         <MudButton StartIcon="@Icons.Material.Filled.DeleteForever" Color="Color.Error" Variant="Variant.Filled"
-            OnClick="Submit">@Loc["Generic_Delete"]</MudButton>
+            OnClick="Submit">@Loc["Button_Delete"]</MudButton>
     </DialogActions>
 </MudDialog>
 

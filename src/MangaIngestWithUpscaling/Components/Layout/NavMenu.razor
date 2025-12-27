@@ -2,7 +2,7 @@
 
 @using Microsoft.Extensions.Localization
 @using MangaIngestWithUpscaling.Resources
-@inject IStringLocalizer<SharedResource> Loc
+@inject IStringLocalizer<NavMenu> Loc
 @inject NavigationManager NavigationManager
 @inject IConfiguration Configuration
 
@@ -38,8 +38,9 @@
                     <AntiforgeryToken />
                     <input type="hidden" name="ReturnUrl" value="@currentUrl" />
                     <button type="submit" class="mud-nav-link mud-ripple">
-                        <MudIcon Class="mud-icon-root mud-icon-default mud-svg-icon mud-icon-size-medium mud-nav-link-icon mud-nav-link-icon-default"
-                                 Icon="@Icons.Material.Filled.Logout" />
+                        <MudIcon
+                            Class="mud-icon-root mud-icon-default mud-svg-icon mud-icon-size-medium mud-nav-link-icon mud-nav-link-icon-default"
+                            Icon="@Icons.Material.Filled.Logout" />
                         <div class="mud-nav-link-text">@Loc["Logout"]</div>
                     </button>
                 </form>
@@ -54,8 +55,9 @@
                     <AntiforgeryToken />
                     <input type="hidden" name="ReturnUrl" value="@currentUrl" />
                     <button type="submit" class="mud-nav-link mud-ripple">
-                        <MudIcon Class="mud-icon-root mud-icon-default mud-svg-icon mud-icon-size-medium mud-nav-link-icon mud-nav-link-icon-default"
-                                 Icon="@Icons.Material.Filled.Logout" />
+                        <MudIcon
+                            Class="mud-icon-root mud-icon-default mud-svg-icon mud-icon-size-medium mud-nav-link-icon mud-nav-link-icon-default"
+                            Icon="@Icons.Material.Filled.Logout" />
                         <div class="mud-nav-link-text">@Loc["Logout"]</div>
                     </button>
                 </form>
@@ -73,9 +75,10 @@
             }
             else
             {
-                 // Optionally, show a login button that triggers OIDC challenge if OIDC is enabled and user is not authorized
-                 <MudNavLink Href="/Account/LoginOidc" Icon="@Icons.Material.Filled.Login">Login with OIDC</MudNavLink>
-            }
+                // Optionally, show a login button that triggers OIDC challenge if OIDC is enabled and user is not
+                authorized
+                <MudNavLink Href = "/Account/LoginOidc" Icon = "@Icons.Material.Filled.Login" > Login with OIDC</ MudNavLink >
+                        }
         </NotAuthorized>
     </AuthorizeView>
 </MudNavMenu>

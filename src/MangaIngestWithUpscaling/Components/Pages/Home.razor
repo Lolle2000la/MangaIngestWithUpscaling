@@ -5,7 +5,7 @@
 @using MangaIngestWithUpscaling.Resources
 @using Humanizer
 
-@inject IStringLocalizer<SharedResource> Loc
+@inject IStringLocalizer<Home> Loc
 @inject ITaskQueue TaskQueue
 @inject IWebHostEnvironment WebHostEnvironment
 
@@ -22,7 +22,7 @@
     <MudItem xs="12" md="8">
         <MudPaper Elevation="2" Class="pa-6">
             <MudText Typo="Typo.h4" GutterBottom="true" Color="Color.Primary">
-                <MudIcon Icon="@Icons.Material.Filled.Rocket" Class="mr-3"/>
+                <MudIcon Icon="@Icons.Material.Filled.Rocket" Class="mr-3" />
                 @Loc["QuickStartGuide"]
             </MudText>
             <MudText Typo="Typo.body1" Class="mb-4">
@@ -65,51 +65,36 @@
     <MudItem xs="12" md="4">
         <MudPaper Elevation="2" Class="pa-6">
             <MudText Typo="Typo.h5" GutterBottom="true" Color="Color.Primary">
-                <MudIcon Icon="@Icons.Material.Filled.FlashOn" Class="mr-3"/>
+                <MudIcon Icon="@Icons.Material.Filled.FlashOn" Class="mr-3" />
                 @Loc["QuickActions"]
             </MudText>
 
             <MudStack Spacing="3">
-                <MudButton Href="libraries/create"
-                           Variant="Variant.Filled"
-                           Color="Color.Primary"
-                           StartIcon="@Icons.Material.Filled.Add"
-                           FullWidth="true"
-                           Size="Size.Large">
+                <MudButton Href="libraries/create" Variant="Variant.Filled" Color="Color.Primary"
+                    StartIcon="@Icons.Material.Filled.Add" FullWidth="true" Size="Size.Large">
                     @Loc["CreateLibrary"]
                 </MudButton>
 
-                <MudButton Href="upscaling/profiles"
-                           Variant="Variant.Outlined"
-                           Color="Color.Secondary"
-                           StartIcon="@Icons.Material.Filled.ImageAspectRatio"
-                           FullWidth="true"
-                           Size="Size.Large">
+                <MudButton Href="upscaling/profiles" Variant="Variant.Outlined" Color="Color.Secondary"
+                    StartIcon="@Icons.Material.Filled.ImageAspectRatio" FullWidth="true" Size="Size.Large">
                     @Loc["ManageProfiles"]
                 </MudButton>
 
-                <MudButton Href="tasks"
-                           Variant="Variant.Text"
-                           Color="Color.Tertiary"
-                           StartIcon="@Icons.Material.Filled.Task"
-                           FullWidth="true"
-                           Size="Size.Large">
+                <MudButton Href="tasks" Variant="Variant.Text" Color="Color.Tertiary"
+                    StartIcon="@Icons.Material.Filled.Task" FullWidth="true" Size="Size.Large">
                     @Loc["ViewTasks"]
                 </MudButton>
-                
+
                 <MudText Typo="Typo.caption" Align="Align.Center">
-                    @Loc["PendingTask"].Value.ToQuantity(TaskQueue.GetStandardSnapshot().Count + TaskQueue.GetUpscaleSnapshot().Count)
+                    @Loc["PendingTask"].Value.ToQuantity(TaskQueue.GetStandardSnapshot().Count +
+                                        TaskQueue.GetUpscaleSnapshot().Count)
                 </MudText>
 
 
 
-                <MudButton Href="logs"
-                           Variant="Variant.Text"
-                           Color="Color.Default"
-                           StartIcon="@Icons.Material.Filled.List"
-                           FullWidth="true"
-                           Size="Size.Large">
-                    System Logs
+                <MudButton Href="logs" Variant="Variant.Text" Color="Color.Default"
+                    StartIcon="@Icons.Material.Filled.List" FullWidth="true" Size="Size.Large">
+                    @Loc["SystemLogs"]
                 </MudButton>
             </MudStack>
         </MudPaper>
@@ -129,17 +114,12 @@
                 <MudText Typo="Typo.h6" Class="mb-3">Task Queue Test</MudText>
                 <MudGrid>
                     <MudItem xs="12" sm="8">
-                        <MudTextField @bind-Value="message"
-                                      Label="Test Message"
-                                      Variant="Variant.Outlined"
-                                      FullWidth="true"/>
+                        <MudTextField @bind-Value="message" Label="Test Message" Variant="Variant.Outlined"
+                            FullWidth="true" />
                     </MudItem>
                     <MudItem xs="12" sm="4">
-                        <MudButton OnClick="TestTaskQueue"
-                                   Variant="Variant.Filled"
-                                   Color="Color.Info"
-                                   StartIcon="@Icons.Material.Filled.PlayArrow"
-                                   FullWidth="true">
+                        <MudButton OnClick="TestTaskQueue" Variant="Variant.Filled" Color="Color.Info"
+                            StartIcon="@Icons.Material.Filled.PlayArrow" FullWidth="true">
                             Enqueue Test Task
                         </MudButton>
                     </MudItem>
@@ -154,7 +134,7 @@
             <MudExpansionPanel Text="Dependencies & Licenses" Icon="@Icons.Material.Filled.Info">
                 <TitleContent>
                     <div class="d-flex align-center">
-                        <MudIcon Icon="@Icons.Material.Filled.Info" Class="mr-3"/>
+                        <MudIcon Icon="@Icons.Material.Filled.Info" Class="mr-3" />
                         <MudText Typo="Typo.h6">Dependencies & Licenses</MudText>
                     </div>
                 </TitleContent>
@@ -167,7 +147,7 @@
                                 <MudListItem T="string" Icon="@Icons.Material.Filled.AutoAwesome">
                                     <div>
                                         <MudLink Href="https://github.com/the-database/MangaJaNai/blob/main/LICENSE"
-                                                 Target="_blank" Color="Color.Primary">
+                                            Target="_blank" Color="Color.Primary">
                                             MangaJaNai
                                         </MudLink>
                                         <MudText Typo="Typo.body2" Color="Color.Secondary">Attribution-NonCommercial 4.0
@@ -180,8 +160,8 @@
                                 <MudListItem T="string" Icon="@Icons.Material.Filled.Terminal">
                                     <div>
                                         <MudLink
-                                                Href="https://github.com/the-database/MangaJaNaiConverterGui/blob/main/LICENSE"
-                                                Target="_blank" Color="Color.Primary">
+                                            Href="https://github.com/the-database/MangaJaNaiConverterGui/blob/main/LICENSE"
+                                            Target="_blank" Color="Color.Primary">
                                             MangaJaNaiConverterGui
                                         </MudLink>
                                         <MudText Typo="Typo.body2" Color="Color.Secondary">GNU General Public License
@@ -194,7 +174,7 @@
                                 <MudListItem T="string" Icon="@Icons.Material.Filled.Web">
                                     <div>
                                         <MudLink Href="https://github.com/dotnet/aspnetcore/blob/main/LICENSE.txt"
-                                                 Target="_blank" Color="Color.Primary">
+                                            Target="_blank" Color="Color.Primary">
                                             .NET & ASP.NET Core
                                         </MudLink>
                                         <MudText Typo="Typo.body2" Color="Color.Secondary">MIT License</MudText>
@@ -205,7 +185,7 @@
                                 <MudListItem T="string" Icon="@Icons.Material.Filled.Palette">
                                     <div>
                                         <MudLink Href="https://github.com/MudBlazor/MudBlazor/blob/dev/LICENSE"
-                                                 Target="_blank" Color="Color.Primary">
+                                            Target="_blank" Color="Color.Primary">
                                             MudBlazor
                                         </MudLink>
                                         <MudText Typo="Typo.body2" Color="Color.Secondary">MIT License</MudText>
@@ -222,8 +202,8 @@
                                 <MudListItem T="string" Icon="@Icons.Material.Filled.Extension">
                                     <div>
                                         <MudLink
-                                                Href="https://github.com/patrickklaeren/AutoRegisterInject/blob/main/LICENSE.txt"
-                                                Target="_blank" Color="Color.Primary">
+                                            Href="https://github.com/patrickklaeren/AutoRegisterInject/blob/main/LICENSE.txt"
+                                            Target="_blank" Color="Color.Primary">
                                             AutoRegisterInject
                                         </MudLink>
                                         <MudText Typo="Typo.body2" Color="Color.Secondary">MIT License</MudText>
@@ -233,7 +213,7 @@
                                 <MudListItem T="string" Icon="@Icons.Material.Filled.Storage">
                                     <div>
                                         <MudLink Href="https://github.com/reactivemarbles/DynamicData/blob/main/LICENSE"
-                                                 Target="_blank" Color="Color.Primary">
+                                            Target="_blank" Color="Color.Primary">
                                             DynamicData
                                         </MudLink>
                                         <MudText Typo="Typo.body2" Color="Color.Secondary">MIT License</MudText>
@@ -243,7 +223,7 @@
                                 <MudListItem T="string" Icon="@Icons.Material.Filled.Api">
                                     <div>
                                         <MudLink Href="https://github.com/grpc/grpc-dotnet/blob/master/LICENSE"
-                                                 Target="_blank" Color="Color.Primary">
+                                            Target="_blank" Color="Color.Primary">
                                             Grpc.AspNetCore
                                         </MudLink>
                                         <MudText Typo="Typo.body2" Color="Color.Secondary">Apache-2.0 License</MudText>
@@ -253,7 +233,7 @@
                                 <MudListItem T="string" Icon="@Icons.Material.Filled.Computer">
                                     <div>
                                         <MudLink Href="https://github.com/mono/mono/blob/main/LICENSE" Target="_blank"
-                                                 Color="Color.Primary">
+                                            Color="Color.Primary">
                                             Mono.Posix.NETStandard
                                         </MudLink>
                                         <MudText Typo="Typo.body2" Color="Color.Secondary">MIT License</MudText>
@@ -263,7 +243,7 @@
                                 <MudListItem T="string" Icon="@Icons.Material.Filled.Image">
                                     <div>
                                         <MudLink Href="https://github.com/kleisauke/net-vips/blob/master/LICENSE"
-                                                 Target="_blank" Color="Color.Primary">
+                                            Target="_blank" Color="Color.Primary">
                                             NetVips
                                         </MudLink>
                                         <MudText Typo="Typo.body2" Color="Color.Secondary">MIT License</MudText>
@@ -276,7 +256,7 @@
                                 <MudListItem T="string" Icon="@Icons.Material.Filled.Image">
                                     <div>
                                         <MudLink Href="https://github.com/libvips/libvips/blob/master/LICENSE"
-                                                 Target="_blank" Color="Color.Primary">
+                                            Target="_blank" Color="Color.Primary">
                                             libvips
                                         </MudLink>
                                         <MudText Typo="Typo.body2" Color="Color.Secondary">LGPL-2.1-or-later</MudText>
@@ -289,7 +269,7 @@
                                 <MudListItem T="string" Icon="@Icons.Material.Filled.QrCode">
                                     <div>
                                         <MudLink Href="https://github.com/PinguApps/Blazor.QRCode/blob/main/LICENSE"
-                                                 Target="_blank" Color="Color.Primary">
+                                            Target="_blank" Color="Color.Primary">
                                             PinguApps.Blazor.QRCode
                                         </MudLink>
                                         <MudText Typo="Typo.body2" Color="Color.Secondary">MIT License</MudText>
@@ -299,7 +279,7 @@
                                 <MudListItem T="string" Icon="@Icons.Material.Filled.Computer">
                                     <div>
                                         <MudLink Href="https://github.com/dotnet/Silk.NET/blob/main/LICENSE.md"
-                                                 Target="_blank" Color="Color.Primary">
+                                            Target="_blank" Color="Color.Primary">
                                             Silk.NET (OpenGL, Windowing)
                                         </MudLink>
                                         <MudText Typo="Typo.body2" Color="Color.Secondary">MIT License</MudText>
@@ -309,8 +289,8 @@
                                 <MudListItem T="string" Icon="@Icons.Material.Filled.Extension">
                                     <div>
                                         <MudLink
-                                                Href="https://github.com/Open-NET-Libraries/Open.ChannelExtensions/blob/master/LICENSE"
-                                                Target="_blank" Color="Color.Primary">
+                                            Href="https://github.com/Open-NET-Libraries/Open.ChannelExtensions/blob/master/LICENSE"
+                                            Target="_blank" Color="Color.Primary">
                                             Open.ChannelExtensions
                                         </MudLink>
                                         <MudText Typo="Typo.body2" Color="Color.Secondary">MIT License</MudText>
@@ -320,7 +300,7 @@
                                 <MudListItem T="string" Icon="@Icons.Material.Filled.Translate">
                                     <div>
                                         <MudLink Href="https://www.nuget.org/packages/MudBlazor.Translations/"
-                                                 Target="_blank" Color="Color.Primary">
+                                            Target="_blank" Color="Color.Primary">
                                             MudBlazor.Translations
                                         </MudLink>
                                         <MudText Typo="Typo.body2" Color="Color.Secondary">MIT License</MudText>
@@ -330,7 +310,7 @@
                                 <MudListItem T="string" Icon="@Icons.Material.Filled.Api">
                                     <div>
                                         <MudLink Href="https://github.com/dotnet/reactive/blob/main/LICENSE"
-                                                 Target="_blank" Color="Color.Primary">
+                                            Target="_blank" Color="Color.Primary">
                                             System.Interactive.Async (Reactive Extensions)
                                         </MudLink>
                                         <MudText Typo="Typo.body2" Color="Color.Secondary">MIT License</MudText>
@@ -340,7 +320,7 @@
                                 <MudListItem T="string" Icon="@Icons.Material.Filled.Api">
                                     <div>
                                         <MudLink Href="https://github.com/reactiveui/ReactiveUI/blob/main/LICENSE"
-                                                 Target="_blank" Color="Color.Primary">
+                                            Target="_blank" Color="Color.Primary">
                                             ReactiveUI
                                         </MudLink>
                                         <MudText Typo="Typo.body2" Color="Color.Secondary">MIT License</MudText>
@@ -350,8 +330,8 @@
                                 <MudListItem T="string" Icon="@Icons.Material.Filled.Api">
                                     <div>
                                         <MudLink
-                                                Href="https://github.com/reactivemarbles/ObservableEvents/blob/main/LICENSE"
-                                                Target="_blank" Color="Color.Primary">
+                                            Href="https://github.com/reactivemarbles/ObservableEvents/blob/main/LICENSE"
+                                            Target="_blank" Color="Color.Primary">
                                             ReactiveMarbles.ObservableEvents.SourceGenerator
                                         </MudLink>
                                         <MudText Typo="Typo.body2" Color="Color.Secondary">MIT License</MudText>
@@ -361,7 +341,7 @@
                                 <MudListItem T="string" Icon="@Icons.Material.Filled.Storage">
                                     <div>
                                         <MudLink Href="https://github.com/serilog/serilog/blob/dev/LICENSE"
-                                                 Target="_blank" Color="Color.Primary">
+                                            Target="_blank" Color="Color.Primary">
                                             Serilog
                                         </MudLink>
                                         <MudText Typo="Typo.body2" Color="Color.Secondary">Apache-2.0 License</MudText>
@@ -371,7 +351,7 @@
                                 <MudListItem T="string" Icon="@Icons.Material.Filled.Update">
                                     <div>
                                         <MudLink Href="https://github.com/Velopack/Velopack/blob/master/LICENSE"
-                                                 Target="_blank" Color="Color.Primary">
+                                            Target="_blank" Color="Color.Primary">
                                             Velopack
                                         </MudLink>
                                         <MudText Typo="Typo.body2" Color="Color.Secondary">MIT License</MudText>

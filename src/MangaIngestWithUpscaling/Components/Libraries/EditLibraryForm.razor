@@ -7,18 +7,18 @@
 @inject ApplicationDbContext DbContext
 @inject IOptions<KavitaConfiguration> KavitaConfig
 @inject IDialogService DialogService
-@inject IStringLocalizer<SharedResource> Loc
+@inject IStringLocalizer<EditLibraryForm> Loc
 
 <MudForm Model="@Library" IsValid="@IsValid">
     <MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-6">
 
         <!-- Basic Settings Tab -->
-        <MudTabPanel Text="@Loc["EditLibraryForm_Tab_BasicSettings"]" Icon="@Icons.Material.Filled.Settings">
+        <MudTabPanel Text="@Loc["Tab_BasicSettings"]" Icon="@Icons.Material.Filled.Settings">
             <MudGrid Spacing="4">
                 <MudItem xs="12">
-                    <MudText Typo="Typo.h5" GutterBottom="true">@Loc["EditLibraryForm_Header_LibraryInfo"]</MudText>
-                    <MudTextField Required="true" Label="@Loc["EditLibraryForm_Label_LibraryName"]"
-                        HelperText="@Loc["EditLibraryForm_Helper_LibraryName"]" Immediate="true"
+                    <MudText Typo="Typo.h5" GutterBottom="true">@Loc["Header_LibraryInfo"]</MudText>
+                    <MudTextField Required="true" Label="@Loc["Label_LibraryName"]"
+                        HelperText="@Loc["Helper_LibraryName"]" Immediate="true"
                         @bind-Value="Library.Name" @bind-Value:after="OnInputChanged" Variant="Variant.Outlined" />
 
                     @if (Library.Id > 0)
@@ -26,26 +26,26 @@
                         <MudDivider Style="margin: 16px 0;" />
                         <MudStack Row Spacing="4" Class="mt-2">
                             <MudText Typo="Typo.caption" Color="Color.Secondary">
-                                @Loc["EditLibraryForm_Label_Created"] @Library.CreatedAt.ToString("yyyy-MM-dd HH:mm")
+                                @Loc["Label_Created"] @Library.CreatedAt.ToString("yyyy-MM-dd HH:mm")
                             </MudText>
                             <MudText Typo="Typo.caption" Color="Color.Secondary">
-                                @Loc["EditLibraryForm_Label_Modified"] @Library.ModifiedAt.ToString("yyyy-MM-dd HH:mm")
+                                @Loc["Label_Modified"] @Library.ModifiedAt.ToString("yyyy-MM-dd HH:mm")
                             </MudText>
                         </MudStack>
                     }
                 </MudItem>
 
                 <MudItem xs="12">
-                    <MudText Typo="Typo.h5" GutterBottom="true">@Loc["EditLibraryForm_Header_IngestConfig"]</MudText>
+                    <MudText Typo="Typo.h5" GutterBottom="true">@Loc["Header_IngestConfig"]</MudText>
                     <FolderPicker RootDirectory="@Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)"
                         SelectedPath="@Library.IngestPath" SelectedPathChanged="@OnIngestPathChanged"
-                        Title="@Loc["EditLibraryForm_Title_IngestFolder"]" Required="true" />
+                        Title="@Loc["Title_IngestFolder"]" Required="true" />
                 </MudItem>
             </MudGrid>
         </MudTabPanel>
 
         <!-- Storage Paths Tab -->
-        <MudTabPanel Text="@Loc["EditLibraryForm_Tab_StoragePaths"]" Icon="@Icons.Material.Filled.FolderOpen">
+        <MudTabPanel Text="@Loc["Tab_StoragePaths"]" Icon="@Icons.Material.Filled.FolderOpen">
             <MudGrid Spacing="4">
                 @if (Library.MangaSeries.Count > 0)
                 {
@@ -53,14 +53,14 @@
                         <MudAlert Severity="Severity.Warning" Variant="Variant.Filled">
                             <div>
                                 <MudText Typo="Typo.h6" Class="mb-2">
-                                    @string.Format(Loc["EditLibraryForm_Warning_LibraryContainsSeries"],
+                                    @string.Format(Loc["Warning_LibraryContainsSeries"],
                                     Library.MangaSeries.Count)
                             </MudText>
                             <MudText Typo="Typo.body2">
-                                @Loc["EditLibraryForm_Warning_CannotChangePaths"]
+                                @Loc["Warning_CannotChangePaths"]
                             </MudText>
                             <MudText Typo="Typo.body2" Class="mt-2">
-                                @((MarkupString)Loc["EditLibraryForm_Warning_CanStillChange"].Value)
+                                @((MarkupString)Loc["Warning_CanStillChange"].Value)
                             </MudText>
                         </div>
                     </MudAlert>
@@ -68,14 +68,14 @@
                                 }
 
                 <MudItem xs="12">
-                    <MudText Typo="Typo.h5" GutterBottom="true">@Loc["EditLibraryForm_Header_StorageLocations"]
+                    <MudText Typo="Typo.h5" GutterBottom="true">@Loc["Header_StorageLocations"]
                     </MudText>
                 </MudItem>
 
                 <MudItem md="6" xs="12">
                     <FolderPicker RootDirectory="@Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)"
                         SelectedPath="@Library.NotUpscaledLibraryPath" SelectedPathChanged="@OnNotUpscaledPathChanged"
-                        Disabled="Library.MangaSeries.Count > 0" Title="@Loc["EditLibraryForm_Title_StoragePathAsIs"]"
+                        Disabled="Library.MangaSeries.Count > 0" Title="@Loc["Title_StoragePathAsIs"]"
                         Required="true" />
                 </MudItem>
 
@@ -84,29 +84,29 @@
                         SelectedPath="@Library.UpscaledLibraryPath"
                         Disabled="Library.MangaSeries.Count > 0 && Library.UpscaledLibraryPath != null"
                         SelectedPathChanged="@OnUpscaledPathChanged"
-                        Title="@Loc["EditLibraryForm_Title_UpscaledLocation"]" />
+                        Title="@Loc["Title_UpscaledLocation"]" />
                 </MudItem>
             </MudGrid>
         </MudTabPanel>
 
         <!-- Upscaling Configuration Tab -->
-        <MudTabPanel Text="@Loc["EditLibraryForm_Tab_Upscaling"]" Icon="@Icons.Material.Filled.ImageAspectRatio">
+        <MudTabPanel Text="@Loc["Tab_Upscaling"]" Icon="@Icons.Material.Filled.ImageAspectRatio">
             <MudGrid Spacing="4">
                 <MudItem xs="12">
-                    <MudText Typo="Typo.h5" GutterBottom="true">@Loc["EditLibraryForm_Header_UpscalingConfig"]</MudText>
+                    <MudText Typo="Typo.h5" GutterBottom="true">@Loc["Header_UpscalingConfig"]</MudText>
                 </MudItem>
 
                 <MudItem xs="12">
-                    <MudCheckBox T="bool" Label="@Loc["EditLibraryForm_Label_UpscaleOnIngest"]" Color="Color.Primary"
+                    <MudCheckBox T="bool" Label="@Loc["Label_UpscaleOnIngest"]" Color="Color.Primary"
                         @bind-Value="Library.UpscaleOnIngest" @bind-Value:after="OnInputChanged" />
                 </MudItem>
 
                 <MudItem xs="12">
-                    <MudSelect T="int?" Label="@Loc["EditLibraryForm_Label_UpscalerProfile"]"
-                        HelperText="@Loc["EditLibraryForm_Helper_UpscalerProfile"]" Immediate="true"
+                    <MudSelect T="int?" Label="@Loc["Label_UpscalerProfile"]"
+                        HelperText="@Loc["Helper_UpscalerProfile"]" Immediate="true"
                         @bind-Value="Library.UpscalerProfileId" @bind-Value:after="OnInputChanged" Clearable="true"
                         Variant="Variant.Outlined">
-                        <MudSelectItem T="int?" Value="null">@Loc["EditLibraryForm_Option_None"]</MudSelectItem>
+                        <MudSelectItem T="int?" Value="null">@Loc["Option_None"]</MudSelectItem>
                         @foreach (var upscalerConfig in DbContext.UpscalerProfiles)
                         {
                             <MudSelectItem T="int?" Value="@upscalerConfig.Id">@upscalerConfig.Name</MudSelectItem>
@@ -117,10 +117,10 @@
         </MudTabPanel>
 
         <!-- File Management Tab -->
-        <MudTabPanel Text="@Loc["EditLibraryForm_Tab_FileManagement"]" Icon="@Icons.Material.Filled.ManageSearch">
+        <MudTabPanel Text="@Loc["Tab_FileManagement"]" Icon="@Icons.Material.Filled.ManageSearch">
             <MudGrid Spacing="4">
                 <MudItem xs="12">
-                    <MudText Typo="Typo.h5" GutterBottom="true">@Loc["EditLibraryForm_Header_FileFiltering"]</MudText>
+                    <MudText Typo="Typo.h5" GutterBottom="true">@Loc["Header_FileFiltering"]</MudText>
                 </MudItem>
 
                 <MudItem xs="12">
@@ -128,39 +128,39 @@
                 </MudItem>
 
                 <MudItem xs="12">
-                    <MudText Typo="Typo.h5" GutterBottom="true">@Loc["EditLibraryForm_Header_ChapterProcessing"]
+                    <MudText Typo="Typo.h5" GutterBottom="true">@Loc["Header_ChapterProcessing"]
                     </MudText>
-                    <MudCheckBox T="bool" Label="@Loc["EditLibraryForm_Label_MergeChapters"]" Color="Color.Warning"
+                    <MudCheckBox T="bool" Label="@Loc["Label_MergeChapters"]" Color="Color.Warning"
                         @bind-Value="Library.MergeChapterParts" @bind-Value:after="OnInputChanged" />
                     <MudText Typo="Typo.caption" Color="Color.Warning">
-                        @Loc["EditLibraryForm_Warning_Experimental"]
+                        @Loc["Warning_Experimental"]
                     </MudText>
 
                     <MudText Typo="Typo.h5" GutterBottom="true" Class="mt-4">
-                        @Loc["EditLibraryForm_Header_VerticalStrip"]</MudText>
-                    <MudSelect T="StripDetectionMode" Label="@Loc["EditLibraryForm_Label_DetectionMode"]"
-                        HelperText="@Loc["EditLibraryForm_Helper_DetectionMode"]"
+                        @Loc["Header_VerticalStrip"]</MudText>
+                    <MudSelect T="StripDetectionMode" Label="@Loc["Label_DetectionMode"]"
+                        HelperText="@Loc["Helper_DetectionMode"]"
                         @bind-Value="Library.StripDetectionMode" @bind-Value:after="OnInputChanged"
                         Variant="Variant.Outlined">
-                        <MudSelectItem Value="StripDetectionMode.None">@Loc["EditLibraryForm_Option_Disabled"]
+                        <MudSelectItem Value="StripDetectionMode.None">@Loc["Option_Disabled"]
                         </MudSelectItem>
-                        <MudSelectItem Value="StripDetectionMode.DetectOnly">@Loc["EditLibraryForm_Option_DetectOnly"]
+                        <MudSelectItem Value="StripDetectionMode.DetectOnly">@Loc["Option_DetectOnly"]
                         </MudSelectItem>
                         <MudSelectItem Value="StripDetectionMode.DetectAndApply">
-                            @Loc["EditLibraryForm_Option_DetectAndApply"]</MudSelectItem>
+                            @Loc["Option_DetectAndApply"]</MudSelectItem>
                     </MudSelect>
                 </MudItem>
             </MudGrid>
         </MudTabPanel>
 
         <!-- Rename Rules Tab -->
-        <MudTabPanel Text="@Loc["EditLibraryForm_Tab_RenameRules"]"
+        <MudTabPanel Text="@Loc["Tab_RenameRules"]"
             Icon="@Icons.Material.Filled.DriveFileRenameOutline">
             <MudGrid Spacing="4">
                 <MudItem xs="12">
-                    <MudText Typo="Typo.h5" GutterBottom="true">@Loc["EditLibraryForm_Header_RenameConfig"]</MudText>
+                    <MudText Typo="Typo.h5" GutterBottom="true">@Loc["Header_RenameConfig"]</MudText>
                     <MudText Typo="Typo.body1" Class="mb-4">
-                        @Loc["EditLibraryForm_Body_RenameConfig"]
+                        @Loc["Body_RenameConfig"]
                     </MudText>
                 </MudItem>
 
@@ -173,7 +173,7 @@
                     <div class="d-flex justify-center mt-4">
                         <MudButton Variant="Variant.Filled" Color="Color.Primary"
                             StartIcon="@Icons.Material.Filled.Preview" OnClick="ShowRenameDialog" Size="Size.Large">
-                            @Loc["EditLibraryForm_Button_PreviewRename"]
+                            @Loc["Button_PreviewRename"]
                         </MudButton>
                     </div>
                 </MudItem>
@@ -183,36 +183,36 @@
         <!-- Integration Tab (only if Kavita is enabled) -->
         @if (KavitaConfig.Value.Enabled)
         {
-            <MudTabPanel Text="@Loc["EditLibraryForm_Tab_Integration"]" Icon="@Icons.Material.Filled.Hub">
+            <MudTabPanel Text="@Loc["Tab_Integration"]" Icon="@Icons.Material.Filled.Hub">
                 <MudGrid Spacing="4">
                     <MudItem xs="12">
                         <MudText Typo="Typo.h5" GutterBottom="true">
                             <MudIcon Icon="@Icons.Material.Filled.Hub" Class="mr-2" />
-                            @Loc["EditLibraryForm_Header_KavitaConfig"]
+                            @Loc["Header_KavitaConfig"]
                         </MudText>
 
                         <MudAlert Severity="Severity.Info" Variant="Variant.Text" Class="mb-4">
                             <div>
                                 <MudText Typo="Typo.body2">
-                                    @Loc["EditLibraryForm_Body_KavitaConfig"]
+                                    @Loc["Body_KavitaConfig"]
                                 </MudText>
                                 <MudText Typo="Typo.body2" Class="mt-2">
-                                    @((MarkupString)Loc["EditLibraryForm_Note_KavitaConfig"].Value)
+                                    @((MarkupString)Loc["Note_KavitaConfig"].Value)
                                 </MudText>
                             </div>
                         </MudAlert>
                     </MudItem>
 
                     <MudItem md="6" xs="12">
-                        <MudTextField Label="@Loc["EditLibraryForm_Label_KavitaAsIs"]"
-                            HelperText="@Loc["EditLibraryForm_Helper_KavitaAsIs"]" Immediate="true"
+                        <MudTextField Label="@Loc["Label_KavitaAsIs"]"
+                            HelperText="@Loc["Helper_KavitaAsIs"]" Immediate="true"
                             @bind-Value="Library.KavitaConfig.NotUpscaledMountPoint" @bind-Value:after="OnInputChanged"
                             Variant="Variant.Outlined" />
                     </MudItem>
 
                     <MudItem md="6" xs="12">
-                        <MudTextField Label="@Loc["EditLibraryForm_Label_KavitaUpscaled"]"
-                            HelperText="@Loc["EditLibraryForm_Helper_KavitaUpscaled"]" Immediate="true"
+                        <MudTextField Label="@Loc["Label_KavitaUpscaled"]"
+                            HelperText="@Loc["Helper_KavitaUpscaled"]" Immediate="true"
                             @bind-Value="Library.KavitaConfig.UpscaledMountPoint" @bind-Value:after="OnInputChanged"
                             Variant="Variant.Outlined" />
                     </MudItem>
@@ -220,7 +220,7 @@
                     <MudItem xs="12">
                         <MudAlert Severity="Severity.Success" Variant="Variant.Text">
                             <MudText Typo="Typo.body2">
-                                @((MarkupString)Loc["EditLibraryForm_Hint_Kavita"].Value)
+                                @((MarkupString)Loc["Hint_Kavita"].Value)
                             </MudText>
                         </MudAlert>
                     </MudItem>

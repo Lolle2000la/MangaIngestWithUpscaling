@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="PageTitle" xml:space="preserve">
+    <value>Edit Manga: {0}</value>
+  </data>
+  <data name="Tooltip_Back" xml:space="preserve">
+    <value>Back to Mangas</value>
+  </data>
+  <data name="Header_EditManga" xml:space="preserve">
+    <value>Edit Manga</value>
+  </data>
+  <data name="Chip_Library" xml:space="preserve">
+    <value>Library: {0}</value>
+  </data>
+  <data name="Tab_BasicInfo" xml:space="preserve">
+    <value>Basic Information</value>
+  </data>
+  <data name="Header_BasicInfo" xml:space="preserve">
+    <value>Basic Information</value>
+  </data>
+  <data name="Label_PrimaryTitle" xml:space="preserve">
+    <value>Primary Title</value>
+  </data>
+  <data name="Helper_PrimaryTitle" xml:space="preserve">
+    <value>The main title of the manga</value>
+  </data>
+  <data name="Label_AddOldTitle" xml:space="preserve">
+    <value>Add old title to alternative titles</value>
+  </data>
+  <data name="Label_UpscalerProfile" xml:space="preserve">
+    <value>Upscaler Profile</value>
+  </data>
+  <data name="Helper_UpscalerProfile" xml:space="preserve">
+    <value>The upscaler profile to use for this manga</value>
+  </data>
+  <data name="Option_None" xml:space="preserve">
+    <value>None</value>
+  </data>
+  <data name="Label_ChapterMerging" xml:space="preserve">
+    <value>Chapter Merging</value>
+  </data>
+  <data name="Helper_ChapterMerging" xml:space="preserve">
+    <value>Whether to merge chapter parts</value>
+  </data>
+  <data name="Option_Default" xml:space="preserve">
+    <value>Default</value>
+  </data>
+  <data name="Option_AlwaysMerge" xml:space="preserve">
+    <value>Always Merge</value>
+  </data>
+  <data name="Option_NeverMerge" xml:space="preserve">
+    <value>Never Merge</value>
+  </data>
+  <data name="Warning_Experimental" xml:space="preserve">
+    <value>Warning: This feature is experimental</value>
+  </data>
+  <data name="Label_Created" xml:space="preserve">
+    <value>Created:</value>
+  </data>
+  <data name="Label_Modified" xml:space="preserve">
+    <value>Modified:</value>
+  </data>
+  <data name="Tab_AltTitles" xml:space="preserve">
+    <value>Alternative Titles</value>
+  </data>
+  <data name="Header_AltTitles" xml:space="preserve">
+    <value>Alternative Titles</value>
+  </data>
+  <data name="Body_AltTitles" xml:space="preserve">
+    <value>Manage alternative titles for this manga. These titles can be used for searching.</value>
+  </data>
+  <data name="Header_AddNewTitle" xml:space="preserve">
+    <value>Add New Title</value>
+  </data>
+  <data name="Label_AltTitle" xml:space="preserve">
+    <value>Alternative Title</value>
+  </data>
+  <data name="Helper_AltTitle" xml:space="preserve">
+    <value>Enter an alternative title</value>
+  </data>
+  <data name="Button_AddTitle" xml:space="preserve">
+    <value>Add Title</value>
+  </data>
+  <data name="Header_CurrentTitles" xml:space="preserve">
+    <value>Current Alternative Titles</value>
+  </data>
+  <data name="Text_NoTitles" xml:space="preserve">
+    <value>No alternative titles added yet.</value>
+  </data>
+  <data name="Text_AddTitlesHelp" xml:space="preserve">
+    <value>Add alternative titles above to help with searching.</value>
+  </data>
+  <data name="Tooltip_RemoveTitle" xml:space="preserve">
+    <value>Remove this title</value>
+  </data>
+  <data name="Tab_Chapters" xml:space="preserve">
+    <value>Chapters</value>
+  </data>
+  <data name="Header_ChapterManagement" xml:space="preserve">
+    <value>Chapter Management</value>
+  </data>
+  <data name="Warning_DeleteChapter" xml:space="preserve">
+    <value>&lt;b&gt;Warning:&lt;/b&gt; Deleting a chapter will remove it from the database and delete the files from disk.</value>
+  </data>
+  <data name="Text_CannotUndo" xml:space="preserve">
+    <value>This action cannot be undone.</value>
+  </data>
+  <data name="Text_UnsavedChanges" xml:space="preserve">
+    <value>You have unsaved changes.</value>
+  </data>
+  <data name="Text_NoChanges" xml:space="preserve">
+    <value>No changes made.</value>
+  </data>
+  <data name="Button_Cancel" xml:space="preserve">
+    <value>Cancel</value>
+  </data>
+  <data name="Button_SaveChanges" xml:space="preserve">
+    <value>Save Changes</value>
+  </data>
+  <data name="Error_FormValidation" xml:space="preserve">
+    <value>Please fix the errors in the form.</value>
+  </data>
+  <data name="Error_ChangeTitle" xml:space="preserve">
+    <value>Failed to change manga title.</value>
+  </data>
+  <data name="Success_Update" xml:space="preserve">
+    <value>Manga updated successfully.</value>
+  </data>
+  <data name="Error_Saving" xml:space="preserve">
+    <value>Error saving manga {0}</value>
+  </data>
+  <data name="Loading" xml:space="preserve">
+    <value>Loading...</value>
+  </data>
+</root>

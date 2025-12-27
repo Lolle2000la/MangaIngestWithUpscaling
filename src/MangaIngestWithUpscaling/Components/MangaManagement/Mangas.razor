@@ -13,9 +13,9 @@
 @inject ITaskQueue TaskQueue
 @inject ISnackbar Snackbar
 @inject ILogger<Mangas> Logger
-@inject IStringLocalizer<SharedResource> Loc
+@inject IStringLocalizer<Mangas> Loc
 
-<PageTitle>@Loc["PageTitle_BrowseMangas"]</PageTitle>
+<PageTitle>@Loc["PageTitle"]</PageTitle>
 
 <MudTable T="Manga" ServerData="@GetMangas" Hover="true" MultiSelection="true" SelectOnRowClick="false"
     CanCancelEdit="true" RowEditPreview="@BackupBeforeEdit" RowEditCancel="@RestoreOnCancel"
@@ -23,12 +23,12 @@
     <ToolBarContent>
         <MudGrid>
             <MudItem xs="12" sm="6" lg="6">
-                <MudText Typo="Typo.h4">@Loc["Mangas_Title"]</MudText>
+                <MudText Typo="Typo.h4">@Loc["Title"]</MudText>
             </MudItem>
             <MudItem xs="12" sm="6" lg="3">
-                <MudSelect Label="@Loc["Mangas_LibraryToBrowse"]" T="Library ?" @bind-Value="selectedLibrary"
+                <MudSelect Label="@Loc["LibraryToBrowse"]" T="Library ?" @bind-Value="selectedLibrary"
                     @bind-Value:after="async () => await table.ReloadServerData()">
-                    <MudSelectItem T="Library?" Value="null">@Loc["Mangas_Library_All"]</MudSelectItem>
+                    <MudSelectItem T="Library?" Value="null">@Loc["Library_All"]</MudSelectItem>
                     @foreach (var library in DbContext.Libraries)
                     {
                         <MudSelectItem T="Library?" Value="@library">@library.Name</MudSelectItem>
@@ -36,7 +36,7 @@
                 </MudSelect>
             </MudItem>
             <MudItem xs="12" sm="12" lg="3">
-                <MudTextField Label="@Loc["Mangas_SearchLabel"]" Placeholder="@Loc["Mangas_SearchPlaceholder"]"
+                <MudTextField Label="@Loc["SearchLabel"]" Placeholder="@Loc["SearchPlaceholder"]"
                     Variant="Variant.Outlined" @bind-Value="SearchString"
                     @bind-Value:after="async () => await table.ReloadServerData()" Immediate="true"
                     OnInternalInputChanged="async () => await table.ReloadServerData()" />
@@ -45,16 +45,16 @@
                 <MudStack Row="true">
                     <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Merge"
                         Disabled="@(selectedMangas == null || selectedMangas.Count < 2)" OnClick="OnMergeSelected">
-                        @Loc["Mangas_MergeSelected"]
+                        @Loc["MergeSelected"]
                     </MudButton>
                     <MudButton Variant="Variant.Filled" Color="Color.Secondary"
                         StartIcon="@Icons.Material.Filled.Shuffle"
                         Disabled="selectedMangas == null || selectedMangas.Count == 0"
-                        OnClick="OnMoveSelectedToNewLibrary">@Loc["Mangas_MoveSelected"]
+                        OnClick="OnMoveSelectedToNewLibrary">@Loc["MoveSelected"]
                     </MudButton>
                     <MudButton Variant="Variant.Filled" Color="Color.Error" OnClick="OnDeleteSelected"
                         StartIcon="@Icons.Material.Filled.DeleteSweep"
-                        Disabled="@(selectedMangas == null || selectedMangas.Count == 0)">@Loc["Mangas_DeleteSelected"]
+                        Disabled="@(selectedMangas == null || selectedMangas.Count == 0)">@Loc["DeleteSelected"]
                     </MudButton>
                 </MudStack>
             </MudItem>
@@ -64,49 +64,49 @@
     <HeaderContent>
         <MudTh>
             <MudTableSortLabel T="Manga" SortLabel="library_field">
-                @Loc["Mangas_Header_Library"]
+                @Loc["Header_Library"]
             </MudTableSortLabel>
         </MudTh>
         <MudTh>
             <MudTableSortLabel T="Manga" SortLabel="title_field" InitialDirection="SortDirection.Ascending">
-                @Loc["Mangas_Header_Title"]
+                @Loc["Header_Title"]
             </MudTableSortLabel>
         </MudTh>
         <MudTh>
             <MudTableSortLabel T="Manga" SortLabel="chapters_field" InitialDirection="SortDirection.Descending">
-                @Loc["Mangas_Header_Chapters"]
+                @Loc["Header_Chapters"]
             </MudTableSortLabel>
         </MudTh>
-        <MudTh>@Loc["Mangas_Header_ShouldUpscale"]</MudTh>
-        <MudTh>@Loc["Mangas_Header_Actions"]</MudTh>
+        <MudTh>@Loc["Header_ShouldUpscale"]</MudTh>
+        <MudTh>@Loc["Header_Actions"]</MudTh>
     </HeaderContent>
     <RowTemplate>
-        <MudTd DataLabel="@Loc["Mangas_Header_Library"]">@context.Library.Name</MudTd>
-        <MudTd DataLabel="@Loc["Mangas_Header_Title"]">@context.PrimaryTitle</MudTd>
-        <MudTd DataLabel="@Loc["Mangas_Header_Chapters"]">@string.Format(Loc["Mangas_ChapterCount"],
+        <MudTd DataLabel="@Loc["Header_Library"]">@context.Library.Name</MudTd>
+        <MudTd DataLabel="@Loc["Header_Title"]">@context.PrimaryTitle</MudTd>
+        <MudTd DataLabel="@Loc["Header_Chapters"]">@string.Format(Loc["ChapterCount"],
                         context.Chapters.Count(), context.Chapters.Count(c => c.IsUpscaled))
         </MudTd>
-        <MudTd DataLabel="@Loc["Mangas_Header_ShouldUpscale"]">@(context.ShouldUpscale is not null ?
-                        context.ShouldUpscale.Value : Loc["Mangas_UseLibrarySettings"])</MudTd>
+        <MudTd DataLabel="@Loc["Header_ShouldUpscale"]">@(context.ShouldUpscale is not null ?
+                        context.ShouldUpscale.Value : Loc["UseLibrarySettings"])</MudTd>
         <MudTd>
-            <a href="mangas/@context.Id" title="@Loc["Mangas_Tooltip_Edit"]">
+            <a href="mangas/@context.Id" title="@Loc["Tooltip_Edit"]">
                 <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Text" Size="Size.Small" />
             </a>
             <MudIconButton Icon="@Icons.Material.Filled.ImageAspectRatio" Variant="Variant.Text" Size="Size.Small"
-                title="@Loc["Mangas_Tooltip_Upscale"]" OnClick="_ => OnUpscaleSpecific(context)" />
+                title="@Loc["Tooltip_Upscale"]" OnClick="_ => OnUpscaleSpecific(context)" />
             <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Variant="Variant.Text"
-                OnClick="_ => OnDeleteSpecific(context)" title="@Loc["Mangas_Tooltip_Delete"]" Size="Size.Small" />
+                OnClick="_ => OnDeleteSpecific(context)" title="@Loc["Tooltip_Delete"]" Size="Size.Small" />
         </MudTd>
     </RowTemplate>
     <RowEditingTemplate>
-        <MudTd DataLabel="@Loc["Mangas_Header_Library"]">@context.Library.Name</MudTd>
-        <MudTd DataLabel="@Loc["Mangas_Header_Title"]">
+        <MudTd DataLabel="@Loc["Header_Library"]">@context.Library.Name</MudTd>
+        <MudTd DataLabel="@Loc["Header_Title"]">
             <MudTextField @bind-Value="context.PrimaryTitle" Required />
         </MudTd>
-        <MudTd DataLabel="@Loc["Mangas_Header_Chapters"]">@string.Format(Loc["Mangas_ChapterCount"],
+        <MudTd DataLabel="@Loc["Header_Chapters"]">@string.Format(Loc["ChapterCount"],
                         context.Chapters.Count(), context.Chapters.Count(c => c.IsUpscaled))
         </MudTd>
-        <MudTd DataLabel="@Loc["Mangas_Header_ShouldUpscale"]">
+        <MudTd DataLabel="@Loc["Header_ShouldUpscale"]">
             <MudCheckBox T="bool?" TriState="true" @bind-Value="context.ShouldUpscale" />
         </MudTd>
 
@@ -180,7 +180,7 @@
         catch (Exception e)
         {
             Snackbar.Add($"Error: {e.Message}", Severity.Error);
-            Logger.LogError(e, Loc["Mangas_Error_Loading"]);
+            Logger.LogError(e, Loc["Error_Loading"]);
             return new TableData<Manga> { Items = new List<Manga>(), TotalItems = 0 };
         }
     }
@@ -195,7 +195,7 @@
 
         try
         {
-            var dialog = await DialogService.ShowAsync<MergeMangaDialog>(Loc["Mangas_Dialog_Merge_Title"], parameters);
+            var dialog = await DialogService.ShowAsync<MergeMangaDialog>(Loc["Dialog_Merge_Title"], parameters);
             var result = await dialog.Result;
 
             if (result is { Canceled: false })
@@ -206,7 +206,7 @@
         catch (Exception e)
         {
             Snackbar.Add($"Error: {e.Message}", Severity.Error);
-            Logger.LogError(e, Loc["Mangas_Error_Merging"]);
+            Logger.LogError(e, Loc["Error_Merging"]);
             await table.ReloadServerData();
         }
     }
@@ -220,7 +220,7 @@
 };
         try
         {
-            var dialog = await DialogService.ShowAsync<MoveMangasToLibraryDialog>(Loc["Mangas_Dialog_Move_Title"], parameters);
+            var dialog = await DialogService.ShowAsync<MoveMangasToLibraryDialog>(Loc["Dialog_Move_Title"], parameters);
             var result = await dialog.Result;
             if (result is { Canceled: false })
             {
@@ -230,7 +230,7 @@
         catch (Exception e)
         {
             Snackbar.Add($"Error: {e.Message}", Severity.Error);
-            Logger.LogError(e, Loc["Mangas_Error_Moving"]);
+            Logger.LogError(e, Loc["Error_Moving"]);
             await table.ReloadServerData();
         }
     }
@@ -245,7 +245,7 @@
 
         try
         {
-            var dialog = await DialogService.ShowAsync<DeleteMangasDialog>(Loc["Mangas_Dialog_Delete_Title"], parameters);
+            var dialog = await DialogService.ShowAsync<DeleteMangasDialog>(Loc["Dialog_Delete_Title"], parameters);
             var result = await dialog.Result;
 
             if (result is { Canceled: false })
@@ -256,7 +256,7 @@
         catch (Exception e)
         {
             Snackbar.Add($"Error: {e.Message}", Severity.Error);
-            Logger.LogError(e, Loc["Mangas_Error_Deleting"]);
+            Logger.LogError(e, Loc["Error_Deleting"]);
             await table.ReloadServerData();
         }
     }
@@ -265,7 +265,7 @@
     {
         try
         {
-            var dialog = await DialogService.ShowAsync<DeleteMangasDialog>(Loc["Mangas_Dialog_DeleteSingle_Title"], new
+            var dialog = await DialogService.ShowAsync<DeleteMangasDialog>(Loc["Dialog_DeleteSingle_Title"], new
             DialogParameters<DeleteMangasDialog>
 {
 { x => x.Mangas, new List<Manga> { manga } }
@@ -279,7 +279,7 @@
         catch (Exception e)
         {
             Snackbar.Add($"Error: {e.Message}", Severity.Error);
-            Logger.LogError(e, Loc["Mangas_Error_DeletingSingle"], manga.Id);
+            Logger.LogError(e, Loc["Error_DeletingSingle"], manga.Id);
             await table.ReloadServerData();
         }
     }
@@ -331,7 +331,7 @@
             catch (Exception e)
             {
                 Snackbar.Add($"Error: {e.Message}", Severity.Error);
-                Logger.LogError(e, Loc["Mangas_Error_ChangingTitle"], manga.Id, newTitle);
+                Logger.LogError(e, Loc["Error_ChangingTitle"], manga.Id, newTitle);
             }
         }
 
@@ -342,7 +342,7 @@
         catch (Exception e)
         {
             Snackbar.Add($"Error: {e.Message}", Severity.Error);
-            Logger.LogError(e, Loc["Mangas_Error_Saving"], manga.Id);
+            Logger.LogError(e, Loc["Error_Saving"], manga.Id);
         }
     }
 

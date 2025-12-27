@@ -1,51 +1,51 @@
 ﻿@using MangaIngestWithUpscaling.Data.BackgroundTaskQueue
-@inject IStringLocalizer<SharedResource> Loc
+@inject IStringLocalizer<TaskTable> Loc
 
 <MudTable T="PersistedTask" Items="@Tasks" RowsPerPage="10" Elevation="3" Dense="true" @ref="Table">
     <ToolBarContent>
         <MudText Typo="Typo.h6">@Title</MudText>
         <MudSpacer />
         <MudButton StartIcon="@Icons.Material.Filled.Delete" Variant="Variant.Outlined" Color="Color.Primary"
-            OnClick="OnClearFailed">@Loc["TaskTable_ClearFailed"]
+            OnClick="OnClearFailed">@Loc["ClearFailed"]
         </MudButton>
         <MudButton StartIcon="@Icons.Material.Filled.ClearAll" Variant="Variant.Filled" Color="Color.Primary"
-            OnClick="OnClearCompleted">@Loc["TaskTable_ClearCompleted"]
+            OnClick="OnClearCompleted">@Loc["ClearCompleted"]
         </MudButton>
     </ToolBarContent>
     <HeaderContent>
         <MudTh>
             <MudTableSortLabel SortBy="new Func<PersistedTask, object>(x => x.Data.TaskFriendlyName)">
-                @Loc["TaskTable_Header_Name"]
+                @Loc["Header_Name"]
             </MudTableSortLabel>
         </MudTh>
         <MudTh>
             <MudTableSortLabel SortBy="new Func<PersistedTask, object>(x => x.CreatedAt)">
-                @Loc["TaskTable_Header_QueuedAt"]</MudTableSortLabel>
+                @Loc["Header_QueuedAt"]</MudTableSortLabel>
         </MudTh>
         <MudTh>
             <MudTableSortLabel SortBy="new Func<PersistedTask, object?>(x => x.ProcessedAt)">
-                @Loc["TaskTable_Header_FinishedAt"]
+                @Loc["Header_FinishedAt"]
             </MudTableSortLabel>
         </MudTh>
         <MudTh>
-            <MudTableSortLabel SortBy="new Func<PersistedTask, object>(x => x.Status)">@Loc["TaskTable_Header_Status"]
+            <MudTableSortLabel SortBy="new Func<PersistedTask, object>(x => x.Status)">@Loc["Header_Status"]
             </MudTableSortLabel>
         </MudTh>
-        <MudTh>@Loc["TaskTable_Header_Actions"]</MudTh>
+        <MudTh>@Loc["Header_Actions"]</MudTh>
     </HeaderContent>
     <RowTemplate>
-        <MudTd DataLabel="@Loc["TaskTable_Header_Name"]">@context.Data.TaskFriendlyName</MudTd>
-        <MudTd DataLabel="@Loc["TaskTable_Header_QueuedAt"]">@context.CreatedAt.ToLocalTime()</MudTd>
-        <MudTd DataLabel="@Loc["TaskTable_Header_FinishedAt"]">@(context.ProcessedAt is not null ?
+        <MudTd DataLabel="@Loc["Header_Name"]">@context.Data.TaskFriendlyName</MudTd>
+        <MudTd DataLabel="@Loc["Header_QueuedAt"]">@context.CreatedAt.ToLocalTime()</MudTd>
+        <MudTd DataLabel="@Loc["Header_FinishedAt"]">@(context.ProcessedAt is not null ?
                         context.ProcessedAt.Value.ToLocalTime() : "")
         </MudTd>
-        <MudTd DataLabel="@Loc["TaskTable_Header_Status"]">
+        <MudTd DataLabel="@Loc["Header_Status"]">
             @context.Status
             @if (context.Status == PersistedTaskStatus.Processing && context.Data?.Progress is not null)
             {
                 var p = context.Data.Progress;
                 <div style="font-size: 0.85em; color: var(--mud-palette-text-secondary); margin-top: 2px;">
-                    @(p.IsIndeterminate? Loc["TaskTable_Progress_Working"] : $"{p.Current}/{p.Total} {p.ProgressUnit}")
+                    @(p.IsIndeterminate? Loc["Progress_Working"] : $"{p.Current}/{p.Total} {p.ProgressUnit}")
                     @if (!string.IsNullOrWhiteSpace(p.StatusMessage))
                     {
                         <span> — @p.StatusMessage</span>
@@ -53,7 +53,7 @@
                 </div>
             }
         </MudTd>
-        <MudTd DataLabel="@Loc["TaskTable_Header_Actions"]" Style="white-space: nowrap">
+        <MudTd DataLabel="@Loc["Header_Actions"]" Style="white-space: nowrap">
             @if (context.Status == PersistedTaskStatus.Pending)
             {
                 <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" Variant="Variant.Text" Size="Size.Small"

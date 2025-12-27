@@ -4,19 +4,19 @@
 @using Microsoft.Extensions.Localization
 @inject ApplicationDbContext DbContext
 @inject IMangaLibraryMover MangaMover
-@inject IStringLocalizer<SharedResource> Loc
+@inject IStringLocalizer<MoveMangasToLibraryDialog> Loc
 
 <MudDialog>
     <DialogContent>
         <MudStack>
             <MudText>
-                @(Mangas.Count > 1 ? string.Format(Loc["MoveMangasDialog_Title_Multiple"], Mangas.Count) :
-                                string.Format(Loc["MoveMangasDialog_Title_Single"], Mangas.First().PrimaryTitle))
+                @(Mangas.Count > 1 ? Loc["Title_Multiple", Mangas.Count] :
+                                Loc["Title_Single", Mangas.First().PrimaryTitle])
             </MudText>
             <MudText Color="Color.Error">
-                @((MarkupString)Loc["MoveMangasDialog_Warning_MoveFiles"].Value)
+                @((MarkupString)Loc["Warning_MoveFiles"].Value)
             </MudText>
-            <MudSelect Label="@Loc["MoveMangasDialog_SelectLibrary"]" T="Library" @bind-Value="selected">
+            <MudSelect Label="@Loc["SelectLibrary"]" T="Library" @bind-Value="selected">
                 @foreach (var library in DbContext.Libraries)
                 {
                     <MudSelectItem T="Library" Value="@library">@library.Name</MudSelectItem>
@@ -25,9 +25,9 @@
         </MudStack>
     </DialogContent>
     <DialogActions>
-        <MudButton OnClick="Cancel">@Loc["Generic_Cancel"]</MudButton>
+        <MudButton OnClick="Cancel">@Loc["Button_Cancel"]</MudButton>
         <MudButton StartIcon="@Icons.Material.Filled.MergeType" Color="Color.Primary" Variant="Variant.Filled"
-            Disabled="selected == null" OnClick="Submit">@Loc["Generic_Move"]</MudButton>
+            Disabled="selected == null" OnClick="Submit">@Loc["Button_Move"]</MudButton>
     </DialogActions>
 </MudDialog>
 

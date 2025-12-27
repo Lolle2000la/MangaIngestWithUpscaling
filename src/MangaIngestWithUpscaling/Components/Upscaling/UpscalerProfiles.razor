@@ -4,28 +4,28 @@
 
 @inject ApplicationDbContext DbContext
 @inject IDialogService DialogService
-@inject IStringLocalizer<SharedResource> Loc
+@inject IStringLocalizer<UpscalerProfiles> Loc
 
-<PageTitle>@Loc["PageTitle_UpscalerProfiles"]</PageTitle>
+<PageTitle>@Loc["PageTitle"]</PageTitle>
 
-<MudText Typo="Typo.h4">@Loc["UpscalerProfiles_Title"]</MudText>
+<MudText Typo="Typo.h4">@Loc["Title"]</MudText>
 
 <MudPaper Elevation="3" Class="mb-3">
     <MudStack Row>
         <a href="upscaling/profiles/create">
             <MudButton StartIcon="@Icons.Material.Filled.Add" Variant="Variant.Filled" Color="Color.Primary">
-                @Loc["Generic_Create"]</MudButton>
+                @Loc["Button_Create"]</MudButton>
         </a>
     </MudStack>
 </MudPaper>
 
 <MudTable T="UpscalerProfile" Items="@Profiles">
     <HeaderContent>
-        <MudTh>@Loc["UpscalerProfiles_Header_Name"]</MudTh>
-        <MudTh>@Loc["UpscalerProfiles_Header_ScalingFactor"]</MudTh>
-        <MudTh>@Loc["UpscalerProfiles_Header_CompFormat"]</MudTh>
-        <MudTh>@Loc["UpscalerProfiles_Header_CompQuality"]</MudTh>
-        <MudTh>@Loc["UpscalerProfiles_Header_Actions"]</MudTh>
+        <MudTh>@Loc["Header_Name"]</MudTh>
+        <MudTh>@Loc["Header_ScalingFactor"]</MudTh>
+        <MudTh>@Loc["Header_CompFormat"]</MudTh>
+        <MudTh>@Loc["Header_CompQuality"]</MudTh>
+        <MudTh>@Loc["Header_Actions"]</MudTh>
     </HeaderContent>
     <RowTemplate>
         <MudTd>@context.Name</MudTd>
@@ -35,11 +35,10 @@
         <MudTd>
             <a href="upscaling/profiles/edit/@context.Id">
                 <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Text" Size="Size.Small"
-                    title="@Loc["UpscalerProfiles_Tooltip_Edit"]" />
+                    title="@Loc["Tooltip_Edit"]" />
             </a>
             <MudIconButton Icon="@Icons.Material.Filled.Delete" Variant="Variant.Text" Color="Color.Error"
-                Size="Size.Small" title="@Loc["UpscalerProfiles_Tooltip_Delete"]"
-                OnClick="e => OnDeleteProfile(context)" />
+                Size="Size.Small" title="@Loc["Tooltip_Delete"]" OnClick="e => OnDeleteProfile(context)" />
         </MudTd>
     </RowTemplate>
 </MudTable>
@@ -55,9 +54,9 @@
     private async Task OnDeleteProfile(UpscalerProfile profile)
     {
         var result = await DialogService.ShowMessageBox(
-        Loc["UpscalerProfiles_DeleteDialog_Title"],
-        Loc["UpscalerProfiles_DeleteDialog_Content"],
-        Loc["Generic_OK"], cancelText: Loc["Generic_Cancel"],
+        Loc["DeleteDialog_Title"],
+        Loc["DeleteDialog_Content"],
+        Loc["Button_OK"], cancelText: Loc["Button_Cancel"],
         options: new DialogOptions
         {
             CloseButton = true,

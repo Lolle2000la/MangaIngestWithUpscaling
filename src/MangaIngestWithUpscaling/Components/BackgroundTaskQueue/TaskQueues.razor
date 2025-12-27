@@ -11,24 +11,24 @@
 @inject UpscaleTaskProcessor UpscaleTaskProcessor
 @inject DistributedUpscaleTaskProcessor DistributedUpscaleTaskProcessor
 @inject TaskRegistry TaskRegistry
-@inject IStringLocalizer<SharedResource> Loc
+@inject IStringLocalizer<TaskQueues> Loc
 
 @page "/tasks"
 
-<PageTitle>@Loc["PageTitle_Tasks"]</PageTitle>
+<PageTitle>@Loc["PageTitle"]</PageTitle>
 
-<MudText Typo="Typo.h4" Class="mb-2">@Loc["TaskQueues_Title"]</MudText>
+<MudText Typo="Typo.h4" Class="mb-2">@Loc["Title"]</MudText>
 
 <MudGrid>
     <MudItem lg="6" xs="12">
-        <TaskTable Tasks="@standardTasks" Title="@Loc["TaskQueues_StandardTasks"]"
-            OnClearCompleted="OnClearCompletedStandardTasks" OnClearFailed="OnClearFailedStandardTasks"
-            OnRetryFailed="OnRetryFailed" OnDelete="OnDelete" OnCancel="OnCancelStandardTask" OnRunNow="OnRunNow" />
+        <TaskTable Tasks="@standardTasks" Title="@Loc["StandardTasks"]" OnClearCompleted="OnClearCompletedStandardTasks"
+            OnClearFailed="OnClearFailedStandardTasks" OnRetryFailed="OnRetryFailed" OnDelete="OnDelete"
+            OnCancel="OnCancelStandardTask" OnRunNow="OnRunNow" />
     </MudItem>
     <MudItem lg="6" xs="12">
-        <TaskTable Tasks="@upscaleTasks" Title="@Loc["TaskQueues_UpscalingTasks"]"
-            OnClearCompleted="OnClearCompletedUpscaleTasks" OnClearFailed="OnClearFailedUpscaleTasks"
-            OnRetryFailed="OnRetryFailed" OnDelete="OnDelete" OnCancel="OnCancelUpscaleTask" OnRunNow="OnRunNow" />
+        <TaskTable Tasks="@upscaleTasks" Title="@Loc["UpscalingTasks"]" OnClearCompleted="OnClearCompletedUpscaleTasks"
+            OnClearFailed="OnClearFailedUpscaleTasks" OnRetryFailed="OnRetryFailed" OnDelete="OnDelete"
+            OnCancel="OnCancelUpscaleTask" OnRunNow="OnRunNow" />
     </MudItem>
 </MudGrid>
 
@@ -49,7 +49,7 @@
         catch (Exception ex)
         {
             Logger.LogError(ex, "Failed to clear completed tasks");
-            Snackbar.Add(string.Format(Loc["TaskQueues_Error_ClearCompleted"], ex.Message), Severity.Error);
+            Snackbar.Add(string.Format(Loc["Error_ClearCompleted"], ex.Message), Severity.Error);
             StateHasChanged();
         }
     }
@@ -67,7 +67,7 @@
         catch (Exception ex)
         {
             Logger.LogError(ex, "Failed to clear failed tasks");
-            Snackbar.Add(string.Format(Loc["TaskQueues_Error_ClearFailed"], ex.Message), Severity.Error);
+            Snackbar.Add(string.Format(Loc["Error_ClearFailed"], ex.Message), Severity.Error);
             StateHasChanged();
         }
     }
@@ -85,7 +85,7 @@
         catch (Exception ex)
         {
             Logger.LogError(ex, "Failed to clear completed tasks");
-            Snackbar.Add(string.Format(Loc["TaskQueues_Error_ClearCompleted"], ex.Message), Severity.Error);
+            Snackbar.Add(string.Format(Loc["Error_ClearCompleted"], ex.Message), Severity.Error);
             StateHasChanged();
         }
     }

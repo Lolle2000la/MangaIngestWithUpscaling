@@ -4,13 +4,13 @@
 
 @inject ApplicationDbContext DbContext
 @inject NavigationManager NavigationManager
-@inject IStringLocalizer<SharedResource> Loc
+@inject IStringLocalizer<EditUpscalerProfile> Loc
 
-<PageTitle>@string.Format(Loc["UpscalerProfile_EditTitle"], Profile.Name)</PageTitle>
+<PageTitle>@string.Format(Loc["PageTitle"], Profile.Name)</PageTitle>
 
 <MudCard>
     <MudCardHeader>
-        <MudText Typo="Typo.h5">@string.Format(Loc["UpscalerProfile_EditHeader"], Profile.Name)</MudText>
+        <MudText Typo="Typo.h5">@string.Format(Loc["Header"], Profile.Name)</MudText>
     </MudCardHeader>
     <MudCardContent>
         <UpscalerProfileForm @bind-Profile="Profile" @bind-IsValid="IsValid" />
@@ -20,10 +20,10 @@
             <MudDivider Style="margin: 16px 0;" />
             <MudStack Row Spacing="4" Class="mt-2">
                 <MudText Typo="Typo.caption" Color="Color.Secondary">
-                    @Loc["UpscalerProfile_Created"] @existingProfile.CreatedAt.ToString("yyyy-MM-dd HH:mm")
+                    @Loc["Created"] @existingProfile.CreatedAt.ToString("yyyy-MM-dd HH:mm")
                 </MudText>
                 <MudText Typo="Typo.caption" Color="Color.Secondary">
-                    @Loc["UpscalerProfile_Modified"] @existingProfile.ModifiedAt.ToString("yyyy-MM-dd HH:mm")
+                    @Loc["Modified"] @existingProfile.ModifiedAt.ToString("yyyy-MM-dd HH:mm")
                 </MudText>
             </MudStack>
         }
@@ -31,7 +31,7 @@
     <MudCardActions>
         <MudSpacer />
         <MudButton StartIcon="@Icons.Material.Filled.Save" Variant="Variant.Filled" Color="Color.Primary"
-            Disabled="!IsValid" OnClick="OnSaveProfile">@Loc["Save"]
+            Disabled="!IsValid" OnClick="OnSaveProfile">@Loc["Button_Save"]
         </MudButton>
     </MudCardActions>
 </MudCard>

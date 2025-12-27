@@ -2,6 +2,7 @@
 @using System.ComponentModel.DataAnnotations
 @using MangaIngestWithUpscaling.Services.Auth
 @using Microsoft.AspNetCore.Identity
+@using Microsoft.Extensions.Localization
 
 @inject UserManager<ApplicationUser> UserManager
 @inject SignInManager<ApplicationUser> SignInManager
@@ -9,21 +10,22 @@
 @inject IdentityRedirectManager RedirectManager
 @inject IApiKeyService ApiKeyService
 @inject ApplicationDbContext DbContext
+@inject IStringLocalizer<ApiKeys> Loc
 
-<PageTitle>API Key</PageTitle>
+<PageTitle>@Loc["PageTitle"]</PageTitle>
 
-<h3>API Key</h3>
-<StatusMessage/>
+<h3>@Loc["Header"]</h3>
+<StatusMessage />
 
 <div class="row">
     <div class="col-xl-6">
         <EditForm Model="Input" FormName="apiKey" OnValidSubmit="OnValidSubmitAsync" method="post">
             <div class="form-floating mb-3">
-                <input type="text" value="@apiKey?.Key" id="apiKey" class="form-control" placeholder="API Key."
-                       readonly/>
-                <label for="apiKey" class="form-label">API Key (Click to copy)</label>
+                <input type="text" value="@apiKey?.Key" id="apiKey" class="form-control"
+                    placeholder="@Loc["Placeholder"]" readonly />
+                <label for="apiKey" class="form-label">@Loc["Label"]</label>
             </div>
-            <button type="submit" class="w-100 btn btn-lg btn-primary">Regenerate API Key</button>
+            <button type="submit" class="w-100 btn btn-lg btn-primary">@Loc["RegenerateButton"]</button>
         </EditForm>
     </div>
 </div>
@@ -32,10 +34,10 @@
     let apiKeyEl = document.getElementById("apiKey");
 
     apiKeyEl.addEventListener("click", function () {
-    apiKeyEl.select();
-    apiKeyEl.setSelectionRange(0, 99999);
-    navigator.clipboard.writeText(apiKeyEl.value);
-    apiKeyEl.title += " (copied to clipboard)";
+        apiKeyEl.select();
+        apiKeyEl.setSelectionRange(0, 99999);
+        navigator.clipboard.writeText(apiKeyEl.value);
+        apiKeyEl.title += " (copied to clipboard)";
     });
 </script>
 

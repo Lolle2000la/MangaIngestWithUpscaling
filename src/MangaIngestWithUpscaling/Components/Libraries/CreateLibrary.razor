@@ -2,14 +2,12 @@
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 
 @page "/libraries/create"
-@using MangaIngestWithUpscaling.Data.LibraryManagement
-@using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 
 @inject ApplicationDbContext DbContext
 @inject NavigationManager NavigationManager
-@inject IStringLocalizer<SharedResource> Loc
+@inject IStringLocalizer<CreateLibrary> Loc
 
-<PageTitle>@Loc["CreateLibrary_Title"]</PageTitle>
+<PageTitle>@Loc["PageTitle"]</PageTitle>
 
 <MudCard>
     <MudCardHeader>
@@ -17,7 +15,7 @@
             <a href="libraries">
                 <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" />
             </a>
-            <MudText Typo="Typo.h5">@Loc["CreateLibrary_Title"]</MudText>
+            <MudText Typo="Typo.h5">@Loc["Header"]</MudText>
         </MudStack>
     </MudCardHeader>
     <MudCardContent>
@@ -26,7 +24,7 @@
     <MudCardActions>
         <MudSpacer />
         <MudButton StartIcon="@Icons.Material.Filled.Save" Variant="Variant.Filled" Color="Color.Primary"
-            Disabled="!IsValid" OnClick="OnCreateLibrary">@Loc["CreateLibrary_Button"]</MudButton>
+            Disabled="!IsValid" OnClick="OnCreateLibrary">@Loc["CreateButton"]</MudButton>
     </MudCardActions>
 </MudCard>
 

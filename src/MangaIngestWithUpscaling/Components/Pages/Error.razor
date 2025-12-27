@@ -2,17 +2,17 @@
 @using System.Diagnostics
 @using Microsoft.Extensions.Localization
 @using MangaIngestWithUpscaling.Resources
-@inject IStringLocalizer<SharedResource> Loc
+@inject IStringLocalizer<Error> Loc
 
-<PageTitle>@Loc["Error_PageTitle"]</PageTitle>
+<PageTitle>@Loc["PageTitle"]</PageTitle>
 
-<h1 class="text-danger">@Loc["Error_Title"]</h1>
-<h2 class="text-danger">@((MarkupString)Loc["Error_Message"].Value)</h2>
+<h1 class="text-danger">@Loc["Title"]</h1>
+<h2 class="text-danger">@((MarkupString)Loc["Message"].Value)</h2>
 
 @if (ShowRequestId)
 {
     <p>
-        <strong>@Loc["Error_RequestId"]</strong> <code>@RequestId</code>
+        <strong>@Loc["RequestId"]</strong> <code>@RequestId</code>
     </p>
 }
 

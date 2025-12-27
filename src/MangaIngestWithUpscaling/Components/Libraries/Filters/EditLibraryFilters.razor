@@ -1,40 +1,40 @@
 ﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Helpers
+@using Microsoft.Extensions.Localization
+@using MangaIngestWithUpscaling.Resources
+@inject IStringLocalizer<EditLibraryFilters> Loc
 <MudStack>
     <MudText Typo="Typo.h5">
-        Edit Ingest Filters
+        @Loc["Title"]
     </MudText>
     <MudText Typo="Typo.body1">
-        Define filters to apply to the files in the ingest folder. Files that do not match the filters will not be
-        ingested.
+        @Loc["Description"]
     </MudText>
 
-    <MudTable T="LibraryFilterRule" Items="@Library.FilterRules"
-              Dense>
+    <MudTable T="LibraryFilterRule" Items="@Library.FilterRules" Dense>
         <HeaderContent>
-            <MudTh>Pattern to match</MudTh>
-            <MudTh>Pattern Type</MudTh>
-            <MudTh>Target Field</MudTh>
-            <MudTh>Action</MudTh>
+            <MudTh>@Loc["Header_PatternToMatch"]</MudTh>
+            <MudTh>@Loc["Header_PatternType"]</MudTh>
+            <MudTh>@Loc["Header_TargetField"]</MudTh>
+            <MudTh>@Loc["Header_Action"]</MudTh>
             <MudTh>
                 <MudIconButton Icon="@Icons.Material.Filled.Add"
-                               OnClick="() => Library.FilterRules.Add(new LibraryFilterRule { Library = Library})"/>
+                    OnClick="() => Library.FilterRules.Add(new LibraryFilterRule { Library = Library})" />
             </MudTh>
         </HeaderContent>
         <RowTemplate>
-            <MudTd DataLabel="Pattern to match">@context.Pattern</MudTd>
-            <MudTd DataLabel="Pattern Type">@context.PatternType.GetDisplayName()</MudTd>
-            <MudTd DataLabel="Target Field">@context.TargetField.GetDisplayName()</MudTd>
-            <MudTd DataLabel="Action">@context.Action.GetDisplayName()</MudTd>
+            <MudTd DataLabel="@Loc["Header_PatternToMatch"]">@context.Pattern</MudTd>
+            <MudTd DataLabel="@Loc["Header_PatternType"]">@context.PatternType.GetDisplayName()</MudTd>
+            <MudTd DataLabel="@Loc["Header_TargetField"]">@context.TargetField.GetDisplayName()</MudTd>
+            <MudTd DataLabel="@Loc["Header_Action"]">@context.Action.GetDisplayName()</MudTd>
             <MudTd>
-                <MudIconButton Icon="@Icons.Material.Filled.Delete"
-                               Color="Color.Error"
-                               OnClick="() => Library.FilterRules.Remove(context)"/>
+                <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
+                    OnClick="() => Library.FilterRules.Remove(context)" />
             </MudTd>
         </RowTemplate>
         <RowEditingTemplate>
-            <EditLibraryFilterForm FilterRule="@context"/>
+            <EditLibraryFilterForm FilterRule="@context" />
         </RowEditingTemplate>
     </MudTable>
 </MudStack>

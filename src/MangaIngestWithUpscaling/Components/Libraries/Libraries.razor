@@ -7,9 +7,10 @@
 @inject ApplicationDbContext DbContext
 @inject IDialogService DialogService
 @inject TaskQueue TaskQueue
-@inject IStringLocalizer<SharedResource> Loc
+@inject IStringLocalizer<Libraries> Loc
+@inject IStringLocalizer<SharedResource> SharedLoc
 
-<PageTitle>@Loc["PageTitle_ManageLibraries"]</PageTitle>
+<PageTitle>@Loc["PageTitle"]</PageTitle>
 
 <MudGrid>
     <MudItem xs="12">
@@ -17,16 +18,16 @@
             <div class="d-flex align-center">
                 <MudIcon Icon="@Icons.Material.Filled.LibraryBooks" Color="Color.Primary" Size="Size.Large"
                     Class="mr-3" />
-                <MudText Typo="Typo.h3" Color="Color.Primary">@Loc["Libraries_Title"]</MudText>
+                <MudText Typo="Typo.h3" Color="Color.Primary">@Loc["Title"]</MudText>
             </div>
             <MudStack Row Spacing="2">
                 <MudButton Href="libraries/create" StartIcon="@Icons.Material.Filled.Add" Variant="Variant.Filled"
                     Color="Color.Primary" Size="Size.Large">
-                    @Loc["Libraries_CreateLibrary"]
+                    @Loc["CreateLibrary"]
                 </MudButton>
                 <MudButton StartIcon="@Icons.Material.Filled.ImageAspectRatio" Variant="Variant.Outlined"
                     Color="Color.Secondary" Size="Size.Large" OnClick="OnUpscaleAll">
-                    @Loc["Libraries_UpscaleAll"]
+                    @Loc["UpscaleAll"]
                 </MudButton>
             </MudStack>
         </div>
@@ -37,13 +38,13 @@
         {
             <MudPaper Elevation="0" Class="pa-8 text-center" Style="border: 2px dashed;">
                 <MudIcon Icon="@Icons.Material.Filled.LibraryBooks" Size="Size.Large" Color="Color.Surface" Class="mb-4" />
-                <MudText Typo="Typo.h5" Color="Color.Surface" Class="mb-2">@Loc["Libraries_NoLibrariesYet"]</MudText>
+                <MudText Typo="Typo.h5" Color="Color.Surface" Class="mb-2">@Loc["NoLibrariesYet"]</MudText>
                 <MudText Typo="Typo.body1" Color="Color.Surface" Class="mb-4">
-                    @Loc["Libraries_CreateFirstLibraryDescription"]
+                    @Loc["CreateFirstLibraryDescription"]
                 </MudText>
                 <MudButton Href="libraries/create" StartIcon="@Icons.Material.Filled.Add" Variant="Variant.Filled"
                     Color="Color.Primary" Size="Size.Large">
-                    @Loc["Libraries_CreateYourFirstLibrary"]
+                    @Loc["CreateYourFirstLibrary"]
                 </MudButton>
             </MudPaper>
         }
@@ -52,40 +53,40 @@
         <MudPaper Elevation="2">
             <MudTable T="Library" Items="@LoadedLibraries" FixedHeader="true">
                 <ToolBarContent>
-                    <MudText Typo="Typo.h6" Class="mr-4">@Loc["Libraries_LibraryOverview"]</MudText>
+                    <MudText Typo="Typo.h6" Class="mr-4">@Loc["LibraryOverview"]</MudText>
                     <MudSpacer />
                     <MudText Typo="Typo.body2" Color="Color.Surface">
-                        @string.Format(Loc["Libraries_Stats_Libraries"], LoadedLibraries.Count()) •
-                        @string.Format(Loc["Libraries_Stats_MangaSeries"], LoadedLibraries.SelectMany(l => l.MangaSeries
+                        @string.Format(Loc["Stats_Libraries"], LoadedLibraries.Count()) •
+                        @string.Format(Loc["Stats_MangaSeries"], LoadedLibraries.SelectMany(l => l.MangaSeries
                                                 ?? new List<Manga>()).Count()) •
-                        @string.Format(Loc["Libraries_Stats_Chapters"], LoadedLibraries.SelectMany(l => l.MangaSeries ??
+                        @string.Format(Loc["Stats_Chapters"], LoadedLibraries.SelectMany(l => l.MangaSeries ??
                                                 new List<Manga>()).SelectMany(m => m.Chapters).Count())
                     </MudText>
                 </ToolBarContent>
 
                 <HeaderContent>
                     <MudTh>
-                        <MudText Typo="Typo.subtitle2">@Loc["Libraries_Header_LibraryName"]</MudText>
+                        <MudText Typo="Typo.subtitle2">@Loc["Header_LibraryName"]</MudText>
                     </MudTh>
                     <MudTh>
-                        <MudText Typo="Typo.subtitle2">@Loc["Libraries_Header_IngestPath"]</MudText>
+                        <MudText Typo="Typo.subtitle2">@Loc["Header_IngestPath"]</MudText>
                     </MudTh>
                     <MudTh>
-                        <MudText Typo="Typo.subtitle2">@Loc["Libraries_Header_UpscalerConfig"]</MudText>
+                        <MudText Typo="Typo.subtitle2">@Loc["Header_UpscalerConfig"]</MudText>
                     </MudTh>
                     <MudTh Style="text-align: center;">
-                        <MudText Typo="Typo.subtitle2">@Loc["Libraries_Header_MangaSeries"]</MudText>
+                        <MudText Typo="Typo.subtitle2">@Loc["Header_MangaSeries"]</MudText>
                     </MudTh>
                     <MudTh Style="text-align: center;">
-                        <MudText Typo="Typo.subtitle2">@Loc["Libraries_Header_Chapters"]</MudText>
+                        <MudText Typo="Typo.subtitle2">@Loc["Header_Chapters"]</MudText>
                     </MudTh>
                     <MudTh Style="text-align: center;">
-                        <MudText Typo="Typo.subtitle2">@Loc["Libraries_Header_Actions"]</MudText>
+                        <MudText Typo="Typo.subtitle2">@Loc["Header_Actions"]</MudText>
                     </MudTh>
                 </HeaderContent>
 
                 <RowTemplate>
-                    <MudTd DataLabel="@Loc["Libraries_Header_LibraryName"]">
+                    <MudTd DataLabel="@Loc["Header_LibraryName"]">
                         <div class="d-flex align-center">
                             <MudIcon Icon="@Icons.Material.Filled.Folder" Color="Color.Primary" Class="mr-3" />
                             <div>
@@ -94,7 +95,7 @@
                         </div>
                     </MudTd>
 
-                    <MudTd DataLabel="@Loc["Libraries_Header_IngestPath"]">
+                    <MudTd DataLabel="@Loc["Header_IngestPath"]">
                         <MudTooltip Text="@context.IngestPath">
                             <MudText Typo="Typo.body2" Class="text-truncate">
                                 @context.IngestPath
@@ -102,7 +103,7 @@
                         </MudTooltip>
                     </MudTd>
 
-                    <MudTd DataLabel="@Loc["Libraries_Header_UpscalerConfig"]">
+                    <MudTd DataLabel="@Loc["Header_UpscalerConfig"]">
                         <div class="d-flex flex-column gap-1">
                             @if (context.UpscalerProfile != null)
                                 {
@@ -113,37 +114,37 @@
                                 }
                                 else
                                 {
-                                    <MudText Typo="Typo.body2" Color="Color.Surface">@Loc["Libraries_NotConfigured"]</MudText>
+                                    <MudText Typo="Typo.body2" Color="Color.Surface">@Loc["NotConfigured"]</MudText>
                                 }
                                 @if (context.UpscaleOnIngest)
                                 {
                                     <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Text">
-                                        @Loc["Libraries_AutoUpscale"]
+                                        @Loc["AutoUpscale"]
                                     </MudChip>
                                 }
                             </div>
                         </MudTd>
 
-                        <MudTd DataLabel="@Loc["Libraries_Header_MangaSeries"]" Style="text-align: center;">
+                        <MudTd DataLabel="@Loc["Header_MangaSeries"]" Style="text-align: center;">
                             <MudText Typo="Typo.body1" Class="font-weight-medium">
                                 @(context.MangaSeries?.Count() ?? 0)
                             </MudText>
                         </MudTd>
 
-                        <MudTd DataLabel="@Loc["Libraries_Header_Chapters"]" Style="text-align: center;">
+                        <MudTd DataLabel="@Loc["Header_Chapters"]" Style="text-align: center;">
                             <MudText Typo="Typo.body1" Class="font-weight-medium">
                                 @(context.MangaSeries?.SelectMany(m => m.Chapters)?.Count() ?? 0)
                             </MudText>
                         </MudTd>
 
-                        <MudTd DataLabel="@Loc["Libraries_Header_Actions"]" Style="text-align: center;">
+                        <MudTd DataLabel="@Loc["Header_Actions"]" Style="text-align: center;">
                             <MudStack Row Spacing="1" Justify="Justify.Center">
-                                <MudTooltip Text="@Loc["Libraries_Tooltip_Edit"]">
+                                <MudTooltip Text="@Loc["Tooltip_Edit"]">
                                     <MudIconButton Href="@($"libraries/edit/{context.Id}")"
                                         Icon="@Icons.Material.Filled.Edit" Color="Color.Primary" Size="Size.Small" />
                                 </MudTooltip>
 
-                                <MudTooltip Text="@Loc["Libraries_Tooltip_Scan"]">
+                                <MudTooltip Text="@Loc["Tooltip_Scan"]">
                                     <MudIconButton Icon="@Icons.Material.Filled.Search" Color="Color.Info" Size="Size.Small"
                                         OnClick="@(e => OnScanLibrary(context))" />
                                 </MudTooltip>
@@ -151,23 +152,23 @@
                                 @if (context.UpscalerProfileId is not null &&
                                                             !string.IsNullOrEmpty(context.UpscaledLibraryPath))
                                 {
-                                    <MudTooltip Text="@Loc["Libraries_Tooltip_Upscale"]">
+                                    <MudTooltip Text="@Loc["Tooltip_Upscale"]">
                                         <MudIconButton Icon="@Icons.Material.Filled.ImageAspectRatio" Color="Color.Secondary"
                                             Size="Size.Small" OnClick="@(e => OnUpscaleLibrary(context))" />
                                     </MudTooltip>
                                 }
 
-                                <MudTooltip Text="@Loc["Libraries_Tooltip_Integrity"]">
+                                <MudTooltip Text="@Loc["Tooltip_Integrity"]">
                                     <MudIconButton Icon="@Icons.Material.Filled.Checklist" Color="Color.Warning"
                                         Size="Size.Small" OnClick="@(e => OnCheckIntegrity(context))" />
                                 </MudTooltip>
 
-                                <MudTooltip Text="@Loc["Libraries_Tooltip_Filters"]">
+                                <MudTooltip Text="@Loc["Tooltip_Filters"]">
                                     <MudIconButton Href="@($"libraries/{context.Id}/filtered-images")"
                                         Icon="@Icons.Material.Filled.FilterAlt" Color="Color.Default" Size="Size.Small" />
                                 </MudTooltip>
 
-                                <MudTooltip Text="@Loc["Libraries_Tooltip_Delete"]">
+                                <MudTooltip Text="@Loc["Tooltip_Delete"]">
                                     <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
                                         Size="Size.Small" OnClick="@(e => OnDeleteLibraryEntry(context))" />
                                 </MudTooltip>
@@ -211,9 +212,9 @@
     protected async Task OnDeleteLibraryEntry(Library library)
     {
         var result = await DialogService.ShowMessageBox(
-        Loc["Libraries_DeleteDialog_Title"],
-        Loc["Libraries_DeleteDialog_Content"],
-        Loc["Generic_OK"], cancelText: Loc["Generic_Cancel"],
+        Loc["DeleteDialog_Title"],
+        Loc["DeleteDialog_Content"],
+        SharedLoc["Generic_OK"], cancelText: SharedLoc["Generic_Cancel"],
         options: new DialogOptions
         {
             CloseButton = true,

@@ -2,28 +2,31 @@
 @using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.ImageFiltering
 @using MangaIngestWithUpscaling.Shared.Constants
+@using Microsoft.Extensions.Localization
+@using MangaIngestWithUpscaling.Resources
 @inject ApplicationDbContext DbContext
 @inject IImageFilterService ImageFilterService
 @inject ILogger<AddImageFilterDialog> Logger
+@inject IStringLocalizer<AddImageFilterDialog> Loc
+@inject IStringLocalizer<SharedResource> SharedLoc
 
 <MudDialog>
-    <TitleContent>Add Image Filter</TitleContent>
+    <TitleContent>@Loc["Title"]</TitleContent>
     <DialogContent>
         <MudStack Spacing="3">
             <MudText Typo="Typo.body1">
-                Choose an image to filter out from future ingests and retroactive scans.
+                @Loc["Description"]
             </MudText>
 
             <MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-6">
-                <MudTabPanel Text="Upload Image File">
+                <MudTabPanel Text="@Loc["Tab_UploadImage"]">
                     <MudStack Spacing="3">
                         <MudFileUpload T="IBrowserFile" Accept=".jpg,.jpeg,.png,.webp,.bmp,.tiff,.tif,.avif"
-                                       FilesChanged="OnFileSelected" MaximumFileCount="1">
+                            FilesChanged="OnFileSelected" MaximumFileCount="1">
                             <ActivatorContent>
-                                <MudButton Variant="Variant.Filled"
-                                           Color="Color.Primary"
-                                           StartIcon="@Icons.Material.Filled.CloudUpload">
-                                    Select Image File
+                                <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                                    StartIcon="@Icons.Material.Filled.CloudUpload">
+                                    @Loc["Button_SelectImage"]
                                 </MudButton>
                             </ActivatorContent>
                         </MudFileUpload>
@@ -33,7 +36,7 @@
                             <MudCard Elevation="2">
                                 <MudCardContent>
                                     <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
-                                        <MudIcon Icon="@Icons.Material.Filled.Image"/>
+                                        <MudIcon Icon="@Icons.Material.Filled.Image" />
                                         <MudText>@selectedFile.Name (@FormatFileSize(selectedFile.Size))</MudText>
                                     </MudStack>
                                 </MudCardContent>
@@ -42,44 +45,37 @@
                     </MudStack>
                 </MudTabPanel>
 
-                <MudTabPanel Text="Extract from CBZ">
+                <MudTabPanel Text="@Loc["Tab_ExtractFromCbz"]">
                     <MudStack Spacing="3">
-                        <MudTextField @bind-Value="cbzPath"
-                                      Label="CBZ File Path"
-                                      Placeholder="/path/to/chapter.cbz"
-                                      HelperText="Enter the full path to a CBZ file"/>
+                        <MudTextField @bind-Value="cbzPath" Label="@Loc["Label_CbzPath"]"
+                            Placeholder="@Loc["Placeholder_CbzPath"]" HelperText="@Loc["HelperText_CbzPath"]" />
 
-                        <MudButton Variant="Variant.Outlined"
-                                   OnClick="LoadCbzImages"
-                                   Disabled="string.IsNullOrEmpty(cbzPath)"
-                                   StartIcon="@Icons.Material.Filled.FolderOpen">
-                            Load CBZ Images
+                        <MudButton Variant="Variant.Outlined" OnClick="LoadCbzImages"
+                            Disabled="string.IsNullOrEmpty(cbzPath)" StartIcon="@Icons.Material.Filled.FolderOpen">
+                            @Loc["Button_LoadCbzImages"]
                         </MudButton>
 
                         @if (cbzImages.Any())
                         {
-                            <MudText Typo="Typo.h6">Select image to filter:</MudText>
+                            <MudText Typo="Typo.h6">@Loc["Header_SelectImage"]</MudText>
                             <MudGrid>
                                 @foreach (var (imageName, thumbnail) in cbzImages)
                                 {
                                     <MudItem xs="6" sm="4" md="3">
                                         <MudCard Elevation="1" Class="@GetImageCardClass(imageName)"
-                                                 @onclick="() => SelectCbzImage(imageName)">
+                                            @onclick="() => SelectCbzImage(imageName)">
                                             <MudCardContent Class="pa-2">
                                                 <MudStack AlignItems="AlignItems.Center" Spacing="1">
                                                     @if (!string.IsNullOrEmpty(thumbnail))
                                                     {
-                                                        <MudImage Src="@($"data:image/jpeg;base64,{thumbnail}")"
-                                                                  Width="80" Height="80"
-                                                                  ObjectFit="ObjectFit.Cover"
-                                                                  Class="rounded"/>
+                                                        <MudImage Src="@($"data:image/jpeg;base64,{thumbnail}")" Width="80"
+                                                            Height="80" ObjectFit="ObjectFit.Cover" Class="rounded" />
                                                     }
                                                     else
                                                     {
-                                                        <MudIcon Icon="@Icons.Material.Filled.Image" Size="Size.Large"/>
+                                                        <MudIcon Icon="@Icons.Material.Filled.Image" Size="Size.Large" />
                                                     }
-                                                    <MudText Typo="Typo.caption" Align="Align.Center"
-                                                             Class="text-truncate">
+                                                    <MudText Typo="Typo.caption" Align="Align.Center" Class="text-truncate">
                                                         @Path.GetFileName(imageName)
                                                     </MudText>
                                                 </MudStack>
@@ -93,23 +89,19 @@
                 </MudTabPanel>
             </MudTabs>
 
-            <MudTextField @bind-Value="description"
-                          Label="Description (Optional)"
-                          Placeholder="Why is this image being filtered?"
-                          Lines="2"/>
+            <MudTextField @bind-Value="description" Label="@Loc["Label_Description"]"
+                Placeholder="@Loc["Placeholder_Description"]" Lines="2" />
 
             @if (!string.IsNullOrEmpty(previewThumbnail))
             {
                 <MudCard Elevation="2">
                     <MudCardHeader>
-                        <MudText Typo="Typo.h6">Preview</MudText>
+                        <MudText Typo="Typo.h6">@Loc["Header_Preview"]</MudText>
                     </MudCardHeader>
                     <MudCardContent>
                         <MudStack AlignItems="AlignItems.Center" Spacing="2">
-                            <MudImage Src="@($"data:image/jpeg;base64,{previewThumbnail}")"
-                                      Width="150" Height="150"
-                                      ObjectFit="ObjectFit.Cover"
-                                      Class="rounded"/>
+                            <MudImage Src="@($"data:image/jpeg;base64,{previewThumbnail}")" Width="150" Height="150"
+                                ObjectFit="ObjectFit.Cover" Class="rounded" />
                             <MudText Typo="Typo.body2" Align="Align.Center">
                                 @(selectedFile?.Name ?? selectedCbzImageName ?? "")
                             </MudText>
@@ -120,12 +112,9 @@
         </MudStack>
     </DialogContent>
     <DialogActions>
-        <MudButton OnClick="Cancel">Cancel</MudButton>
-        <MudButton Color="Color.Primary"
-                   Variant="Variant.Filled"
-                   OnClick="Submit"
-                   Disabled="!CanSubmit()">
-            Add Filter
+        <MudButton OnClick="Cancel">@SharedLoc["Cancel"]</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit" Disabled="!CanSubmit()">
+            @Loc["Button_AddFilter"]
         </MudButton>
     </DialogActions>
 </MudDialog>
@@ -181,10 +170,10 @@
             Logger.LogInformation("Loading images from CBZ file: {CbzPath}", cbzPath);
             using var archive = ZipFile.Open(cbzPath, ZipArchiveMode.Read);
             var imageEntries = archive.Entries
-                .Where(e => !string.IsNullOrEmpty(e.Name))
-                .Where(e => ImageConstants.IsSupportedImageExtension(Path.GetExtension(e.FullName)))
-                .Take(20) // Limit for performance
-                .ToList();
+            .Where(e => !string.IsNullOrEmpty(e.Name))
+            .Where(e => ImageConstants.IsSupportedImageExtension(Path.GetExtension(e.FullName)))
+            .Take(20) // Limit for performance
+            .ToList();
 
             Logger.LogInformation("Found {Count} images in CBZ file", imageEntries.Count);
 
@@ -283,7 +272,7 @@
                 Logger.LogInformation("Generated content hash for {FileName}: {ContentHash}", selectedFile.Name, contentHash);
 
                 filteredImage = await ImageFilterService.CreateFilteredImageFromBytesAsync(
-                    imageBytes, selectedFile.Name, Library, description);
+                imageBytes, selectedFile.Name, Library, description);
                 if (filteredImage != null)
                 {
                     // Ensure description is persisted regardless of service behavior
@@ -295,14 +284,15 @@
                 Logger.LogInformation("Processing CBZ image: {ImageName} from {CbzPath}", selectedCbzImageName, cbzPath);
                 // Create filter from CBZ image
                 filteredImage = await ImageFilterService.CreateFilteredImageFromCbzAsync(
-                    cbzPath, selectedCbzImageName, Library, description);
+                cbzPath, selectedCbzImageName, Library, description);
 
                 // Log the content hash for debugging
                 if (filteredImage != null)
                 {
                     // Ensure description is persisted regardless of service behavior
                     filteredImage.Description = description;
-                    Logger.LogInformation("Generated content hash for {ImageName}: {ContentHash}", selectedCbzImageName, filteredImage.ContentHash);
+                    Logger.LogInformation("Generated content hash for {ImageName}: {ContentHash}", selectedCbzImageName,
+                    filteredImage.ContentHash);
                 }
             }
             else
@@ -316,7 +306,7 @@
             if (filteredImage != null)
             {
                 Logger.LogInformation("Saving filtered image to database - OriginalFileName: {OriginalFileName}, ContentHash: {ContentHash}",
-                    filteredImage.OriginalFileName, filteredImage.ContentHash);
+                filteredImage.OriginalFileName, filteredImage.ContentHash);
 
                 // Ensure the Library's FilteredImages collection is loaded
                 if (!DbContext.Entry(Library).Collection(l => l.FilteredImages).IsLoaded)

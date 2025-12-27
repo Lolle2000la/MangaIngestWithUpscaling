@@ -4,13 +4,13 @@
 
 @inject ApplicationDbContext DbContext
 @inject NavigationManager NavigationManager
-@inject IStringLocalizer<SharedResource> Loc
+@inject IStringLocalizer<CreateUpscalerProfile> Loc
 
-<PageTitle>@Loc["UpscalerProfile_CreateTitle"]</PageTitle>
+<PageTitle>@Loc["PageTitle"]</PageTitle>
 
 <MudCard>
     <MudCardHeader>
-        <MudText Typo="Typo.h5">@Loc["UpscalerProfile_CreateHeader"]</MudText>
+        <MudText Typo="Typo.h5">@Loc["Header"]</MudText>
     </MudCardHeader>
     <MudCardContent>
         <UpscalerProfileForm @bind-Profile="Profile" @bind-IsValid="IsValid" />
@@ -18,7 +18,7 @@
     <MudCardActions>
         <MudSpacer />
         <MudButton StartIcon="@Icons.Material.Filled.Save" Variant="Variant.Filled" Color="Color.Primary"
-            Disabled="!IsValid" OnClick="OnCreateLibrary">@Loc["Create"]</MudButton>
+            Disabled="!IsValid" OnClick="OnCreateLibrary">@Loc["Button_Create"]</MudButton>
     </MudCardActions>
 </MudCard>
 

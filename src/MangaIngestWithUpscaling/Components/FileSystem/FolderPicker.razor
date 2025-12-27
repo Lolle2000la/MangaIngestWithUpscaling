@@ -1,7 +1,8 @@
 ﻿@inherits ReactiveInjectableComponentBase<FolderPickerViewModel>
 @using Microsoft.Extensions.Localization
 @using MangaIngestWithUpscaling.Resources
-@inject IStringLocalizer<SharedResource> Loc
+@inject IStringLocalizer<FolderPicker> Loc
+@inject IStringLocalizer<SharedResource> SharedLoc
 
 <MudPaper Class="pa-4" Elevation="5">
     <MudStack Row="true">
@@ -16,7 +17,7 @@
     </MudStack>
 
     <MudStack Row="true" AlignItems="AlignItems.Baseline">
-        <MudText Typo="Typo.subtitle2" Class="mb-2">@Loc["FolderPicker_CurrentPath"]</MudText>
+        <MudText Typo="Typo.subtitle2" Class="mb-2">@Loc["CurrentPath"]</MudText>
         <MudInputString @bind-Value="ViewModel!.RootDirectory" Class="mb-2 flex-grow-1" FullWidth="true"
             Disabled="@(ViewModel?.Disabled == true || (ViewModel?.Loading ?? false))" />
     </MudStack>
@@ -30,13 +31,13 @@
         <MudStack Row="true" AlignItems="AlignItems.Center">
             <MudButton Variant="Variant.Outlined" OnClick="async e => await ViewModel!.GoToParentCommand.Execute()"
                 Disabled="@(ViewModel?.Disabled == true || (ViewModel?.Loading ?? false))">
-                @Loc["FolderPicker_GoToParent"]
+                @Loc["GoToParent"]
             </MudButton>
             <MudSpacer />
             <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Refresh"
                 Disabled="@(ViewModel?.Disabled == true || (ViewModel?.Loading ?? false))"
                 OnClick="async e => await ViewModel!.LoadDirectoryItemsCommand.Execute()">
-                @Loc["Generic_Refresh"]
+                @SharedLoc["Generic_Refresh"]
             </MudButton>
         </MudStack>
     </MudPaper>

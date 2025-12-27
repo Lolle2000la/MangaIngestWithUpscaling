@@ -3,9 +3,9 @@
 
 @inject ApplicationDbContext DbContext
 @inject NavigationManager NavigationManager
-@inject IStringLocalizer<SharedResource> Loc
+@inject IStringLocalizer<EditLibrary> Loc
 
-<PageTitle>@string.Format(Loc["EditLibrary_TitleWithParams"], Library?.Name ?? Loc["EditLibrary_Unknown"])</PageTitle>
+<PageTitle>@string.Format(Loc["PageTitle"], Library?.Name ?? Loc["UnknownLibrary"])</PageTitle>
 
 <MudCard>
     <MudCardHeader>
@@ -13,8 +13,8 @@
             <a href="libraries">
                 <MudIconButton Icon="@Icons.Material.Filled.ArrowBack" />
             </a>
-            <MudText Typo="Typo.h5">@string.Format(Loc["EditLibrary_TitleWithParams"], Library?.Name ??
-                                Loc["EditLibrary_Unknown"])</MudText>
+            <MudText Typo="Typo.h5">@string.Format(Loc["PageTitle"], Library?.Name ??
+                                Loc["UnknownLibrary"])</MudText>
         </MudStack>
     </MudCardHeader>
     <MudCardContent>
@@ -23,7 +23,7 @@
     <MudCardActions>
         <MudSpacer />
         <MudButton StartIcon="@Icons.Material.Filled.Save" Variant="Variant.Filled" Color="Color.Primary"
-            Disabled="!IsValid" OnClick="OnSaveLibrary">@Loc["EditLibrary_SaveButton"]</MudButton>
+            Disabled="!IsValid" OnClick="OnSaveLibrary">@Loc["SaveButton"]</MudButton>
     </MudCardActions>
 </MudCard>
 
