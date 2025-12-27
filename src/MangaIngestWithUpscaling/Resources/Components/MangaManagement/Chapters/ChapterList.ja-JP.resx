@@ -115,4 +115,67 @@
   <data name="Button_SplitSelected" xml:space="preserve">
     <value>選択したものを分割 (実験的)</value>
   </data>
+  <data name="Chip_Pending" xml:space="preserve">
+    <value>保留中</value>
+  </data>
+  <data name="Chip_Detected" xml:space="preserve">
+    <value>検出済み</value>
+  </data>
+  <data name="Chip_NoSplits" xml:space="preserve">
+    <value>分割なし</value>
+  </data>
+  <data name="Menu_ViewEdit" xml:space="preserve">
+    <value>表示 / 編集</value>
+  </data>
+  <data name="Menu_ApplySplits" xml:space="preserve">
+    <value>分割を適用</value>
+  </data>
+  <data name="Tooltip_RedetectSplits" xml:space="preserve">
+    <value>分割を再検出</value>
+  </data>
+  <data name="Snackbar_SplitDetectionCompleted" xml:space="preserve">
+    <value>{0} の分割検出が完了しました。</value>
+  </data>
+  <data name="Status_Yes" xml:space="preserve">
+    <value>はい</value>
+  </data>
+  <data name="Status_No" xml:space="preserve">
+    <value>いいえ</value>
+  </data>
+  <data name="Chip_Applied" xml:space="preserve">
+    <value>適用済み</value>
+  </data>
+  <data name="Chip_Failed" xml:space="preserve">
+    <value>失敗</value>
+  </data>
+  <data name="Tooltip_RetryDetection" xml:space="preserve">
+    <value>検出を再試行</value>
+  </data>
+  <data name="Tooltip_DetectSplits" xml:space="preserve">
+    <value>分割を検出</value>
+  </data>
+  <data name="Snackbar_SplitDetectionQueued" xml:space="preserve">
+    <value>{0} の分割検出チェックをキューに入れました</value>
+  </data>
+  <data name="Snackbar_SplitDetectionFailure" xml:space="preserve">
+    <value>分割検出のキュー登録に失敗しました: {0}</value>
+  </data>
+  <data name="Snackbar_SplitApplicationQueued" xml:space="preserve">
+    <value>{0} の分割適用をキューに入れました</value>
+  </data>
+  <data name="Snackbar_SplitApplicationFailure" xml:space="preserve">
+    <value>分割の適用に失敗しました: {0}</value>
+  </data>
+  <data name="Dialog_EditSplits_Title" xml:space="preserve">
+    <value>分割を編集</value>
+  </data>
+  <data name="Dialog_ApplySplits_Title" xml:space="preserve">
+    <value>分割を適用</value>
+  </data>
+  <data name="Dialog_ApplySplits_Content" xml:space="preserve">
+    <value>検出された分割を適用してもよろしいですか？これにより、チャプターが複数のファイルに分割され、オリジナルは削除されます。</value>
+  </data>
+  <data name="Text_NotAvailable" xml:space="preserve">
+    <value>なし</value>
+  </data>
 </root>

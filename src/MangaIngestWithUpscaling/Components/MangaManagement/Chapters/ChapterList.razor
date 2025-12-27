@@ -94,7 +94,7 @@
     <RowTemplate>
         <MudTd DataLabel="@Loc["Header_ChapterTitle"]">
             <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
-                <MudText>@(context.ExtractedMetadata?.ChapterTitle ?? "N/A")</MudText>
+                <MudText>@(context.ExtractedMetadata?.ChapterTitle ?? Loc["Text_NotAvailable"])</MudText>
                 @if (context.IsMerged)
                 {
                     <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Filled">
@@ -106,7 +106,7 @@
         </MudTd>
         <MudTd DataLabel="@Loc["Header_ChapterPath"]">@context.Chapter.RelativePath</MudTd>
         <MudTd DataLabel="@Loc["Header_Upscaled"]">
-            @context.Chapter.IsUpscaled
+            @(context.Chapter.IsUpscaled? Loc["Status_Yes"] : Loc["Status_No"])
             @if (!context.Chapter.IsUpscaled)
             {
                 <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Color="Color.Primary" Variant="Variant.Text"

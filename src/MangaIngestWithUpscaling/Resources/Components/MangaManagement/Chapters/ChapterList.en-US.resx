@@ -310,4 +310,13 @@
   <data name="Snackbar_SplitApplicationFailure" xml:space="preserve">
     <value>Failed to apply splits: {0}</value>
   </data>
+  <data name="Status_Yes" xml:space="preserve">
+    <value>Yes</value>
+  </data>
+  <data name="Status_No" xml:space="preserve">
+    <value>No</value>
+  </data>
+  <data name="Text_NotAvailable" xml:space="preserve">
+    <value>N/A</value>
+  </data>
 </root>

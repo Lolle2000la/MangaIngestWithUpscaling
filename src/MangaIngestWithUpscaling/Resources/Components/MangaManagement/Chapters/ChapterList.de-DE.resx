@@ -115,4 +115,67 @@
   <data name="Button_SplitSelected" xml:space="preserve">
     <value>Ausgewählte teilen (Experimentell)</value>
   </data>
+  <data name="Chip_Pending" xml:space="preserve">
+    <value>Ausstehend</value>
+  </data>
+  <data name="Chip_Detected" xml:space="preserve">
+    <value>Erkannt</value>
+  </data>
+  <data name="Chip_NoSplits" xml:space="preserve">
+    <value>Keine Aufteilungen</value>
+  </data>
+  <data name="Menu_ViewEdit" xml:space="preserve">
+    <value>Ansehen / Bearbeiten</value>
+  </data>
+  <data name="Menu_ApplySplits" xml:space="preserve">
+    <value>Aufteilungen anwenden</value>
+  </data>
+  <data name="Tooltip_RedetectSplits" xml:space="preserve">
+    <value>Aufteilungen neu erkennen</value>
+  </data>
+  <data name="Snackbar_SplitDetectionCompleted" xml:space="preserve">
+    <value>Aufteilungserkennung für {0} abgeschlossen.</value>
+  </data>
+  <data name="Status_Yes" xml:space="preserve">
+    <value>Ja</value>
+  </data>
+  <data name="Status_No" xml:space="preserve">
+    <value>Nein</value>
+  </data>
+  <data name="Chip_Applied" xml:space="preserve">
+    <value>Angewendet</value>
+  </data>
+  <data name="Chip_Failed" xml:space="preserve">
+    <value>Fehlgeschlagen</value>
+  </data>
+  <data name="Tooltip_RetryDetection" xml:space="preserve">
+    <value>Erkennung wiederholen</value>
+  </data>
+  <data name="Tooltip_DetectSplits" xml:space="preserve">
+    <value>Aufteilungen erkennen</value>
+  </data>
+  <data name="Snackbar_SplitDetectionQueued" xml:space="preserve">
+    <value>Aufteilungserkennung für {0} in die Warteschlange eingereiht</value>
+  </data>
+  <data name="Snackbar_SplitDetectionFailure" xml:space="preserve">
+    <value>Fehler beim Einreihen der Aufteilungserkennung: {0}</value>
+  </data>
+  <data name="Snackbar_SplitApplicationQueued" xml:space="preserve">
+    <value>Anwendung der Aufteilungen für {0} in die Warteschlange eingereiht</value>
+  </data>
+  <data name="Snackbar_SplitApplicationFailure" xml:space="preserve">
+    <value>Fehler beim Anwenden der Aufteilungen: {0}</value>
+  </data>
+  <data name="Dialog_EditSplits_Title" xml:space="preserve">
+    <value>Aufteilungen bearbeiten</value>
+  </data>
+  <data name="Dialog_ApplySplits_Title" xml:space="preserve">
+    <value>Aufteilungen anwenden</value>
+  </data>
+  <data name="Dialog_ApplySplits_Content" xml:space="preserve">
+    <value>Sind Sie sicher, dass Sie die erkannten Aufteilungen anwenden möchten? Dies wird das Kapitel in mehrere Dateien aufteilen und das Original löschen.</value>
+  </data>
+  <data name="Text_NotAvailable" xml:space="preserve">
+    <value>N/V</value>
+  </data>
 </root>
