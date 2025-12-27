@@ -161,7 +161,13 @@
     <value>Revert Selected Merged Chapters</value>
   </data>
   <data name="Dialog_RevertSelectedMerged_Content" xml:space="preserve">
-    <value>Are you sure you want to revert {0} merged chapters back to their original parts? This will delete the merged chapters and restore the individual parts.</value>
+    <value>Are you sure you want to revert {0} back to their original parts? This will delete the merged chapters and restore the individual parts.</value>
+  </data>
+  <data name="Word_MergedChapter" xml:space="preserve">
+    <value>merged chapter</value>
+  </data>
+  <data name="Suffix_Old" xml:space="preserve">
+    <value>(old)</value>
   </data>
   <data name="Snackbar_RevertMerged_Success" xml:space="preserve">
     <value>Successfully reverted {0} merged chapters.</value>

@@ -86,7 +86,10 @@
     <value>Storage Paths</value>
   </data>
   <data name="Warning_LibraryContainsSeries" xml:space="preserve">
-    <value>This library contains {0} series.</value>
+    <value>This library contains {0}.</value>
+  </data>
+  <data name="Word_Series" xml:space="preserve">
+    <value>series</value>
   </data>
   <data name="Warning_CannotChangePaths" xml:space="preserve">
     <value>You cannot change the storage paths while the library contains series.</value>

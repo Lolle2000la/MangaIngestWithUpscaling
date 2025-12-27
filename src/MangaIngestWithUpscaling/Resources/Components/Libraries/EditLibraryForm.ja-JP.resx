@@ -86,7 +86,10 @@
     <value>保存パス</value>
   </data>
   <data name="Warning_LibraryContainsSeries" xml:space="preserve">
-    <value>このライブラリには {0} のシリーズが含まれています。</value>
+    <value>このライブラリには {0} が含まれています。</value>
+  </data>
+  <data name="Word_Series" xml:space="preserve">
+    <value>シリーズ</value>
   </data>
   <data name="Warning_CannotChangePaths" xml:space="preserve">
     <value>ライブラリにシリーズが含まれている間は、保存パスを変更できません。</value>

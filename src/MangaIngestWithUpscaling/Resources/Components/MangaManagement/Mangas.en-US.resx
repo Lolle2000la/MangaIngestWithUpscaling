@@ -103,6 +103,9 @@
   <data name="ChapterCount" xml:space="preserve">
     <value>{0} ({1} upscaled)</value>
   </data>
+  <data name="Word_Chapter" xml:space="preserve">
+    <value>chapter</value>
+  </data>
   <data name="UseLibrarySettings" xml:space="preserve">
     <value>Use Library Settings</value>
   </data>

@@ -103,6 +103,9 @@
   <data name="ChapterCount" xml:space="preserve">
     <value>{0} ({1} アップスケール済み)</value>
   </data>
+  <data name="Word_Chapter" xml:space="preserve">
+    <value>チャプター</value>
+  </data>
   <data name="UseLibrarySettings" xml:space="preserve">
     <value>ライブラリ設定を使用</value>
   </data>

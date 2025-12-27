@@ -86,7 +86,10 @@
     <value>Speicherpfade</value>
   </data>
   <data name="Warning_LibraryContainsSeries" xml:space="preserve">
-    <value>Diese Bibliothek enthält {0} Serien.</value>
+    <value>Diese Bibliothek enthält {0}.</value>
+  </data>
+  <data name="Word_Series" xml:space="preserve">
+    <value>Serie</value>
   </data>
   <data name="Warning_CannotChangePaths" xml:space="preserve">
     <value>Sie können die Speicherpfade nicht ändern, solange die Bibliothek Serien enthält.</value>

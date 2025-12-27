@@ -175,7 +175,16 @@
   <data name="Dialog_ApplySplits_Content" xml:space="preserve">
     <value>検出された分割を適用してもよろしいですか？これにより、チャプターが複数のファイルに分割され、オリジナルは削除されます。</value>
   </data>
-  <data name="Text_NotAvailable" xml:space="preserve">
-    <value>なし</value>
+  <data name="Dialog_RevertSelectedMerged_Title" xml:space="preserve">
+    <value>選択した結合済みチャプターを元に戻す</value>
+  </data>
+  <data name="Dialog_RevertSelectedMerged_Content" xml:space="preserve">
+    <value>{0} を元のパーツに戻してもよろしいですか？これにより、結合されたチャプターが削除され、個々のパーツが復元されます。</value>
+  </data>
+  <data name="Word_MergedChapter" xml:space="preserve">
+    <value>結合されたチャプター</value>
+  </data>
+  <data name="Suffix_Old" xml:space="preserve">
+    <value>(旧)</value>
   </data>
 </root>

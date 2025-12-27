@@ -4,6 +4,8 @@
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks
 @using MangaIngestWithUpscaling.Services.ImageFiltering
 @using Microsoft.Extensions.Localization
+@using Humanizer
+@using System.Globalization
 
 @inject ApplicationDbContext DbContext
 @inject IDialogService DialogService
@@ -58,8 +60,10 @@
                         <MudText Typo="Typo.h6">
                             @if (Library.FilteredImages.Any())
                             {
-                                <span>@string.Format(Loc["Text_FilteredImagesCount"], Library.FilteredImages.Count)</span>
-                            }
+                                <span>@string.Format(Loc["Text_FilteredImagesCount"],
+                                                                Loc["Word_FilteredImage"].Value.ToQuantity(Library.FilteredImages.Count, formatProvider:
+                                                                CultureInfo.CurrentUICulture))</span>
+                                                }
                             else
                             {
                                 <span>@Loc["Text_NoFilteredImages"]</span>

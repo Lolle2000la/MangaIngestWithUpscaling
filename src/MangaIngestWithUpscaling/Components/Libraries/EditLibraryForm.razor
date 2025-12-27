@@ -4,6 +4,8 @@
 @using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Shared.Data.Analysis
 @using Microsoft.Extensions.Options
+@using Humanizer
+@using System.Globalization
 @inject ApplicationDbContext DbContext
 @inject IOptions<KavitaConfiguration> KavitaConfig
 @inject IDialogService DialogService
@@ -18,8 +20,8 @@
                 <MudItem xs="12">
                     <MudText Typo="Typo.h5" GutterBottom="true">@Loc["Header_LibraryInfo"]</MudText>
                     <MudTextField Required="true" Label="@Loc["Label_LibraryName"]"
-                        HelperText="@Loc["Helper_LibraryName"]" Immediate="true"
-                        @bind-Value="Library.Name" @bind-Value:after="OnInputChanged" Variant="Variant.Outlined" />
+                        HelperText="@Loc["Helper_LibraryName"]" Immediate="true" @bind-Value="Library.Name"
+                        @bind-Value:after="OnInputChanged" Variant="Variant.Outlined" />
 
                     @if (Library.Id > 0)
                     {
@@ -54,7 +56,8 @@
                             <div>
                                 <MudText Typo="Typo.h6" Class="mb-2">
                                     @string.Format(Loc["Warning_LibraryContainsSeries"],
-                                    Library.MangaSeries.Count)
+                                    Loc["Word_Series"].Value.ToQuantity(Library.MangaSeries.Count, formatProvider:
+                                    CultureInfo.CurrentUICulture))
                             </MudText>
                             <MudText Typo="Typo.body2">
                                 @Loc["Warning_CannotChangePaths"]
@@ -83,8 +86,7 @@
                     <FolderPicker RootDirectory="@Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)"
                         SelectedPath="@Library.UpscaledLibraryPath"
                         Disabled="Library.MangaSeries.Count > 0 && Library.UpscaledLibraryPath != null"
-                        SelectedPathChanged="@OnUpscaledPathChanged"
-                        Title="@Loc["Title_UpscaledLocation"]" />
+                        SelectedPathChanged="@OnUpscaledPathChanged" Title="@Loc["Title_UpscaledLocation"]" />
                 </MudItem>
             </MudGrid>
         </MudTabPanel>
@@ -139,9 +141,8 @@
                     <MudText Typo="Typo.h5" GutterBottom="true" Class="mt-4">
                         @Loc["Header_VerticalStrip"]</MudText>
                     <MudSelect T="StripDetectionMode" Label="@Loc["Label_DetectionMode"]"
-                        HelperText="@Loc["Helper_DetectionMode"]"
-                        @bind-Value="Library.StripDetectionMode" @bind-Value:after="OnInputChanged"
-                        Variant="Variant.Outlined">
+                        HelperText="@Loc["Helper_DetectionMode"]" @bind-Value="Library.StripDetectionMode"
+                        @bind-Value:after="OnInputChanged" Variant="Variant.Outlined">
                         <MudSelectItem Value="StripDetectionMode.None">@Loc["Option_Disabled"]
                         </MudSelectItem>
                         <MudSelectItem Value="StripDetectionMode.DetectOnly">@Loc["Option_DetectOnly"]
@@ -154,8 +155,7 @@
         </MudTabPanel>
 
         <!-- Rename Rules Tab -->
-        <MudTabPanel Text="@Loc["Tab_RenameRules"]"
-            Icon="@Icons.Material.Filled.DriveFileRenameOutline">
+        <MudTabPanel Text="@Loc["Tab_RenameRules"]" Icon="@Icons.Material.Filled.DriveFileRenameOutline">
             <MudGrid Spacing="4">
                 <MudItem xs="12">
                     <MudText Typo="Typo.h5" GutterBottom="true">@Loc["Header_RenameConfig"]</MudText>
@@ -204,17 +204,15 @@
                     </MudItem>
 
                     <MudItem md="6" xs="12">
-                        <MudTextField Label="@Loc["Label_KavitaAsIs"]"
-                            HelperText="@Loc["Helper_KavitaAsIs"]" Immediate="true"
-                            @bind-Value="Library.KavitaConfig.NotUpscaledMountPoint" @bind-Value:after="OnInputChanged"
-                            Variant="Variant.Outlined" />
+                        <MudTextField Label="@Loc["Label_KavitaAsIs"]" HelperText="@Loc["Helper_KavitaAsIs"]"
+                            Immediate="true" @bind-Value="Library.KavitaConfig.NotUpscaledMountPoint"
+                            @bind-Value:after="OnInputChanged" Variant="Variant.Outlined" />
                     </MudItem>
 
                     <MudItem md="6" xs="12">
-                        <MudTextField Label="@Loc["Label_KavitaUpscaled"]"
-                            HelperText="@Loc["Helper_KavitaUpscaled"]" Immediate="true"
-                            @bind-Value="Library.KavitaConfig.UpscaledMountPoint" @bind-Value:after="OnInputChanged"
-                            Variant="Variant.Outlined" />
+                        <MudTextField Label="@Loc["Label_KavitaUpscaled"]" HelperText="@Loc["Helper_KavitaUpscaled"]"
+                            Immediate="true" @bind-Value="Library.KavitaConfig.UpscaledMountPoint"
+                            @bind-Value:after="OnInputChanged" Variant="Variant.Outlined" />
                     </MudItem>
 
                     <MudItem xs="12">

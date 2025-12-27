@@ -68,6 +68,9 @@
     <value>追加日: {0}</value>
   </data>
   <data name="Text_Occurrences" xml:space="preserve">
-    <value>出現回数: {0}</value>
+    <value>{0}</value>
+  </data>
+  <data name="Word_Occurrence" xml:space="preserve">
+    <value>出現</value>
   </data>
 </root>

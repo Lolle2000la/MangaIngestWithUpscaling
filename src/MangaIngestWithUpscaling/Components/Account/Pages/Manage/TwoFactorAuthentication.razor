@@ -4,6 +4,8 @@
 @using Microsoft.AspNetCore.Identity
 @using MangaIngestWithUpscaling.Data
 @using Microsoft.Extensions.Localization
+@using Humanizer
+@using System.Globalization
 
 @inject UserManager<ApplicationUser> UserManager
 @inject SignInManager<ApplicationUser> SignInManager
@@ -36,10 +38,11 @@
         else if (recoveryCodesLeft <= 3)
         {
             <div class="alert alert-warning">
-                <strong>@string.Format(Loc["RecoveryCodesLeft"], recoveryCodesLeft)</strong>
-                <p>@((MarkupString)Loc["ShouldGenerateNewCodes"].Value)</p>
-            </div>
-        }
+                <strong>@string.Format(Loc["RecoveryCodesLeft"], Loc["Word_RecoveryCode"].Value.ToQuantity(recoveryCodesLeft,
+                            formatProvider: CultureInfo.CurrentUICulture))</strong>
+    <p>@((MarkupString)Loc["ShouldGenerateNewCodes"].Value)</p>
+</div>
+}
 
         if (isMachineRemembered)
         {

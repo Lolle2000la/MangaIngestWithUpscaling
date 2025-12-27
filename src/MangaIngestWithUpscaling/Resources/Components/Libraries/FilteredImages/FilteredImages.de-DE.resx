@@ -71,7 +71,10 @@
     <value>Filter rückwirkend anwenden</value>
   </data>
   <data name="Text_FilteredImagesCount" xml:space="preserve">
-    <value>{0} gefilterte(s) Bild(er)</value>
+    <value>{0}</value>
+  </data>
+  <data name="Word_FilteredImage" xml:space="preserve">
+    <value>gefiltertes Bild</value>
   </data>
   <data name="Text_NoFilteredImages" xml:space="preserve">
     <value>Keine gefilterten Bilder konfiguriert</value>

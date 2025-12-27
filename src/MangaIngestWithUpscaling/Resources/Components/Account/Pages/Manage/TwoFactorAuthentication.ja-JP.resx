@@ -77,7 +77,10 @@
     <value>&lt;a href="Account/Manage/GenerateRecoveryCodes"&gt;新しいリカバリーコードのセットを生成&lt;/a&gt;できます。</value>
   </data>
   <data name="RecoveryCodesLeft" xml:space="preserve">
-    <value>リカバリーコードが残り {0} 個です。</value>
+    <value>{0} が残りです。</value>
+  </data>
+  <data name="Word_RecoveryCode" xml:space="preserve">
+    <value>リカバリーコード</value>
   </data>
   <data name="ShouldGenerateNewCodes" xml:space="preserve">
     <value>&lt;a href="Account/Manage/GenerateRecoveryCodes"&gt;新しいリカバリーコードのセットを生成&lt;/a&gt;することをお勧めします。</value>

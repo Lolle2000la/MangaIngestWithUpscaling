@@ -71,7 +71,10 @@
     <value>Apply Filters Retroactively</value>
   </data>
   <data name="Text_FilteredImagesCount" xml:space="preserve">
-    <value>{0} filtered image(s)</value>
+    <value>{0}</value>
+  </data>
+  <data name="Word_FilteredImage" xml:space="preserve">
+    <value>filtered image</value>
   </data>
   <data name="Text_NoFilteredImages" xml:space="preserve">
     <value>No filtered images configured</value>

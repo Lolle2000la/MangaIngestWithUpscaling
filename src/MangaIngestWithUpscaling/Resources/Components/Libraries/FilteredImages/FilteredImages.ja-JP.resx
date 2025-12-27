@@ -71,7 +71,10 @@
     <value>フィルターを遡及的に適用</value>
   </data>
   <data name="Text_FilteredImagesCount" xml:space="preserve">
-    <value>{0} 枚のフィルタリングされた画像</value>
+    <value>{0}</value>
+  </data>
+  <data name="Word_FilteredImage" xml:space="preserve">
+    <value>フィルタリングされた画像</value>
   </data>
   <data name="Text_NoFilteredImages" xml:space="preserve">
     <value>フィルタリングされた画像は設定されていません</value>

@@ -175,7 +175,16 @@
   <data name="Dialog_ApplySplits_Content" xml:space="preserve">
     <value>Sind Sie sicher, dass Sie die erkannten Aufteilungen anwenden möchten? Dies wird das Kapitel in mehrere Dateien aufteilen und das Original löschen.</value>
   </data>
-  <data name="Text_NotAvailable" xml:space="preserve">
-    <value>N/V</value>
+  <data name="Dialog_RevertSelectedMerged_Title" xml:space="preserve">
+    <value>Ausgewählte zusammengeführte Kapitel zurücksetzen</value>
+  </data>
+  <data name="Dialog_RevertSelectedMerged_Content" xml:space="preserve">
+    <value>Sind Sie sicher, dass Sie {0} in ihre ursprünglichen Teile zurücksetzen möchten? Dies löscht die zusammengeführten Kapitel und stellt die einzelnen Teile wieder her.</value>
+  </data>
+  <data name="Word_MergedChapter" xml:space="preserve">
+    <value>zusammengeführtes Kapitel</value>
+  </data>
+  <data name="Suffix_Old" xml:space="preserve">
+    <value>(alt)</value>
   </data>
 </root>

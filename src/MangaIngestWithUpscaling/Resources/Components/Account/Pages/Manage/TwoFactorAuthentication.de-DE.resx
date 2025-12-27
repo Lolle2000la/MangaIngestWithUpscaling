@@ -77,7 +77,10 @@
     <value>Sie können &lt;a href="Account/Manage/GenerateRecoveryCodes"&gt;einen neuen Satz Wiederherstellungscodes generieren&lt;/a&gt;.</value>
   </data>
   <data name="RecoveryCodesLeft" xml:space="preserve">
-    <value>Sie haben noch {0} Wiederherstellungscodes übrig.</value>
+    <value>Sie haben noch {0} übrig.</value>
+  </data>
+  <data name="Word_RecoveryCode" xml:space="preserve">
+    <value>Wiederherstellungscode</value>
   </data>
   <data name="ShouldGenerateNewCodes" xml:space="preserve">
     <value>Sie sollten &lt;a href="Account/Manage/GenerateRecoveryCodes"&gt;einen neuen Satz Wiederherstellungscodes generieren&lt;/a&gt;.</value>
