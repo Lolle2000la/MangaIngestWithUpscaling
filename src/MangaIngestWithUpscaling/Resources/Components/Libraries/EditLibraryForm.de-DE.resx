@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="Tab_BasicSettings" xml:space="preserve">
+    <value>Grundeinstellungen</value>
+  </data>
+  <data name="Header_LibraryInfo" xml:space="preserve">
+    <value>Bibliotheksinformationen</value>
+  </data>
+  <data name="Label_LibraryName" xml:space="preserve">
+    <value>Bibliotheksname</value>
+  </data>
+  <data name="Helper_LibraryName" xml:space="preserve">
+    <value>Ein eindeutiger Name für diese Bibliothek</value>
+  </data>
+  <data name="Label_Created" xml:space="preserve">
+    <value>Erstellt:</value>
+  </data>
+  <data name="Label_Modified" xml:space="preserve">
+    <value>Geändert:</value>
+  </data>
+  <data name="Header_IngestConfig" xml:space="preserve">
+    <value>Ingest-Konfiguration</value>
+  </data>
+  <data name="Title_IngestFolder" xml:space="preserve">
+    <value>Ingest-Ordner (Quelle)</value>
+  </data>
+  <data name="Tab_StoragePaths" xml:space="preserve">
+    <value>Speicherpfade</value>
+  </data>
+  <data name="Warning_LibraryContainsSeries" xml:space="preserve">
+    <value>Diese Bibliothek enthält {0} Serien.</value>
+  </data>
+  <data name="Warning_CannotChangePaths" xml:space="preserve">
+    <value>Sie können die Speicherpfade nicht ändern, solange die Bibliothek Serien enthält.</value>
+  </data>
+  <data name="Warning_CanStillChange" xml:space="preserve">
+    <value>Sie können weiterhin den &lt;b&gt;Ingest-Pfad&lt;/b&gt; und die &lt;b&gt;Upscaling-Konfiguration&lt;/b&gt; ändern.</value>
+  </data>
+  <data name="Header_StorageLocations" xml:space="preserve">
+    <value>Speicherorte</value>
+  </data>
+  <data name="Title_StoragePathAsIs" xml:space="preserve">
+    <value>Speicherpfad (Original)</value>
+  </data>
+  <data name="Title_UpscaledLocation" xml:space="preserve">
+    <value>Hochskalierter Speicherort (Optional)</value>
+  </data>
+  <data name="Tab_Upscaling" xml:space="preserve">
+    <value>Hochskalierung</value>
+  </data>
+  <data name="Header_UpscalingConfig" xml:space="preserve">
+    <value>Upscaling-Konfiguration</value>
+  </data>
+  <data name="Label_UpscaleOnIngest" xml:space="preserve">
+    <value>Beim Ingest hochskalieren</value>
+  </data>
+  <data name="Label_UpscalerProfile" xml:space="preserve">
+    <value>Standard-Upscaler-Profil</value>
+  </data>
+  <data name="Helper_UpscalerProfile" xml:space="preserve">
+    <value>Wählen Sie das Profil für die Hochskalierung</value>
+  </data>
+  <data name="Option_None" xml:space="preserve">
+    <value>Keines</value>
+  </data>
+  <data name="Tab_FileManagement" xml:space="preserve">
+    <value>Dateiverwaltung</value>
+  </data>
+  <data name="Header_FileFiltering" xml:space="preserve">
+    <value>Dateifilterung</value>
+  </data>
+  <data name="Header_ChapterProcessing" xml:space="preserve">
+    <value>Kapitelverarbeitung</value>
+  </data>
+  <data name="Label_MergeChapters" xml:space="preserve">
+    <value>Kapitelteile zusammenführen (z.B. Kap. 1 Teil 1 + Kap. 1 Teil 2 -&gt; Kap. 1)</value>
+  </data>
+  <data name="Warning_Experimental" xml:space="preserve">
+    <value>Experimentell: Diese Funktion befindet sich noch in der Entwicklung und funktioniert möglicherweise nicht wie erwartet.</value>
+  </data>
+  <data name="Header_VerticalStrip" xml:space="preserve">
+    <value>Erkennung vertikaler Streifen</value>
+  </data>
+  <data name="Label_DetectionMode" xml:space="preserve">
+    <value>Erkennungsmodus</value>
+  </data>
+  <data name="Helper_DetectionMode" xml:space="preserve">
+    <value>Umgang mit langen vertikalen Streifen (Webtoons)</value>
+  </data>
+  <data name="Option_Disabled" xml:space="preserve">
+    <value>Deaktiviert</value>
+  </data>
+  <data name="Option_DetectOnly" xml:space="preserve">
+    <value>Nur erkennen</value>
+  </data>
+  <data name="Option_DetectAndApply" xml:space="preserve">
+    <value>Erkennen &amp; Aufteilungen anwenden</value>
+  </data>
+  <data name="Tab_RenameRules" xml:space="preserve">
+    <value>Umbenennungsregeln</value>
+  </data>
+  <data name="Header_RenameConfig" xml:space="preserve">
+    <value>Umbenennungskonfiguration</value>
+  </data>
+  <data name="Body_RenameConfig" xml:space="preserve">
+    <value>Konfigurieren Sie, wie Dateien und Ordner beim Ingest umbenannt werden. Regeln werden in der Reihenfolge angewendet.</value>
+  </data>
+  <data name="Button_PreviewRename" xml:space="preserve">
+    <value>Vorschau der Umbenennungsregeln</value>
+  </data>
+  <data name="Tab_Integration" xml:space="preserve">
+    <value>Integration</value>
+  </data>
+  <data name="Header_KavitaConfig" xml:space="preserve">
+    <value>Kavita-Konfiguration</value>
+  </data>
+  <data name="Body_KavitaConfig" xml:space="preserve">
+    <value>Konfigurieren Sie, wie Kavita Ihre Bibliothekspfade sieht. Dies ist nützlich, wenn Sie Kavita in Docker ausführen und die Pfade unterschiedlich sind.</value>
+  </data>
+  <data name="Note_KavitaConfig" xml:space="preserve">
+    <value>Hinweis: Diese Pfade werden &lt;b&gt;nur&lt;/b&gt; für die Kavita-Integration (Scan-Trigger) verwendet. Sie haben keinen Einfluss darauf, wo Dateien gespeichert werden.</value>
+  </data>
+  <data name="Label_KavitaAsIs" xml:space="preserve">
+    <value>Kavita-Mount-Punkt (Original)</value>
+  </data>
+  <data name="Helper_KavitaAsIs" xml:space="preserve">
+    <value>Der Pfad zur 'Original'-Bibliothek, wie er von Kavita gesehen wird</value>
+  </data>
+  <data name="Label_KavitaUpscaled" xml:space="preserve">
+    <value>Kavita-Mount-Punkt (Hochskaliert)</value>
+  </data>
+  <data name="Helper_KavitaUpscaled" xml:space="preserve">
+    <value>Der Pfad zur 'Hochskaliert'-Bibliothek, wie er von Kavita gesehen wird</value>
+  </data>
+  <data name="Hint_Kavita" xml:space="preserve">
+    <value>Wenn leer gelassen, werden die lokalen Pfade verwendet. Verwenden Sie dies, wenn Kavita in einem Container mit unterschiedlichen Volume-Zuordnungen ausgeführt wird.</value>
+  </data>
+</root>

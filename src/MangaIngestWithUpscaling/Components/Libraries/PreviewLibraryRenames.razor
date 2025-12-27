@@ -444,13 +444,11 @@
         string style;
         if (highlightType == DiffHighlightType.Addition)
         {
-            style = "background-color: #d4edda; color: #155724; border-radius: 2px; padding: 0 2px;"; // Light green background,
-            dark green text
+            style = "background-color: #d4edda; color: #155724; border-radius: 2px; padding: 0 2px;"; // Light green background, dark green text
         }
         else // Removal
         {
-            style = "background-color: #f8d7da; color: #721c24; border-radius: 2px; padding: 0 2px;"; // Light red background, dark
-            red text
+            style = "background-color: #f8d7da; color: #721c24; border-radius: 2px; padding: 0 2px;"; // Light red background, dark red text
         }
 
         if (!string.IsNullOrEmpty(changed))
