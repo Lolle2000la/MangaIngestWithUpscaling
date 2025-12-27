@@ -5,14 +5,16 @@
 @using System.Text.Encodings.Web
 @using Microsoft.AspNetCore.Identity
 @using PinguApps.Blazor.QRCode
+@using Microsoft.Extensions.Localization
 
 @inject UserManager<ApplicationUser> UserManager
 @inject IdentityUserAccessor UserAccessor
 @inject UrlEncoder UrlEncoder
 @inject IdentityRedirectManager RedirectManager
 @inject ILogger<EnableAuthenticator> Logger
+@inject IStringLocalizer<EnableAuthenticator> Loc
 
-<PageTitle>Configure authenticator app</PageTitle>
+<PageTitle>@Loc["PageTitle"]</PageTitle>
 
 @if (recoveryCodes is not null)
 {
@@ -21,48 +23,36 @@
 else
 {
     <StatusMessage Message="@message" />
-    <h3>Configure authenticator app</h3>
+    <h3>@Loc["Header"]</h3>
     <div>
-        <p>To use an authenticator app go through the following steps:</p>
+        <p>@Loc["StepsIntro"]</p>
         <ol class="list">
             <li>
                 <p>
-                    Download a two-factor authenticator app like Microsoft Authenticator for
-                    <a href="https://go.microsoft.com/fwlink/?Linkid=825072">Android</a> and
-                    <a href="https://go.microsoft.com/fwlink/?Linkid=825073">iOS</a> or
-                    Google Authenticator for
-                    <a
-                            href="https://play.google.com/store/apps/details?id=com.google.android.apps.authenticator2&amp;hl=en">Android</a>
-                    and
-                    <a href="https://itunes.apple.com/us/app/google-authenticator/id388497605?mt=8">iOS</a>.
+                    @((MarkupString)Loc["Step1"].Value)
                 </p>
             </li>
             <li>
-                <p>Scan the QR Code or enter this key <kbd>@sharedKey</kbd> into your two factor authenticator app.
-                    Spaces
-                    and casing do not matter.</p>
+                <p>@((MarkupString)string.Format(Loc["Step2"], sharedKey))</p>
                 <div data-url="@authenticatorUri">
                     <QRCode Data="@authenticatorUri" Size="250px" ErrorCorrection="ErrorCorrection.High" Class="mb-3" />
                 </div>
             </li>
             <li>
                 <p>
-                    Once you have scanned the QR code or input the key above, your two factor authentication app will
-                    provide you
-                    with a unique code. Enter the code in the confirmation box below.
+                    @Loc["Step3"]
                 </p>
                 <div class="row">
                     <div class="col-xl-6">
                         <EditForm Model="Input" FormName="send-code" OnValidSubmit="OnValidSubmitAsync" method="post">
                             <DataAnnotationsValidator />
                             <div class="form-floating mb-3">
-                                <InputText @bind-Value="Input!.Code" id="Input.Code" class="form-control"
-                                           autocomplete="off"
-                                           placeholder="Enter the code"/>
-                                <label for="Input.Code" class="control-label form-label">Verification Code</label>
-                                <ValidationMessage For="() => Input!.Code" class="text-danger"/>
+                                <InputText @bind-Value="Input!.Code" id="Input.Code" class="form-control" autocomplete="off"
+                                    placeholder="@Loc["CodePlaceholder"]" />
+                                <label for="Input.Code" class="control-label form-label">@Loc["VerificationCode"]</label>
+                                <ValidationMessage For="() => Input!.Code" class="text-danger" />
                             </div>
-                            <button type="submit" class="w-100 btn btn-lg btn-primary">Verify</button>
+                            <button type="submit" class="w-100 btn btn-lg btn-primary">@Loc["VerifyButton"]</button>
                             <ValidationSummary class="text-danger" role="alert" />
                         </EditForm>
                     </div>
@@ -101,7 +91,7 @@ else
         var verificationCode = Input!.Code.Replace(" ", string.Empty).Replace("-", string.Empty);
 
         var is2faTokenValid = await UserManager.VerifyTwoFactorTokenAsync(
-                user, UserManager.Options.Tokens.AuthenticatorTokenProvider, verificationCode);
+        user, UserManager.Options.Tokens.AuthenticatorTokenProvider, verificationCode);
 
         if (!is2faTokenValid)
         {
@@ -161,11 +151,11 @@ else
     private string GenerateQrCodeUri(string email, string unformattedKey)
     {
         return string.Format(
-                CultureInfo.InvariantCulture,
-                AuthenticatorUriFormat,
-                UrlEncoder.Encode("Microsoft.AspNetCore.Identity.UI"),
-                UrlEncoder.Encode(email),
-                unformattedKey);
+        CultureInfo.InvariantCulture,
+        AuthenticatorUriFormat,
+        UrlEncoder.Encode("Microsoft.AspNetCore.Identity.UI"),
+        UrlEncoder.Encode(email),
+        unformattedKey);
     }
 
     private sealed class InputModel

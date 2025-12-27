@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <data name="PageTitle" xml:space="preserve">
+    <value>Authentifizierungsschlüssel zurücksetzen</value>
+  </data>
+  <data name="Header" xml:space="preserve">
+    <value>Authentifizierungsschlüssel zurücksetzen</value>
+  </data>
+  <data name="WarningTitle" xml:space="preserve">
+    <value>Wenn Sie Ihren Authentifizierungsschlüssel zurücksetzen, funktioniert Ihre Authentifizierungs-App nicht mehr, bis Sie sie neu konfigurieren.</value>
+  </data>
+  <data name="WarningDescription" xml:space="preserve">
+    <value>Dieser Vorgang deaktiviert 2FA, bis Sie Ihre Authentifizierungs-App verifizieren. Wenn Sie die Konfiguration Ihrer Authentifizierungs-App nicht abschließen, verlieren Sie möglicherweise den Zugriff auf Ihr Konto.</value>
+  </data>
+  <data name="ResetButton" xml:space="preserve">
+    <value>Authentifizierungsschlüssel zurücksetzen</value>
+  </data>
+  <data name="StatusMessage" xml:space="preserve">
+    <value>Ihr Authentifizierungsschlüssel wurde zurückgesetzt. Sie müssen Ihre Authentifizierungs-App mit dem neuen Schlüssel konfigurieren.</value>
+  </data>
+</root>

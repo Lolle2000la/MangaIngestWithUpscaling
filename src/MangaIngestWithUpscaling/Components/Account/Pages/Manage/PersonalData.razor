@@ -1,24 +1,28 @@
 ﻿@page "/Account/Manage/PersonalData"
 
-@inject IdentityUserAccessor UserAccessor
+@using Microsoft.Extensions.Localization
 
-<PageTitle>Personal Data</PageTitle>
+@inject IdentityUserAccessor UserAccessor
+@inject IStringLocalizer<PersonalData> Loc
+@inject IStringLocalizer<SharedResource> SharedLoc
+
+<PageTitle>@Loc["PageTitle"]</PageTitle>
 
 <StatusMessage />
-<h3>Personal Data</h3>
+<h3>@Loc["Header"]</h3>
 
 <div class="row">
     <div class="col-md-6">
-        <p>Your account contains personal data that you have given us. This page allows you to download or delete that data.</p>
+        <p>@Loc["Description"]</p>
         <p>
-            <strong>Deleting this data will permanently remove your account, and this cannot be recovered.</strong>
+            <strong>@Loc["Warning"]</strong>
         </p>
         <form action="Account/Manage/DownloadPersonalData" method="post">
             <AntiforgeryToken />
-            <button class="btn btn-primary" type="submit">Download</button>
+            <button class="btn btn-primary" type="submit">@Loc["Download"]</button>
         </form>
         <p>
-            <a href="Account/Manage/DeletePersonalData" class="btn btn-danger">Delete</a>
+            <a href="Account/Manage/DeletePersonalData" class="btn btn-danger">@SharedLoc["Delete"]</a>
         </p>
     </div>
 </div>
