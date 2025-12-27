@@ -137,13 +137,13 @@
     <value>Experimental: This feature is still in development and may not work as expected.</value>
   </data>
   <data name="Header_VerticalStrip" xml:space="preserve">
-    <value>Vertical Strip Detection</value>
+    <value>Vertical Image Splitting</value>
   </data>
   <data name="Label_DetectionMode" xml:space="preserve">
     <value>Detection Mode</value>
   </data>
   <data name="Helper_DetectionMode" xml:space="preserve">
-    <value>How to handle long vertical strips (webtoons)</value>
+    <value>How to handle vertically concatenated pages</value>
   </data>
   <data name="Option_Disabled" xml:space="preserve">
     <value>Disabled</value>

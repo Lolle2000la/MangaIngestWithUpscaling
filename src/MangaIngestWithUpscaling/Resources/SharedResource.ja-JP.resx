@@ -515,13 +515,13 @@
     <value>⚠️ 実験的な機能です - データ損失の可能性があります！</value>
   </data>
   <data name="EditLibraryForm_Header_VerticalStrip" xml:space="preserve">
-    <value>縦読み検出</value>
+    <value>縦長画像分割</value>
   </data>
   <data name="EditLibraryForm_Label_DetectionMode" xml:space="preserve">
     <value>検出モード</value>
   </data>
   <data name="EditLibraryForm_Helper_DetectionMode" xml:space="preserve">
-    <value>縦読み (ウェブトゥーン) の処理方法を設定します。</value>
+    <value>縦に連結されたページの分割方法を設定します。</value>
   </data>
   <data name="EditLibraryForm_Option_Disabled" xml:space="preserve">
     <value>無効</value>

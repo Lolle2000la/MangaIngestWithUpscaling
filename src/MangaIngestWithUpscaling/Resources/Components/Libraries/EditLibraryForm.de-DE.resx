@@ -137,13 +137,13 @@
     <value>Experimentell: Diese Funktion befindet sich noch in der Entwicklung und funktioniert möglicherweise nicht wie erwartet.</value>
   </data>
   <data name="Header_VerticalStrip" xml:space="preserve">
-    <value>Erkennung vertikaler Streifen</value>
+    <value>Aufteilung vertikaler Bilder</value>
   </data>
   <data name="Label_DetectionMode" xml:space="preserve">
     <value>Erkennungsmodus</value>
   </data>
   <data name="Helper_DetectionMode" xml:space="preserve">
-    <value>Umgang mit langen vertikalen Streifen (Webtoons)</value>
+    <value>Umgang mit vertikal verbundenen Seiten</value>
   </data>
   <data name="Option_Disabled" xml:space="preserve">
     <value>Deaktiviert</value>

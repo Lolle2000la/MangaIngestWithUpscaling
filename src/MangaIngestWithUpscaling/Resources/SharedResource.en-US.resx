@@ -521,13 +521,13 @@
     <value>⚠️ Experimental feature - expect potential data loss!</value>
   </data>
   <data name="EditLibraryForm_Header_VerticalStrip" xml:space="preserve">
-    <value>Vertical Strip Detection</value>
+    <value>Vertical Image Splitting</value>
   </data>
   <data name="EditLibraryForm_Label_DetectionMode" xml:space="preserve">
     <value>Detection Mode</value>
   </data>
   <data name="EditLibraryForm_Helper_DetectionMode" xml:space="preserve">
-    <value>Configure how vertical strips (webtoons) should be handled.</value>
+    <value>Configure how vertically concatenated pages should be split.</value>
   </data>
   <data name="EditLibraryForm_Option_Disabled" xml:space="preserve">
     <value>Disabled</value>

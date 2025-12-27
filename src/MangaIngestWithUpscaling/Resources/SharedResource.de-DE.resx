@@ -515,13 +515,13 @@
     <value>⚠️ Experimentelle Funktion - Datenverlust möglich!</value>
   </data>
   <data name="EditLibraryForm_Header_VerticalStrip" xml:space="preserve">
-    <value>Erkennung vertikaler Streifen</value>
+    <value>Aufteilung vertikaler Bilder</value>
   </data>
   <data name="EditLibraryForm_Label_DetectionMode" xml:space="preserve">
     <value>Erkennungsmodus</value>
   </data>
   <data name="EditLibraryForm_Helper_DetectionMode" xml:space="preserve">
-    <value>Konfigurieren Sie, wie vertikale Streifen (Webtoons) behandelt werden sollen.</value>
+    <value>Konfigurieren Sie, wie vertikal verbundene Seiten aufgeteilt werden sollen.</value>
   </data>
   <data name="EditLibraryForm_Option_Disabled" xml:space="preserve">
     <value>Deaktiviert</value>
