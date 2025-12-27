@@ -75,10 +75,9 @@
             }
             else
             {
-                // Optionally, show a login button that triggers OIDC challenge if OIDC is enabled and user is not
-                authorized
-                <MudNavLink Href = "/Account/LoginOidc" Icon = "@Icons.Material.Filled.Login" > Login with OIDC</ MudNavLink >
-                        }
+                // Optionally, show a login button that triggers OIDC challenge if OIDC is enabled and user is not authorized
+                <MudNavLink Href="/Account/LoginOidc" Icon="@Icons.Material.Filled.Login"> Login with OIDC</MudNavLink>
+            }
         </NotAuthorized>
     </AuthorizeView>
 </MudNavMenu>
