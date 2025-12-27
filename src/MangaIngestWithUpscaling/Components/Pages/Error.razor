@@ -1,19 +1,22 @@
 ﻿@page "/Error"
 @using System.Diagnostics
+@using Microsoft.Extensions.Localization
+@using MangaIngestWithUpscaling.Resources
+@inject IStringLocalizer<SharedResource> Loc
 
-<PageTitle>Error</PageTitle>
+<PageTitle>@Loc["Error_PageTitle"]</PageTitle>
 
-<h1 class="text-danger">Error.</h1>
-<h2 class="text-danger">An error occurred while processing your request. Please take a look at the <a href="Logs">logs</a> to find out more.</h2>
+<h1 class="text-danger">@Loc["Error_Title"]</h1>
+<h2 class="text-danger">@((MarkupString)Loc["Error_Message"].Value)</h2>
 
 @if (ShowRequestId)
 {
     <p>
-        <strong>Request ID:</strong> <code>@RequestId</code>
+        <strong>@Loc["Error_RequestId"]</strong> <code>@RequestId</code>
     </p>
 }
 
-@code{
+@code {
     [CascadingParameter]
     private HttpContext? HttpContext { get; set; }
 
@@ -21,5 +24,5 @@
     private bool ShowRequestId => !string.IsNullOrEmpty(RequestId);
 
     protected override void OnInitialized() =>
-        RequestId = Activity.Current?.Id ?? HttpContext?.TraceIdentifier;
+    RequestId = Activity.Current?.Id ?? HttpContext?.TraceIdentifier;
 }

@@ -142,4 +142,550 @@
   <data name="PendingTask" xml:space="preserve">
     <value>ausstehende Aufgabe</value>
   </data>
+  <data name="PageTitle_ManageLibraries" xml:space="preserve">
+    <value>Bibliotheken verwalten</value>
+  </data>
+  <data name="Libraries_Title" xml:space="preserve">
+    <value>Bibliotheken</value>
+  </data>
+  <data name="Libraries_CreateLibrary" xml:space="preserve">
+    <value>Bibliothek erstellen</value>
+  </data>
+  <data name="Libraries_UpscaleAll" xml:space="preserve">
+    <value>Alle hochskalieren</value>
+  </data>
+  <data name="Libraries_NoLibrariesYet" xml:space="preserve">
+    <value>Noch keine Bibliotheken</value>
+  </data>
+  <data name="Libraries_CreateFirstLibraryDescription" xml:space="preserve">
+    <value>Erstellen Sie Ihre erste Bibliothek, um Ihre Manga-Sammlung zu verwalten.</value>
+  </data>
+  <data name="Libraries_CreateYourFirstLibrary" xml:space="preserve">
+    <value>Erste Bibliothek erstellen</value>
+  </data>
+  <data name="Libraries_LibraryOverview" xml:space="preserve">
+    <value>Bibliotheksübersicht</value>
+  </data>
+  <data name="Libraries_Stats_Libraries" xml:space="preserve">
+    <value>{0} Bibliotheken</value>
+  </data>
+  <data name="Libraries_Stats_MangaSeries" xml:space="preserve">
+    <value>{0} Manga-Serien</value>
+  </data>
+  <data name="Libraries_Stats_Chapters" xml:space="preserve">
+    <value>{0} Kapitel</value>
+  </data>
+  <data name="Libraries_Header_LibraryName" xml:space="preserve">
+    <value>Bibliotheksname</value>
+  </data>
+  <data name="Libraries_Header_IngestPath" xml:space="preserve">
+    <value>Ingest-Pfad</value>
+  </data>
+  <data name="Libraries_Header_UpscalerConfig" xml:space="preserve">
+    <value>Upscaler-Konfiguration</value>
+  </data>
+  <data name="Libraries_Header_MangaSeries" xml:space="preserve">
+    <value>Manga-Serien</value>
+  </data>
+  <data name="Libraries_Header_Chapters" xml:space="preserve">
+    <value>Kapitel</value>
+  </data>
+  <data name="Libraries_Header_Actions" xml:space="preserve">
+    <value>Aktionen</value>
+  </data>
+  <data name="Libraries_NotConfigured" xml:space="preserve">
+    <value>Nicht konfiguriert</value>
+  </data>
+  <data name="Libraries_AutoUpscale" xml:space="preserve">
+    <value>Auto-Upscale</value>
+  </data>
+  <data name="Libraries_Tooltip_Edit" xml:space="preserve">
+    <value>Diese Bibliothek bearbeiten</value>
+  </data>
+  <data name="Libraries_Tooltip_Scan" xml:space="preserve">
+    <value>Bibliothek nach neuen Inhalten scannen</value>
+  </data>
+  <data name="Libraries_Tooltip_Upscale" xml:space="preserve">
+    <value>Unbearbeitete Inhalte hochskalieren</value>
+  </data>
+  <data name="Libraries_Tooltip_Integrity" xml:space="preserve">
+    <value>Bibliotheksintegrität prüfen</value>
+  </data>
+  <data name="Libraries_Tooltip_Filters" xml:space="preserve">
+    <value>Bildfilter verwalten</value>
+  </data>
+  <data name="Libraries_Tooltip_Delete" xml:space="preserve">
+    <value>Diese Bibliothek löschen</value>
+  </data>
+  <data name="Libraries_DeleteDialog_Title" xml:space="preserve">
+    <value>Bibliothek löschen</value>
+  </data>
+  <data name="Libraries_DeleteDialog_Content" xml:space="preserve">
+    <value>Möchten Sie diese Bibliothek wirklich löschen? Hinweis: Dies löscht KEINE der erstellten Dateien.</value>
+  </data>
+  <data name="Generic_OK" xml:space="preserve">
+    <value>OK</value>
+  </data>
+  <data name="Generic_Cancel" xml:space="preserve">
+    <value>Abbrechen</value>
+  </data>
+  <data name="PageTitle_BrowseMangas" xml:space="preserve">
+    <value>Mangas durchsuchen und verwalten</value>
+  </data>
+  <data name="Mangas_Title" xml:space="preserve">
+    <value>Mangas</value>
+  </data>
+  <data name="Mangas_LibraryToBrowse" xml:space="preserve">
+    <value>Bibliothek zum Durchsuchen</value>
+  </data>
+  <data name="Mangas_Library_All" xml:space="preserve">
+    <value>Alle</value>
+  </data>
+  <data name="Mangas_SearchLabel" xml:space="preserve">
+    <value>Nach Titel suchen.</value>
+  </data>
+  <data name="Mangas_SearchPlaceholder" xml:space="preserve">
+    <value>Suchen...</value>
+  </data>
+  <data name="Mangas_MergeSelected" xml:space="preserve">
+    <value>Ausgewählte zusammenführen</value>
+  </data>
+  <data name="Mangas_MoveSelected" xml:space="preserve">
+    <value>Ausgewählte in neue Bibliothek verschieben</value>
+  </data>
+  <data name="Mangas_DeleteSelected" xml:space="preserve">
+    <value>Ausgewählte löschen</value>
+  </data>
+  <data name="Mangas_Header_Library" xml:space="preserve">
+    <value>Bibliothek</value>
+  </data>
+  <data name="Mangas_Header_Title" xml:space="preserve">
+    <value>Titel</value>
+  </data>
+  <data name="Mangas_Header_Chapters" xml:space="preserve">
+    <value>Kapitel</value>
+  </data>
+  <data name="Mangas_Header_ShouldUpscale" xml:space="preserve">
+    <value>Soll hochskaliert werden</value>
+  </data>
+  <data name="Mangas_Header_Actions" xml:space="preserve">
+    <value>Aktionen</value>
+  </data>
+  <data name="Mangas_ChapterCount" xml:space="preserve">
+    <value>{0} ({1} hochskaliert)</value>
+  </data>
+  <data name="Mangas_UseLibrarySettings" xml:space="preserve">
+    <value>Bibliothekseinstellungen verwenden</value>
+  </data>
+  <data name="Mangas_Tooltip_Edit" xml:space="preserve">
+    <value>Diesen Manga bearbeiten.</value>
+  </data>
+  <data name="Mangas_Tooltip_Upscale" xml:space="preserve">
+    <value>Kapitel in diesem Manga hochskalieren. Dies skaliert alle Kapitel hoch, die noch nicht hochskaliert sind oder eine andere Konfiguration verwendet haben.</value>
+  </data>
+  <data name="Mangas_Tooltip_Delete" xml:space="preserve">
+    <value>Diesen Manga löschen.</value>
+  </data>
+  <data name="Mangas_Dialog_Merge_Title" xml:space="preserve">
+    <value>Mangas zusammenführen</value>
+  </data>
+  <data name="Mangas_Dialog_Move_Title" xml:space="preserve">
+    <value>Mangas verschieben</value>
+  </data>
+  <data name="Mangas_Dialog_Delete_Title" xml:space="preserve">
+    <value>Mangas löschen</value>
+  </data>
+  <data name="Mangas_Dialog_DeleteSingle_Title" xml:space="preserve">
+    <value>Manga löschen</value>
+  </data>
+  <data name="Mangas_Error_Loading" xml:space="preserve">
+    <value>Fehler beim Laden der Mangas.</value>
+  </data>
+  <data name="Mangas_Error_Merging" xml:space="preserve">
+    <value>Fehler beim Zusammenführen der Mangas.</value>
+  </data>
+  <data name="Mangas_Error_Moving" xml:space="preserve">
+    <value>Fehler beim Verschieben der Mangas in eine neue Bibliothek.</value>
+  </data>
+  <data name="Mangas_Error_Deleting" xml:space="preserve">
+    <value>Fehler beim Löschen der Mangas.</value>
+  </data>
+  <data name="Mangas_Error_DeletingSingle" xml:space="preserve">
+    <value>Fehler beim Löschen des Mangas {0}</value>
+  </data>
+  <data name="Mangas_Error_ChangingTitle" xml:space="preserve">
+    <value>Fehler beim Ändern des Titels von Manga {0} zu {1}</value>
+  </data>
+  <data name="Mangas_Error_Saving" xml:space="preserve">
+    <value>Fehler beim Speichern der Änderungen an Manga {0}</value>
+  </data>
+  <data name="PageTitle_UpscalerProfiles" xml:space="preserve">
+    <value>Upscaler-Profile</value>
+  </data>
+  <data name="UpscalerProfiles_Title" xml:space="preserve">
+    <value>Profile für Upscaling erstellen und bearbeiten</value>
+  </data>
+  <data name="Generic_Create" xml:space="preserve">
+    <value>Erstellen</value>
+  </data>
+  <data name="UpscalerProfiles_Header_Name" xml:space="preserve">
+    <value>Name</value>
+  </data>
+  <data name="UpscalerProfiles_Header_ScalingFactor" xml:space="preserve">
+    <value>Skalierungsfaktor</value>
+  </data>
+  <data name="UpscalerProfiles_Header_CompFormat" xml:space="preserve">
+    <value>Komp.-Format</value>
+  </data>
+  <data name="UpscalerProfiles_Header_CompQuality" xml:space="preserve">
+    <value>Komp.-Qualität</value>
+  </data>
+  <data name="UpscalerProfiles_Header_Actions" xml:space="preserve">
+    <value>Aktionen</value>
+  </data>
+  <data name="UpscalerProfiles_Tooltip_Edit" xml:space="preserve">
+    <value>Dieses Profil bearbeiten</value>
+  </data>
+  <data name="UpscalerProfiles_Tooltip_Delete" xml:space="preserve">
+    <value>Dieses Profil löschen</value>
+  </data>
+  <data name="UpscalerProfiles_DeleteDialog_Title" xml:space="preserve">
+    <value>Profil löschen</value>
+  </data>
+  <data name="UpscalerProfiles_DeleteDialog_Content" xml:space="preserve">
+    <value>Möchten Sie dieses Profil wirklich löschen? Hinweis: Dies löscht KEINE der erstellten Dateien.</value>
+  </data>
+  <data name="PageTitle_Tasks" xml:space="preserve">
+    <value>Aufgaben</value>
+  </data>
+  <data name="TaskQueues_Title" xml:space="preserve">
+    <value>Aktuell laufende Aufgaben</value>
+  </data>
+  <data name="TaskQueues_StandardTasks" xml:space="preserve">
+    <value>Standardaufgaben</value>
+  </data>
+  <data name="TaskQueues_UpscalingTasks" xml:space="preserve">
+    <value>Upscaling-Aufgaben</value>
+  </data>
+  <data name="TaskQueues_Error_ClearCompleted" xml:space="preserve">
+    <value>Fehler beim Löschen abgeschlossener Aufgaben: {0}</value>
+  </data>
+  <data name="TaskQueues_Error_ClearFailed" xml:space="preserve">
+    <value>Fehler beim Löschen fehlgeschlagener Aufgaben: {0}</value>
+  </data>
+  <data name="TaskTable_ClearFailed" xml:space="preserve">
+    <value>Fehlgeschlagene löschen</value>
+  </data>
+  <data name="TaskTable_ClearCompleted" xml:space="preserve">
+    <value>Abgeschlossene löschen</value>
+  </data>
+  <data name="TaskTable_Header_Name" xml:space="preserve">
+    <value>Name</value>
+  </data>
+  <data name="TaskTable_Header_QueuedAt" xml:space="preserve">
+    <value>Eingereiht am</value>
+  </data>
+  <data name="TaskTable_Header_FinishedAt" xml:space="preserve">
+    <value>Beendet am</value>
+  </data>
+  <data name="TaskTable_Header_Status" xml:space="preserve">
+    <value>Status</value>
+  </data>
+  <data name="TaskTable_Header_Actions" xml:space="preserve">
+    <value>Aktionen</value>
+  </data>
+  <data name="TaskTable_Progress_Working" xml:space="preserve">
+    <value>Arbeitet…</value>
+  </data>
+  <data name="PageTitle_Logs" xml:space="preserve">
+    <value>Protokolle</value>
+  </data>
+  <data name="Logs_Title" xml:space="preserve">
+    <value>Anwendungsprotokolle</value>
+  </data>
+  <data name="Logs_FilterLabel" xml:space="preserve">
+    <value>Protokollierungsstufe filtern</value>
+  </data>
+  <data name="Logs_Header_Timestamp" xml:space="preserve">
+    <value>Zeitstempel</value>
+  </data>
+  <data name="Logs_Header_Level" xml:space="preserve">
+    <value>Stufe</value>
+  </data>
+  <data name="Logs_Header_Message" xml:space="preserve">
+    <value>Nachricht</value>
+  </data>
+  <data name="Logs_Header_Exception" xml:space="preserve">
+    <value>Ausnahme</value>
+  </data>
+  <data name="CreateLibrary_Title" xml:space="preserve">
+    <value>Bibliothek erstellen</value>
+  </data>
+  <data name="CreateLibrary_Button" xml:space="preserve">
+    <value>Erstellen</value>
+  </data>
+  <data name="EditLibrary_Title" xml:space="preserve">
+    <value>Bibliothek bearbeiten</value>
+  </data>
+  <data name="EditLibrary_TitleWithParams" xml:space="preserve">
+    <value>Bibliothek bearbeiten: {0}</value>
+  </data>
+  <data name="EditLibrary_Unknown" xml:space="preserve">
+    <value>Unbekannt</value>
+  </data>
+  <data name="EditLibrary_SaveButton" xml:space="preserve">
+    <value>Speichern</value>
+  </data>
+  <data name="EditLibraryForm_Tab_BasicSettings" xml:space="preserve">
+    <value>Grundeinstellungen</value>
+  </data>
+  <data name="EditLibraryForm_Header_LibraryInfo" xml:space="preserve">
+    <value>Bibliotheksinformationen</value>
+  </data>
+  <data name="EditLibraryForm_Label_LibraryName" xml:space="preserve">
+    <value>Bibliotheksname</value>
+  </data>
+  <data name="EditLibraryForm_Helper_LibraryName" xml:space="preserve">
+    <value>Name nur für Anzeigezwecke.</value>
+  </data>
+  <data name="EditLibraryForm_Label_Created" xml:space="preserve">
+    <value>Erstellt:</value>
+  </data>
+  <data name="EditLibraryForm_Label_Modified" xml:space="preserve">
+    <value>Geändert:</value>
+  </data>
+  <data name="EditLibraryForm_Header_IngestConfig" xml:space="preserve">
+    <value>Import-Konfiguration</value>
+  </data>
+  <data name="EditLibraryForm_Title_IngestFolder" xml:space="preserve">
+    <value>Import-Ordner</value>
+  </data>
+  <data name="EditLibraryForm_Tab_StoragePaths" xml:space="preserve">
+    <value>Speicherpfade</value>
+  </data>
+  <data name="EditLibraryForm_Warning_LibraryContainsSeries" xml:space="preserve">
+    <value>Bibliothek enthält {0} Manga-Serien</value>
+  </data>
+  <data name="EditLibraryForm_Warning_CannotChangePaths" xml:space="preserve">
+    <value>Sie können die Speicherpfade einer Bibliothek nicht ändern, die bereits Manga-Serien enthält. Löschen oder verschieben Sie die Serien in eine andere Bibliothek, bevor Sie die Pfade ändern.</value>
+  </data>
+  <data name="EditLibraryForm_Warning_CanStillChange" xml:space="preserve">
+    <value>Sie können weiterhin die Upscaling-Konfiguration und den Bibliotheksnamen ändern sowie einen Pfad für den Import-Ordner festlegen. Falls Sie &lt;strong&gt;noch keinen Zielordner für die hochskalierten Mangas eingerichtet haben&lt;/strong&gt;, können Sie dies unten tun.</value>
+  </data>
+  <data name="EditLibraryForm_Header_StorageLocations" xml:space="preserve">
+    <value>Speicherorte</value>
+  </data>
+  <data name="EditLibraryForm_Title_StoragePathAsIs" xml:space="preserve">
+    <value>Speicherpfad (Original)</value>
+  </data>
+  <data name="EditLibraryForm_Title_UpscaledLocation" xml:space="preserve">
+    <value>Speicherpfad (Hochskaliert)</value>
+  </data>
+  <data name="EditLibraryForm_Tab_Upscaling" xml:space="preserve">
+    <value>Upscaling</value>
+  </data>
+  <data name="EditLibraryForm_Header_UpscalingConfig" xml:space="preserve">
+    <value>Upscaling-Konfiguration</value>
+  </data>
+  <data name="EditLibraryForm_Label_UpscaleOnIngest" xml:space="preserve">
+    <value>Alle Mangas beim Import automatisch hochskalieren</value>
+  </data>
+  <data name="EditLibraryForm_Label_UpscalerProfile" xml:space="preserve">
+    <value>Upscaler-Profil</value>
+  </data>
+  <data name="EditLibraryForm_Helper_UpscalerProfile" xml:space="preserve">
+    <value>Wählen Sie ein Upscaling-Profil für diese Bibliothek. Lassen Sie es auf 'keines', wenn Sie keine Bilder hochskalieren möchten.</value>
+  </data>
+  <data name="EditLibraryForm_Option_None" xml:space="preserve">
+    <value>«Keines (Nicht hochskalieren)»</value>
+  </data>
+  <data name="EditLibraryForm_Tab_FileManagement" xml:space="preserve">
+    <value>Dateiverwaltung</value>
+  </data>
+  <data name="EditLibraryForm_Header_FileFiltering" xml:space="preserve">
+    <value>Dateifilterung &amp; Verarbeitung</value>
+  </data>
+  <data name="EditLibraryForm_Header_ChapterProcessing" xml:space="preserve">
+    <value>Kapitelverarbeitungsoptionen</value>
+  </data>
+  <data name="EditLibraryForm_Label_MergeChapters" xml:space="preserve">
+    <value>Kapitelteile zusammenführen (z.B. Kapitel 22.1, 22.2, 22.3 → Kapitel 22). Führt nur abgeschlossene Kapitel zusammen, nicht das neueste.</value>
+  </data>
+  <data name="EditLibraryForm_Warning_Experimental" xml:space="preserve">
+    <value>⚠️ Experimentelle Funktion - Datenverlust möglich!</value>
+  </data>
+  <data name="EditLibraryForm_Header_VerticalStrip" xml:space="preserve">
+    <value>Erkennung vertikaler Streifen</value>
+  </data>
+  <data name="EditLibraryForm_Label_DetectionMode" xml:space="preserve">
+    <value>Erkennungsmodus</value>
+  </data>
+  <data name="EditLibraryForm_Helper_DetectionMode" xml:space="preserve">
+    <value>Konfigurieren Sie, wie vertikale Streifen (Webtoons) behandelt werden sollen.</value>
+  </data>
+  <data name="EditLibraryForm_Option_Disabled" xml:space="preserve">
+    <value>Deaktiviert</value>
+  </data>
+  <data name="EditLibraryForm_Option_DetectOnly" xml:space="preserve">
+    <value>Nur erkennen (Manuelle Überprüfung)</value>
+  </data>
+  <data name="EditLibraryForm_Option_DetectAndApply" xml:space="preserve">
+    <value>Erkennen &amp; Automatisch anwenden</value>
+  </data>
+  <data name="EditLibraryForm_Tab_RenameRules" xml:space="preserve">
+    <value>Umbenennungsregeln</value>
+  </data>
+  <data name="EditLibraryForm_Header_RenameConfig" xml:space="preserve">
+    <value>Datei-Umbenennungskonfiguration</value>
+  </data>
+  <data name="EditLibraryForm_Body_RenameConfig" xml:space="preserve">
+    <value>Konfigurieren Sie, wie Dateien umbenannt werden sollen, wenn sie von der Bibliothek verarbeitet werden. Dies hilft, konsistente Namenskonventionen in Ihrer Manga-Sammlung sicherzustellen.</value>
+  </data>
+  <data name="EditLibraryForm_Button_PreviewRename" xml:space="preserve">
+    <value>Umbenennungsregeln Vorschau</value>
+  </data>
+  <data name="EditLibraryForm_Tab_Integration" xml:space="preserve">
+    <value>Integration</value>
+  </data>
+  <data name="EditLibraryForm_Header_KavitaConfig" xml:space="preserve">
+    <value>Kavita-Integrationskonfiguration</value>
+  </data>
+  <data name="EditLibraryForm_Body_KavitaConfig" xml:space="preserve">
+    <value>Konfigurieren Sie die Integration mit Kavita, um es automatisch über neue Inhalte zu benachrichtigen. Wenn Sie Kavita nicht verwenden, können Sie diese Einstellungen ignorieren.</value>
+  </data>
+  <data name="EditLibraryForm_Note_KavitaConfig" xml:space="preserve">
+    <value>&lt;strong&gt;Hinweis:&lt;/strong&gt; Sie müssen nicht beide Mount-Punkte konfigurieren, sondern nur denjenigen, über den Sie Kavita benachrichtigen möchten. Wenn Sie einen Mount-Punkt leer lassen, wird die Integration für diesen Inhaltstyp deaktiviert.</value>
+  </data>
+  <data name="EditLibraryForm_Label_KavitaAsIs" xml:space="preserve">
+    <value>Original Mount-Punkt in Kavita</value>
+  </data>
+  <data name="EditLibraryForm_Helper_KavitaAsIs" xml:space="preserve">
+    <value>Der Mount-Punkt innerhalb der Kavita-Umgebung, der die Kapitel im Original enthält.</value>
+  </data>
+  <data name="EditLibraryForm_Label_KavitaUpscaled" xml:space="preserve">
+    <value>Hochskalierter Mount-Punkt in Kavita</value>
+  </data>
+  <data name="EditLibraryForm_Helper_KavitaUpscaled" xml:space="preserve">
+    <value>Der Mount-Punkt innerhalb der Kavita-Umgebung, der die hochskalierten Kapitel enthält.</value>
+  </data>
+  <data name="EditLibraryForm_Hint_Kavita" xml:space="preserve">
+    <value>💡 &lt;strong&gt;Tipp:&lt;/strong&gt; Sie können den Pfad verwenden, wie er in den Bibliothekseinstellungen in Kavita festgelegt ist.</value>
+  </data>
+  <data name="EditManga_PageTitle" xml:space="preserve">
+    <value>"{0}" bearbeiten</value>
+  </data>
+  <data name="EditManga_Tooltip_Back" xml:space="preserve">
+    <value>Zurück zu Mangas</value>
+  </data>
+  <data name="EditManga_Header_EditManga" xml:space="preserve">
+    <value>Manga bearbeiten</value>
+  </data>
+  <data name="EditManga_Chip_Library" xml:space="preserve">
+    <value>Bibliothek: {0}</value>
+  </data>
+  <data name="EditManga_Tab_BasicInfo" xml:space="preserve">
+    <value>Basisinfo</value>
+  </data>
+  <data name="EditManga_Header_BasicInfo" xml:space="preserve">
+    <value>Basisinformationen</value>
+  </data>
+  <data name="EditManga_Label_PrimaryTitle" xml:space="preserve">
+    <value>Haupttitel</value>
+  </data>
+  <data name="EditManga_Helper_PrimaryTitle" xml:space="preserve">
+    <value>Der Haupttitel, unter dem dieser Manga geführt werden soll.</value>
+  </data>
+  <data name="EditManga_Label_AddOldTitle" xml:space="preserve">
+    <value>Alten Titel automatisch zu anderen Titeln hinzufügen, wenn geändert</value>
+  </data>
+  <data name="EditManga_Label_UpscalerProfile" xml:space="preserve">
+    <value>Upscaler-Profil-Präferenz</value>
+  </data>
+  <data name="EditManga_Helper_UpscalerProfile" xml:space="preserve">
+    <value>Überschreibt das Standard-Upscaler-Profil der Bibliothek für diesen Manga.</value>
+  </data>
+  <data name="EditManga_Option_None" xml:space="preserve">
+    <value>Keines (Bibliotheksstandard verwenden)</value>
+  </data>
+  <data name="EditManga_Label_ChapterMerging" xml:space="preserve">
+    <value>Kapitelteile zusammenführen</value>
+  </data>
+  <data name="EditManga_Helper_ChapterMerging" xml:space="preserve">
+    <value>Steuert, ob Kapitelteile (z.B. Kap 20.1, Kap 20.2) automatisch zusammengeführt werden.</value>
+  </data>
+  <data name="EditManga_Option_Default" xml:space="preserve">
+    <value>Standard (Bibliothekseinstellung verwenden)</value>
+  </data>
+  <data name="EditManga_Option_AlwaysMerge" xml:space="preserve">
+    <value>Kapitelteile immer zusammenführen</value>
+  </data>
+  <data name="EditManga_Option_NeverMerge" xml:space="preserve">
+    <value>Kapitelteile nie zusammenführen</value>
+  </data>
+  <data name="EditManga_Warning_Experimental" xml:space="preserve">
+    <value>⚠️ Kapitelzusammenführung ist experimentell</value>
+  </data>
+  <data name="EditManga_Label_Created" xml:space="preserve">
+    <value>Erstellt:</value>
+  </data>
+  <data name="EditManga_Label_Modified" xml:space="preserve">
+    <value>Geändert:</value>
+  </data>
+  <data name="EditManga_Tab_AltTitles" xml:space="preserve">
+    <value>Alternative Titel</value>
+  </data>
+  <data name="EditManga_Header_AltTitles" xml:space="preserve">
+    <value>Alternative Titel</value>
+  </data>
+  <data name="EditManga_Body_AltTitles" xml:space="preserve">
+    <value>Andere Titel, unter denen dieser Manga bekannt ist. Mangas im Import werden anhand dieser Titel in Ordner sortiert.</value>
+  </data>
+  <data name="EditManga_Header_AddNewTitle" xml:space="preserve">
+    <value>Neuen Titel hinzufügen</value>
+  </data>
+  <data name="EditManga_Label_AltTitle" xml:space="preserve">
+    <value>Alternativer Titel</value>
+  </data>
+  <data name="EditManga_Helper_AltTitle" xml:space="preserve">
+    <value>Geben Sie einen alternativen Titel für diesen Manga ein</value>
+  </data>
+  <data name="EditManga_Button_AddTitle" xml:space="preserve">
+    <value>Titel hinzufügen</value>
+  </data>
+  <data name="EditManga_Header_CurrentTitles" xml:space="preserve">
+    <value>Aktuelle alternative Titel</value>
+  </data>
+  <data name="EditManga_Text_NoTitles" xml:space="preserve">
+    <value>Noch keine alternativen Titel hinzugefügt</value>
+  </data>
+  <data name="EditManga_Text_AddTitlesHelp" xml:space="preserve">
+    <value>Fügen Sie alternative Titel hinzu, um den Manga-Abgleich während des Imports zu unterstützen</value>
+  </data>
+  <data name="EditManga_Tooltip_RemoveTitle" xml:space="preserve">
+    <value>Diesen Titel entfernen</value>
+  </data>
+  <data name="EditManga_Tab_Chapters" xml:space="preserve">
+    <value>Kapitel</value>
+  </data>
+  <data name="EditManga_Header_ChapterManagement" xml:space="preserve">
+    <value>Kapitelverwaltung</value>
+  </data>
+  <data name="EditManga_Warning_DeleteChapter" xml:space="preserve">
+    <value>&lt;strong&gt;Warnung:&lt;/strong&gt; Das Löschen eines Kapitels entfernt es dauerhaft sowohl aus der Bibliothek als auch aus dem Dateisystem.</value>
+  </data>
+  <data name="EditManga_Text_CannotUndo" xml:space="preserve">
+    <value>Diese Aktion kann nicht rückgängig gemacht werden. Stellen Sie sicher, dass Sie Backups haben, falls erforderlich.</value>
+  </data>
+  <data name="EditManga_Text_UnsavedChanges" xml:space="preserve">
+    <value>Sie haben ungespeicherte Änderungen</value>
+  </data>
+  <data name="EditManga_Text_NoChanges" xml:space="preserve">
+    <value>Keine Änderungen vorgenommen</value>
+  </data>
+  <data name="EditManga_Button_Cancel" xml:space="preserve">
+    <value>Abbrechen</value>
+  </data>
+  <data name="EditManga_Button_SaveChanges" xml:space="preserve">
+    <value>Änderungen speichern</value>
+  </data>
 </root>

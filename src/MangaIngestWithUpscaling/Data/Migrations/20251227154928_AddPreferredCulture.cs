@@ -14,15 +14,14 @@ namespace MangaIngestWithUpscaling.Migrations
                 name: "PreferredCulture",
                 table: "AspNetUsers",
                 type: "TEXT",
-                nullable: true);
+                nullable: true
+            );
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropColumn(
-                name: "PreferredCulture",
-                table: "AspNetUsers");
+            migrationBuilder.DropColumn(name: "PreferredCulture", table: "AspNetUsers");
         }
     }
 }

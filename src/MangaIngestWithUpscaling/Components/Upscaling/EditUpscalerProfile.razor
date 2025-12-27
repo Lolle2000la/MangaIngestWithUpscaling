@@ -1,39 +1,37 @@
 ﻿@page "/upscaling/profiles/edit/{ProfileId:int}"
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
+@using Microsoft.Extensions.Localization
 
 @inject ApplicationDbContext DbContext
 @inject NavigationManager NavigationManager
+@inject IStringLocalizer<SharedResource> Loc
 
-<PageTitle>Edit Upscaler Profile "@Profile.Name"</PageTitle>
+<PageTitle>@string.Format(Loc["UpscalerProfile_EditTitle"], Profile.Name)</PageTitle>
 
 <MudCard>
     <MudCardHeader>
-        <MudText Typo="Typo.h5">Edit Upscaler Profile: @Profile.Name</MudText>
+        <MudText Typo="Typo.h5">@string.Format(Loc["UpscalerProfile_EditHeader"], Profile.Name)</MudText>
     </MudCardHeader>
     <MudCardContent>
-        <UpscalerProfileForm @bind-Profile="Profile"
-                             @bind-IsValid="IsValid"/>
-        
+        <UpscalerProfileForm @bind-Profile="Profile" @bind-IsValid="IsValid" />
+
         @if (existingProfile is not null)
         {
             <MudDivider Style="margin: 16px 0;" />
             <MudStack Row Spacing="4" Class="mt-2">
                 <MudText Typo="Typo.caption" Color="Color.Secondary">
-                    Created: @existingProfile.CreatedAt.ToString("yyyy-MM-dd HH:mm")
+                    @Loc["UpscalerProfile_Created"] @existingProfile.CreatedAt.ToString("yyyy-MM-dd HH:mm")
                 </MudText>
                 <MudText Typo="Typo.caption" Color="Color.Secondary">
-                    Modified: @existingProfile.ModifiedAt.ToString("yyyy-MM-dd HH:mm")
+                    @Loc["UpscalerProfile_Modified"] @existingProfile.ModifiedAt.ToString("yyyy-MM-dd HH:mm")
                 </MudText>
             </MudStack>
         }
     </MudCardContent>
     <MudCardActions>
-        <MudSpacer/>
-        <MudButton StartIcon="@Icons.Material.Filled.Save"
-                   Variant="Variant.Filled"
-                   Color="Color.Primary"
-                   Disabled="!IsValid"
-                   OnClick="OnSaveProfile">Save
+        <MudSpacer />
+        <MudButton StartIcon="@Icons.Material.Filled.Save" Variant="Variant.Filled" Color="Color.Primary"
+            Disabled="!IsValid" OnClick="OnSaveProfile">@Loc["Save"]
         </MudButton>
     </MudCardActions>
 </MudCard>
@@ -90,19 +88,19 @@
         // Preserve the original creation date for the new profile
         Profile.CreatedAt = existingProfile.CreatedAt;
         Profile.ModifiedAt = DateTime.UtcNow;
-        
+
         DbContext.UpscalerProfiles.Add(Profile);
         existingProfile.Deleted = true;
         await DbContext.SaveChangesAsync();
         // change all references to existingProfile to Profile, except for concrete chapters
         // (right now this is only the upscaler profile id in the library))
         await DbContext.Libraries
-            .Where(l => l.UpscalerProfileId == existingProfile.Id)
-            .ExecuteUpdateAsync(s => s.SetProperty(l => l.UpscalerProfileId, Profile.Id));
+        .Where(l => l.UpscalerProfileId == existingProfile.Id)
+        .ExecuteUpdateAsync(s => s.SetProperty(l => l.UpscalerProfileId, Profile.Id));
 
         await DbContext.MangaSeries
-            .Where(m => m.UpscalerProfilePreferenceId == existingProfile.Id)
-            .ExecuteUpdateAsync(s => s.SetProperty(m => m.UpscalerProfilePreferenceId, Profile.Id));
+        .Where(m => m.UpscalerProfilePreferenceId == existingProfile.Id)
+        .ExecuteUpdateAsync(s => s.SetProperty(m => m.UpscalerProfilePreferenceId, Profile.Id));
 
         await DbContext.SaveChangesAsync();
         NavigationManager.NavigateTo("/upscaling/profiles");

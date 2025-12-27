@@ -1,21 +1,19 @@
 ﻿@using MangaIngestWithUpscaling.Helpers
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
+@using Microsoft.Extensions.Localization
+@inject IStringLocalizer<SharedResource> Loc
+
 <MudForm Model="@Profile" IsValid="@IsValid">
     <MudGrid Spacing="4">
         <MudItem xs="12">
-            <MudTextField Label="Name"
-                          @bind-Value="@Profile.Name"
-                          @bind-Value:after="OnInputChanged"
-                          Immediate="true"
-                          Required="true"
-                          HelperText="This is for display purposes only." />
+            <MudTextField Label="@Loc["UpscalerProfile_Name"]" @bind-Value="@Profile.Name"
+                @bind-Value:after="OnInputChanged" Immediate="true" Required="true"
+                HelperText="@Loc["UpscalerProfile_NameHelper"]" />
         </MudItem>
         <MudItem xs="12" sm="4">
-            <MudSelect Label="Scaling Factor"
-                       @bind-Value="@Profile.ScalingFactor"
-                       @bind-Value:after="OnInputChanged"
-                       Required="true"
-                       HelperText="Whether to scale the respective images by 2x, 3x, ... Refer to MangaJaNaiConverterGui for more info.">
+            <MudSelect Label="@Loc["UpscalerProfile_ScalingFactor"]" @bind-Value="@Profile.ScalingFactor"
+                @bind-Value:after="OnInputChanged" Required="true"
+                HelperText="@Loc["UpscalerProfile_ScalingFactorHelper"]">
                 @foreach (ScaleFactor factor in Enum.GetValues(typeof(ScaleFactor)))
                 {
                     <MudSelectItem Value="@factor">@factor.GetDisplayName()</MudSelectItem>
@@ -23,11 +21,9 @@
             </MudSelect>
         </MudItem>
         <MudItem xs="12" sm="4">
-            <MudSelect Label="Compression Format"
-                       @bind-Value="@Profile.CompressionFormat"
-                       @bind-Value:after="OnInputChanged"
-                       Required="true"
-                       HelperText="The compression format used for the upscaled images. Does NOT the existing ones.">
+            <MudSelect Label="@Loc["UpscalerProfile_CompressionFormat"]" @bind-Value="@Profile.CompressionFormat"
+                @bind-Value:after="OnInputChanged" Required="true"
+                HelperText="@Loc["UpscalerProfile_CompressionFormatHelper"]">
                 @foreach (CompressionFormat format in Enum.GetValues(typeof(CompressionFormat)))
                 {
                     <MudSelectItem Value="@format">@format.GetDisplayName()</MudSelectItem>
@@ -35,14 +31,9 @@
             </MudSelect>
         </MudItem>
         <MudItem xs="12" sm="4">
-            <MudNumericField Label="Quality"
-                             @bind-Value="@Profile.Quality"
-                             @bind-Value:after="OnInputChanged"
-                             Min="1"
-                             Max="100"
-                             Step="1"
-                             Required="true"
-                             HelperText="The quality value of the respective compression format. Refer to the individual formats for details on what values to choose for what results." />
+            <MudNumericField Label="@Loc["UpscalerProfile_Quality"]" @bind-Value="@Profile.Quality"
+                @bind-Value:after="OnInputChanged" Min="1" Max="100" Step="1" Required="true"
+                HelperText="@Loc["UpscalerProfile_QualityHelper"]" />
         </MudItem>
     </MudGrid>
 </MudForm>
@@ -50,12 +41,12 @@
 @code {
     [Parameter]
     public UpscalerProfile Profile { get; set; } = new UpscalerProfile
-        {
-            Name = "",
-            ScalingFactor = ScaleFactor.TwoX,
-            CompressionFormat = CompressionFormat.Webp,
-            Quality = 80
-        };
+    {
+        Name = "",
+        ScalingFactor = ScaleFactor.TwoX,
+        CompressionFormat = CompressionFormat.Webp,
+        Quality = 80
+    };
     [Parameter]
     public EventCallback<UpscalerProfile> ProfileChanged { get; set; }
 

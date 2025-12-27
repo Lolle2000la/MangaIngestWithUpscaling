@@ -1,30 +1,35 @@
 @using MangaIngestWithUpscaling.Data.LogModel
+@using Microsoft.Extensions.Localization
 @namespace MangaIngestWithUpscaling.Components.Pages
+@inject IStringLocalizer<SharedResource> Loc
 
 <MudDialog Style="max-height:90vh; max-width: 100%; display:flex; flex-direction:column;">
-    <TitleContent>Log Details</TitleContent>
+    <TitleContent>@Loc["LogDetailDialog_Title"]</TitleContent>
     <DialogContent>
         <div Style="overflow-y:auto; flex:1 1 auto;">
             <MudStack Spacing="3">
-                <MudText><b>Timestamp:</b> @Log.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</MudText>
-                <MudText><b>Level:</b> @Log.Level</MudText>
+                <MudText><b>@Loc["Logs_Header_Timestamp"]:</b> @Log.Timestamp.ToLocalTime().ToString("yyyy-MM-dd                    HH:mm:ss")</MudText>
+                <MudText><b>@Loc["Logs_Header_Level"]:</b> @Log.Level</MudText>
 
-                <MudText Typo="Typo.subtitle2"><b>Message:</b></MudText>
-                <MudPaper Class="pa-2" Style="overflow-x: auto; width: 100%; white-space:pre-wrap;">@Log.RenderedMessage</MudPaper>
+                <MudText Typo="Typo.subtitle2"><b>@Loc["Logs_Header_Message"]:</b></MudText>
+                <MudPaper Class="pa-2" Style="overflow-x: auto; width: 100%; white-space:pre-wrap;">@Log.RenderedMessage
+                </MudPaper>
 
                 @if (!string.IsNullOrEmpty(Log.Exception))
                 {
-                    <MudText Typo="Typo.subtitle2"><b>Exception:</b></MudText>
-                    <MudPaper Class="pa-2" Style="overflow-x: auto; width: 100%; white-space:pre-wrap;">@Log.Exception</MudPaper>
+                    <MudText Typo="Typo.subtitle2"><b>@Loc["Logs_Header_Exception"]:</b></MudText>
+                    <MudPaper Class="pa-2" Style="overflow-x: auto; width: 100%; white-space:pre-wrap;">@Log.Exception
+                    </MudPaper>
                 }
 
-                <MudText Typo="Typo.subtitle2"><b>Properties:</b></MudText>
-                <MudPaper Class="pa-2" Style="overflow-x: auto; width: 100%; white-space:pre-wrap;">@Log.Properties</MudPaper>
+                <MudText Typo="Typo.subtitle2"><b>@Loc["LogDetailDialog_Properties"]</b></MudText>
+                <MudPaper Class="pa-2" Style="overflow-x: auto; width: 100%; white-space:pre-wrap;">@Log.Properties
+                </MudPaper>
             </MudStack>
         </div>
     </DialogContent>
     <DialogActions>
-        <MudButton Variant="Variant.Text" OnClick="Close">Close</MudButton>
+        <MudButton Variant="Variant.Text" OnClick="Close">@Loc["Generic_Close"]</MudButton>
     </DialogActions>
 </MudDialog>
 

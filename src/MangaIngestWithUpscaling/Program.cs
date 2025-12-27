@@ -475,19 +475,22 @@ var localizationOptions = new RequestLocalizationOptions()
     .AddSupportedCultures(supportedCultures)
     .AddSupportedUICultures(supportedCultures);
 
-localizationOptions.RequestCultureProviders.Insert(0, new CustomRequestCultureProvider(async context =>
-{
-    var user = context.User;
-    if (user.Identity?.IsAuthenticated == true)
+localizationOptions.RequestCultureProviders.Insert(
+    0,
+    new CustomRequestCultureProvider(async context =>
     {
-        var localeClaim = user.FindFirst("locale");
-        if (localeClaim != null)
+        var user = context.User;
+        if (user.Identity?.IsAuthenticated == true)
         {
-            return new ProviderCultureResult(localeClaim.Value);
+            var localeClaim = user.FindFirst("locale");
+            if (localeClaim != null)
+            {
+                return new ProviderCultureResult(localeClaim.Value);
+            }
         }
-    }
-    return await Task.FromResult<ProviderCultureResult?>(null);
-}));
+        return await Task.FromResult<ProviderCultureResult?>(null);
+    })
+);
 
 app.UseRequestLocalization(localizationOptions);
 

@@ -1,14 +1,17 @@
 ﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.MangaManagement
+@using Microsoft.Extensions.Localization
 @inject ApplicationDbContext DbContext
 @inject IMangaMerger MangaMerger
+@inject IStringLocalizer<SharedResource> Loc
 
 <MudDialog>
     <DialogContent>
         <MudStack>
-            <MudText>Merge @(Mangas.Count > 1 ? $"{Mangas.Count} Mangas" : '"' + Mangas.First().PrimaryTitle + '"')?</MudText>
-            <MudSelect Label="Manga to keep (the others will have their titles and chapters merged into this one)." T="Manga" @bind-Value="primary">
+            <MudText>@(Mangas.Count > 1 ? string.Format(Loc["MergeMangaDialog_Title_Multiple"], Mangas.Count) :
+                                string.Format(Loc["MergeMangaDialog_Title_Single"], Mangas.First().PrimaryTitle))</MudText>
+            <MudSelect Label="@Loc["MergeMangaDialog_SelectPrimary"]" T="Manga" @bind-Value="primary">
                 @foreach (var manga in Mangas)
                 {
                     <MudSelectItem T="Manga" Value="@manga">@manga.PrimaryTitle</MudSelectItem>
@@ -17,12 +20,9 @@
         </MudStack>
     </DialogContent>
     <DialogActions>
-        <MudButton OnClick="Cancel">Cancel</MudButton>
-        <MudButton StartIcon="@Icons.Material.Filled.MergeType"
-                   Color="Color.Primary"
-                   Variant="Variant.Filled"
-                   Disabled="primary == null"
-                   OnClick="Submit">Merge</MudButton>
+        <MudButton OnClick="Cancel">@Loc["Generic_Cancel"]</MudButton>
+        <MudButton StartIcon="@Icons.Material.Filled.MergeType" Color="Color.Primary" Variant="Variant.Filled"
+            Disabled="primary == null" OnClick="Submit">@Loc["Generic_Merge"]</MudButton>
     </DialogActions>
 </MudDialog>
 

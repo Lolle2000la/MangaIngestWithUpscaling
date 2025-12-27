@@ -1,4 +1,7 @@
 ﻿@inherits ReactiveInjectableComponentBase<FolderPickerViewModel>
+@using Microsoft.Extensions.Localization
+@using MangaIngestWithUpscaling.Resources
+@inject IStringLocalizer<SharedResource> Loc
 
 <MudPaper Class="pa-4" Elevation="5">
     <MudStack Row="true">
@@ -13,9 +16,9 @@
     </MudStack>
 
     <MudStack Row="true" AlignItems="AlignItems.Baseline">
-        <MudText Typo="Typo.subtitle2" Class="mb-2">Current Path:</MudText>
+        <MudText Typo="Typo.subtitle2" Class="mb-2">@Loc["FolderPicker_CurrentPath"]</MudText>
         <MudInputString @bind-Value="ViewModel!.RootDirectory" Class="mb-2 flex-grow-1" FullWidth="true"
-                        Disabled="@(ViewModel?.Disabled == true || (ViewModel?.Loading ?? false))"/>
+            Disabled="@(ViewModel?.Disabled == true || (ViewModel?.Loading ?? false))" />
     </MudStack>
 
     @if (ViewModel?.ErrorMessage != null)
@@ -25,36 +28,29 @@
 
     <MudPaper Elevation="2">
         <MudStack Row="true" AlignItems="AlignItems.Center">
-            <MudButton Variant="Variant.Outlined"
-                       OnClick="async e => await ViewModel!.GoToParentCommand.Execute()"
-                       Disabled="@(ViewModel?.Disabled == true || (ViewModel?.Loading ?? false))">
-                Go to Parent
+            <MudButton Variant="Variant.Outlined" OnClick="async e => await ViewModel!.GoToParentCommand.Execute()"
+                Disabled="@(ViewModel?.Disabled == true || (ViewModel?.Loading ?? false))">
+                @Loc["FolderPicker_GoToParent"]
             </MudButton>
-            <MudSpacer/>
-            <MudButton Variant="Variant.Text"
-                       Color="Color.Primary"
-                       StartIcon="@Icons.Material.Filled.Refresh"
-                       Disabled="@(ViewModel?.Disabled == true || (ViewModel?.Loading ?? false))"
-                       OnClick="async e => await ViewModel!.LoadDirectoryItemsCommand.Execute()">
-                Refresh
+            <MudSpacer />
+            <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Refresh"
+                Disabled="@(ViewModel?.Disabled == true || (ViewModel?.Loading ?? false))"
+                OnClick="async e => await ViewModel!.LoadDirectoryItemsCommand.Execute()">
+                @Loc["Generic_Refresh"]
             </MudButton>
         </MudStack>
     </MudPaper>
 
-    <MudTreeView T="DirectoryItem" ServerData="@ViewModel!.HandleExpand" Items="@ViewModel?.TreeItems"
-                 Hover="true" MaxHeight="20rem"
-                 SelectionMode="SelectionMode.SingleSelection"
-                 Disabled="@(ViewModel?.Disabled == true || (ViewModel?.Loading ?? false))"
-                 SelectedValueChanged="v => ViewModel!.SelectedPath = v.Path">
+    <MudTreeView T="DirectoryItem" ServerData="@ViewModel!.HandleExpand" Items="@ViewModel?.TreeItems" Hover="true"
+        MaxHeight="20rem" SelectionMode="SelectionMode.SingleSelection"
+        Disabled="@(ViewModel?.Disabled == true || (ViewModel?.Loading ?? false))"
+        SelectedValueChanged="v => ViewModel!.SelectedPath = v.Path">
         <ItemTemplate>
-            <MudTreeViewItem T="DirectoryItem?" @key="context.Value?.Path" Value="@context.Value"
-                             Text="@context.Value?.Name"
-                             Icon="@Icons.Material.Filled.FolderOpen"
-                             ItemsChanged="@(new Action<IReadOnlyCollection<TreeItemData<DirectoryItem?>>?>(items => ViewModel?.HandleItemsLoaded(context, items)))"
-                             CanExpand="@context.Expandable"
-                             @bind-Expanded="@context.Expanded"
-                             Items="@context.Children"
-                             OnDoubleClick="@(() => ViewModel!.RootDirectory = context.Value!.Path)"/>
+            <MudTreeViewItem T="DirectoryItem ?" @key="context.Value?.Path" Value="@context.Value"
+                Text="@context.Value?.Name" Icon="@Icons.Material.Filled.FolderOpen"
+                ItemsChanged="@(new Action<IReadOnlyCollection<TreeItemData<DirectoryItem?>>?>(items => ViewModel?.HandleItemsLoaded(context, items)))"
+                CanExpand="@context.Expandable" @bind-Expanded="@context.Expanded" Items="@context.Children"
+                OnDoubleClick="@(() => ViewModel!.RootDirectory = context.Value!.Path)" />
         </ItemTemplate>
     </MudTreeView>
     <MudStack Row="true" AlignItems="AlignItems.Center">
@@ -62,26 +58,25 @@
 
             <MudText Typo="Typo.subtitle2" Class="mb-2">Selected Folder:</MudText>
             <MudInputString Required="@Required" Value="@ViewModel?.SelectedPath"
-                            Disabled="@(ViewModel?.Disabled == true || (ViewModel?.Loading ?? false))"
-                            Class="flex-grow-1" ReadOnly="true"/>
+                Disabled="@(ViewModel?.Disabled == true || (ViewModel?.Loading ?? false))" Class="flex-grow-1"
+                ReadOnly="true" />
         </MudStack>
-        <MudIconButton Icon="@Icons.Material.Sharp.Clear"
-                       OnClick="(e) => SelectedPath = null"
-                       Disabled="@(ViewModel?.Disabled == true || Required || (ViewModel?.Loading ?? false))"
-                       title="Clear selection"/>
+        <MudIconButton Icon="@Icons.Material.Sharp.Clear" OnClick="(e) => SelectedPath = null"
+            Disabled="@(ViewModel?.Disabled == true || Required || (ViewModel?.Loading ?? false))"
+            title="Clear selection" />
     </MudStack>
 </MudPaper>
 
 @code {
     [Parameter] public bool Required { get; set; }
 
-    [Parameter] [EditorRequired] public required string RootDirectory { get; set; }
+    [Parameter][EditorRequired] public required string RootDirectory { get; set; }
 
     [Parameter] public string? SelectedPath { get; set; }
 
     [Parameter] public EventCallback<string> SelectedPathChanged { get; set; }
 
-    [Parameter] [EditorRequired] public required string Title { get; set; }
+    [Parameter][EditorRequired] public required string Title { get; set; }
 
     [Parameter] public bool Disabled { get; set; }
 
@@ -92,11 +87,11 @@
         base.OnInitialized();
 
         ViewModel!.WhenPathSelected
-            .WhereNotNull()
-            .DistinctUntilChanged()
-            .Do(path => SelectedPath = path)
-            .Subscribe(path => SelectedPathChanged.InvokeAsync(path))
-            .DisposeWith(disposables);
+        .WhereNotNull()
+        .DistinctUntilChanged()
+        .Do(path => SelectedPath = path)
+        .Subscribe(path => SelectedPathChanged.InvokeAsync(path))
+        .DisposeWith(disposables);
     }
 
     protected override void OnParametersSet()
