@@ -25,12 +25,6 @@
                 <label for="username" class="form-label">@Loc["UsernameLabel"]</label>
             </div>
             <div class="form-floating mb-3">
-                <InputText @bind-Value="Input!.PhoneNumber" id="Input.PhoneNumber" class="form-control"
-                    placeholder="@Loc["PhoneNumberPlaceholder"]" />
-                <label for="Input.PhoneNumber" class="form-label">@Loc["PhoneNumberLabel"]</label>
-                <ValidationMessage For="() => Input!.PhoneNumber" class="text-danger" />
-            </div>
-            <div class="form-floating mb-3">
                 <InputSelect @bind-Value="Input!.PreferredCulture" id="Input.PreferredCulture" class="form-select">
                     <option value="">@Loc["DefaultBrowser"]</option>
                     <option value="en-US">English (US)</option>
@@ -47,7 +41,6 @@
 @code {
     private ApplicationUser user = default!;
     private string? username;
-    private string? phoneNumber;
 
     [CascadingParameter]
     private HttpContext HttpContext { get; set; } = default!;
@@ -60,24 +53,13 @@
 
         user = await UserAccessor.GetRequiredUserAsync(HttpContext);
         username = await UserManager.GetUserNameAsync(user);
-        phoneNumber = await UserManager.GetPhoneNumberAsync(user);
 
-        Input.PhoneNumber ??= phoneNumber;
         Input.PreferredCulture ??= user.PreferredCulture;
     }
 
     private async Task OnValidSubmitAsync()
     {
-        if (Input!.PhoneNumber != phoneNumber)
-        {
-            var setPhoneResult = await UserManager.SetPhoneNumberAsync(user, Input.PhoneNumber);
-            if (!setPhoneResult.Succeeded)
-            {
-                RedirectManager.RedirectToCurrentPageWithStatus(Loc["Status_SetPhoneFailed"], HttpContext);
-            }
-        }
-
-        if (Input.PreferredCulture != user.PreferredCulture)
+        if (Input!.PreferredCulture != user.PreferredCulture)
         {
             user.PreferredCulture = string.IsNullOrEmpty(Input.PreferredCulture) ? null : Input.PreferredCulture;
             await UserManager.UpdateAsync(user);
@@ -89,10 +71,6 @@
 
     private sealed class InputModel
     {
-        [Phone]
-        [Display(Name = "Phone number")]
-        public string? PhoneNumber { get; set; }
-
         [Display(Name = "Preferred Language")]
         public string? PreferredCulture { get; set; }
     }
