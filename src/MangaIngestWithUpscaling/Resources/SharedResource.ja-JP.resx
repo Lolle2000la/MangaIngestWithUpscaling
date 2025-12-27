@@ -688,4 +688,13 @@
   <data name="EditManga_Button_SaveChanges" xml:space="preserve">
     <value>変更を保存</value>
   </data>
+  <data name="FolderPicker_CurrentPath" xml:space="preserve">
+    <value>現在のパス:</value>
+  </data>
+  <data name="FolderPicker_GoToParent" xml:space="preserve">
+    <value>親フォルダへ</value>
+  </data>
+  <data name="Generic_Refresh" xml:space="preserve">
+    <value>更新</value>
+  </data>
 </root>
