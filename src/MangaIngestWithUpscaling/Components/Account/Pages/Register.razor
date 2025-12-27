@@ -64,11 +64,12 @@
 }
 else
 {
-    <p>There is already a user in the system. You can't register a new user.</p>
+    <p>@Loc["UserExistsMessage1"]</p>
 
-    <p>You can ask your admin to create a new user for you.</p>
+    <p>@Loc["UserExistsMessage2"]</p>
 
-    <p>Or you can <a href="Account/Login">login</a> with an existing user.</p>
+    <p>@Loc["UserExistsMessage3_Part1"] <a href="Account/Login">@Loc["UserExistsMessage3_Link"]</a>
+        @Loc["UserExistsMessage3_Part2"]</p>
 }
 
 @code {
@@ -80,92 +81,94 @@ else
     private string? ReturnUrl { get; set; }
 
     private string? Message => identityErrors is null
-                ? null
-                : $"Error: {string.Join(", ", identityErrors.Select(error =>
-    error.Description))}";
+    ? null
+    : $"Error: {string.Join(", ", identityErrors.Select(error =>
+    error.Description))}
+";
 
     private bool SingleUserExistsAlready => UserManager.Users.Any();
 
     protected override void OnInitialized()
     {
-        Input ??= new InputModel();
+    Input ??= new InputModel();
     }
 
     public async Task RegisterUser(EditContext editContext)
     {
-        var user = CreateUser();
+    var user = CreateUser();
 
-        await UserStore.SetUserNameAsync(user, Input!.Email, CancellationToken.None);
-        var emailStore = GetEmailStore();
-        await emailStore.SetEmailAsync(user, Input.Email, CancellationToken.None);
-        var result = await UserManager.CreateAsync(user, Input.Password);
+    await UserStore.SetUserNameAsync(user, Input!.Email, CancellationToken.None);
+    var emailStore = GetEmailStore();
+    await emailStore.SetEmailAsync(user, Input.Email, CancellationToken.None);
+    var result = await UserManager.CreateAsync(user, Input.Password);
 
-        if (!result.Succeeded)
-        {
-            identityErrors = result.Errors;
-            return;
-        }
+    if (!result.Succeeded)
+    {
+    identityErrors = result.Errors;
+    return;
+    }
 
-        Logger.LogInformation("User created a new account with password.");
+    Logger.LogInformation("User created a new account with password.");
 
-        var userId = await UserManager.GetUserIdAsync(user);
-        var code = await UserManager.GenerateEmailConfirmationTokenAsync(user);
-        code = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(code));
-        var callbackUrl = NavigationManager.GetUriWithQueryParameters(
-        NavigationManager.ToAbsoluteUri("Account/ConfirmEmail").AbsoluteUri,
-        new Dictionary<string, object?> { ["userId"] = userId, ["code"] = code, ["returnUrl"] = ReturnUrl });
+    var userId = await UserManager.GetUserIdAsync(user);
+    var code = await UserManager.GenerateEmailConfirmationTokenAsync(user);
+    code = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(code));
+    var callbackUrl = NavigationManager.GetUriWithQueryParameters(
+    NavigationManager.ToAbsoluteUri("Account/ConfirmEmail").AbsoluteUri,
+    new Dictionary<string, object?> { ["userId"] = userId, ["code"] = code, ["returnUrl"] = ReturnUrl });
 
         await EmailSender.SendConfirmationLinkAsync(user, Input.Email, HtmlEncoder.Default.Encode(callbackUrl));
 
         if (UserManager.Options.SignIn.RequireConfirmedAccount)
         {
-            RedirectManager.RedirectTo(
-            "Account/RegisterConfirmation",
-            new Dictionary<string, object?> { ["email"] = Input.Email, ["returnUrl"] = ReturnUrl });
-        }
+        RedirectManager.RedirectTo(
+        "Account/RegisterConfirmation",
+        new Dictionary<string, object?> { ["email"] = Input.Email, ["returnUrl"] = ReturnUrl });
+            }
 
-        await SignInManager.SignInAsync(user, isPersistent: false);
-        RedirectManager.RedirectTo(ReturnUrl);
-    }
+            await SignInManager.SignInAsync(user, isPersistent: false);
+            RedirectManager.RedirectTo(ReturnUrl);
+            }
 
-    private ApplicationUser CreateUser()
-    {
-        try
-        {
+            private ApplicationUser CreateUser()
+            {
+            try
+            {
             return Activator.CreateInstance<ApplicationUser>();
-        }
-        catch
-        {
-            throw new InvalidOperationException($"Can't create an instance of '{nameof(ApplicationUser)}'. " +
-            $"Ensure that '{nameof(ApplicationUser)}' is not an abstract class and has a parameterless constructor.");
-        }
-    }
+                }
+                catch
+                {
+                throw new InvalidOperationException($"Can't create an instance of '{nameof(ApplicationUser)}'. " +
+                $"Ensure that '{nameof(ApplicationUser)}' is not an abstract class and has a parameterless constructor.");
+                }
+                }
 
-    private IUserEmailStore<ApplicationUser> GetEmailStore()
-    {
-        if (!UserManager.SupportsUserEmail)
-        {
-            throw new NotSupportedException("The default UI requires a user store with email support.");
-        }
-        return (IUserEmailStore<ApplicationUser>)UserStore;
-    }
+                private IUserEmailStore<ApplicationUser> GetEmailStore()
+                    {
+                    if (!UserManager.SupportsUserEmail)
+                    {
+                    throw new NotSupportedException("The default UI requires a user store with email support.");
+                    }
+                    return (IUserEmailStore<ApplicationUser>)UserStore;
+                        }
 
-    private sealed class InputModel
-    {
-        [Required]
-        [EmailAddress]
-        [Display(Name = "Email")]
-        public string Email { get; set; } = "";
+                        private sealed class InputModel
+                        {
+                        [Required]
+                        [EmailAddress]
+                        [Display(Name = "Email")]
+                        public string Email { get; set; } = "";
 
-        [Required]
-        [StringLength(100, ErrorMessage = "The {0} must be at least {2} and at max {1} characters long.", MinimumLength = 6)]
-        [DataType(DataType.Password)]
-        [Display(Name = "Password")]
-        public string Password { get; set; } = "";
+                        [Required]
+                        [StringLength(100, ErrorMessage = "The {0} must be at least {2} and at max {1} characters long.",
+                        MinimumLength = 6)]
+                        [DataType(DataType.Password)]
+                        [Display(Name = "Password")]
+                        public string Password { get; set; } = "";
 
-        [DataType(DataType.Password)]
-        [Display(Name = "Confirm password")]
-        [Compare("Password", ErrorMessage = "The password and confirmation password do not match.")]
-        public string ConfirmPassword { get; set; } = "";
-    }
-}
+                        [DataType(DataType.Password)]
+                        [Display(Name = "Confirm password")]
+                        [Compare("Password", ErrorMessage = "The password and confirmation password do not match.")]
+                        public string ConfirmPassword { get; set; } = "";
+                        }
+                        }

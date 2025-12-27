@@ -82,4 +82,19 @@
   <data name="Progress_Working" xml:space="preserve">
     <value>Working…</value>
   </data>
+  <data name="Status_Pending" xml:space="preserve">
+    <value>Pending</value>
+  </data>
+  <data name="Status_Processing" xml:space="preserve">
+    <value>Processing</value>
+  </data>
+  <data name="Status_Completed" xml:space="preserve">
+    <value>Completed</value>
+  </data>
+  <data name="Status_Failed" xml:space="preserve">
+    <value>Failed</value>
+  </data>
+  <data name="Status_Canceled" xml:space="preserve">
+    <value>Canceled</value>
+  </data>
 </root>

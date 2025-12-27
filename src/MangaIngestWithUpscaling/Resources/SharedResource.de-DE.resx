@@ -109,4 +109,28 @@
   <data name="Delete" xml:space="preserve">
     <value>Löschen</value>
   </data>
+  <data name="ScaleFactor_OneX" xml:space="preserve">
+    <value>1x</value>
+  </data>
+  <data name="ScaleFactor_TwoX" xml:space="preserve">
+    <value>2x</value>
+  </data>
+  <data name="ScaleFactor_ThreeX" xml:space="preserve">
+    <value>3x</value>
+  </data>
+  <data name="ScaleFactor_FourX" xml:space="preserve">
+    <value>4x</value>
+  </data>
+  <data name="CompressionFormat_Avif" xml:space="preserve">
+    <value>AVIF</value>
+  </data>
+  <data name="CompressionFormat_Png" xml:space="preserve">
+    <value>PNG</value>
+  </data>
+  <data name="CompressionFormat_Webp" xml:space="preserve">
+    <value>WebP</value>
+  </data>
+  <data name="CompressionFormat_Jpg" xml:space="preserve">
+    <value>JPEG</value>
+  </data>
 </root>

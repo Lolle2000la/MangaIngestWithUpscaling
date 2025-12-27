@@ -85,4 +85,10 @@
   <data name="Save" xml:space="preserve">
     <value>Speichern</value>
   </data>
+  <data name="Status_SetPhoneFailed" xml:space="preserve">
+    <value>Fehler: Telefonnummer konnte nicht festgelegt werden.</value>
+  </data>
+  <data name="Status_ProfileUpdated" xml:space="preserve">
+    <value>Ihr Profil wurde aktualisiert</value>
+  </data>
 </root>

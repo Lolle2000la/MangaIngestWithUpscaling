@@ -91,4 +91,19 @@
   <data name="ExternalRegisterHeader" xml:space="preserve">
     <value>Use another service to register.</value>
   </data>
+  <data name="UserExistsMessage1" xml:space="preserve">
+    <value>There is already a user in the system. You can't register a new user.</value>
+  </data>
+  <data name="UserExistsMessage2" xml:space="preserve">
+    <value>You can ask your admin to create a new user for you.</value>
+  </data>
+  <data name="UserExistsMessage3_Part1" xml:space="preserve">
+    <value>Or you can </value>
+  </data>
+  <data name="UserExistsMessage3_Link" xml:space="preserve">
+    <value>login</value>
+  </data>
+  <data name="UserExistsMessage3_Part2" xml:space="preserve">
+    <value> with an existing user.</value>
+  </data>
 </root>

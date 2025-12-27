@@ -5,6 +5,7 @@
 @inject ApplicationDbContext DbContext
 @inject IDialogService DialogService
 @inject IStringLocalizer<UpscalerProfiles> Loc
+@inject IStringLocalizer<SharedResource> SharedLoc
 
 <PageTitle>@Loc["PageTitle"]</PageTitle>
 
@@ -29,8 +30,8 @@
     </HeaderContent>
     <RowTemplate>
         <MudTd>@context.Name</MudTd>
-        <MudTd>@context.ScalingFactor.GetDisplayName()</MudTd>
-        <MudTd>@context.CompressionFormat.GetDisplayName()</MudTd>
+        <MudTd>@SharedLoc[$"ScaleFactor_{context.ScalingFactor}"]</MudTd>
+        <MudTd>@SharedLoc[$"CompressionFormat_{context.CompressionFormat}"]</MudTd>
         <MudTd>@context.Quality</MudTd>
         <MudTd>
             <a href="upscaling/profiles/edit/@context.Id">

@@ -85,4 +85,10 @@
   <data name="Save" xml:space="preserve">
     <value>Save</value>
   </data>
+  <data name="Status_SetPhoneFailed" xml:space="preserve">
+    <value>Error: Failed to set phone number.</value>
+  </data>
+  <data name="Status_ProfileUpdated" xml:space="preserve">
+    <value>Your profile has been updated</value>
+  </data>
 </root>

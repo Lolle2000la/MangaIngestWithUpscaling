@@ -91,4 +91,19 @@
   <data name="ExternalRegisterHeader" xml:space="preserve">
     <value>Mit einem anderen Dienst registrieren.</value>
   </data>
+  <data name="UserExistsMessage1" xml:space="preserve">
+    <value>Es gibt bereits einen Benutzer im System. Sie können keinen neuen Benutzer registrieren.</value>
+  </data>
+  <data name="UserExistsMessage2" xml:space="preserve">
+    <value>Sie können Ihren Administrator bitten, einen neuen Benutzer für Sie zu erstellen.</value>
+  </data>
+  <data name="UserExistsMessage3_Part1" xml:space="preserve">
+    <value>Oder Sie können sich mit einem bestehenden Benutzer </value>
+  </data>
+  <data name="UserExistsMessage3_Link" xml:space="preserve">
+    <value>anmelden</value>
+  </data>
+  <data name="UserExistsMessage3_Part2" xml:space="preserve">
+    <value>.</value>
+  </data>
 </root>

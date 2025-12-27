@@ -2,6 +2,7 @@
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using Microsoft.Extensions.Localization
 @inject IStringLocalizer<UpscalerProfileForm> Loc
+@inject IStringLocalizer<SharedResource> SharedLoc
 
 <MudForm Model="@Profile" IsValid="@IsValid">
     <MudGrid Spacing="4">
@@ -14,7 +15,7 @@
                 @bind-Value:after="OnInputChanged" Required="true" HelperText="@Loc["ScalingFactorHelper"]">
                 @foreach (ScaleFactor factor in Enum.GetValues(typeof(ScaleFactor)))
                 {
-                    <MudSelectItem Value="@factor">@factor.GetDisplayName()</MudSelectItem>
+                    <MudSelectItem Value="@factor">@SharedLoc[$"ScaleFactor_{factor}"]</MudSelectItem>
                 }
             </MudSelect>
         </MudItem>
@@ -23,7 +24,7 @@
                 @bind-Value:after="OnInputChanged" Required="true" HelperText="@Loc["CompressionFormatHelper"]">
                 @foreach (CompressionFormat format in Enum.GetValues(typeof(CompressionFormat)))
                 {
-                    <MudSelectItem Value="@format">@format.GetDisplayName()</MudSelectItem>
+                    <MudSelectItem Value="@format">@SharedLoc[$"CompressionFormat_{format}"]</MudSelectItem>
                 }
             </MudSelect>
         </MudItem>

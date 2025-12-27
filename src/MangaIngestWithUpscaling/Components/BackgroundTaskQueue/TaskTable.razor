@@ -40,7 +40,7 @@
                         context.ProcessedAt.Value.ToLocalTime() : "")
         </MudTd>
         <MudTd DataLabel="@Loc["Header_Status"]">
-            @context.Status
+            @Loc[$"Status_{context.Status}"]
             @if (context.Status == PersistedTaskStatus.Processing && context.Data?.Progress is not null)
             {
                 var p = context.Data.Progress;

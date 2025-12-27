@@ -85,4 +85,10 @@
   <data name="Save" xml:space="preserve">
     <value>保存</value>
   </data>
+  <data name="Status_SetPhoneFailed" xml:space="preserve">
+    <value>エラー: 電話番号を設定できませんでした。</value>
+  </data>
+  <data name="Status_ProfileUpdated" xml:space="preserve">
+    <value>プロフィールが更新されました</value>
+  </data>
 </root>
