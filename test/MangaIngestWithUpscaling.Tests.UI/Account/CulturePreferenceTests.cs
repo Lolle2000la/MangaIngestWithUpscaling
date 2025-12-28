@@ -27,6 +27,7 @@ public class CulturePreferenceTests
         };
 
         // Act - simulate user selecting "Default (Browser)" option
+        // Note: The dropdown uses value="" (empty string), not null
         string? newPreferredCulture = ""; // Empty string means browser default
 
         // Simulate the logic from Index.razor OnValidSubmitAsync
@@ -102,6 +103,7 @@ public class CulturePreferenceTests
         };
 
         // Act - simulate user saving with empty string (from dropdown "Default (Browser)")
+        // Note: The dropdown explicitly uses value="" (empty string), not null
         string? newPreferredCulture = ""; // Empty string from dropdown
 
         bool shouldClearCookie = false;
