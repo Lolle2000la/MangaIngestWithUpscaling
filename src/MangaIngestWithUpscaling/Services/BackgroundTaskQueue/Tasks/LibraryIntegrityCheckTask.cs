@@ -2,6 +2,7 @@
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.LibraryIntegrity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 
@@ -28,6 +29,7 @@ public class LibraryIntegrityCheckTask : BaseTask
     {
         var integrityChecker = services.GetRequiredService<ILibraryIntegrityChecker>();
         var dbContext = services.GetRequiredService<ApplicationDbContext>();
+        var localizer = services.GetRequiredService<IStringLocalizer<LibraryIntegrityCheckTask>>();
 
         var library = await dbContext
             .Libraries.Include(l => l.MangaSeries)
@@ -38,7 +40,7 @@ public class LibraryIntegrityCheckTask : BaseTask
 
         if (library == null)
         {
-            throw new InvalidOperationException($"Library with ID {LibraryId} not found.");
+            throw new InvalidOperationException(localizer["Error_LibraryNotFound", LibraryId]);
         }
 
         // Prepare progress reporter

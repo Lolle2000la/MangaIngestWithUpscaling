@@ -1,27 +1,33 @@
 @using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Helpers
+@using Microsoft.Extensions.Localization
+@inject IStringLocalizer<EditLibraryRenames> Loc
+
 <MudStack>
-    <MudText Typo="Typo.h5">Edit Rename Rules</MudText>
+    <MudText Typo="Typo.h5">@Loc["Title"]</MudText>
     <MudText Typo="Typo.body1">
-        Define regex or substring replacements to apply during ingest.
+        @Loc["Description"]
     </MudText>
 
     <MudTable T="LibraryRenameRule" Items="@Library.RenameRules" Dense>
         <HeaderContent>
-            <MudTh>Pattern</MudTh>
-            <MudTh>Pattern Type</MudTh>
-            <MudTh>Target Field</MudTh>
-            <MudTh>Replacement</MudTh>
-            <MudTh><MudIconButton Icon="@Icons.Material.Filled.Add" OnClick="async () => { Library.RenameRules.Add(new()); await RulesChanged.InvokeAsync(); }" /></MudTh>
+            <MudTh>@Loc["Header_Pattern"]</MudTh>
+            <MudTh>@Loc["Header_PatternType"]</MudTh>
+            <MudTh>@Loc["Header_TargetField"]</MudTh>
+            <MudTh>@Loc["Header_Replacement"]</MudTh>
+            <MudTh>
+                <MudIconButton Icon="@Icons.Material.Filled.Add"
+                    OnClick="async () => { Library.RenameRules.Add(new()); await RulesChanged.InvokeAsync(); }" />
+            </MudTh>
         </HeaderContent>
         <RowTemplate>
-            <MudTd DataLabel="Pattern">@context.Pattern</MudTd>
-            <MudTd DataLabel="Pattern Type">@context.PatternType.GetDisplayName()</MudTd>
-            <MudTd DataLabel="Target Field">@context.TargetField.GetDisplayName()</MudTd>
-            <MudTd DataLabel="Replacement">@context.Replacement</MudTd>
+            <MudTd DataLabel="@Loc["Header_Pattern"]">@context.Pattern</MudTd>
+            <MudTd DataLabel="@Loc["Header_PatternType"]">@Loc[$"Enum_PatternType_{context.PatternType}"]</MudTd>
+            <MudTd DataLabel="@Loc["Header_TargetField"]">@Loc[$"Enum_TargetField_{context.TargetField}"]</MudTd>
+            <MudTd DataLabel="@Loc["Header_Replacement"]">@context.Replacement</MudTd>
             <MudTd>
                 <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
-                               OnClick="async () => { Library.RenameRules.Remove(context); await RulesChanged.InvokeAsync(); }" />
+                    OnClick="async () => { Library.RenameRules.Remove(context); await RulesChanged.InvokeAsync(); }" />
             </MudTd>
         </RowTemplate>
         <RowEditingTemplate>

@@ -1,27 +1,29 @@
 ﻿@implements IDisposable
 
+@using Microsoft.Extensions.Localization
+@inject IStringLocalizer<NavMenu> Loc
 @inject NavigationManager NavigationManager
 @inject IConfiguration Configuration
 
 
 <MudNavMenu>
     <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Home">
-        Home
+        @Loc["Home"]
     </MudNavLink>
     <MudNavLink Href="libraries" Icon="@Icons.Material.Filled.LibraryBooks">
-        Libraries
+        @Loc["Libraries"]
     </MudNavLink>
     <MudNavLink Href="upscaling/profiles" Icon="@Icons.Material.Filled.ImageAspectRatio">
-        Upscale Profiles
+        @Loc["UpscaleProfiles"]
     </MudNavLink>
     <MudNavLink Href="mangas" Icon="@Icons.Material.Filled.Book">
-        Mangas
+        @Loc["Mangas"]
     </MudNavLink>
     <MudNavLink Href="tasks" Icon="@Icons.Material.Filled.Task">
-        Tasks
+        @Loc["Tasks"]
     </MudNavLink>
     <MudNavLink Href="logs" Icon="@Icons.Material.Filled.List">
-        Logs
+        @Loc["Logs"]
     </MudNavLink>
     <AuthorizeView>
         <Authorized>
@@ -35,9 +37,10 @@
                     <AntiforgeryToken />
                     <input type="hidden" name="ReturnUrl" value="@currentUrl" />
                     <button type="submit" class="mud-nav-link mud-ripple">
-                        <MudIcon Class="mud-icon-root mud-icon-default mud-svg-icon mud-icon-size-medium mud-nav-link-icon mud-nav-link-icon-default"
-                                 Icon="@Icons.Material.Filled.Logout" />
-                        <div class="mud-nav-link-text">Logout</div>
+                        <MudIcon
+                            Class="mud-icon-root mud-icon-default mud-svg-icon mud-icon-size-medium mud-nav-link-icon mud-nav-link-icon-default"
+                            Icon="@Icons.Material.Filled.Logout" />
+                        <div class="mud-nav-link-text">@Loc["Logout"]</div>
                     </button>
                 </form>
             }
@@ -51,9 +54,10 @@
                     <AntiforgeryToken />
                     <input type="hidden" name="ReturnUrl" value="@currentUrl" />
                     <button type="submit" class="mud-nav-link mud-ripple">
-                        <MudIcon Class="mud-icon-root mud-icon-default mud-svg-icon mud-icon-size-medium mud-nav-link-icon mud-nav-link-icon-default"
-                                 Icon="@Icons.Material.Filled.Logout" />
-                        <div class="mud-nav-link-text">Logout</div>
+                        <MudIcon
+                            Class="mud-icon-root mud-icon-default mud-svg-icon mud-icon-size-medium mud-nav-link-icon mud-nav-link-icon-default"
+                            Icon="@Icons.Material.Filled.Logout" />
+                        <div class="mud-nav-link-text">@Loc["Logout"]</div>
                     </button>
                 </form>
             }
@@ -70,8 +74,8 @@
             }
             else
             {
-                 // Optionally, show a login button that triggers OIDC challenge if OIDC is enabled and user is not authorized
-                 <MudNavLink Href="/Account/LoginOidc" Icon="@Icons.Material.Filled.Login">Login with OIDC</MudNavLink>
+                // Optionally, show a login button that triggers OIDC challenge if OIDC is enabled and user is not authorized
+                <MudNavLink Href="/Account/LoginOidc" Icon="@Icons.Material.Filled.Login"> Login with OIDC</MudNavLink>
             }
         </NotAuthorized>
     </AuthorizeView>

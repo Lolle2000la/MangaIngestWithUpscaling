@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="PageTitle" xml:space="preserve">
+    <value>マンガの編集: {0}</value>
+  </data>
+  <data name="Tooltip_Back" xml:space="preserve">
+    <value>マンガに戻る</value>
+  </data>
+  <data name="Header_EditManga" xml:space="preserve">
+    <value>マンガの編集</value>
+  </data>
+  <data name="Chip_Library" xml:space="preserve">
+    <value>ライブラリ: {0}</value>
+  </data>
+  <data name="Tab_BasicInfo" xml:space="preserve">
+    <value>基本情報</value>
+  </data>
+  <data name="Header_BasicInfo" xml:space="preserve">
+    <value>基本情報</value>
+  </data>
+  <data name="Label_PrimaryTitle" xml:space="preserve">
+    <value>メインタイトル</value>
+  </data>
+  <data name="Helper_PrimaryTitle" xml:space="preserve">
+    <value>マンガのメインタイトル</value>
+  </data>
+  <data name="Label_AddOldTitle" xml:space="preserve">
+    <value>古いタイトルを代替タイトルに追加</value>
+  </data>
+  <data name="Label_UpscalerProfile" xml:space="preserve">
+    <value>アップスケーラープロファイル</value>
+  </data>
+  <data name="Helper_UpscalerProfile" xml:space="preserve">
+    <value>このマンガに使用するアップスケーラープロファイル</value>
+  </data>
+  <data name="Option_None" xml:space="preserve">
+    <value>なし</value>
+  </data>
+  <data name="Label_ChapterMerging" xml:space="preserve">
+    <value>チャプター結合</value>
+  </data>
+  <data name="Helper_ChapterMerging" xml:space="preserve">
+    <value>チャプターの一部を結合するかどうか</value>
+  </data>
+  <data name="Option_Default" xml:space="preserve">
+    <value>デフォルト</value>
+  </data>
+  <data name="Option_AlwaysMerge" xml:space="preserve">
+    <value>常に結合</value>
+  </data>
+  <data name="Option_NeverMerge" xml:space="preserve">
+    <value>結合しない</value>
+  </data>
+  <data name="Warning_Experimental" xml:space="preserve">
+    <value>警告: この機能は実験的です</value>
+  </data>
+  <data name="Label_Created" xml:space="preserve">
+    <value>作成日:</value>
+  </data>
+  <data name="Label_Modified" xml:space="preserve">
+    <value>変更日:</value>
+  </data>
+  <data name="Tab_AltTitles" xml:space="preserve">
+    <value>代替タイトル</value>
+  </data>
+  <data name="Header_AltTitles" xml:space="preserve">
+    <value>代替タイトル</value>
+  </data>
+  <data name="Body_AltTitles" xml:space="preserve">
+    <value>このマンガの代替タイトルを管理します。これらのタイトルは検索に使用できます。</value>
+  </data>
+  <data name="Header_AddNewTitle" xml:space="preserve">
+    <value>新しいタイトルを追加</value>
+  </data>
+  <data name="Label_AltTitle" xml:space="preserve">
+    <value>代替タイトル</value>
+  </data>
+  <data name="Helper_AltTitle" xml:space="preserve">
+    <value>代替タイトルを入力してください</value>
+  </data>
+  <data name="Button_AddTitle" xml:space="preserve">
+    <value>タイトルを追加</value>
+  </data>
+  <data name="Header_CurrentTitles" xml:space="preserve">
+    <value>現在の代替タイトル</value>
+  </data>
+  <data name="Text_NoTitles" xml:space="preserve">
+    <value>代替タイトルはまだ追加されていません。</value>
+  </data>
+  <data name="Text_AddTitlesHelp" xml:space="preserve">
+    <value>検索を容易にするために、上に代替タイトルを追加してください。</value>
+  </data>
+  <data name="Tooltip_RemoveTitle" xml:space="preserve">
+    <value>このタイトルを削除</value>
+  </data>
+  <data name="Tab_Chapters" xml:space="preserve">
+    <value>チャプター</value>
+  </data>
+  <data name="Header_ChapterManagement" xml:space="preserve">
+    <value>チャプター管理</value>
+  </data>
+  <data name="Warning_DeleteChapter" xml:space="preserve">
+    <value>&lt;b&gt;警告:&lt;/b&gt; チャプターを削除すると、データベースから削除され、ディスクからもファイルが削除されます。</value>
+  </data>
+  <data name="Text_CannotUndo" xml:space="preserve">
+    <value>この操作は元に戻せません。</value>
+  </data>
+  <data name="Text_UnsavedChanges" xml:space="preserve">
+    <value>保存されていない変更があります。</value>
+  </data>
+  <data name="Text_NoChanges" xml:space="preserve">
+    <value>変更はありません。</value>
+  </data>
+  <data name="Button_Cancel" xml:space="preserve">
+    <value>キャンセル</value>
+  </data>
+  <data name="Button_SaveChanges" xml:space="preserve">
+    <value>変更を保存</value>
+  </data>
+  <data name="Error_FormValidation" xml:space="preserve">
+    <value>フォームのエラーを修正してください。</value>
+  </data>
+  <data name="Error_ChangeTitle" xml:space="preserve">
+    <value>マンガのタイトルの変更に失敗しました。</value>
+  </data>
+  <data name="Success_Update" xml:space="preserve">
+    <value>マンガが正常に更新されました。</value>
+  </data>
+  <data name="Error_Saving" xml:space="preserve">
+    <value>マンガ {0} の保存中にエラーが発生しました</value>
+  </data>
+  <data name="Loading" xml:space="preserve">
+    <value>読み込み中...</value>
+  </data>
+</root>

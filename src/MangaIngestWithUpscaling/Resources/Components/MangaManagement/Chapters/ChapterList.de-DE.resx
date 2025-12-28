@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="Button_DeleteSelected" xml:space="preserve">
+    <value>Ausgewählte löschen</value>
+  </data>
+  <data name="Button_UpscaleSelected" xml:space="preserve">
+    <value>Ausgewählte hochskalieren</value>
+  </data>
+  <data name="Button_DeleteUpscaledSelected" xml:space="preserve">
+    <value>Ausgewählte hochskalierte löschen</value>
+  </data>
+  <data name="Button_RevertSelectedMerged" xml:space="preserve">
+    <value>Ausgewählte zusammengeführte rückgängig machen (Experimentell)</value>
+  </data>
+  <data name="Button_MergeSelected" xml:space="preserve">
+    <value>Ausgewählte zusammenführen / Zu bestehenden hinzufügen (Experimentell)</value>
+  </data>
+  <data name="Header_ChapterTitle" xml:space="preserve">
+    <value>Kapiteltitel</value>
+  </data>
+  <data name="Header_ChapterPath" xml:space="preserve">
+    <value>Kapitelpfad</value>
+  </data>
+  <data name="Header_Upscaled" xml:space="preserve">
+    <value>Hochskaliert</value>
+  </data>
+  <data name="Header_Splits" xml:space="preserve">
+    <value>Aufteilungen</value>
+  </data>
+  <data name="Header_UpscalerProfile" xml:space="preserve">
+    <value>Upscaler-Profil</value>
+  </data>
+  <data name="Header_Actions" xml:space="preserve">
+    <value>Aktionen</value>
+  </data>
+  <data name="Chip_Merged" xml:space="preserve">
+    <value>Zusammengeführt</value>
+  </data>
+  <data name="Tooltip_Upscale" xml:space="preserve">
+    <value>Dieses Kapitel hochskalieren.</value>
+  </data>
+  <data name="Tooltip_DeleteUpscaled" xml:space="preserve">
+    <value>...</value>
+  </data>
+  <data name="Chip_Split" xml:space="preserve">
+    <value>Geteilt</value>
+  </data>
+  <data name="Header_ChapterNumber" xml:space="preserve">
+    <value>Kapitelnummer</value>
+  </data>
+  <data name="Header_VolumeNumber" xml:space="preserve">
+    <value>Bandnummer</value>
+  </data>
+  <data name="Header_PageCount" xml:space="preserve">
+    <value>Seitenanzahl</value>
+  </data>
+  <data name="Button_SplitSelected" xml:space="preserve">
+    <value>Ausgewählte teilen (Experimentell)</value>
+  </data>
+  <data name="Chip_Pending" xml:space="preserve">
+    <value>Ausstehend</value>
+  </data>
+  <data name="Chip_Detected" xml:space="preserve">
+    <value>Erkannt</value>
+  </data>
+  <data name="Chip_NoSplits" xml:space="preserve">
+    <value>Keine Aufteilungen</value>
+  </data>
+  <data name="Menu_ViewEdit" xml:space="preserve">
+    <value>Ansehen / Bearbeiten</value>
+  </data>
+  <data name="Menu_ApplySplits" xml:space="preserve">
+    <value>Aufteilungen anwenden</value>
+  </data>
+  <data name="Tooltip_RedetectSplits" xml:space="preserve">
+    <value>Aufteilungen neu erkennen</value>
+  </data>
+  <data name="Snackbar_SplitDetectionCompleted" xml:space="preserve">
+    <value>Aufteilungserkennung für {0} abgeschlossen.</value>
+  </data>
+  <data name="Status_Yes" xml:space="preserve">
+    <value>Ja</value>
+  </data>
+  <data name="Status_No" xml:space="preserve">
+    <value>Nein</value>
+  </data>
+  <data name="Chip_Applied" xml:space="preserve">
+    <value>Angewendet</value>
+  </data>
+  <data name="Chip_Failed" xml:space="preserve">
+    <value>Fehlgeschlagen</value>
+  </data>
+  <data name="Tooltip_RetryDetection" xml:space="preserve">
+    <value>Erkennung wiederholen</value>
+  </data>
+  <data name="Tooltip_DetectSplits" xml:space="preserve">
+    <value>Aufteilungen erkennen</value>
+  </data>
+  <data name="Snackbar_SplitDetectionQueued" xml:space="preserve">
+    <value>Aufteilungserkennung für {0} in die Warteschlange eingereiht</value>
+  </data>
+  <data name="Snackbar_SplitDetectionFailure" xml:space="preserve">
+    <value>Fehler beim Einreihen der Aufteilungserkennung: {0}</value>
+  </data>
+  <data name="Snackbar_SplitApplicationQueued" xml:space="preserve">
+    <value>Anwendung der Aufteilungen für {0} in die Warteschlange eingereiht</value>
+  </data>
+  <data name="Snackbar_SplitApplicationFailure" xml:space="preserve">
+    <value>Fehler beim Anwenden der Aufteilungen: {0}</value>
+  </data>
+  <data name="Dialog_EditSplits_Title" xml:space="preserve">
+    <value>Aufteilungen bearbeiten</value>
+  </data>
+  <data name="Dialog_ApplySplits_Title" xml:space="preserve">
+    <value>Aufteilungen anwenden</value>
+  </data>
+  <data name="Dialog_ApplySplits_Content" xml:space="preserve">
+    <value>Sind Sie sicher, dass Sie die erkannten Aufteilungen anwenden möchten? Dies wird das Kapitel in mehrere Dateien aufteilen und das Original löschen.</value>
+  </data>
+  <data name="Dialog_RevertSelectedMerged_Title" xml:space="preserve">
+    <value>Ausgewählte zusammengeführte Kapitel zurücksetzen</value>
+  </data>
+  <data name="Dialog_RevertSelectedMerged_Content" xml:space="preserve">
+    <value>Sind Sie sicher, dass Sie {0} in ihre ursprünglichen Teile zurücksetzen möchten? Dies löscht die zusammengeführten Kapitel und stellt die einzelnen Teile wieder her.</value>
+  </data>
+  <data name="Word_MergedChapter" xml:space="preserve">
+    <value>zusammengeführtes Kapitel</value>
+  </data>
+  <data name="Suffix_Old" xml:space="preserve">
+    <value>(alt)</value>
+  </data>
+</root>

@@ -7,6 +7,8 @@
 @inject ISplitProcessingService SplitProcessingService
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
+@inject IStringLocalizer<SplitEditorDialog> Loc
+@inject IStringLocalizer<SharedResource> SharedLoc
 
 <MudDialog>
     <DialogContent>
@@ -17,7 +19,7 @@
             }
             else if (_findings == null || !_findings.Any())
             {
-                <MudText>No split findings found for this chapter.</MudText>
+                <MudText>@Loc["NoFindings"]</MudText>
             }
             else
             {
@@ -27,7 +29,7 @@
                         <MudTabPanel Text="@finding.PageFileName">
                             <MudStack>
                                 <MudText Typo="Typo.h6">@finding.PageFileName</MudText>
-                                <MudText>Detected Splits: @GetSplitCount(finding)</MudText>
+                                <MudText>@string.Format(Loc["DetectedSplits"], GetSplitCount(finding))</MudText>
 
                                 <!-- Image Visualization -->
                                 <div style="position: relative; width: 100%; border: 1px solid #ccc;">
@@ -49,7 +51,7 @@
                                     }
                                     else
                                     {
-                                        <MudText>Failed to parse split data.</MudText>
+                                        <MudText>@Loc["FailedToParse"]</MudText>
                                     }
                                 </div>
                             </MudStack>
@@ -60,8 +62,8 @@
         </MudContainer>
     </DialogContent>
     <DialogActions>
-        <MudButton OnClick="Cancel">Cancel</MudButton>
-        <MudButton Color="Color.Primary" OnClick="Save">Save</MudButton>
+        <MudButton OnClick="Cancel">@SharedLoc["Generic_Cancel"]</MudButton>
+        <MudButton Color="Color.Primary" OnClick="Save">@SharedLoc["Generic_Save"]</MudButton>
     </DialogActions>
 </MudDialog>
 
@@ -86,7 +88,7 @@
         }
         catch (Exception ex)
         {
-            Snackbar.Add($"Failed to load data: {ex.Message}", Severity.Error);
+            Snackbar.Add(string.Format(Loc["LoadDataFailure"], ex.Message), Severity.Error);
         }
         finally
         {

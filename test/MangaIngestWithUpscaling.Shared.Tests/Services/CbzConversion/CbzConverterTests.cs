@@ -2,6 +2,8 @@ using System.IO.Compression;
 using MangaIngestWithUpscaling.Shared.Services.CbzConversion;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
+using Microsoft.Extensions.Localization;
+using NSubstitute;
 
 namespace MangaIngestWithUpscaling.Shared.Tests.Services.CbzConversion;
 
@@ -14,7 +16,7 @@ public class CbzConverterTests : IDisposable
     {
         _tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         Directory.CreateDirectory(_tempDir);
-        _converter = new CbzConverter();
+        _converter = new CbzConverter(Substitute.For<IStringLocalizer<CbzConverter>>());
     }
 
     public void Dispose()

@@ -4,42 +4,42 @@
 
 @inject ApplicationDbContext DbContext
 @inject IDialogService DialogService
+@inject IStringLocalizer<UpscalerProfiles> Loc
+@inject IStringLocalizer<SharedResource> SharedLoc
 
-<PageTitle>Upscaler Profiles</PageTitle>
+<PageTitle>@Loc["PageTitle"]</PageTitle>
 
-<MudText Typo="Typo.h4">Create and Edit Profiles configuring Upscaling</MudText>
+<MudText Typo="Typo.h4">@Loc["Title"]</MudText>
 
 <MudPaper Elevation="3" Class="mb-3">
     <MudStack Row>
         <a href="upscaling/profiles/create">
-            <MudButton StartIcon="@Icons.Material.Filled.Add" Variant="Variant.Filled" Color="Color.Primary">Create</MudButton>
+            <MudButton StartIcon="@Icons.Material.Filled.Add" Variant="Variant.Filled" Color="Color.Primary">
+                @Loc["Button_Create"]</MudButton>
         </a>
     </MudStack>
 </MudPaper>
 
 <MudTable T="UpscalerProfile" Items="@Profiles">
     <HeaderContent>
-        <MudTh>Name</MudTh>
-        <MudTh>Scaling Factor</MudTh>
-        <MudTh>Comp. Format</MudTh>
-        <MudTh>Comp. Quality</MudTh>
-        <MudTh>Actions</MudTh>
+        <MudTh>@Loc["Header_Name"]</MudTh>
+        <MudTh>@Loc["Header_ScalingFactor"]</MudTh>
+        <MudTh>@Loc["Header_CompFormat"]</MudTh>
+        <MudTh>@Loc["Header_CompQuality"]</MudTh>
+        <MudTh>@Loc["Header_Actions"]</MudTh>
     </HeaderContent>
     <RowTemplate>
         <MudTd>@context.Name</MudTd>
-        <MudTd>@context.ScalingFactor.GetDisplayName()</MudTd>
-        <MudTd>@context.CompressionFormat.GetDisplayName()</MudTd>
+        <MudTd>@SharedLoc[$"ScaleFactor_{context.ScalingFactor}"]</MudTd>
+        <MudTd>@SharedLoc[$"CompressionFormat_{context.CompressionFormat}"]</MudTd>
         <MudTd>@context.Quality</MudTd>
         <MudTd>
             <a href="upscaling/profiles/edit/@context.Id">
-                <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Text"
-                               Size="Size.Small"
-                               title="Edit this profile"/>
+                <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Text" Size="Size.Small"
+                    title="@Loc["Tooltip_Edit"]" />
             </a>
             <MudIconButton Icon="@Icons.Material.Filled.Delete" Variant="Variant.Text" Color="Color.Error"
-                           Size="Size.Small"
-                           title="Delete this profile"
-                           OnClick="e => OnDeleteProfile(context)"/>
+                Size="Size.Small" title="@Loc["Tooltip_Delete"]" OnClick="e => OnDeleteProfile(context)" />
         </MudTd>
     </RowTemplate>
 </MudTable>
@@ -55,15 +55,15 @@
     private async Task OnDeleteProfile(UpscalerProfile profile)
     {
         var result = await DialogService.ShowMessageBox(
-            "Delete Profile",
-            "Do you really want to delete this profile? Note: This does NOT delete any of the files created.",
-            "OK", cancelText: "Cancel",
-            options: new DialogOptions
-                {
-                    CloseButton = true,
-                    BackdropClick = true,
-                    CloseOnEscapeKey = true
-                });
+        Loc["DeleteDialog_Title"],
+        Loc["DeleteDialog_Content"],
+        Loc["Button_OK"], cancelText: Loc["Button_Cancel"],
+        options: new DialogOptions
+        {
+            CloseButton = true,
+            BackdropClick = true,
+            CloseOnEscapeKey = true
+        });
 
         if (result.HasValue && result.Value)
         {

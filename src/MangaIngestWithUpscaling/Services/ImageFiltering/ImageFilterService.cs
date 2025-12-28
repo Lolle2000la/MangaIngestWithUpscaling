@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Helpers;
+using Microsoft.Extensions.Localization;
 using NetVips;
 
 namespace MangaIngestWithUpscaling.Services.ImageFiltering;
@@ -11,11 +12,16 @@ namespace MangaIngestWithUpscaling.Services.ImageFiltering;
 public class ImageFilterService : IImageFilterService
 {
     private readonly ILogger<ImageFilterService> _logger;
+    private readonly IStringLocalizer<ImageFilterService> _localizer;
     private readonly NetVipsPerceptualHash _perceptualHasher;
 
-    public ImageFilterService(ILogger<ImageFilterService> logger)
+    public ImageFilterService(
+        ILogger<ImageFilterService> logger,
+        IStringLocalizer<ImageFilterService> localizer
+    )
     {
         _logger = logger;
+        _localizer = localizer;
         // Use NetVips-based perceptual hash implementation
         _perceptualHasher = new NetVipsPerceptualHash();
     }
@@ -234,7 +240,7 @@ public class ImageFilterService : IImageFilterService
     {
         if (!File.Exists(imagePath))
         {
-            throw new FileNotFoundException($"Image file not found: {imagePath}");
+            throw new FileNotFoundException(_localizer["Error_ImageFileNotFound", imagePath]);
         }
 
         var imageBytes = await File.ReadAllBytesAsync(imagePath, cancellationToken);
@@ -260,7 +266,7 @@ public class ImageFilterService : IImageFilterService
     {
         if (!File.Exists(cbzPath))
         {
-            throw new FileNotFoundException($"CBZ file not found: {cbzPath}");
+            throw new FileNotFoundException(_localizer["Error_CbzFileNotFound", cbzPath]);
         }
 
         await using ZipArchive archive = await ZipFile.OpenAsync(

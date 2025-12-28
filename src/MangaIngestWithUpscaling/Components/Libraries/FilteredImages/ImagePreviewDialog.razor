@@ -1,7 +1,13 @@
 @using MangaIngestWithUpscaling.Data.LibraryManagement
+@using Microsoft.Extensions.Localization
+@using MangaIngestWithUpscaling.Shared.Helpers
+@using Humanizer
+@using System.Globalization
+@inject IStringLocalizer<ImagePreviewDialog> Loc
+@inject IStringLocalizer<SharedResource> SharedLoc
 
 <MudDialog>
-    <TitleContent>Image Preview</TitleContent>
+    <TitleContent>@Loc["Title"]</TitleContent>
     <DialogContent>
         <MudStack Spacing="3" AlignItems="AlignItems.Center">
             @if (!string.IsNullOrEmpty(FilteredImage.ThumbnailBase64))
@@ -26,23 +32,25 @@
                     @if (FilteredImage.FileSizeBytes.HasValue)
                     {
                         <MudText Typo="Typo.caption" Color="Color.Secondary">
-                            Size: @FormatFileSize(FilteredImage.FileSizeBytes.Value)
+                            @string.Format(Loc["Text_Size"], FormatFileSize(FilteredImage.FileSizeBytes.Value))
                         </MudText>
                     }
 
                     <MudText Typo="Typo.caption" Color="Color.Secondary">
-                        Added: @FilteredImage.DateAdded.ToString("yyyy-MM-dd")
+                        @string.Format(Loc["Text_Added"], FilteredImage.DateAdded.ToString("yyyy-MM-dd"))
                     </MudText>
 
                     <MudText Typo="Typo.caption" Color="Color.Secondary">
-                        Occurrences: @FilteredImage.OccurrenceCount
+                        @string.Format(Loc["Text_Occurrences"],
+                        Loc["Word_Occurrence"].Value.ToLocalizedQuantity(FilteredImage.OccurrenceCount,
+                        CultureInfo.CurrentUICulture))
                     </MudText>
                 </MudStack>
             </MudStack>
         </MudStack>
     </DialogContent>
     <DialogActions>
-        <MudButton Color="Color.Primary" OnClick="Close">Close</MudButton>
+        <MudButton Color="Color.Primary" OnClick="Close">@SharedLoc["Close"]</MudButton>
     </DialogActions>
 </MudDialog>
 

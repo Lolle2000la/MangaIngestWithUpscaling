@@ -2,57 +2,59 @@
 @using System.ComponentModel.DataAnnotations
 @using Microsoft.AspNetCore.Authentication
 @using Microsoft.AspNetCore.Identity
+@using Microsoft.Extensions.Localization
 
 @inject SignInManager<ApplicationUser> SignInManager
 @inject ILogger<Login> Logger
 @inject NavigationManager NavigationManager
 @inject IdentityRedirectManager RedirectManager
+@inject IStringLocalizer<Login> Loc
 
-<PageTitle>Log in</PageTitle>
+<PageTitle>@Loc["PageTitle"]</PageTitle>
 
-<h1>Log in</h1>
+<h1>@Loc["Header"]</h1>
 <div class="row">
     <div class="col-lg-6">
         <section>
             <StatusMessage Message="@errorMessage" />
             <EditForm Model="Input" method="post" OnValidSubmit="LoginUser" FormName="login">
                 <DataAnnotationsValidator />
-                <h2>Use a local account to log in.</h2>
+                <h2>@Loc["LocalAccountHeader"]</h2>
                 <hr />
                 <ValidationSummary class="text-danger" role="alert" />
                 <div class="form-floating mb-3">
                     <InputText @bind-Value="Input!.Email" id="Input.Email" class="form-control" autocomplete="username"
-                               aria-required="true" placeholder="name@example.com"/>
-                    <label for="Input.Email" class="form-label">Email</label>
-                    <ValidationMessage For="() => Input!.Email" class="text-danger"/>
+                        aria-required="true" placeholder="@Loc["EmailPlaceholder"]" />
+                    <label for="Input.Email" class="form-label">@Loc["EmailLabel"]</label>
+                    <ValidationMessage For="() => Input!.Email" class="text-danger" />
                 </div>
                 <div class="form-floating mb-3">
                     <InputText type="password" @bind-Value="Input!.Password" id="Input.Password" class="form-control"
-                               autocomplete="current-password" aria-required="true" placeholder="password"/>
-                    <label for="Input.Password" class="form-label">Password</label>
-                    <ValidationMessage For="() => Input!.Password" class="text-danger"/>
+                        autocomplete="current-password" aria-required="true"
+                        placeholder="@Loc["PasswordPlaceholder"]" />
+                    <label for="Input.Password" class="form-label">@Loc["PasswordLabel"]</label>
+                    <ValidationMessage For="() => Input!.Password" class="text-danger" />
                 </div>
                 <div class="checkbox mb-3">
                     <label class="form-label">
                         <InputCheckbox @bind-Value="Input!.RememberMe"
-                                       class="darker-border-checkbox form-check-input"/>
-                        Remember me
+                            class="darker-border-checkbox form-check-input" />
+                        @Loc["RememberMe"]
                     </label>
                 </div>
                 <div>
-                    <button type="submit" class="w-100 btn btn-lg btn-primary">Log in</button>
+                    <button type="submit" class="w-100 btn btn-lg btn-primary">@Loc["LoginButton"]</button>
                 </div>
                 <div>
                     <p>
-                        <a href="Account/ForgotPassword">Forgot your password?</a>
+                        <a href="Account/ForgotPassword">@Loc["ForgotPasswordLink"]</a>
                     </p>
                     <p>
                         <a
-                                href="@(NavigationManager.GetUriWithQueryParameters("Account/Register", new Dictionary<string, object?> { ["ReturnUrl"] = ReturnUrl }))">Register
-                            as a new user</a>
+                            href="@(NavigationManager.GetUriWithQueryParameters("Account/Register", new Dictionary<string, object?> { ["ReturnUrl"] = ReturnUrl }))">@Loc["RegisterLink"]</a>
                     </p>
                     <p>
-                        <a href="Account/ResendEmailConfirmation">Resend email confirmation</a>
+                        <a href="Account/ResendEmailConfirmation">@Loc["ResendConfirmationLink"]</a>
                     </p>
                 </div>
             </EditForm>
@@ -60,7 +62,7 @@
     </div>
     <div class="col-lg-4 col-lg-offset-2">
         <section>
-            <h3>Use another service to log in.</h3>
+            <h3>@Loc["ExternalLoginHeader"]</h3>
             <hr />
             <ExternalLoginPicker />
         </section>
@@ -102,8 +104,8 @@
         else if (result.RequiresTwoFactor)
         {
             RedirectManager.RedirectTo(
-                    "Account/LoginWith2fa",
-                    new Dictionary<string, object?> { ["returnUrl"] = ReturnUrl, ["rememberMe"] = Input.RememberMe });
+            "Account/LoginWith2fa",
+            new Dictionary<string, object?> { ["returnUrl"] = ReturnUrl, ["rememberMe"] = Input.RememberMe });
         }
         else if (result.IsLockedOut)
         {

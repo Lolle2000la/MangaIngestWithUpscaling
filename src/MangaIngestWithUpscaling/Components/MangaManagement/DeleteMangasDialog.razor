@@ -1,24 +1,25 @@
 ﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.ChapterManagement
+@using Microsoft.Extensions.Localization
 @inject ApplicationDbContext DbContext
 @inject IChapterDeletion DeletionService
+@inject IStringLocalizer<DeleteMangasDialog> Loc
 
 <MudDialog>
     <DialogContent>
         <MudStack>
-            <MudText>Delete @(Mangas.Count > 1 ? $"{Mangas.Count} Mangas" : '"' + Mangas.First().PrimaryTitle + '"')?</MudText>
+            <MudText>@(Mangas.Count > 1 ? string.Format(Loc["Title_Multiple"], Mangas.Count) :
+                                string.Format(Loc["Title_Single"], Mangas.First().PrimaryTitle))</MudText>
 
-            <MudCheckBox T="bool" Label="Delete original files from disk" @bind-Value="DeleteOriginalFiles" />
-            <MudCheckBox T="bool" Label="Delete upscaled files from disk" @bind-Value="DeleteUpscaledFiles" />
+            <MudCheckBox T="bool" Label="@Loc["Option_Original"]" @bind-Value="DeleteOriginalFiles" />
+            <MudCheckBox T="bool" Label="@Loc["Option_Upscaled"]" @bind-Value="DeleteUpscaledFiles" />
         </MudStack>
     </DialogContent>
     <DialogActions>
-        <MudButton OnClick="Cancel">Cancel</MudButton>
-        <MudButton StartIcon="@Icons.Material.Filled.DeleteForever"
-                   Color="Color.Error"
-                   Variant="Variant.Filled"
-                   OnClick="Submit">Delete</MudButton>
+        <MudButton OnClick="Cancel">@Loc["Button_Cancel"]</MudButton>
+        <MudButton StartIcon="@Icons.Material.Filled.DeleteForever" Color="Color.Error" Variant="Variant.Filled"
+            OnClick="Submit">@Loc["Button_Delete"]</MudButton>
     </DialogActions>
 </MudDialog>
 

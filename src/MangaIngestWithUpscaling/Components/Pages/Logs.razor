@@ -2,21 +2,17 @@
 @using MangaIngestWithUpscaling.Data.LogModel
 @inject LoggingDbContext DbContext
 @inject IDialogService DialogService
+@inject IStringLocalizer<Logs> Loc
 
-<PageTitle>Logs</PageTitle>
+<PageTitle>@Loc["PageTitle"]</PageTitle>
 
-<MudTable T="Log" Items="@_logs" Hover="true" ServerData="@ServerData"
-          SortLabel="Timestamp"
-          @ref="table"
-          HorizontalScrollbar="true"
-          Dense="true"
-          Breakpoint="Breakpoint.None"
-          OnRowClick="OnRowClick">
+<MudTable T="Log" Items="@_logs" Hover="true" ServerData="@ServerData" SortLabel="Timestamp" @ref="table"
+    HorizontalScrollbar="true" Dense="true" Breakpoint="Breakpoint.None" OnRowClick="OnRowClick">
     <ToolBarContent>
-        <MudText Typo="Typo.h6">Application Logs</MudText>
+        <MudText Typo="Typo.h6">@Loc["Title"]</MudText>
         <MudSpacer />
-        <MudSelect @bind-Value="_selectedLevel" @bind-Value:after="async () => await table.ReloadServerData()" Label="Logging level filter"
-                   Immediate="true">
+        <MudSelect @bind-Value="_selectedLevel" @bind-Value:after="async () => await table.ReloadServerData()"
+            Label="@Loc["FilterLabel"]" Immediate="true">
             @foreach (var level in Enum.GetValues<LogLevel>())
             {
                 <MudSelectItem Value="@level">@level.ToString()</MudSelectItem>
@@ -25,30 +21,30 @@
     </ToolBarContent>
 
     <HeaderContent>
-        <MudTh>Timestamp</MudTh>
-        <MudTh>Level</MudTh>
-        <MudTh>Message</MudTh>
-        <MudTh>Exception</MudTh>
+        <MudTh>@Loc["Header_Timestamp"]</MudTh>
+        <MudTh>@Loc["Header_Level"]</MudTh>
+        <MudTh>@Loc["Header_Message"]</MudTh>
+        <MudTh>@Loc["Header_Exception"]</MudTh>
     </HeaderContent>
 
     <RowTemplate>
-        <MudTd DataLabel="Timestamp">
+        <MudTd DataLabel="@Loc["Header_Timestamp"]">
             @context.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
         </MudTd>
 
-        <MudTd DataLabel="Level">
+        <MudTd DataLabel="@Loc["Header_Level"]">
             <MudChip T="string" Color="@GetLevelColor(context.Level)" Variant="Variant.Filled" Class="ma-1">
                 @context.Level
             </MudChip>
         </MudTd>
 
-        <MudTd DataLabel="Message" Class="log-message">
+        <MudTd DataLabel="@Loc["Header_Message"]" Class="log-message">
             <div class="log-message">
                 <MudText title="@context.RenderedMessage">@context.RenderedMessage</MudText>
             </div>
         </MudTd>
 
-        <MudTd DataLabel="Exception">
+        <MudTd DataLabel="@Loc["Header_Exception"]">
             @if (!string.IsNullOrEmpty(context.Exception))
             {
                 <div class="log-message">
@@ -74,24 +70,24 @@
         IQueryable<Log> query = DbContext.Logs;
 
         var logLevels = Enum.GetNames<LogLevel>()
-            .Skip((int)_selectedLevel)
-            .ToList();
+        .Skip((int)_selectedLevel)
+        .ToList();
 
         query = query.Where(log => logLevels.Contains(log.Level));
 
         query = state.SortLabel switch
         {
             "Timestamp" => (state.SortDirection == SortDirection.Ascending)
-                ? query.OrderBy(log => log.Timestamp)
-                : query.OrderByDescending(log => log.Timestamp),
+            ? query.OrderBy(log => log.Timestamp)
+            : query.OrderByDescending(log => log.Timestamp),
             _ => query.OrderByDescending(log => log.Timestamp)
         };
 
         var totalItems = await query.CountAsync(cancellationToken);
         var items = await query
-            .Skip(state.Page * state.PageSize)
-            .Take(state.PageSize)
-            .ToListAsync(cancellationToken);
+        .Skip(state.Page * state.PageSize)
+        .Take(state.PageSize)
+        .ToListAsync(cancellationToken);
 
         return new TableData<Log> { TotalItems = totalItems, Items = items };
     }

@@ -17,6 +17,7 @@ using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -122,13 +123,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
+                Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
-            _splitCoordinator
+            _splitCoordinator,
+            Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
         bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
@@ -206,13 +209,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
+                Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
-            _splitCoordinator
+            _splitCoordinator,
+            Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
         bool result = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
@@ -272,13 +277,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
+                Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
-            _splitCoordinator
+            _splitCoordinator,
+            Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
         // Act - file does not exist
@@ -346,13 +353,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
+                Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
-            _splitCoordinator
+            _splitCoordinator,
+            Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
         // Act
@@ -423,13 +432,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
+                Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
-            _splitCoordinator
+            _splitCoordinator,
+            Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
         int? total = null;
@@ -525,13 +536,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
+                Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
-            _splitCoordinator
+            _splitCoordinator,
+            Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
         bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
@@ -603,13 +616,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
+                Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
-            _splitCoordinator
+            _splitCoordinator,
+            Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
         bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
@@ -703,13 +718,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
+                Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
-            _splitCoordinator
+            _splitCoordinator,
+            Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
         bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
@@ -771,13 +788,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
+                Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
-            _splitCoordinator
+            _splitCoordinator,
+            Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
         bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
@@ -859,13 +878,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
+                Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
-            _splitCoordinator
+            _splitCoordinator,
+            Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
         bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
@@ -925,13 +946,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
+                Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
-            _splitCoordinator
+            _splitCoordinator,
+            Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
         bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
@@ -1017,13 +1040,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
+                Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
-            _splitCoordinator
+            _splitCoordinator,
+            Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
         bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
@@ -1142,13 +1167,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
+                Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
-            _splitCoordinator
+            _splitCoordinator,
+            Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
         bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
@@ -1262,13 +1289,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
+                Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
-            _splitCoordinator
+            _splitCoordinator,
+            Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
         bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
@@ -1366,13 +1395,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
+                Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
-            _splitCoordinator
+            _splitCoordinator,
+            Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
         bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
@@ -1491,13 +1522,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
+                Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
-            _splitCoordinator
+            _splitCoordinator,
+            Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
         bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
@@ -1570,13 +1603,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
+                Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
-            _splitCoordinator
+            _splitCoordinator,
+            Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
         bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
@@ -1677,13 +1712,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
+                Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
-            _splitCoordinator
+            _splitCoordinator,
+            Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
         bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
@@ -1759,13 +1796,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
+                Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
                 NullLogger<ChapterProcessingService>.Instance
             ),
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
-            _splitCoordinator
+            _splitCoordinator,
+            Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
         bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);

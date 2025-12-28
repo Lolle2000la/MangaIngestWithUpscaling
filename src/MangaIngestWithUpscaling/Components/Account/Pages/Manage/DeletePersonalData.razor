@@ -1,22 +1,24 @@
 ﻿@page "/Account/Manage/DeletePersonalData"
 @using System.ComponentModel.DataAnnotations
 @using Microsoft.AspNetCore.Identity
+@using Microsoft.Extensions.Localization
 
 @inject UserManager<ApplicationUser> UserManager
 @inject SignInManager<ApplicationUser> SignInManager
 @inject IdentityUserAccessor UserAccessor
 @inject IdentityRedirectManager RedirectManager
 @inject ILogger<DeletePersonalData> Logger
+@inject IStringLocalizer<DeletePersonalData> Loc
 
-<PageTitle>Delete Personal Data</PageTitle>
+<PageTitle>@Loc["PageTitle"]</PageTitle>
 
 <StatusMessage Message="@message" />
 
-<h3>Delete Personal Data</h3>
+<h3>@Loc["Header"]</h3>
 
 <div class="alert alert-warning" role="alert">
     <p>
-        <strong>Deleting this data will permanently remove your account, and this cannot be recovered.</strong>
+        <strong>@Loc["Warning"]</strong>
     </p>
 </div>
 
@@ -28,13 +30,12 @@
         {
             <div class="form-floating mb-3">
                 <InputText type="password" @bind-Value="Input!.Password" id="Input.Password" class="form-control"
-                           autocomplete="current-password" aria-required="true"
-                           placeholder="Please enter your password."/>
-                <label for="Input.Password" class="form-label">Password</label>
-                <ValidationMessage For="() => Input!.Password" class="text-danger"/>
+                    autocomplete="current-password" aria-required="true" placeholder="@Loc["PasswordPlaceholder"]" />
+                <label for="Input.Password" class="form-label">@Loc["Password"]</label>
+                <ValidationMessage For="() => Input!.Password" class="text-danger" />
             </div>
         }
-        <button class="w-100 btn btn-lg btn-danger" type="submit">Delete data and close my account</button>
+        <button class="w-100 btn btn-lg btn-danger" type="submit">@Loc["DeleteButton"]</button>
     </EditForm>
 </div>
 
@@ -59,7 +60,7 @@
     {
         if (requirePassword && !await UserManager.CheckPasswordAsync(user, Input!.Password))
         {
-            message = "Error: Incorrect password.";
+            message = Loc["ErrorIncorrectPassword"];
             return;
         }
 

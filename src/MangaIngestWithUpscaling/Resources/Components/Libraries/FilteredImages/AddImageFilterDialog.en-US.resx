@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="Title" xml:space="preserve">
+    <value>Add Image Filter</value>
+  </data>
+  <data name="Description" xml:space="preserve">
+    <value>Choose an image to filter out from future ingests and retroactive scans.</value>
+  </data>
+  <data name="Tab_UploadImage" xml:space="preserve">
+    <value>Upload Image File</value>
+  </data>
+  <data name="Button_SelectImage" xml:space="preserve">
+    <value>Select Image File</value>
+  </data>
+  <data name="Tab_ExtractFromCbz" xml:space="preserve">
+    <value>Extract from CBZ</value>
+  </data>
+  <data name="Label_CbzPath" xml:space="preserve">
+    <value>CBZ File Path</value>
+  </data>
+  <data name="Placeholder_CbzPath" xml:space="preserve">
+    <value>/path/to/chapter.cbz</value>
+  </data>
+  <data name="HelperText_CbzPath" xml:space="preserve">
+    <value>Enter the full path to a CBZ file</value>
+  </data>
+  <data name="Button_LoadCbzImages" xml:space="preserve">
+    <value>Load CBZ Images</value>
+  </data>
+  <data name="Header_SelectImage" xml:space="preserve">
+    <value>Select image to filter:</value>
+  </data>
+  <data name="Label_Description" xml:space="preserve">
+    <value>Description (Optional)</value>
+  </data>
+  <data name="Placeholder_Description" xml:space="preserve">
+    <value>Why is this image being filtered?</value>
+  </data>
+  <data name="Header_Preview" xml:space="preserve">
+    <value>Preview</value>
+  </data>
+  <data name="Button_AddFilter" xml:space="preserve">
+    <value>Add Filter</value>
+  </data>
+</root>

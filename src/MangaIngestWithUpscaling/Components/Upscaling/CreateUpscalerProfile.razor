@@ -1,37 +1,35 @@
 ﻿@page "/upscaling/profiles/create"
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
+@using Microsoft.Extensions.Localization
 
 @inject ApplicationDbContext DbContext
 @inject NavigationManager NavigationManager
+@inject IStringLocalizer<CreateUpscalerProfile> Loc
 
-<PageTitle>Create Upscaler Profile</PageTitle>
+<PageTitle>@Loc["PageTitle"]</PageTitle>
 
 <MudCard>
     <MudCardHeader>
-        <MudText Typo="Typo.h5">Create new Upscaler Profile</MudText>
+        <MudText Typo="Typo.h5">@Loc["Header"]</MudText>
     </MudCardHeader>
     <MudCardContent>
-        <UpscalerProfileForm @bind-Profile="Profile"
-                         @bind-IsValid="IsValid"/>
+        <UpscalerProfileForm @bind-Profile="Profile" @bind-IsValid="IsValid" />
     </MudCardContent>
     <MudCardActions>
         <MudSpacer />
-        <MudButton StartIcon="@Icons.Material.Filled.Save"
-        Variant="Variant.Filled"
-        Color="Color.Primary"
-        Disabled="!IsValid"
-        OnClick="OnCreateLibrary">Create</MudButton>
+        <MudButton StartIcon="@Icons.Material.Filled.Save" Variant="Variant.Filled" Color="Color.Primary"
+            Disabled="!IsValid" OnClick="OnCreateLibrary">@Loc["Button_Create"]</MudButton>
     </MudCardActions>
 </MudCard>
 
 @code {
     private UpscalerProfile Profile { get; set; } = new UpscalerProfile
-        {
-            Name = "",
-            ScalingFactor = ScaleFactor.TwoX,
-            CompressionFormat = CompressionFormat.Webp,
-            Quality = 80
-        };
+    {
+        Name = "",
+        ScalingFactor = ScaleFactor.TwoX,
+        CompressionFormat = CompressionFormat.Webp,
+        Quality = 80
+    };
 
     public bool IsValid { get; set; } = false;
 

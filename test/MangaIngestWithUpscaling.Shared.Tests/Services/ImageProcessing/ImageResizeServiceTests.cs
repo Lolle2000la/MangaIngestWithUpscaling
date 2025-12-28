@@ -1,5 +1,6 @@
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 
@@ -9,13 +10,30 @@ public class ImageResizeServiceTests
 {
     private readonly IFileSystem _mockFileSystem;
     private readonly ILogger<ImageResizeService> _mockLogger;
+    private readonly IStringLocalizer<ImageResizeService> _mockLocalizer;
     private readonly ImageResizeService _service;
 
     public ImageResizeServiceTests()
     {
         _mockLogger = Substitute.For<ILogger<ImageResizeService>>();
         _mockFileSystem = Substitute.For<IFileSystem>();
-        _service = new ImageResizeService(_mockLogger, _mockFileSystem);
+        _mockLocalizer = Substitute.For<IStringLocalizer<ImageResizeService>>();
+
+        _mockLocalizer["Error_MaxDimensionMustBePositive"]
+            .Returns(
+                new LocalizedString(
+                    "Error_MaxDimensionMustBePositive",
+                    "Maximum dimension must be greater than 0"
+                )
+            );
+
+        _mockLocalizer["Error_InputCbzFileNotFound", Arg.Any<object[]>()]
+            .Returns(x => new LocalizedString(
+                "Error_InputCbzFileNotFound",
+                $"File not found: {x.Arg<object[]>()[0]}"
+            ));
+
+        _service = new ImageResizeService(_mockLogger, _mockFileSystem, _mockLocalizer);
     }
 
     [Theory]

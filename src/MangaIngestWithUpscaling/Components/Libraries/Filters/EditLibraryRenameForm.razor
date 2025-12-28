@@ -1,31 +1,29 @@
 @using MangaIngestWithUpscaling.Data.LibraryManagement
+@using Microsoft.Extensions.Localization
+@inject IStringLocalizer<EditLibraryRenameForm> Loc
 
-<MudTd DataLabel="Pattern">
-    <MudTextField Immediate="true" Required="true"
-                  Value="@RenameRule.Pattern"
-                  ValueChanged="@((string val) => { RenameRule.Pattern = val; RulesChanged.InvokeAsync(); })" />
+<MudTd DataLabel="@Loc["Label_Pattern"]">
+    <MudTextField Immediate="true" Required="true" Value="@RenameRule.Pattern"
+        ValueChanged="@((string val) => { RenameRule.Pattern = val; RulesChanged.InvokeAsync(); })" />
 </MudTd>
-<MudTd DataLabel="Pattern Type">
-    <MudSelect Immediate="true" T="LibraryRenamePatternType"
-               Value="@RenameRule.PatternType"
-               ValueChanged="@((LibraryRenamePatternType val) => { RenameRule.PatternType = val; RulesChanged.InvokeAsync(); })">
-        <MudSelectItem Value="LibraryRenamePatternType.Contains">Target contains pattern</MudSelectItem>
-        <MudSelectItem Value="LibraryRenamePatternType.Regex">Regular Expression</MudSelectItem>
+<MudTd DataLabel="@Loc["Label_PatternType"]">
+    <MudSelect Immediate="true" T="LibraryRenamePatternType" Value="@RenameRule.PatternType"
+        ValueChanged="@((LibraryRenamePatternType val) => { RenameRule.PatternType = val; RulesChanged.InvokeAsync(); })">
+        <MudSelectItem Value="LibraryRenamePatternType.Contains">@Loc["Option_Contains"]</MudSelectItem>
+        <MudSelectItem Value="LibraryRenamePatternType.Regex">@Loc["Option_Regex"]</MudSelectItem>
     </MudSelect>
 </MudTd>
-<MudTd DataLabel="Target Field">
-    <MudSelect Immediate="true" T="LibraryRenameTargetField"
-               Value="@RenameRule.TargetField"
-               ValueChanged="@((LibraryRenameTargetField val) => { RenameRule.TargetField = val; RulesChanged.InvokeAsync(); })">
-        <MudSelectItem Value="LibraryRenameTargetField.SeriesTitle">Series Title</MudSelectItem>
-        <MudSelectItem Value="LibraryRenameTargetField.FileName">File Name</MudSelectItem>
-        <MudSelectItem Value="LibraryRenameTargetField.ChapterTitle">Chapter Title</MudSelectItem>
+<MudTd DataLabel="@Loc["Label_TargetField"]">
+    <MudSelect Immediate="true" T="LibraryRenameTargetField" Value="@RenameRule.TargetField"
+        ValueChanged="@((LibraryRenameTargetField val) => { RenameRule.TargetField = val; RulesChanged.InvokeAsync(); })">
+        <MudSelectItem Value="LibraryRenameTargetField.SeriesTitle">@Loc["Option_SeriesTitle"]</MudSelectItem>
+        <MudSelectItem Value="LibraryRenameTargetField.FileName">@Loc["Option_FileName"]</MudSelectItem>
+        <MudSelectItem Value="LibraryRenameTargetField.ChapterTitle">@Loc["Option_ChapterTitle"]</MudSelectItem>
     </MudSelect>
 </MudTd>
-<MudTd DataLabel="Replacement">
-    <MudTextField Immediate="true"
-                  Value="@RenameRule.Replacement"
-                  ValueChanged="@((string val) => { RenameRule.Replacement = val; RulesChanged.InvokeAsync(); })" />
+<MudTd DataLabel="@Loc["Label_Replacement"]">
+    <MudTextField Immediate="true" Value="@RenameRule.Replacement"
+        ValueChanged="@((string val) => { RenameRule.Replacement = val; RulesChanged.InvokeAsync(); })" />
 </MudTd>
 
 @code {

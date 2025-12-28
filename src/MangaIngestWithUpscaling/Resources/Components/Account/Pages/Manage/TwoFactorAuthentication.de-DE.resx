@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="PageTitle" xml:space="preserve">
+    <value>Zwei-Faktor-Authentifizierung (2FA)</value>
+  </data>
+  <data name="Header" xml:space="preserve">
+    <value>Zwei-Faktor-Authentifizierung (2FA)</value>
+  </data>
+  <data name="NoRecoveryCodesLeft" xml:space="preserve">
+    <value>Sie haben keine Wiederherstellungscodes mehr übrig.</value>
+  </data>
+  <data name="GenerateNewCodesBeforeLogin" xml:space="preserve">
+    <value>Sie müssen &lt;a href="Account/Manage/GenerateRecoveryCodes"&gt;einen neuen Satz Wiederherstellungscodes generieren&lt;/a&gt;, bevor Sie sich mit einem Wiederherstellungscode anmelden können.</value>
+  </data>
+  <data name="OneRecoveryCodeLeft" xml:space="preserve">
+    <value>Sie haben noch 1 Wiederherstellungscode übrig.</value>
+  </data>
+  <data name="CanGenerateNewCodes" xml:space="preserve">
+    <value>Sie können &lt;a href="Account/Manage/GenerateRecoveryCodes"&gt;einen neuen Satz Wiederherstellungscodes generieren&lt;/a&gt;.</value>
+  </data>
+  <data name="RecoveryCodesLeft" xml:space="preserve">
+    <value>Sie haben noch {0} übrig.</value>
+  </data>
+  <data name="Word_RecoveryCode" xml:space="preserve">
+    <value>Wiederherstellungscode</value>
+  </data>
+  <data name="ShouldGenerateNewCodes" xml:space="preserve">
+    <value>Sie sollten &lt;a href="Account/Manage/GenerateRecoveryCodes"&gt;einen neuen Satz Wiederherstellungscodes generieren&lt;/a&gt;.</value>
+  </data>
+  <data name="ForgetBrowser" xml:space="preserve">
+    <value>Diesen Browser vergessen</value>
+  </data>
+  <data name="Disable2FA" xml:space="preserve">
+    <value>2FA deaktivieren</value>
+  </data>
+  <data name="ResetRecoveryCodes" xml:space="preserve">
+    <value>Wiederherstellungscodes zurücksetzen</value>
+  </data>
+  <data name="AuthenticatorApp" xml:space="preserve">
+    <value>Authenticator-App</value>
+  </data>
+  <data name="AddAuthenticatorApp" xml:space="preserve">
+    <value>Authenticator-App hinzufügen</value>
+  </data>
+  <data name="SetupAuthenticatorApp" xml:space="preserve">
+    <value>Authenticator-App einrichten</value>
+  </data>
+  <data name="ResetAuthenticatorApp" xml:space="preserve">
+    <value>Authenticator-App zurücksetzen</value>
+  </data>
+  <data name="PrivacyPolicyNotAccepted" xml:space="preserve">
+    <value>Datenschutz- und Cookie-Richtlinie wurden nicht akzeptiert.</value>
+  </data>
+  <data name="AcceptPolicyBefore2FA" xml:space="preserve">
+    <value>Sie müssen die Richtlinie akzeptieren, bevor Sie die Zwei-Faktor-Authentifizierung aktivieren können.</value>
+  </data>
+  <data name="BrowserForgotten" xml:space="preserve">
+    <value>Der aktuelle Browser wurde vergessen. Wenn Sie sich erneut von diesem Browser aus anmelden, werden Sie nach Ihrem 2FA-Code gefragt.</value>
+  </data>
+</root>

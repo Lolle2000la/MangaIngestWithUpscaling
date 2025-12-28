@@ -11,21 +11,22 @@
 @inject UpscaleTaskProcessor UpscaleTaskProcessor
 @inject DistributedUpscaleTaskProcessor DistributedUpscaleTaskProcessor
 @inject TaskRegistry TaskRegistry
+@inject IStringLocalizer<TaskQueues> Loc
 
 @page "/tasks"
 
-<PageTitle>Tasks</PageTitle>
+<PageTitle>@Loc["PageTitle"]</PageTitle>
 
-<MudText Typo="Typo.h4" Class="mb-2">Currently running tasks</MudText>
+<MudText Typo="Typo.h4" Class="mb-2">@Loc["Title"]</MudText>
 
 <MudGrid>
     <MudItem lg="6" xs="12">
-        <TaskTable Tasks="@standardTasks" Title="Standard Tasks" OnClearCompleted="OnClearCompletedStandardTasks"
+        <TaskTable Tasks="@standardTasks" Title="@Loc["StandardTasks"]" OnClearCompleted="OnClearCompletedStandardTasks"
             OnClearFailed="OnClearFailedStandardTasks" OnRetryFailed="OnRetryFailed" OnDelete="OnDelete"
             OnCancel="OnCancelStandardTask" OnRunNow="OnRunNow" />
     </MudItem>
     <MudItem lg="6" xs="12">
-        <TaskTable Tasks="@upscaleTasks" Title="Upscaling Tasks" OnClearCompleted="OnClearCompletedUpscaleTasks"
+        <TaskTable Tasks="@upscaleTasks" Title="@Loc["UpscalingTasks"]" OnClearCompleted="OnClearCompletedUpscaleTasks"
             OnClearFailed="OnClearFailedUpscaleTasks" OnRetryFailed="OnRetryFailed" OnDelete="OnDelete"
             OnCancel="OnCancelUpscaleTask" OnRunNow="OnRunNow" />
     </MudItem>
@@ -48,7 +49,7 @@
         catch (Exception ex)
         {
             Logger.LogError(ex, "Failed to clear completed tasks");
-            Snackbar.Add("Failed to clear completed tasks: " + ex.Message, Severity.Error);
+            Snackbar.Add(string.Format(Loc["Error_ClearCompleted"], ex.Message), Severity.Error);
             StateHasChanged();
         }
     }
@@ -66,7 +67,7 @@
         catch (Exception ex)
         {
             Logger.LogError(ex, "Failed to clear failed tasks");
-            Snackbar.Add("Failed to clear failed tasks: " + ex.Message, Severity.Error);
+            Snackbar.Add(string.Format(Loc["Error_ClearFailed"], ex.Message), Severity.Error);
             StateHasChanged();
         }
     }
@@ -84,7 +85,7 @@
         catch (Exception ex)
         {
             Logger.LogError(ex, "Failed to clear completed tasks");
-            Snackbar.Add("Failed to clear completed tasks: " + ex.Message, Severity.Error);
+            Snackbar.Add(string.Format(Loc["Error_ClearCompleted"], ex.Message), Severity.Error);
             StateHasChanged();
         }
     }

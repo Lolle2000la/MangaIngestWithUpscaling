@@ -9,28 +9,27 @@
 @inject NavigationManager NavigationManager
 @inject ISnackbar Snackbar
 @inject ILogger<EditManga> Logger
+@inject IStringLocalizer<EditManga> Loc
 
 @if (manga is not null)
 {
-    <PageTitle>Edit "@manga.PrimaryTitle"</PageTitle>
+    <PageTitle>@string.Format(Loc["PageTitle"], manga.PrimaryTitle)</PageTitle>
 
     <MudStack>
         <!-- Header -->
         <MudPaper Elevation="2" Class="pa-4">
             <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3">
-                <MudTooltip Text="Back to Mangas">
-                    <MudIconButton Href="mangas"
-                                   Icon="@Icons.Material.Filled.ArrowBack"
-                                   Color="Color.Primary"
-                                   Size="Size.Large"/>
+                <MudTooltip Text="@Loc["Tooltip_Back"]">
+                    <MudIconButton Href="mangas" Icon="@Icons.Material.Filled.ArrowBack" Color="Color.Primary"
+                        Size="Size.Large" />
                 </MudTooltip>
                 <div>
-                    <MudText Typo="Typo.h4" Class="mb-1">Edit Manga</MudText>
+                    <MudText Typo="Typo.h4" Class="mb-1">@Loc["Header_EditManga"]</MudText>
                     <MudText Typo="Typo.h6" Color="Color.Surface">"@manga.PrimaryTitle"</MudText>
                 </div>
-                <MudSpacer/>
+                <MudSpacer />
                 <MudChip T="string" Color="Color.Info" Variant="Variant.Text">
-                    Library: @manga.Library.Name
+                    @string.Format(Loc["Chip_Library"], manga.Library.Name)
                 </MudChip>
             </MudStack>
         </MudPaper>
@@ -40,36 +39,28 @@
             <MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-6">
 
                 <!-- Basic Information Tab -->
-                <MudTabPanel Text="Basic Info" Icon="@Icons.Material.Filled.Info">
+                <MudTabPanel Text="@Loc["Tab_BasicInfo"]" Icon="@Icons.Material.Filled.Info">
                     <MudGrid Spacing="4">
                         <MudItem xs="12">
                             <MudText Typo="Typo.h5" GutterBottom="true">
-                                <MudIcon Icon="@Icons.Material.Filled.Title" Class="mr-2"/>
-                                Basic Information
+                                <MudIcon Icon="@Icons.Material.Filled.Title" Class="mr-2" />
+                                @Loc["Header_BasicInfo"]
                             </MudText>
                         </MudItem>
 
                         <MudItem xs="12">
-                            <MudTextField Label="Primary Title"
-                                          @bind-Value="manga.PrimaryTitle"
-                                          Immediate="true"
-                                          Variant="Variant.Outlined"
-                                          HelperText="The primary title you want this manga to go by."
-                                          Required/>
-                            <MudCheckBox T="bool"
-                                         Label="Add old title to other titles automatically when changed"
-                                         @bind-Value="addOldTitleToOtherTitles"
-                                         Size="Size.Small"
-                                         Class="mt-2"/>
+                            <MudTextField Label="@Loc["Label_PrimaryTitle"]" @bind-Value="manga.PrimaryTitle"
+                                Immediate="true" Variant="Variant.Outlined"
+                                HelperText="@Loc["Helper_PrimaryTitle"]" Required />
+                            <MudCheckBox T="bool" Label="@Loc["Label_AddOldTitle"]"
+                                @bind-Value="addOldTitleToOtherTitles" Size="Size.Small" Class="mt-2" />
                         </MudItem>
 
                         <MudItem md="6" xs="12">
-                            <MudSelect T="int?"
-                                       Label="Upscaler Profile Preference"
-                                       @bind-Value="manga.UpscalerProfilePreferenceId"
-                                       HelperText="Overrides the library's default upscaler profile for this manga."
-                                       Variant="Variant.Outlined">
-                                <MudSelectItem T="int?" Value="@((int?)null)">None (use library default)</MudSelectItem>
+                            <MudSelect T="int?" Label="@Loc["Label_UpscalerProfile"]"
+                                @bind-Value="manga.UpscalerProfilePreferenceId"
+                                HelperText="@Loc["Helper_UpscalerProfile"]" Variant="Variant.Outlined">
+                                <MudSelectItem T="int?" Value="@((int?)null)">@Loc["Option_None"]</MudSelectItem>
                                 @foreach (var profile in upscalerProfiles)
                                 {
                                     <MudSelectItem T="int?" Value="@profile.Id">@profile.Name</MudSelectItem>
@@ -78,18 +69,16 @@
                         </MudItem>
 
                         <MudItem md="6" xs="12">
-                            <MudSelect T="bool?"
-                                       Label="Chapter Parts Merging"
-                                       @bind-Value="manga.MergeChapterParts"
-                                       HelperText="Controls whether chapter parts (e.g., Ch 20.1, Ch 20.2) are automatically merged."
-                                       Variant="Variant.Outlined">
-                                <MudSelectItem T="bool?" Value="@((bool?)null)">Default (use library setting)
+                            <MudSelect T="bool?" Label="@Loc["Label_ChapterMerging"]"
+                                @bind-Value="manga.MergeChapterParts" HelperText="@Loc["Helper_ChapterMerging"]"
+                                Variant="Variant.Outlined">
+                                <MudSelectItem T="bool?" Value="@((bool?)null)">@Loc["Option_Default"]
                                 </MudSelectItem>
-                                <MudSelectItem T="bool?" Value="@true">Always merge chapter parts</MudSelectItem>
-                                <MudSelectItem T="bool?" Value="@false">Never merge chapter parts</MudSelectItem>
+                                <MudSelectItem T="bool?" Value="@true">@Loc["Option_AlwaysMerge"]</MudSelectItem>
+                                <MudSelectItem T="bool?" Value="@false">@Loc["Option_NeverMerge"]</MudSelectItem>
                             </MudSelect>
                             <MudText Typo="Typo.caption" Color="Color.Warning" Class="mt-1">
-                                ⚠️ Chapter merging is experimental
+                                @Loc["Warning_Experimental"]
                             </MudText>
                         </MudItem>
 
@@ -97,10 +86,10 @@
                             <MudDivider Style="margin: 16px 0;" />
                             <MudStack Row Spacing="4" Class="mt-2">
                                 <MudText Typo="Typo.caption" Color="Color.Secondary">
-                                    Created: @manga.CreatedAt.ToString("yyyy-MM-dd HH:mm")
+                                    @Loc["Label_Created"] @manga.CreatedAt.ToString("yyyy-MM-dd HH:mm")
                                 </MudText>
                                 <MudText Typo="Typo.caption" Color="Color.Secondary">
-                                    Modified: @manga.ModifiedAt.ToString("yyyy-MM-dd HH:mm")
+                                    @Loc["Label_Modified"] @manga.ModifiedAt.ToString("yyyy-MM-dd HH:mm")
                                 </MudText>
                             </MudStack>
                         </MudItem>
@@ -108,75 +97,62 @@
                 </MudTabPanel>
 
                 <!-- Alternative Titles Tab -->
-                <MudTabPanel Text="Alternative Titles" Icon="@Icons.Material.Filled.Title">
+                <MudTabPanel Text="@Loc["Tab_AltTitles"]" Icon="@Icons.Material.Filled.Title">
                     <MudGrid Spacing="4">
                         <MudItem xs="12">
                             <MudText Typo="Typo.h5" GutterBottom="true">
-                                <MudIcon Icon="@Icons.Material.Filled.List" Class="mr-2"/>
-                                Alternative Titles
+                                <MudIcon Icon="@Icons.Material.Filled.List" Class="mr-2" />
+                                @Loc["Header_AltTitles"]
                             </MudText>
                             <MudText Typo="Typo.body1" Color="Color.Surface" Class="mb-4">
-                                Other titles this manga is known by. Mangas in ingest will be sorted into folders using
-                                these titles for matching.
+                                @Loc["Body_AltTitles"]
                             </MudText>
                         </MudItem>
 
                         <MudItem xs="12">
                             <MudPaper Elevation="1" Class="pa-4">
-                                <MudText Typo="Typo.h6" Class="mb-3">Add New Title</MudText>
+                                <MudText Typo="Typo.h6" Class="mb-3">@Loc["Header_AddNewTitle"]</MudText>
                                 <MudStack Row="true" Spacing="2" AlignItems="AlignItems.End">
-                                    <MudTextField Label="Alternative Title"
-                                                  @bind-Value="newTitle"
-                                                  Immediate="true"
-                                                  Class="flex-grow-1"
-                                                  @ref="newTitleField"
-                                                  Variant="Variant.Outlined"
-                                                  HelperText="Enter an alternative title for this manga"/>
-                                    <MudButton StartIcon="@Icons.Material.Filled.Add"
-                                               Variant="Variant.Filled"
-                                               Color="Color.Primary"
-                                               Disabled="string.IsNullOrWhiteSpace(newTitle)"
-                                               OnClick="_ => AddAlternativeTitle()"
-                                               Class="flex-shrink-0">
-                                        Add Title
+                                    <MudTextField Label="@Loc["Label_AltTitle"]" @bind-Value="newTitle"
+                                        Immediate="true" Class="flex-grow-1" @ref="newTitleField" Variant="Variant.Outlined"
+                                        HelperText="@Loc["Helper_AltTitle"]" />
+                                    <MudButton StartIcon="@Icons.Material.Filled.Add" Variant="Variant.Filled"
+                                        Color="Color.Primary" Disabled="string.IsNullOrWhiteSpace(newTitle)"
+                                        OnClick="_ => AddAlternativeTitle()" Class="flex-shrink-0">
+                                        @Loc["Button_AddTitle"]
                                     </MudButton>
                                 </MudStack>
                             </MudPaper>
                         </MudItem>
 
                         <MudItem xs="12">
-                            <MudText Typo="Typo.h6" Class="mb-3">Current Alternative Titles</MudText>
+                            <MudText Typo="Typo.h6" Class="mb-3">@Loc["Header_CurrentTitles"]</MudText>
                             @if (!manga.OtherTitles.Any())
                             {
                                 <MudPaper Elevation="0" Class="pa-4 text-center"
-                                          Style="border: 2px dashed var(--mud-palette-lines-inputs);">
+                                    Style="border: 2px dashed var(--mud-palette-lines-inputs);">
                                     <MudIcon Icon="@Icons.Material.Filled.Title" Size="Size.Large" Color="Color.Surface"
-                                             Class="mb-2"/>
-                                    <MudText Typo="Typo.body1" Color="Color.Surface">No alternative titles added yet
+                                        Class="mb-2" />
+                                    <MudText Typo="Typo.body1" Color="Color.Surface">@Loc["Text_NoTitles"]
                                     </MudText>
-                                    <MudText Typo="Typo.body2" Color="Color.Surface">Add alternative titles to help with
-                                        manga matching during ingest
+                                    <MudText Typo="Typo.body2" Color="Color.Surface">@Loc["Text_AddTitlesHelp"]
                                     </MudText>
                                 </MudPaper>
                             }
                             else
                             {
-                                <MudList T="MangaAlternativeTitle" @ref="titlesList"
-                                         @bind-SelectedValues="selectedTitles">
+                                <MudList T="MangaAlternativeTitle" @ref="titlesList" @bind-SelectedValues="selectedTitles">
                                     @foreach (var title in manga.OtherTitles.OrderBy(t => t.Title))
                                     {
                                         <MudListItem Value="@title">
                                             <MudPaper Elevation="1" Class="pa-3">
                                                 <MudStack Row="true" AlignItems="AlignItems.Center">
                                                     <MudIcon Icon="@Icons.Material.Filled.Label" Color="Color.Primary"
-                                                             Class="mr-2"/>
-                                                    <MudText Typo="Typo.body1"
-                                                             Class="flex-grow-1">@title.Title</MudText>
-                                                    <MudTooltip Text="Remove this title">
-                                                        <MudIconButton Icon="@Icons.Material.Filled.Delete"
-                                                                       Color="Color.Error"
-                                                                       Size="Size.Small"
-                                                                       OnClick="() => manga.OtherTitles.Remove(title)"/>
+                                                        Class="mr-2" />
+                                                    <MudText Typo="Typo.body1" Class="flex-grow-1">@title.Title</MudText>
+                                                    <MudTooltip Text="@Loc["Tooltip_RemoveTitle"]">
+                                                        <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
+                                                            Size="Size.Small" OnClick="() => manga.OtherTitles.Remove(title)" />
                                                     </MudTooltip>
                                                 </MudStack>
                                             </MudPaper>
@@ -189,28 +165,27 @@
                 </MudTabPanel>
 
                 <!-- Chapters Management Tab -->
-                <MudTabPanel Text="Chapters" Icon="@Icons.Material.Filled.MenuBook">
+                <MudTabPanel Text="@Loc["Tab_Chapters"]" Icon="@Icons.Material.Filled.MenuBook">
                     <MudGrid Spacing="4">
                         <MudItem xs="12">
                             <MudText Typo="Typo.h5" GutterBottom="true">
-                                <MudIcon Icon="@Icons.Material.Filled.MenuBook" Class="mr-2"/>
-                                Chapter Management
+                                <MudIcon Icon="@Icons.Material.Filled.MenuBook" Class="mr-2" />
+                                @Loc["Header_ChapterManagement"]
                             </MudText>
                             <MudAlert Severity="Severity.Warning" Variant="Variant.Text" Class="mb-4">
                                 <div>
                                     <MudText Typo="Typo.body2">
-                                        <strong>Warning:</strong> Deleting a chapter will permanently remove it from
-                                        both the library and the filesystem.
+                                        @((MarkupString)Loc["Warning_DeleteChapter"].Value)
                                     </MudText>
                                     <MudText Typo="Typo.body2">
-                                        This action cannot be undone. Make sure you have backups if needed.
+                                        @Loc["Text_CannotUndo"]
                                     </MudText>
                                 </div>
                             </MudAlert>
                         </MudItem>
 
                         <MudItem xs="12">
-                            <ChapterList Manga="manga"/>
+                            <ChapterList Manga="manga" />
                         </MudItem>
                     </MudGrid>
                 </MudTabPanel>
@@ -223,27 +198,22 @@
                 <MudText Typo="Typo.body2" Color="Color.Surface">
                     @if (isTouched)
                     {
-                        <text>You have unsaved changes</text>
+                        <text>@Loc["Text_UnsavedChanges"]</text>
                     }
                     else
                     {
-                        <text>No changes made</text>
+                        <text>@Loc["Text_NoChanges"]</text>
                     }
                 </MudText>
 
                 <MudStack Row="true" Spacing="2">
-                    <MudButton Href="mangas"
-                               StartIcon="@Icons.Material.Filled.Cancel"
-                               Variant="Variant.Text"
-                               Color="Color.Default">
-                        Cancel
+                    <MudButton Href="mangas" StartIcon="@Icons.Material.Filled.Cancel" Variant="Variant.Text"
+                        Color="Color.Default">
+                        @Loc["Button_Cancel"]
                     </MudButton>
-                    <MudButton StartIcon="@Icons.Material.Filled.Save"
-                               Variant="Variant.Filled"
-                               Color="Color.Primary"
-                               OnClick="Save"
-                               Disabled="@(!isTouched || !isValid)">
-                        Save Changes
+                    <MudButton StartIcon="@Icons.Material.Filled.Save" Variant="Variant.Filled" Color="Color.Primary"
+                        OnClick="Save" Disabled="@(!isTouched || !isValid)">
+                        @Loc["Button_SaveChanges"]
                     </MudButton>
                 </MudStack>
             </MudStack>
@@ -252,7 +222,7 @@
 }
 else
 {
-    <MudText Typo="Typo.h4">Loading...</MudText>
+    <MudText Typo="Typo.h4">@Loc["Loading"]</MudText>
 }
 
 @code {
@@ -275,12 +245,12 @@ else
     protected override async Task OnInitializedAsync()
     {
         manga = await DbContext.MangaSeries
-            .Include(m => m.Library)
-            .Include(m => m.Chapters)
-            .ThenInclude(c => c.UpscalerProfile)
-            .Include(m => m.OtherTitles)
-            .Include(m => m.UpscalerProfilePreference)
-            .FirstOrDefaultAsync(m => m.Id == MangaId);
+        .Include(m => m.Library)
+        .Include(m => m.Chapters)
+        .ThenInclude(c => c.UpscalerProfile)
+        .Include(m => m.OtherTitles)
+        .Include(m => m.UpscalerProfilePreference)
+        .FirstOrDefaultAsync(m => m.Id == MangaId);
 
         if (manga == null)
         {
@@ -317,7 +287,7 @@ else
         await form.Validate();
         if (!isValid)
         {
-            Snackbar.Add("Please fix the errors in the form.", Severity.Error);
+            Snackbar.Add(Loc["Error_FormValidation"], Severity.Error);
             return;
         }
 
@@ -330,20 +300,20 @@ else
                 var result = await MetadataChanger.ChangeMangaTitle(manga, newTitle, addOldTitleToOtherTitles);
                 if (result is not RenameResult.Ok)
                 {
-                    Snackbar.Add("Failed to change manga title.", Severity.Error);
+                    Snackbar.Add(Loc["Error_ChangeTitle"], Severity.Error);
                     return;
                 }
             }
 
             await DbContext.SaveChangesAsync();
 
-            Snackbar.Add("Manga updated successfully.", Severity.Success);
+            Snackbar.Add(Loc["Success_Update"], Severity.Success);
             NavigationManager.NavigateTo("/mangas");
         }
         catch (Exception e)
         {
             Snackbar.Add($"Error: {e.Message}", Severity.Error);
-            Logger.LogError(e, "Error saving manga {MangaId}", manga.Id);
+            Logger.LogError(e, Loc["Error_Saving"], manga.Id);
         }
     }
 

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <data name="PageTitle" xml:space="preserve">
+    <value>Wiederherstellungscodes für Zwei-Faktor-Authentifizierung (2FA) generieren</value>
+  </data>
+  <data name="Header" xml:space="preserve">
+    <value>Wiederherstellungscodes für Zwei-Faktor-Authentifizierung (2FA) generieren</value>
+  </data>
+  <data name="WarningTitle" xml:space="preserve">
+    <value>Bewahren Sie diese Codes an einem sicheren Ort auf.</value>
+  </data>
+  <data name="WarningDescription" xml:space="preserve">
+    <value>Wenn Sie Ihr Gerät verlieren und die Wiederherstellungscodes nicht haben, verlieren Sie den Zugriff auf Ihr Konto.</value>
+  </data>
+  <data name="ResetAuthenticatorInfo" xml:space="preserve">
+    <value>Das Generieren neuer Wiederherstellungscodes ändert nicht die Schlüssel, die in Authentifizierungs-Apps verwendet werden. Wenn Sie den Schlüssel in einer Authentifizierungs-App ändern möchten, sollten Sie &lt;a href="Account/Manage/ResetAuthenticator"&gt;Ihre Authentifizierungs-Schlüssel zurücksetzen.&lt;/a&gt;</value>
+  </data>
+  <data name="GenerateButton" xml:space="preserve">
+    <value>Wiederherstellungscodes generieren</value>
+  </data>
+</root>

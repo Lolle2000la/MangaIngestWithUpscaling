@@ -1,15 +1,17 @@
 ﻿@page "/Account/Manage"
 @using System.ComponentModel.DataAnnotations
 @using Microsoft.AspNetCore.Identity
+@using Microsoft.Extensions.Localization
 
 @inject UserManager<ApplicationUser> UserManager
 @inject SignInManager<ApplicationUser> SignInManager
 @inject IdentityUserAccessor UserAccessor
 @inject IdentityRedirectManager RedirectManager
+@inject IStringLocalizer<Index> Loc
 
-<PageTitle>Profile</PageTitle>
+<PageTitle>@Loc["PageTitle"]</PageTitle>
 
-<h3>Profile</h3>
+<h3>@Loc["Header"]</h3>
 <StatusMessage />
 
 <div class="row">
@@ -19,16 +21,19 @@
             <ValidationSummary class="text-danger" role="alert" />
             <div class="form-floating mb-3">
                 <input type="text" value="@username" id="username" class="form-control"
-                       placeholder="Choose your username." disabled/>
-                <label for="username" class="form-label">Username</label>
+                    placeholder="@Loc["UsernamePlaceholder"]" disabled />
+                <label for="username" class="form-label">@Loc["UsernameLabel"]</label>
             </div>
             <div class="form-floating mb-3">
-                <InputText @bind-Value="Input!.PhoneNumber" id="Input.PhoneNumber" class="form-control"
-                           placeholder="Enter your phone number"/>
-                <label for="Input.PhoneNumber" class="form-label">Phone number</label>
-                <ValidationMessage For="() => Input!.PhoneNumber" class="text-danger"/>
+                <InputSelect @bind-Value="Input!.PreferredCulture" id="Input.PreferredCulture" class="form-select">
+                    <option value="">@Loc["DefaultBrowser"]</option>
+                    <option value="en-US">English (US)</option>
+                    <option value="de-DE">Deutsch (DE)</option>
+                    <option value="ja-JP">日本語 (JP)</option>
+                </InputSelect>
+                <label for="Input.PreferredCulture" class="form-label">@Loc["PreferredLanguageLabel"]</label>
             </div>
-            <button type="submit" class="w-100 btn btn-lg btn-primary">Save</button>
+            <button type="submit" class="w-100 btn btn-lg btn-primary">@Loc["Save"]</button>
         </EditForm>
     </div>
 </div>
@@ -36,7 +41,6 @@
 @code {
     private ApplicationUser user = default!;
     private string? username;
-    private string? phoneNumber;
 
     [CascadingParameter]
     private HttpContext HttpContext { get; set; } = default!;
@@ -49,30 +53,25 @@
 
         user = await UserAccessor.GetRequiredUserAsync(HttpContext);
         username = await UserManager.GetUserNameAsync(user);
-        phoneNumber = await UserManager.GetPhoneNumberAsync(user);
 
-        Input.PhoneNumber ??= phoneNumber;
+        Input.PreferredCulture ??= user.PreferredCulture;
     }
 
     private async Task OnValidSubmitAsync()
     {
-        if (Input!.PhoneNumber != phoneNumber)
+        if (Input!.PreferredCulture != user.PreferredCulture)
         {
-            var setPhoneResult = await UserManager.SetPhoneNumberAsync(user, Input.PhoneNumber);
-            if (!setPhoneResult.Succeeded)
-            {
-                RedirectManager.RedirectToCurrentPageWithStatus("Error: Failed to set phone number.", HttpContext);
-            }
+            user.PreferredCulture = string.IsNullOrEmpty(Input.PreferredCulture) ? null : Input.PreferredCulture;
+            await UserManager.UpdateAsync(user);
         }
 
         await SignInManager.RefreshSignInAsync(user);
-        RedirectManager.RedirectToCurrentPageWithStatus("Your profile has been updated", HttpContext);
+        RedirectManager.RedirectToCurrentPageWithStatus(Loc["Status_ProfileUpdated"], HttpContext);
     }
 
     private sealed class InputModel
     {
-        [Phone]
-        [Display(Name = "Phone number")]
-        public string? PhoneNumber { get; set; }
+        [Display(Name = "Preferred Language")]
+        public string? PreferredCulture { get; set; }
     }
 }

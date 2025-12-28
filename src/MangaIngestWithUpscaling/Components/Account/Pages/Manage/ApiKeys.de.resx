@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <data name="PageTitle" xml:space="preserve">
+    <value>API-Schlüssel</value>
+  </data>
+  <data name="Header" xml:space="preserve">
+    <value>Verwalten Sie Ihren API-Schlüssel</value>
+  </data>
+  <data name="Placeholder" xml:space="preserve">
+    <value>Ihr API-Schlüssel</value>
+  </data>
+  <data name="Label" xml:space="preserve">
+    <value>API-Schlüssel</value>
+  </data>
+  <data name="RegenerateButton" xml:space="preserve">
+    <value>API-Schlüssel neu generieren</value>
+  </data>
+</root>

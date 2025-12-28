@@ -1,0 +1,190 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="Button_DeleteSelected" xml:space="preserve">
+    <value>選択したものを削除</value>
+  </data>
+  <data name="Button_UpscaleSelected" xml:space="preserve">
+    <value>選択したものをアップスケール</value>
+  </data>
+  <data name="Button_DeleteUpscaledSelected" xml:space="preserve">
+    <value>選択したアップスケール済みを削除</value>
+  </data>
+  <data name="Button_RevertSelectedMerged" xml:space="preserve">
+    <value>選択した結合を元に戻す (実験的)</value>
+  </data>
+  <data name="Button_MergeSelected" xml:space="preserve">
+    <value>選択したものを結合 / 既存に追加 (実験的)</value>
+  </data>
+  <data name="Header_ChapterTitle" xml:space="preserve">
+    <value>チャプタータイトル</value>
+  </data>
+  <data name="Header_ChapterPath" xml:space="preserve">
+    <value>チャプターパス</value>
+  </data>
+  <data name="Header_Upscaled" xml:space="preserve">
+    <value>アップスケール済み</value>
+  </data>
+  <data name="Header_Splits" xml:space="preserve">
+    <value>分割</value>
+  </data>
+  <data name="Header_UpscalerProfile" xml:space="preserve">
+    <value>アップスケーラープロファイル</value>
+  </data>
+  <data name="Header_Actions" xml:space="preserve">
+    <value>アクション</value>
+  </data>
+  <data name="Chip_Merged" xml:space="preserve">
+    <value>結合済み</value>
+  </data>
+  <data name="Tooltip_Upscale" xml:space="preserve">
+    <value>このチャプターをアップスケール。</value>
+  </data>
+  <data name="Tooltip_DeleteUpscaled" xml:space="preserve">
+    <value>...</value>
+  </data>
+  <data name="Chip_Split" xml:space="preserve">
+    <value>分割済み</value>
+  </data>
+  <data name="Header_ChapterNumber" xml:space="preserve">
+    <value>チャプター番号</value>
+  </data>
+  <data name="Header_VolumeNumber" xml:space="preserve">
+    <value>巻数</value>
+  </data>
+  <data name="Header_PageCount" xml:space="preserve">
+    <value>ページ数</value>
+  </data>
+  <data name="Button_SplitSelected" xml:space="preserve">
+    <value>選択したものを分割 (実験的)</value>
+  </data>
+  <data name="Chip_Pending" xml:space="preserve">
+    <value>保留中</value>
+  </data>
+  <data name="Chip_Detected" xml:space="preserve">
+    <value>検出済み</value>
+  </data>
+  <data name="Chip_NoSplits" xml:space="preserve">
+    <value>分割なし</value>
+  </data>
+  <data name="Menu_ViewEdit" xml:space="preserve">
+    <value>表示 / 編集</value>
+  </data>
+  <data name="Menu_ApplySplits" xml:space="preserve">
+    <value>分割を適用</value>
+  </data>
+  <data name="Tooltip_RedetectSplits" xml:space="preserve">
+    <value>分割を再検出</value>
+  </data>
+  <data name="Snackbar_SplitDetectionCompleted" xml:space="preserve">
+    <value>{0} の分割検出が完了しました。</value>
+  </data>
+  <data name="Status_Yes" xml:space="preserve">
+    <value>はい</value>
+  </data>
+  <data name="Status_No" xml:space="preserve">
+    <value>いいえ</value>
+  </data>
+  <data name="Chip_Applied" xml:space="preserve">
+    <value>適用済み</value>
+  </data>
+  <data name="Chip_Failed" xml:space="preserve">
+    <value>失敗</value>
+  </data>
+  <data name="Tooltip_RetryDetection" xml:space="preserve">
+    <value>検出を再試行</value>
+  </data>
+  <data name="Tooltip_DetectSplits" xml:space="preserve">
+    <value>分割を検出</value>
+  </data>
+  <data name="Snackbar_SplitDetectionQueued" xml:space="preserve">
+    <value>{0} の分割検出チェックをキューに入れました</value>
+  </data>
+  <data name="Snackbar_SplitDetectionFailure" xml:space="preserve">
+    <value>分割検出のキュー登録に失敗しました: {0}</value>
+  </data>
+  <data name="Snackbar_SplitApplicationQueued" xml:space="preserve">
+    <value>{0} の分割適用をキューに入れました</value>
+  </data>
+  <data name="Snackbar_SplitApplicationFailure" xml:space="preserve">
+    <value>分割の適用に失敗しました: {0}</value>
+  </data>
+  <data name="Dialog_EditSplits_Title" xml:space="preserve">
+    <value>分割を編集</value>
+  </data>
+  <data name="Dialog_ApplySplits_Title" xml:space="preserve">
+    <value>分割を適用</value>
+  </data>
+  <data name="Dialog_ApplySplits_Content" xml:space="preserve">
+    <value>検出された分割を適用してもよろしいですか？これにより、チャプターが複数のファイルに分割され、オリジナルは削除されます。</value>
+  </data>
+  <data name="Dialog_RevertSelectedMerged_Title" xml:space="preserve">
+    <value>選択した結合済みチャプターを元に戻す</value>
+  </data>
+  <data name="Dialog_RevertSelectedMerged_Content" xml:space="preserve">
+    <value>{0} を元のパーツに戻してもよろしいですか？これにより、結合されたチャプターが削除され、個々のパーツが復元されます。</value>
+  </data>
+  <data name="Word_MergedChapter" xml:space="preserve">
+    <value>結合されたチャプター</value>
+  </data>
+  <data name="Suffix_Old" xml:space="preserve">
+    <value>(旧)</value>
+  </data>
+</root>

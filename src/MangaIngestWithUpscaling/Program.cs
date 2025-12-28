@@ -19,6 +19,7 @@ using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Localization;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -113,7 +114,7 @@ builder.Services.AddMudTranslations();
 builder.Services.RegisterViewModels();
 builder.Services.AddScoped<MangaJaNaiUpscaler>();
 
-builder.Services.AddLocalization();
+builder.Services.AddLocalization(options => options.ResourcesPath = "Resources");
 
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddScoped<IdentityUserAccessor>();
@@ -294,6 +295,7 @@ builder
     })
     .AddEntityFrameworkStores<ApplicationDbContext>()
     .AddSignInManager()
+    .AddClaimsPrincipalFactory<CustomUserClaimsPrincipalFactory>()
     .AddDefaultTokenProviders();
 
 builder
@@ -464,14 +466,33 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
-app.UseRequestLocalization(
-    new RequestLocalizationOptions()
-        .AddSupportedCultures(new[] { "en-US", "de-DE", "ja" })
-        .AddSupportedUICultures(new[] { "en-US", "de-DE", "ja" })
-);
-
 app.UseAuthentication();
 app.UseAuthorization();
+
+var supportedCultures = new[] { "en-US", "de-DE", "ja-JP" };
+var localizationOptions = new RequestLocalizationOptions()
+    .SetDefaultCulture("en-US")
+    .AddSupportedCultures(supportedCultures)
+    .AddSupportedUICultures(supportedCultures);
+
+localizationOptions.RequestCultureProviders.Insert(
+    0,
+    new CustomRequestCultureProvider(async context =>
+    {
+        var user = context.User;
+        if (user.Identity?.IsAuthenticated == true)
+        {
+            var localeClaim = user.FindFirst("locale");
+            if (localeClaim != null && !string.IsNullOrEmpty(localeClaim.Value))
+            {
+                return new ProviderCultureResult(localeClaim.Value);
+            }
+        }
+        return await Task.FromResult<ProviderCultureResult?>(null);
+    })
+);
+
+app.UseRequestLocalization(localizationOptions);
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())

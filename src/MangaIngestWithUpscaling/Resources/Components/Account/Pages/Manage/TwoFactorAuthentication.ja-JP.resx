@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="PageTitle" xml:space="preserve">
+    <value>二要素認証 (2FA)</value>
+  </data>
+  <data name="Header" xml:space="preserve">
+    <value>二要素認証 (2FA)</value>
+  </data>
+  <data name="NoRecoveryCodesLeft" xml:space="preserve">
+    <value>リカバリーコードが残っていません。</value>
+  </data>
+  <data name="GenerateNewCodesBeforeLogin" xml:space="preserve">
+    <value>リカバリーコードでログインする前に、&lt;a href="Account/Manage/GenerateRecoveryCodes"&gt;新しいリカバリーコードのセットを生成&lt;/a&gt;する必要があります。</value>
+  </data>
+  <data name="OneRecoveryCodeLeft" xml:space="preserve">
+    <value>リカバリーコードが残り1つです。</value>
+  </data>
+  <data name="CanGenerateNewCodes" xml:space="preserve">
+    <value>&lt;a href="Account/Manage/GenerateRecoveryCodes"&gt;新しいリカバリーコードのセットを生成&lt;/a&gt;できます。</value>
+  </data>
+  <data name="RecoveryCodesLeft" xml:space="preserve">
+    <value>{0} が残りです。</value>
+  </data>
+  <data name="Word_RecoveryCode" xml:space="preserve">
+    <value>リカバリーコード</value>
+  </data>
+  <data name="ShouldGenerateNewCodes" xml:space="preserve">
+    <value>&lt;a href="Account/Manage/GenerateRecoveryCodes"&gt;新しいリカバリーコードのセットを生成&lt;/a&gt;することをお勧めします。</value>
+  </data>
+  <data name="ForgetBrowser" xml:space="preserve">
+    <value>このブラウザを忘れる</value>
+  </data>
+  <data name="Disable2FA" xml:space="preserve">
+    <value>2FAを無効にする</value>
+  </data>
+  <data name="ResetRecoveryCodes" xml:space="preserve">
+    <value>リカバリーコードをリセット</value>
+  </data>
+  <data name="AuthenticatorApp" xml:space="preserve">
+    <value>認証アプリ</value>
+  </data>
+  <data name="AddAuthenticatorApp" xml:space="preserve">
+    <value>認証アプリを追加</value>
+  </data>
+  <data name="SetupAuthenticatorApp" xml:space="preserve">
+    <value>認証アプリを設定</value>
+  </data>
+  <data name="ResetAuthenticatorApp" xml:space="preserve">
+    <value>認証アプリをリセット</value>
+  </data>
+  <data name="PrivacyPolicyNotAccepted" xml:space="preserve">
+    <value>プライバシーポリシーとCookieポリシーが同意されていません。</value>
+  </data>
+  <data name="AcceptPolicyBefore2FA" xml:space="preserve">
+    <value>二要素認証を有効にする前に、ポリシーに同意する必要があります。</value>
+  </data>
+  <data name="BrowserForgotten" xml:space="preserve">
+    <value>現在のブラウザは忘れられました。このブラウザから再度ログインすると、2FAコードの入力が求められます。</value>
+  </data>
+</root>

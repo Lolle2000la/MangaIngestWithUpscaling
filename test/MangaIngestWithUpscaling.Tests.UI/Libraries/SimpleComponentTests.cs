@@ -11,6 +11,7 @@ using MangaIngestWithUpscaling.Services.ImageFiltering;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 using MudBlazor;
 using MudBlazor.Services;
 using NSubstitute;
@@ -58,6 +59,7 @@ public class SimpleComponentTests : BunitContext
     private void RegisterServices()
     {
         Services.AddMudServices();
+        Services.AddSingleton(typeof(IStringLocalizer<>), typeof(MockStringLocalizer<>));
         Services.AddSingleton(_dbContext);
         Services.AddSingleton(_mockTaskQueue);
         Services.AddSingleton(_mockImageFilterService);

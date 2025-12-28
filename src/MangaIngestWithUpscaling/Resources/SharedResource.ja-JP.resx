@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="Generic_OK" xml:space="preserve">
+    <value>OK</value>
+  </data>
+  <data name="Generic_Cancel" xml:space="preserve">
+    <value>キャンセル</value>
+  </data>
+  <data name="Generic_Merge" xml:space="preserve">
+    <value>マージ</value>
+  </data>
+  <data name="Generic_Move" xml:space="preserve">
+    <value>移動</value>
+  </data>
+  <data name="Generic_Refresh" xml:space="preserve">
+    <value>更新</value>
+  </data>
+  <data name="Generic_Create" xml:space="preserve">
+    <value>作成</value>
+  </data>
+  <data name="Generic_Save" xml:space="preserve">
+    <value>保存</value>
+  </data>
+  <data name="Yes" xml:space="preserve">
+    <value>はい</value>
+  </data>
+  <data name="No" xml:space="preserve">
+    <value>いいえ</value>
+  </data>
+  <data name="Close" xml:space="preserve">
+    <value>閉じる</value>
+  </data>
+  <data name="Save" xml:space="preserve">
+    <value>保存</value>
+  </data>
+  <data name="Cancel" xml:space="preserve">
+    <value>キャンセル</value>
+  </data>
+  <data name="Loading" xml:space="preserve">
+    <value>読み込み中...</value>
+  </data>
+  <data name="Search" xml:space="preserve">
+    <value>検索...</value>
+  </data>
+  <data name="Actions" xml:space="preserve">
+    <value>アクション</value>
+  </data>
+  <data name="ConfirmDelete" xml:space="preserve">
+    <value>削除の確認</value>
+  </data>
+  <data name="Delete" xml:space="preserve">
+    <value>削除</value>
+  </data>
+  <data name="ScaleFactor_OneX" xml:space="preserve">
+    <value>1倍</value>
+  </data>
+  <data name="ScaleFactor_TwoX" xml:space="preserve">
+    <value>2倍</value>
+  </data>
+  <data name="ScaleFactor_ThreeX" xml:space="preserve">
+    <value>3倍</value>
+  </data>
+  <data name="ScaleFactor_FourX" xml:space="preserve">
+    <value>4倍</value>
+  </data>
+  <data name="CompressionFormat_Avif" xml:space="preserve">
+    <value>AVIF</value>
+  </data>
+  <data name="CompressionFormat_Png" xml:space="preserve">
+    <value>PNG</value>
+  </data>
+  <data name="CompressionFormat_Webp" xml:space="preserve">
+    <value>WebP</value>
+  </data>
+  <data name="CompressionFormat_Jpg" xml:space="preserve">
+    <value>JPEG</value>
+  </data>
+</root>

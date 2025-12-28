@@ -1,33 +1,27 @@
 ﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
-<MudTd DataLabel="Pattern to match">
-    <MudTextField Immediate="true"
-                  Required="true"
-                  @bind-Value="FilterRule.Pattern"/>
+@using Microsoft.Extensions.Localization
+@inject IStringLocalizer<EditLibraryFilterForm> Loc
+<MudTd DataLabel="@Loc["Label_PatternToMatch"]">
+    <MudTextField Immediate="true" Required="true" @bind-Value="FilterRule.Pattern" />
 </MudTd>
-<MudTd DataLabel="Pattern Type">
-    <MudSelect Immediate="true"
-               T="LibraryFilterPatternType"
-               @bind-Value="FilterRule.PatternType">
-        <MudSelectItem Value="LibraryFilterPatternType.Contains">Target field contains pattern</MudSelectItem>
-        <MudSelectItem Value="LibraryFilterPatternType.Regex">Regular Expression</MudSelectItem>
+<MudTd DataLabel="@Loc["Label_PatternType"]">
+    <MudSelect Immediate="true" T="LibraryFilterPatternType" @bind-Value="FilterRule.PatternType">
+        <MudSelectItem Value="LibraryFilterPatternType.Contains">@Loc["Option_Contains"]</MudSelectItem>
+        <MudSelectItem Value="LibraryFilterPatternType.Regex">@Loc["Option_Regex"]</MudSelectItem>
     </MudSelect>
 </MudTd>
-<MudTd DataLabel="Target Field">
-    <MudSelect Immediate="true"
-               T="LibraryFilterTargetField"
-               @bind-Value="FilterRule.TargetField">
-        <MudSelectItem Value="LibraryFilterTargetField.MangaTitle">Manga Title</MudSelectItem>
-        <MudSelectItem Value="LibraryFilterTargetField.ChapterTitle">Chapter Title (i.e. Chapter 1, 第1話, ...)
+<MudTd DataLabel="@Loc["Label_TargetField"]">
+    <MudSelect Immediate="true" T="LibraryFilterTargetField" @bind-Value="FilterRule.TargetField">
+        <MudSelectItem Value="LibraryFilterTargetField.MangaTitle">@Loc["Option_MangaTitle"]</MudSelectItem>
+        <MudSelectItem Value="LibraryFilterTargetField.ChapterTitle">@Loc["Option_ChapterTitle"]
         </MudSelectItem>
-        <MudSelectItem Value="LibraryFilterTargetField.FilePath">File Path (relative to ingest root)</MudSelectItem>
+        <MudSelectItem Value="LibraryFilterTargetField.FilePath">@Loc["Option_FilePath"]</MudSelectItem>
     </MudSelect>
 </MudTd>
-<MudTd DataLabel="Action">
-    <MudSelect Immediate="true"
-               T="FilterAction"
-               @bind-Value="FilterRule.Action">
-        <MudSelectItem Value="FilterAction.Include">Include</MudSelectItem>
-        <MudSelectItem Value="FilterAction.Exclude">Exclude</MudSelectItem>
+<MudTd DataLabel="@Loc["Label_Action"]">
+    <MudSelect Immediate="true" T="FilterAction" @bind-Value="FilterRule.Action">
+        <MudSelectItem Value="FilterAction.Include">@Loc["Option_Include"]</MudSelectItem>
+        <MudSelectItem Value="FilterAction.Exclude">@Loc["Option_Exclude"]</MudSelectItem>
     </MudSelect>
 </MudTd>
 

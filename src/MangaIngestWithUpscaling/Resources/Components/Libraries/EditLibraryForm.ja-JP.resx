@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="Tab_BasicSettings" xml:space="preserve">
+    <value>基本設定</value>
+  </data>
+  <data name="Header_LibraryInfo" xml:space="preserve">
+    <value>ライブラリ情報</value>
+  </data>
+  <data name="Label_LibraryName" xml:space="preserve">
+    <value>ライブラリ名</value>
+  </data>
+  <data name="Helper_LibraryName" xml:space="preserve">
+    <value>このライブラリの一意の名前</value>
+  </data>
+  <data name="Label_Created" xml:space="preserve">
+    <value>作成日:</value>
+  </data>
+  <data name="Label_Modified" xml:space="preserve">
+    <value>更新日:</value>
+  </data>
+  <data name="Header_IngestConfig" xml:space="preserve">
+    <value>インジェスト設定</value>
+  </data>
+  <data name="Title_IngestFolder" xml:space="preserve">
+    <value>インジェストフォルダ (ソース)</value>
+  </data>
+  <data name="Tab_StoragePaths" xml:space="preserve">
+    <value>保存パス</value>
+  </data>
+  <data name="Warning_LibraryContainsSeries" xml:space="preserve">
+    <value>このライブラリには {0} が含まれています。</value>
+  </data>
+  <data name="Word_Series" xml:space="preserve">
+    <value>シリーズ</value>
+  </data>
+  <data name="Warning_CannotChangePaths" xml:space="preserve">
+    <value>ライブラリにシリーズが含まれている間は、保存パスを変更できません。</value>
+  </data>
+  <data name="Warning_CanStillChange" xml:space="preserve">
+    <value>&lt;b&gt;インジェストパス&lt;/b&gt;と&lt;b&gt;アップスケーリング設定&lt;/b&gt;は変更可能です。</value>
+  </data>
+  <data name="Header_StorageLocations" xml:space="preserve">
+    <value>保存場所</value>
+  </data>
+  <data name="Title_StoragePathAsIs" xml:space="preserve">
+    <value>保存パス (そのまま)</value>
+  </data>
+  <data name="Title_UpscaledLocation" xml:space="preserve">
+    <value>アップスケール後の保存先 (任意)</value>
+  </data>
+  <data name="Tab_Upscaling" xml:space="preserve">
+    <value>アップスケーリング</value>
+  </data>
+  <data name="Header_UpscalingConfig" xml:space="preserve">
+    <value>アップスケーリング設定</value>
+  </data>
+  <data name="Label_UpscaleOnIngest" xml:space="preserve">
+    <value>インジェスト時にアップスケール</value>
+  </data>
+  <data name="Label_UpscalerProfile" xml:space="preserve">
+    <value>デフォルトのアップスケーラープロファイル</value>
+  </data>
+  <data name="Helper_UpscalerProfile" xml:space="preserve">
+    <value>アップスケーリングに使用するプロファイルを選択</value>
+  </data>
+  <data name="Option_None" xml:space="preserve">
+    <value>なし</value>
+  </data>
+  <data name="Tab_FileManagement" xml:space="preserve">
+    <value>ファイル管理</value>
+  </data>
+  <data name="Header_FileFiltering" xml:space="preserve">
+    <value>ファイルフィルタリング</value>
+  </data>
+  <data name="Header_ChapterProcessing" xml:space="preserve">
+    <value>チャプター処理</value>
+  </data>
+  <data name="Label_MergeChapters" xml:space="preserve">
+    <value>チャプターパーツを結合 (例: 第1章 パート1 + 第1章 パート2 -&gt; 第1章)</value>
+  </data>
+  <data name="Warning_Experimental" xml:space="preserve">
+    <value>実験的: この機能は開発中であり、期待通りに動作しない可能性があります。</value>
+  </data>
+  <data name="Header_VerticalStrip" xml:space="preserve">
+    <value>縦長画像分割</value>
+  </data>
+  <data name="Label_DetectionMode" xml:space="preserve">
+    <value>検出モード</value>
+  </data>
+  <data name="Helper_DetectionMode" xml:space="preserve">
+    <value>縦に連結されたページの処理方法</value>
+  </data>
+  <data name="Option_Disabled" xml:space="preserve">
+    <value>無効</value>
+  </data>
+  <data name="Option_DetectOnly" xml:space="preserve">
+    <value>検出のみ</value>
+  </data>
+  <data name="Option_DetectAndApply" xml:space="preserve">
+    <value>検出して分割を適用</value>
+  </data>
+  <data name="Tab_RenameRules" xml:space="preserve">
+    <value>名前変更ルール</value>
+  </data>
+  <data name="Header_RenameConfig" xml:space="preserve">
+    <value>名前変更設定</value>
+  </data>
+  <data name="Body_RenameConfig" xml:space="preserve">
+    <value>インジェスト時にファイルとフォルダの名前を変更する方法を設定します。ルールは順に適用されます。</value>
+  </data>
+  <data name="Button_PreviewRename" xml:space="preserve">
+    <value>名前変更ルールのプレビュー</value>
+  </data>
+  <data name="Tab_Integration" xml:space="preserve">
+    <value>統合</value>
+  </data>
+  <data name="Header_KavitaConfig" xml:space="preserve">
+    <value>Kavita設定</value>
+  </data>
+  <data name="Body_KavitaConfig" xml:space="preserve">
+    <value>Kavitaがライブラリパスをどのように認識するかを設定します。KavitaをDockerで実行していてパスが異なる場合に便利です。</value>
+  </data>
+  <data name="Note_KavitaConfig" xml:space="preserve">
+    <value>注意: これらのパスはKavita統合 (スキャントリガー) に&lt;b&gt;のみ&lt;/b&gt;使用されます。ファイルの保存場所には影響しません。</value>
+  </data>
+  <data name="Label_KavitaAsIs" xml:space="preserve">
+    <value>Kavitaマウントポイント (そのまま)</value>
+  </data>
+  <data name="Helper_KavitaAsIs" xml:space="preserve">
+    <value>Kavitaから見た「そのまま」ライブラリへのパス</value>
+  </data>
+  <data name="Label_KavitaUpscaled" xml:space="preserve">
+    <value>Kavitaマウントポイント (アップスケール)</value>
+  </data>
+  <data name="Helper_KavitaUpscaled" xml:space="preserve">
+    <value>Kavitaから見た「アップスケール」ライブラリへのパス</value>
+  </data>
+  <data name="Hint_Kavita" xml:space="preserve">
+    <value>空のままにすると、ローカルパスが使用されます。Kavitaが異なるボリュームマッピングを持つコンテナで実行されている場合に使用してください。</value>
+  </data>
+</root>

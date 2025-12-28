@@ -3,109 +3,113 @@
 @using MangaIngestWithUpscaling.Configuration
 @using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Shared.Data.Analysis
+@using MangaIngestWithUpscaling.Shared.Helpers
 @using Microsoft.Extensions.Options
+@using Humanizer
+@using System.Globalization
 @inject ApplicationDbContext DbContext
 @inject IOptions<KavitaConfiguration> KavitaConfig
 @inject IDialogService DialogService
+@inject IStringLocalizer<EditLibraryForm> Loc
 
 <MudForm Model="@Library" IsValid="@IsValid">
     <MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-6">
 
         <!-- Basic Settings Tab -->
-        <MudTabPanel Text="Basic Settings" Icon="@Icons.Material.Filled.Settings">
+        <MudTabPanel Text="@Loc["Tab_BasicSettings"]" Icon="@Icons.Material.Filled.Settings">
             <MudGrid Spacing="4">
                 <MudItem xs="12">
-                    <MudText Typo="Typo.h5" GutterBottom="true">Library Information</MudText>
-                    <MudTextField Required="true" Label="Library Name" HelperText="Name for display purposes only."
-                        Immediate="true" @bind-Value="Library.Name" @bind-Value:after="OnInputChanged"
-                        Variant="Variant.Outlined" />
+                    <MudText Typo="Typo.h5" GutterBottom="true">@Loc["Header_LibraryInfo"]</MudText>
+                    <MudTextField Required="true" Label="@Loc["Label_LibraryName"]"
+                        HelperText="@Loc["Helper_LibraryName"]" Immediate="true" @bind-Value="Library.Name"
+                        @bind-Value:after="OnInputChanged" Variant="Variant.Outlined" />
 
                     @if (Library.Id > 0)
                     {
                         <MudDivider Style="margin: 16px 0;" />
                         <MudStack Row Spacing="4" Class="mt-2">
                             <MudText Typo="Typo.caption" Color="Color.Secondary">
-                                Created: @Library.CreatedAt.ToString("yyyy-MM-dd HH:mm")
+                                @Loc["Label_Created"] @Library.CreatedAt.ToString("yyyy-MM-dd HH:mm")
                             </MudText>
                             <MudText Typo="Typo.caption" Color="Color.Secondary">
-                                Modified: @Library.ModifiedAt.ToString("yyyy-MM-dd HH:mm")
+                                @Loc["Label_Modified"] @Library.ModifiedAt.ToString("yyyy-MM-dd HH:mm")
                             </MudText>
                         </MudStack>
                     }
                 </MudItem>
 
                 <MudItem xs="12">
-                    <MudText Typo="Typo.h5" GutterBottom="true">Ingest Configuration</MudText>
+                    <MudText Typo="Typo.h5" GutterBottom="true">@Loc["Header_IngestConfig"]</MudText>
                     <FolderPicker RootDirectory="@Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)"
                         SelectedPath="@Library.IngestPath" SelectedPathChanged="@OnIngestPathChanged"
-                        Title="Ingest Folder" Required="true" />
+                        Title="@Loc["Title_IngestFolder"]" Required="true" />
                 </MudItem>
             </MudGrid>
         </MudTabPanel>
 
         <!-- Storage Paths Tab -->
-        <MudTabPanel Text="Storage Paths" Icon="@Icons.Material.Filled.FolderOpen">
+        <MudTabPanel Text="@Loc["Tab_StoragePaths"]" Icon="@Icons.Material.Filled.FolderOpen">
             <MudGrid Spacing="4">
                 @if (Library.MangaSeries.Count > 0)
                 {
                     <MudItem xs="12">
                         <MudAlert Severity="Severity.Warning" Variant="Variant.Filled">
                             <div>
-                                <MudText Typo="Typo.h6" Class="mb-2">Library Contains @Library.MangaSeries.Count Manga
-                                    Series
-                                </MudText>
-                                <MudText Typo="Typo.body2">
-                                    You cannot change the storage paths of a library that already contains manga series.
-                                    Either delete or move the series to another library before changing the paths.
-                                </MudText>
-                                <MudText Typo="Typo.body2" Class="mt-2">
-                                    You can still change the upscaling configuration and the library name, and set a
-                                    path for the ingest folder.
-                                    In case you <strong>haven't set up a target folder for the upscaled mangas</strong>,
-                                    you are still able to set one below.
-                                </MudText>
-                            </div>
-                        </MudAlert>
-                    </MudItem>
-                }
+                                <MudText Typo="Typo.h6" Class="mb-2">
+                                    @string.Format(Loc["Warning_LibraryContainsSeries"],
+                                    Loc["Word_Series"].Value.ToLocalizedQuantity(Library.MangaSeries.Count,
+                                    CultureInfo.CurrentUICulture))
+                            </MudText>
+                            <MudText Typo="Typo.body2">
+                                @Loc["Warning_CannotChangePaths"]
+                            </MudText>
+                            <MudText Typo="Typo.body2" Class="mt-2">
+                                @((MarkupString)Loc["Warning_CanStillChange"].Value)
+                            </MudText>
+                        </div>
+                    </MudAlert>
+                </MudItem>
+                                }
 
                 <MudItem xs="12">
-                    <MudText Typo="Typo.h5" GutterBottom="true">Storage Locations</MudText>
+                    <MudText Typo="Typo.h5" GutterBottom="true">@Loc["Header_StorageLocations"]
+                    </MudText>
                 </MudItem>
 
                 <MudItem md="6" xs="12">
                     <FolderPicker RootDirectory="@Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)"
                         SelectedPath="@Library.NotUpscaledLibraryPath" SelectedPathChanged="@OnNotUpscaledPathChanged"
-                        Disabled="Library.MangaSeries.Count > 0" Title="Storage Path as-is" Required="true" />
+                        Disabled="Library.MangaSeries.Count > 0" Title="@Loc["Title_StoragePathAsIs"]"
+                        Required="true" />
                 </MudItem>
 
                 <MudItem md="6" xs="12">
                     <FolderPicker RootDirectory="@Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)"
                         SelectedPath="@Library.UpscaledLibraryPath"
                         Disabled="Library.MangaSeries.Count > 0 && Library.UpscaledLibraryPath != null"
-                        SelectedPathChanged="@OnUpscaledPathChanged" Title="Upscaled location" />
+                        SelectedPathChanged="@OnUpscaledPathChanged" Title="@Loc["Title_UpscaledLocation"]" />
                 </MudItem>
             </MudGrid>
         </MudTabPanel>
 
         <!-- Upscaling Configuration Tab -->
-        <MudTabPanel Text="Upscaling" Icon="@Icons.Material.Filled.ImageAspectRatio">
+        <MudTabPanel Text="@Loc["Tab_Upscaling"]" Icon="@Icons.Material.Filled.ImageAspectRatio">
             <MudGrid Spacing="4">
                 <MudItem xs="12">
-                    <MudText Typo="Typo.h5" GutterBottom="true">Upscaling Configuration</MudText>
+                    <MudText Typo="Typo.h5" GutterBottom="true">@Loc["Header_UpscalingConfig"]</MudText>
                 </MudItem>
 
                 <MudItem xs="12">
-                    <MudCheckBox T="bool" Label="Automatically upscale all mangas on ingest" Color="Color.Primary"
+                    <MudCheckBox T="bool" Label="@Loc["Label_UpscaleOnIngest"]" Color="Color.Primary"
                         @bind-Value="Library.UpscaleOnIngest" @bind-Value:after="OnInputChanged" />
                 </MudItem>
 
                 <MudItem xs="12">
-                    <MudSelect T="int?" Label="Upscaler Profile"
-                        HelperText="Select an upscaling profile to use for this library. Leave at 'none' if you do not want to upscale any images."
-                        Immediate="true" @bind-Value="Library.UpscalerProfileId" @bind-Value:after="OnInputChanged"
-                        Clearable="true" Variant="Variant.Outlined">
-                        <MudSelectItem T="int?" Value="null">«None (Do Not Upscale)»</MudSelectItem>
+                    <MudSelect T="int?" Label="@Loc["Label_UpscalerProfile"]"
+                        HelperText="@Loc["Helper_UpscalerProfile"]" Immediate="true"
+                        @bind-Value="Library.UpscalerProfileId" @bind-Value:after="OnInputChanged" Clearable="true"
+                        Variant="Variant.Outlined">
+                        <MudSelectItem T="int?" Value="null">@Loc["Option_None"]</MudSelectItem>
                         @foreach (var upscalerConfig in DbContext.UpscalerProfiles)
                         {
                             <MudSelectItem T="int?" Value="@upscalerConfig.Id">@upscalerConfig.Name</MudSelectItem>
@@ -116,10 +120,10 @@
         </MudTabPanel>
 
         <!-- File Management Tab -->
-        <MudTabPanel Text="File Management" Icon="@Icons.Material.Filled.ManageSearch">
+        <MudTabPanel Text="@Loc["Tab_FileManagement"]" Icon="@Icons.Material.Filled.ManageSearch">
             <MudGrid Spacing="4">
                 <MudItem xs="12">
-                    <MudText Typo="Typo.h5" GutterBottom="true">File Filtering & Processing</MudText>
+                    <MudText Typo="Typo.h5" GutterBottom="true">@Loc["Header_FileFiltering"]</MudText>
                 </MudItem>
 
                 <MudItem xs="12">
@@ -127,37 +131,37 @@
                 </MudItem>
 
                 <MudItem xs="12">
-                    <MudText Typo="Typo.h5" GutterBottom="true">Chapter Processing Options</MudText>
-                    <MudCheckBox T="bool"
-                        Label="Merge chapter parts (e.g., Chapter 22.1, 22.2, 22.3 → Chapter 22). Only merges completed chapters, not the latest one."
-                        Color="Color.Warning" @bind-Value="Library.MergeChapterParts"
-                        @bind-Value:after="OnInputChanged" />
+                    <MudText Typo="Typo.h5" GutterBottom="true">@Loc["Header_ChapterProcessing"]
+                    </MudText>
+                    <MudCheckBox T="bool" Label="@Loc["Label_MergeChapters"]" Color="Color.Warning"
+                        @bind-Value="Library.MergeChapterParts" @bind-Value:after="OnInputChanged" />
                     <MudText Typo="Typo.caption" Color="Color.Warning">
-                        ⚠️ Experimental feature - expect potential data loss!
+                        @Loc["Warning_Experimental"]
                     </MudText>
 
-                    <MudText Typo="Typo.h5" GutterBottom="true" Class="mt-4">Vertical Strip Detection</MudText>
-                    <MudSelect T="StripDetectionMode" Label="Detection Mode"
-                        HelperText="Configure how vertical strips (webtoons) should be handled."
-                        @bind-Value="Library.StripDetectionMode" @bind-Value:after="OnInputChanged"
-                        Variant="Variant.Outlined">
-                        <MudSelectItem Value="StripDetectionMode.None">Disabled</MudSelectItem>
-                        <MudSelectItem Value="StripDetectionMode.DetectOnly">Detect Only (Manual Review)</MudSelectItem>
-                        <MudSelectItem Value="StripDetectionMode.DetectAndApply">Detect & Apply Automatically
+                    <MudText Typo="Typo.h5" GutterBottom="true" Class="mt-4">
+                        @Loc["Header_VerticalStrip"]</MudText>
+                    <MudSelect T="StripDetectionMode" Label="@Loc["Label_DetectionMode"]"
+                        HelperText="@Loc["Helper_DetectionMode"]" @bind-Value="Library.StripDetectionMode"
+                        @bind-Value:after="OnInputChanged" Variant="Variant.Outlined">
+                        <MudSelectItem Value="StripDetectionMode.None">@Loc["Option_Disabled"]
                         </MudSelectItem>
+                        <MudSelectItem Value="StripDetectionMode.DetectOnly">@Loc["Option_DetectOnly"]
+                        </MudSelectItem>
+                        <MudSelectItem Value="StripDetectionMode.DetectAndApply">
+                            @Loc["Option_DetectAndApply"]</MudSelectItem>
                     </MudSelect>
                 </MudItem>
             </MudGrid>
         </MudTabPanel>
 
         <!-- Rename Rules Tab -->
-        <MudTabPanel Text="Rename Rules" Icon="@Icons.Material.Filled.DriveFileRenameOutline">
+        <MudTabPanel Text="@Loc["Tab_RenameRules"]" Icon="@Icons.Material.Filled.DriveFileRenameOutline">
             <MudGrid Spacing="4">
                 <MudItem xs="12">
-                    <MudText Typo="Typo.h5" GutterBottom="true">File Rename Configuration</MudText>
+                    <MudText Typo="Typo.h5" GutterBottom="true">@Loc["Header_RenameConfig"]</MudText>
                     <MudText Typo="Typo.body1" Class="mb-4">
-                        Configure how files should be renamed when processed by the library.
-                        This helps ensure consistent naming conventions across your manga collection.
+                        @Loc["Body_RenameConfig"]
                     </MudText>
                 </MudItem>
 
@@ -170,7 +174,7 @@
                     <div class="d-flex justify-center mt-4">
                         <MudButton Variant="Variant.Filled" Color="Color.Primary"
                             StartIcon="@Icons.Material.Filled.Preview" OnClick="ShowRenameDialog" Size="Size.Large">
-                            Preview Rename Rules
+                            @Loc["Button_PreviewRename"]
                         </MudButton>
                     </div>
                 </MudItem>
@@ -180,39 +184,34 @@
         <!-- Integration Tab (only if Kavita is enabled) -->
         @if (KavitaConfig.Value.Enabled)
         {
-            <MudTabPanel Text="Integration" Icon="@Icons.Material.Filled.Hub">
+            <MudTabPanel Text="@Loc["Tab_Integration"]" Icon="@Icons.Material.Filled.Hub">
                 <MudGrid Spacing="4">
                     <MudItem xs="12">
                         <MudText Typo="Typo.h5" GutterBottom="true">
                             <MudIcon Icon="@Icons.Material.Filled.Hub" Class="mr-2" />
-                            Kavita Integration Configuration
+                            @Loc["Header_KavitaConfig"]
                         </MudText>
 
                         <MudAlert Severity="Severity.Info" Variant="Variant.Text" Class="mb-4">
                             <div>
                                 <MudText Typo="Typo.body2">
-                                    Configure the integration with Kavita to automatically notify it of new content.
-                                    If you do not use Kavita, you can ignore these settings.
+                                    @Loc["Body_KavitaConfig"]
                                 </MudText>
                                 <MudText Typo="Typo.body2" Class="mt-2">
-                                    <strong>Note:</strong> You do not need to configure both mount points, but only the
-                                    one you want to notify Kavita about.
-                                    Leaving any mount point empty will disable the integration for that content type.
+                                    @((MarkupString)Loc["Note_KavitaConfig"].Value)
                                 </MudText>
                             </div>
                         </MudAlert>
                     </MudItem>
 
                     <MudItem md="6" xs="12">
-                        <MudTextField Label="As-Is Mount Point in Kavita"
-                            HelperText="The mount point within the Kavita environment that contains the chapters as-is."
+                        <MudTextField Label="@Loc["Label_KavitaAsIs"]" HelperText="@Loc["Helper_KavitaAsIs"]"
                             Immediate="true" @bind-Value="Library.KavitaConfig.NotUpscaledMountPoint"
                             @bind-Value:after="OnInputChanged" Variant="Variant.Outlined" />
                     </MudItem>
 
                     <MudItem md="6" xs="12">
-                        <MudTextField Label="Upscaled Mount Point in Kavita"
-                            HelperText="The mount point within the Kavita environment that contains the upscaled chapters."
+                        <MudTextField Label="@Loc["Label_KavitaUpscaled"]" HelperText="@Loc["Helper_KavitaUpscaled"]"
                             Immediate="true" @bind-Value="Library.KavitaConfig.UpscaledMountPoint"
                             @bind-Value:after="OnInputChanged" Variant="Variant.Outlined" />
                     </MudItem>
@@ -220,8 +219,7 @@
                     <MudItem xs="12">
                         <MudAlert Severity="Severity.Success" Variant="Variant.Text">
                             <MudText Typo="Typo.body2">
-                                💡 <strong>Hint:</strong> You can use the path as it's set in the library settings in
-                                Kavita.
+                                @((MarkupString)Loc["Hint_Kavita"].Value)
                             </MudText>
                         </MudAlert>
                     </MudItem>

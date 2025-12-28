@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="metadata">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" />
+              </xsd:sequence>
+              <xsd:attribute name="name" use="required" type="xsd:string" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="assembly">
+            <xsd:complexType>
+              <xsd:attribute name="alias" type="xsd:string" />
+              <xsd:attribute name="name" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" msdata:Ordinal="1" />
+              <xsd:attribute name="type" type="xsd:string" msdata:Ordinal="3" />
+              <xsd:attribute name="mimetype" type="xsd:string" msdata:Ordinal="4" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="PageTitle" xml:space="preserve">
+    <value>ライブラリの管理</value>
+  </data>
+  <data name="Title" xml:space="preserve">
+    <value>ライブラリ</value>
+  </data>
+  <data name="CreateLibrary" xml:space="preserve">
+    <value>ライブラリの作成</value>
+  </data>
+  <data name="UpscaleAll" xml:space="preserve">
+    <value>すべてアップスケール</value>
+  </data>
+  <data name="NoLibrariesYet" xml:space="preserve">
+    <value>ライブラリはまだありません</value>
+  </data>
+  <data name="CreateFirstLibraryDescription" xml:space="preserve">
+    <value>最初のライブラリを作成して、マンガコレクションの整理を始めましょう。</value>
+  </data>
+  <data name="CreateYourFirstLibrary" xml:space="preserve">
+    <value>最初のライブラリを作成</value>
+  </data>
+  <data name="LibraryOverview" xml:space="preserve">
+    <value>ライブラリ概要</value>
+  </data>
+  <data name="Stats_Libraries" xml:space="preserve">
+    <value>{0}</value>
+  </data>
+  <data name="Stats_MangaSeries" xml:space="preserve">
+    <value>{0}</value>
+  </data>
+  <data name="Stats_Chapters" xml:space="preserve">
+    <value>{0}</value>
+  </data>
+  <data name="Word_Library" xml:space="preserve">
+    <value>ライブラリ</value>
+  </data>
+  <data name="Word_MangaSeries" xml:space="preserve">
+    <value>マンガシリーズ</value>
+  </data>
+  <data name="Word_Chapter" xml:space="preserve">
+    <value>チャプター</value>
+  </data>
+  <data name="Header_LibraryName" xml:space="preserve">
+    <value>ライブラリ名</value>
+  </data>
+  <data name="Header_IngestPath" xml:space="preserve">
+    <value>インジェストパス</value>
+  </data>
+  <data name="Header_UpscalerConfig" xml:space="preserve">
+    <value>アップスケーラー設定</value>
+  </data>
+  <data name="Header_MangaSeries" xml:space="preserve">
+    <value>マンガシリーズ</value>
+  </data>
+  <data name="Header_Chapters" xml:space="preserve">
+    <value>チャプター</value>
+  </data>
+  <data name="Header_Actions" xml:space="preserve">
+    <value>アクション</value>
+  </data>
+  <data name="NotConfigured" xml:space="preserve">
+    <value>未設定</value>
+  </data>
+  <data name="AutoUpscale" xml:space="preserve">
+    <value>自動アップスケール</value>
+  </data>
+  <data name="Tooltip_Edit" xml:space="preserve">
+    <value>ライブラリを編集</value>
+  </data>
+  <data name="Tooltip_Scan" xml:space="preserve">
+    <value>ライブラリをスキャン</value>
+  </data>
+  <data name="Tooltip_Upscale" xml:space="preserve">
+    <value>ライブラリをアップスケール</value>
+  </data>
+  <data name="Tooltip_Integrity" xml:space="preserve">
+    <value>整合性を確認</value>
+  </data>
+  <data name="Tooltip_Filters" xml:space="preserve">
+    <value>フィルタリングされた画像</value>
+  </data>
+  <data name="Tooltip_Delete" xml:space="preserve">
+    <value>ライブラリを削除</value>
+  </data>
+  <data name="DeleteDialog_Title" xml:space="preserve">
+    <value>ライブラリを削除</value>
+  </data>
+  <data name="DeleteDialog_Content" xml:space="preserve">
+    <value>本当にこのライブラリを削除しますか？この操作は元に戻せません。</value>
+  </data>
+</root>

@@ -9,6 +9,7 @@ using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 
 namespace MangaIngestWithUpscaling.Services.ChapterMerging;
 
@@ -19,6 +20,7 @@ public class ChapterMergeRevertService(
     IChapterChangedNotifier chapterChangedNotifier,
     IUpscalerJsonHandlingService upscalerJsonHandlingService,
     ITaskQueue taskQueue,
+    IStringLocalizer<ChapterMergeRevertService> localizer,
     ILogger<ChapterMergeRevertService> logger
 ) : IChapterMergeRevertService
 {
@@ -31,7 +33,7 @@ public class ChapterMergeRevertService(
         if (mergeInfo == null)
         {
             throw new InvalidOperationException(
-                $"Chapter {chapter.FileName} is not a merged chapter and cannot be reverted."
+                localizer["Error_NotAMergedChapter", chapter.FileName]
             );
         }
 
@@ -57,7 +59,9 @@ public class ChapterMergeRevertService(
 
         if (!File.Exists(mergedChapterPath))
         {
-            throw new FileNotFoundException($"Merged chapter file not found: {mergedChapterPath}");
+            throw new FileNotFoundException(
+                localizer["Error_MergedChapterFileNotFound", mergedChapterPath]
+            );
         }
 
         // If a partial upscaling repair task was scheduled for this merged chapter, cancel it now to avoid wasted work
@@ -69,9 +73,7 @@ public class ChapterMergeRevertService(
             List<OriginalChapterPart>? originalParts = mergeInfo.OriginalParts;
             if (originalParts == null || !originalParts.Any())
             {
-                throw new InvalidOperationException(
-                    "Invalid merge information: no original parts found."
-                );
+                throw new InvalidOperationException(localizer["Error_InvalidMergeInfo"]);
             }
 
             logger.LogInformation(

@@ -3,16 +3,21 @@
 @using Microsoft.AspNetCore.Http.Features
 @using Microsoft.AspNetCore.Identity
 @using MangaIngestWithUpscaling.Data
+@using Microsoft.Extensions.Localization
+@using MangaIngestWithUpscaling.Shared.Helpers
+@using Humanizer
+@using System.Globalization
 
 @inject UserManager<ApplicationUser> UserManager
 @inject SignInManager<ApplicationUser> SignInManager
 @inject IdentityUserAccessor UserAccessor
 @inject IdentityRedirectManager RedirectManager
+@inject IStringLocalizer<TwoFactorAuthentication> Loc
 
-<PageTitle>Two-factor authentication (2FA)</PageTitle>
+<PageTitle>@Loc["PageTitle"]</PageTitle>
 
 <StatusMessage />
-<h3>Two-factor authentication (2FA)</h3>
+<h3>@Loc["Header"]</h3>
 @if (canTrack)
 {
     if (is2faEnabled)
@@ -20,53 +25,54 @@
         if (recoveryCodesLeft == 0)
         {
             <div class="alert alert-danger">
-                <strong>You have no recovery codes left.</strong>
-                <p>You must <a href="Account/Manage/GenerateRecoveryCodes">generate a new set of recovery codes</a> before you can log in with a recovery code.</p>
+                <strong>@Loc["NoRecoveryCodesLeft"]</strong>
+                <p>@((MarkupString)Loc["GenerateNewCodesBeforeLogin"].Value)</p>
             </div>
         }
         else if (recoveryCodesLeft == 1)
         {
             <div class="alert alert-danger">
-                <strong>You have 1 recovery code left.</strong>
-                <p>You can <a href="Account/Manage/GenerateRecoveryCodes">generate a new set of recovery codes</a>.</p>
+                <strong>@Loc["OneRecoveryCodeLeft"]</strong>
+                <p>@((MarkupString)Loc["CanGenerateNewCodes"].Value)</p>
             </div>
         }
         else if (recoveryCodesLeft <= 3)
         {
             <div class="alert alert-warning">
-                <strong>You have @recoveryCodesLeft recovery codes left.</strong>
-                <p>You should <a href="Account/Manage/GenerateRecoveryCodes">generate a new set of recovery codes</a>.</p>
-            </div>
-        }
+                <strong>@string.Format(Loc["RecoveryCodesLeft"], Loc["Word_RecoveryCode"].Value.ToLocalizedQuantity(recoveryCodesLeft,
+                            CultureInfo.CurrentUICulture))</strong>
+    <p>@((MarkupString)Loc["ShouldGenerateNewCodes"].Value)</p>
+</div>
+}
 
         if (isMachineRemembered)
         {
             <form style="display: inline-block" @formname="forget-browser" @onsubmit="OnSubmitForgetBrowserAsync" method="post">
                 <AntiforgeryToken />
-                <button type="submit" class="btn btn-primary">Forget this browser</button>
+                <button type="submit" class="btn btn-primary">@Loc["ForgetBrowser"]</button>
             </form>
         }
 
-        <a href="Account/Manage/Disable2fa" class="btn btn-primary">Disable 2FA</a>
-        <a href="Account/Manage/GenerateRecoveryCodes" class="btn btn-primary">Reset recovery codes</a>
+        <a href="Account/Manage/Disable2fa" class="btn btn-primary">@Loc["Disable2FA"]</a>
+        <a href="Account/Manage/GenerateRecoveryCodes" class="btn btn-primary">@Loc["ResetRecoveryCodes"]</a>
     }
 
-    <h4>Authenticator app</h4>
+    <h4>@Loc["AuthenticatorApp"]</h4>
     @if (!hasAuthenticator)
     {
-        <a href="Account/Manage/EnableAuthenticator" class="btn btn-primary">Add authenticator app</a>
+        <a href="Account/Manage/EnableAuthenticator" class="btn btn-primary">@Loc["AddAuthenticatorApp"]</a>
     }
     else
     {
-        <a href="Account/Manage/EnableAuthenticator" class="btn btn-primary">Set up authenticator app</a>
-        <a href="Account/Manage/ResetAuthenticator" class="btn btn-primary">Reset authenticator app</a>
+        <a href="Account/Manage/EnableAuthenticator" class="btn btn-primary">@Loc["SetupAuthenticatorApp"]</a>
+        <a href="Account/Manage/ResetAuthenticator" class="btn btn-primary">@Loc["ResetAuthenticatorApp"]</a>
     }
 }
 else
 {
     <div class="alert alert-danger">
-        <strong>Privacy and cookie policy have not been accepted.</strong>
-        <p>You must accept the policy before you can enable two factor authentication.</p>
+        <strong>@Loc["PrivacyPolicyNotAccepted"]</strong>
+        <p>@Loc["AcceptPolicyBefore2FA"]</p>
     </div>
 }
 
@@ -95,7 +101,7 @@ else
         await SignInManager.ForgetTwoFactorClientAsync();
 
         RedirectManager.RedirectToCurrentPageWithStatus(
-            "The current browser has been forgotten. When you login again from this browser you will be prompted for your 2fa code.",
-            HttpContext);
+        Loc["BrowserForgotten"],
+        HttpContext);
     }
 }

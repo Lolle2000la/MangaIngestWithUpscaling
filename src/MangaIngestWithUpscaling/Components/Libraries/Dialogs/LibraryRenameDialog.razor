@@ -2,10 +2,13 @@
 @using MangaIngestWithUpscaling.Components.Libraries.Filters
 @using MangaIngestWithUpscaling.Components.Libraries
 @using Microsoft.EntityFrameworkCore.Query
+@using Microsoft.Extensions.Localization
 @inject ApplicationDbContext DbContext
+@inject IStringLocalizer<LibraryRenameDialog> Loc
+@inject IStringLocalizer<SharedResource> SharedLoc
 
 <MudDialog>
-    <TitleContent>Edit & Preview Rename Rules</TitleContent>
+    <TitleContent>@Loc["Title"]</TitleContent>
     <DialogContent>
         <MudGrid Spacing="3">
             <MudItem xs="12" lg="6">
@@ -17,14 +20,14 @@
         </MudGrid>
     </DialogContent>
     <DialogActions>
-        <MudButton Color="Color.Primary" OnClick="Close">Close</MudButton>
+        <MudButton Color="Color.Primary" OnClick="Close">@SharedLoc["Close"]</MudButton>
     </DialogActions>
 </MudDialog>
 
 @code {
     [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
     [Parameter, EditorRequired] public required Library Library { get; set; }
-    
+
     private PreviewLibraryRenames? _previewLibraryRenamesComponent;
     private bool _chaptersLoaded = false;
 
@@ -34,7 +37,7 @@
         {
             _chaptersLoaded = true;
             // Ensure preview is updated after chapters are loaded
-            await OnRulesChanged(); 
+            await OnRulesChanged();
         }
     }
 

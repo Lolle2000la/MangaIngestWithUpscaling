@@ -10,92 +10,98 @@
 @inject IServiceProvider ServiceProvider
 @inject ISnackbar Snackbar
 @inject ILogger<PreviewLibraryRenames> Logger
+@inject IStringLocalizer<PreviewLibraryRenames> Loc
 
 <MudStack Spacing="2">
-    <MudText Typo="Typo.h5">Preview Rename Effects</MudText>
+    <MudText Typo="Typo.h5">@Loc["Title"]</MudText>
     <MudExpansionPanels>
-        <MudExpansionPanel Text="Existing Series Preview">
+        <MudExpansionPanel Text="@Loc["Panel_ExistingSeries"]">
             <MudTable T="SeriesPreview" Items="@seriesPreviews" Dense>
                 <HeaderContent>
-                    <MudTh>Original Series</MudTh>
-                    <MudTh>Renamed Series</MudTh>
+                    <MudTh>@Loc["Header_OriginalSeries"]</MudTh>
+                    <MudTh>@Loc["Header_RenamedSeries"]</MudTh>
                 </HeaderContent>
                 <RowTemplate Context="sp">
-                    <MudTd DataLabel="Original Series" Style="white-space: pre">@sp.OrigHtml</MudTd>
-                    <MudTd DataLabel="Renamed Series" Style="white-space: pre">@sp.NewNameHtml</MudTd>
+                    <MudTd DataLabel="@Loc["Header_OriginalSeries"]" Style="white-space: pre">@sp.OrigHtml</MudTd>
+                    <MudTd DataLabel="@Loc["Header_RenamedSeries"]" Style="white-space: pre">@sp.NewNameHtml</MudTd>
                 </RowTemplate>
             </MudTable>
         </MudExpansionPanel>
-        <MudExpansionPanel Text="Existing Chapter File Path Preview">
+        <MudExpansionPanel Text="@Loc["Panel_ExistingChapterPath"]">
             <MudTable T="ChapterFilePathPreview" Items="@existingChapterFilePreviews" Dense>
                 <HeaderContent>
-                    <MudTh>Series</MudTh>
-                    <MudTh>Original File Path</MudTh>
-                    <MudTh>New File Path</MudTh>
+                    <MudTh>@Loc["Header_Series"]</MudTh>
+                    <MudTh>@Loc["Header_OriginalFilePath"]</MudTh>
+                    <MudTh>@Loc["Header_NewFilePath"]</MudTh>
                 </HeaderContent>
                 <RowTemplate Context="cfp">
-                    <MudTd DataLabel="Series">@cfp.SeriesTitle</MudTd>
-                    <MudTd DataLabel="Original File Path" Style="white-space: pre">@cfp.OriginalFilePathHtml</MudTd>
-                    <MudTd DataLabel="New File Path" Style="white-space: pre">@cfp.NewFilePathHtml</MudTd>
+                    <MudTd DataLabel="@Loc["Header_Series"]">@cfp.SeriesTitle</MudTd>
+                    <MudTd DataLabel="@Loc["Header_OriginalFilePath"]" Style="white-space: pre">
+                        @cfp.OriginalFilePathHtml</MudTd>
+                    <MudTd DataLabel="@Loc["Header_NewFilePath"]" Style="white-space: pre">@cfp.NewFilePathHtml</MudTd>
                 </RowTemplate>
             </MudTable>
         </MudExpansionPanel>
-        <MudExpansionPanel Text="Existing Chapter Title Preview">
+        <MudExpansionPanel Text="@Loc["Panel_ExistingChapterTitle"]">
             <MudTable T="ChapterTitlePreview" Items="@existingChapterTitlePreviews" Dense>
                 <HeaderContent>
-                    <MudTh>Series</MudTh>
-                    <MudTh>Original Chapter Title</MudTh>
-                    <MudTh>New Chapter Title</MudTh>
+                    <MudTh>@Loc["Header_Series"]</MudTh>
+                    <MudTh>@Loc["Header_OriginalChapterTitle"]</MudTh>
+                    <MudTh>@Loc["Header_NewChapterTitle"]</MudTh>
                 </HeaderContent>
                 <RowTemplate Context="ctp">
-                    <MudTd DataLabel="Series">@ctp.SeriesTitle</MudTd>
-                    <MudTd DataLabel="Original Chapter Title"
-                           Style="white-space: pre">@ctp.OriginalChapterTitleHtml</MudTd>
-                    <MudTd DataLabel="New Chapter Title" Style="white-space: pre">@ctp.NewChapterTitleHtml</MudTd>
+                    <MudTd DataLabel="@Loc["Header_Series"]">@ctp.SeriesTitle</MudTd>
+                    <MudTd DataLabel="@Loc["Header_OriginalChapterTitle"]" Style="white-space: pre">
+                        @ctp.OriginalChapterTitleHtml</MudTd>
+                    <MudTd DataLabel="@Loc["Header_NewChapterTitle"]" Style="white-space: pre">@ctp.NewChapterTitleHtml
+                    </MudTd>
                 </RowTemplate>
             </MudTable>
         </MudExpansionPanel>
-        <MudExpansionPanel Text="Ingest - Series Title Preview">
+        <MudExpansionPanel Text="@Loc["Panel_IngestSeriesTitle"]">
             <MudTable T="IngestSeriesTitlePreview" Items="@ingestSeriesTitlePreviews" Dense>
                 <HeaderContent>
-                    <MudTh>Original Ingest Path</MudTh>
-                    <MudTh>Original Series Title</MudTh>
-                    <MudTh>New Series Title</MudTh>
+                    <MudTh>@Loc["Header_OriginalIngestPath"]</MudTh>
+                    <MudTh>@Loc["Header_OriginalSeriesTitle"]</MudTh>
+                    <MudTh>@Loc["Header_NewSeriesTitle"]</MudTh>
                 </HeaderContent>
                 <RowTemplate Context="istp">
-                    <MudTd DataLabel="Original Ingest Path">@istp.OriginalIngestPath</MudTd>
-                    <MudTd DataLabel="Original Series Title"
-                           Style="white-space: pre">@istp.OriginalSeriesTitleHtml</MudTd>
-                    <MudTd DataLabel="New Series Title" Style="white-space: pre">@istp.NewSeriesTitleHtml</MudTd>
+                    <MudTd DataLabel="@Loc["Header_OriginalIngestPath"]">@istp.OriginalIngestPath</MudTd>
+                    <MudTd DataLabel="@Loc["Header_OriginalSeriesTitle"]" Style="white-space: pre">
+                        @istp.OriginalSeriesTitleHtml</MudTd>
+                    <MudTd DataLabel="@Loc["Header_NewSeriesTitle"]" Style="white-space: pre">@istp.NewSeriesTitleHtml
+                    </MudTd>
                 </RowTemplate>
             </MudTable>
         </MudExpansionPanel>
-        <MudExpansionPanel Text="Ingest - Chapter Title Preview">
+        <MudExpansionPanel Text="@Loc["Panel_IngestChapterTitle"]">
             <MudTable T="IngestChapterTitlePreview" Items="@ingestChapterTitlePreviews" Dense>
                 <HeaderContent>
-                    <MudTh>Original Ingest Path</MudTh>
-                    <MudTh>Original Chapter Title</MudTh>
-                    <MudTh>New Chapter Title</MudTh>
+                    <MudTh>@Loc["Header_OriginalIngestPath"]</MudTh>
+                    <MudTh>@Loc["Header_OriginalChapterTitle"]</MudTh>
+                    <MudTh>@Loc["Header_NewChapterTitle"]</MudTh>
                 </HeaderContent>
                 <RowTemplate Context="ictp">
-                    <MudTd DataLabel="Original Ingest Path">@ictp.OriginalIngestPath</MudTd>
-                    <MudTd DataLabel="Original Chapter Title"
-                           Style="white-space: pre">@ictp.OriginalChapterTitleHtml</MudTd>
-                    <MudTd DataLabel="New Chapter Title" Style="white-space: pre">@ictp.NewChapterTitleHtml</MudTd>
+                    <MudTd DataLabel="@Loc["Header_OriginalIngestPath"]">@ictp.OriginalIngestPath</MudTd>
+                    <MudTd DataLabel="@Loc["Header_OriginalChapterTitle"]" Style="white-space: pre">
+                        @ictp.OriginalChapterTitleHtml</MudTd>
+                    <MudTd DataLabel="@Loc["Header_NewChapterTitle"]" Style="white-space: pre">@ictp.NewChapterTitleHtml
+                    </MudTd>
                 </RowTemplate>
             </MudTable>
         </MudExpansionPanel>
-        <MudExpansionPanel Text="Ingest - File Name Preview">
+        <MudExpansionPanel Text="@Loc["Panel_IngestFileName"]">
             <MudTable T="IngestFileNamePreview" Items="@ingestFileNamePreviews" Dense>
                 <HeaderContent>
-                    <MudTh>Original Ingest Path</MudTh>
-                    <MudTh>Original File Name</MudTh>
-                    <MudTh>New File Name</MudTh>
+                    <MudTh>@Loc["Header_OriginalIngestPath"]</MudTh>
+                    <MudTh>@Loc["Header_OriginalFileName"]</MudTh>
+                    <MudTh>@Loc["Header_NewFileName"]</MudTh>
                 </HeaderContent>
                 <RowTemplate Context="ifnp">
-                    <MudTd DataLabel="Original Ingest Path">@ifnp.OriginalIngestPath</MudTd>
-                    <MudTd DataLabel="Original File Name" Style="white-space: pre">@ifnp.OriginalFileNameHtml</MudTd>
-                    <MudTd DataLabel="New File Name" Style="white-space: pre">@ifnp.NewFileNameHtml</MudTd>
+                    <MudTd DataLabel="@Loc["Header_OriginalIngestPath"]">@ifnp.OriginalIngestPath</MudTd>
+                    <MudTd DataLabel="@Loc["Header_OriginalFileName"]" Style="white-space: pre">
+                        @ifnp.OriginalFileNameHtml</MudTd>
+                    <MudTd DataLabel="@Loc["Header_NewFileName"]" Style="white-space: pre">@ifnp.NewFileNameHtml</MudTd>
                 </RowTemplate>
             </MudTable>
         </MudExpansionPanel>
@@ -183,15 +189,15 @@
 
             lastPreviewGeneration = new CancellationTokenSource();
             _ = GeneratePreviews(lastPreviewGeneration.Token)
-                .ContinueWith(async (t, o) =>
+            .ContinueWith(async (t, o) =>
+            {
+                await InvokeAsync(StateHasChanged);
+                if (t.IsFaulted)
                 {
-                    await InvokeAsync(StateHasChanged);
-                    if (t.IsFaulted)
-                    {
-                        Snackbar.Add("Error generating previews: " + t.Exception?.GetBaseException().Message, Severity.Error);
-                        Logger.LogError(t.Exception, "Error generating previews");
-                    }
-                }, null, lastPreviewGeneration.Token);
+                    Snackbar.Add("Error generating previews: " + t.Exception?.GetBaseException().Message, Severity.Error);
+                    Logger.LogError(t.Exception, "Error generating previews");
+                }
+            }, null, lastPreviewGeneration.Token);
         }
         catch (Exception ex)
         {
@@ -202,23 +208,23 @@
     protected override void OnInitialized()
     {
         _seriesPreviewSource.Connect()
-            .Sort(SortExpressionComparer<SeriesPreview>.Ascending(p => p.Orig))
-            .Bind(out seriesPreviews).Subscribe();
+        .Sort(SortExpressionComparer<SeriesPreview>.Ascending(p => p.Orig))
+        .Bind(out seriesPreviews).Subscribe();
         _existingChapterFilePreviewsSource.Connect()
-            .Sort(SortExpressionComparer<ChapterFilePathPreview>.Ascending(p => p.OriginalFilePath))
-            .Bind(out existingChapterFilePreviews).Subscribe();
+        .Sort(SortExpressionComparer<ChapterFilePathPreview>.Ascending(p => p.OriginalFilePath))
+        .Bind(out existingChapterFilePreviews).Subscribe();
         _existingChapterTitlePreviewsSource.Connect()
-            .Sort(SortExpressionComparer<ChapterTitlePreview>.Ascending(p => p.OriginalChapterTitle))
-            .Bind(out existingChapterTitlePreviews).Subscribe();
+        .Sort(SortExpressionComparer<ChapterTitlePreview>.Ascending(p => p.OriginalChapterTitle))
+        .Bind(out existingChapterTitlePreviews).Subscribe();
         _ingestSeriesTitlePreviewsSource.Connect()
-            .Sort(SortExpressionComparer<IngestSeriesTitlePreview>.Ascending(p => p.OriginalSeriesTitle))
-            .Bind(out ingestSeriesTitlePreviews).Subscribe();
+        .Sort(SortExpressionComparer<IngestSeriesTitlePreview>.Ascending(p => p.OriginalSeriesTitle))
+        .Bind(out ingestSeriesTitlePreviews).Subscribe();
         _ingestChapterTitlePreviewsSource.Connect()
-            .Sort(SortExpressionComparer<IngestChapterTitlePreview>.Ascending(p => p.OriginalChapterTitle))
-            .Bind(out ingestChapterTitlePreviews).Subscribe();
+        .Sort(SortExpressionComparer<IngestChapterTitlePreview>.Ascending(p => p.OriginalChapterTitle))
+        .Bind(out ingestChapterTitlePreviews).Subscribe();
         _ingestFileNamePreviewsSource.Connect()
-            .Sort(SortExpressionComparer<IngestFileNamePreview>.Ascending(p => p.OriginalFileName))
-            .Bind(out ingestFileNamePreviews).Subscribe();
+        .Sort(SortExpressionComparer<IngestFileNamePreview>.Ascending(p => p.OriginalFileName))
+        .Bind(out ingestFileNamePreviews).Subscribe();
         base.OnInitialized();
     }
 
@@ -232,17 +238,18 @@
             }
 
             lastPreviewGeneration = new CancellationTokenSource();
-            var combinedCancellationToken = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lastPreviewGeneration.Token).Token;
+            var combinedCancellationToken = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken,
+            lastPreviewGeneration.Token).Token;
             _ = GeneratePreviews(combinedCancellationToken)
-                .ContinueWith(async (t, o) =>
+            .ContinueWith(async (t, o) =>
+            {
+                await InvokeAsync(StateHasChanged);
+                if (t.IsFaulted)
                 {
-                    await InvokeAsync(StateHasChanged);
-                    if (t.IsFaulted)
-                    {
-                        Snackbar.Add("Error generating previews: " + t.Exception?.GetBaseException().Message, Severity.Error);
-                        Logger.LogError(t.Exception, "Error generating previews");
-                    }
-                }, null, combinedCancellationToken);
+                    Snackbar.Add("Error generating previews: " + t.Exception?.GetBaseException().Message, Severity.Error);
+                    Logger.LogError(t.Exception, "Error generating previews");
+                }
+            }, null, combinedCancellationToken);
             ;
         }
         catch (Exception ex)
@@ -264,14 +271,14 @@
 
             // Clear previous previews
             await InvokeAsync(() =>
-            {
-                _seriesPreviewSource.Clear();
-                _existingChapterFilePreviewsSource.Clear();
-                _existingChapterTitlePreviewsSource.Clear();
-                _ingestSeriesTitlePreviewsSource.Clear();
-                _ingestChapterTitlePreviewsSource.Clear();
-                _ingestFileNamePreviewsSource.Clear();
-            });
+    {
+            _seriesPreviewSource.Clear();
+            _existingChapterFilePreviewsSource.Clear();
+            _existingChapterTitlePreviewsSource.Clear();
+            _ingestSeriesTitlePreviewsSource.Clear();
+            _ingestChapterTitlePreviewsSource.Clear();
+            _ingestFileNamePreviewsSource.Clear();
+        });
 
             if (Library.MangaSeries != null && Library.RenameRules != null)
             {
@@ -279,7 +286,7 @@
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var dummy = new FoundChapter("", "", ChapterStorageType.Cbz,
-                        new ExtractedMetadata(m.PrimaryTitle, null, null));
+            new ExtractedMetadata(m.PrimaryTitle, null, null));
                     var renamed = renamingService.ApplyRenameRules(dummy, Library.RenameRules);
                     if (renamed.Metadata.Series != m.PrimaryTitle)
                     {
@@ -290,10 +297,10 @@
                             NewNameHtml = ComputeDiffHtml(m.PrimaryTitle, renamed.Metadata.Series, DiffHighlightType.Addition)
                         };
                         _ = InvokeAsync(() =>
-                        {
-                            _seriesPreviewSource.Add(preview);
-                            StateHasChanged();
-                        });
+                {
+            _seriesPreviewSource.Add(preview);
+            StateHasChanged();
+        });
                     }
                 }
 
@@ -301,8 +308,8 @@
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     await foreach (var chapter in dbContext.Chapters.Include(c => c.Manga).ThenInclude(m => m.Library)
-                                       .Where(c => c.MangaId == series.Id)
-                                       .AsAsyncEnumerable().WithCancellation(cancellationToken))
+            .Where(c => c.MangaId == series.Id)
+            .AsAsyncEnumerable().WithCancellation(cancellationToken))
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         var meta = await metadataHandlingService.GetSeriesAndTitleFromComicInfoAsync(chapter.NotUpscaledFullPath);
@@ -317,10 +324,10 @@
                                 NewFilePathHtml = ComputeDiffHtml(chapter.FileName, renamed.FileName, DiffHighlightType.Addition)
                             };
                             _ = InvokeAsync(() =>
-                            {
-                                _existingChapterFilePreviewsSource.Add(preview);
-                                StateHasChanged();
-                            });
+                    {
+            _existingChapterFilePreviewsSource.Add(preview);
+            StateHasChanged();
+        });
                         }
 
                         var origTitle = original.Metadata.ChapterTitle ?? original.FileName;
@@ -334,10 +341,10 @@
                                 NewChapterTitleHtml = ComputeDiffHtml(origTitle, newTitle, DiffHighlightType.Addition)
                             };
                             _ = InvokeAsync(() =>
-                            {
-                                _existingChapterTitlePreviewsSource.Add(preview);
-                                StateHasChanged();
-                            });
+                    {
+            _existingChapterTitlePreviewsSource.Add(preview);
+            StateHasChanged();
+        });
                         }
                     }
                 }
@@ -360,10 +367,10 @@
                             NewSeriesTitleHtml = ComputeDiffHtml(origChap.Metadata.Series, renamed.Metadata.Series, DiffHighlightType.Addition)
                         };
                         _ = InvokeAsync(() =>
-                        {
-                            _ingestSeriesTitlePreviewsSource.Add(preview);
-                            StateHasChanged();
-                        });
+                {
+            _ingestSeriesTitlePreviewsSource.Add(preview);
+            StateHasChanged();
+        });
                     }
 
                     var origCT = origChap.Metadata.ChapterTitle ?? origChap.FileName;
@@ -377,10 +384,10 @@
                             NewChapterTitleHtml = ComputeDiffHtml(origCT, newCT, DiffHighlightType.Addition)
                         };
                         _ = InvokeAsync(() =>
-                        {
-                            _ingestChapterTitlePreviewsSource.Add(preview);
-                            StateHasChanged();
-                        });
+                {
+            _ingestChapterTitlePreviewsSource.Add(preview);
+            StateHasChanged();
+        });
                     }
 
                     if (origChap.FileName != renamed.FileName)
@@ -392,10 +399,10 @@
                             NewFileNameHtml = ComputeDiffHtml(origChap.FileName, renamed.FileName, DiffHighlightType.Addition)
                         };
                         _ = InvokeAsync(() =>
-                        {
-                            _ingestFileNamePreviewsSource.Add(preview);
-                            StateHasChanged();
-                        });
+                {
+            _ingestFileNamePreviewsSource.Add(preview);
+            StateHasChanged();
+        });
                     }
                 }
             }
@@ -421,7 +428,7 @@
 
         int end = 0;
         while (end < minLength - start &&
-               baseString[baseString.Length - 1 - end] == displayString[displayString.Length - 1 - end])
+        baseString[baseString.Length - 1 - end] == displayString[displayString.Length - 1 - end])
         {
             end++;
         }

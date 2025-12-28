@@ -1,19 +1,22 @@
 ﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.MangaManagement
+@using Microsoft.Extensions.Localization
 @inject ApplicationDbContext DbContext
 @inject IMangaLibraryMover MangaMover
+@inject IStringLocalizer<MoveMangasToLibraryDialog> Loc
 
 <MudDialog>
     <DialogContent>
         <MudStack>
             <MudText>
-                Move @(Mangas.Count > 1 ? $"{Mangas.Count} Mangas" : '"' + Mangas.First().PrimaryTitle + '"')?
+                @(Mangas.Count > 1 ? Loc["Title_Multiple", Mangas.Count] :
+                                Loc["Title_Single", Mangas.First().PrimaryTitle])
             </MudText>
             <MudText Color="Color.Error">
-                This will also move <b>ALL</b> files associated with the Manga.
+                @((MarkupString)Loc["Warning_MoveFiles"].Value)
             </MudText>
-            <MudSelect Label="The libary to move the Manga into." T="Library" @bind-Value="selected">
+            <MudSelect Label="@Loc["SelectLibrary"]" T="Library" @bind-Value="selected">
                 @foreach (var library in DbContext.Libraries)
                 {
                     <MudSelectItem T="Library" Value="@library">@library.Name</MudSelectItem>
@@ -22,12 +25,9 @@
         </MudStack>
     </DialogContent>
     <DialogActions>
-        <MudButton OnClick="Cancel">Cancel</MudButton>
-        <MudButton StartIcon="@Icons.Material.Filled.MergeType"
-                   Color="Color.Primary"
-                   Variant="Variant.Filled"
-                   Disabled="selected == null"
-                   OnClick="Submit">Move</MudButton>
+        <MudButton OnClick="Cancel">@Loc["Button_Cancel"]</MudButton>
+        <MudButton StartIcon="@Icons.Material.Filled.MergeType" Color="Color.Primary" Variant="Variant.Filled"
+            Disabled="selected == null" OnClick="Submit">@Loc["Button_Move"]</MudButton>
     </DialogActions>
 </MudDialog>
 

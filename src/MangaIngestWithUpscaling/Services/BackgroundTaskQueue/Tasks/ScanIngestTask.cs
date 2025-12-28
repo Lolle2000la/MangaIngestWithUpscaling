@@ -1,5 +1,6 @@
 ﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Services.ChapterManagement;
+using Microsoft.Extensions.Localization;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 
@@ -18,6 +19,7 @@ public class ScanIngestTask : BaseTask
     )
     {
         var logger = services.GetRequiredService<ILogger<ScanIngestTask>>();
+        var localizer = services.GetRequiredService<IStringLocalizer<ScanIngestTask>>();
         var dbContext = services.GetRequiredService<ApplicationDbContext>();
         var library = await dbContext.Libraries.FindAsync(
             [LibraryId],
@@ -27,7 +29,7 @@ public class ScanIngestTask : BaseTask
 
         if (library == null)
         {
-            throw new InvalidOperationException($"Library with ID {LibraryId} not found.");
+            throw new InvalidOperationException(localizer["Error_LibraryNotFound", LibraryId]);
         }
         else
         {

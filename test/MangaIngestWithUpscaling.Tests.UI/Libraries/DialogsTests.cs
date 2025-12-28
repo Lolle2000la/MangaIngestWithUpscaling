@@ -7,6 +7,7 @@ using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 using MudBlazor;
 using MudBlazor.Services;
 using NSubstitute;
@@ -39,6 +40,7 @@ public class DialogsTests : BunitContext
     private void RegisterServices()
     {
         Services.AddMudServices();
+        Services.AddSingleton(typeof(IStringLocalizer<>), typeof(MockStringLocalizer<>));
         Services.AddSingleton(_dbContext);
 
         // Setup MudBlazor JavaScript interop

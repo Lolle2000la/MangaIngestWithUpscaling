@@ -1,4 +1,6 @@
 ﻿@inherits LayoutComponentBase
+@using Microsoft.Extensions.Localization
+@inject IStringLocalizer<MainLayout> Loc
 
 <MudThemeProvider @ref="@_mudThemeProvider" @bind-IsDarkMode="@_isDarkMode" />
 <MudPopoverProvider />
@@ -7,15 +9,18 @@
 
 <MudLayout>
     <MudAppBar Elevation="1">
-        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start" OnClick="@((e) => DrawerToggle())" />
+        <MudIconButton Icon="@Icons.Material.Filled.Menu" Color="Color.Inherit" Edge="Edge.Start"
+            OnClick="@((e) => DrawerToggle())" />
         <MudDrawerHeader>
-            <a href=""><MudText Typo="Typo.h5" Class="mt-1" Style="color: white">Manga Ingest Dashboard</MudText></a>
+            <a href="">
+                <MudText Typo="Typo.h5" Class="mt-1" Style="color: white">@Loc["MangaIngestDashboard"]</MudText>
+            </a>
         </MudDrawerHeader>
     </MudAppBar>
 
     <MudDrawer @bind-Open="@_drawerOpen" Elevation="2">
         <MudDrawerHeader>
-            <MudText Typo="Typo.h6">Manga Ingest with Upscaling</MudText>
+            <MudText Typo="Typo.h6">@Loc["MangaIngestWithUpscaling"]</MudText>
         </MudDrawerHeader>
         <NavMenu />
     </MudDrawer>

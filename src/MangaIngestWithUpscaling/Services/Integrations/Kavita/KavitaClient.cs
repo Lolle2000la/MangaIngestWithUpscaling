@@ -1,17 +1,21 @@
 ﻿using MangaIngestWithUpscaling.Configuration;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Options;
 
 namespace MangaIngestWithUpscaling.Services.Integrations.Kavita;
 
-public class KavitaClient(HttpClient client, IOptions<KavitaConfiguration> configuration)
-    : IKavitaClient
+public class KavitaClient(
+    HttpClient client,
+    IOptions<KavitaConfiguration> configuration,
+    IStringLocalizer<KavitaClient> localizer
+) : IKavitaClient
 {
     /// <inheritdoc />
     public async Task ScanFolder(string folderPath)
     {
         if (string.IsNullOrWhiteSpace(configuration.Value.ApiKey))
         {
-            throw new InvalidOperationException("Kavita API key is not configured.");
+            throw new InvalidOperationException(localizer["Error_KavitaApiKeyNotConfigured"]);
         }
 
         await client.PostAsJsonAsync(

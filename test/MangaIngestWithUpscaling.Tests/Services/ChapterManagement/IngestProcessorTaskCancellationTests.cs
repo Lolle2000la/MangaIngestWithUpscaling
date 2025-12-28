@@ -20,6 +20,7 @@ using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -113,7 +114,8 @@ public class IngestProcessorTaskCancellationTests : IDisposable
             processor,
             imageFilter,
             chapterProcessingService,
-            splitCoordinator
+            splitCoordinator,
+            Substitute.For<IStringLocalizer<IngestProcessor>>()
         );
 
         // Library and series

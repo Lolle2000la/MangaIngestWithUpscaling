@@ -1,11 +1,12 @@
 ﻿using System.IO.Compression;
 using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
+using Microsoft.Extensions.Localization;
 
 namespace MangaIngestWithUpscaling.Shared.Services.CbzConversion;
 
 [RegisterScoped]
-public class CbzConverter : ICbzConverter
+public class CbzConverter(IStringLocalizer<CbzConverter> localizer) : ICbzConverter
 {
     public FoundChapter ConvertToCbz(FoundChapter chapter, string foundIn)
     {
@@ -29,14 +30,14 @@ public class CbzConverter : ICbzConverter
             };
         }
 
-        throw new InvalidOperationException("Chapter is not in a supported format.");
+        throw new InvalidOperationException(localizer["Error_UnsupportedChapterFormat"]);
     }
 
     /// <inheritdoc/>
     public bool FixImageExtensionsInCbz(string cbzPath)
     {
         if (!File.Exists(cbzPath))
-            throw new FileNotFoundException($"CBZ file not found: {cbzPath}");
+            throw new FileNotFoundException(localizer["Error_CbzFileNotFound", cbzPath]);
 
         var tempExtractDir = Path.Combine(Path.GetTempPath(), $"cbz_fix_{Guid.NewGuid()}");
         var tempCbzPath = Path.Combine(Path.GetTempPath(), $"cbz_temp_{Guid.NewGuid()}.cbz");
