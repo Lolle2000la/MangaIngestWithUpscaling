@@ -10,7 +10,7 @@ namespace MangaIngestWithUpscaling.Tests.UI.Account;
 ///
 /// Note: These are logic tests rather than full UI component tests because the Index.razor
 /// component requires complex authentication and HTTP context setup that is difficult to
-/// mock properly in bUnit tests.
+/// test properly in a unit test environment.
 /// </summary>
 public class CulturePreferenceTests
 {
@@ -107,7 +107,7 @@ public class CulturePreferenceTests
         bool shouldClearCookie = false;
         if (newPreferredCulture != user.PreferredCulture)
         {
-            // This block WILL execute because "" != null in C#
+            // This block will execute because "" != null in C#
             user.PreferredCulture = string.IsNullOrEmpty(newPreferredCulture)
                 ? null
                 : newPreferredCulture;
