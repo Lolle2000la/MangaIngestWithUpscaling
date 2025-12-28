@@ -7,6 +7,7 @@ using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 
@@ -47,6 +48,7 @@ public class DetectSplitCandidatesTask : BaseTask
         var splitDetectionService = services.GetRequiredService<ISplitDetectionService>();
         var splitProcessingService = services.GetRequiredService<ISplitProcessingService>();
         var logger = services.GetRequiredService<ILogger<DetectSplitCandidatesTask>>();
+        var localizer = services.GetRequiredService<IStringLocalizer<DetectSplitCandidatesTask>>();
 
         var chapter = await dbContext
             .Chapters.Include(c => c.Manga)
@@ -55,7 +57,7 @@ public class DetectSplitCandidatesTask : BaseTask
 
         if (chapter == null)
         {
-            throw new InvalidOperationException($"Chapter {ChapterId} not found.");
+            throw new InvalidOperationException(localizer["Error_ChapterNotFound", ChapterId]);
         }
 
         var libraryPath = chapter.Manga.Library.NotUpscaledLibraryPath;
@@ -108,7 +110,9 @@ public class DetectSplitCandidatesTask : BaseTask
             }
             else
             {
-                throw new FileNotFoundException($"Chapter file/folder not found at {chapterPath}");
+                throw new FileNotFoundException(
+                    localizer["Error_ChapterFileOrFolderNotFound", chapterPath]
+                );
             }
 
             var progressReporter = new Progress<UpscaleProgress>(p =>

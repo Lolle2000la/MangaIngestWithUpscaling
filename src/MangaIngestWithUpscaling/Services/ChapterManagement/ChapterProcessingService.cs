@@ -6,6 +6,7 @@ using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 
 namespace MangaIngestWithUpscaling.Services.ChapterManagement;
 
@@ -17,6 +18,7 @@ public partial class ChapterProcessingService(
     ApplicationDbContext dbContext,
     IUpscalerJsonHandlingService upscalerJsonHandlingService,
     IFileSystem fileSystem,
+    IStringLocalizer<ChapterProcessingService> localizer,
     ILogger<ChapterProcessingService> logger
 ) : IChapterProcessingService
 {
@@ -183,7 +185,9 @@ public partial class ChapterProcessingService(
     {
         if (string.IsNullOrEmpty(library.UpscaledLibraryPath))
         {
-            throw new InvalidOperationException("Library has no upscaled path configured");
+            throw new InvalidOperationException(
+                localizer["Error_UpscaledLibraryPathNotConfigured"]
+            );
         }
 
         try

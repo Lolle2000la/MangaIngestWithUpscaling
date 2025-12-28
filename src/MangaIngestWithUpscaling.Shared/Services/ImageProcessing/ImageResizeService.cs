@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
 using NetVips;
 
@@ -14,11 +15,17 @@ public class ImageResizeService : IImageResizeService
 
     private readonly IFileSystem _fileSystem;
     private readonly ILogger<ImageResizeService> _logger;
+    private readonly IStringLocalizer<ImageResizeService> _localizer;
 
-    public ImageResizeService(ILogger<ImageResizeService> logger, IFileSystem fileSystem)
+    public ImageResizeService(
+        ILogger<ImageResizeService> logger,
+        IFileSystem fileSystem,
+        IStringLocalizer<ImageResizeService> localizer
+    )
     {
         _logger = logger;
         _fileSystem = fileSystem;
+        _localizer = localizer;
     }
 
     public async Task<TempResizedCbz> CreateResizedTempCbzAsync(
@@ -42,13 +49,13 @@ public class ImageResizeService : IImageResizeService
     {
         if (!File.Exists(inputCbzPath))
         {
-            throw new FileNotFoundException($"Input CBZ file not found: {inputCbzPath}");
+            throw new FileNotFoundException(_localizer["Error_InputCbzFileNotFound", inputCbzPath]);
         }
 
         if (options.MaxDimension.HasValue && options.MaxDimension.Value <= 0)
         {
             throw new ArgumentException(
-                "Maximum dimension must be greater than 0",
+                _localizer["Error_MaxDimensionMustBePositive"],
                 nameof(options)
             );
         }

@@ -15,6 +15,7 @@ using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Options;
 
 namespace MangaIngestWithUpscaling.Services.LibraryIntegrity;
@@ -30,7 +31,8 @@ public partial class LibraryIntegrityChecker(
     ICbzConverter cbzConverter,
     ILogger<LibraryIntegrityChecker> logger,
     IOptions<IntegrityCheckerConfig> configOptions,
-    ISplitProcessingCoordinator splitProcessingCoordinator
+    ISplitProcessingCoordinator splitProcessingCoordinator,
+    IStringLocalizer<LibraryIntegrityChecker> localizer
 ) : ILibraryIntegrityChecker
 {
     // Bound concurrency to avoid overloading disk/CPU and to keep services thread-safe
@@ -757,9 +759,7 @@ public partial class LibraryIntegrityChecker(
                     );
                 }
 
-                throw new InvalidDataException(
-                    "The upscaled chapter does not match the outward number of pages to the original chapter."
-                );
+                throw new InvalidDataException(localizer["Error_UpscaledChapterPageCountMismatch"]);
             }
         }
         catch (Exception ex)

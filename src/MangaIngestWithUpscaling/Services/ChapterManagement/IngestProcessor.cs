@@ -22,6 +22,7 @@ using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 
 namespace MangaIngestWithUpscaling.Services.ChapterManagement;
 
@@ -41,7 +42,8 @@ public partial class IngestProcessor(
     UpscaleTaskProcessor upscaleTaskProcessor,
     IImageFilterService imageFilterService,
     IChapterProcessingService chapterProcessingService,
-    ISplitProcessingCoordinator splitProcessingCoordinator
+    ISplitProcessingCoordinator splitProcessingCoordinator,
+    IStringLocalizer<IngestProcessor> localizer
 ) : IIngestProcessor
 {
     public async Task ProcessAsync(Library library, CancellationToken cancellationToken)
@@ -663,7 +665,11 @@ public partial class IngestProcessor(
                         if (!File.Exists(mergedTargetPath))
                         {
                             throw new InvalidOperationException(
-                                $"Merged chapter file {mergedChapter.FileName} was not found at expected location: {mergedTargetPath}"
+                                localizer[
+                                    "Error_MergedChapterFileNotFound",
+                                    mergedChapter.FileName,
+                                    mergedTargetPath
+                                ]
                             );
                         }
 

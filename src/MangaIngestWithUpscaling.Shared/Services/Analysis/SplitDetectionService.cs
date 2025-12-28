@@ -5,6 +5,7 @@ using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Python;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
 
 namespace MangaIngestWithUpscaling.Shared.Services.Analysis;
@@ -12,7 +13,8 @@ namespace MangaIngestWithUpscaling.Shared.Services.Analysis;
 [RegisterScoped]
 public class SplitDetectionService(
     IPythonService pythonService,
-    ILogger<SplitDetectionService> logger
+    ILogger<SplitDetectionService> logger,
+    IStringLocalizer<SplitDetectionService> localizer
 ) : ISplitDetectionService
 {
     public const int CURRENT_DETECTOR_VERSION = 1;
@@ -75,7 +77,7 @@ public class SplitDetectionService(
         }
         else
         {
-            throw new FileNotFoundException($"Input path not found: {inputPath}");
+            throw new FileNotFoundException(localizer["Error_InputPathNotFound", inputPath]);
         }
 
         return results;
@@ -93,15 +95,15 @@ public class SplitDetectionService(
 
         if (!File.Exists(scriptPath))
         {
-            throw new FileNotFoundException($"Split detection script not found at {scriptPath}");
+            throw new FileNotFoundException(localizer["Error_ScriptNotFound", scriptPath]);
         }
         if (!File.Exists(checkpointPath))
         {
-            throw new FileNotFoundException($"Model checkpoint not found at {checkpointPath}");
+            throw new FileNotFoundException(localizer["Error_CheckpointNotFound", checkpointPath]);
         }
         if (!File.Exists(configPath))
         {
-            throw new FileNotFoundException($"Model config not found at {configPath}");
+            throw new FileNotFoundException(localizer["Error_ConfigNotFound", configPath]);
         }
 
         // Quote paths to handle spaces
@@ -129,7 +131,7 @@ public class SplitDetectionService(
                 );
                 if (result == null)
                 {
-                    throw new JsonException("Deserialized result is null");
+                    throw new JsonException(localizer["Error_DeserializationFailed"]);
                 }
                 return result;
             }

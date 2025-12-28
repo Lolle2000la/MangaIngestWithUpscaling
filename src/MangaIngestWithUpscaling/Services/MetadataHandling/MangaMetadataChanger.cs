@@ -9,6 +9,7 @@ using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Localization;
 using MudBlazor;
 
 namespace MangaIngestWithUpscaling.Services.MetadataHandling;
@@ -21,7 +22,8 @@ public class MangaMetadataChanger(
     ILogger<MangaMetadataChanger> logger,
     ITaskQueue taskQueue,
     IFileSystem fileSystem,
-    IChapterChangedNotifier chapterChangedNotifier
+    IChapterChangedNotifier chapterChangedNotifier,
+    IStringLocalizer<MangaMetadataChanger> loc
 ) : IMangaMetadataChanger
 {
     /// <inheritdoc/>
@@ -33,19 +35,17 @@ public class MangaMetadataChanger(
     {
         if (!fileSystem.FileExists(origChapterPath))
         {
-            throw new InvalidOperationException("Chapter file not found.");
+            throw new InvalidOperationException(loc["Error_ChapterFileNotFound"]);
         }
 
         if (chapter.Manga == null || chapter.Manga.Library == null)
         {
-            throw new ArgumentNullException(
-                "Chapter manga or library not found. Please ensure you have loaded it with the chapter."
-            );
+            throw new ArgumentNullException(loc["Error_MangaOrLibraryNotFound"]);
         }
 
         if (chapter.Manga.Library.UpscaledLibraryPath == null)
         {
-            throw new InvalidOperationException("Upscaled library path not set.");
+            throw new InvalidOperationException(loc["Error_UpscaledLibraryPathNotSet"]);
         }
 
         await UpdateChapterTitle(newTitle, origChapterPath);
@@ -88,11 +88,10 @@ public class MangaMetadataChanger(
         if (possibleCurrent != null)
         {
             bool? consentToMerge = await dialogService.ShowMessageBox(
-                "Merge into existing manga of same name?",
-                "The title you are trying to rename to already has an existing entry. "
-                    + "Do you want to merge this manga into the existing one?",
-                yesText: "Merge",
-                cancelText: "Cancel"
+                loc["Dialog_MergeManga_Title"],
+                loc["Dialog_MergeManga_Content"],
+                yesText: loc["Dialog_MergeManga_Merge"],
+                cancelText: loc["Dialog_MergeManga_Cancel"]
             );
             if (consentToMerge == true)
             {
@@ -116,11 +115,7 @@ public class MangaMetadataChanger(
 
         if (manga.Library == null)
         {
-            logger.LogError(
-                "Manga {MangaId} (Title: {PrimaryTitle}) must have an associated library to be renamed. Aborting rename.",
-                manga.Id,
-                manga.PrimaryTitle
-            );
+            logger.LogError(loc["Error_MangaMustHaveLibrary"], manga.Id, manga.PrimaryTitle);
             return RenameResult.Cancelled;
         }
 

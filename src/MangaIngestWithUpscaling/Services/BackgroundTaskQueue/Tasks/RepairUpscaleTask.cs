@@ -7,6 +7,7 @@ using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 
@@ -63,6 +64,7 @@ public class RepairUpscaleTask : BaseTask
     )
     {
         var logger = services.GetRequiredService<ILogger<RepairUpscaleTask>>();
+        var localizer = services.GetRequiredService<IStringLocalizer<RepairUpscaleTask>>();
         var dbContext = services.GetRequiredService<ApplicationDbContext>();
         var metadataChanger = services.GetRequiredService<IMangaMetadataChanger>();
         var metadataHandling = services.GetRequiredService<IMetadataHandlingService>();
@@ -84,14 +86,23 @@ public class RepairUpscaleTask : BaseTask
         if (chapter == null || upscalerProfile == null)
         {
             throw new InvalidOperationException(
-                $"Chapter ({chapter?.RelativePath ?? "Not found"}) or upscaler profile ({upscalerProfile?.Name ?? "Not found"}, id: {UpscalerProfileId}) not found."
+                localizer[
+                    "Error_ChapterOrProfileNotFound",
+                    chapter?.RelativePath ?? "Not found",
+                    upscalerProfile?.Name ?? "Not found",
+                    UpscalerProfileId
+                ]
             );
         }
 
         if (chapter.UpscaledFullPath == null)
         {
             throw new InvalidOperationException(
-                $"Upscaled library path of library {chapter.Manga?.Library?.Name ?? "Unknown"} ({chapter.Manga?.Library?.Id}) not set."
+                localizer[
+                    "Error_UpscaledLibraryPathNotSet",
+                    chapter.Manga?.Library?.Name ?? "Unknown",
+                    chapter.Manga?.Library?.Id
+                ]
             );
         }
 

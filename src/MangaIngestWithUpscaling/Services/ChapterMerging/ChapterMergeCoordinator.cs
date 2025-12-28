@@ -8,6 +8,7 @@ using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 
 namespace MangaIngestWithUpscaling.Services.ChapterMerging;
 
@@ -18,6 +19,7 @@ public class ChapterMergeCoordinator(
     IChapterMergeUpscaleTaskManager upscaleTaskManager,
     ITaskQueue taskQueue,
     IMetadataHandlingService metadataHandlingService,
+    IStringLocalizer<ChapterMergeCoordinator> localizer,
     ILogger<ChapterMergeCoordinator> logger
 ) : IChapterMergeCoordinator
 {
@@ -289,7 +291,7 @@ public class ChapterMergeCoordinator(
             if (!compatibility.CanMerge)
             {
                 throw new InvalidOperationException(
-                    $"Cannot merge chapters: {compatibility.Reason}"
+                    localizer["Error_CannotMergeChapters", compatibility.Reason]
                 );
             }
 
@@ -1226,7 +1228,7 @@ public class ChapterMergeCoordinator(
         if (!File.Exists(existingMergedFilePath))
         {
             throw new InvalidOperationException(
-                $"Existing merged chapter file not found: {existingMergedFilePath}"
+                localizer["Error_ExistingMergedChapterFileNotFound", existingMergedFilePath]
             );
         }
 

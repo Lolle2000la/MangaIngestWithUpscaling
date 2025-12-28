@@ -12,6 +12,7 @@ using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 
 namespace MangaIngestWithUpscaling.Services.Analysis;
 
@@ -21,7 +22,8 @@ public class SplitApplicationService(
     ISplitProcessingCoordinator splitProcessingCoordinator,
     ISplitApplier splitApplier,
     IUpscaler upscaler,
-    ILogger<SplitApplicationService> logger
+    ILogger<SplitApplicationService> logger,
+    IStringLocalizer<SplitApplicationService> localizer
 ) : ISplitApplicationService
 {
     public async Task ApplySplitsAsync(
@@ -38,7 +40,7 @@ public class SplitApplicationService(
 
         if (chapter == null)
         {
-            throw new InvalidOperationException($"Chapter {chapterId} not found.");
+            throw new InvalidOperationException(localizer["Error_ChapterNotFound", chapterId]);
         }
 
         var findings = await dbContext
@@ -68,7 +70,7 @@ public class SplitApplicationService(
         if (!File.Exists(originalCbzPath))
         {
             throw new FileNotFoundException(
-                $"Original chapter file not found at {originalCbzPath}"
+                localizer["Error_OriginalChapterFileNotFound", originalCbzPath]
             );
         }
 

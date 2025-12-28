@@ -6,6 +6,7 @@ using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Python;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -19,7 +20,8 @@ public class MangaJaNaiUpscaler(
     IFileSystem fileSystem,
     IMetadataHandlingService metadataHandling,
     IUpscalerJsonHandlingService upscalerJsonHandlingService,
-    IImageResizeService imageResizeService
+    IImageResizeService imageResizeService,
+    IStringLocalizer<MangaJaNaiUpscaler> localizer
 ) : IUpscaler
 {
     private record ModelPackage(
@@ -232,7 +234,7 @@ public class MangaJaNaiUpscaler(
     {
         if (!File.Exists(inputPath))
         {
-            throw new FileNotFoundException("Input file not found", inputPath);
+            throw new FileNotFoundException(localizer["Error_InputFileNotFound"], inputPath);
         }
 
         string outputDirectory = Path.GetDirectoryName(outputPath)!;
@@ -245,7 +247,7 @@ public class MangaJaNaiUpscaler(
 
         if (!outputPath.EndsWith(".cbz"))
         {
-            throw new ArgumentException("Output path must be a cbz file", nameof(outputPath));
+            throw new ArgumentException(localizer["Error_OutputPathMustBeCbz"], nameof(outputPath));
         }
 
         if (File.Exists(outputPath))
@@ -543,7 +545,7 @@ public class MangaJaNaiUpscaler(
         if (hashString != package.ZipHash)
         {
             throw new Exception(
-                $"Hash mismatch for {package.ZipUrl}. Expected: {package.ZipHash}, Actual: {hashString}"
+                localizer["Error_ZipHashMismatch", package.ZipUrl, package.ZipHash, hashString]
             );
         }
 
@@ -568,7 +570,7 @@ public class MangaJaNaiUpscaler(
             if (!File.Exists(filePath))
             {
                 throw new FileNotFoundException(
-                    $"Model file not found after download: {fileName}",
+                    localizer["Error_ModelFileNotFound", fileName],
                     filePath
                 );
             }
@@ -579,7 +581,7 @@ public class MangaJaNaiUpscaler(
             if (hashString != expectedHash)
             {
                 throw new Exception(
-                    $"Hash verification failed for model file {fileName}. Expected: {expectedHash}, Actual: {hashString}"
+                    localizer["Error_ModelHashMismatch", fileName, expectedHash, hashString]
                 );
             }
         }

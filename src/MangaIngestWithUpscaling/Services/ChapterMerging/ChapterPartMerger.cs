@@ -5,12 +5,14 @@ using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
+using Microsoft.Extensions.Localization;
 
 namespace MangaIngestWithUpscaling.Services.ChapterMerging;
 
 [RegisterScoped]
 public partial class ChapterPartMerger(
     IMetadataHandlingService metadataHandling,
+    IStringLocalizer<ChapterPartMerger> localizer,
     ILogger<ChapterPartMerger> logger
 ) : IChapterPartMerger
 {
@@ -776,8 +778,12 @@ public partial class ChapterPartMerger(
             // Instead of throwing an exception, we should return an indication that this merge was skipped
             // For now, we'll throw but with more context about where to find the file
             throw new InvalidOperationException(
-                $"Merge-target file '{mergedFileName}' already exists at path: {finalMergedFilePath}. "
-                    + $"This file likely exists from a previous merge operation. Check the library directory: {Path.GetDirectoryName(finalMergedFilePath)}"
+                localizer[
+                    "Error_MergeTargetFileExists",
+                    mergedFileName,
+                    finalMergedFilePath,
+                    Path.GetDirectoryName(finalMergedFilePath)
+                ]
             );
         }
 
