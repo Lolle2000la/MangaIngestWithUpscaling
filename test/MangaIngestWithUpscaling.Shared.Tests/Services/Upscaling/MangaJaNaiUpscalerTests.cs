@@ -22,6 +22,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
     private readonly ILogger<MangaJaNaiUpscaler> _mockLogger;
     private readonly IMetadataHandlingService _mockMetadataHandling;
     private readonly IPythonService _mockPythonService;
+    private readonly IStringLocalizer<MangaJaNaiUpscaler> _mockLocalizer;
     private readonly string _tempDir;
     private readonly MangaJaNaiUpscaler _upscaler;
 
@@ -33,6 +34,10 @@ public class MangaJaNaiUpscalerTests : IDisposable
         _mockMetadataHandling = Substitute.For<IMetadataHandlingService>();
         _mockJsonHandling = Substitute.For<IUpscalerJsonHandlingService>();
         _mockImageResize = Substitute.For<IImageResizeService>();
+        _mockLocalizer = Substitute.For<IStringLocalizer<MangaJaNaiUpscaler>>();
+
+        _mockLocalizer["Error_InputFileNotFound"].Returns(new LocalizedString("Error_InputFileNotFound", "Input file not found"));
+        _mockLocalizer["Error_OutputPathMustBeCbz"].Returns(new LocalizedString("Error_OutputPathMustBeCbz", "Output path must be a cbz file"));
 
         if (TestContext.Current.TestCase is null)
         {
@@ -71,7 +76,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
             _mockMetadataHandling,
             _mockJsonHandling,
             _mockImageResize,
-            Substitute.For<IStringLocalizer<MangaJaNaiUpscaler>>()
+            _mockLocalizer
         );
     }
 
@@ -685,6 +690,11 @@ public class MangaJaNaiUpscalerTests : IDisposable
         );
 
         // Should either complete successfully or fail with expected exceptions
+        if (exception != null && exception is not FileNotFoundException && exception is not InvalidOperationException)
+        {
+             Assert.Fail($"Unexpected exception type: {exception.GetType().Name}, Message: {exception.Message}");
+        }
+
         Assert.True(
             exception
                 is null
