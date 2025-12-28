@@ -291,7 +291,7 @@ public class ChapterMergeCoordinator(
             if (!compatibility.CanMerge)
             {
                 throw new InvalidOperationException(
-                    localizer["Error_CannotMergeChapters", compatibility.Reason]
+                    localizer["Error_CannotMergeChapters", compatibility.Reason ?? "Unknown reason"]
                 );
             }
 

@@ -101,7 +101,7 @@ public class RepairUpscaleTask : BaseTask
                 localizer[
                     "Error_UpscaledLibraryPathNotSet",
                     chapter.Manga?.Library?.Name ?? "Unknown",
-                    chapter.Manga?.Library?.Id
+                    chapter.Manga?.Library?.Id ?? -1
                 ]
             );
         }

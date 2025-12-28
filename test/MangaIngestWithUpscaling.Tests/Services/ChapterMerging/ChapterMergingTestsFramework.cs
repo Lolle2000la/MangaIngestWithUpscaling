@@ -15,6 +15,7 @@ using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NetVips;
@@ -158,7 +159,11 @@ public class ChapterPartMergerTests : IDisposable
     {
         _mockMetadataService = Substitute.For<IMetadataHandlingService>();
         _mockLogger = Substitute.For<ILogger<ChapterPartMerger>>();
-        _chapterPartMerger = new ChapterPartMerger(_mockMetadataService, _mockLogger);
+        _chapterPartMerger = new ChapterPartMerger(
+            _mockMetadataService,
+            Substitute.For<IStringLocalizer<ChapterPartMerger>>(),
+            _mockLogger
+        );
 
         _tempDir = Path.Combine(Path.GetTempPath(), $"chapter_part_merger_test_{Guid.NewGuid()}");
         Directory.CreateDirectory(_tempDir);

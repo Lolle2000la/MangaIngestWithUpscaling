@@ -7,6 +7,7 @@ public static class ServiceRegistration
 {
     public static void RegisterRemoteWorkerServices(this IServiceCollection services)
     {
+        services.AddLocalization();
         services.RegisterSharedServices();
         services.AutoRegister();
 

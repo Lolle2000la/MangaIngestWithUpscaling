@@ -782,7 +782,7 @@ public partial class ChapterPartMerger(
                     "Error_MergeTargetFileExists",
                     mergedFileName,
                     finalMergedFilePath,
-                    Path.GetDirectoryName(finalMergedFilePath)
+                    Path.GetDirectoryName(finalMergedFilePath) ?? "Unknown directory"
                 ]
             );
         }

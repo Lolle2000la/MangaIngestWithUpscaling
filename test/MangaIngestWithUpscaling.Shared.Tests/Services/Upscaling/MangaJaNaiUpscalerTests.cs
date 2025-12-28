@@ -6,6 +6,7 @@ using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Python;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -69,7 +70,8 @@ public class MangaJaNaiUpscalerTests : IDisposable
             _mockFileSystem,
             _mockMetadataHandling,
             _mockJsonHandling,
-            _mockImageResize
+            _mockImageResize,
+            Substitute.For<IStringLocalizer<MangaJaNaiUpscaler>>()
         );
     }
 
