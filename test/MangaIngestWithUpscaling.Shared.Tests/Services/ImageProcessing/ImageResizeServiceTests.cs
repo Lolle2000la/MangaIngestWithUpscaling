@@ -20,16 +20,20 @@ public class ImageResizeServiceTests
         _mockLocalizer = Substitute.For<IStringLocalizer<ImageResizeService>>();
 
         _mockLocalizer["Error_MaxDimensionMustBePositive"]
-            .Returns(new LocalizedString("Error_MaxDimensionMustBePositive", "Maximum dimension must be greater than 0"));
-        
-        _mockLocalizer["Error_InputCbzFileNotFound", Arg.Any<object[]>()]
-            .Returns(x => new LocalizedString("Error_InputCbzFileNotFound", $"File not found: {x.Arg<object[]>()[0]}"));
+            .Returns(
+                new LocalizedString(
+                    "Error_MaxDimensionMustBePositive",
+                    "Maximum dimension must be greater than 0"
+                )
+            );
 
-        _service = new ImageResizeService(
-            _mockLogger,
-            _mockFileSystem,
-            _mockLocalizer
-        );
+        _mockLocalizer["Error_InputCbzFileNotFound", Arg.Any<object[]>()]
+            .Returns(x => new LocalizedString(
+                "Error_InputCbzFileNotFound",
+                $"File not found: {x.Arg<object[]>()[0]}"
+            ));
+
+        _service = new ImageResizeService(_mockLogger, _mockFileSystem, _mockLocalizer);
     }
 
     [Theory]
