@@ -1393,6 +1393,7 @@ public class ChapterMergeRevertServiceTests : IDisposable
             null!,
             null!,
             taskQueue,
+            Substitute.For<IStringLocalizer<ChapterMergeRevertService>>(),
             mockLogger
         );
 
@@ -1666,7 +1667,11 @@ public class ComicInfoPreservationTests : IDisposable
         {
             var logger = Substitute.For<ILogger<ChapterPartMerger>>();
             var metadataHandler = Substitute.For<IMetadataHandlingService>();
-            var merger = new ChapterPartMerger(metadataHandler, logger);
+            var merger = new ChapterPartMerger(
+                metadataHandler,
+                Substitute.For<IStringLocalizer<ChapterPartMerger>>(),
+                logger
+            );
 
             // Create test CBZ files with complete ComicInfo.xml
             var originalComicInfo1 = """
@@ -1844,7 +1849,11 @@ public class ComicInfoPreservationTests : IDisposable
         {
             var logger = Substitute.For<ILogger<ChapterPartMerger>>();
             var metadataHandler = Substitute.For<IMetadataHandlingService>();
-            var merger = new ChapterPartMerger(metadataHandler, logger);
+            var merger = new ChapterPartMerger(
+                metadataHandler,
+                Substitute.For<IStringLocalizer<ChapterPartMerger>>(),
+                logger
+            );
 
             // Create a merged file
             var mergedFile = CreateTestCbzFile(tempDir, "Chapter 5.cbz", 6);
@@ -2169,13 +2178,18 @@ public class UpscaledChapterHandlingTests : IDisposable
             var metadataHandler = Substitute.For<IMetadataHandlingService>();
             var partMergerLogger = Substitute.For<ILogger<ChapterPartMerger>>();
 
-            var chapterPartMerger = new ChapterPartMerger(metadataHandler, partMergerLogger);
+            var chapterPartMerger = new ChapterPartMerger(
+                metadataHandler,
+                Substitute.For<IStringLocalizer<ChapterPartMerger>>(),
+                partMergerLogger
+            );
             var revertService = new ChapterMergeRevertService(
                 context,
                 chapterPartMerger,
                 chapterChangedNotifier,
                 upscalerJsonService,
                 taskQueue,
+                Substitute.For<IStringLocalizer<ChapterMergeRevertService>>(),
                 logger
             );
 
@@ -2308,13 +2322,18 @@ public class UpscaledChapterHandlingTests : IDisposable
             var metadataHandler = Substitute.For<IMetadataHandlingService>();
             var partMergerLogger = Substitute.For<ILogger<ChapterPartMerger>>();
 
-            var chapterPartMerger = new ChapterPartMerger(metadataHandler, partMergerLogger);
+            var chapterPartMerger = new ChapterPartMerger(
+                metadataHandler,
+                Substitute.For<IStringLocalizer<ChapterPartMerger>>(),
+                partMergerLogger
+            );
             var revertService = new ChapterMergeRevertService(
                 context,
                 chapterPartMerger,
                 chapterChangedNotifier,
                 upscalerJsonService,
                 taskQueue,
+                Substitute.For<IStringLocalizer<ChapterMergeRevertService>>(),
                 logger
             );
 
@@ -2448,6 +2467,7 @@ public class PartialUpscalingMergeTests : IDisposable
             upscaleTaskManager,
             taskQueueStub,
             metadataHandling,
+            Substitute.For<IStringLocalizer<ChapterMergeCoordinator>>(),
             logger
         );
 
@@ -2644,6 +2664,7 @@ public class PartialUpscalingMergeTests : IDisposable
             upscaleTaskManager,
             taskQueueStub2,
             metadataHandling,
+            Substitute.For<IStringLocalizer<ChapterMergeCoordinator>>(),
             logger
         );
 
@@ -2747,6 +2768,7 @@ public class PartialUpscalingMergeTests : IDisposable
             upscaleTaskManager,
             taskQueueStub3,
             metadataHandling,
+            Substitute.For<IStringLocalizer<ChapterMergeCoordinator>>(),
             logger
         );
 
@@ -2952,6 +2974,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
             chapterChangedNotifier,
             upscalerJsonHandling,
             taskQueue,
+            Substitute.For<IStringLocalizer<ChapterMergeRevertService>>(),
             logger
         );
 
@@ -3098,6 +3121,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
             chapterChangedNotifier,
             upscalerJsonHandling,
             taskQueue2,
+            Substitute.For<IStringLocalizer<ChapterMergeRevertService>>(),
             logger
         );
 
@@ -3247,6 +3271,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
             chapterChangedNotifier,
             upscalerJsonHandling,
             taskQueue,
+            Substitute.For<IStringLocalizer<ChapterMergeRevertService>>(),
             logger
         );
 
@@ -3385,6 +3410,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
             chapterChangedNotifier,
             upscalerJsonHandling,
             taskQueue,
+            Substitute.For<IStringLocalizer<ChapterMergeRevertService>>(),
             logger
         );
 
@@ -3445,6 +3471,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
             chapterChangedNotifier,
             upscalerJsonHandling,
             taskQueue,
+            Substitute.For<IStringLocalizer<ChapterMergeRevertService>>(),
             logger
         );
 
@@ -3526,12 +3553,17 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         var logger = Substitute.For<ILogger<ChapterMergeRevertService>>();
         var taskQueue = Substitute.For<ITaskQueue>();
 
+        var localizer = Substitute.For<IStringLocalizer<ChapterMergeRevertService>>();
+        localizer["Error_NotAMergedChapter", Arg.Any<object[]>()]
+            .Returns(new LocalizedString("Error_NotAMergedChapter", "is not a merged chapter"));
+
         var revertService = new ChapterMergeRevertService(
             context,
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
             taskQueue,
+            localizer,
             logger
         );
 
@@ -3645,6 +3677,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
             chapterChangedNotifier,
             upscalerJsonHandling,
             taskQueue,
+            Substitute.For<IStringLocalizer<ChapterMergeRevertService>>(),
             logger
         );
 
@@ -3766,6 +3799,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
             chapterChangedNotifier,
             upscalerJsonHandling,
             taskQueue,
+            Substitute.For<IStringLocalizer<ChapterMergeRevertService>>(),
             logger
         );
 
@@ -3895,6 +3929,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
             chapterChangedNotifier,
             upscalerJsonHandling,
             taskQueue,
+            Substitute.For<IStringLocalizer<ChapterMergeRevertService>>(),
             logger
         );
 

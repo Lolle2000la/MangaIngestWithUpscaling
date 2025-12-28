@@ -14,6 +14,7 @@ using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Xunit;
@@ -50,7 +51,8 @@ public class SplitApplicationServiceTests : IDisposable
             _coordinator,
             _splitApplier,
             _upscaler,
-            _logger
+            _logger,
+            Substitute.For<IStringLocalizer<SplitApplicationService>>()
         );
 
         _tempDir = Path.Combine(Path.GetTempPath(), $"split_test_{Guid.NewGuid()}");

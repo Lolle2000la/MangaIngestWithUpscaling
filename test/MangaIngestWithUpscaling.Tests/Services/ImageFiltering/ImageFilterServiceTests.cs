@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.ImageFiltering;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
 using NetVips;
 using NSubstitute;
@@ -18,7 +19,10 @@ public class ImageFilterServiceTests : IDisposable
     public ImageFilterServiceTests()
     {
         _mockLogger = Substitute.For<ILogger<ImageFilterService>>();
-        _service = new ImageFilterService(_mockLogger);
+        _service = new ImageFilterService(
+            _mockLogger,
+            Substitute.For<IStringLocalizer<ImageFilterService>>()
+        );
         _tempDir = Path.Combine(Path.GetTempPath(), $"image_filter_test_{Guid.NewGuid()}");
         Directory.CreateDirectory(_tempDir);
 

@@ -8,6 +8,7 @@ using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
+using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
 using MudBlazor;
 using NSubstitute;
@@ -26,6 +27,7 @@ public class MangaMetadataChangerTests : IDisposable
     private readonly ITaskQueue _mockTaskQueue;
     private readonly string _tempDir;
     private readonly TestDatabaseHelper.TestDbContext _testDb;
+    private readonly IStringLocalizer<MangaMetadataChanger> _mockLocalizer;
 
     public MangaMetadataChangerTests()
     {
@@ -40,6 +42,42 @@ public class MangaMetadataChangerTests : IDisposable
         _mockTaskQueue = Substitute.For<ITaskQueue>();
         _mockFileSystem = Substitute.For<IFileSystem>();
         _mockChapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
+        _mockLocalizer = Substitute.For<IStringLocalizer<MangaMetadataChanger>>();
+
+        _mockLocalizer["Dialog_MergeManga_Title"]
+            .Returns(
+                new LocalizedString(
+                    "Dialog_MergeManga_Title",
+                    "Merge into existing manga of same name?"
+                )
+            );
+        _mockLocalizer["Dialog_MergeManga_Content"]
+            .Returns(
+                new LocalizedString(
+                    "Dialog_MergeManga_Content",
+                    "The title you are trying to rename to already has an existing entry. Do you want to merge this manga into the existing one?"
+                )
+            );
+        _mockLocalizer["Dialog_MergeManga_Merge"]
+            .Returns(new LocalizedString("Dialog_MergeManga_Merge", "Merge"));
+        _mockLocalizer["Dialog_MergeManga_Cancel"]
+            .Returns(new LocalizedString("Dialog_MergeManga_Cancel", "Cancel"));
+        _mockLocalizer["Error_ChapterFileNotFound"]
+            .Returns(new LocalizedString("Error_ChapterFileNotFound", "Chapter file not found"));
+        _mockLocalizer["Error_MangaOrLibraryNotFound"]
+            .Returns(
+                new LocalizedString(
+                    "Error_MangaOrLibraryNotFound",
+                    "Chapter manga or library not found"
+                )
+            );
+        _mockLocalizer["Error_UpscaledLibraryPathNotSet"]
+            .Returns(
+                new LocalizedString(
+                    "Error_UpscaledLibraryPathNotSet",
+                    "Upscaled library path not set"
+                )
+            );
 
         _tempDir = Path.Combine(Path.GetTempPath(), $"metadata_test_{Guid.NewGuid()}");
         Directory.CreateDirectory(_tempDir);
@@ -51,7 +89,8 @@ public class MangaMetadataChangerTests : IDisposable
             _mockLogger,
             _mockTaskQueue,
             _mockFileSystem,
-            _mockChapterChangedNotifier
+            _mockChapterChangedNotifier,
+            _mockLocalizer
         );
     }
 
