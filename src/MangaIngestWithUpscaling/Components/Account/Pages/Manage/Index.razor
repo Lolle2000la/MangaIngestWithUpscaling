@@ -63,6 +63,13 @@
         {
             user.PreferredCulture = string.IsNullOrEmpty(Input.PreferredCulture) ? null : Input.PreferredCulture;
             await UserManager.UpdateAsync(user);
+
+            // Clear culture cookie when user selects browser default
+            // This ensures the Accept-Language header is used instead of a stale cookie
+            if (string.IsNullOrEmpty(Input.PreferredCulture))
+            {
+                HttpContext.Response.Cookies.Delete(".AspNetCore.Culture");
+            }
         }
 
         await SignInManager.RefreshSignInAsync(user);
