@@ -322,16 +322,6 @@ var app = builder.Build();
 
 app.UseForwardedHeaders();
 
-// Configure localization early in the pipeline, before authentication
-// This allows both browser preferences (Accept-Language header) and user preferences (cookie) to work
-var supportedCultures = new[] { "en-US", "de-DE", "ja-JP" };
-var localizationOptions = new RequestLocalizationOptions()
-    .SetDefaultCulture("en-US")
-    .AddSupportedCultures(supportedCultures)
-    .AddSupportedUICultures(supportedCultures);
-
-app.UseRequestLocalization(localizationOptions);
-
 // Apply migrations on startup
 using (var scope = app.Services.CreateScope())
 {
@@ -478,6 +468,31 @@ using (var scope = app.Services.CreateScope())
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+var supportedCultures = new[] { "en-US", "de-DE", "ja-JP" };
+var localizationOptions = new RequestLocalizationOptions()
+    .SetDefaultCulture("en-US")
+    .AddSupportedCultures(supportedCultures)
+    .AddSupportedUICultures(supportedCultures);
+
+localizationOptions.RequestCultureProviders.Insert(
+    0,
+    new CustomRequestCultureProvider(async context =>
+    {
+        var user = context.User;
+        if (user.Identity?.IsAuthenticated == true)
+        {
+            var localeClaim = user.FindFirst("locale");
+            if (localeClaim != null && !string.IsNullOrEmpty(localeClaim.Value))
+            {
+                return new ProviderCultureResult(localeClaim.Value);
+            }
+        }
+        return await Task.FromResult<ProviderCultureResult?>(null);
+    })
+);
+
+app.UseRequestLocalization(localizationOptions);
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
