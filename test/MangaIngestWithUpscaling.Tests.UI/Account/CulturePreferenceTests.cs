@@ -146,6 +146,7 @@ public class CulturePreferenceTests
 
         // Act - simulate the logic from Index.razor OnValidSubmitAsync
         bool shouldClearCookie = false;
+        bool shouldSetCookie = false;
         if (newCulture != user.PreferredCulture)
         {
             user.PreferredCulture = string.IsNullOrEmpty(newCulture) ? null : newCulture;
@@ -154,9 +155,21 @@ public class CulturePreferenceTests
             {
                 shouldClearCookie = true;
             }
+            else
+            {
+                shouldSetCookie = true;
+            }
         }
 
         // Assert
         Assert.Equal(expectedShouldClearCookie, shouldClearCookie);
+        if (
+            !expectedShouldClearCookie
+            && newCulture != currentCulture
+            && !string.IsNullOrEmpty(newCulture)
+        )
+        {
+            Assert.True(shouldSetCookie, "Cookie should be set when selecting a specific language");
+        }
     }
 }
