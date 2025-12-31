@@ -13,75 +13,132 @@ using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
+using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Xunit;
+using TestContext = Xunit.TestContext;
 
 namespace MangaIngestWithUpscaling.Tests.Services.Analysis;
 
-public class SplitApplicationServiceTests : IDisposable
+[Collection(TestDatabaseCollection.Name)]
+public class SplitApplicationServiceTests
 {
-    private readonly ApplicationDbContext _dbContext;
-    private readonly ISplitProcessingCoordinator _coordinator;
-    private readonly ISplitApplier _splitApplier;
-    private readonly IUpscaler _upscaler;
-    private readonly ILogger<SplitApplicationService> _logger;
-    private readonly SplitApplicationService _service;
-    private readonly string _tempDir;
+    private readonly TestDatabaseFixture _fixture;
 
-    public SplitApplicationServiceTests()
+    public SplitApplicationServiceTests(TestDatabaseFixture fixture)
     {
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseSqlite("Data Source=:memory:")
-            .Options;
-
-        _dbContext = new ApplicationDbContext(options);
-        _dbContext.Database.OpenConnection();
-        _dbContext.Database.EnsureCreated();
-
-        _coordinator = Substitute.For<ISplitProcessingCoordinator>();
-        _splitApplier = Substitute.For<ISplitApplier>();
-        _upscaler = Substitute.For<IUpscaler>();
-        _logger = Substitute.For<ILogger<SplitApplicationService>>();
-
-        _service = new SplitApplicationService(
-            _dbContext,
-            _coordinator,
-            _splitApplier,
-            _upscaler,
-            _logger,
-            Substitute.For<IStringLocalizer<SplitApplicationService>>()
-        );
-
-        _tempDir = Path.Combine(Path.GetTempPath(), $"split_test_{Guid.NewGuid()}");
-        Directory.CreateDirectory(_tempDir);
+        _fixture = fixture;
     }
 
-    public void Dispose()
-    {
-        _dbContext.Database.CloseConnection();
-        _dbContext.Dispose();
+    public static TheoryData<TestDatabaseBackend> Backends => TestDatabaseBackends.Enabled;
 
-        if (Directory.Exists(_tempDir))
+    private sealed class TestScope : IAsyncDisposable
+    {
+        public TestScope(
+            TestDatabase database,
+            ApplicationDbContext dbContext,
+            SplitApplicationService service,
+            ISplitProcessingCoordinator coordinator,
+            ISplitApplier splitApplier,
+            IUpscaler upscaler,
+            ILogger<SplitApplicationService> logger,
+            string tempDir
+        )
         {
-            Directory.Delete(_tempDir, true);
+            Database = database;
+            DbContext = dbContext;
+            Service = service;
+            Coordinator = coordinator;
+            SplitApplier = splitApplier;
+            Upscaler = upscaler;
+            Logger = logger;
+            TempDir = tempDir;
+        }
+
+        public TestDatabase Database { get; }
+
+        public ApplicationDbContext DbContext { get; }
+
+        public SplitApplicationService Service { get; }
+
+        public ISplitProcessingCoordinator Coordinator { get; }
+
+        public ISplitApplier SplitApplier { get; }
+
+        public IUpscaler Upscaler { get; }
+
+        public ILogger<SplitApplicationService> Logger { get; }
+
+        public string TempDir { get; }
+
+        public async ValueTask DisposeAsync()
+        {
+            DbContext.Dispose();
+            await Database.DisposeAsync();
+
+            if (Directory.Exists(TempDir))
+            {
+                Directory.Delete(TempDir, true);
+            }
         }
     }
 
-    [Fact]
-    public async Task ApplySplitsAsync_WhenChapterIsUpscaled_UpscalesSplitPagesOnly()
+    private async Task<TestScope> CreateScopeAsync(TestDatabaseBackend backend)
     {
-        // Arrange
+        var database = await _fixture.CreateDatabaseAsync(
+            backend,
+            TestContext.Current.CancellationToken
+        );
+        var context = await database.CreateContextAsync(TestContext.Current.CancellationToken);
+
+        var coordinator = Substitute.For<ISplitProcessingCoordinator>();
+        var splitApplier = Substitute.For<ISplitApplier>();
+        var upscaler = Substitute.For<IUpscaler>();
+        var logger = Substitute.For<ILogger<SplitApplicationService>>();
+        var tempDir = Path.Combine(Path.GetTempPath(), $"split_test_{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+
+        var service = new SplitApplicationService(
+            context,
+            coordinator,
+            splitApplier,
+            upscaler,
+            logger,
+            Substitute.For<IStringLocalizer<SplitApplicationService>>()
+        );
+
+        return new TestScope(
+            database,
+            context,
+            service,
+            coordinator,
+            splitApplier,
+            upscaler,
+            logger,
+            tempDir
+        );
+    }
+
+    [Theory]
+    [MemberData(nameof(Backends))]
+    public async Task ApplySplitsAsync_WhenChapterIsUpscaled_UpscalesSplitPagesOnly(
+        TestDatabaseBackend backend
+    )
+    {
+        await using var scope = await CreateScopeAsync(backend);
+        var dbContext = scope.DbContext;
+
         var library = new Library
         {
             Name = "Test Library",
-            NotUpscaledLibraryPath = Path.Combine(_tempDir, "original"),
-            UpscaledLibraryPath = Path.Combine(_tempDir, "upscaled"),
+            NotUpscaledLibraryPath = Path.Combine(scope.TempDir, "original"),
+            UpscaledLibraryPath = Path.Combine(scope.TempDir, "upscaled"),
         };
-        _dbContext.Libraries.Add(library);
-        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        dbContext.Libraries.Add(library);
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         Directory.CreateDirectory(library.NotUpscaledLibraryPath);
         Directory.CreateDirectory(library.UpscaledLibraryPath);
@@ -93,8 +150,8 @@ public class SplitApplicationServiceTests : IDisposable
             CompressionFormat = CompressionFormat.Png,
             Quality = 90,
         };
-        _dbContext.UpscalerProfiles.Add(profile);
-        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        dbContext.UpscalerProfiles.Add(profile);
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var manga = new Manga
         {
@@ -102,8 +159,8 @@ public class SplitApplicationServiceTests : IDisposable
             LibraryId = library.Id,
             Library = library,
         };
-        _dbContext.MangaSeries.Add(manga);
-        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        dbContext.MangaSeries.Add(manga);
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var chapter = new Chapter
         {
@@ -115,17 +172,17 @@ public class SplitApplicationServiceTests : IDisposable
             UpscalerProfileId = profile.Id,
             UpscalerProfile = profile,
         };
-        _dbContext.Chapters.Add(chapter);
-        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        dbContext.Chapters.Add(chapter);
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Create original CBZ with test images (one will be split, one won't)
         var originalCbzPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(originalCbzPath)!);
-        CreateTestCbz(originalCbzPath, "page1.png", "page2.png");
+        CreateTestCbz(scope.TempDir, originalCbzPath, "page1.png", "page2.png");
 
         // Create upscaled CBZ with same pages
         var upscaledCbzPath = chapter.UpscaledFullPath!;
-        CreateTestCbz(upscaledCbzPath, "page1.png", "page2.png");
+        CreateTestCbz(scope.TempDir, upscaledCbzPath, "page1.png", "page2.png");
 
         // Create split finding for page1 only
         var finding = new StripSplitFinding
@@ -141,12 +198,12 @@ public class SplitApplicationServiceTests : IDisposable
                 }
             ),
         };
-        _dbContext.StripSplitFindings.Add(finding);
-        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        dbContext.StripSplitFindings.Add(finding);
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Configure split applier to create dummy split files
-        _splitApplier
-            .ApplySplitsToImage(
+        scope
+            .SplitApplier.ApplySplitsToImage(
                 Arg.Any<string>(),
                 Arg.Any<List<DetectedSplit>>(),
                 Arg.Any<string>()
@@ -162,8 +219,8 @@ public class SplitApplicationServiceTests : IDisposable
             });
 
         // Configure upscaler to create dummy upscaled CBZ
-        _upscaler
-            .Upscale(
+        scope
+            .Upscaler.Upscale(
                 Arg.Any<string>(),
                 Arg.Any<string>(),
                 Arg.Any<UpscalerProfile>(),
@@ -173,44 +230,47 @@ public class SplitApplicationServiceTests : IDisposable
             {
                 var outputPath = callInfo.ArgAt<string>(1);
                 // Create a CBZ with upscaled split pages
-                CreateTestCbz(outputPath, "page1_part1.png", "page1_part2.png");
+                CreateTestCbz(scope.TempDir, outputPath, "page1_part1.png", "page1_part2.png");
                 return Task.CompletedTask;
             });
 
-        // Act
-        await _service.ApplySplitsAsync(chapter.Id, 1, TestContext.Current.CancellationToken);
+        await scope.Service.ApplySplitsAsync(chapter.Id, 1, TestContext.Current.CancellationToken);
 
-        // Assert
         // Verify upscaler was called to upscale the split pages
-        await _upscaler
-            .Received(1)
+        await scope
+            .Upscaler.Received(1)
             .Upscale(Arg.Any<string>(), Arg.Any<string>(), profile, Arg.Any<CancellationToken>());
 
         // Verify the upscaled CBZ still exists and has been updated
         Assert.True(File.Exists(upscaledCbzPath), "Upscaled CBZ should still exist");
 
         // Chapter should remain upscaled
-        await _dbContext.Entry(chapter).ReloadAsync(TestContext.Current.CancellationToken);
+        await dbContext.Entry(chapter).ReloadAsync(TestContext.Current.CancellationToken);
         Assert.True(chapter.IsUpscaled, "Chapter should still be marked as upscaled");
         Assert.Equal(profile.Id, chapter.UpscalerProfileId);
 
         // Verify coordinator was notified
-        await _coordinator
-            .Received(1)
+        await scope
+            .Coordinator.Received(1)
             .OnSplitsAppliedAsync(chapter.Id, 1, Arg.Any<CancellationToken>());
     }
 
-    [Fact]
-    public async Task ApplySplitsAsync_WhenChapterIsNotUpscaled_DoesNotAttemptToDeleteUpscaled()
+    [Theory]
+    [MemberData(nameof(Backends))]
+    public async Task ApplySplitsAsync_WhenChapterIsNotUpscaled_DoesNotAttemptToDeleteUpscaled(
+        TestDatabaseBackend backend
+    )
     {
-        // Arrange
+        await using var scope = await CreateScopeAsync(backend);
+        var dbContext = scope.DbContext;
+
         var library = new Library
         {
             Name = "Test Library",
-            NotUpscaledLibraryPath = Path.Combine(_tempDir, "original"),
+            NotUpscaledLibraryPath = Path.Combine(scope.TempDir, "original"),
         };
-        _dbContext.Libraries.Add(library);
-        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        dbContext.Libraries.Add(library);
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         Directory.CreateDirectory(library.NotUpscaledLibraryPath);
 
@@ -220,8 +280,8 @@ public class SplitApplicationServiceTests : IDisposable
             LibraryId = library.Id,
             Library = library,
         };
-        _dbContext.MangaSeries.Add(manga);
-        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        dbContext.MangaSeries.Add(manga);
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var chapter = new Chapter
         {
@@ -231,13 +291,13 @@ public class SplitApplicationServiceTests : IDisposable
             Manga = manga,
             IsUpscaled = false,
         };
-        _dbContext.Chapters.Add(chapter);
-        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        dbContext.Chapters.Add(chapter);
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Create original CBZ
         var originalCbzPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
         Directory.CreateDirectory(Path.GetDirectoryName(originalCbzPath)!);
-        CreateTestCbz(originalCbzPath, "page1.png");
+        CreateTestCbz(scope.TempDir, originalCbzPath, "page1.png");
 
         // Create split finding
         var finding = new StripSplitFinding
@@ -253,12 +313,12 @@ public class SplitApplicationServiceTests : IDisposable
                 }
             ),
         };
-        _dbContext.StripSplitFindings.Add(finding);
-        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        dbContext.StripSplitFindings.Add(finding);
+        await dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // Configure split applier
-        _splitApplier
-            .ApplySplitsToImage(
+        scope
+            .SplitApplier.ApplySplitsToImage(
                 Arg.Any<string>(),
                 Arg.Any<List<DetectedSplit>>(),
                 Arg.Any<string>()
@@ -273,21 +333,19 @@ public class SplitApplicationServiceTests : IDisposable
                 return new List<string> { part1, part2 };
             });
 
-        // Act
-        await _service.ApplySplitsAsync(chapter.Id, 1, TestContext.Current.CancellationToken);
+        await scope.Service.ApplySplitsAsync(chapter.Id, 1, TestContext.Current.CancellationToken);
 
-        // Assert
-        await _dbContext.Entry(chapter).ReloadAsync(TestContext.Current.CancellationToken);
+        await dbContext.Entry(chapter).ReloadAsync(TestContext.Current.CancellationToken);
         Assert.False(chapter.IsUpscaled);
 
-        await _coordinator
-            .Received(1)
+        await scope
+            .Coordinator.Received(1)
             .OnSplitsAppliedAsync(chapter.Id, 1, Arg.Any<CancellationToken>());
     }
 
-    private void CreateTestCbz(string path, params string[] imageNames)
+    private static void CreateTestCbz(string baseTempDir, string path, params string[] imageNames)
     {
-        var tempExtractDir = Path.Combine(_tempDir, $"extract_{Guid.NewGuid()}");
+        var tempExtractDir = Path.Combine(baseTempDir, $"extract_{Guid.NewGuid()}");
         Directory.CreateDirectory(tempExtractDir);
 
         try

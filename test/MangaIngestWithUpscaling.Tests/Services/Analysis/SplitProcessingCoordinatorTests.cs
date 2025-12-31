@@ -11,56 +11,98 @@ using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
+using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Xunit;
+using TestContext = Xunit.TestContext;
 
 namespace MangaIngestWithUpscaling.Tests.Services.Analysis;
 
-public class SplitProcessingCoordinatorTests : IDisposable
+[Collection(TestDatabaseCollection.Name)]
+public class SplitProcessingCoordinatorTests
 {
-    private readonly ApplicationDbContext _dbContext;
-    private readonly ITaskQueue _taskQueue;
-    private readonly IChapterChangedNotifier _chapterChangedNotifier;
-    private readonly IFileSystem _fileSystem;
-    private readonly ILogger<SplitProcessingCoordinator> _logger;
-    private readonly SplitProcessingCoordinator _coordinator;
+    private readonly TestDatabaseFixture _fixture;
 
-    public SplitProcessingCoordinatorTests()
+    public SplitProcessingCoordinatorTests(TestDatabaseFixture fixture)
     {
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseSqlite("Data Source=:memory:")
-            .Options;
+        _fixture = fixture;
+    }
 
-        _dbContext = new ApplicationDbContext(options);
-        _dbContext.Database.OpenConnection();
-        _dbContext.Database.EnsureCreated();
+    public static TheoryData<TestDatabaseBackend> Backends => TestDatabaseBackends.Enabled;
 
-        _taskQueue = Substitute.For<ITaskQueue>();
-        _chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
-        _fileSystem = Substitute.For<IFileSystem>();
-        _logger = Substitute.For<ILogger<SplitProcessingCoordinator>>();
-        _coordinator = new SplitProcessingCoordinator(
-            _dbContext,
-            _taskQueue,
-            _chapterChangedNotifier,
-            _fileSystem,
-            _logger
+    private sealed class CoordinatorTestScope : IAsyncDisposable
+    {
+        public CoordinatorTestScope(
+            TestDatabase database,
+            ApplicationDbContext context,
+            SplitProcessingCoordinator coordinator,
+            ITaskQueue taskQueue,
+            IChapterChangedNotifier chapterChangedNotifier
+        )
+        {
+            Database = database;
+            Context = context;
+            Coordinator = coordinator;
+            TaskQueue = taskQueue;
+            ChapterChangedNotifier = chapterChangedNotifier;
+        }
+
+        public TestDatabase Database { get; }
+
+        public ApplicationDbContext Context { get; }
+
+        public SplitProcessingCoordinator Coordinator { get; }
+
+        public ITaskQueue TaskQueue { get; }
+
+        public IChapterChangedNotifier ChapterChangedNotifier { get; }
+
+        public ValueTask DisposeAsync()
+        {
+            Context.Dispose();
+            return Database.DisposeAsync();
+        }
+    }
+
+    private async Task<CoordinatorTestScope> CreateScopeAsync(
+        TestDatabaseBackend backend,
+        CancellationToken cancellationToken
+    )
+    {
+        var database = await _fixture.CreateDatabaseAsync(backend, cancellationToken);
+        var context = await database.CreateContextAsync(cancellationToken);
+
+        var taskQueue = Substitute.For<ITaskQueue>();
+        var chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
+        var fileSystem = Substitute.For<IFileSystem>();
+        var logger = Substitute.For<ILogger<SplitProcessingCoordinator>>();
+        var coordinator = new SplitProcessingCoordinator(
+            context,
+            taskQueue,
+            chapterChangedNotifier,
+            fileSystem,
+            logger
+        );
+
+        return new CoordinatorTestScope(
+            database,
+            context,
+            coordinator,
+            taskQueue,
+            chapterChangedNotifier
         );
     }
 
-    public void Dispose()
-    {
-        _dbContext.Database.CloseConnection();
-        _dbContext.Dispose();
-    }
-
-    private async Task<Chapter> CreateChapterAsync()
+    private static async Task<Chapter> CreateChapterAsync(
+        ApplicationDbContext context,
+        CancellationToken cancellationToken
+    )
     {
         var library = new Library { Name = "Test Lib" };
-        _dbContext.Libraries.Add(library);
-        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        context.Libraries.Add(library);
+        await context.SaveChangesAsync(cancellationToken);
 
         var manga = new Manga
         {
@@ -68,8 +110,8 @@ public class SplitProcessingCoordinatorTests : IDisposable
             LibraryId = library.Id,
             Library = library,
         };
-        _dbContext.MangaSeries.Add(manga);
-        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        context.MangaSeries.Add(manga);
+        await context.SaveChangesAsync(cancellationToken);
 
         var chapter = new Chapter
         {
@@ -77,20 +119,23 @@ public class SplitProcessingCoordinatorTests : IDisposable
             MangaId = manga.Id,
             Manga = manga,
         };
-        _dbContext.Chapters.Add(chapter);
-        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        context.Chapters.Add(chapter);
+        await context.SaveChangesAsync(cancellationToken);
 
         return chapter;
     }
 
-    [Fact]
-    public async Task ShouldProcessAsync_ReturnsTrue_WhenNoStateExists()
+    [Theory]
+    [MemberData(nameof(Backends))]
+    public async Task ShouldProcessAsync_ReturnsTrue_WhenNoStateExists(TestDatabaseBackend backend)
     {
-        // Arrange
+        await using var scope = await CreateScopeAsync(
+            backend,
+            TestContext.Current.CancellationToken
+        );
         var chapterId = 1;
 
-        // Act
-        var result = await _coordinator.ShouldProcessAsync(
+        var result = await scope.Coordinator.ShouldProcessAsync(
             chapterId,
             StripDetectionMode.DetectOnly,
             cancellationToken: TestContext.Current.CancellationToken
@@ -100,12 +145,19 @@ public class SplitProcessingCoordinatorTests : IDisposable
         Assert.True(result);
     }
 
-    [Fact]
-    public async Task ShouldProcessAsync_ReturnsTrue_WhenVersionIsOld()
+    [Theory]
+    [MemberData(nameof(Backends))]
+    public async Task ShouldProcessAsync_ReturnsTrue_WhenVersionIsOld(TestDatabaseBackend backend)
     {
-        // Arrange
-        var chapter = await CreateChapterAsync();
-        _dbContext.ChapterSplitProcessingStates.Add(
+        await using var scope = await CreateScopeAsync(
+            backend,
+            TestContext.Current.CancellationToken
+        );
+        var chapter = await CreateChapterAsync(
+            scope.Context,
+            TestContext.Current.CancellationToken
+        );
+        scope.Context.ChapterSplitProcessingStates.Add(
             new ChapterSplitProcessingState
             {
                 ChapterId = chapter.Id,
@@ -113,10 +165,9 @@ public class SplitProcessingCoordinatorTests : IDisposable
                 ModifiedAt = DateTime.UtcNow,
             }
         );
-        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        await scope.Context.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        // Act
-        var result = await _coordinator.ShouldProcessAsync(
+        var result = await scope.Coordinator.ShouldProcessAsync(
             chapter.Id,
             StripDetectionMode.DetectOnly,
             cancellationToken: TestContext.Current.CancellationToken
@@ -126,12 +177,21 @@ public class SplitProcessingCoordinatorTests : IDisposable
         Assert.True(result);
     }
 
-    [Fact]
-    public async Task ShouldProcessAsync_ReturnsFalse_WhenVersionIsCurrent()
+    [Theory]
+    [MemberData(nameof(Backends))]
+    public async Task ShouldProcessAsync_ReturnsFalse_WhenVersionIsCurrent(
+        TestDatabaseBackend backend
+    )
     {
-        // Arrange
-        var chapter = await CreateChapterAsync();
-        _dbContext.ChapterSplitProcessingStates.Add(
+        await using var scope = await CreateScopeAsync(
+            backend,
+            TestContext.Current.CancellationToken
+        );
+        var chapter = await CreateChapterAsync(
+            scope.Context,
+            TestContext.Current.CancellationToken
+        );
+        scope.Context.ChapterSplitProcessingStates.Add(
             new ChapterSplitProcessingState
             {
                 ChapterId = chapter.Id,
@@ -139,10 +199,9 @@ public class SplitProcessingCoordinatorTests : IDisposable
                 ModifiedAt = DateTime.UtcNow,
             }
         );
-        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        await scope.Context.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        // Act
-        var result = await _coordinator.ShouldProcessAsync(
+        var result = await scope.Coordinator.ShouldProcessAsync(
             chapter.Id,
             StripDetectionMode.DetectOnly,
             cancellationToken: TestContext.Current.CancellationToken
@@ -152,18 +211,23 @@ public class SplitProcessingCoordinatorTests : IDisposable
         Assert.False(result);
     }
 
-    [Fact]
-    public async Task EnqueueDetectionAsync_EnqueuesTask()
+    [Theory]
+    [MemberData(nameof(Backends))]
+    public async Task EnqueueDetectionAsync_EnqueuesTask(TestDatabaseBackend backend)
     {
-        // Arrange
+        await using var scope = await CreateScopeAsync(
+            backend,
+            TestContext.Current.CancellationToken
+        );
         var chapterId = 1;
 
-        // Act
-        await _coordinator.EnqueueDetectionAsync(chapterId, TestContext.Current.CancellationToken);
+        await scope.Coordinator.EnqueueDetectionAsync(
+            chapterId,
+            TestContext.Current.CancellationToken
+        );
 
-        // Assert
-        await _taskQueue
-            .Received(1)
+        await scope
+            .TaskQueue.Received(1)
             .EnqueueAsync(
                 Arg.Is<DetectSplitCandidatesTask>(t =>
                     t.ChapterId == chapterId

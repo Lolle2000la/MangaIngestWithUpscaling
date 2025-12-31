@@ -1,34 +1,36 @@
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using TestContext = Xunit.TestContext;
 
 namespace MangaIngestWithUpscaling.Tests.Data;
 
-public class EntityTimestampTests : IDisposable
+[Collection(TestDatabaseCollection.Name)]
+public class EntityTimestampTests
 {
-    private readonly ApplicationDbContext _context;
+    private readonly TestDatabaseFixture _fixture;
 
-    public EntityTimestampTests()
+    public EntityTimestampTests(TestDatabaseFixture fixture)
     {
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseSqlite("Data Source=:memory:")
-            .Options;
-
-        _context = new ApplicationDbContext(options);
-        _context.Database.OpenConnection();
-        _context.Database.EnsureCreated();
+        _fixture = fixture;
     }
 
-    public void Dispose()
-    {
-        _context.Database.CloseConnection();
-        _context.Dispose();
-    }
+    public static TheoryData<TestDatabaseBackend> Backends => TestDatabaseBackends.Enabled;
 
-    [Fact]
-    public async Task Library_CreatedAt_ShouldBeSetOnCreation()
+    [Theory]
+    [MemberData(nameof(Backends))]
+    public async Task Library_CreatedAt_ShouldBeSetOnCreation(TestDatabaseBackend backend)
     {
+        await using var database = await _fixture.CreateDatabaseAsync(
+            backend,
+            TestContext.Current.CancellationToken
+        );
+        await using var context = await database.CreateContextAsync(
+            TestContext.Current.CancellationToken
+        );
+
         // Arrange
         var beforeCreation = DateTime.UtcNow.AddSeconds(-1);
         var library = new Library
@@ -39,9 +41,9 @@ public class EntityTimestampTests : IDisposable
         };
 
         // Act
-        _context.Libraries.Add(library);
+        context.Libraries.Add(library);
 #pragma warning disable xUnit1051
-        await _context.SaveChangesAsync();
+        await context.SaveChangesAsync();
 #pragma warning restore xUnit1051
         var afterCreation = DateTime.UtcNow.AddSeconds(1);
 
@@ -52,9 +54,18 @@ public class EntityTimestampTests : IDisposable
         Assert.True(library.ModifiedAt <= afterCreation);
     }
 
-    [Fact]
-    public async Task Library_ModifiedAt_ShouldBeUpdatedOnModification()
+    [Theory]
+    [MemberData(nameof(Backends))]
+    public async Task Library_ModifiedAt_ShouldBeUpdatedOnModification(TestDatabaseBackend backend)
     {
+        await using var database = await _fixture.CreateDatabaseAsync(
+            backend,
+            TestContext.Current.CancellationToken
+        );
+        await using var context = await database.CreateContextAsync(
+            TestContext.Current.CancellationToken
+        );
+
         // Arrange
         var library = new Library
         {
@@ -62,9 +73,9 @@ public class EntityTimestampTests : IDisposable
             IngestPath = "/test/ingest",
             NotUpscaledLibraryPath = "/test/notupscaled",
         };
-        _context.Libraries.Add(library);
+        context.Libraries.Add(library);
 #pragma warning disable xUnit1051
-        await _context.SaveChangesAsync();
+        await context.SaveChangesAsync();
 #pragma warning restore xUnit1051
 
         var originalModifiedAt = library.ModifiedAt;
@@ -78,7 +89,7 @@ public class EntityTimestampTests : IDisposable
         // Act
         library.Name = "Modified Library";
 #pragma warning disable xUnit1051
-        await _context.SaveChangesAsync();
+        await context.SaveChangesAsync();
 #pragma warning restore xUnit1051
         var afterModification = DateTime.UtcNow.AddSeconds(1);
 
@@ -88,9 +99,18 @@ public class EntityTimestampTests : IDisposable
         Assert.True(library.ModifiedAt <= afterModification);
     }
 
-    [Fact]
-    public async Task Manga_TimestampsShouldBeSetCorrectly()
+    [Theory]
+    [MemberData(nameof(Backends))]
+    public async Task Manga_TimestampsShouldBeSetCorrectly(TestDatabaseBackend backend)
     {
+        await using var database = await _fixture.CreateDatabaseAsync(
+            backend,
+            TestContext.Current.CancellationToken
+        );
+        await using var context = await database.CreateContextAsync(
+            TestContext.Current.CancellationToken
+        );
+
         // Arrange
         var library = new Library
         {
@@ -98,9 +118,9 @@ public class EntityTimestampTests : IDisposable
             IngestPath = "/test/ingest",
             NotUpscaledLibraryPath = "/test/notupscaled",
         };
-        _context.Libraries.Add(library);
+        context.Libraries.Add(library);
 #pragma warning disable xUnit1051
-        await _context.SaveChangesAsync();
+        await context.SaveChangesAsync();
 #pragma warning restore xUnit1051
 
         var beforeCreation = DateTime.UtcNow.AddSeconds(-1);
@@ -112,9 +132,9 @@ public class EntityTimestampTests : IDisposable
         };
 
         // Act
-        _context.MangaSeries.Add(manga);
+        context.MangaSeries.Add(manga);
 #pragma warning disable xUnit1051
-        await _context.SaveChangesAsync();
+        await context.SaveChangesAsync();
 #pragma warning restore xUnit1051
         var afterCreation = DateTime.UtcNow.AddSeconds(1);
 
@@ -125,9 +145,18 @@ public class EntityTimestampTests : IDisposable
         Assert.True(manga.ModifiedAt <= afterCreation);
     }
 
-    [Fact]
-    public async Task MangaAlternativeTitle_CreatedAtShouldBeSet()
+    [Theory]
+    [MemberData(nameof(Backends))]
+    public async Task MangaAlternativeTitle_CreatedAtShouldBeSet(TestDatabaseBackend backend)
     {
+        await using var database = await _fixture.CreateDatabaseAsync(
+            backend,
+            TestContext.Current.CancellationToken
+        );
+        await using var context = await database.CreateContextAsync(
+            TestContext.Current.CancellationToken
+        );
+
         // Arrange
         var library = new Library
         {
@@ -136,10 +165,10 @@ public class EntityTimestampTests : IDisposable
             NotUpscaledLibraryPath = "/test/notupscaled",
         };
         var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
-        _context.Libraries.Add(library);
-        _context.MangaSeries.Add(manga);
+        context.Libraries.Add(library);
+        context.MangaSeries.Add(manga);
 #pragma warning disable xUnit1051
-        await _context.SaveChangesAsync();
+        await context.SaveChangesAsync();
 #pragma warning restore xUnit1051
 
         var beforeCreation = DateTime.UtcNow.AddSeconds(-1);
@@ -151,9 +180,9 @@ public class EntityTimestampTests : IDisposable
         };
 
         // Act
-        _context.MangaAlternativeTitles.Add(alternativeTitle);
+        context.MangaAlternativeTitles.Add(alternativeTitle);
 #pragma warning disable xUnit1051
-        await _context.SaveChangesAsync();
+        await context.SaveChangesAsync();
 #pragma warning restore xUnit1051
         var afterCreation = DateTime.UtcNow.AddSeconds(1);
 
@@ -162,9 +191,18 @@ public class EntityTimestampTests : IDisposable
         Assert.True(alternativeTitle.CreatedAt <= afterCreation);
     }
 
-    [Fact]
-    public async Task Chapter_TimestampsShouldBeSetCorrectly()
+    [Theory]
+    [MemberData(nameof(Backends))]
+    public async Task Chapter_TimestampsShouldBeSetCorrectly(TestDatabaseBackend backend)
     {
+        await using var database = await _fixture.CreateDatabaseAsync(
+            backend,
+            TestContext.Current.CancellationToken
+        );
+        await using var context = await database.CreateContextAsync(
+            TestContext.Current.CancellationToken
+        );
+
         // Arrange
         var library = new Library
         {
@@ -173,10 +211,10 @@ public class EntityTimestampTests : IDisposable
             NotUpscaledLibraryPath = "/test/notupscaled",
         };
         var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
-        _context.Libraries.Add(library);
-        _context.MangaSeries.Add(manga);
+        context.Libraries.Add(library);
+        context.MangaSeries.Add(manga);
 #pragma warning disable xUnit1051
-        await _context.SaveChangesAsync();
+        await context.SaveChangesAsync();
 #pragma warning restore xUnit1051
 
         var beforeCreation = DateTime.UtcNow.AddSeconds(-1);
@@ -189,9 +227,9 @@ public class EntityTimestampTests : IDisposable
         };
 
         // Act
-        _context.Chapters.Add(chapter);
+        context.Chapters.Add(chapter);
 #pragma warning disable xUnit1051
-        await _context.SaveChangesAsync();
+        await context.SaveChangesAsync();
 #pragma warning restore xUnit1051
         var afterCreation = DateTime.UtcNow.AddSeconds(1);
 
@@ -202,10 +240,18 @@ public class EntityTimestampTests : IDisposable
         Assert.True(chapter.ModifiedAt <= afterCreation);
     }
 
-    [Fact]
-    public async Task UpscalerProfile_TimestampsShouldBeSetCorrectly()
+    [Theory]
+    [MemberData(nameof(Backends))]
+    public async Task UpscalerProfile_TimestampsShouldBeSetCorrectly(TestDatabaseBackend backend)
     {
-        // Arrange
+        await using var database = await _fixture.CreateDatabaseAsync(
+            backend,
+            TestContext.Current.CancellationToken
+        );
+        await using var context = await database.CreateContextAsync(
+            TestContext.Current.CancellationToken
+        );
+
         var beforeCreation = DateTime.UtcNow.AddSeconds(-1);
         var profile = new UpscalerProfile
         {
@@ -215,10 +261,9 @@ public class EntityTimestampTests : IDisposable
             Quality = 80,
         };
 
-        // Act
-        _context.UpscalerProfiles.Add(profile);
+        context.UpscalerProfiles.Add(profile);
 #pragma warning disable xUnit1051
-        await _context.SaveChangesAsync();
+        await context.SaveChangesAsync();
 #pragma warning restore xUnit1051
         var afterCreation = DateTime.UtcNow.AddSeconds(1);
 
