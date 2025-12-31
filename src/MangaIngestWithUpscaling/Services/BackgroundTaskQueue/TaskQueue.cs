@@ -30,6 +30,7 @@ public class TaskQueue : ITaskQueue, IHostedService
     private readonly ILogger<TaskQueue> _logger;
     private readonly Channel<PersistedTask> _reroutedUpscaleChannel;
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly ITaskSerializer _serializer;
     private readonly Channel<PersistedTask> _standardChannel;
 
     private readonly SortedSet<PersistedTask> _standardTasks;
@@ -38,8 +39,13 @@ public class TaskQueue : ITaskQueue, IHostedService
     private readonly SortedSet<PersistedTask> _upscaleTasks;
     private readonly object _upscaleTasksLock = new();
 
-    public TaskQueue(IServiceScopeFactory scopeFactory, ILogger<TaskQueue> logger)
+    public TaskQueue(
+        ITaskSerializer serializer,
+        IServiceScopeFactory scopeFactory,
+        ILogger<TaskQueue> logger
+    )
     {
+        _serializer = serializer;
         _scopeFactory = scopeFactory;
         _logger = logger;
 
@@ -164,7 +170,8 @@ public class TaskQueue : ITaskQueue, IHostedService
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         // Determine which set to modify
-        (SortedSet<PersistedTask> tasks, object lockObj) = task.Data
+        BaseTask data = _serializer.Deserialize(task);
+        (SortedSet<PersistedTask> tasks, object lockObj) = data
             is UpscaleTask
                 or RenameUpscaledChaptersSeriesTask
                 or RepairUpscaleTask
@@ -226,7 +233,8 @@ public class TaskQueue : ITaskQueue, IHostedService
         dbContext.PersistedTasks.Remove(task);
         await dbContext.SaveChangesAsync();
 
-        (SortedSet<PersistedTask> tasks, object lockObj) = task.Data
+        BaseTask data = _serializer.Deserialize(task);
+        (SortedSet<PersistedTask> tasks, object lockObj) = data
             is UpscaleTask
                 or RenameUpscaledChaptersSeriesTask
                 or RepairUpscaleTask
@@ -253,7 +261,8 @@ public class TaskQueue : ITaskQueue, IHostedService
         dbContext.Update(task);
         await dbContext.SaveChangesAsync();
 
-        (SortedSet<PersistedTask> tasks, object lockObj) = task.Data
+        BaseTask data = _serializer.Deserialize(task);
+        (SortedSet<PersistedTask> tasks, object lockObj) = data
             is UpscaleTask
                 or RenameUpscaledChaptersSeriesTask
                 or RepairUpscaleTask
@@ -278,15 +287,27 @@ public class TaskQueue : ITaskQueue, IHostedService
             .PersistedTasks.OrderBy(t => t.Order)
             .AsAsyncEnumerable()
             .Where(t =>
-                t.Status == PersistedTaskStatus.Pending
-                || (t.Status == PersistedTaskStatus.Failed && t.RetryCount < t.Data.RetryFor)
-            )
+            {
+                if (t.Status == PersistedTaskStatus.Pending)
+                {
+                    return true;
+                }
+
+                if (t.Status == PersistedTaskStatus.Failed)
+                {
+                    var data = _serializer.Deserialize(t);
+                    return t.RetryCount < data.RetryFor;
+                }
+
+                return false;
+            })
             .ToListAsync(cancellationToken);
 
         // Load tasks into sorted sets
         foreach (var task in pendingTasks)
         {
-            if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask)
+            var data = _serializer.Deserialize(task);
+            if (data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask)
             {
                 lock (_upscaleTasksLock)
                     _upscaleTasks.Add(task);

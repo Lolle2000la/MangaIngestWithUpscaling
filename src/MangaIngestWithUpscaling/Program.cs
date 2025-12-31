@@ -1,4 +1,3 @@
-using System.Data.SQLite;
 using System.Security.Claims;
 using MangaIngestWithUpscaling.Api;
 using MangaIngestWithUpscaling.Api.Auth;
@@ -7,8 +6,11 @@ using MangaIngestWithUpscaling.Components.Account;
 using MangaIngestWithUpscaling.Configuration;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
+using MangaIngestWithUpscaling.Data.LogModel;
 using MangaIngestWithUpscaling.Services;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.ChapterMerging;
+using MangaIngestWithUpscaling.Shared.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.Python;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
@@ -21,6 +23,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Localization;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
@@ -59,16 +62,19 @@ builder.Configuration.AddEnvironmentVariables("Ingest_");
 
 builder.RegisterConfig(); // Register the configuration classes
 
+// Register task polymorphism once so EF converters and runtime serializers share the same options
+TaskJsonOptionsProvider.RegisterDerivedTypesFromAssemblies(typeof(UpscaleTask).Assembly);
+
 string connectionString =
     builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
 
-SQLiteConnectionStringBuilder sqliteConnectionStringBuilder = new(connectionString);
+SqliteConnectionStringBuilder sqliteConnectionStringBuilder = new(connectionString);
 
 var loggingConnectionString =
     builder.Configuration.GetConnectionString("LoggingConnection") ?? "Data Source=logs.db";
 
-var loggingConnectionReadOnlyStringBuilder = new SQLiteConnectionStringBuilder(
+var loggingConnectionReadOnlyStringBuilder = new SqliteConnectionStringBuilder(
     loggingConnectionString
 );
 var loggingConnectionReadOnlyString = loggingConnectionReadOnlyStringBuilder.ConnectionString;

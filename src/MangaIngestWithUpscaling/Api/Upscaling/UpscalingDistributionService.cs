@@ -25,7 +25,8 @@ public partial class UpscalingDistributionService(
     IChapterChangedNotifier chapterChangedNotifier,
     ISplitProcessingService splitProcessingService,
     ISplitProcessingCoordinator splitProcessingCoordinator,
-    ILogger<UpscalingDistributionService> logger
+    ILogger<UpscalingDistributionService> logger,
+    ITaskSerializer taskSerializer
 ) : UpscalingService.UpscalingServiceBase
 {
     private static readonly string tempDir = Path.Combine(
@@ -33,6 +34,7 @@ public partial class UpscalingDistributionService(
         "mangaingestwithupscaling"
     );
     private readonly ILogger<UpscalingDistributionService> _logger = logger;
+    private readonly ITaskSerializer _taskSerializer = taskSerializer;
 
     public override Task<CheckConnectionResponse> CheckConnection(
         Empty request,
@@ -80,15 +82,17 @@ public partial class UpscalingDistributionService(
 
         // Handle both UpscaleTask and RepairUpscaleTask
         int upscalerProfileId;
-        if (task.Data is UpscaleTask upscaleTask)
+        var payload = _taskSerializer.Deserialize<BaseTask>(task);
+
+        if (payload is UpscaleTask upscaleTask)
         {
             upscalerProfileId = upscaleTask.UpscalerProfileId;
         }
-        else if (task.Data is RepairUpscaleTask repairTask)
+        else if (payload is RepairUpscaleTask repairTask)
         {
             upscalerProfileId = repairTask.UpscalerProfileId;
         }
-        else if (task.Data is DetectSplitCandidatesTask)
+        else if (payload is DetectSplitCandidatesTask)
         {
             return new UpscaleTaskDelegationResponse
             {
@@ -96,7 +100,7 @@ public partial class UpscalingDistributionService(
                 TaskType = TaskType.SplitDetection,
             };
         }
-        else if (task.Data is ApplySplitsTask applySplitsTask)
+        else if (payload is ApplySplitsTask applySplitsTask)
         {
             var findings = await dbContext
                 .StripSplitFindings.Where(f =>
@@ -237,7 +241,9 @@ public partial class UpscalingDistributionService(
         string filePath;
 
         // Handle different task types
-        if (task.Data is UpscaleTask upscaleTask)
+        var payload = _taskSerializer.Deserialize<BaseTask>(task);
+
+        if (payload is UpscaleTask upscaleTask)
         {
             Chapter? chapter = await dbContext
                 .Chapters.Include(chapter => chapter.Manga)
@@ -251,7 +257,7 @@ public partial class UpscalingDistributionService(
 
             filePath = chapter.NotUpscaledFullPath;
         }
-        else if (task.Data is RepairUpscaleTask repairTask)
+        else if (payload is RepairUpscaleTask repairTask)
         {
             // For repair tasks, serve the prepared missing pages CBZ
             DistributedUpscaleTaskProcessor.RemoteRepairState? repairState =
@@ -276,7 +282,7 @@ public partial class UpscalingDistributionService(
                 filePath
             );
         }
-        else if (task.Data is DetectSplitCandidatesTask detectTask)
+        else if (payload is DetectSplitCandidatesTask detectTask)
         {
             Chapter? chapter = await dbContext
                 .Chapters.Include(chapter => chapter.Manga)
@@ -290,7 +296,7 @@ public partial class UpscalingDistributionService(
 
             filePath = chapter.NotUpscaledFullPath;
         }
-        else if (task.Data is ApplySplitsTask applySplitsTask)
+        else if (payload is ApplySplitsTask applySplitsTask)
         {
             Chapter? chapter = await dbContext
                 .Chapters.Include(chapter => chapter.Manga)
@@ -352,7 +358,9 @@ public partial class UpscalingDistributionService(
         string filePath;
 
         // Handle different task types
-        if (task.Data is UpscaleTask upscaleTask)
+        var payload = _taskSerializer.Deserialize<BaseTask>(task);
+
+        if (payload is UpscaleTask upscaleTask)
         {
             Chapter? chapter = await dbContext
                 .Chapters.Include(chapter => chapter.Manga)
@@ -366,7 +374,7 @@ public partial class UpscalingDistributionService(
 
             filePath = chapter.NotUpscaledFullPath;
         }
-        else if (task.Data is RepairUpscaleTask repairTask)
+        else if (payload is RepairUpscaleTask repairTask)
         {
             // For repair tasks, serve the prepared missing pages CBZ
             DistributedUpscaleTaskProcessor.RemoteRepairState? repairState =
@@ -386,7 +394,7 @@ public partial class UpscalingDistributionService(
 
             filePath = repairState.PreparedMissingPagesCbzPath;
         }
-        else if (task.Data is DetectSplitCandidatesTask detectTask)
+        else if (payload is DetectSplitCandidatesTask detectTask)
         {
             Chapter? chapter = await dbContext
                 .Chapters.Include(chapter => chapter.Manga)
@@ -400,7 +408,7 @@ public partial class UpscalingDistributionService(
 
             filePath = chapter.NotUpscaledFullPath;
         }
-        else if (task.Data is ApplySplitsTask applySplitsTask)
+        else if (payload is ApplySplitsTask applySplitsTask)
         {
             Chapter? chapter = await dbContext
                 .Chapters.Include(chapter => chapter.Manga)
@@ -465,7 +473,9 @@ public partial class UpscalingDistributionService(
                 };
             }
 
-            if (task.Data is not DetectSplitCandidatesTask detectTask)
+            var payload = _taskSerializer.Deserialize<BaseTask>(task);
+
+            if (payload is not DetectSplitCandidatesTask detectTask)
             {
                 return new UploadDetectionResultResponse
                 {
@@ -575,7 +585,9 @@ public partial class UpscalingDistributionService(
                 }
 
                 // Handle different task types
-                if (task.Data is UpscaleTask upscaleTask)
+                var payload = _taskSerializer.Deserialize<BaseTask>(task);
+
+                if (payload is UpscaleTask upscaleTask)
                 {
                     Chapter? chapter = await dbContext
                         .Chapters.Include(chapter => chapter.Manga)
@@ -636,7 +648,7 @@ public partial class UpscalingDistributionService(
                     );
                     _ = chapterChangedNotifier.Notify(chapter, true);
                 }
-                else if (task.Data is RepairUpscaleTask repairTask)
+                else if (payload is RepairUpscaleTask repairTask)
                 {
                     // For repair tasks, save the upscaled result to the designated repair path
                     DistributedUpscaleTaskProcessor.RemoteRepairState? repairState =
@@ -686,7 +698,7 @@ public partial class UpscalingDistributionService(
                         }
                     );
                 }
-                else if (task.Data is ApplySplitsTask applySplitsTask)
+                else if (payload is ApplySplitsTask applySplitsTask)
                 {
                     Chapter? chapter = await dbContext
                         .Chapters.Include(chapter => chapter.Manga)

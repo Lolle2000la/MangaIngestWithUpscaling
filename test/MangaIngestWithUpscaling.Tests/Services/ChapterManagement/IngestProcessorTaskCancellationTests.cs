@@ -72,7 +72,11 @@ public class IngestProcessorTaskCancellationTests : IDisposable
         services.AddScoped<IQueueCleanup, QueueCleanup>();
         ServiceProvider provider = services.BuildServiceProvider();
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
-        var taskQueue = new TaskQueue(scopeFactory, Substitute.For<ILogger<TaskQueue>>());
+        var taskQueue = new TaskQueue(
+            new TaskSerializer(),
+            scopeFactory,
+            Substitute.For<ILogger<TaskQueue>>()
+        );
         IOptions<UpscalerConfig> upscalerOptions = Options.Create(
             new UpscalerConfig { RemoteOnly = true }
         );
@@ -83,7 +87,8 @@ public class IngestProcessorTaskCancellationTests : IDisposable
             scopeFactory,
             upscalerOptions,
             processorLogger,
-            taskPersistenceService
+            taskPersistenceService,
+            new TaskSerializer()
         );
 
         // SUT

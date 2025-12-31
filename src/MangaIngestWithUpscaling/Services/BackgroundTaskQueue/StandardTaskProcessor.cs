@@ -8,7 +8,8 @@ public class StandardTaskProcessor(
     TaskQueue taskQueue,
     IServiceScopeFactory scopeFactory,
     ILogger<StandardTaskProcessor> logger,
-    ITaskPersistenceService taskPersistenceService
+    ITaskPersistenceService taskPersistenceService,
+    ITaskSerializer taskSerializer
 ) : BackgroundService
 {
     private readonly Lock _lock = new();
@@ -76,7 +77,9 @@ public class StandardTaskProcessor(
         {
             // Polymorphic processing based on concrete type, forward debounced progress to UI
             var last = DateTime.UtcNow;
-            using var progressSubscription = task.Data.Progress.Changed.Subscribe(_ =>
+            var data = taskSerializer.Deserialize(task);
+
+            using var progressSubscription = data.Progress.Changed.Subscribe(_ =>
             {
                 var now = DateTime.UtcNow;
                 if (now - last >= _progressDebounce)
@@ -86,7 +89,7 @@ public class StandardTaskProcessor(
                 }
             });
 
-            await task.Data.ProcessAsync(scope.ServiceProvider, stoppingToken);
+            await data.ProcessAsync(scope.ServiceProvider, stoppingToken);
             StatusChanged?.Invoke(task);
 
             await taskPersistenceService.CompleteTaskAsync(task.Id);

@@ -13,6 +13,7 @@ public class TaskQueueTests : IDisposable
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly ILogger<TaskQueue> _mockLogger;
+    private readonly ITaskSerializer _taskSerializer;
     private readonly IQueueCleanup _mockQueueCleanup;
     private readonly IServiceScope _scope;
     private readonly TaskQueue _taskQueue;
@@ -33,8 +34,10 @@ public class TaskQueueTests : IDisposable
         _dbContext = _scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         _mockLogger = Substitute.For<ILogger<TaskQueue>>();
+        _taskSerializer = new TaskSerializer();
 
         _taskQueue = new TaskQueue(
+            _taskSerializer,
             serviceProvider.GetRequiredService<IServiceScopeFactory>(),
             _mockLogger
         );

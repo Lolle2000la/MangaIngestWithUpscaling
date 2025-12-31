@@ -13,7 +13,8 @@ public class ChapterMergeUpscaleTaskManager(
     ApplicationDbContext dbContext,
     ITaskQueue taskQueue,
     UpscaleTaskProcessor upscaleTaskProcessor,
-    ILogger<ChapterMergeUpscaleTaskManager> logger
+    ILogger<ChapterMergeUpscaleTaskManager> logger,
+    ITaskSerializer taskSerializer
 ) : IChapterMergeUpscaleTaskManager
 {
     public async Task HandleUpscaleTaskManagementAsync(
@@ -59,7 +60,7 @@ public class ChapterMergeUpscaleTaskManager(
                     await taskQueue.RemoveTaskAsync(task);
                     logger.LogInformation(
                         "Removed pending upscale task for chapter {ChapterId} due to chapter merging",
-                        ((UpscaleTask)task.Data).ChapterId
+                        taskSerializer.Deserialize<UpscaleTask>(task).ChapterId
                     );
                     break;
 
@@ -69,7 +70,7 @@ public class ChapterMergeUpscaleTaskManager(
                     tasksToCancel.Add(task);
                     logger.LogInformation(
                         "Canceled processing upscale task for chapter {ChapterId} due to chapter merging",
-                        ((UpscaleTask)task.Data).ChapterId
+                        taskSerializer.Deserialize<UpscaleTask>(task).ChapterId
                     );
                     break;
 
@@ -78,7 +79,7 @@ public class ChapterMergeUpscaleTaskManager(
                     tasksToRemove.Add(task);
                     logger.LogDebug(
                         "Removing completed upscale task for chapter {ChapterId} due to chapter merging",
-                        ((UpscaleTask)task.Data).ChapterId
+                        taskSerializer.Deserialize<UpscaleTask>(task).ChapterId
                     );
                     break;
 
@@ -89,7 +90,7 @@ public class ChapterMergeUpscaleTaskManager(
                     logger.LogDebug(
                         "Removing {Status} upscale task for chapter {ChapterId} due to chapter merging",
                         task.Status,
-                        ((UpscaleTask)task.Data).ChapterId
+                        taskSerializer.Deserialize<UpscaleTask>(task).ChapterId
                     );
                     break;
             }
@@ -114,7 +115,7 @@ public class ChapterMergeUpscaleTaskManager(
                 tasksToRemove.Add(canceledTask);
                 logger.LogDebug(
                     "Successfully canceled and will remove task for chapter {ChapterId}",
-                    ((UpscaleTask)canceledTask.Data).ChapterId
+                    taskSerializer.Deserialize<UpscaleTask>(canceledTask).ChapterId
                 );
             }
         }
@@ -170,8 +171,7 @@ public class ChapterMergeUpscaleTaskManager(
         {
             // Extract chapter IDs from the task data for comparison
             HashSet<int> taskChapterIds = pendingTasks
-                .Where(pt => pt.Data is UpscaleTask)
-                .Select(pt => ((UpscaleTask)pt.Data).ChapterId)
+                .Select(pt => taskSerializer.Deserialize<UpscaleTask>(pt).ChapterId)
                 .ToHashSet();
 
             List<Chapter> affectedChapters = chapters

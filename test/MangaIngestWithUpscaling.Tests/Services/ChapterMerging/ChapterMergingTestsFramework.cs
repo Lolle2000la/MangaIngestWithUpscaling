@@ -2592,6 +2592,7 @@ public class PartialUpscalingMergeTests : IDisposable
         var provider = services.BuildServiceProvider();
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
         var realQueueForProcessor = new TaskQueue(
+            new TaskSerializer(),
             scopeFactory,
             Substitute.For<ILogger<TaskQueue>>()
         );
@@ -2603,14 +2604,16 @@ public class PartialUpscalingMergeTests : IDisposable
             scopeFactory,
             upscalerOptions,
             processorLogger,
-            taskPersistenceService
+            taskPersistenceService,
+            new TaskSerializer()
         );
 
         var realTaskManager = new ChapterMergeUpscaleTaskManager(
             context,
             taskQueue,
             processor,
-            taskManagerLogger
+            taskManagerLogger,
+            new TaskSerializer()
         );
 
         await realTaskManager.HandleUpscaleTaskManagementAsync(
@@ -3791,7 +3794,11 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         services.AddScoped<IQueueCleanup, QueueCleanup>();
         ServiceProvider provider = services.BuildServiceProvider();
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
-        var taskQueue = new TaskQueue(scopeFactory, Substitute.For<ILogger<TaskQueue>>());
+        var taskQueue = new TaskQueue(
+            new TaskSerializer(),
+            scopeFactory,
+            Substitute.For<ILogger<TaskQueue>>()
+        );
 
         var revertService = new ChapterMergeRevertService(
             context,

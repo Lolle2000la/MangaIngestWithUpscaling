@@ -22,11 +22,13 @@ public class DistributedUpscaleTaskProcessor(
     TaskQueue taskQueue,
     IServiceScopeFactory scopeFactory,
     IOptions<UpscalerConfig> upscalerConfig,
-    ITaskPersistenceService taskPersistenceService
+    ITaskPersistenceService taskPersistenceService,
+    ITaskSerializer taskSerializer
 ) : BackgroundService
 {
     private readonly Lock _lock = new();
     private readonly ChannelReader<PersistedTask> _reader = taskQueue.UpscaleReader;
+    private readonly ITaskSerializer _serializer = taskSerializer;
 
     private readonly Channel<(
         TaskCompletionSource<PersistedTask>,
@@ -39,7 +41,7 @@ public class DistributedUpscaleTaskProcessor(
     // Store remote repair state separately from the task itself
     private readonly Dictionary<int, RemoteRepairState> remoteRepairStates = new();
 
-    private readonly Dictionary<int, PersistedTask> runningTasks = new();
+    private readonly Dictionary<int, RunningTask> runningTasks = new();
 
     private CancellationToken serviceStoppingToken;
 
@@ -57,11 +59,11 @@ public class DistributedUpscaleTaskProcessor(
         {
             if (
                 runningTasks.TryGetValue(checkAgainst.Id, out var currentTask)
-                && currentTask.Id == checkAgainst.Id
+                && currentTask.Persisted.Id == checkAgainst.Id
             )
             {
-                currentTask.Status = PersistedTaskStatus.Canceled;
-                _ = StatusChanged?.Invoke(currentTask);
+                currentTask.Persisted.Status = PersistedTaskStatus.Canceled;
+                _ = StatusChanged?.Invoke(currentTask.Persisted);
 
                 runningTasks.Remove(checkAgainst.Id);
             }
@@ -92,8 +94,8 @@ public class DistributedUpscaleTaskProcessor(
                     {
                         var deadTasks = runningTasks
                             .Where(x =>
-                                x.Value.Status == PersistedTaskStatus.Processing
-                                && x.Value.LastKeepAlive.AddMinutes(1) < DateTime.UtcNow
+                                x.Value.Persisted.Status == PersistedTaskStatus.Processing
+                                && x.Value.Persisted.LastKeepAlive.AddMinutes(1) < DateTime.UtcNow
                             )
                             .ToList();
 
@@ -105,7 +107,7 @@ public class DistributedUpscaleTaskProcessor(
                         deadTasksToRequeue = new List<PersistedTask>(deadTasks.Count);
                         foreach (var (taskId, task) in deadTasks)
                         {
-                            deadTasksToRequeue.Add(task);
+                            deadTasksToRequeue.Add(task.Persisted);
                             runningTasks.Remove(taskId);
                         }
                     }
@@ -202,8 +204,10 @@ public class DistributedUpscaleTaskProcessor(
                         continue;
                     }
 
+                    BaseTask taskData = _serializer.Deserialize(task);
+
                     // Handle RepairUpscaleTask specially based on remote-only mode
-                    if (task.Data is RepairUpscaleTask repairTask)
+                    if (taskData is RepairUpscaleTask repairTask)
                     {
                         using IServiceScope scope = scopeFactory.CreateScope();
                         var logger = scope.ServiceProvider.GetRequiredService<
@@ -247,7 +251,7 @@ public class DistributedUpscaleTaskProcessor(
                     }
 
                     // Handle other reroutable tasks (e.g., RenameUpscaledChaptersSeriesTask)
-                    if (task.Data is RenameUpscaledChaptersSeriesTask)
+                    if (taskData is RenameUpscaledChaptersSeriesTask)
                     {
                         using IServiceScope scope = scopeFactory.CreateScope();
                         var logger = scope.ServiceProvider.GetRequiredService<
@@ -256,14 +260,14 @@ public class DistributedUpscaleTaskProcessor(
                         logger.LogDebug(
                             "Rerouting task {taskId} ({taskType}) to local UpscaleTaskProcessor and continuing to search.",
                             task.Id,
-                            task.Data.GetType().Name
+                            taskData.GetType().Name
                         );
 
                         await taskQueue.SendToLocalUpscaleAsync(task, linkedCts.Token);
                         continue;
                     }
 
-                    if (task.Data is ApplySplitsTask applySplitsTask)
+                    if (taskData is ApplySplitsTask applySplitsTask)
                     {
                         // Check if the chapter exists
                         using IServiceScope scope = scopeFactory.CreateScope();
@@ -295,7 +299,7 @@ public class DistributedUpscaleTaskProcessor(
                         }
                     }
 
-                    if (task.Data is UpscaleTask upscaleData)
+                    if (taskData is UpscaleTask upscaleData)
                     {
                         // Check if the target chapter file still exists before giving the task to the worker
                         using IServiceScope scope = scopeFactory.CreateScope();
@@ -399,7 +403,7 @@ public class DistributedUpscaleTaskProcessor(
 
                                         task.Status = PersistedTaskStatus.Completed;
                                         task.ProcessedAt = DateTime.UtcNow;
-                                        task.Data.Progress.StatusMessage =
+                                        upscaleData.Progress.StatusMessage =
                                             "Replaced by RepairUpscaleTask due to page mismatch";
                                         _ = StatusChanged?.Invoke(task);
                                         continue;
@@ -470,7 +474,11 @@ public class DistributedUpscaleTaskProcessor(
 
             using (_lock.EnterScope())
             {
-                runningTasks[task.Id] = task;
+                runningTasks[task.Id] = new RunningTask
+                {
+                    Persisted = task,
+                    Data = _serializer.Deserialize(task),
+                };
             }
 
             _ = StatusChanged?.Invoke(task);
@@ -488,9 +496,9 @@ public class DistributedUpscaleTaskProcessor(
         {
             if (runningTasks.TryGetValue(taskId, out var currentTask))
             {
-                currentTask.LastKeepAlive = DateTime.UtcNow;
+                currentTask.Persisted.LastKeepAlive = DateTime.UtcNow;
                 // Notify listeners (e.g., TaskRegistry/UI) that the task heartbeat was updated
-                _ = StatusChanged?.Invoke(currentTask);
+                _ = StatusChanged?.Invoke(currentTask.Persisted);
                 return true;
             }
         }
@@ -512,7 +520,7 @@ public class DistributedUpscaleTaskProcessor(
     {
         using (_lock.EnterScope())
         {
-            if (runningTasks.TryGetValue(taskId, out PersistedTask? task))
+            if (runningTasks.TryGetValue(taskId, out RunningTask? task))
             {
                 ProgressInfo p = task.Data.Progress;
                 if (total.HasValue)
@@ -536,9 +544,9 @@ public class DistributedUpscaleTaskProcessor(
                 }
 
                 // Treat progress updates as heartbeats as well, to keep liveness fresh
-                task.LastKeepAlive = DateTime.UtcNow;
+                task.Persisted.LastKeepAlive = DateTime.UtcNow;
 
-                _ = StatusChanged?.Invoke(task);
+                _ = StatusChanged?.Invoke(task.Persisted);
             }
         }
     }
@@ -576,7 +584,8 @@ public class DistributedUpscaleTaskProcessor(
         }
 
         bool repairSuccess = true;
-        if (dbTask.Data is RepairUpscaleTask repairTask)
+        BaseTask data = _serializer.Deserialize(dbTask);
+        if (data is RepairUpscaleTask repairTask)
         {
             repairSuccess = await HandleRepairTaskCompletion(
                 repairTask,
@@ -697,7 +706,7 @@ public class DistributedUpscaleTaskProcessor(
 
             try
             {
-                persistedTask.Data.Progress.StatusMessage = "Merging repaired pages";
+                repairTask.Progress.StatusMessage = "Merging repaired pages";
                 _ = StatusChanged?.Invoke(persistedTask);
 
                 repairService.MergeRepairResults(repairContext, upscaledPath, logger);
@@ -815,11 +824,11 @@ public class DistributedUpscaleTaskProcessor(
 
         using (_lock.EnterScope())
         {
-            if (runningTasks.TryGetValue(taskId, out PersistedTask? task))
+            if (runningTasks.TryGetValue(taskId, out RunningTask? task))
             {
-                task.Status = PersistedTaskStatus.Failed;
+                task.Persisted.Status = PersistedTaskStatus.Failed;
                 runningTasks.Remove(taskId);
-                _ = StatusChanged?.Invoke(task);
+                _ = StatusChanged?.Invoke(task.Persisted);
             }
         }
 
@@ -969,10 +978,10 @@ public class DistributedUpscaleTaskProcessor(
                     remoteRepairStates[persistedTask.Id] = repairState;
                 }
 
-                persistedTask.Data.Progress.StatusMessage = "Prepared for remote upscaling";
-                persistedTask.Data.Progress.Total = differences.MissingPages.Count;
-                persistedTask.Data.Progress.Current = 0;
-                persistedTask.Data.Progress.ProgressUnit = "pages";
+                repairTask.Progress.StatusMessage = "Prepared for remote upscaling";
+                repairTask.Progress.Total = differences.MissingPages.Count;
+                repairTask.Progress.Current = 0;
+                repairTask.Progress.ProgressUnit = "pages";
                 _ = StatusChanged?.Invoke(persistedTask);
 
                 logger.LogInformation(
@@ -1034,5 +1043,11 @@ public class DistributedUpscaleTaskProcessor(
         ///     This context is created during preparation and disposed during cleanup.
         /// </summary>
         public RepairContext? RepairContext { get; set; }
+    }
+
+    private sealed class RunningTask
+    {
+        public required PersistedTask Persisted { get; init; }
+        public required BaseTask Data { get; init; }
     }
 }

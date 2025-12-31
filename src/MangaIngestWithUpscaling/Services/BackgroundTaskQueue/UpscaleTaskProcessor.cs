@@ -13,7 +13,8 @@ public class UpscaleTaskProcessor(
     IServiceScopeFactory scopeFactory,
     IOptions<UpscalerConfig> upscalerConfig,
     ILogger<UpscaleTaskProcessor> logger,
-    ITaskPersistenceService taskPersistenceService
+    ITaskPersistenceService taskPersistenceService,
+    ITaskSerializer taskSerializer
 ) : BackgroundService
 {
     private readonly Lock _lock = new();
@@ -113,7 +114,9 @@ public class UpscaleTaskProcessor(
         {
             // Forward progress changes to UI by raising StatusChanged (debounced)
             var last = DateTime.UtcNow;
-            using var progressSubscription = task.Data.Progress.Changed.Subscribe(e =>
+            var data = taskSerializer.Deserialize(task);
+
+            using var progressSubscription = data.Progress.Changed.Subscribe(e =>
             {
                 var now = DateTime.UtcNow;
                 if (now - last >= _progressDebounce)
@@ -123,7 +126,7 @@ public class UpscaleTaskProcessor(
                 }
             });
 
-            await task.Data.ProcessAsync(scope.ServiceProvider, stoppingToken);
+            await data.ProcessAsync(scope.ServiceProvider, stoppingToken);
             _ = StatusChanged?.Invoke(task);
 
             await taskPersistenceService.CompleteTaskAsync(task.Id);
