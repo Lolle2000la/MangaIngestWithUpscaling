@@ -23,6 +23,7 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.1" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="3.8.0" />
     <PackageReference Include="MudBlazor" Version="8.15.0" />
     <PackageReference Include="NSubstitute" Version="5.3.0" />
   </ItemGroup>
@@ -36,5 +37,12 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\MangaIngestWithUpscaling\MangaIngestWithUpscaling.csproj" />
     <ProjectReference Include="..\..\src\MangaIngestWithUpscaling.Shared\MangaIngestWithUpscaling.Shared.csproj" />
+    <ProjectReference Include="..\..\src\MangaIngestWithUpscaling.Data.Postgres\MangaIngestWithUpscaling.Data.Postgres.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile
+      Include="..\MangaIngestWithUpscaling.Tests\Infrastructure\TestDatabaseBackends.cs"
+      Link="Infrastructure\TestDatabaseBackends.cs"
+    />
   </ItemGroup>
 </Project>

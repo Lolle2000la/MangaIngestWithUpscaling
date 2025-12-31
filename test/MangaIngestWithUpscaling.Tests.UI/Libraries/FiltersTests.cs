@@ -2,39 +2,45 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading;
 using MangaIngestWithUpscaling.Components.Libraries.Filters;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.AspNetCore.Components;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
 using MudBlazor.Services;
 using NSubstitute;
+using Xunit;
 
 namespace MangaIngestWithUpscaling.Tests.UI.Libraries;
 
+[Collection(TestDatabaseCollection.Name)]
 public class FiltersTests : BunitContext
 {
+    private readonly TestDatabaseFixture _fixture;
+    private readonly TestDatabaseBackend _backend;
+    private TestDatabase _database = null!;
     private ApplicationDbContext _dbContext = null!;
 
-    public FiltersTests()
+    public FiltersTests(TestDatabaseFixture fixture)
     {
+        _fixture = fixture;
+        _backend = TestDatabaseBackends.PostgresEnabled
+            ? TestDatabaseBackend.Postgres
+            : TestDatabaseBackend.Sqlite;
         SetupDatabase();
         RegisterServices();
     }
 
     private void SetupDatabase()
     {
-        var connection = new SqliteConnection("Data Source=:memory:");
-        connection.Open();
-
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseSqlite(connection)
-            .Options;
-
-        _dbContext = new ApplicationDbContext(options);
-        _dbContext.Database.EnsureCreated();
+        _database = _fixture
+            .CreateDatabaseAsync(_backend, CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+        _dbContext = _database.CreateContext();
     }
 
     private void RegisterServices()
@@ -62,6 +68,17 @@ public class FiltersTests : BunitContext
         JSInterop.Setup<bool>("mudElementRef.focusLast").SetResult(true);
         JSInterop.Setup<bool>("mudElementRef.saveFocus").SetResult(true);
         JSInterop.Setup<bool>("mudElementRef.restoreFocus").SetResult(true);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _dbContext?.Dispose();
+            _database?.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        }
+
+        base.Dispose(disposing);
     }
 
     [Fact]
@@ -253,15 +270,5 @@ public class FiltersTests : BunitContext
         Assert.Contains("Pattern Type", component.Markup);
         Assert.Contains("Target Field", component.Markup);
         Assert.Contains("Replacement", component.Markup);
-    }
-
-    protected override void Dispose(bool disposing)
-    {
-        if (disposing)
-        {
-            _dbContext?.Database.CloseConnection();
-            _dbContext?.Dispose();
-        }
-        base.Dispose(disposing);
     }
 }

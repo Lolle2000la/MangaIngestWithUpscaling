@@ -2,39 +2,45 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading;
 using MangaIngestWithUpscaling.Components.Libraries.Dialogs;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
-using Microsoft.Data.Sqlite;
+using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
 using MudBlazor;
 using MudBlazor.Services;
 using NSubstitute;
+using Xunit;
 
 namespace MangaIngestWithUpscaling.Tests.UI.Libraries;
 
+[Collection(TestDatabaseCollection.Name)]
 public class DialogsTests : BunitContext
 {
+    private readonly TestDatabaseFixture _fixture;
+    private readonly TestDatabaseBackend _backend;
+    private TestDatabase _database = null!;
     private ApplicationDbContext _dbContext = null!;
 
-    public DialogsTests()
+    public DialogsTests(TestDatabaseFixture fixture)
     {
+        _fixture = fixture;
+        _backend = TestDatabaseBackends.PostgresEnabled
+            ? TestDatabaseBackend.Postgres
+            : TestDatabaseBackend.Sqlite;
         SetupDatabase();
         RegisterServices();
     }
 
     private void SetupDatabase()
     {
-        var connection = new SqliteConnection("Data Source=:memory:");
-        connection.Open();
-
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseSqlite(connection)
-            .Options;
-
-        _dbContext = new ApplicationDbContext(options);
-        _dbContext.Database.EnsureCreated();
+        _database = _fixture
+            .CreateDatabaseAsync(_backend, CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+        _dbContext = _database.CreateContext();
     }
 
     private void RegisterServices()
@@ -189,6 +195,7 @@ public class DialogsTests : BunitContext
         {
             _dbContext?.Database.CloseConnection();
             _dbContext?.Dispose();
+            _database?.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
         base.Dispose(disposing);
     }
