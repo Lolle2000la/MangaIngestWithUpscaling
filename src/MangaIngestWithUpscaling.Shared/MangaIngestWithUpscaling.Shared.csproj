@@ -71,7 +71,7 @@
     />
     <PackageReference
       Include="NetVips.Native.osx-arm64"
-      Version="8.17.3"
+      Version="8.18.0"
       Condition="'$(RuntimeIdentifier)' == 'osx-arm64'"
     />
     <!-- Fallback for AnyCPU builds - includes all platforms -->
