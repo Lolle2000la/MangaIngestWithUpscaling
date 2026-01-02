@@ -110,7 +110,7 @@
     />
     <PackageReference
       Include="NetVips.Native.osx-x64"
-      Version="8.17.3"
+      Version="8.18.0"
       Condition="'$(RuntimeIdentifier)' == 'osx-x64'"
     />
     <PackageReference
