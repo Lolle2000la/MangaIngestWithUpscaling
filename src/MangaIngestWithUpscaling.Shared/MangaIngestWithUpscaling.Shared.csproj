@@ -26,7 +26,7 @@
     <!-- Platform-specific NetVips native libraries -->
     <PackageReference
       Include="NetVips.Native.win-x64"
-      Version="8.17.3"
+      Version="8.18.0"
       Condition="'$(RuntimeIdentifier)' == 'win-x64'"
     />
     <PackageReference
