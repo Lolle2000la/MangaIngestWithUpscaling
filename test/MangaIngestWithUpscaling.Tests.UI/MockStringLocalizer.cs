@@ -18,6 +18,25 @@ public class MockStringLocalizer<T> : IStringLocalizer<T>
         { "Generic_OK", "OK" },
         { "Yes", "Yes" },
         { "No", "No" },
+        // TaskQueues
+        { "PageTitle", "Tasks" },
+        { "StandardTasks", "Standard Tasks" },
+        { "UpscalingTasks", "Upscaling Tasks" },
+        { "Error_ClearCompleted", "Failed to clear completed tasks: {0}" },
+        { "Error_ClearFailed", "Failed to clear failed tasks: {0}" },
+        // TaskTable
+        { "ClearFailed", "Clear Failed" },
+        { "ClearCompleted", "Clear Completed" },
+        { "Header_Name", "Name" },
+        { "Header_QueuedAt", "Queued At" },
+        { "Header_FinishedAt", "Finished At" },
+        { "Header_Status", "Status" },
+        { "Progress_Working", "Working…" },
+        { "Status_Pending", "Pending" },
+        { "Status_Processing", "Processing" },
+        { "Status_Completed", "Completed" },
+        { "Status_Failed", "Failed" },
+        { "Status_Canceled", "Canceled" },
         // EditLibraryFilters
         { "Title", "Edit Ingest Filters" },
         {
@@ -68,6 +87,11 @@ public class MockStringLocalizer<T> : IStringLocalizer<T>
         get
         {
             // Handle context-specific keys
+            if (typeof(T).Name.Contains("TaskQueues"))
+            {
+                if (name == "Title")
+                    return new LocalizedString(name, "Currently running tasks");
+            }
             if (typeof(T).Name.Contains("EditLibraryRenames"))
             {
                 if (name == "Title")
