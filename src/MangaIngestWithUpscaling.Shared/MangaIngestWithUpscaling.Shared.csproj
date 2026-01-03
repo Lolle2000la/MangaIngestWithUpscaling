@@ -31,7 +31,7 @@
     />
     <PackageReference
       Include="NetVips.Native.win-x86"
-      Version="8.17.3"
+      Version="8.18.0"
       Condition="'$(RuntimeIdentifier)' == 'win-x86'"
     />
     <PackageReference
