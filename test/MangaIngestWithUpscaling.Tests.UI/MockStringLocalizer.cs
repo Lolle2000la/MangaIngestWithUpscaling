@@ -20,7 +20,6 @@ public class MockStringLocalizer<T> : IStringLocalizer<T>
         { "No", "No" },
         // TaskQueues
         { "PageTitle", "Tasks" },
-        { "Title", "Currently running tasks" },
         { "StandardTasks", "Standard Tasks" },
         { "UpscalingTasks", "Upscaling Tasks" },
         { "Error_ClearCompleted", "Failed to clear completed tasks: {0}" },
@@ -88,6 +87,11 @@ public class MockStringLocalizer<T> : IStringLocalizer<T>
         get
         {
             // Handle context-specific keys
+            if (typeof(T).Name.Contains("TaskQueues"))
+            {
+                if (name == "Title")
+                    return new LocalizedString(name, "Currently running tasks");
+            }
             if (typeof(T).Name.Contains("EditLibraryRenames"))
             {
                 if (name == "Title")
