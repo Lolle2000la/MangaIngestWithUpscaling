@@ -21,12 +21,12 @@
 
 <MudGrid>
     <MudItem lg="6" xs="12">
-        <TaskTable Tasks="@standardTasks" Title="@Loc["StandardTasks"]" OnClearCompleted="OnClearCompletedStandardTasks"
+        <TaskTable @key="@("standard-tasks")" Tasks="@standardTasks" Title="@Loc["StandardTasks"]" OnClearCompleted="OnClearCompletedStandardTasks"
             OnClearFailed="OnClearFailedStandardTasks" OnRetryFailed="OnRetryFailed" OnDelete="OnDelete"
             OnCancel="OnCancelStandardTask" OnRunNow="OnRunNow" />
     </MudItem>
     <MudItem lg="6" xs="12">
-        <TaskTable Tasks="@upscaleTasks" Title="@Loc["UpscalingTasks"]" OnClearCompleted="OnClearCompletedUpscaleTasks"
+        <TaskTable @key="@("upscale-tasks")" Tasks="@upscaleTasks" Title="@Loc["UpscalingTasks"]" OnClearCompleted="OnClearCompletedUpscaleTasks"
             OnClearFailed="OnClearFailedUpscaleTasks" OnRetryFailed="OnRetryFailed" OnDelete="OnDelete"
             OnCancel="OnCancelUpscaleTask" OnRunNow="OnRunNow" />
     </MudItem>
