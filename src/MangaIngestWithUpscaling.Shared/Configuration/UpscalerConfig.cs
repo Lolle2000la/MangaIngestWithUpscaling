@@ -72,5 +72,11 @@ public record UpscalerConfig
             ToFormat = ".jpg",
             Quality = 98,
         },
+        new ImageFormatConversionRule
+        {
+            FromFormat = ".avif",
+            ToFormat = ".jpg",
+            Quality = 98,
+        },
     ];
 }
