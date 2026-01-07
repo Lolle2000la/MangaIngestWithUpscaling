@@ -59,18 +59,21 @@
     <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </resheader>
   <data name="PageTitle" xml:space="preserve">
-    <value>API-Schlüssel</value>
+    <value>Authentifizierungsschlüssel zurücksetzen</value>
   </data>
   <data name="Header" xml:space="preserve">
-    <value>Verwalten Sie Ihren API-Schlüssel</value>
+    <value>Authentifizierungsschlüssel zurücksetzen</value>
   </data>
-  <data name="Placeholder" xml:space="preserve">
-    <value>Ihr API-Schlüssel</value>
+  <data name="WarningTitle" xml:space="preserve">
+    <value>Wenn Sie Ihren Authentifizierungsschlüssel zurücksetzen, funktioniert Ihre Authentifizierungs-App nicht mehr, bis Sie sie neu konfigurieren.</value>
   </data>
-  <data name="Label" xml:space="preserve">
-    <value>API-Schlüssel</value>
+  <data name="WarningDescription" xml:space="preserve">
+    <value>Dieser Vorgang deaktiviert 2FA, bis Sie Ihre Authentifizierungs-App verifizieren. Wenn Sie die Konfiguration Ihrer Authentifizierungs-App nicht abschließen, verlieren Sie möglicherweise den Zugriff auf Ihr Konto.</value>
   </data>
-  <data name="RegenerateButton" xml:space="preserve">
-    <value>API-Schlüssel neu generieren</value>
+  <data name="ResetButton" xml:space="preserve">
+    <value>Authentifizierungsschlüssel zurücksetzen</value>
+  </data>
+  <data name="StatusMessage" xml:space="preserve">
+    <value>Ihr Authentifizierungsschlüssel wurde zurückgesetzt. Sie müssen Ihre Authentifizierungs-App mit dem neuen Schlüssel konfigurieren.</value>
   </data>
 </root>

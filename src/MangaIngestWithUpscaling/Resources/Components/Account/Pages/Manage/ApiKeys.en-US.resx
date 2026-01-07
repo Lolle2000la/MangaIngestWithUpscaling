@@ -59,16 +59,16 @@
     <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </resheader>
   <data name="PageTitle" xml:space="preserve">
-    <value>API Key</value>
+    <value>API Keys</value>
   </data>
   <data name="Header" xml:space="preserve">
-    <value>API Key</value>
+    <value>Manage your API Key</value>
   </data>
   <data name="Placeholder" xml:space="preserve">
-    <value>API Key.</value>
+    <value>Your API Key</value>
   </data>
   <data name="Label" xml:space="preserve">
-    <value>API Key (Click to copy)</value>
+    <value>API Key</value>
   </data>
   <data name="RegenerateButton" xml:space="preserve">
     <value>Regenerate API Key</value>

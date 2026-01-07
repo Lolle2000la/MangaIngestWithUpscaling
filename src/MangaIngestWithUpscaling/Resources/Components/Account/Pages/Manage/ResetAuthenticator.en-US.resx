@@ -59,18 +59,21 @@
     <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </resheader>
   <data name="PageTitle" xml:space="preserve">
-    <value>API-Schlüssel</value>
+    <value>Reset authenticator key</value>
   </data>
   <data name="Header" xml:space="preserve">
-    <value>Verwalten Sie Ihren API-Schlüssel</value>
+    <value>Reset authenticator key</value>
   </data>
-  <data name="Placeholder" xml:space="preserve">
-    <value>Ihr API-Schlüssel</value>
+  <data name="WarningTitle" xml:space="preserve">
+    <value>If you reset your authenticator key your authenticator app will not work until you reconfigure it.</value>
   </data>
-  <data name="Label" xml:space="preserve">
-    <value>API-Schlüssel</value>
+  <data name="WarningDescription" xml:space="preserve">
+    <value>This process disables 2FA until you verify your authenticator app. If you do not complete your authenticator app configuration you may lose access to your account.</value>
   </data>
-  <data name="RegenerateButton" xml:space="preserve">
-    <value>API-Schlüssel neu generieren</value>
+  <data name="ResetButton" xml:space="preserve">
+    <value>Reset authenticator key</value>
+  </data>
+  <data name="StatusMessage" xml:space="preserve">
+    <value>Your authenticator app key has been reset, you will need to configure your authenticator app using the new key.</value>
   </data>
 </root>

@@ -187,4 +187,157 @@
   <data name="Suffix_Old" xml:space="preserve">
     <value>(旧)</value>
   </data>
+  <data name="Dialog_DeleteUpscaledChapter_Title" xml:space="preserve">
+    <value>アップスケールされた章を削除</value>
+  </data>
+  <data name="Dialog_DeleteUpscaledChapter_Content" xml:space="preserve">
+    <value>この章のアップスケール版を削除してもよろしいですか？</value>
+  </data>
+  <data name="Dialog_DeleteChapter_Content" xml:space="preserve">
+    <value>このチャプターを削除してもよろしいですか？</value>
+  </data>
+  <data name="Dialog_DeleteChapter_Title" xml:space="preserve">
+    <value>チャプターを削除</value>
+  </data>
+  <data name="Dialog_DeleteSelected_Content" xml:space="preserve">
+    <value>選択したチャプターを削除してもよろしいですか？</value>
+  </data>
+  <data name="Dialog_DeleteSelected_Title" xml:space="preserve">
+    <value>選択したチャプターを削除</value>
+  </data>
+  <data name="Dialog_DeleteUpscaledSelected_Content" xml:space="preserve">
+    <value>選択したチャプターのアップスケール版を削除してもよろしいですか？</value>
+  </data>
+  <data name="Dialog_DeleteUpscaledSelected_Title" xml:space="preserve">
+    <value>選択したアップスケール済みチャプターを削除</value>
+  </data>
+  <data name="Dialog_LatestChapterSpecific_Content" xml:space="preserve">
+    <value>チャプター {1} の {0} に最新のチャプターが含まれています。続行しますか？</value>
+  </data>
+  <data name="Dialog_LatestChapter_Content" xml:space="preserve">
+    <value>選択には最新のチャプターに関わる操作が含まれています。可能なすべての結合操作を続行しますか？</value>
+  </data>
+  <data name="Dialog_LatestChapter_Title" xml:space="preserve">
+    <value>最新チャプターを検出</value>
+  </data>
+  <data name="Dialog_RevertMergedChapter_Content" xml:space="preserve">
+    <value>この結合されたチャプターを元のパーツに戻してもよろしいですか？これにより、結合されたチャプターが削除され、個々のパーツが復元されます。</value>
+  </data>
+  <data name="Dialog_RevertMergedChapter_Title" xml:space="preserve">
+    <value>結合されたチャプターを元に戻す</value>
+  </data>
+  <data name="Label_Filename" xml:space="preserve">
+    <value>ファイル名</value>
+  </data>
+  <data name="Snackbar_AddChaptersFailure" xml:space="preserve">
+    <value>既存の結合されたチャプター {0} へのチャプター追加に失敗しました。詳細についてはログを確認してください。</value>
+  </data>
+  <data name="Snackbar_AddChaptersSuccess" xml:space="preserve">
+    <value>{0} チャプターを既存の結合されたチャプター {1} に正常に追加しました。</value>
+  </data>
+  <data name="Snackbar_ChapterNotMergeable" xml:space="preserve">
+    <value>選択されたチャプターは結合可能なグループの一部ではありません。</value>
+  </data>
+  <data name="Snackbar_DeleteFile_Failure" xml:space="preserve">
+    <value>{0} の削除に失敗しました。詳細についてはログを確認してください。</value>
+  </data>
+  <data name="Snackbar_DeleteUpscaledFile_Failure" xml:space="preserve">
+    <value>アップスケールされた {0} の削除に失敗しました。詳細についてはログを確認してください。</value>
+  </data>
+  <data name="Snackbar_InvalidFileName" xml:space="preserve">
+    <value>新しい名前に無効な文字が含まれています。</value>
+  </data>
+  <data name="Snackbar_LoadMetadata_Failure" xml:space="preserve">
+    <value>{0} のメタデータ読み込みに失敗しました。詳細についてはログを確認してください。</value>
+  </data>
+  <data name="Snackbar_MergeFailure" xml:space="preserve">
+    <value>チャプターの結合に失敗しました。詳細についてはログを確認してください。</value>
+  </data>
+  <data name="Snackbar_MergeOperationsFailure" xml:space="preserve">
+    <value>結合操作の完了に失敗しました。詳細についてはログを確認してください。</value>
+  </data>
+  <data name="Snackbar_MergeOperationsSuccess_Add" xml:space="preserve">
+    <value>既存の結合されたチャプターへの {0} 件の追加が正常に完了しました。</value>
+  </data>
+  <data name="Snackbar_MergeOperationsSuccess_Both" xml:space="preserve">
+    <value>{0} 件の新規結合と {1} 件の既存の結合されたチャプターへの追加が正常に完了しました。</value>
+  </data>
+  <data name="Snackbar_MergeOperationsSuccess_New" xml:space="preserve">
+    <value>{0} 件の新規結合が正常に完了しました。</value>
+  </data>
+  <data name="Snackbar_MergeSuccess_Multiple" xml:space="preserve">
+    <value>{0} チャプターを {1} グループに正常に結合しました。</value>
+  </data>
+  <data name="Snackbar_MergeSuccess_Single" xml:space="preserve">
+    <value>{0} チャプターを 1 グループに正常に結合しました。</value>
+  </data>
+  <data name="Snackbar_MissingInfo" xml:space="preserve">
+    <value>マンガまたはライブラリ情報が不足しています。</value>
+  </data>
+  <data name="Snackbar_NoChaptersMerged" xml:space="preserve">
+    <value>チャプターは結合されませんでした。詳細についてはログを確認してください。</value>
+  </data>
+  <data name="Snackbar_NoChaptersSelected" xml:space="preserve">
+    <value>チャプターが選択されていません。</value>
+  </data>
+  <data name="Snackbar_NoMergeOperationsForChapter" xml:space="preserve">
+    <value>このチャプターに対して可能な結合操作はありません。</value>
+  </data>
+  <data name="Snackbar_NoMergedSelected" xml:space="preserve">
+    <value>元に戻すための結合されたチャプターが選択されていません。</value>
+  </data>
+  <data name="Snackbar_NoNonMergedSelected" xml:space="preserve">
+    <value>結合するための未結合チャプターが選択されていません。</value>
+  </data>
+  <data name="Snackbar_NoValidMergeOperations" xml:space="preserve">
+    <value>選択されたチャプターに対して有効な結合操作がありません。</value>
+  </data>
+  <data name="Snackbar_NotifyChange_Failure" xml:space="preserve">
+    <value>{0} のチャプター変更を接続されたサービスに通知できませんでした。詳細についてはログを確認してください。</value>
+  </data>
+  <data name="Snackbar_RenameFile_Failure" xml:space="preserve">
+    <value>{0} の名前変更に失敗しました。詳細についてはログを確認してください。</value>
+  </data>
+  <data name="Snackbar_RenameUpscaledFile_Failure" xml:space="preserve">
+    <value>アップスケールされた {0} の名前変更に失敗しました。詳細についてはログを確認してください。</value>
+  </data>
+  <data name="Snackbar_RevertMergedChapter_Failure" xml:space="preserve">
+    <value>結合されたチャプターを元に戻すことに失敗しました。詳細についてはログを確認してください。</value>
+  </data>
+  <data name="Snackbar_RevertMergedChapter_Success" xml:space="preserve">
+    <value>結合されたチャプターを正常に元に戻し、{0} 個の個別のパーツを復元しました。</value>
+  </data>
+  <data name="Snackbar_RevertMerged_Failure" xml:space="preserve">
+    <value>{0} 個の結合されたチャプターを元に戻すことに失敗しました。詳細についてはログを確認してください。</value>
+  </data>
+  <data name="Snackbar_RevertMerged_Success" xml:space="preserve">
+    <value>{0} 個の結合されたチャプターを正常に元に戻しました。</value>
+  </data>
+  <data name="Snackbar_RevertRenameUpscaled_Failure" xml:space="preserve">
+    <value>アップスケールされた {0} の名前変更の取り消しに失敗しました。詳細についてはログを確認してください。</value>
+  </data>
+  <data name="Snackbar_RevertRename_Failure" xml:space="preserve">
+    <value>{0} の名前変更の取り消しに失敗しました。詳細についてはログを確認してください。</value>
+  </data>
+  <data name="Snackbar_UpscaledLibraryPathNotSet" xml:space="preserve">
+    <value>このライブラリのアップスケールライブラリパスが設定されていません。</value>
+  </data>
+  <data name="Snackbar_UpscaledPathNotSetButUpscaled" xml:space="preserve">
+    <value>このライブラリのアップスケールライブラリパスが設定されていませんが、チャプターはアップスケールされています。</value>
+  </data>
+  <data name="Snackbar_UpscalerProfileNotSet" xml:space="preserve">
+    <value>このライブラリ/マンガのアップスケーラープロファイルが設定されていません。</value>
+  </data>
+  <data name="Text_NotAvailable" xml:space="preserve">
+    <value>該当なし</value>
+  </data>
+  <data name="Tooltip_DeleteChapter" xml:space="preserve">
+    <value>このチャプターを削除</value>
+  </data>
+  <data name="Tooltip_MergeChapter" xml:space="preserve">
+    <value>このチャプターを後続のパーツと結合するか、既存の結合されたチャプターに追加します</value>
+  </data>
+  <data name="Tooltip_RevertMerged" xml:space="preserve">
+    <value>この結合されたチャプターを元のパーツに戻します</value>
+  </data>
 </root>

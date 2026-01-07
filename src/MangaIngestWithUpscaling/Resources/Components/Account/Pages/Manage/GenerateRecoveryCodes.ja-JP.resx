@@ -59,18 +59,21 @@
     <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </resheader>
   <data name="PageTitle" xml:space="preserve">
-    <value>API-Schlüssel</value>
+    <value>二要素認証 (2FA) リカバリーコードの生成</value>
   </data>
   <data name="Header" xml:space="preserve">
-    <value>Verwalten Sie Ihren API-Schlüssel</value>
+    <value>二要素認証 (2FA) リカバリーコードの生成</value>
   </data>
-  <data name="Placeholder" xml:space="preserve">
-    <value>Ihr API-Schlüssel</value>
+  <data name="WarningTitle" xml:space="preserve">
+    <value>これらのコードを安全な場所に保管してください。</value>
   </data>
-  <data name="Label" xml:space="preserve">
-    <value>API-Schlüssel</value>
+  <data name="WarningDescription" xml:space="preserve">
+    <value>デバイスを紛失し、リカバリーコードがない場合、アカウントへのアクセスを失います。</value>
   </data>
-  <data name="RegenerateButton" xml:space="preserve">
-    <value>API-Schlüssel neu generieren</value>
+  <data name="ResetAuthenticatorInfo" xml:space="preserve">
+    <value>新しいリカバリーコードを生成しても、認証アプリで使用されるキーは変更されません。認証アプリで使用されるキーを変更したい場合は、&lt;a href="Account/Manage/ResetAuthenticator"&gt;認証キーをリセット&lt;/a&gt;する必要があります。</value>
+  </data>
+  <data name="GenerateButton" xml:space="preserve">
+    <value>リカバリーコードを生成</value>
   </data>
 </root>

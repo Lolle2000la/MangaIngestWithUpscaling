@@ -100,4 +100,19 @@
   <data name="QuickActions" xml:space="preserve">
     <value>クイックアクション</value>
   </data>
+  <data name="CreateLibrary" xml:space="preserve">
+    <value>ライブラリを作成</value>
+  </data>
+  <data name="ManageProfiles" xml:space="preserve">
+    <value>プロファイルを管理</value>
+  </data>
+  <data name="ViewTasks" xml:space="preserve">
+    <value>タスクを表示</value>
+  </data>
+  <data name="PendingTask" xml:space="preserve">
+    <value>保留中のタスク</value>
+  </data>
+  <data name="SystemLogs" xml:space="preserve">
+    <value>システムログ</value>
+  </data>
 </root>

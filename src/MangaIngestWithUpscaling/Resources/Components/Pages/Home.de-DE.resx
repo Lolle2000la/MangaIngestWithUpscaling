@@ -100,4 +100,19 @@
   <data name="QuickActions" xml:space="preserve">
     <value>Schnellaktionen</value>
   </data>
+  <data name="CreateLibrary" xml:space="preserve">
+    <value>Bibliothek erstellen</value>
+  </data>
+  <data name="ManageProfiles" xml:space="preserve">
+    <value>Profile verwalten</value>
+  </data>
+  <data name="ViewTasks" xml:space="preserve">
+    <value>Aufgaben anzeigen</value>
+  </data>
+  <data name="PendingTask" xml:space="preserve">
+    <value>ausstehende Aufgabe</value>
+  </data>
+  <data name="SystemLogs" xml:space="preserve">
+    <value>Systemprotokolle</value>
+  </data>
 </root>

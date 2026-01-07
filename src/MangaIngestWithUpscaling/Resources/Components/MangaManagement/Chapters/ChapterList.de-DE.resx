@@ -187,4 +187,184 @@
   <data name="Suffix_Old" xml:space="preserve">
     <value>(alt)</value>
   </data>
+  <data name="Dialog_DeleteUpscaledChapter_Title" xml:space="preserve">
+    <value>Hochskaliertes Kapitel löschen</value>
+  </data>
+  <data name="Dialog_DeleteUpscaledChapter_Content" xml:space="preserve">
+    <value>Sind Sie sicher, dass Sie die hochskalierte Version dieses Kapitels löschen möchten?</value>
+  </data>
+  <data name="Dialog_DeleteSelected_Title" xml:space="preserve">
+    <value>Ausgewählte Kapitel löschen</value>
+  </data>
+  <data name="Dialog_DeleteSelected_Content" xml:space="preserve">
+    <value>Sind Sie sicher, dass Sie die ausgewählten Kapitel löschen möchten?</value>
+  </data>
+  <data name="Dialog_DeleteUpscaledSelected_Title" xml:space="preserve">
+    <value>Ausgewählte hochskalierte Kapitel löschen</value>
+  </data>
+  <data name="Dialog_DeleteUpscaledSelected_Content" xml:space="preserve">
+    <value>Sind Sie sicher, dass Sie die hochskalierten Versionen der ausgewählten Kapitel löschen möchten?</value>
+  </data>
+  <data name="Snackbar_NoMergedSelected" xml:space="preserve">
+    <value>Keine zusammengeführten Kapitel ausgewählt.</value>
+  </data>
+  <data name="Dialog_RevertSelectedMerged_Title" xml:space="preserve">
+    <value>Ausgewählte zusammengeführte Kapitel zurücksetzen</value>
+  </data>
+  <data name="Snackbar_RevertMerged_Success" xml:space="preserve">
+    <value>Erfolgreich {0} zusammengeführte Kapitel zurückgesetzt.</value>
+  </data>
+  <data name="Snackbar_RevertMerged_Failure" xml:space="preserve">
+    <value>Fehler beim Zurücksetzen von {0} zusammengeführten Kapiteln. Überprüfen Sie die Protokolle für weitere Informationen.</value>
+  </data>
+  <data name="Dialog_DeleteChapter_Title" xml:space="preserve">
+    <value>Kapitel löschen</value>
+  </data>
+  <data name="Dialog_DeleteChapter_Content" xml:space="preserve">
+    <value>Sind Sie sicher, dass Sie dieses Kapitel löschen möchten?</value>
+  </data>
+  <data name="Dialog_RevertMergedChapter_Title" xml:space="preserve">
+    <value>Zusammengeführtes Kapitel zurücksetzen</value>
+  </data>
+  <data name="Dialog_RevertMergedChapter_Content" xml:space="preserve">
+    <value>Sind Sie sicher, dass Sie dieses zusammengeführte Kapitel in seine ursprünglichen Teile zurücksetzen möchten? Dies löscht das zusammengeführte Kapitel und stellt die einzelnen Teile wieder her.</value>
+  </data>
+  <data name="Snackbar_NotifyChange_Failure" xml:space="preserve">
+    <value>Fehler beim Benachrichtigen des verbundenen Dienstes über die Kapiteländerung für {0}. Überprüfen Sie die Protokolle für weitere Informationen.</value>
+  </data>
+  <data name="Snackbar_RevertMergedChapter_Success" xml:space="preserve">
+    <value>Zusammengeführtes Kapitel erfolgreich zurückgesetzt und {0} einzelne Teile wiederhergestellt.</value>
+  </data>
+  <data name="Snackbar_RevertMergedChapter_Failure" xml:space="preserve">
+    <value>Fehler beim Zurücksetzen des zusammengeführten Kapitels. Überprüfen Sie die Protokolle für weitere Informationen.</value>
+  </data>
+  <data name="Snackbar_DeleteFile_Failure" xml:space="preserve">
+    <value>Fehler beim Löschen von {0}. Überprüfen Sie die Protokolle für weitere Informationen.</value>
+  </data>
+  <data name="Snackbar_UpscalerProfileNotSet" xml:space="preserve">
+    <value>Upscaler-Profil für diese Bibliothek/Manga nicht gesetzt.</value>
+  </data>
+  <data name="Snackbar_UpscaledLibraryPathNotSet" xml:space="preserve">
+    <value>Pfad zur hochskalierten Bibliothek für diese Bibliothek nicht gesetzt.</value>
+  </data>
+  <data name="Snackbar_DeleteUpscaledFile_Failure" xml:space="preserve">
+    <value>Fehler beim Löschen der hochskalierten Datei {0}. Überprüfen Sie die Protokolle für weitere Informationen.</value>
+  </data>
+  <data name="Snackbar_InvalidFileName" xml:space="preserve">
+    <value>Der neue Name enthält ungültige Zeichen.</value>
+  </data>
+  <data name="Snackbar_MissingInfo" xml:space="preserve">
+    <value>Manga- oder Bibliotheksinformationen fehlen.</value>
+  </data>
+  <data name="Snackbar_UpscaledPathNotSetButUpscaled" xml:space="preserve">
+    <value>Pfad zur hochskalierten Bibliothek nicht gesetzt, aber Kapitel ist hochskaliert.</value>
+  </data>
+  <data name="Snackbar_RenameFile_Failure" xml:space="preserve">
+    <value>Fehler beim Umbenennen von {0}. Überprüfen Sie die Protokolle für weitere Informationen.</value>
+  </data>
+  <data name="Snackbar_RenameUpscaledFile_Failure" xml:space="preserve">
+    <value>Fehler beim Umbenennen der hochskalierten Datei {0}. Überprüfen Sie die Protokolle für weitere Informationen.</value>
+  </data>
+  <data name="Snackbar_RevertRename_Failure" xml:space="preserve">
+    <value>Fehler beim Rückgängigmachen der Umbenennung von {0}. Überprüfen Sie die Protokolle für weitere Informationen.</value>
+  </data>
+  <data name="Snackbar_RevertRenameUpscaled_Failure" xml:space="preserve">
+    <value>Fehler beim Rückgängigmachen der Umbenennung der hochskalierten Datei {0}. Überprüfen Sie die Protokolle für weitere Informationen.</value>
+  </data>
+  <data name="Snackbar_LoadMetadata_Failure" xml:space="preserve">
+    <value>Fehler beim Laden der Metadaten für {0}. Überprüfen Sie die Protokolle für weitere Informationen.</value>
+  </data>
+  <data name="Snackbar_NoChaptersSelected" xml:space="preserve">
+    <value>Keine Kapitel ausgewählt.</value>
+  </data>
+  <data name="Snackbar_NoNonMergedSelected" xml:space="preserve">
+    <value>Keine nicht zusammengeführten Kapitel zum Zusammenführen ausgewählt.</value>
+  </data>
+  <data name="Snackbar_NoValidMergeOperations" xml:space="preserve">
+    <value>Keine gültigen Zusammenführungsoperationen für die ausgewählten Kapitel möglich.</value>
+  </data>
+  <data name="Dialog_LatestChapter_Title" xml:space="preserve">
+    <value>Neuestes Kapitel erkannt</value>
+  </data>
+  <data name="Dialog_LatestChapter_Content" xml:space="preserve">
+    <value>Die Auswahl enthält Operationen, die die neuesten Kapitel betreffen. Möchten Sie mit allen möglichen Zusammenführungen fortfahren?</value>
+  </data>
+  <data name="Snackbar_NoMergeOperationsForChapter" xml:space="preserve">
+    <value>Keine Zusammenführungsoperationen für dieses Kapitel möglich.</value>
+  </data>
+  <data name="Snackbar_ChapterNotMergeable" xml:space="preserve">
+    <value>Das ausgewählte Kapitel ist Teil keiner zusammenführbaren Gruppe.</value>
+  </data>
+  <data name="Dialog_LatestChapterSpecific_Content" xml:space="preserve">
+    <value>Die {0} für Kapitel {1} beinhaltet das neueste Kapitel. Möchten Sie fortfahren?</value>
+  </data>
+  <data name="Snackbar_NoChaptersMerged" xml:space="preserve">
+    <value>Es wurden keine Kapitel zusammengeführt. Überprüfen Sie die Protokolle für weitere Informationen.</value>
+  </data>
+  <data name="Snackbar_MergeSuccess_Single" xml:space="preserve">
+    <value>Erfolgreich {0} Kapitel in 1 Gruppe zusammengeführt.</value>
+  </data>
+  <data name="Snackbar_MergeSuccess_Multiple" xml:space="preserve">
+    <value>Erfolgreich {0} Kapitel in {1} Gruppen zusammengeführt.</value>
+  </data>
+  <data name="Snackbar_MergeFailure" xml:space="preserve">
+    <value>Fehler beim Zusammenführen der Kapitel. Überprüfen Sie die Protokolle für weitere Informationen.</value>
+  </data>
+  <data name="Snackbar_MergeOperationsSuccess_Both" xml:space="preserve">
+    <value>Erfolgreich {0} neue Zusammenführungen und {1} Erweiterungen bestehender zusammengeführter Kapitel abgeschlossen.</value>
+  </data>
+  <data name="Snackbar_MergeOperationsSuccess_New" xml:space="preserve">
+    <value>Erfolgreich {0} neue Zusammenführungen abgeschlossen.</value>
+  </data>
+  <data name="Snackbar_MergeOperationsSuccess_Add" xml:space="preserve">
+    <value>Erfolgreich {0} Erweiterungen bestehender zusammengeführter Kapitel abgeschlossen.</value>
+  </data>
+  <data name="Snackbar_MergeOperationsFailure" xml:space="preserve">
+    <value>Fehler beim Abschließen der Zusammenführungsoperationen. Überprüfen Sie die Protokolle für weitere Informationen.</value>
+  </data>
+  <data name="Snackbar_AddChaptersSuccess" xml:space="preserve">
+    <value>Erfolgreich {0} Kapitel zum bestehenden zusammengeführten Kapitel {1} hinzugefügt.</value>
+  </data>
+  <data name="Snackbar_AddChaptersFailure" xml:space="preserve">
+    <value>Fehler beim Hinzufügen von Kapiteln zum bestehenden zusammengeführten Kapitel {0}. Überprüfen Sie die Protokolle für weitere Informationen.</value>
+  </data>
+  <data name="Snackbar_SplitDetectionQueued" xml:space="preserve">
+    <value>Aufteilungserkennung für {0} in die Warteschlange eingereiht</value>
+  </data>
+  <data name="Snackbar_SplitDetectionCompleted" xml:space="preserve">
+    <value>Aufteilungserkennung für {0} abgeschlossen (keine Kandidaten gefunden)</value>
+  </data>
+  <data name="Snackbar_SplitDetectionFailure" xml:space="preserve">
+    <value>Fehler beim Einreihen der Aufteilungserkennung: {0}</value>
+  </data>
+  <data name="Dialog_EditSplits_Title" xml:space="preserve">
+    <value>Aufteilungen bearbeiten</value>
+  </data>
+  <data name="Dialog_ApplySplits_Title" xml:space="preserve">
+    <value>Aufteilungen anwenden</value>
+  </data>
+  <data name="Dialog_ApplySplits_Content" xml:space="preserve">
+    <value>Sind Sie sicher, dass Sie die erkannten Aufteilungen anwenden möchten? Dies wird das Kapitel in mehrere Dateien aufteilen und das Original löschen.</value>
+  </data>
+  <data name="Snackbar_SplitApplicationQueued" xml:space="preserve">
+    <value>Anwendung der Aufteilungen für {0} in die Warteschlange eingereiht</value>
+  </data>
+  <data name="Snackbar_SplitApplicationFailure" xml:space="preserve">
+    <value>Fehler beim Anwenden der Aufteilungen: {0}</value>
+  </data>
+  <data name="Text_NotAvailable" xml:space="preserve">
+    <value>N/V</value>
+  </data>
+  <data name="Label_Filename" xml:space="preserve">
+    <value>Dateiname</value>
+  </data>
+  <data name="Tooltip_DeleteChapter" xml:space="preserve">
+    <value>Dieses Kapitel löschen</value>
+  </data>
+  <data name="Tooltip_MergeChapter" xml:space="preserve">
+    <value>Dieses Kapitel mit nachfolgenden Teilen zusammenführen oder zu einem bestehenden zusammengeführten Kapitel hinzufügen</value>
+  </data>
+  <data name="Tooltip_RevertMerged" xml:space="preserve">
+    <value>Dieses zusammengeführte Kapitel in seine ursprünglichen Teile zurücksetzen</value>
+  </data>
 </root>
