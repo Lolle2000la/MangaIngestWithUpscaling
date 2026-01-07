@@ -63,7 +63,10 @@ public class MockStringLocalizer<T> : IStringLocalizer<T>
         { "Tooltip_Upscale", "Upscale" },
         { "Tooltip_DeleteUpscaled", "Delete upscaled" },
         { "Dialog_DeleteUpscaledChapter_Title", "Delete Upscaled Chapter" },
-        { "Dialog_DeleteUpscaledChapter_Content", "Are you sure you want to delete the upscaled version of this chapter?" },
+        {
+            "Dialog_DeleteUpscaledChapter_Content",
+            "Are you sure you want to delete the upscaled version of this chapter?"
+        },
         { "Header_ChapterTitle", "Chapter Title" },
         { "Header_ChapterPath", "Path" },
         { "Header_Upscaled", "Upscaled" },
