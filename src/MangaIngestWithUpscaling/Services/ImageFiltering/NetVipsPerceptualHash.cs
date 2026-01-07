@@ -43,7 +43,7 @@ public class NetVipsPerceptualHash
         using Image? processed = resized.HasAlpha() ? resized.Flatten() : resized;
         using Image? grayscale = processed.Colourspace(Enums.Interpretation.Bw);
 
-        byte[]? pixelBytes = grayscale.WriteToMemory();
+        byte[] pixelBytes = grayscale.WriteToMemory<byte>();
 
         // Sanity check the pixel buffer size.
         if (pixelBytes.Length < SIZE * SIZE)
