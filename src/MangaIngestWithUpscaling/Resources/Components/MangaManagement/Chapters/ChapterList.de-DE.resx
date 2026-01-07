@@ -208,9 +208,6 @@
   <data name="Snackbar_NoMergedSelected" xml:space="preserve">
     <value>Keine zusammengeführten Kapitel ausgewählt.</value>
   </data>
-  <data name="Dialog_RevertSelectedMerged_Title" xml:space="preserve">
-    <value>Ausgewählte zusammengeführte Kapitel zurücksetzen</value>
-  </data>
   <data name="Snackbar_RevertMerged_Success" xml:space="preserve">
     <value>Erfolgreich {0} zusammengeführte Kapitel zurückgesetzt.</value>
   </data>
@@ -327,30 +324,6 @@
   </data>
   <data name="Snackbar_AddChaptersFailure" xml:space="preserve">
     <value>Fehler beim Hinzufügen von Kapiteln zum bestehenden zusammengeführten Kapitel {0}. Überprüfen Sie die Protokolle für weitere Informationen.</value>
-  </data>
-  <data name="Snackbar_SplitDetectionQueued" xml:space="preserve">
-    <value>Aufteilungserkennung für {0} in die Warteschlange eingereiht</value>
-  </data>
-  <data name="Snackbar_SplitDetectionCompleted" xml:space="preserve">
-    <value>Aufteilungserkennung für {0} abgeschlossen (keine Kandidaten gefunden)</value>
-  </data>
-  <data name="Snackbar_SplitDetectionFailure" xml:space="preserve">
-    <value>Fehler beim Einreihen der Aufteilungserkennung: {0}</value>
-  </data>
-  <data name="Dialog_EditSplits_Title" xml:space="preserve">
-    <value>Aufteilungen bearbeiten</value>
-  </data>
-  <data name="Dialog_ApplySplits_Title" xml:space="preserve">
-    <value>Aufteilungen anwenden</value>
-  </data>
-  <data name="Dialog_ApplySplits_Content" xml:space="preserve">
-    <value>Sind Sie sicher, dass Sie die erkannten Aufteilungen anwenden möchten? Dies wird das Kapitel in mehrere Dateien aufteilen und das Original löschen.</value>
-  </data>
-  <data name="Snackbar_SplitApplicationQueued" xml:space="preserve">
-    <value>Anwendung der Aufteilungen für {0} in die Warteschlange eingereiht</value>
-  </data>
-  <data name="Snackbar_SplitApplicationFailure" xml:space="preserve">
-    <value>Fehler beim Anwenden der Aufteilungen: {0}</value>
   </data>
   <data name="Text_NotAvailable" xml:space="preserve">
     <value>N/V</value>
