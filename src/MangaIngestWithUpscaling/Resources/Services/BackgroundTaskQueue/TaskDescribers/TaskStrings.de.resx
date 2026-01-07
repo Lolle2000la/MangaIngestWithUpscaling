@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+    <data name="Progress_Indeterminate" xml:space="preserve">
+        <value>Verarbeitet: {0}</value>
+    </data>
+    <data name="Progress_Determinate" xml:space="preserve">
+        <value>{0} von {1}</value>
+    </data>
+    <data name="Title_LoggingTask" xml:space="preserve">
+        <value>Protokollierung: {0}</value>
+    </data>
+    <data name="Title_UpscaleTask" xml:space="preserve">
+        <value>Hochskalieren von {0} aus {1} mit {2}</value>
+    </data>
+    <data name="Title_UpscaleTask_Unknown" xml:space="preserve">
+        <value>Hochskalieren von unbekanntem Kapitel {0}</value>
+    </data>
+    <data name="Title_RepairUpscaleTask" xml:space="preserve">
+        <value>Repariere hochskaliertes {0} aus {1} mit {2}</value>
+    </data>
+    <data name="Title_RepairUpscaleTask_Unknown" xml:space="preserve">
+        <value>Repariere unbekanntes Kapitel {0}</value>
+    </data>
+    <data name="Title_ScanIngestTask" xml:space="preserve">
+        <value>Scanne {0}</value>
+    </data>
+    <data name="Title_RenameUpscaledChaptersSeriesTask" xml:space="preserve">
+        <value>Benenne {0} in {1} um</value>
+    </data>
+    <data name="Title_LibraryIntegrityCheckTask" xml:space="preserve">
+        <value>Integritätsprüfung: {0}</value>
+    </data>
+    <data name="Title_MergeMangaTask" xml:space="preserve">
+        <value>Führe {0} Manga in {1} zusammen</value>
+    </data>
+    <data name="Title_ApplyImageFiltersTask" xml:space="preserve">
+        <value>Wende Filter auf {0} an</value>
+    </data>
+    <data name="Title_UpdatePerceptualHashesTask" xml:space="preserve">
+        <value>Aktualisiere Wahrnehmungshashes</value>
+    </data>
+    <data name="Title_DetectSplitCandidatesTask" xml:space="preserve">
+        <value>Erkenne Trennungen für Kapitel {0}</value>
+    </data>
+    <data name="Title_ApplySplitsTask" xml:space="preserve">
+        <value>Wende Trennungen für Kapitel {0} an</value>
+    </data>
+    <data name="Progress_UpscaleTask" xml:space="preserve">
+        <value>Hochskaliert: {0} von {1} Seiten</value>
+    </data>
+    <data name="Progress_UpscaleTask_Indeterminate" xml:space="preserve">
+        <value>Hochskaliert: {0} Seiten</value>
+    </data>
+    <data name="Progress_RepairUpscaleTask" xml:space="preserve">
+        <value>Repariert: {0} von {1} Seiten</value>
+    </data>
+    <data name="Progress_RepairUpscaleTask_Indeterminate" xml:space="preserve">
+        <value>Repariert: {0} Seiten</value>
+    </data>
+    <data name="Progress_ScanIngestTask" xml:space="preserve">
+        <value>Gescannt: {0} von {1} Elementen</value>
+    </data>
+    <data name="Progress_ScanIngestTask_Indeterminate" xml:space="preserve">
+        <value>Gescannt: {0} Elemente</value>
+    </data>
+    <data name="Progress_MergeMangaTask" xml:space="preserve">
+        <value>Zusammengeführt: {0} von {1} Kapiteln</value>
+    </data>
+    <data name="Progress_MergeMangaTask_Indeterminate" xml:space="preserve">
+        <value>Zusammengeführt: {0} Kapitel</value>
+    </data>
+    <data name="Progress_DetectSplitCandidatesTask" xml:space="preserve">
+        <value>Analysiert: {0} von {1} Seiten</value>
+    </data>
+    <data name="Progress_DetectSplitCandidatesTask_Indeterminate" xml:space="preserve">
+        <value>Analysiert: {0} Seiten</value>
+    </data>
+    <data name="Progress_ApplySplitsTask" xml:space="preserve">
+        <value>Geteilt: {0} von {1} Seiten</value>
+    </data>
+    <data name="Progress_ApplySplitsTask_Indeterminate" xml:space="preserve">
+        <value>Geteilt: {0} Seiten</value>
+    </data>
+    <data name="Progress_LibraryIntegrityCheckTask" xml:space="preserve">
+        <value>Geprüft: {0} von {1} Elementen</value>
+    </data>
+    <data name="Progress_LibraryIntegrityCheckTask_Indeterminate" xml:space="preserve">
+        <value>Geprüft: {0} Elemente</value>
+    </data>
+    <data name="Progress_UpdatePerceptualHashesTask" xml:space="preserve">
+        <value>Gehasht: {0} von {1} Bildern</value>
+    </data>
+    <data name="Progress_UpdatePerceptualHashesTask_Indeterminate" xml:space="preserve">
+        <value>Gehasht: {0} Bilder</value>
+    </data>
+</root>

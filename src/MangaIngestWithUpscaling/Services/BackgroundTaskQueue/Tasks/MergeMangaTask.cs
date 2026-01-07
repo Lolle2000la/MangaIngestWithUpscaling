@@ -15,17 +15,11 @@ public class MergeMangaTask : BaseTask
     {
         IntoMangaId = into.Id;
         ToMerge = toMerge.Select(m => m.Id).ToList();
-        string pluralSuffix = toMerge.Count > 1 ? "s" : "";
-        MergeMessage = $"Merging {toMerge.Count} manga{pluralSuffix} into {into.PrimaryTitle}";
     }
-
-    public override string TaskFriendlyName => MergeMessage;
 
     public int IntoMangaId { get; set; }
 
     public List<int> ToMerge { get; set; }
-
-    public string MergeMessage { get; set; }
 
     public override int RetryFor { get; set; } = 1;
 

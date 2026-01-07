@@ -1,4 +1,5 @@
-﻿using System.Threading.Channels;
+using System.Threading.Channels;
+using AutoRegisterInject;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.Analysis;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
@@ -399,8 +400,7 @@ public class DistributedUpscaleTaskProcessor(
 
                                         task.Status = PersistedTaskStatus.Completed;
                                         task.ProcessedAt = DateTime.UtcNow;
-                                        task.Data.Progress.StatusMessage =
-                                            "Replaced by RepairUpscaleTask due to page mismatch";
+                                        // task.Data.Progress.StatusMessage = "Replaced by RepairUpscaleTask due to page mismatch";
                                         _ = StatusChanged?.Invoke(task);
                                         continue;
                                     }
@@ -523,16 +523,6 @@ public class DistributedUpscaleTaskProcessor(
                 if (current.HasValue)
                 {
                     p.Current = current.Value;
-                }
-
-                if (!string.IsNullOrWhiteSpace(statusMessage))
-                {
-                    p.StatusMessage = statusMessage!;
-                }
-                else if (!string.IsNullOrWhiteSpace(phase))
-                {
-                    // Use phase as a fallback status message for visibility
-                    p.StatusMessage = phase!;
                 }
 
                 // Treat progress updates as heartbeats as well, to keep liveness fresh
@@ -697,7 +687,7 @@ public class DistributedUpscaleTaskProcessor(
 
             try
             {
-                persistedTask.Data.Progress.StatusMessage = "Merging repaired pages";
+                // persistedTask.Data.Progress.StatusMessage = "Merging repaired pages";
                 _ = StatusChanged?.Invoke(persistedTask);
 
                 repairService.MergeRepairResults(repairContext, upscaledPath, logger);
@@ -969,10 +959,10 @@ public class DistributedUpscaleTaskProcessor(
                     remoteRepairStates[persistedTask.Id] = repairState;
                 }
 
-                persistedTask.Data.Progress.StatusMessage = "Prepared for remote upscaling";
+                // persistedTask.Data.Progress.StatusMessage = "Prepared for remote upscaling";
                 persistedTask.Data.Progress.Total = differences.MissingPages.Count;
                 persistedTask.Data.Progress.Current = 0;
-                persistedTask.Data.Progress.ProgressUnit = "pages";
+                // persistedTask.Data.Progress.ProgressUnit = "pages";
                 _ = StatusChanged?.Invoke(persistedTask);
 
                 logger.LogInformation(

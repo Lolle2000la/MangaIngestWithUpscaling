@@ -33,9 +33,6 @@ public class RenameUpscaledChaptersSeriesTask : BaseTask
 
     public string NewTitle { get; set; } = string.Empty;
 
-    public override string TaskFriendlyName =>
-        $"Changing {ChapterFileName} title attribute to \"{NewTitle}\"";
-
     public override async Task ProcessAsync(
         IServiceProvider services,
         CancellationToken cancellationToken

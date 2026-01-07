@@ -1,4 +1,5 @@
-﻿using MangaIngestWithUpscaling.Services.LibraryIntegrity;
+using AutoRegisterInject;
+using MangaIngestWithUpscaling.Services.LibraryIntegrity;
 
 namespace MangaIngestWithUpscaling.Services.Background;
 

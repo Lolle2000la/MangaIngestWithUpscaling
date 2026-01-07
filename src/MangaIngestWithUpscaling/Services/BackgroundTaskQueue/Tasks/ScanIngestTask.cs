@@ -9,8 +9,6 @@ public class ScanIngestTask : BaseTask
     public int LibraryId { get; set; }
     public string LibraryName { get; set; } = string.Empty;
 
-    public override string TaskFriendlyName => $"Scanning {LibraryName}";
-
     public override int RetryFor { get; set; } = 3;
 
     public override async Task ProcessAsync(

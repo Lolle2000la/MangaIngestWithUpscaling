@@ -16,8 +16,6 @@ public class LibraryIntegrityCheckTask : BaseTask
         LibraryId = library.Id;
     }
 
-    public override string TaskFriendlyName => $"Checking integrity for {LibraryName}";
-
     public string LibraryName { get; set; } = string.Empty;
 
     public int LibraryId { get; set; }
@@ -44,7 +42,6 @@ public class LibraryIntegrityCheckTask : BaseTask
         }
 
         // Prepare progress reporter
-        Progress.ProgressUnit = "chapters";
         var reporter = new Progress<IntegrityProgress>(p =>
         {
             if (p.Total.HasValue)
@@ -55,11 +52,6 @@ public class LibraryIntegrityCheckTask : BaseTask
             if (p.Current.HasValue)
             {
                 Progress.Current = p.Current.Value;
-            }
-
-            if (!string.IsNullOrWhiteSpace(p.StatusMessage))
-            {
-                Progress.StatusMessage = p.StatusMessage!;
             }
         });
 

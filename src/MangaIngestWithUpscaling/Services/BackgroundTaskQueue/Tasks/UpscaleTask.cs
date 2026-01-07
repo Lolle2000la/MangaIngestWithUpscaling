@@ -35,19 +35,13 @@ public class UpscaleTask : BaseTask
 
         ChapterId = chapter.Id;
         UpscalerProfileId = chapter.Manga.EffectiveUpscalerProfile.Id;
-        FriendlyEntryName =
-            $"Upscaling {chapter.FileName} of {chapter.Manga.PrimaryTitle} with {chapter.Manga.EffectiveUpscalerProfile.Name}";
     }
 
     public UpscaleTask(Chapter chapter, UpscalerProfile profile)
     {
         ChapterId = chapter.Id;
         UpscalerProfileId = profile.Id;
-        FriendlyEntryName =
-            $"Upscaling {chapter.FileName} of {chapter.Manga.PrimaryTitle} with {profile.Name}";
     }
-
-    public override string TaskFriendlyName => FriendlyEntryName;
 
     public int UpscalerProfileId { get; set; }
     public int ChapterId { get; set; }
@@ -192,14 +186,6 @@ public class UpscaleTask : BaseTask
                 {
                     Progress.Current = p.Current.Value;
                 }
-
-                if (!string.IsNullOrWhiteSpace(p.StatusMessage))
-                {
-                    Progress.StatusMessage = p.StatusMessage!;
-                }
-
-                // Pages as a sensible unit for upscaling
-                Progress.ProgressUnit = "pages";
             });
 
             await upscaler.Upscale(

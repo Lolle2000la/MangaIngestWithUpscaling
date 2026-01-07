@@ -17,10 +17,6 @@ public class DetectSplitCandidatesTask : BaseTask
     public int DetectorVersion { get; set; }
     public string FriendlyEntryName { get; set; } = string.Empty;
 
-    public override string TaskFriendlyName =>
-        !string.IsNullOrEmpty(FriendlyEntryName)
-            ? FriendlyEntryName
-            : $"Detecting splits for Chapter {ChapterId}";
     public override int RetryFor { get; set; } = 1;
 
     public DetectSplitCandidatesTask() { }
@@ -124,10 +120,6 @@ public class DetectSplitCandidatesTask : BaseTask
                 if (p.Current.HasValue)
                 {
                     this.Progress.Current = p.Current.Value;
-                }
-                if (!string.IsNullOrEmpty(p.StatusMessage))
-                {
-                    this.Progress.StatusMessage = p.StatusMessage;
                 }
             });
 

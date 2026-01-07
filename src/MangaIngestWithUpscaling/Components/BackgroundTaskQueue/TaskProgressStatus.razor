@@ -1,0 +1,20 @@
+@using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks
+@using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.TaskDescribers
+@inject ITaskDescriberFactory DescriberFactory
+
+@_progressStatus
+
+@code {
+    [Parameter] public BaseTask TaskData { get; set; } = null!;
+    [Parameter] public ProgressInfo Progress { get; set; } = null!;
+
+    private string _progressStatus = string.Empty;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (TaskData == null || Progress == null) return;
+        
+        var describer = DescriberFactory.GetDescriber(TaskData);
+        _progressStatus = await describer.GetProgressStatusAsync(TaskData, Progress);
+    }
+}
