@@ -1,4 +1,3 @@
-using AutoRegisterInject;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -29,13 +28,21 @@ public class UpscaleTaskDescriber(
                 .ThenInclude(m => m.Library)
                     .ThenInclude(l => l.UpscalerProfile)
             .FirstOrDefaultAsync(c => c.Id == task.ChapterId);
+
+        if (chapter == null)
+        {
+            return Localizer["Title_UpscaleTask_Unknown", task.ChapterId].Value;
+        }
+
         var profile = await db.UpscalerProfiles.FindAsync(task.UpscalerProfileId);
         var profileName = profile?.Name ?? "Unknown Profile";
-        var title =
-            chapter != null
-                ? $"Upscaling {chapter.FileName} of {chapter.Manga.PrimaryTitle} with {profileName}"
-                : $"Unknown Chapter {task.ChapterId}";
-        return Localizer["Title_UpscaleTask", title].Value;
+
+        return Localizer[
+            "Title_UpscaleTask",
+            chapter.FileName,
+            chapter.Manga.PrimaryTitle,
+            profileName
+        ].Value;
     }
 }
 
@@ -51,13 +58,21 @@ public class RepairUpscaleTaskDescriber(
         var chapter = await db
             .Chapters.Include(c => c.Manga)
             .FirstOrDefaultAsync(c => c.Id == task.ChapterId);
+
+        if (chapter == null)
+        {
+            return Localizer["Title_RepairUpscaleTask_Unknown", task.ChapterId].Value;
+        }
+
         var profile = await db.UpscalerProfiles.FindAsync(task.UpscalerProfileId);
         var profileName = profile?.Name ?? "Unknown Profile";
-        var title =
-            chapter != null
-                ? $"Repairing upscaled {chapter.FileName} of {chapter.Manga.PrimaryTitle} with {profileName}"
-                : $"Unknown Chapter {task.ChapterId}";
-        return Localizer["Title_RepairUpscaleTask", title].Value;
+
+        return Localizer[
+            "Title_RepairUpscaleTask",
+            chapter.FileName,
+            chapter.Manga.PrimaryTitle,
+            profileName
+        ].Value;
     }
 }
 

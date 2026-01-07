@@ -10,10 +10,16 @@
         <value>ログ記録: {0}</value>
     </data>
     <data name="Title_UpscaleTask" xml:space="preserve">
-        <value>{0} をアップスケーリング中</value>
+        <value>{2} で {1} の {0} をアップスケーリング中</value>
+    </data>
+    <data name="Title_UpscaleTask_Unknown" xml:space="preserve">
+        <value>不明なチャプター {0} をアップスケーリング中</value>
     </data>
     <data name="Title_RepairUpscaleTask" xml:space="preserve">
-        <value>{0} を修復中</value>
+        <value>{2} で {1} のアップスケーリングされた {0} を修復中</value>
+    </data>
+    <data name="Title_RepairUpscaleTask_Unknown" xml:space="preserve">
+        <value>不明なチャプター {0} を修復中</value>
     </data>
     <data name="Title_ScanIngestTask" xml:space="preserve">
         <value>{0} をスキャン中</value>

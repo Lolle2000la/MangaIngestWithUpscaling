@@ -10,10 +10,16 @@
         <value>Protokollierung: {0}</value>
     </data>
     <data name="Title_UpscaleTask" xml:space="preserve">
-        <value>Hochskalieren von {0}</value>
+        <value>Hochskalieren von {0} aus {1} mit {2}</value>
+    </data>
+    <data name="Title_UpscaleTask_Unknown" xml:space="preserve">
+        <value>Hochskalieren von unbekanntem Kapitel {0}</value>
     </data>
     <data name="Title_RepairUpscaleTask" xml:space="preserve">
-        <value>Repariere {0}</value>
+        <value>Repariere hochskaliertes {0} aus {1} mit {2}</value>
+    </data>
+    <data name="Title_RepairUpscaleTask_Unknown" xml:space="preserve">
+        <value>Repariere unbekanntes Kapitel {0}</value>
     </data>
     <data name="Title_ScanIngestTask" xml:space="preserve">
         <value>Scanne {0}</value>

@@ -10,10 +10,16 @@
         <value>Logging: {0}</value>
     </data>
     <data name="Title_UpscaleTask" xml:space="preserve">
-        <value>Upscaling {0}</value>
+        <value>Upscaling {0} of {1} with {2}</value>
+    </data>
+    <data name="Title_UpscaleTask_Unknown" xml:space="preserve">
+        <value>Upscaling Unknown Chapter {0}</value>
     </data>
     <data name="Title_RepairUpscaleTask" xml:space="preserve">
-        <value>Repairing {0}</value>
+        <value>Repairing upscaled {0} of {1} with {2}</value>
+    </data>
+    <data name="Title_RepairUpscaleTask_Unknown" xml:space="preserve">
+        <value>Repairing Unknown Chapter {0}</value>
     </data>
     <data name="Title_ScanIngestTask" xml:space="preserve">
         <value>Scanning {0}</value>

@@ -1,4 +1,3 @@
-using AutoRegisterInject;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using Microsoft.Extensions.DependencyInjection;
 
