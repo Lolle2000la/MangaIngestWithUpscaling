@@ -128,6 +128,14 @@ dotnet run --project src/MangaIngestWithUpscaling
 - Prefer clarity in code over excessive explanation in comments—well-named variables, methods, and classes reduce the need for comments.
 - **Keep comments up to date** as code changes; outdated comments are worse than none.
 
+## Localization Guidelines
+
+- **Location**: All resource files (`.resx`) MUST be placed in the `Resources` directory within the respective project (e.g., `src/MangaIngestWithUpscaling/Resources`, `src/MangaIngestWithUpscaling.Shared/Resources`).
+- **Structure**: The directory structure within `Resources` MUST mirror the source structure precisely (e.g., `Components/Account/Pages/Manage/ApiKeys.razor` -> `Resources/Components/Account/Pages/Manage/ApiKeys.en-US.resx`).
+- **Naming**: ALWAYS use full ISO culture codes (e.g., `en-US`, `de-DE`, `ja-JP`). NEVER use 2-letter language codes (e.g., `de`, `ja`).
+- **File Format**: Ensure all `.resx` files use the standard .NET XML header structure.
+- **Cleanup**: Never leave `.resx` files in the source directories alongside the code files.
+
 ## Project Structure
 
 ### Key Directories
