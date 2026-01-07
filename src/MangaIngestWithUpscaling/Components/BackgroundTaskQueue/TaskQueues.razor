@@ -1,4 +1,5 @@
 ﻿@using System.Collections.Specialized
+@using System.Globalization
 @using MangaIngestWithUpscaling.Data.BackgroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue
 @implements IDisposable
@@ -33,6 +34,7 @@
 </MudGrid>
 
 @code {
+    private CultureInfo _runTimeCulture = null!;
     private IReadOnlyCollection<PersistedTask> standardTasks => TaskRegistry.StandardTasks;
     private IReadOnlyCollection<PersistedTask> upscaleTasks => TaskRegistry.UpscaleTasks;
 
@@ -174,6 +176,9 @@
 
     protected override Task OnInitializedAsync()
     {
+        // this component interacts with background threads, so we need to capture the current culture
+        _runTimeCulture = CultureInfo.CurrentUICulture;
+
         TaskQueue.TaskEnqueuedOrChanged += OnTaskUpdate;
         TaskQueue.TaskRemoved += OnTaskRemoved;
         StandardTaskProcessor.StatusChanged += OnStandardTaskChanged;
@@ -206,6 +211,9 @@
     {
         await InvokeAsync(() =>
         {
+            CultureInfo.CurrentUICulture = _runTimeCulture;
+            CultureInfo.CurrentCulture = _runTimeCulture;
+
             // Registry drives the state; we only trigger UI refresh
             StateHasChanged();
             return Task.CompletedTask;
@@ -216,6 +224,9 @@
     {
         await InvokeAsync(() =>
         {
+            CultureInfo.CurrentUICulture = _runTimeCulture;
+            CultureInfo.CurrentCulture = _runTimeCulture;
+
             // Registry drives the state; we only trigger UI refresh
             StateHasChanged();
             return Task.CompletedTask;
@@ -226,6 +237,9 @@
     {
         await InvokeAsync(() =>
         {
+            CultureInfo.CurrentUICulture = _runTimeCulture;
+            CultureInfo.CurrentCulture = _runTimeCulture;
+
             // Registry drives the state; we only trigger UI refresh
             StateHasChanged();
             return Task.CompletedTask;
@@ -236,6 +250,9 @@
     {
         await InvokeAsync(() =>
         {
+            CultureInfo.CurrentUICulture = _runTimeCulture;
+            CultureInfo.CurrentCulture = _runTimeCulture;
+            
             StateHasChanged();
             return Task.CompletedTask;
         });
@@ -243,7 +260,12 @@
 
     private void OnRegistryCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
-        _ = InvokeAsync(StateHasChanged);
+        _ = InvokeAsync(() =>
+        {
+            CultureInfo.CurrentUICulture = _runTimeCulture;
+            CultureInfo.CurrentCulture = _runTimeCulture;
+            StateHasChanged();
+        });
     }
 
     // No local collections; TaskRegistry is the single source of truth.
