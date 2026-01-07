@@ -5,8 +5,32 @@ namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.TaskDescribers;
 
 [RegisterScoped(typeof(LibraryIntegrityCheckTaskDescriber))]
 public class LibraryIntegrityCheckTaskDescriber(IStringLocalizer<TaskStrings> localizer)
-    : BaseTaskDescriber<LibraryIntegrityCheckTask>(localizer)
+    : ITaskDescriber<BaseTask>
 {
-    public override Task<string> GetTitleAsync(LibraryIntegrityCheckTask task) =>
-        Task.FromResult(Localizer["Title_LibraryIntegrityCheckTask", task.LibraryName ?? ""].Value);
+    public Task<string> GetTitleAsync(BaseTask task)
+    {
+        if (task is LibraryIntegrityCheckTask t)
+        {
+            return Task.FromResult(
+                localizer["Title_LibraryIntegrityCheckTask", t.LibraryName ?? ""].Value
+            );
+        }
+        return Task.FromResult(string.Empty);
+    }
+
+    public Task<string> GetProgressStatusAsync(BaseTask task, ProgressInfo progress)
+    {
+        if (progress.IsIndeterminate)
+        {
+            return Task.FromResult(
+                localizer[
+                    "Progress_LibraryIntegrityCheckTask_Indeterminate",
+                    progress.Current
+                ].Value
+            );
+        }
+        return Task.FromResult(
+            localizer["Progress_LibraryIntegrityCheckTask", progress.Current, progress.Total].Value
+        );
+    }
 }

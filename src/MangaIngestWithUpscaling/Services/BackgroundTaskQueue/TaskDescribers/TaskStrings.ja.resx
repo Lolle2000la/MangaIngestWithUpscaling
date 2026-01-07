@@ -45,4 +45,52 @@
     <data name="Title_ApplySplitsTask" xml:space="preserve">
         <value>チャプター {0} の分割を適用中</value>
     </data>
+    <data name="Progress_UpscaleTask" xml:space="preserve">
+        <value>{0} / {1} ページをアップスケール完了</value>
+    </data>
+    <data name="Progress_UpscaleTask_Indeterminate" xml:space="preserve">
+        <value>{0} ページをアップスケール完了</value>
+    </data>
+    <data name="Progress_RepairUpscaleTask" xml:space="preserve">
+        <value>{0} / {1} ページを修復完了</value>
+    </data>
+    <data name="Progress_RepairUpscaleTask_Indeterminate" xml:space="preserve">
+        <value>{0} ページを修復完了</value>
+    </data>
+    <data name="Progress_ScanIngestTask" xml:space="preserve">
+        <value>{0} / {1} 項目をスキャン完了</value>
+    </data>
+    <data name="Progress_ScanIngestTask_Indeterminate" xml:space="preserve">
+        <value>{0} 項目をスキャン完了</value>
+    </data>
+    <data name="Progress_MergeMangaTask" xml:space="preserve">
+        <value>{0} / {1} チャプターを統合完了</value>
+    </data>
+    <data name="Progress_MergeMangaTask_Indeterminate" xml:space="preserve">
+        <value>{0} チャプターを統合完了</value>
+    </data>
+    <data name="Progress_DetectSplitCandidatesTask" xml:space="preserve">
+        <value>{0} / {1} ページを分析完了</value>
+    </data>
+    <data name="Progress_DetectSplitCandidatesTask_Indeterminate" xml:space="preserve">
+        <value>{0} ページを分析完了</value>
+    </data>
+    <data name="Progress_ApplySplitsTask" xml:space="preserve">
+        <value>{0} / {1} ページを分割完了</value>
+    </data>
+    <data name="Progress_ApplySplitsTask_Indeterminate" xml:space="preserve">
+        <value>{0} ページを分割完了</value>
+    </data>
+    <data name="Progress_LibraryIntegrityCheckTask" xml:space="preserve">
+        <value>{0} / {1} 項目をチェック完了</value>
+    </data>
+    <data name="Progress_LibraryIntegrityCheckTask_Indeterminate" xml:space="preserve">
+        <value>{0} 項目をチェック完了</value>
+    </data>
+    <data name="Progress_UpdatePerceptualHashesTask" xml:space="preserve">
+        <value>{0} / {1} 画像をハッシュ化完了</value>
+    </data>
+    <data name="Progress_UpdatePerceptualHashesTask_Indeterminate" xml:space="preserve">
+        <value>{0} 画像をハッシュ化完了</value>
+    </data>
 </root>

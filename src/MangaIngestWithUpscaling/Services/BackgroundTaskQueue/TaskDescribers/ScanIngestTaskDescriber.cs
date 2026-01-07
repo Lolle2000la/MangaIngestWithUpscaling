@@ -10,15 +10,33 @@ namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.TaskDescribers;
 public class ScanIngestTaskDescriber(
     IStringLocalizer<TaskStrings> localizer,
     IDbContextFactory<ApplicationDbContext> dbFactory
-) : BaseTaskDescriber<ScanIngestTask>(localizer)
+) : ITaskDescriber<BaseTask>
 {
-    public override async Task<string> GetTitleAsync(ScanIngestTask task)
+    public async Task<string> GetTitleAsync(BaseTask task)
     {
-        if (!string.IsNullOrEmpty(task.LibraryName))
-            return Localizer["Title_ScanIngestTask", task.LibraryName].Value;
+        if (task is not ScanIngestTask t)
+        {
+            return string.Empty;
+        }
+
+        if (!string.IsNullOrEmpty(t.LibraryName))
+            return localizer["Title_ScanIngestTask", t.LibraryName].Value;
 
         using var db = await dbFactory.CreateDbContextAsync();
-        var library = await db.Libraries.FindAsync(task.LibraryId);
-        return Localizer["Title_ScanIngestTask", library?.Name ?? "Unknown Library"].Value;
+        var library = await db.Libraries.FindAsync(t.LibraryId);
+        return localizer["Title_ScanIngestTask", library?.Name ?? "Unknown Library"].Value;
+    }
+
+    public Task<string> GetProgressStatusAsync(BaseTask task, ProgressInfo progress)
+    {
+        if (progress.IsIndeterminate)
+        {
+            return Task.FromResult(
+                localizer["Progress_ScanIngestTask_Indeterminate", progress.Current].Value
+            );
+        }
+        return Task.FromResult(
+            localizer["Progress_ScanIngestTask", progress.Current, progress.Total].Value
+        );
     }
 }

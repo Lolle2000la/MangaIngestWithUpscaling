@@ -5,8 +5,16 @@ namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.TaskDescribers;
 
 [RegisterScoped(typeof(ApplyImageFiltersTaskDescriber))]
 public class ApplyImageFiltersTaskDescriber(IStringLocalizer<TaskStrings> localizer)
-    : BaseTaskDescriber<ApplyImageFiltersTask>(localizer)
+    : ITaskDescriber<BaseTask>
 {
-    public override Task<string> GetTitleAsync(ApplyImageFiltersTask task) =>
-        Task.FromResult(Localizer["Title_ApplyImageFiltersTask", task.LibraryName ?? ""].Value);
+    public Task<string> GetTitleAsync(BaseTask task)
+    {
+        if (task is ApplyImageFiltersTask t)
+        {
+            return Task.FromResult(
+                localizer["Title_ApplyImageFiltersTask", t.LibraryName ?? ""].Value
+            );
+        }
+        return Task.FromResult(string.Empty);
+    }
 }

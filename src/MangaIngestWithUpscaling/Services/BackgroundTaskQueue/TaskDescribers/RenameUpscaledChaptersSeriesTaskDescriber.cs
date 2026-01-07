@@ -5,14 +5,20 @@ namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.TaskDescribers;
 
 [RegisterScoped(typeof(RenameUpscaledChaptersSeriesTaskDescriber))]
 public class RenameUpscaledChaptersSeriesTaskDescriber(IStringLocalizer<TaskStrings> localizer)
-    : BaseTaskDescriber<RenameUpscaledChaptersSeriesTask>(localizer)
+    : ITaskDescriber<BaseTask>
 {
-    public override Task<string> GetTitleAsync(RenameUpscaledChaptersSeriesTask task) =>
-        Task.FromResult(
-            Localizer[
-                "Title_RenameUpscaledChaptersSeriesTask",
-                task.ChapterFileName ?? "",
-                task.NewTitle ?? ""
-            ].Value
-        );
+    public Task<string> GetTitleAsync(BaseTask task)
+    {
+        if (task is RenameUpscaledChaptersSeriesTask t)
+        {
+            return Task.FromResult(
+                localizer[
+                    "Title_RenameUpscaledChaptersSeriesTask",
+                    t.ChapterFileName ?? "",
+                    t.NewTitle ?? ""
+                ].Value
+            );
+        }
+        return Task.FromResult(string.Empty);
+    }
 }

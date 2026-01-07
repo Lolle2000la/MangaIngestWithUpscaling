@@ -10,30 +10,48 @@ namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.TaskDescribers;
 public class UpscaleTaskDescriber(
     IStringLocalizer<TaskStrings> localizer,
     IDbContextFactory<ApplicationDbContext> dbFactory
-) : BaseTaskDescriber<UpscaleTask>(localizer)
+) : ITaskDescriber<BaseTask>
 {
-    public override async Task<string> GetTitleAsync(UpscaleTask task)
+    public async Task<string> GetTitleAsync(BaseTask task)
     {
+        if (task is not UpscaleTask t)
+        {
+            return string.Empty;
+        }
+
         using var db = await dbFactory.CreateDbContextAsync();
         var chapter = await db
             .Chapters.Include(c => c.Manga)
                 .ThenInclude(m => m.Library)
                     .ThenInclude(l => l.UpscalerProfile)
-            .FirstOrDefaultAsync(c => c.Id == task.ChapterId);
+            .FirstOrDefaultAsync(c => c.Id == t.ChapterId);
 
         if (chapter == null)
         {
-            return Localizer["Title_UpscaleTask_Unknown", task.ChapterId].Value;
+            return localizer["Title_UpscaleTask_Unknown", t.ChapterId].Value;
         }
 
-        var profile = await db.UpscalerProfiles.FindAsync(task.UpscalerProfileId);
+        var profile = await db.UpscalerProfiles.FindAsync(t.UpscalerProfileId);
         var profileName = profile?.Name ?? "Unknown Profile";
 
-        return Localizer[
+        return localizer[
             "Title_UpscaleTask",
             chapter.FileName,
             chapter.Manga.PrimaryTitle,
             profileName
         ].Value;
+    }
+
+    public Task<string> GetProgressStatusAsync(BaseTask task, ProgressInfo progress)
+    {
+        if (progress.IsIndeterminate)
+        {
+            return Task.FromResult(
+                localizer["Progress_UpscaleTask_Indeterminate", progress.Current].Value
+            );
+        }
+        return Task.FromResult(
+            localizer["Progress_UpscaleTask", progress.Current, progress.Total].Value
+        );
     }
 }

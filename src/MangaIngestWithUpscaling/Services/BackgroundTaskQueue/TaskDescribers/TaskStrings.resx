@@ -45,4 +45,52 @@
     <data name="Title_ApplySplitsTask" xml:space="preserve">
         <value>Applying Splits for Chapter {0}</value>
     </data>
+    <data name="Progress_UpscaleTask" xml:space="preserve">
+        <value>Upscaled {0} of {1} pages</value>
+    </data>
+    <data name="Progress_UpscaleTask_Indeterminate" xml:space="preserve">
+        <value>Upscaled {0} pages</value>
+    </data>
+    <data name="Progress_RepairUpscaleTask" xml:space="preserve">
+        <value>Repaired {0} of {1} pages</value>
+    </data>
+    <data name="Progress_RepairUpscaleTask_Indeterminate" xml:space="preserve">
+        <value>Repaired {0} pages</value>
+    </data>
+    <data name="Progress_ScanIngestTask" xml:space="preserve">
+        <value>Scanned {0} of {1} items</value>
+    </data>
+    <data name="Progress_ScanIngestTask_Indeterminate" xml:space="preserve">
+        <value>Scanned {0} items</value>
+    </data>
+    <data name="Progress_MergeMangaTask" xml:space="preserve">
+        <value>Merged {0} of {1} chapters</value>
+    </data>
+    <data name="Progress_MergeMangaTask_Indeterminate" xml:space="preserve">
+        <value>Merged {0} chapters</value>
+    </data>
+    <data name="Progress_DetectSplitCandidatesTask" xml:space="preserve">
+        <value>Analyzed {0} of {1} pages</value>
+    </data>
+    <data name="Progress_DetectSplitCandidatesTask_Indeterminate" xml:space="preserve">
+        <value>Analyzed {0} pages</value>
+    </data>
+    <data name="Progress_ApplySplitsTask" xml:space="preserve">
+        <value>Split {0} of {1} pages</value>
+    </data>
+    <data name="Progress_ApplySplitsTask_Indeterminate" xml:space="preserve">
+        <value>Split {0} pages</value>
+    </data>
+    <data name="Progress_LibraryIntegrityCheckTask" xml:space="preserve">
+        <value>Checked {0} of {1} items</value>
+    </data>
+    <data name="Progress_LibraryIntegrityCheckTask_Indeterminate" xml:space="preserve">
+        <value>Checked {0} items</value>
+    </data>
+    <data name="Progress_UpdatePerceptualHashesTask" xml:space="preserve">
+        <value>Hashed {0} of {1} images</value>
+    </data>
+    <data name="Progress_UpdatePerceptualHashesTask_Indeterminate" xml:space="preserve">
+        <value>Hashed {0} images</value>
+    </data>
 </root>

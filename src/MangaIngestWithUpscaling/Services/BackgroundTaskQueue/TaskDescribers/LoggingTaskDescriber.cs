@@ -5,8 +5,14 @@ namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.TaskDescribers;
 
 [RegisterScoped(typeof(LoggingTaskDescriber))]
 public class LoggingTaskDescriber(IStringLocalizer<TaskStrings> localizer)
-    : BaseTaskDescriber<LoggingTask>(localizer)
+    : ITaskDescriber<BaseTask>
 {
-    public override Task<string> GetTitleAsync(LoggingTask task) =>
-        Task.FromResult(Localizer["Title_LoggingTask", task.Message ?? ""].Value);
+    public Task<string> GetTitleAsync(BaseTask task)
+    {
+        if (task is LoggingTask t)
+        {
+            return Task.FromResult(localizer["Title_LoggingTask", t.Message ?? ""].Value);
+        }
+        return Task.FromResult(string.Empty);
+    }
 }

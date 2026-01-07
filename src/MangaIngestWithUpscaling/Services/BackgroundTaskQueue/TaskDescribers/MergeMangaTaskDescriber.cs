@@ -10,16 +10,33 @@ namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.TaskDescribers;
 public class MergeMangaTaskDescriber(
     IStringLocalizer<TaskStrings> localizer,
     IDbContextFactory<ApplicationDbContext> dbFactory
-) : BaseTaskDescriber<MergeMangaTask>(localizer)
+) : ITaskDescriber<BaseTask>
 {
-    public override async Task<string> GetTitleAsync(MergeMangaTask task)
+    public async Task<string> GetTitleAsync(BaseTask task)
     {
-        using var db = await dbFactory.CreateDbContextAsync();
-        var manga = await db.MangaSeries.FindAsync(task.IntoMangaId);
-        return Localizer[
-            "Title_MergeMangaTask",
-            task.ToMerge?.Count ?? 0,
-            manga?.PrimaryTitle ?? "Unknown Manga"
-        ].Value;
+        if (task is MergeMangaTask t)
+        {
+            using var db = await dbFactory.CreateDbContextAsync();
+            var manga = await db.MangaSeries.FindAsync(t.IntoMangaId);
+            return localizer[
+                "Title_MergeMangaTask",
+                t.ToMerge?.Count ?? 0,
+                manga?.PrimaryTitle ?? "Unknown Manga"
+            ].Value;
+        }
+        return string.Empty;
+    }
+
+    public Task<string> GetProgressStatusAsync(BaseTask task, ProgressInfo progress)
+    {
+        if (progress.IsIndeterminate)
+        {
+            return Task.FromResult(
+                localizer["Progress_MergeMangaTask_Indeterminate", progress.Current].Value
+            );
+        }
+        return Task.FromResult(
+            localizer["Progress_MergeMangaTask", progress.Current, progress.Total].Value
+        );
     }
 }
