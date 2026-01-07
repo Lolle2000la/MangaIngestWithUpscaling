@@ -37,19 +37,13 @@ public class RepairUpscaleTask : BaseTask
 
         ChapterId = chapter.Id;
         UpscalerProfileId = chapter.Manga.EffectiveUpscalerProfile.Id;
-        FriendlyEntryName =
-            $"Repairing upscaled {chapter.FileName} of {chapter.Manga.PrimaryTitle} with {chapter.Manga.EffectiveUpscalerProfile.Name}";
     }
 
     public RepairUpscaleTask(Chapter chapter, UpscalerProfile profile)
     {
         ChapterId = chapter.Id;
         UpscalerProfileId = profile.Id;
-        FriendlyEntryName =
-            $"Repairing upscaled {chapter.FileName} of {chapter.Manga.PrimaryTitle} with {profile.Name}";
     }
-
-    public override string TaskFriendlyName => FriendlyEntryName;
 
     public int UpscalerProfileId { get; set; }
     public int ChapterId { get; set; }
@@ -210,8 +204,8 @@ public class RepairUpscaleTask : BaseTask
                 // Update progress for missing pages upscaling
                 Progress.Total = differences.MissingPages.Count;
                 Progress.Current = 0;
-                Progress.ProgressUnit = "pages";
-                Progress.StatusMessage = "Upscaling missing pages";
+                // Progress.ProgressUnit = "pages";
+                // Progress.StatusMessage = "Upscaling missing pages";
 
                 var reporter = new Progress<UpscaleProgress>(p =>
                 {
@@ -223,11 +217,6 @@ public class RepairUpscaleTask : BaseTask
                     if (p.Current.HasValue)
                     {
                         Progress.Current = p.Current.Value;
-                    }
-
-                    if (!string.IsNullOrWhiteSpace(p.StatusMessage))
-                    {
-                        Progress.StatusMessage = p.StatusMessage!;
                     }
                 });
 
@@ -244,7 +233,7 @@ public class RepairUpscaleTask : BaseTask
             }
 
             // Update progress for final packaging
-            Progress.StatusMessage = "Packaging repaired CBZ";
+            // Progress.StatusMessage = "Packaging repaired CBZ";
 
             // Use the repair service to merge results
             repairService.MergeRepairResults(repairContext, upscaledPath, logger);

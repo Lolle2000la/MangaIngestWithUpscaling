@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Reactive.Disposables;
+using AutoRegisterInject;
 using DynamicData;
 using DynamicData.Binding;
 using MangaIngestWithUpscaling.Data;

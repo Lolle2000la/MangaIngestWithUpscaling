@@ -9,10 +9,6 @@ public class ApplySplitsTask : BaseTask
     public int DetectorVersion { get; set; }
     public string FriendlyEntryName { get; set; } = string.Empty;
 
-    public override string TaskFriendlyName =>
-        !string.IsNullOrEmpty(FriendlyEntryName)
-            ? FriendlyEntryName
-            : $"Applying splits for Chapter {ChapterId}";
     public override int RetryFor { get; set; } = 0;
 
     public ApplySplitsTask() { }

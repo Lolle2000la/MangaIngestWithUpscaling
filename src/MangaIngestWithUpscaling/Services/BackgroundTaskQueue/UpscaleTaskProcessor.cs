@@ -1,4 +1,5 @@
-﻿using System.Threading.Channels;
+using System.Threading.Channels;
+using AutoRegisterInject;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Shared.Configuration;

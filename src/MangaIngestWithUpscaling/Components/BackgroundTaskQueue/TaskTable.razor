@@ -1,5 +1,7 @@
 ﻿@using MangaIngestWithUpscaling.Data.BackgroundTaskQueue
+@using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.TaskDescribers
 @inject IStringLocalizer<TaskTable> Loc
+@inject ITaskDescriberFactory DescriberFactory
 
 <MudTable T="PersistedTask" Items="@Tasks" RowsPerPage="10" Elevation="3" Dense="true" @ref="Table">
     <ToolBarContent>
@@ -13,11 +15,7 @@
         </MudButton>
     </ToolBarContent>
     <HeaderContent>
-        <MudTh>
-            <MudTableSortLabel SortBy="new Func<PersistedTask, object>(x => x.Data.TaskFriendlyName)">
-                @Loc["Header_Name"]
-            </MudTableSortLabel>
-        </MudTh>
+        <MudTh>@Loc["Header_Name"]</MudTh>
         <MudTh>
             <MudTableSortLabel SortBy="new Func<PersistedTask, object>(x => x.CreatedAt)">
                 @Loc["Header_QueuedAt"]</MudTableSortLabel>
@@ -34,7 +32,9 @@
         <MudTh>@Loc["Header_Actions"]</MudTh>
     </HeaderContent>
     <RowTemplate>
-        <MudTd DataLabel="@Loc["Header_Name"]">@context.Data.TaskFriendlyName</MudTd>
+        <MudTd DataLabel="@Loc["Header_Name"]">
+            <TaskTitle Task="@context.Data" />
+        </MudTd>
         <MudTd DataLabel="@Loc["Header_QueuedAt"]">@context.CreatedAt.ToLocalTime()</MudTd>
         <MudTd DataLabel="@Loc["Header_FinishedAt"]">@(context.ProcessedAt is not null ?
                         context.ProcessedAt.Value.ToLocalTime() : "")
@@ -45,11 +45,7 @@
             {
                 var p = context.Data.Progress;
                 <div style="font-size: 0.85em; color: var(--mud-palette-text-secondary); margin-top: 2px;">
-                    @(p.IsIndeterminate? Loc["Progress_Working"] : $"{p.Current}/{p.Total} {p.ProgressUnit}")
-                    @if (!string.IsNullOrWhiteSpace(p.StatusMessage))
-                    {
-                        <span> — @p.StatusMessage</span>
-                    }
+                    <TaskProgressStatus TaskData="@context.Data" Progress="@p" />
                 </div>
             }
         </MudTd>

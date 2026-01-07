@@ -1,4 +1,5 @@
-﻿using MangaIngestWithUpscaling.Data;
+using AutoRegisterInject;
+using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.ChapterManagement;
 using Microsoft.EntityFrameworkCore;

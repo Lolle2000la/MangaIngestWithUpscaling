@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+    <data name="Progress_Indeterminate" xml:space="preserve">
+        <value>Verarbeitet: {0}</value>
+    </data>
+    <data name="Progress_Determinate" xml:space="preserve">
+        <value>{0} von {1}</value>
+    </data>
+    <data name="Title_LoggingTask" xml:space="preserve">
+        <value>Protokollierung: {0}</value>
+    </data>
+    <data name="Title_UpscaleTask" xml:space="preserve">
+        <value>Hochskalieren von {0}</value>
+    </data>
+    <data name="Title_RepairUpscaleTask" xml:space="preserve">
+        <value>Repariere {0}</value>
+    </data>
+    <data name="Title_ScanIngestTask" xml:space="preserve">
+        <value>Scanne {0}</value>
+    </data>
+    <data name="Title_RenameUpscaledChaptersSeriesTask" xml:space="preserve">
+        <value>Benenne {0} in {1} um</value>
+    </data>
+    <data name="Title_LibraryIntegrityCheckTask" xml:space="preserve">
+        <value>Integritätsprüfung: {0}</value>
+    </data>
+    <data name="Title_MergeMangaTask" xml:space="preserve">
+        <value>Führe {0} Manga in {1} zusammen</value>
+    </data>
+    <data name="Title_ApplyImageFiltersTask" xml:space="preserve">
+        <value>Wende Filter auf {0} an</value>
+    </data>
+    <data name="Title_UpdatePerceptualHashesTask" xml:space="preserve">
+        <value>Aktualisiere Wahrnehmungshashes</value>
+    </data>
+    <data name="Title_DetectSplitCandidatesTask" xml:space="preserve">
+        <value>Erkenne Trennungen für Kapitel {0}</value>
+    </data>
+    <data name="Title_ApplySplitsTask" xml:space="preserve">
+        <value>Wende Trennungen für Kapitel {0} an</value>
+    </data>
+</root>

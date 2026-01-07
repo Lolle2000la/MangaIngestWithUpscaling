@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using AutoRegisterInject;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 

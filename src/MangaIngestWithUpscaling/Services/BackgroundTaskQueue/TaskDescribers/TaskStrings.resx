@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+    <data name="Progress_Indeterminate" xml:space="preserve">
+        <value>Processed: {0}</value>
+    </data>
+    <data name="Progress_Determinate" xml:space="preserve">
+        <value>{0} / {1}</value>
+    </data>
+    <data name="Title_LoggingTask" xml:space="preserve">
+        <value>Logging: {0}</value>
+    </data>
+    <data name="Title_UpscaleTask" xml:space="preserve">
+        <value>Upscaling {0}</value>
+    </data>
+    <data name="Title_RepairUpscaleTask" xml:space="preserve">
+        <value>Repairing {0}</value>
+    </data>
+    <data name="Title_ScanIngestTask" xml:space="preserve">
+        <value>Scanning {0}</value>
+    </data>
+    <data name="Title_RenameUpscaledChaptersSeriesTask" xml:space="preserve">
+        <value>Renaming {0} to {1}</value>
+    </data>
+    <data name="Title_LibraryIntegrityCheckTask" xml:space="preserve">
+        <value>Integrity Check: {0}</value>
+    </data>
+    <data name="Title_MergeMangaTask" xml:space="preserve">
+        <value>Merging {0} manga into {1}</value>
+    </data>
+    <data name="Title_ApplyImageFiltersTask" xml:space="preserve">
+        <value>Applying Filters to {0}</value>
+    </data>
+    <data name="Title_UpdatePerceptualHashesTask" xml:space="preserve">
+        <value>Updating Perceptual Hashes</value>
+    </data>
+    <data name="Title_DetectSplitCandidatesTask" xml:space="preserve">
+        <value>Detecting Splits for Chapter {0}</value>
+    </data>
+    <data name="Title_ApplySplitsTask" xml:space="preserve">
+        <value>Applying Splits for Chapter {0}</value>
+    </data>
+</root>

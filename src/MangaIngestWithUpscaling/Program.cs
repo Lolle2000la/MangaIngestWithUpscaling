@@ -8,6 +8,7 @@ using MangaIngestWithUpscaling.Configuration;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.TaskDescribers;
 using MangaIngestWithUpscaling.Services.ChapterMerging;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.Python;
@@ -115,6 +116,20 @@ builder.Services.RegisterViewModels();
 builder.Services.AddScoped<MangaJaNaiUpscaler>();
 
 builder.Services.AddLocalization(options => options.ResourcesPath = "Resources");
+
+// Register Task Describers
+builder.Services.AddSingleton<ITaskDescriberFactory, TaskDescriberFactory>();
+builder.Services.AddTransient<LoggingTaskDescriber>();
+builder.Services.AddTransient<UpscaleTaskDescriber>();
+builder.Services.AddTransient<RepairUpscaleTaskDescriber>();
+builder.Services.AddTransient<ScanIngestTaskDescriber>();
+builder.Services.AddTransient<RenameUpscaledChaptersSeriesTaskDescriber>();
+builder.Services.AddTransient<LibraryIntegrityCheckTaskDescriber>();
+builder.Services.AddTransient<MergeMangaTaskDescriber>();
+builder.Services.AddTransient<ApplyImageFiltersTaskDescriber>();
+builder.Services.AddTransient<UpdatePerceptualHashesTaskDescriber>();
+builder.Services.AddTransient<DetectSplitCandidatesTaskDescriber>();
+builder.Services.AddTransient<ApplySplitsTaskDescriber>();
 
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddScoped<IdentityUserAccessor>();

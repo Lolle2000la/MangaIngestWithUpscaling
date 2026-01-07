@@ -24,8 +24,6 @@ namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 [JsonDerivedType(typeof(ApplySplitsTask), nameof(ApplySplitsTask))]
 public class BaseTask
 {
-    public virtual string TaskFriendlyName { get; } = "Unknown Task";
-
     public virtual int RetryFor { get; set; } = 0;
 
     [NotMapped]

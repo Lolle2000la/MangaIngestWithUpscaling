@@ -2,7 +2,6 @@
 
 public class LoggingTask : BaseTask
 {
-    public override string TaskFriendlyName => $"Logging Task: {Message}";
     public required string Message { get; set; }
 
     public override int RetryFor { get; set; } = 1;

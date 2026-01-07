@@ -10,14 +10,13 @@ namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 public class ApplyImageFiltersTask : BaseTask
 {
     public int LibraryId { get; set; }
+    public string LibraryName { get; set; } = string.Empty;
 
     /// <summary>
     /// If true, only process chapters that haven't been processed by image filters yet.
     /// If false, process all chapters regardless.
     /// </summary>
     public bool OnlyUnprocessed { get; set; } = true;
-
-    public override string TaskFriendlyName => $"Apply Image Filters to Library (ID: {LibraryId})";
 
     public override async Task ProcessAsync(
         IServiceProvider services,
@@ -64,13 +63,13 @@ public class ApplyImageFiltersTask : BaseTask
         logger.LogInformation("Found {TotalChapters} chapters to process", totalChapters);
 
         // Initialize progress reporting (units: chapters)
-        Progress.ProgressUnit = "chapters";
+        // Progress.ProgressUnit = "chapters";
         Progress.Total = totalChapters;
         Progress.Current = 0;
-        Progress.StatusMessage =
-            totalChapters == 0
-                ? "No chapters to process"
-                : $"Processing 0/{totalChapters} chapters";
+        // Progress.StatusMessage =
+        //     totalChapters == 0
+        //         ? "No chapters to process"
+        //         : $"Processing 0/{totalChapters} chapters";
 
         int processedChapters = 0;
         int filteredImages = 0;
@@ -132,7 +131,7 @@ public class ApplyImageFiltersTask : BaseTask
                     lock (Progress)
                     {
                         Progress.Current = currentCount;
-                        Progress.StatusMessage = $"Processed: {chapter.FileName}";
+                        // Progress.StatusMessage = $"Processed: {chapter.FileName}";
                     }
 
                     if (currentCount % 10 == 0)
@@ -170,7 +169,7 @@ public class ApplyImageFiltersTask : BaseTask
 
         // Final progress update
         Progress.Current = processedChapters;
-        Progress.StatusMessage =
-            $"Completed: {processedChapters}/{totalChapters} chapters | Filtered images total: {filteredImages}";
+        // Progress.StatusMessage =
+        //     $"Completed: {processedChapters}/{totalChapters} chapters | Filtered images total: {filteredImages}";
     }
 }

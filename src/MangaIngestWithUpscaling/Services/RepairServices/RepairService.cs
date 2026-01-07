@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using AutoRegisterInject;
 using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
@@ -8,6 +9,7 @@ namespace MangaIngestWithUpscaling.Services.RepairServices;
 /// <summary>
 /// Service for handling chapter repair operations, including preparation and merging of upscaled content.
 /// </summary>
+[RegisterScoped]
 public class RepairService : IRepairService
 {
     /// <summary>
