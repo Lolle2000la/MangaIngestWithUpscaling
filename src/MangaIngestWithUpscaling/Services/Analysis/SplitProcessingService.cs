@@ -58,7 +58,10 @@ public class SplitProcessingService(
         var existingFindings = dbContext.StripSplitFindings.Where(f => f.ChapterId == chapterId);
         dbContext.StripSplitFindings.RemoveRange(existingFindings);
 
-        foreach (var res in results)
+        // Only save findings that actually have splits detected
+        var resultsWithSplits = results.Where(r => r.Splits.Count > 0).ToList();
+
+        foreach (var res in resultsWithSplits)
         {
             // We use the file name without extension as the identity
             var pageFileName = Path.GetFileNameWithoutExtension(res.ImagePath);
@@ -84,52 +87,90 @@ public class SplitProcessingService(
             "Processed split detection results for chapter {ChapterId}, version {Version}. Found splits for {Count} images.",
             chapterId,
             detectorVersion,
-            results.Count()
+            resultsWithSplits.Count
         );
 
-        // Check if we should auto-apply
-        var chapter = await dbContext
-            .Chapters.Include(c => c.Manga)
-                .ThenInclude(m => m.Library)
-                    .ThenInclude(l => l.UpscalerProfile)
-            .Include(c => c.Manga)
-                .ThenInclude(m => m.UpscalerProfilePreference)
-            .Include(c => c.UpscalerProfile)
-            .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
-
-        if (chapter?.Manga?.Library?.StripDetectionMode == StripDetectionMode.DetectAndApply)
+        // Check if we should auto-apply (only if there are actual splits to apply)
+        if (resultsWithSplits.Count > 0)
         {
-            logger.LogInformation(
-                "Auto-applying splits for chapter {ChapterId} based on library settings.",
-                chapterId
-            );
-            await taskQueue.EnqueueAsync(new ApplySplitsTask(chapter, detectorVersion));
+            var chapter = await dbContext
+                .Chapters.Include(c => c.Manga)
+                    .ThenInclude(m => m.Library)
+                        .ThenInclude(l => l.UpscalerProfile)
+                .Include(c => c.Manga)
+                    .ThenInclude(m => m.UpscalerProfilePreference)
+                .Include(c => c.UpscalerProfile)
+                .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
 
-            // Update status to Processing immediately to reflect the queued task
-            state.Status = SplitProcessingStatus.Processing;
-            await dbContext.SaveChangesAsync(cancellationToken);
-        }
-        else if (
-            chapter != null
-            && chapter.Manga?.Library?.StripDetectionMode == StripDetectionMode.DetectOnly
-            && chapter.Manga.Library.UpscaleOnIngest
-            && chapter.Manga.ShouldUpscale != false
-            && chapter.Manga.Library.UpscalerProfileId != null
-        )
-        {
-            if (
-                chapter.IsUpscaled
-                || (
-                    chapter.UpscaledFullPath != null
-                    && fileSystem.FileExists(chapter.UpscaledFullPath)
-                )
+            if (chapter?.Manga?.Library?.StripDetectionMode == StripDetectionMode.DetectAndApply)
+            {
+                logger.LogInformation(
+                    "Auto-applying splits for chapter {ChapterId} based on library settings.",
+                    chapterId
+                );
+                await taskQueue.EnqueueAsync(new ApplySplitsTask(chapter, detectorVersion));
+
+                // Update status to Processing immediately to reflect the queued task
+                state.Status = SplitProcessingStatus.Processing;
+                await dbContext.SaveChangesAsync(cancellationToken);
+            }
+            else if (
+                chapter != null
+                && chapter.Manga?.Library?.StripDetectionMode == StripDetectionMode.DetectOnly
+                && chapter.Manga.Library.UpscaleOnIngest
+                && chapter.Manga.ShouldUpscale != false
+                && chapter.Manga.Library.UpscalerProfileId != null
             )
             {
-                await taskQueue.EnqueueAsync(new RepairUpscaleTask(chapter));
+                if (
+                    chapter.IsUpscaled
+                    || (
+                        chapter.UpscaledFullPath != null
+                        && fileSystem.FileExists(chapter.UpscaledFullPath)
+                    )
+                )
+                {
+                    await taskQueue.EnqueueAsync(new RepairUpscaleTask(chapter));
+                }
+                else
+                {
+                    await taskQueue.EnqueueAsync(new UpscaleTask(chapter));
+                }
             }
-            else
+        }
+        else if (results.Any())
+        {
+            // No splits detected, but we still need to proceed with upscaling if configured
+            var chapter = await dbContext
+                .Chapters.Include(c => c.Manga)
+                    .ThenInclude(m => m.Library)
+                        .ThenInclude(l => l.UpscalerProfile)
+                .Include(c => c.Manga)
+                    .ThenInclude(m => m.UpscalerProfilePreference)
+                .Include(c => c.UpscalerProfile)
+                .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
+
+            if (
+                chapter != null
+                && chapter.Manga?.Library?.UpscaleOnIngest == true
+                && chapter.Manga.ShouldUpscale != false
+                && chapter.Manga.Library.UpscalerProfileId != null
+            )
             {
-                await taskQueue.EnqueueAsync(new UpscaleTask(chapter));
+                if (
+                    chapter.IsUpscaled
+                    || (
+                        chapter.UpscaledFullPath != null
+                        && fileSystem.FileExists(chapter.UpscaledFullPath)
+                    )
+                )
+                {
+                    await taskQueue.EnqueueAsync(new RepairUpscaleTask(chapter));
+                }
+                else
+                {
+                    await taskQueue.EnqueueAsync(new UpscaleTask(chapter));
+                }
             }
         }
     }
