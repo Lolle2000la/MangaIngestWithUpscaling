@@ -1,5 +1,6 @@
 using MangaIngestWithUpscaling.Configuration;
 using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.Analysis;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.Analysis;
@@ -1830,6 +1831,188 @@ public class LibraryIntegrityCheckerTests : IDisposable
 
         // Clean up
         Directory.Delete(temp, true);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task CheckIntegrity_SplitAppliedWithNoFindings_ZeroSplitsDetected_DoesNotReset()
+    {
+        // This tests the fix for the bug where chapters with zero detected splits
+        // were continuously re-enqueued for detection on every integrity check
+        await using ApplicationDbContext ctx = _db.CreateContext();
+
+        string temp = Directory.CreateTempSubdirectory().FullName;
+        var lib = new Library
+        {
+            Name = "Lib",
+            NotUpscaledLibraryPath = Path.Combine(temp, "orig"),
+            UpscaledLibraryPath = Path.Combine(temp, "up"),
+        };
+        Directory.CreateDirectory(lib.NotUpscaledLibraryPath);
+        Directory.CreateDirectory(lib.UpscaledLibraryPath!);
+
+        string rel = "Series/Ch1.cbz";
+        Directory.CreateDirectory(Path.Combine(lib.NotUpscaledLibraryPath, "Series"));
+        File.WriteAllText(Path.Combine(lib.NotUpscaledLibraryPath, rel), "orig");
+
+        var manga = new Manga { PrimaryTitle = "Series", Library = lib };
+        var chapter = new Chapter
+        {
+            FileName = "ch1.cbz",
+            RelativePath = rel,
+            Manga = manga,
+            IsUpscaled = false,
+        };
+        manga.Chapters.Add(chapter);
+        lib.MangaSeries.Add(manga);
+
+        ctx.Libraries.Add(lib);
+        await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Create a split state showing detection was run (LastProcessedDetectorVersion > 0)
+        // but no splits were found, and status is Applied (meaning ApplySplits was called and completed)
+        var splitState = new ChapterSplitProcessingState
+        {
+            ChapterId = chapter.Id,
+            Status = SplitProcessingStatus.Applied,
+            LastProcessedDetectorVersion = 1, // Detection was run
+            LastAppliedDetectorVersion = 1, // And "applied" (even though there were no splits)
+        };
+        ctx.ChapterSplitProcessingStates.Add(splitState);
+        // Importantly: NO StripSplitFindings are added (because no splits were detected)
+        await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Clear the change tracker to ensure the context is clean before integrity checking
+        ctx.ChangeTracker.Clear();
+
+        _metadata
+            .GetSeriesAndTitleFromComicInfoAsync(Arg.Any<string>())
+            .Returns(Task.FromResult(new ExtractedMetadata("Series", "Ch1", null)));
+
+        var checker = new LibraryIntegrityChecker(
+            ctx,
+            _factory,
+            _metadata,
+            _chapterRecognition,
+            new ChapterProcessingService(
+                ctx,
+                _upscalerJsonHandling,
+                _fileSystem,
+                Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
+                NullLogger<ChapterProcessingService>.Instance
+            ),
+            _taskQueue,
+            _cbzConverter,
+            NullLogger<LibraryIntegrityChecker>.Instance,
+            _options,
+            _splitCoordinator,
+            Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
+        );
+
+        bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
+
+        // Should return false (no correction needed) because this is a valid state:
+        // detection was run, found no splits, and "applied" nothing
+        Assert.False(changed);
+
+        // Verify the split state was NOT modified
+        var reloadedState = await ctx
+            .ChapterSplitProcessingStates.AsNoTracking()
+            .FirstAsync(s => s.ChapterId == chapter.Id, TestContext.Current.CancellationToken);
+        Assert.Equal(SplitProcessingStatus.Applied, reloadedState.Status);
+        Assert.Equal(1, reloadedState.LastProcessedDetectorVersion);
+        Assert.Equal(1, reloadedState.LastAppliedDetectorVersion);
+
+        // Verify no detection tasks were enqueued
+        await _taskQueue.DidNotReceive().EnqueueAsync(Arg.Any<DetectSplitCandidatesTask>());
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task CheckIntegrity_SplitAppliedWithNoFindings_NeverDetected_ResetsToDetected()
+    {
+        // This tests that truly corrupted states (Applied with no findings and no detection)
+        // are still corrected
+        await using ApplicationDbContext ctx = _db.CreateContext();
+
+        string temp = Directory.CreateTempSubdirectory().FullName;
+        var lib = new Library
+        {
+            Name = "Lib",
+            NotUpscaledLibraryPath = Path.Combine(temp, "orig"),
+            UpscaledLibraryPath = Path.Combine(temp, "up"),
+        };
+        Directory.CreateDirectory(lib.NotUpscaledLibraryPath);
+        Directory.CreateDirectory(lib.UpscaledLibraryPath!);
+
+        string rel = "Series/Ch1.cbz";
+        Directory.CreateDirectory(Path.Combine(lib.NotUpscaledLibraryPath, "Series"));
+        File.WriteAllText(Path.Combine(lib.NotUpscaledLibraryPath, rel), "orig");
+
+        var manga = new Manga { PrimaryTitle = "Series", Library = lib };
+        var chapter = new Chapter
+        {
+            FileName = "ch1.cbz",
+            RelativePath = rel,
+            Manga = manga,
+            IsUpscaled = false,
+        };
+        manga.Chapters.Add(chapter);
+        lib.MangaSeries.Add(manga);
+
+        ctx.Libraries.Add(lib);
+        await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Create a corrupted split state: Applied but detection was NEVER run (LastProcessedDetectorVersion = 0)
+        var splitState = new ChapterSplitProcessingState
+        {
+            ChapterId = chapter.Id,
+            Status = SplitProcessingStatus.Applied,
+            LastProcessedDetectorVersion = 0, // Detection was NEVER run
+            LastAppliedDetectorVersion = 0,
+        };
+        ctx.ChapterSplitProcessingStates.Add(splitState);
+        // No findings (correctly, since detection never ran)
+        await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Clear the change tracker to ensure the context is clean before integrity checking
+        ctx.ChangeTracker.Clear();
+
+        _metadata
+            .GetSeriesAndTitleFromComicInfoAsync(Arg.Any<string>())
+            .Returns(Task.FromResult(new ExtractedMetadata("Series", "Ch1", null)));
+
+        var checker = new LibraryIntegrityChecker(
+            ctx,
+            _factory,
+            _metadata,
+            _chapterRecognition,
+            new ChapterProcessingService(
+                ctx,
+                _upscalerJsonHandling,
+                _fileSystem,
+                Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
+                NullLogger<ChapterProcessingService>.Instance
+            ),
+            _taskQueue,
+            _cbzConverter,
+            NullLogger<LibraryIntegrityChecker>.Instance,
+            _options,
+            _splitCoordinator,
+            Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
+        );
+
+        bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
+
+        // Should return true (correction made) because this is truly corrupted
+        Assert.True(changed);
+
+        // Verify the split state was reset to Detected
+        var reloadedState = await ctx
+            .ChapterSplitProcessingStates.AsNoTracking()
+            .FirstAsync(s => s.ChapterId == chapter.Id, TestContext.Current.CancellationToken);
+        Assert.Equal(SplitProcessingStatus.Detected, reloadedState.Status);
+        Assert.Equal(0, reloadedState.LastAppliedDetectorVersion);
     }
 
     private sealed class TestDbContextFactory : IDbContextFactory<ApplicationDbContext>

@@ -557,10 +557,16 @@ public partial class LibraryIntegrityChecker(
             .ToListAsync(cancellationToken);
 
         // Check 1: Status is "Applied" but no findings exist
-        if (splitState.Status == SplitProcessingStatus.Applied && findings.Count == 0)
+        // However, if LastProcessedDetectorVersion > 0, it means detection was run and found no splits,
+        // so this is a valid state (e.g., for large digital banners that can't be split)
+        if (
+            splitState.Status == SplitProcessingStatus.Applied
+            && findings.Count == 0
+            && splitState.LastProcessedDetectorVersion == 0
+        )
         {
             logger.LogWarning(
-                "Chapter {chapterFileName} ({chapterId}) has split status 'Applied' but no split findings exist. Resetting status to Detected.",
+                "Chapter {chapterFileName} ({chapterId}) has split status 'Applied' but no split findings exist and detection was never run. Resetting status to Detected.",
                 chapter.FileName,
                 chapter.Id
             );
