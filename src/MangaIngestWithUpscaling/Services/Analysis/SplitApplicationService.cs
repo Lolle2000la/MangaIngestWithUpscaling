@@ -99,12 +99,16 @@ public class SplitApplicationService(
                 .Where(f => ImageConstants.SupportedImageExtensions.Contains(Path.GetExtension(f)))
                 .ToList();
 
-            var splitPagesMap = new Dictionary<string, List<string>>(); // OriginalFileName -> List<NewFilePaths>
+            var splitPagesMap = new Dictionary<string, List<string>>(
+                StringComparer.OrdinalIgnoreCase
+            ); // OriginalFileName -> List<NewFilePaths>
 
             foreach (var imagePath in originalImages)
             {
                 var fileNameWithoutExt = Path.GetFileNameWithoutExtension(imagePath);
-                var finding = findings.FirstOrDefault(f => f.PageFileName == fileNameWithoutExt);
+                var finding = findings.FirstOrDefault(f =>
+                    f.PageFileName.Equals(fileNameWithoutExt, StringComparison.OrdinalIgnoreCase)
+                );
 
                 if (finding != null)
                 {
@@ -160,7 +164,9 @@ public class SplitApplicationService(
                     .ToList();
 
                 // Collect pages that need to be upscaled (split pages from original)
-                var splitPagesToUpscale = new Dictionary<string, List<string>>(); // old page name -> new split page paths
+                var splitPagesToUpscale = new Dictionary<string, List<string>>(
+                    StringComparer.OrdinalIgnoreCase
+                ); // old page name -> new split page paths
 
                 foreach (var imagePath in upscaledImages)
                 {

@@ -1,6 +1,7 @@
 ﻿using System.Text.RegularExpressions;
 using MangaIngestWithUpscaling.Configuration;
 using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.Analysis;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.Analysis;
@@ -505,6 +506,17 @@ public partial class LibraryIntegrityChecker(
             }
         }
 
+        // Check split integrity
+        var splitIntegrityResult = await CheckSplitIntegrity(
+            context,
+            chapter,
+            cancellationToken ?? CancellationToken.None
+        );
+        if (splitIntegrityResult != IntegrityCheckResult.Ok)
+        {
+            return splitIntegrityResult;
+        }
+
         if (!CheckMetadata(metadata, out var correctedMetadata))
         {
             logger.LogWarning(
@@ -521,6 +533,146 @@ public partial class LibraryIntegrityChecker(
         }
 
         return extensionsFixed ? IntegrityCheckResult.Corrected : IntegrityCheckResult.Ok;
+    }
+
+    private async Task<IntegrityCheckResult> CheckSplitIntegrity(
+        ApplicationDbContext context,
+        Chapter chapter,
+        CancellationToken cancellationToken
+    )
+    {
+        var splitState = await context
+            .ChapterSplitProcessingStates.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.ChapterId == chapter.Id, cancellationToken);
+
+        if (splitState == null)
+        {
+            // No split processing state - nothing to check
+            return IntegrityCheckResult.Ok;
+        }
+
+        var findings = await context
+            .StripSplitFindings.AsNoTracking()
+            .Where(f => f.ChapterId == chapter.Id)
+            .ToListAsync(cancellationToken);
+
+        // Check 1: Status is "Applied" but no findings exist
+        if (splitState.Status == SplitProcessingStatus.Applied && findings.Count == 0)
+        {
+            logger.LogWarning(
+                "Chapter {chapterFileName} ({chapterId}) has split status 'Applied' but no split findings exist. Resetting status to Detected.",
+                chapter.FileName,
+                chapter.Id
+            );
+
+            splitState.Status = SplitProcessingStatus.Detected;
+            splitState.LastAppliedDetectorVersion = 0;
+            context.ChapterSplitProcessingStates.Update(splitState);
+            await context.SaveChangesAsync(cancellationToken);
+
+            return IntegrityCheckResult.Corrected;
+        }
+
+        // Check 2: Findings exist but status indicates they were never detected
+        if (
+            findings.Count > 0
+            && splitState.LastProcessedDetectorVersion == 0
+            && splitState.Status != SplitProcessingStatus.Detected
+        )
+        {
+            logger.LogWarning(
+                "Chapter {chapterFileName} ({chapterId}) has {count} split findings but LastProcessedDetectorVersion is 0. Correcting.",
+                chapter.FileName,
+                chapter.Id,
+                findings.Count
+            );
+
+            splitState.LastProcessedDetectorVersion = findings.Max(f => f.DetectorVersion);
+            splitState.Status = SplitProcessingStatus.Detected;
+            context.ChapterSplitProcessingStates.Update(splitState);
+            await context.SaveChangesAsync(cancellationToken);
+
+            return IntegrityCheckResult.Corrected;
+        }
+
+        // Check 3: Findings exist with splits but status is "Applied" - verify splits were actually applied
+        if (
+            splitState.Status == SplitProcessingStatus.Applied
+            && findings.Any()
+            && File.Exists(chapter.NotUpscaledFullPath)
+        )
+        {
+            try
+            {
+                using var archive = System.IO.Compression.ZipFile.OpenRead(
+                    chapter.NotUpscaledFullPath
+                );
+                var imageFiles = archive
+                    .Entries.Where(e =>
+                        Shared.Constants.ImageConstants.SupportedImageExtensions.Contains(
+                            Path.GetExtension(e.Name).ToLower()
+                        )
+                    )
+                    .Select(e => Path.GetFileNameWithoutExtension(e.Name))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                // Check if any split parts exist in the archive
+                bool hasSplitParts = false;
+                foreach (var finding in findings)
+                {
+                    // Look for _part1, _part2, etc. suffixes
+                    if (
+                        imageFiles.Any(f =>
+                            f.StartsWith(
+                                finding.PageFileName + "_part",
+                                StringComparison.OrdinalIgnoreCase
+                            )
+                        )
+                    )
+                    {
+                        hasSplitParts = true;
+                        break;
+                    }
+                }
+
+                // Check if original unsplit pages still exist
+                bool hasOriginalPages = findings.Any(finding =>
+                    imageFiles.Contains(finding.PageFileName)
+                );
+
+                if (!hasSplitParts && hasOriginalPages)
+                {
+                    logger.LogWarning(
+                        "Chapter {chapterFileName} ({chapterId}) has split status 'Applied' but split parts are not found in archive. Re-enqueueing split application.",
+                        chapter.FileName,
+                        chapter.Id
+                    );
+
+                    splitState.Status = SplitProcessingStatus.Detected;
+                    splitState.LastAppliedDetectorVersion = 0;
+                    context.ChapterSplitProcessingStates.Update(splitState);
+                    await context.SaveChangesAsync(cancellationToken);
+
+                    // Re-enqueue split application
+                    await taskQueue.EnqueueAsync(
+                        new ApplySplitsTask(chapter, splitState.LastProcessedDetectorVersion)
+                    );
+
+                    return IntegrityCheckResult.Corrected;
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(
+                    ex,
+                    "Failed to verify split application for chapter {chapterFileName} ({chapterId}). Skipping split integrity check.",
+                    chapter.FileName,
+                    chapter.Id
+                );
+            }
+        }
+
+        return IntegrityCheckResult.Ok;
     }
 
     private async Task<IntegrityCheckResult> CheckUpscaledIntegrity(

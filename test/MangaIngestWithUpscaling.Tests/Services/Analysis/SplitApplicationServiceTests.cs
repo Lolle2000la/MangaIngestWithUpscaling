@@ -285,6 +285,96 @@ public class SplitApplicationServiceTests : IDisposable
             .OnSplitsAppliedAsync(chapter.Id, 1, Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task ApplySplitsAsync_MatchesFindingsCaseInsensitively()
+    {
+        // Arrange - test that filename matching is case-insensitive
+        var library = new Library
+        {
+            Name = "Test Library",
+            NotUpscaledLibraryPath = Path.Combine(_tempDir, "original"),
+        };
+        _dbContext.Libraries.Add(library);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        Directory.CreateDirectory(library.NotUpscaledLibraryPath);
+
+        var manga = new Manga
+        {
+            PrimaryTitle = "Test Manga",
+            LibraryId = library.Id,
+            Library = library,
+        };
+        _dbContext.MangaSeries.Add(manga);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var chapter = new Chapter
+        {
+            FileName = "chapter1.cbz",
+            RelativePath = "manga/chapter1.cbz",
+            MangaId = manga.Id,
+            Manga = manga,
+            IsUpscaled = false,
+        };
+        _dbContext.Chapters.Add(chapter);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Create original CBZ with UPPERCASE filename
+        var originalCbzPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(originalCbzPath)!);
+        CreateTestCbz(originalCbzPath, "PAGE001.png");
+
+        // Create split finding with lowercase PageFileName
+        var finding = new StripSplitFinding
+        {
+            ChapterId = chapter.Id,
+            DetectorVersion = 1,
+            PageFileName = "page001", // lowercase
+            SplitJson = JsonSerializer.Serialize(
+                new SplitDetectionResult
+                {
+                    OriginalHeight = 1000,
+                    Splits = [new DetectedSplit { YOriginal = 500, Confidence = 0.9 }],
+                }
+            ),
+        };
+        _dbContext.StripSplitFindings.Add(finding);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Configure split applier
+        _splitApplier
+            .ApplySplitsToImage(
+                Arg.Any<string>(),
+                Arg.Any<List<DetectedSplit>>(),
+                Arg.Any<string>()
+            )
+            .Returns(callInfo =>
+            {
+                var outputDir = callInfo.ArgAt<string>(2);
+                var part1 = Path.Combine(outputDir, "PAGE001_part1.png");
+                var part2 = Path.Combine(outputDir, "PAGE001_part2.png");
+                File.WriteAllText(part1, "dummy");
+                File.WriteAllText(part2, "dummy");
+                return new List<string> { part1, part2 };
+            });
+
+        // Act
+        await _service.ApplySplitsAsync(chapter.Id, 1, TestContext.Current.CancellationToken);
+
+        // Assert - the split should have been applied despite case mismatch
+        _splitApplier
+            .Received(1)
+            .ApplySplitsToImage(
+                Arg.Any<string>(),
+                Arg.Any<List<DetectedSplit>>(),
+                Arg.Any<string>()
+            );
+
+        await _coordinator
+            .Received(1)
+            .OnSplitsAppliedAsync(chapter.Id, 1, Arg.Any<CancellationToken>());
+    }
+
     private void CreateTestCbz(string path, params string[] imageNames)
     {
         var tempExtractDir = Path.Combine(_tempDir, $"extract_{Guid.NewGuid()}");
