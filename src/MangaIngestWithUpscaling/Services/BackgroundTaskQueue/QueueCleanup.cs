@@ -8,7 +8,7 @@ namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 public class QueueCleanup(ApplicationDbContext dbContext, ILogger<QueueCleanup> _logger)
     : IQueueCleanup
 {
-    public async Task CleanupAsync()
+    public async Task<IReadOnlyList<int>> CleanupAsync()
     {
         // In QueueCleanup.cs
         var cutoffDate = await dbContext
@@ -18,16 +18,30 @@ public class QueueCleanup(ApplicationDbContext dbContext, ILogger<QueueCleanup> 
             .Select(t => t.CreatedAt)
             .FirstOrDefaultAsync();
 
-        if (cutoffDate != default)
+        if (cutoffDate == default)
         {
-            var deletedCount = await dbContext
-                .PersistedTasks.Where(t =>
-                    t.Status == PersistedTaskStatus.Completed && t.CreatedAt <= cutoffDate
-                )
-                .ExecuteDeleteAsync();
-
-            if (deletedCount > 0)
-                _logger.LogInformation("Cleaned up {Count} old tasks.", deletedCount);
+            return Array.Empty<int>();
         }
+
+        var taskIds = await dbContext
+            .PersistedTasks.Where(t =>
+                t.Status == PersistedTaskStatus.Completed && t.CreatedAt <= cutoffDate
+            )
+            .Select(t => t.Id)
+            .ToListAsync();
+
+        if (taskIds.Count == 0)
+        {
+            return taskIds;
+        }
+
+        var deletedCount = await dbContext
+            .PersistedTasks.Where(t => taskIds.Contains(t.Id))
+            .ExecuteDeleteAsync();
+
+        if (deletedCount > 0)
+            _logger.LogInformation("Cleaned up {Count} old tasks.", deletedCount);
+
+        return taskIds;
     }
 }

@@ -156,7 +156,14 @@ public class TaskQueue : ITaskQueue, IHostedService
         TaskEnqueuedOrChanged?.Invoke(taskItem);
 
         var queueCleanup = scope.ServiceProvider.GetRequiredService<IQueueCleanup>();
-        await queueCleanup.CleanupAsync();
+        var removedTaskIds = await queueCleanup.CleanupAsync();
+
+        if (TaskRemoved != null && removedTaskIds.Count > 0)
+        {
+            await Task.WhenAll(
+                removedTaskIds.Select(id => TaskRemoved(new PersistedTask { Id = id }))
+            );
+        }
     }
 
     public async Task ReorderTaskAsync(PersistedTask task, int newOrder)

@@ -21,11 +21,13 @@ public class TaskQueueTests : IDisposable
     {
         // Setup in-memory database
         var services = new ServiceCollection();
-        services.AddDbContext<ApplicationDbContext>(options =>
-            options.UseInMemoryDatabase($"TestDb_{Guid.NewGuid()}")
-        );
+        var dbName = $"TestDb_{Guid.NewGuid()}";
+        services.AddDbContext<ApplicationDbContext>(options => options.UseInMemoryDatabase(dbName));
 
         _mockQueueCleanup = Substitute.For<IQueueCleanup>();
+        _mockQueueCleanup
+            .CleanupAsync()
+            .Returns(Task.FromResult<IReadOnlyList<int>>(Array.Empty<int>()));
         services.AddScoped<IQueueCleanup>(_ => _mockQueueCleanup);
 
         var serviceProvider = services.BuildServiceProvider();
@@ -103,6 +105,35 @@ public class TaskQueueTests : IDisposable
             _taskQueue.ReplayPendingOrFailed(CancellationToken.None)
         );
         Assert.Null(exception);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task EnqueueAsync_WhenCleanupRemovesTasks_RaisesTaskRemoved()
+    {
+        // Arrange
+        _mockQueueCleanup
+            .CleanupAsync()
+            .Returns(Task.FromResult<IReadOnlyList<int>>(new List<int> { 5 }));
+
+        var removalNotified = new TaskCompletionSource<int>();
+        _taskQueue.TaskRemoved += task =>
+        {
+            removalNotified.TrySetResult(task.Id);
+            return Task.CompletedTask;
+        };
+
+        // Act
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "cleanup" });
+
+        // Assert
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(
+            TestContext.Current.CancellationToken
+        );
+        cts.CancelAfter(TimeSpan.FromSeconds(1));
+
+        var removedId = await removalNotified.Task.WaitAsync(cts.Token);
+        Assert.Equal(5, removedId);
     }
 
     [Fact]

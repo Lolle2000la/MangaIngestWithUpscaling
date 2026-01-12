@@ -2,5 +2,5 @@
 
 public interface IQueueCleanup
 {
-    Task CleanupAsync();
+    Task<IReadOnlyList<int>> CleanupAsync();
 }

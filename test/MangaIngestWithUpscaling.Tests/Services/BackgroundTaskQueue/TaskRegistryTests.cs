@@ -1,4 +1,13 @@
+using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Shared.Configuration;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using NSubstitute;
 
 namespace MangaIngestWithUpscaling.Tests.Services.BackgroundTaskQueue;
 
@@ -125,5 +134,85 @@ public class TaskRegistryTests
         Assert.Equal(5, sortedTasks[2].Id); // Canceled
         Assert.Equal(3, sortedTasks[3].Id); // Processing
         Assert.Equal(2, sortedTasks[4].Id); // Pending
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task TaskRegistry_RemovesTasks_WhenQueueEmitsRemoval()
+    {
+        // Arrange: build minimal service provider and seed a task
+        var services = new ServiceCollection();
+        var dbName = $"TaskRegistry_{Guid.NewGuid()}";
+        services.AddLogging();
+        services.AddDbContext<ApplicationDbContext>(options =>
+            options.UseInMemoryDatabase(dbName)
+        );
+        services.AddSingleton<IOptions<UpscalerConfig>>(Options.Create(new UpscalerConfig
+        {
+            RemoteOnly = true,
+        }));
+        var cleanup = Substitute.For<IQueueCleanup>();
+        cleanup.CleanupAsync().Returns(Task.FromResult<IReadOnlyList<int>>(Array.Empty<int>()));
+        services.AddScoped<IQueueCleanup>(_ => cleanup);
+        services.AddSingleton(Substitute.For<ITaskPersistenceService>());
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+
+        var queueLogger = provider.GetRequiredService<ILogger<TaskQueue>>();
+        var taskQueue = new TaskQueue(scopeFactory, queueLogger);
+
+        var persistence = provider.GetRequiredService<ITaskPersistenceService>();
+        var standard = new StandardTaskProcessor(
+            taskQueue,
+            scopeFactory,
+            Substitute.For<ILogger<StandardTaskProcessor>>(),
+            persistence
+        );
+        var upscaler = new UpscaleTaskProcessor(
+            taskQueue,
+            scopeFactory,
+            provider.GetRequiredService<IOptions<UpscalerConfig>>(),
+            Substitute.For<ILogger<UpscaleTaskProcessor>>(),
+            persistence
+        );
+        var distributed = new DistributedUpscaleTaskProcessor(
+            taskQueue,
+            scopeFactory,
+            provider.GetRequiredService<IOptions<UpscalerConfig>>(),
+            persistence
+        );
+
+        var registry = new TaskRegistry(scopeFactory, taskQueue, standard, upscaler, distributed);
+        await registry.StartAsync(TestContext.Current.CancellationToken);
+
+        // Enqueue a task so the registry gets an entry via TaskEnqueuedOrChanged
+        await taskQueue.EnqueueAsync(new LoggingTask { Message = "keep" });
+
+        var snapshot = taskQueue.GetStandardSnapshot();
+        Assert.Single(snapshot);
+        var persistedId = snapshot[0].Id;
+
+        // Allow event propagation into registry
+        for (int i = 0; i < 5 && !registry.StandardTasks.Any(t => t.Id == persistedId); i++)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Contains(registry.StandardTasks, t => t.Id == persistedId);
+
+        // Act: remove the task via queue and wait for registry to update
+        await taskQueue.RemoveTaskAsync(new PersistedTask
+        {
+            Id = persistedId,
+            Data = new LoggingTask { Message = "keep" },
+        });
+
+        for (int i = 0; i < 5 && registry.StandardTasks.Any(t => t.Id == persistedId); i++)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
+
+        Assert.DoesNotContain(registry.StandardTasks, t => t.Id == persistedId);
     }
 }
