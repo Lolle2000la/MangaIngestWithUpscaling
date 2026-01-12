@@ -144,13 +144,10 @@ public class TaskRegistryTests
         var services = new ServiceCollection();
         var dbName = $"TaskRegistry_{Guid.NewGuid()}";
         services.AddLogging();
-        services.AddDbContext<ApplicationDbContext>(options =>
-            options.UseInMemoryDatabase(dbName)
+        services.AddDbContext<ApplicationDbContext>(options => options.UseInMemoryDatabase(dbName));
+        services.AddSingleton<IOptions<UpscalerConfig>>(
+            Options.Create(new UpscalerConfig { RemoteOnly = true })
         );
-        services.AddSingleton<IOptions<UpscalerConfig>>(Options.Create(new UpscalerConfig
-        {
-            RemoteOnly = true,
-        }));
         var cleanup = Substitute.For<IQueueCleanup>();
         cleanup.CleanupAsync().Returns(Task.FromResult<IReadOnlyList<int>>(Array.Empty<int>()));
         services.AddScoped<IQueueCleanup>(_ => cleanup);
@@ -202,11 +199,13 @@ public class TaskRegistryTests
         Assert.Contains(registry.StandardTasks, t => t.Id == persistedId);
 
         // Act: remove the task via queue and wait for registry to update
-        await taskQueue.RemoveTaskAsync(new PersistedTask
-        {
-            Id = persistedId,
-            Data = new LoggingTask { Message = "keep" },
-        });
+        await taskQueue.RemoveTaskAsync(
+            new PersistedTask
+            {
+                Id = persistedId,
+                Data = new LoggingTask { Message = "keep" },
+            }
+        );
 
         for (int i = 0; i < 5 && registry.StandardTasks.Any(t => t.Id == persistedId); i++)
         {
