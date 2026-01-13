@@ -42,28 +42,34 @@ public class SplitProcessingCoordinator(
             .FirstOrDefaultAsync(s => s.ChapterId == chapterId, cancellationToken);
 
         // Avoid enqueuing duplicate detection tasks if one is already pending or processing
-        bool pendingDetectionExists = await db
-            .PersistedTasks.AsNoTracking()
-            .Where(t =>
-                t.Status == PersistedTaskStatus.Pending
-                || t.Status == PersistedTaskStatus.Processing
-            )
-            .Where(t =>
-                EF.Functions.Like(
-                    EF.Property<string>(t, "Data"),
-                    $"%\"{nameof(DetectSplitCandidatesTask)}\"%"
+        var pendingDetectionExists = false;
+        await foreach (
+            var task in db
+                .PersistedTasks.AsNoTracking()
+                .Where(t =>
+                    t.Status == PersistedTaskStatus.Pending
+                    || t.Status == PersistedTaskStatus.Processing
                 )
-            )
-            .Where(t =>
-                EF.Functions.Like(EF.Property<string>(t, "Data"), $"%\"ChapterId\":{chapterId}%")
-            )
-            .Where(t =>
-                EF.Functions.Like(
-                    EF.Property<string>(t, "Data"),
-                    $"%\"DetectorVersion\":{SplitDetectionService.CURRENT_DETECTOR_VERSION}%"
+                .Where(t =>
+                    EF.Functions.Like(
+                        EF.Property<string>(t, "Data"),
+                        $"%\"{nameof(DetectSplitCandidatesTask)}\"%"
+                    )
                 )
+                .AsAsyncEnumerable()
+                .WithCancellation(cancellationToken)
+        )
+        {
+            if (
+                task.Data is DetectSplitCandidatesTask detectTask
+                && detectTask.ChapterId == chapterId
+                && detectTask.DetectorVersion >= SplitDetectionService.CURRENT_DETECTOR_VERSION
             )
-            .AnyAsync(cancellationToken);
+            {
+                pendingDetectionExists = true;
+                break;
+            }
+        }
 
         if (pendingDetectionExists)
         {
