@@ -42,22 +42,19 @@ public class SplitProcessingCoordinator(
             .FirstOrDefaultAsync(s => s.ChapterId == chapterId, cancellationToken);
 
         // Avoid enqueuing duplicate detection tasks if one is already pending or processing
-        if (
-            taskQueue
-                .GetUpscaleSnapshot()
-                .Any(t =>
-                    t.Status is PersistedTaskStatus.Pending or PersistedTaskStatus.Processing
-                    && t.Data is DetectSplitCandidatesTask detectTask
-                    && detectTask.ChapterId == chapterId
-                    && detectTask.DetectorVersion >= SplitDetectionService.CURRENT_DETECTOR_VERSION
-                )
-        )
+        if (state is { Status: SplitProcessingStatus.Pending or SplitProcessingStatus.Processing })
         {
             logger.LogDebug(
                 "Split detection already queued for chapter {ChapterId}, skipping enqueue.",
                 chapterId
             );
             return false;
+        }
+
+        if (state is { Status: SplitProcessingStatus.Failed })
+        {
+            // Retry failed detections
+            return true;
         }
 
         // Process if no state exists or if the detector version is outdated
@@ -215,6 +212,7 @@ public class SplitProcessingCoordinator(
 
         if (chapter != null)
         {
+            await UpsertPendingState(chapter.Id, cancellationToken);
             await taskQueue.EnqueueAsync(
                 new DetectSplitCandidatesTask(
                     chapter,
@@ -224,6 +222,7 @@ public class SplitProcessingCoordinator(
         }
         else
         {
+            await UpsertPendingState(chapterId, cancellationToken);
             await taskQueue.EnqueueAsync(
                 new DetectSplitCandidatesTask(
                     chapterId,
@@ -231,6 +230,25 @@ public class SplitProcessingCoordinator(
                 )
             );
         }
+    }
+
+    private async Task UpsertPendingState(int chapterId, CancellationToken cancellationToken)
+    {
+        var state = await dbContext.ChapterSplitProcessingStates.FirstOrDefaultAsync(
+            s => s.ChapterId == chapterId,
+            cancellationToken
+        );
+
+        if (state == null)
+        {
+            state = new ChapterSplitProcessingState { ChapterId = chapterId };
+            dbContext.ChapterSplitProcessingStates.Add(state);
+        }
+
+        state.Status = SplitProcessingStatus.Pending;
+        state.ModifiedAt = DateTime.UtcNow;
+
+        await dbContext.SaveChangesAsync(cancellationToken);
     }
 
     public async Task EnqueueDetectionBatchAsync(

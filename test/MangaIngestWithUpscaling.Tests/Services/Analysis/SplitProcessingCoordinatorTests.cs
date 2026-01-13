@@ -158,14 +158,12 @@ public class SplitProcessingCoordinatorTests : IDisposable
     {
         // Arrange
         var chapter = await CreateChapterAsync();
-        _dbContext.PersistedTasks.Add(
-            new PersistedTask
+        _dbContext.ChapterSplitProcessingStates.Add(
+            new ChapterSplitProcessingState
             {
-                Data = new DetectSplitCandidatesTask(
-                    chapter.Id,
-                    SplitDetectionService.CURRENT_DETECTOR_VERSION
-                ),
-                Status = PersistedTaskStatus.Pending,
+                ChapterId = chapter.Id,
+                Status = SplitProcessingStatus.Pending,
+                LastProcessedDetectorVersion = 0,
             }
         );
         await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
