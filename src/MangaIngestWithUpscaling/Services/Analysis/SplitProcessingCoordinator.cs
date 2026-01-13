@@ -42,21 +42,30 @@ public class SplitProcessingCoordinator(
             .FirstOrDefaultAsync(s => s.ChapterId == chapterId, cancellationToken);
 
         // Avoid enqueuing duplicate detection tasks if one is already pending or processing
-        var existingDetectionTasks = await db
+        bool pendingDetectionExists = await db
             .PersistedTasks.AsNoTracking()
             .Where(t =>
                 t.Status == PersistedTaskStatus.Pending
                 || t.Status == PersistedTaskStatus.Processing
             )
-            .ToListAsync(cancellationToken);
-
-        if (
-            existingDetectionTasks.Any(t =>
-                t.Data is DetectSplitCandidatesTask detectTask
-                && detectTask.ChapterId == chapterId
-                && detectTask.DetectorVersion >= SplitDetectionService.CURRENT_DETECTOR_VERSION
+            .Where(t =>
+                EF.Functions.Like(
+                    EF.Property<string>(t, "Data"),
+                    $"%\"{nameof(DetectSplitCandidatesTask)}\"%"
+                )
             )
-        )
+            .Where(t =>
+                EF.Functions.Like(EF.Property<string>(t, "Data"), $"%\"ChapterId\":{chapterId}%")
+            )
+            .Where(t =>
+                EF.Functions.Like(
+                    EF.Property<string>(t, "Data"),
+                    $"%\"DetectorVersion\":{SplitDetectionService.CURRENT_DETECTOR_VERSION}%"
+                )
+            )
+            .AnyAsync(cancellationToken);
+
+        if (pendingDetectionExists)
         {
             logger.LogDebug(
                 "Split detection already queued for chapter {ChapterId}, skipping enqueue.",
