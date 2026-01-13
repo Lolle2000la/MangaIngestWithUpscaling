@@ -71,7 +71,7 @@ public class SplitProcessingCoordinator(
 
                     state.LastProcessedDetectorVersion =
                         SplitDetectionService.CURRENT_DETECTOR_VERSION;
-                    state.Status = SplitProcessingStatus.Detected; // Treated as detected with 0 splits
+                    state.Status = SplitProcessingStatus.NoSplitsFound;
                     state.ModifiedAt = DateTime.UtcNow;
 
                     await db.SaveChangesAsync(cancellationToken);
@@ -157,7 +157,7 @@ public class SplitProcessingCoordinator(
             }
 
             state.LastProcessedDetectorVersion = SplitDetectionService.CURRENT_DETECTOR_VERSION;
-            state.Status = SplitProcessingStatus.Detected;
+            state.Status = SplitProcessingStatus.NoSplitsFound;
             state.ModifiedAt = DateTime.UtcNow;
 
             // Clear any existing findings since we decided there are none

@@ -154,6 +154,14 @@
                         </MudTooltip>
                     }
                     break;
+                case SplitProcessingStatus.NoSplitsFound:
+                    <MudChip T="string" Size="Size.Small" Color="Color.Surface" Variant="Variant.Outlined">@Loc["Chip_NoSplits"]
+                    </MudChip>
+                    <MudTooltip Text="@Loc["Tooltip_RedetectSplits"]">
+                        <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small"
+                            OnClick="@(() => DetectSplits(context.Chapter))" />
+                    </MudTooltip>
+                    break;
                 case SplitProcessingStatus.Applied:
                     <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Filled">@Loc["Chip_Applied"]
                     </MudChip>

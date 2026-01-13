@@ -10,6 +10,7 @@ using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.ChapterManagement;
 using MangaIngestWithUpscaling.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.CbzConversion;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
@@ -555,6 +556,45 @@ public partial class LibraryIntegrityChecker(
             .StripSplitFindings.AsNoTracking()
             .Where(f => f.ChapterId == chapter.Id)
             .ToListAsync(cancellationToken);
+
+        if (splitState.Status == SplitProcessingStatus.NoSplitsFound)
+        {
+            if (findings.Any())
+            {
+                logger.LogWarning(
+                    "Chapter {chapterFileName} ({chapterId}) has split status 'NoSplitsFound' but findings exist. Resetting status to Detected.",
+                    chapter.FileName,
+                    chapter.Id
+                );
+
+                splitState.Status = SplitProcessingStatus.Detected;
+                context.ChapterSplitProcessingStates.Update(splitState);
+                await context.SaveChangesAsync(cancellationToken);
+
+                return IntegrityCheckResult.Corrected;
+            }
+
+            if (
+                splitState.LastProcessedDetectorVersion
+                < SplitDetectionService.CURRENT_DETECTOR_VERSION
+            )
+            {
+                logger.LogWarning(
+                    "Chapter {chapterFileName} ({chapterId}) has split status 'NoSplitsFound' but detection is missing or outdated. Resetting state to ensure re-detection.",
+                    chapter.FileName,
+                    chapter.Id
+                );
+
+                // Removing the state (instead of just changing the status) forces the next integrity
+                // check to go through the normal detection pipeline with a clean slate. This avoids
+                // having to emulate intermediate status transitions for older detector versions and
+                // keeps all version-upgrade semantics centralized in the detection logic itself.
+                context.ChapterSplitProcessingStates.Remove(splitState);
+                await context.SaveChangesAsync(cancellationToken);
+
+                return IntegrityCheckResult.Corrected;
+            }
+        }
 
         // Check 1: Status is "Applied" but no findings exist
         // However, if LastProcessedDetectorVersion > 0, it means detection was run and found no splits,

@@ -263,7 +263,7 @@ public class SplitProcessingServiceTests : IDisposable
             TestContext.Current.CancellationToken
         );
         Assert.NotNull(state);
-        Assert.Equal(SplitProcessingStatus.Detected, state.Status);
+        Assert.Equal(SplitProcessingStatus.NoSplitsFound, state.Status);
     }
 
     [Fact]

@@ -78,16 +78,25 @@ public class SplitProcessingService(
         }
 
         state.LastProcessedDetectorVersion = detectorVersion;
-        state.Status = SplitProcessingStatus.Detected;
         state.ModifiedAt = DateTime.UtcNow;
+
+        if (resultsWithSplits.Count == 0)
+        {
+            state.Status = SplitProcessingStatus.NoSplitsFound;
+        }
+        else
+        {
+            state.Status = SplitProcessingStatus.Detected;
+        }
 
         await dbContext.SaveChangesAsync(cancellationToken);
 
         logger.LogInformation(
-            "Processed split detection results for chapter {ChapterId}, version {Version}. Found splits for {Count} images.",
+            "Processed split detection results for chapter {ChapterId}, version {Version}. Found splits for {Count} images. Status set to {Status}.",
             chapterId,
             detectorVersion,
-            resultsWithSplits.Count
+            resultsWithSplits.Count,
+            state.Status
         );
 
         // Check if we should auto-apply (only if there are actual splits to apply)

@@ -10,6 +10,7 @@ public enum SplitProcessingStatus
     Applied = 2,
     Failed = 3,
     Processing = 4,
+    NoSplitsFound = 5,
 }
 
 public class ChapterSplitProcessingState
