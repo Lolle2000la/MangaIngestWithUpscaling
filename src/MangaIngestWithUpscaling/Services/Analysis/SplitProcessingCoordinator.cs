@@ -2,6 +2,7 @@ using System.IO.Compression;
 using AutoRegisterInject;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.Analysis;
+using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.Integrations;
@@ -39,6 +40,30 @@ public class SplitProcessingCoordinator(
         var state = await db
             .ChapterSplitProcessingStates.AsNoTracking()
             .FirstOrDefaultAsync(s => s.ChapterId == chapterId, cancellationToken);
+
+        // Avoid enqueuing duplicate detection tasks if one is already pending or processing
+        var existingDetectionTasks = await db
+            .PersistedTasks.AsNoTracking()
+            .Where(t =>
+                t.Status == PersistedTaskStatus.Pending
+                || t.Status == PersistedTaskStatus.Processing
+            )
+            .ToListAsync(cancellationToken);
+
+        if (
+            existingDetectionTasks.Any(t =>
+                t.Data is DetectSplitCandidatesTask detectTask
+                && detectTask.ChapterId == chapterId
+                && detectTask.DetectorVersion >= SplitDetectionService.CURRENT_DETECTOR_VERSION
+            )
+        )
+        {
+            logger.LogDebug(
+                "Split detection already queued for chapter {ChapterId}, skipping enqueue.",
+                chapterId
+            );
+            return false;
+        }
 
         // Process if no state exists or if the detector version is outdated
         if (

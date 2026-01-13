@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.Analysis;
+using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.Analysis;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
@@ -137,6 +138,34 @@ public class SplitProcessingCoordinatorTests : IDisposable
                 ChapterId = chapter.Id,
                 LastProcessedDetectorVersion = SplitDetectionService.CURRENT_DETECTOR_VERSION,
                 ModifiedAt = DateTime.UtcNow,
+            }
+        );
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Act
+        var result = await _coordinator.ShouldProcessAsync(
+            chapter.Id,
+            StripDetectionMode.DetectOnly,
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        // Assert
+        Assert.False(result);
+    }
+
+    [Fact]
+    public async Task ShouldProcessAsync_ReturnsFalse_WhenDetectionAlreadyQueued()
+    {
+        // Arrange
+        var chapter = await CreateChapterAsync();
+        _dbContext.PersistedTasks.Add(
+            new PersistedTask
+            {
+                Data = new DetectSplitCandidatesTask(
+                    chapter.Id,
+                    SplitDetectionService.CURRENT_DETECTOR_VERSION
+                ),
+                Status = PersistedTaskStatus.Pending,
             }
         );
         await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
