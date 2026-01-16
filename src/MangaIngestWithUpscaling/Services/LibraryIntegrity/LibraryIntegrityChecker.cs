@@ -596,6 +596,25 @@ public partial class LibraryIntegrityChecker(
             }
         }
 
+        if (splitState.Status == SplitProcessingStatus.Detected && findings.Count == 0)
+        {
+            logger.LogInformation(
+                "Chapter {chapterFileName} ({chapterId}) has split status 'Detected' but 0 findings. Updating status to 'NoSplitsFound'.",
+                chapter.FileName,
+                chapter.Id
+            );
+
+            splitState.Status = SplitProcessingStatus.NoSplitsFound;
+            // Ensure version is set if for some reason it's 0, though unlikely if Detected
+            if (splitState.LastProcessedDetectorVersion == 0)
+                splitState.LastProcessedDetectorVersion =
+                    SplitDetectionService.CURRENT_DETECTOR_VERSION;
+
+            context.ChapterSplitProcessingStates.Update(splitState);
+            await context.SaveChangesAsync(cancellationToken);
+            return IntegrityCheckResult.Corrected;
+        }
+
         // Check 1: Status is "Applied" but no findings exist
         // However, if LastProcessedDetectorVersion > 0, it means detection was run and found no splits,
         // so this is a valid state (e.g., for large digital banners that can't be split)
