@@ -2,6 +2,7 @@ using System.IO.Compression;
 using AutoRegisterInject;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.Analysis;
+using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.Integrations;
@@ -46,6 +47,12 @@ public class SplitProcessingCoordinator(
             || state.LastProcessedDetectorVersion < SplitDetectionService.CURRENT_DETECTOR_VERSION
         )
         {
+            // Check if there is already a pending detection task for this chapter
+            if (await HasExistingDetectionTaskAsync(db, chapterId, cancellationToken))
+            {
+                return false;
+            }
+
             // Check if the chapter actually needs splitting based on aspect ratio
             var chapter = await db
                 .Chapters.Include(c => c.Manga)
@@ -254,6 +261,22 @@ public class SplitProcessingCoordinator(
                 );
             }
         }
+    }
+
+    private static async Task<bool> HasExistingDetectionTaskAsync(
+        ApplicationDbContext context,
+        int chapterId,
+        CancellationToken cancellationToken
+    )
+    {
+        IQueryable<PersistedTask> query = context.PersistedTasks.FromSql(
+            $@"
+            SELECT * FROM PersistedTasks
+            WHERE Data->>'$.$type' = {nameof(DetectSplitCandidatesTask)}
+              AND Data->>'$.ChapterId' = {chapterId}
+        "
+        );
+        return await query.AnyAsync(cancellationToken);
     }
 
     public async Task OnSplitsAppliedAsync(
