@@ -605,10 +605,8 @@ public partial class LibraryIntegrityChecker(
             );
 
             splitState.Status = SplitProcessingStatus.NoSplitsFound;
-            // Ensure version is set if for some reason it's 0, though unlikely if Detected
-            if (splitState.LastProcessedDetectorVersion == 0)
-                splitState.LastProcessedDetectorVersion =
-                    SplitDetectionService.CURRENT_DETECTOR_VERSION;
+            splitState.LastProcessedDetectorVersion =
+                SplitDetectionService.CURRENT_DETECTOR_VERSION;
 
             context.ChapterSplitProcessingStates.Update(splitState);
             await context.SaveChangesAsync(cancellationToken);
