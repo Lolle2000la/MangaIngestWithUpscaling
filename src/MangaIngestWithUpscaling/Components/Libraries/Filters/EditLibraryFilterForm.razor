@@ -1,8 +1,10 @@
 ﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
 @using Microsoft.Extensions.Localization
+@using System.Text.RegularExpressions
 @inject IStringLocalizer<EditLibraryFilterForm> Loc
 <MudTd DataLabel="@Loc["Label_PatternToMatch"]">
-    <MudTextField Immediate="true" Required="true" @bind-Value="FilterRule.Pattern" />
+    <MudTextField Immediate="true" Required="true" @bind-Value="FilterRule.Pattern" 
+                  Error="@IsPatternInvalid" ErrorText="@PatternErrorText" />
 </MudTd>
 <MudTd DataLabel="@Loc["Label_PatternType"]">
     <MudSelect Immediate="true" T="LibraryFilterPatternType" @bind-Value="FilterRule.PatternType">
@@ -27,4 +29,27 @@
 
 @code {
     [Parameter] public required LibraryFilterRule FilterRule { get; set; }
+    
+    private bool IsPatternInvalid => 
+        FilterRule.PatternType == LibraryFilterPatternType.Regex && 
+        !string.IsNullOrWhiteSpace(FilterRule.Pattern) && 
+        !IsValidRegex(FilterRule.Pattern);
+    
+    private string? PatternErrorText => IsPatternInvalid ? (Loc["Error_InvalidRegex"].Value ?? "Invalid regular expression pattern") : null;
+    
+    private static bool IsValidRegex(string pattern)
+    {
+        if (string.IsNullOrWhiteSpace(pattern))
+            return true;
+        
+        try
+        {
+            _ = Regex.Match("", pattern);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
 }

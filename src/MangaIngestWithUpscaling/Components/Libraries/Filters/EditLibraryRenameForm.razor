@@ -1,10 +1,12 @@
 @using MangaIngestWithUpscaling.Data.LibraryManagement
 @using Microsoft.Extensions.Localization
+@using System.Text.RegularExpressions
 @inject IStringLocalizer<EditLibraryRenameForm> Loc
 
 <MudTd DataLabel="@Loc["Label_Pattern"]">
     <MudTextField Immediate="true" Required="true" Value="@RenameRule.Pattern"
-        ValueChanged="@((string val) => { RenameRule.Pattern = val; RulesChanged.InvokeAsync(); })" />
+        ValueChanged="@((string val) => { RenameRule.Pattern = val; RulesChanged.InvokeAsync(); })"
+        Error="@IsPatternInvalid" ErrorText="@PatternErrorText" />
 </MudTd>
 <MudTd DataLabel="@Loc["Label_PatternType"]">
     <MudSelect Immediate="true" T="LibraryRenamePatternType" Value="@RenameRule.PatternType"
@@ -29,4 +31,27 @@
 @code {
     [Parameter, EditorRequired] public required LibraryRenameRule RenameRule { get; set; }
     [Parameter] public EventCallback RulesChanged { get; set; }
+    
+    private bool IsPatternInvalid => 
+        RenameRule.PatternType == LibraryRenamePatternType.Regex && 
+        !string.IsNullOrWhiteSpace(RenameRule.Pattern) && 
+        !IsValidRegex(RenameRule.Pattern);
+    
+    private string? PatternErrorText => IsPatternInvalid ? (Loc["Error_InvalidRegex"].Value ?? "Invalid regular expression pattern") : null;
+    
+    private static bool IsValidRegex(string pattern)
+    {
+        if (string.IsNullOrWhiteSpace(pattern))
+            return true;
+        
+        try
+        {
+            _ = Regex.Match("", pattern);
+            return true;
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
 }
