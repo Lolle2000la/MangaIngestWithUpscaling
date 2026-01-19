@@ -85,4 +85,7 @@
   <data name="Label_Replacement" xml:space="preserve">
     <value>Ersetzung</value>
   </data>
+  <data name="Error_InvalidRegex" xml:space="preserve">
+    <value>Ungültiges reguläres Ausdrucksmuster</value>
+  </data>
 </root>

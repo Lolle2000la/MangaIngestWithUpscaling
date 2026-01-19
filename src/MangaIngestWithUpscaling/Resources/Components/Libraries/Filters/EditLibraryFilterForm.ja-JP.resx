@@ -91,4 +91,7 @@
   <data name="Option_Exclude" xml:space="preserve">
     <value>除外する</value>
   </data>
+  <data name="Error_InvalidRegex" xml:space="preserve">
+    <value>無効な正規表現パターン</value>
+  </data>
 </root>

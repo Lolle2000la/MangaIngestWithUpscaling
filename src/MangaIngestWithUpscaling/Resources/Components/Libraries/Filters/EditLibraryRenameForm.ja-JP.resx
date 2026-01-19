@@ -85,4 +85,7 @@
   <data name="Label_Replacement" xml:space="preserve">
     <value>置換</value>
   </data>
+  <data name="Error_InvalidRegex" xml:space="preserve">
+    <value>無効な正規表現パターン</value>
+  </data>
 </root>
