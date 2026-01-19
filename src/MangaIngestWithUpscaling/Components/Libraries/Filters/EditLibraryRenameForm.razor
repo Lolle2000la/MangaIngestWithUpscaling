@@ -1,6 +1,6 @@
 @using MangaIngestWithUpscaling.Data.LibraryManagement
+@using MangaIngestWithUpscaling.Helpers
 @using Microsoft.Extensions.Localization
-@using System.Text.RegularExpressions
 @inject IStringLocalizer<EditLibraryRenameForm> Loc
 
 <MudTd DataLabel="@Loc["Label_Pattern"]">
@@ -35,23 +35,7 @@
     private bool IsPatternInvalid => 
         RenameRule.PatternType == LibraryRenamePatternType.Regex && 
         !string.IsNullOrWhiteSpace(RenameRule.Pattern) && 
-        !IsValidRegex(RenameRule.Pattern);
+        !RegexValidator.IsValidRegex(RenameRule.Pattern);
     
     private string? PatternErrorText => IsPatternInvalid ? (Loc["Error_InvalidRegex"].Value ?? "Invalid regular expression pattern") : null;
-    
-    private static bool IsValidRegex(string pattern)
-    {
-        if (string.IsNullOrWhiteSpace(pattern))
-            return true;
-        
-        try
-        {
-            _ = Regex.Match("", pattern);
-            return true;
-        }
-        catch (ArgumentException)
-        {
-            return false;
-        }
-    }
 }
