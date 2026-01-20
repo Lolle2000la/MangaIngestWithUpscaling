@@ -355,6 +355,16 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         }
         finally
         {
+            // Ensure process is killed if it's still running (e.g. cancellation or unhandled exception)
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(true);
+                }
+            }
+            catch { }
+
             try
             {
                 if (!process.HasExited)
