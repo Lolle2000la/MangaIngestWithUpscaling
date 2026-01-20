@@ -339,4 +339,58 @@ public class SplitProcessingServiceTests : IDisposable
         // UpscaleTask should be enqueued since upscaling is enabled
         await _taskQueue.Received(1).EnqueueAsync(Arg.Any<UpscaleTask>());
     }
+
+    [Fact]
+    public async Task ProcessDetectionResultsAsync_SetsStatusToFailed_WhenErrorsExist()
+    {
+        // Arrange
+        var library = new Library
+        {
+            Name = "Test Library",
+            NotUpscaledLibraryPath = "/test/path",
+            StripDetectionMode = StripDetectionMode.DetectOnly,
+        };
+        _dbContext.Libraries.Add(library);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var manga = new Manga
+        {
+            PrimaryTitle = "Test Manga",
+            LibraryId = library.Id,
+            Library = library,
+        };
+        _dbContext.MangaSeries.Add(manga);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var chapter = new Chapter { FileName = "Test.cbz", Manga = manga };
+        _dbContext.Chapters.Add(chapter);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var results = new List<SplitDetectionResult>
+        {
+            new() { ImagePath = "page1.png", Error = "Something went wrong" },
+            new() { ImagePath = "page2.png", Splits = [] },
+        };
+
+        // Act
+        await _service.ProcessDetectionResultsAsync(
+            chapter.Id,
+            results,
+            1,
+            TestContext.Current.CancellationToken
+        );
+
+        // Assert
+        var state = await _dbContext.ChapterSplitProcessingStates.FirstAsync(
+            s => s.ChapterId == chapter.Id,
+            TestContext.Current.CancellationToken
+        );
+        Assert.Equal(SplitProcessingStatus.Failed, state.Status);
+
+        // Ensure no findings were saved
+        var findings = await _dbContext
+            .StripSplitFindings.Where(f => f.ChapterId == chapter.Id)
+            .ToListAsync(TestContext.Current.CancellationToken);
+        Assert.Empty(findings);
+    }
 }

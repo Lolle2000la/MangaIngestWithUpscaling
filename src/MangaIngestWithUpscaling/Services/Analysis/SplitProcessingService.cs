@@ -54,6 +54,29 @@ public class SplitProcessingService(
             dbContext.ChapterSplitProcessingStates.Add(state);
         }
 
+        // Check for errors in the results
+        var failedResults = results.Where(r => !string.IsNullOrWhiteSpace(r.Error)).ToList();
+        if (failedResults.Count > 0)
+        {
+            state.Status = SplitProcessingStatus.Failed;
+            state.ModifiedAt = DateTime.UtcNow;
+            state.LastProcessedDetectorVersion = detectorVersion;
+
+            var uniqueErrors = failedResults
+                .Select(r => $"{Path.GetFileName(r.ImagePath)}: {r.Error}")
+                .Distinct();
+            var errorMessage = string.Join("; ", uniqueErrors);
+
+            logger.LogError(
+                "Split detection failed for chapter {ChapterId}. Errors: {Errors}",
+                chapterId,
+                errorMessage
+            );
+
+            await dbContext.SaveChangesAsync(cancellationToken);
+            return;
+        }
+
         // Remove existing findings for this chapter to ensure clean state for this version
         var existingFindings = dbContext.StripSplitFindings.Where(f => f.ChapterId == chapterId);
         dbContext.StripSplitFindings.RemoveRange(existingFindings);
