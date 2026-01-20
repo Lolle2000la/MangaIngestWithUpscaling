@@ -25,7 +25,8 @@ public interface IPythonService
         string script,
         string arguments,
         CancellationToken? cancellationToken = null,
-        TimeSpan? timout = null
+        TimeSpan? timout = null,
+        Dictionary<string, string>? environmentVariables = null
     );
 
     /// <summary>
@@ -36,13 +37,15 @@ public interface IPythonService
     /// <param name="arguments">The arguments to the script</param>
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation</param>
     /// <param name="timout">A timeout that can be used to cancel the operation if there is no activity.</param>
+    /// <param name="environmentVariables">Optional environment variables to set for the process.</param>
     /// <returns>Full standard output captured as a single string.</returns>
     Task<string> RunPythonScript(
         PythonEnvironment environment,
         string script,
         string arguments,
         CancellationToken? cancellationToken = null,
-        TimeSpan? timout = null
+        TimeSpan? timout = null,
+        Dictionary<string, string>? environmentVariables = null
     );
 
     /// <summary>
@@ -53,12 +56,14 @@ public interface IPythonService
     /// <param name="onStdout">Callback receiving each stdout line as it arrives.</param>
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation</param>
     /// <param name="timeout">A timeout that cancels when there is no stdout activity within the specified duration.</param>
+    /// <param name="environmentVariables">Optional environment variables to set for the process.</param>
     Task RunPythonScriptStreaming(
         string script,
         string arguments,
         Func<string, Task> onStdout,
         CancellationToken? cancellationToken = null,
-        TimeSpan? timeout = null
+        TimeSpan? timeout = null,
+        Dictionary<string, string>? environmentVariables = null
     );
 
     /// <summary>
@@ -70,6 +75,7 @@ public interface IPythonService
         string arguments,
         Func<string, Task> onStdout,
         CancellationToken? cancellationToken = null,
-        TimeSpan? timeout = null
+        TimeSpan? timeout = null,
+        Dictionary<string, string>? environmentVariables = null
     );
 }

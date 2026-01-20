@@ -165,7 +165,8 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         string script,
         string arguments,
         CancellationToken? cancellationToken = null,
-        TimeSpan? timout = null
+        TimeSpan? timout = null,
+        Dictionary<string, string>? environmentVariables = null
     )
     {
         if (Environment == null)
@@ -173,7 +174,14 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
             throw new InvalidOperationException("Python environment is not initialized.");
         }
 
-        return RunPythonScript(Environment, script, arguments, cancellationToken, timout);
+        return RunPythonScript(
+            Environment,
+            script,
+            arguments,
+            cancellationToken,
+            timout,
+            environmentVariables
+        );
     }
 
     public async Task<string> RunPythonScript(
@@ -181,7 +189,8 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         string script,
         string arguments,
         CancellationToken? cancellationToken = null,
-        TimeSpan? timeout = null
+        TimeSpan? timeout = null,
+        Dictionary<string, string>? environmentVariables = null
     )
     {
         var sb = new StringBuilder();
@@ -197,7 +206,8 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
                     return Task.CompletedTask;
                 },
                 cancellationToken,
-                timeout
+                timeout,
+                environmentVariables
             );
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("Python process exited"))
@@ -214,7 +224,8 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         string arguments,
         Func<string, Task> onStdout,
         CancellationToken? cancellationToken = null,
-        TimeSpan? timeout = null
+        TimeSpan? timeout = null,
+        Dictionary<string, string>? environmentVariables = null
     )
     {
         if (Environment == null)
@@ -230,7 +241,8 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
             arguments,
             onStdout,
             cancellationToken,
-            timeout
+            timeout,
+            environmentVariables
         );
     }
 
@@ -240,7 +252,8 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         string arguments,
         Func<string, Task> onStdout,
         CancellationToken? cancellationToken = null,
-        TimeSpan? timeout = null
+        TimeSpan? timeout = null,
+        Dictionary<string, string>? environmentVariables = null
     )
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(
@@ -259,6 +272,14 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };
+
+        if (environmentVariables != null)
+        {
+            foreach (var kvp in environmentVariables)
+            {
+                startInfo.Environment[kvp.Key] = kvp.Value;
+            }
+        }
 
         using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         var errorBuilder = new StringBuilder();

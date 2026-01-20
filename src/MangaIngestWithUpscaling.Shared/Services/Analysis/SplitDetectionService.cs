@@ -7,6 +7,7 @@ using MangaIngestWithUpscaling.Shared.Services.Python;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace MangaIngestWithUpscaling.Shared.Services.Analysis;
 
@@ -14,7 +15,8 @@ namespace MangaIngestWithUpscaling.Shared.Services.Analysis;
 public class SplitDetectionService(
     IPythonService pythonService,
     ILogger<SplitDetectionService> logger,
-    IStringLocalizer<SplitDetectionService> localizer
+    IStringLocalizer<SplitDetectionService> localizer,
+    IOptions<UpscalerConfig> options
 ) : ISplitDetectionService
 {
     public const int CURRENT_DETECTOR_VERSION = 1;
@@ -114,13 +116,21 @@ public class SplitDetectionService(
 
         try
         {
+            var envVars = new Dictionary<string, string>();
+            if (options.Value.UseCPU)
+            {
+                envVars["CUDA_VISIBLE_DEVICES"] = "";
+                envVars["UseCPU"] = "true";
+            }
+
             // Set a reasonable timeout, e.g., 2 minutes per image
             var timeout = TimeSpan.FromMinutes(2);
             var output = await pythonService.RunPythonScript(
                 scriptPath,
                 args,
                 cancellationToken,
-                timeout
+                timeout,
+                envVars
             );
 
             try
