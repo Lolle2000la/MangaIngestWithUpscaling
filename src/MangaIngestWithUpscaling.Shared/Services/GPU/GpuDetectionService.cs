@@ -109,7 +109,7 @@ public class GpuDetectionService(ILogger<GpuDetectionService> logger) : IGpuDete
         )
         {
             logger.LogInformation("NVIDIA GPU detected via OpenGL");
-            return GpuBackend.CUDA;
+            return GpuBackend.CUDA_12_8;
         }
 
         // Check for AMD
