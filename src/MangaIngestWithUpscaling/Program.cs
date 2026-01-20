@@ -88,7 +88,9 @@ builder.Services.AddSerilog(
             .WriteTo.SQLite(
                 Path.GetFullPath(loggingConnectionReadOnlyStringBuilder.DataSource),
                 tableName: "Logs",
-                retentionPeriod: TimeSpan.FromDays(7)
+                retentionPeriod: TimeSpan.FromDays(7),
+                maxDatabaseSize: 100,
+                rollOver: false
             )
 );
 
@@ -395,6 +397,18 @@ using (var scope = app.Services.CreateScope())
             // A quick check to see if vacuum is needed could go here (e.g. checking file size)
             await dbContext.Database.ExecuteSqlRawAsync("VACUUM;");
             logger.LogInformation("Database vacuumed successfully.");
+
+            // Also vacuum the logging database to reclaim space from truncated logs
+            try
+            {
+                var loggingDbContext = scope.ServiceProvider.GetRequiredService<LoggingDbContext>();
+                await loggingDbContext.Database.ExecuteSqlRawAsync("VACUUM;");
+                logger.LogInformation("Logging database vacuumed successfully.");
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to vacuum logging database.");
+            }
         }
 
         // reset any tasks that were "Processing" (e.g. during a crash) back to "Pending"
