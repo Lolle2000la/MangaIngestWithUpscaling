@@ -185,18 +185,27 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
     )
     {
         var sb = new StringBuilder();
-        await RunPythonScriptStreaming(
-            environment,
-            script,
-            arguments,
-            line =>
-            {
-                sb.AppendLine(line);
-                return Task.CompletedTask;
-            },
-            cancellationToken,
-            timeout
-        );
+        try
+        {
+            await RunPythonScriptStreaming(
+                environment,
+                script,
+                arguments,
+                line =>
+                {
+                    sb.AppendLine(line);
+                    return Task.CompletedTask;
+                },
+                cancellationToken,
+                timeout
+            );
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("Python process exited"))
+        {
+            // Enrich the exception with stdout content, as some scripts (like detect_breaks.py)
+            // write structured error information to stdout instead of stderr.
+            throw new InvalidOperationException($"{ex.Message}\n\nStandard Output:\n{sb}", ex);
+        }
         return sb.ToString();
     }
 
