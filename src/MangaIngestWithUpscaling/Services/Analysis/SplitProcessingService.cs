@@ -17,7 +17,8 @@ public class SplitProcessingService(
     ApplicationDbContext dbContext,
     ILogger<SplitProcessingService> logger,
     ITaskQueue taskQueue,
-    IFileSystem fileSystem
+    IFileSystem fileSystem,
+    ISplitProcessingStateManager stateManager
 ) : ISplitProcessingService
 {
     public async Task ProcessDetectionResultAsync(
@@ -39,28 +40,13 @@ public class SplitProcessingService(
         CancellationToken cancellationToken
     )
     {
-        var state = await dbContext.ChapterSplitProcessingStates.FirstOrDefaultAsync(
-            s => s.ChapterId == chapterId,
-            cancellationToken
-        );
-
-        if (state == null)
-        {
-            state = new ChapterSplitProcessingState
-            {
-                ChapterId = chapterId,
-                Status = SplitProcessingStatus.Pending,
-            };
-            dbContext.ChapterSplitProcessingStates.Add(state);
-        }
+        var resultList = results.ToList();
 
         // Check for errors in the results
-        var failedResults = results.Where(r => !string.IsNullOrWhiteSpace(r.Error)).ToList();
+        var failedResults = resultList.Where(r => !string.IsNullOrWhiteSpace(r.Error)).ToList();
         if (failedResults.Count > 0)
         {
-            state.Status = SplitProcessingStatus.Failed;
-            state.ModifiedAt = DateTime.UtcNow;
-            state.LastProcessedDetectorVersion = detectorVersion;
+            await stateManager.SetFailedAsync(chapterId, cancellationToken);
 
             var uniqueErrors = failedResults
                 .Select(r => $"{Path.GetFileName(r.ImagePath)}: {r.Error}")
@@ -72,8 +58,6 @@ public class SplitProcessingService(
                 chapterId,
                 errorMessage
             );
-
-            await dbContext.SaveChangesAsync(cancellationToken);
             return;
         }
 
@@ -82,7 +66,7 @@ public class SplitProcessingService(
         dbContext.StripSplitFindings.RemoveRange(existingFindings);
 
         // Only save findings that actually have splits detected
-        var resultsWithSplits = results.Where(r => r.Splits.Count > 0).ToList();
+        var resultsWithSplits = resultList.Where(r => r.Splits.Count > 0).ToList();
 
         foreach (var res in resultsWithSplits)
         {
@@ -100,26 +84,28 @@ public class SplitProcessingService(
             dbContext.StripSplitFindings.Add(finding);
         }
 
-        state.LastProcessedDetectorVersion = detectorVersion;
-        state.ModifiedAt = DateTime.UtcNow;
+        await dbContext.SaveChangesAsync(cancellationToken);
 
+        // Use state manager to set appropriate status
         if (resultsWithSplits.Count == 0)
         {
-            state.Status = SplitProcessingStatus.NoSplitsFound;
+            await stateManager.SetNoSplitsFoundAsync(chapterId, detectorVersion, cancellationToken);
         }
         else
         {
-            state.Status = SplitProcessingStatus.Detected;
+            await stateManager.SetDetectedAsync(chapterId, detectorVersion, cancellationToken);
         }
 
-        await dbContext.SaveChangesAsync(cancellationToken);
+        // Get the status that was just set for logging
+        var state = await stateManager.GetStateAsync(chapterId, cancellationToken);
+        var statusForLogging = state?.Status.ToString() ?? "Unknown";
 
         logger.LogInformation(
             "Processed split detection results for chapter {ChapterId}, version {Version}. Found splits for {Count} images. Status set to {Status}.",
             chapterId,
             detectorVersion,
             resultsWithSplits.Count,
-            state.Status
+            statusForLogging
         );
 
         // Check if we should auto-apply (only if there are actual splits to apply)
@@ -143,8 +129,11 @@ public class SplitProcessingService(
                 await taskQueue.EnqueueAsync(new ApplySplitsTask(chapter, detectorVersion));
 
                 // Update status to Processing immediately to reflect the queued task
-                state.Status = SplitProcessingStatus.Processing;
-                await dbContext.SaveChangesAsync(cancellationToken);
+                await stateManager.SetProcessingAsync(
+                    chapterId,
+                    detectorVersion,
+                    cancellationToken
+                );
             }
             else if (
                 chapter != null

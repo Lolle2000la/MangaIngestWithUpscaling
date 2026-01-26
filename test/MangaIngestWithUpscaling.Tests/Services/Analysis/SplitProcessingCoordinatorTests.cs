@@ -25,6 +25,8 @@ public class SplitProcessingCoordinatorTests : IDisposable
     private readonly IChapterChangedNotifier _chapterChangedNotifier;
     private readonly IFileSystem _fileSystem;
     private readonly ILogger<SplitProcessingCoordinator> _logger;
+    private readonly ISplitProcessingStateManager _stateManager;
+    private readonly ILogger<SplitProcessingStateManager> _stateManagerLogger;
     private readonly SplitProcessingCoordinator _coordinator;
 
     public SplitProcessingCoordinatorTests()
@@ -41,12 +43,16 @@ public class SplitProcessingCoordinatorTests : IDisposable
         _chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
         _fileSystem = Substitute.For<IFileSystem>();
         _logger = Substitute.For<ILogger<SplitProcessingCoordinator>>();
+        _stateManagerLogger = Substitute.For<ILogger<SplitProcessingStateManager>>();
+        _stateManager = new SplitProcessingStateManager(_dbContext, _stateManagerLogger);
+
         _coordinator = new SplitProcessingCoordinator(
             _dbContext,
             _taskQueue,
             _chapterChangedNotifier,
             _fileSystem,
-            _logger
+            _logger,
+            _stateManager
         );
     }
 

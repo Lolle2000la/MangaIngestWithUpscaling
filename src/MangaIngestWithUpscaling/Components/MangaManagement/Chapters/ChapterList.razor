@@ -34,6 +34,7 @@
 @inject IWebHostEnvironment WebHostEnvironment
 @inject ISplitProcessingService SplitProcessingService
 @inject ISplitProcessingCoordinator SplitProcessingCoordinator
+@inject ISplitProcessingStateManager SplitStateManager
 @inject IStringLocalizer<ChapterList> Loc
 @inject IStringLocalizer<SharedResource> SharedLoc
 
@@ -1324,6 +1325,10 @@
                 CancellationToken.None);
                 Snackbar.Add(string.Format(Loc["Snackbar_SplitApplicationQueued"], chapter.FileName), Severity.Success);
 
+                // Reset the state using the state manager
+                await SplitStateManager.ResetToPendingAsync(chapter.Id, CancellationToken.None);
+
+                // Refresh the UI
                 var item = chapters.Items.FirstOrDefault(ci => ci.Chapter.Id == chapter.Id);
                 if (item != null && item.SplitState != null)
                 {

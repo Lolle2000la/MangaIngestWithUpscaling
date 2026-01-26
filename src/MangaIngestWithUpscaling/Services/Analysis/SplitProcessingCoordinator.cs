@@ -21,7 +21,8 @@ public class SplitProcessingCoordinator(
     ITaskQueue taskQueue,
     IChapterChangedNotifier chapterChangedNotifier,
     IFileSystem fileSystem,
-    ILogger<SplitProcessingCoordinator> logger
+    ILogger<SplitProcessingCoordinator> logger,
+    ISplitProcessingStateManager stateManager
 ) : ISplitProcessingCoordinator
 {
     public async Task<bool> ShouldProcessAsync(
@@ -64,24 +65,11 @@ public class SplitProcessingCoordinator(
                 if (!HasImplausiblePages(chapter.NotUpscaledFullPath))
                 {
                     // No implausible pages found, so we can skip detection
-                    // Update state to prevent re-checking
-                    if (state == null)
-                    {
-                        state = new ChapterSplitProcessingState { ChapterId = chapterId };
-                        db.ChapterSplitProcessingStates.Add(state);
-                    }
-                    else
-                    {
-                        db.ChapterSplitProcessingStates.Attach(state);
-                        db.Entry(state).State = EntityState.Modified;
-                    }
-
-                    state.LastProcessedDetectorVersion =
-                        SplitDetectionService.CURRENT_DETECTOR_VERSION;
-                    state.Status = SplitProcessingStatus.NoSplitsFound;
-                    state.ModifiedAt = DateTime.UtcNow;
-
-                    await db.SaveChangesAsync(cancellationToken);
+                    await stateManager.SetNoSplitsFoundAsync(
+                        chapterId,
+                        SplitDetectionService.CURRENT_DETECTOR_VERSION,
+                        cancellationToken
+                    );
                     return false;
                 }
             }
@@ -152,27 +140,18 @@ public class SplitProcessingCoordinator(
 
         if (!HasImplausiblePages(chapter.NotUpscaledFullPath))
         {
-            // Update state to Detected/CurrentVersion
-            var state = await dbContext.ChapterSplitProcessingStates.FirstOrDefaultAsync(
-                s => s.ChapterId == chapterId,
+            // Set no splits found and clear any existing findings
+            await stateManager.SetNoSplitsFoundAsync(
+                chapterId,
+                SplitDetectionService.CURRENT_DETECTOR_VERSION,
                 cancellationToken
             );
-            if (state == null)
-            {
-                state = new ChapterSplitProcessingState { ChapterId = chapterId };
-                dbContext.ChapterSplitProcessingStates.Add(state);
-            }
-
-            state.LastProcessedDetectorVersion = SplitDetectionService.CURRENT_DETECTOR_VERSION;
-            state.Status = SplitProcessingStatus.NoSplitsFound;
-            state.ModifiedAt = DateTime.UtcNow;
 
             // Clear any existing findings since we decided there are none
             var existingFindings = dbContext.StripSplitFindings.Where(f =>
                 f.ChapterId == chapterId
             );
             dbContext.StripSplitFindings.RemoveRange(existingFindings);
-
             await dbContext.SaveChangesAsync(cancellationToken);
             logger.LogInformation(
                 "Skipping split detection for {Chapter} as no plausible pages were found.",
@@ -285,30 +264,8 @@ public class SplitProcessingCoordinator(
         CancellationToken cancellationToken = default
     )
     {
-        // Update state
-        var state = await dbContext.ChapterSplitProcessingStates.FirstOrDefaultAsync(
-            s => s.ChapterId == chapterId,
-            cancellationToken
-        );
-
-        if (state != null)
-        {
-            state.Status = SplitProcessingStatus.Applied;
-            state.LastAppliedDetectorVersion = detectorVersion;
-        }
-        else
-        {
-            dbContext.ChapterSplitProcessingStates.Add(
-                new ChapterSplitProcessingState
-                {
-                    ChapterId = chapterId,
-                    Status = SplitProcessingStatus.Applied,
-                    LastAppliedDetectorVersion = detectorVersion,
-                }
-            );
-        }
-
-        await dbContext.SaveChangesAsync(cancellationToken);
+        // Update state to Applied
+        await stateManager.SetAppliedAsync(chapterId, detectorVersion, cancellationToken);
 
         var chapter = await dbContext
             .Chapters.Include(c => c.Manga)

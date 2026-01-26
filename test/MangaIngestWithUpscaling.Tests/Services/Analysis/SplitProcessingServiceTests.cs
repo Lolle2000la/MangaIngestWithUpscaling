@@ -25,6 +25,8 @@ public class SplitProcessingServiceTests : IDisposable
     private readonly ILogger<SplitProcessingService> _logger;
     private readonly ITaskQueue _taskQueue;
     private readonly IFileSystem _fileSystem;
+    private readonly ISplitProcessingStateManager _stateManager;
+    private readonly ILogger<SplitProcessingStateManager> _stateManagerLogger;
     private readonly SplitProcessingService _service;
 
     public SplitProcessingServiceTests()
@@ -40,8 +42,16 @@ public class SplitProcessingServiceTests : IDisposable
         _logger = Substitute.For<ILogger<SplitProcessingService>>();
         _taskQueue = Substitute.For<ITaskQueue>();
         _fileSystem = Substitute.For<IFileSystem>();
+        _stateManagerLogger = Substitute.For<ILogger<SplitProcessingStateManager>>();
+        _stateManager = new SplitProcessingStateManager(_dbContext, _stateManagerLogger);
 
-        _service = new SplitProcessingService(_dbContext, _logger, _taskQueue, _fileSystem);
+        _service = new SplitProcessingService(
+            _dbContext,
+            _logger,
+            _taskQueue,
+            _fileSystem,
+            _stateManager
+        );
     }
 
     public void Dispose()
