@@ -1,3 +1,4 @@
+using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.Analysis;
 
 namespace MangaIngestWithUpscaling.Services.Analysis;
@@ -13,6 +14,7 @@ public interface ISplitProcessingStateManager
     /// </summary>
     Task<ChapterSplitProcessingState> GetOrCreateStateAsync(
         int chapterId,
+        ApplicationDbContext? context = null,
         CancellationToken cancellationToken = default
     );
 
@@ -23,6 +25,7 @@ public interface ISplitProcessingStateManager
     Task SetDetectedAsync(
         int chapterId,
         int detectorVersion,
+        ApplicationDbContext? context = null,
         CancellationToken cancellationToken = default
     );
 
@@ -33,6 +36,7 @@ public interface ISplitProcessingStateManager
     Task SetNoSplitsFoundAsync(
         int chapterId,
         int detectorVersion,
+        ApplicationDbContext? context = null,
         CancellationToken cancellationToken = default
     );
 
@@ -44,6 +48,7 @@ public interface ISplitProcessingStateManager
     Task SetAppliedAsync(
         int chapterId,
         int detectorVersion,
+        ApplicationDbContext? context = null,
         CancellationToken cancellationToken = default
     );
 
@@ -51,7 +56,11 @@ public interface ISplitProcessingStateManager
     /// Mark detection as failed.
     /// Sets Status to Failed.
     /// </summary>
-    Task SetFailedAsync(int chapterId, CancellationToken cancellationToken = default);
+    Task SetFailedAsync(
+        int chapterId,
+        ApplicationDbContext? context = null,
+        CancellationToken cancellationToken = default
+    );
 
     /// <summary>
     /// Mark detection as processing.
@@ -60,6 +69,7 @@ public interface ISplitProcessingStateManager
     Task SetProcessingAsync(
         int chapterId,
         int detectorVersion,
+        ApplicationDbContext? context = null,
         CancellationToken cancellationToken = default
     );
 
@@ -68,6 +78,7 @@ public interface ISplitProcessingStateManager
     /// </summary>
     Task<ChapterSplitProcessingState?> GetStateAsync(
         int chapterId,
+        ApplicationDbContext? context = null,
         CancellationToken cancellationToken = default
     );
 
@@ -77,6 +88,7 @@ public interface ISplitProcessingStateManager
     Task UpdateStatusAsync(
         int chapterId,
         SplitProcessingStatus newStatus,
+        ApplicationDbContext? context = null,
         CancellationToken cancellationToken = default
     );
 
@@ -84,11 +96,19 @@ public interface ISplitProcessingStateManager
     /// Reset the state to Pending, clearing all version tracking.
     /// Useful for manually re-triggering detection.
     /// </summary>
-    Task ResetToPendingAsync(int chapterId, CancellationToken cancellationToken = default);
+    Task ResetToPendingAsync(
+        int chapterId,
+        ApplicationDbContext? context = null,
+        CancellationToken cancellationToken = default
+    );
 
     /// <summary>
     /// Delete the state for a chapter.
     /// Used when detection needs to be completely reset (e.g., for version upgrades).
     /// </summary>
-    Task DeleteStateAsync(int chapterId, CancellationToken cancellationToken = default);
+    Task DeleteStateAsync(
+        int chapterId,
+        ApplicationDbContext? context = null,
+        CancellationToken cancellationToken = default
+    );
 }

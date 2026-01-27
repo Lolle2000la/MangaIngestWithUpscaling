@@ -130,10 +130,9 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            NullLoggerFactory.Instance,
             _options,
             _splitCoordinator,
-            Substitute.For<ISplitProcessingStateManager>(),
+            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -218,10 +217,9 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            NullLoggerFactory.Instance,
             _options,
             _splitCoordinator,
-            Substitute.For<ISplitProcessingStateManager>(),
+            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -288,10 +286,9 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            NullLoggerFactory.Instance,
             _options,
             _splitCoordinator,
-            Substitute.For<ISplitProcessingStateManager>(),
+            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -366,10 +363,9 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            NullLoggerFactory.Instance,
             _options,
             _splitCoordinator,
-            Substitute.For<ISplitProcessingStateManager>(),
+            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -447,10 +443,9 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            NullLoggerFactory.Instance,
             _options,
             _splitCoordinator,
-            Substitute.For<ISplitProcessingStateManager>(),
+            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -553,10 +548,9 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            NullLoggerFactory.Instance,
             _options,
             _splitCoordinator,
-            Substitute.For<ISplitProcessingStateManager>(),
+            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -635,10 +629,9 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            NullLoggerFactory.Instance,
             _options,
             _splitCoordinator,
-            Substitute.For<ISplitProcessingStateManager>(),
+            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -739,10 +732,9 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            NullLoggerFactory.Instance,
             _options,
             _splitCoordinator,
-            Substitute.For<ISplitProcessingStateManager>(),
+            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -811,10 +803,9 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            NullLoggerFactory.Instance,
             _options,
             _splitCoordinator,
-            Substitute.For<ISplitProcessingStateManager>(),
+            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -903,10 +894,9 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            NullLoggerFactory.Instance,
             _options,
             _splitCoordinator,
-            Substitute.For<ISplitProcessingStateManager>(),
+            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -973,10 +963,9 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            NullLoggerFactory.Instance,
             _options,
             _splitCoordinator,
-            Substitute.For<ISplitProcessingStateManager>(),
+            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -1069,10 +1058,9 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            NullLoggerFactory.Instance,
             _options,
             _splitCoordinator,
-            Substitute.For<ISplitProcessingStateManager>(),
+            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -1198,10 +1186,9 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            NullLoggerFactory.Instance,
             _options,
             _splitCoordinator,
-            Substitute.For<ISplitProcessingStateManager>(),
+            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -1322,10 +1309,9 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            NullLoggerFactory.Instance,
             _options,
             _splitCoordinator,
-            Substitute.For<ISplitProcessingStateManager>(),
+            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -1430,10 +1416,9 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            NullLoggerFactory.Instance,
             _options,
             _splitCoordinator,
-            Substitute.For<ISplitProcessingStateManager>(),
+            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -1559,10 +1544,9 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            NullLoggerFactory.Instance,
             _options,
             _splitCoordinator,
-            Substitute.For<ISplitProcessingStateManager>(),
+            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -1642,10 +1626,9 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            NullLoggerFactory.Instance,
             _options,
             _splitCoordinator,
-            Substitute.For<ISplitProcessingStateManager>(),
+            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -1753,10 +1736,9 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            NullLoggerFactory.Instance,
             _options,
             _splitCoordinator,
-            Substitute.For<ISplitProcessingStateManager>(),
+            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -1839,10 +1821,9 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            NullLoggerFactory.Instance,
             _options,
             _splitCoordinator,
-            Substitute.For<ISplitProcessingStateManager>(),
+            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -1942,10 +1923,9 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            NullLoggerFactory.Instance,
             _options,
             _splitCoordinator,
-            Substitute.For<ISplitProcessingStateManager>(),
+            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -2037,10 +2017,9 @@ public class LibraryIntegrityCheckerTests : IDisposable
             _taskQueue,
             _cbzConverter,
             NullLogger<LibraryIntegrityChecker>.Instance,
-            NullLoggerFactory.Instance,
             _options,
             _splitCoordinator,
-            Substitute.For<ISplitProcessingStateManager>(),
+            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 

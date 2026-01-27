@@ -32,7 +32,6 @@ public partial class LibraryIntegrityChecker(
     ITaskQueue taskQueue,
     ICbzConverter cbzConverter,
     ILogger<LibraryIntegrityChecker> logger,
-    ILoggerFactory loggerFactory,
     IOptions<IntegrityCheckerConfig> configOptions,
     ISplitProcessingCoordinator splitProcessingCoordinator,
     ISplitProcessingStateManager stateManager,
@@ -544,12 +543,6 @@ public partial class LibraryIntegrityChecker(
         CancellationToken cancellationToken
     )
     {
-        // Create a state manager for this context (for thread-safety in parallel operations)
-        var contextStateManager = new SplitProcessingStateManager(
-            context,
-            loggerFactory.CreateLogger<SplitProcessingStateManager>()
-        );
-
         var splitState = await context
             .ChapterSplitProcessingStates.AsNoTracking()
             .FirstOrDefaultAsync(s => s.ChapterId == chapter.Id, cancellationToken);
@@ -575,9 +568,10 @@ public partial class LibraryIntegrityChecker(
                     chapter.Id
                 );
 
-                await contextStateManager.SetDetectedAsync(
+                await stateManager.SetDetectedAsync(
                     chapter.Id,
                     splitState.LastProcessedDetectorVersion,
+                    context,
                     cancellationToken
                 );
 
@@ -599,7 +593,7 @@ public partial class LibraryIntegrityChecker(
                 // check to go through the normal detection pipeline with a clean slate. This avoids
                 // having to emulate intermediate status transitions for older detector versions and
                 // keeps all version-upgrade semantics centralized in the detection logic itself.
-                await contextStateManager.DeleteStateAsync(chapter.Id, cancellationToken);
+                await stateManager.DeleteStateAsync(chapter.Id, context, cancellationToken);
 
                 return IntegrityCheckResult.Corrected;
             }
@@ -613,9 +607,10 @@ public partial class LibraryIntegrityChecker(
                 chapter.Id
             );
 
-            await contextStateManager.SetNoSplitsFoundAsync(
+            await stateManager.SetNoSplitsFoundAsync(
                 chapter.Id,
                 SplitDetectionService.CURRENT_DETECTOR_VERSION,
+                context,
                 cancellationToken
             );
             return IntegrityCheckResult.Corrected;
@@ -636,7 +631,7 @@ public partial class LibraryIntegrityChecker(
                 chapter.Id
             );
 
-            await contextStateManager.SetDetectedAsync(chapter.Id, 0, cancellationToken);
+            await stateManager.SetDetectedAsync(chapter.Id, 0, context, cancellationToken);
 
             return IntegrityCheckResult.Corrected;
         }
@@ -655,9 +650,10 @@ public partial class LibraryIntegrityChecker(
                 findings.Count
             );
 
-            await contextStateManager.SetDetectedAsync(
+            await stateManager.SetDetectedAsync(
                 chapter.Id,
                 findings.Max(f => f.DetectorVersion),
+                context,
                 cancellationToken
             );
 
@@ -717,9 +713,10 @@ public partial class LibraryIntegrityChecker(
                         chapter.Id
                     );
 
-                    await contextStateManager.SetDetectedAsync(
+                    await stateManager.SetDetectedAsync(
                         chapter.Id,
                         splitState.LastProcessedDetectorVersion,
+                        context,
                         cancellationToken
                     );
 

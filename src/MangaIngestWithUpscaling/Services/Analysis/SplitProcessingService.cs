@@ -46,7 +46,7 @@ public class SplitProcessingService(
         var failedResults = resultList.Where(r => !string.IsNullOrWhiteSpace(r.Error)).ToList();
         if (failedResults.Count > 0)
         {
-            await stateManager.SetFailedAsync(chapterId, cancellationToken);
+            await stateManager.SetFailedAsync(chapterId, null, cancellationToken);
 
             var uniqueErrors = failedResults
                 .Select(r => $"{Path.GetFileName(r.ImagePath)}: {r.Error}")
@@ -89,15 +89,25 @@ public class SplitProcessingService(
         // Use state manager to set appropriate status
         if (resultsWithSplits.Count == 0)
         {
-            await stateManager.SetNoSplitsFoundAsync(chapterId, detectorVersion, cancellationToken);
+            await stateManager.SetNoSplitsFoundAsync(
+                chapterId,
+                detectorVersion,
+                null,
+                cancellationToken
+            );
         }
         else
         {
-            await stateManager.SetDetectedAsync(chapterId, detectorVersion, cancellationToken);
+            await stateManager.SetDetectedAsync(
+                chapterId,
+                detectorVersion,
+                null,
+                cancellationToken
+            );
         }
 
         // Get the status that was just set for logging
-        var state = await stateManager.GetStateAsync(chapterId, cancellationToken);
+        var state = await stateManager.GetStateAsync(chapterId, null, cancellationToken);
         var statusForLogging = state?.Status.ToString() ?? "Unknown";
 
         logger.LogInformation(
@@ -132,6 +142,7 @@ public class SplitProcessingService(
                 await stateManager.SetProcessingAsync(
                     chapterId,
                     detectorVersion,
+                    null,
                     cancellationToken
                 );
             }

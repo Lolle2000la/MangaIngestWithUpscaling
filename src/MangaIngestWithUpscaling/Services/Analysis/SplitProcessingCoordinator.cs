@@ -68,6 +68,7 @@ public class SplitProcessingCoordinator(
                     await stateManager.SetNoSplitsFoundAsync(
                         chapterId,
                         SplitDetectionService.CURRENT_DETECTOR_VERSION,
+                        null,
                         cancellationToken
                     );
                     return false;
@@ -144,6 +145,7 @@ public class SplitProcessingCoordinator(
             await stateManager.SetNoSplitsFoundAsync(
                 chapterId,
                 SplitDetectionService.CURRENT_DETECTOR_VERSION,
+                null,
                 cancellationToken
             );
 
@@ -265,7 +267,7 @@ public class SplitProcessingCoordinator(
     )
     {
         // Update state to Applied
-        await stateManager.SetAppliedAsync(chapterId, detectorVersion, cancellationToken);
+        await stateManager.SetAppliedAsync(chapterId, detectorVersion, null, cancellationToken);
 
         var chapter = await dbContext
             .Chapters.Include(c => c.Manga)

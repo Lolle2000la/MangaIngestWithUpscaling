@@ -1326,7 +1326,7 @@
                 Snackbar.Add(string.Format(Loc["Snackbar_SplitApplicationQueued"], chapter.FileName), Severity.Success);
 
                 // Reset the state using the state manager
-                await SplitStateManager.ResetToPendingAsync(chapter.Id, CancellationToken.None);
+                await SplitStateManager.ResetToPendingAsync(chapter.Id, null, CancellationToken.None);
 
                 // Refresh the UI
                 var item = chapters.Items.FirstOrDefault(ci => ci.Chapter.Id == chapter.Id);
