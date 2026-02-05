@@ -52,7 +52,7 @@ public class ImageResizeService : IImageResizeService
             throw new FileNotFoundException(_localizer["Error_InputCbzFileNotFound", inputCbzPath]);
         }
 
-        if (options.MaxDimension.HasValue && options.MaxDimension.Value <= 0)
+        if (options.MaxDimension.HasValue && options.MaxDimension.Value < 0)
         {
             throw new ArgumentException(
                 _localizer["Error_MaxDimensionMustBePositive"],
