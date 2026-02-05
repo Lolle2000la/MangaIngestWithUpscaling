@@ -35,12 +35,13 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
     ///     v10: Updated to pillow>=12.0.0
     ///     v11: Added dependencies for manga-vert-split-nn (aim, boto3, clearml, lightning, matplotlib, mlflow, onnx, onnxscript, optuna, pandas, psycopg2-binary, scipy, torchmetrics)
     ///     v12: Removed unnecessary dependencies for manga-vert-split-nn, relaxed Python version requirement
+    ///     v13: Updated to PyTorch 2.10.0, torchvision 0.25.0 with CUDA 12.6 (cu126), ROCm 7.0, and latest XPU support
     ///     When updating dependencies:
     ///     1. Update the package versions in InstallPythonPackages method
     ///     2. Increment this ENVIRONMENT_VERSION constant
     ///     3. Add a comment above describing the changes
     /// </summary>
-    private const int ENVIRONMENT_VERSION = 12;
+    private const int ENVIRONMENT_VERSION = 13;
 
     public static PythonEnvironment? Environment { get; set; }
 
@@ -563,26 +564,26 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
                     + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
                     + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
             GpuBackend.CUDA_12_8 =>
-                "install torch==2.9.1 torchvision==0.24.1 --extra-index-url https://download.pytorch.org/whl/cu128 "
+                "install torch==2.10.0 torchvision==0.25.0 --extra-index-url https://download.pytorch.org/whl/cu126 "
                     + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
                     + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
                     + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
             GpuBackend.ROCm =>
-                "install torch==2.9.1 torchvision==0.24.1 --extra-index-url https://download.pytorch.org/whl/rocm6.4 "
+                "install torch==2.10.0 torchvision==0.25.0 --extra-index-url https://download.pytorch.org/whl/rocm7.0 "
                     + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
                     + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
                     + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
             GpuBackend.XPU =>
-                "install torch==2.9.1 torchvision==0.24.1 --extra-index-url https://download.pytorch.org/whl/xpu "
+                "install torch==2.10.0 torchvision==0.25.0 --extra-index-url https://download.pytorch.org/whl/xpu "
                     + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
                     + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
                     + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
             GpuBackend.CPU =>
-                "install torch==2.9.1 torchvision==0.24.1 --extra-index-url https://download.pytorch.org/whl/cpu "
+                "install torch==2.10.0 torchvision==0.25.0 --extra-index-url https://download.pytorch.org/whl/cpu "
                     + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
                     + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
                     + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
-            _ => "install torch==2.9.1 torchvision==0.24.1 "
+            _ => "install torch==2.10.0 torchvision==0.25.0 "
                 + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
                 + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
                 + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
