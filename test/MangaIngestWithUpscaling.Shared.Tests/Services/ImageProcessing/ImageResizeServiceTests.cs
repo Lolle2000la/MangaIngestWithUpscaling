@@ -37,11 +37,10 @@ public class ImageResizeServiceTests
     }
 
     [Theory]
-    [InlineData(0)]
     [InlineData(-1)]
     [InlineData(-100)]
     [Trait("Category", "Unit")]
-    public async Task CreateResizedTempCbzAsync_InvalidMaxDimension_ShouldThrowArgumentException(
+    public async Task CreateResizedTempCbzAsync_NegativeMaxDimension_ShouldThrowArgumentException(
         int maxDimension
     )
     {
@@ -95,6 +94,92 @@ public class ImageResizeServiceTests
         );
 
         Assert.Contains(nonExistentPath, exception.Message);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task CreatePreprocessedTempCbzAsync_MaxDimensionZero_ShouldNotThrow()
+    {
+        // Arrange
+        var tempInputPath = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}.cbz");
+
+        // Create a temporary file to pass the file existence check
+        await File.WriteAllTextAsync(
+            tempInputPath,
+            "dummy content",
+            TestContext.Current.CancellationToken
+        );
+
+        try
+        {
+            var options = new ImagePreprocessingOptions { MaxDimension = 0 };
+
+            // Act & Assert - Should not throw ArgumentException for zero
+            // Note: Will throw other exceptions since we're not providing a valid CBZ,
+            // but we're only testing that the validation accepts zero
+            var exception = await Record.ExceptionAsync(() =>
+                _service.CreatePreprocessedTempCbzAsync(
+                    tempInputPath,
+                    options,
+                    TestContext.Current.CancellationToken
+                )
+            );
+
+            // Should not be an ArgumentException about MaxDimension
+            Assert.False(
+                exception is ArgumentException argEx && argEx.ParamName == "options",
+                "Should not throw ArgumentException for MaxDimension = 0"
+            );
+        }
+        finally
+        {
+            // Cleanup
+            if (File.Exists(tempInputPath))
+                File.Delete(tempInputPath);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task CreatePreprocessedTempCbzAsync_MaxDimensionNull_ShouldNotThrow()
+    {
+        // Arrange
+        var tempInputPath = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}.cbz");
+
+        // Create a temporary file to pass the file existence check
+        await File.WriteAllTextAsync(
+            tempInputPath,
+            "dummy content",
+            TestContext.Current.CancellationToken
+        );
+
+        try
+        {
+            var options = new ImagePreprocessingOptions { MaxDimension = null };
+
+            // Act & Assert - Should not throw ArgumentException for null
+            // Note: Will throw other exceptions since we're not providing a valid CBZ,
+            // but we're only testing that the validation accepts null
+            var exception = await Record.ExceptionAsync(() =>
+                _service.CreatePreprocessedTempCbzAsync(
+                    tempInputPath,
+                    options,
+                    TestContext.Current.CancellationToken
+                )
+            );
+
+            // Should not be an ArgumentException about MaxDimension
+            Assert.False(
+                exception is ArgumentException argEx && argEx.ParamName == "options",
+                "Should not throw ArgumentException for MaxDimension = null"
+            );
+        }
+        finally
+        {
+            // Cleanup
+            if (File.Exists(tempInputPath))
+                File.Delete(tempInputPath);
+        }
     }
 
     [Fact]
