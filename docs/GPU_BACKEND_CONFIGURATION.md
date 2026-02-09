@@ -119,20 +119,20 @@ The environment will be automatically recreated when:
 - Compatible with NVIDIA GPUs
 
 ### CUDA 12.8 Backend
-- Installs: `torch==2.9.1 torchvision==0.24.1` from CUDA 12.8 index  
+- Installs: `torch==2.10.0 torchvision==0.25.0` from CUDA 12.8 index  
 - Compatible with NVIDIA GPUs (requires CUDA 12.8+ drivers)
 - Must be manually configured (not auto-detected)
 
 ### ROCm Backend  
-- Installs: `torch==2.9.1 torchvision==0.24.1` from ROCm 6.3 index
+- Installs: `torch==2.10.0 torchvision==0.25.0` from ROCm 7.1 index
 - Compatible with AMD GPUs
 
 ### Intel XPU Backend
-- Installs: `torch==2.9.1 torchvision==0.24.1` from Intel XPU index
+- Installs: `torch==2.10.0 torchvision==0.25.0` from Intel XPU index
 - Compatible with Intel Arc discrete GPUs and Intel Xe GPUs
 
 ### CPU Backend
-- Installs: `torch==2.9.1 torchvision==0.24.1` from CPU-only index
+- Installs: `torch==2.10.0 torchvision==0.25.0` from CPU-only index
 - Compatible with any system
 
 ## Environment Variables
