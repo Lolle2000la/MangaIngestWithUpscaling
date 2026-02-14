@@ -269,6 +269,8 @@ public class SplitProcessingCoordinator(
         // Update state to Applied
         await stateManager.SetAppliedAsync(chapterId, detectorVersion, null, cancellationToken);
 
+        // Load chapter with all necessary navigation properties for upscale task creation
+        // UpscalerProfilePreference is required for EffectiveUpscalerProfile to work correctly
         var chapter = await dbContext
             .Chapters.Include(c => c.Manga)
                 .ThenInclude(m => m.Library)
