@@ -271,6 +271,8 @@ public class SplitProcessingCoordinator(
 
         // Load chapter with all necessary navigation properties for upscale task creation
         // UpscalerProfilePreference is required for EffectiveUpscalerProfile to work correctly
+        // Note: We need two separate .Include(c => c.Manga) calls because EF Core requires a new
+        // Include statement for each branch when loading nested navigation properties
         var chapter = await dbContext
             .Chapters.Include(c => c.Manga)
                 .ThenInclude(m => m.Library)
