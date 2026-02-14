@@ -44,7 +44,10 @@ public class SplitProcessingService(
 
         // Check for errors in the results
         var failedResults = resultList.Where(r => !string.IsNullOrWhiteSpace(r.Error)).ToList();
-        if (failedResults.Count > 0)
+        var successfulResults = resultList.Where(r => string.IsNullOrWhiteSpace(r.Error)).ToList();
+
+        // Only fail completely if ALL results have errors
+        if (failedResults.Count > 0 && successfulResults.Count == 0)
         {
             await stateManager.SetFailedAsync(chapterId, null, cancellationToken);
 
@@ -54,19 +57,39 @@ public class SplitProcessingService(
             var errorMessage = string.Join("; ", uniqueErrors);
 
             logger.LogError(
-                "Split detection failed for chapter {ChapterId}. Errors: {Errors}",
+                "Split detection failed for all images in chapter {ChapterId}. Errors: {Errors}",
                 chapterId,
                 errorMessage
             );
             return;
         }
 
+        // Log warnings for partial failures
+        if (failedResults.Count > 0)
+        {
+            var uniqueErrors = failedResults
+                .Select(r => $"{Path.GetFileName(r.ImagePath)}: {r.Error}")
+                .Distinct();
+            var errorMessage = string.Join("; ", uniqueErrors);
+
+            logger.LogWarning(
+                "Split detection failed for {FailedCount} out of {TotalCount} images in chapter {ChapterId}. These images will be skipped. Errors: {Errors}",
+                failedResults.Count,
+                resultList.Count,
+                chapterId,
+                errorMessage
+            );
+        }
+
+        // Process only successful results
+        var resultsToProcess = successfulResults;
+
         // Remove existing findings for this chapter to ensure clean state for this version
         var existingFindings = dbContext.StripSplitFindings.Where(f => f.ChapterId == chapterId);
         dbContext.StripSplitFindings.RemoveRange(existingFindings);
 
         // Only save findings that actually have splits detected
-        var resultsWithSplits = resultList.Where(r => r.Splits.Count > 0).ToList();
+        var resultsWithSplits = resultsToProcess.Where(r => r.Splits.Count > 0).ToList();
 
         foreach (var res in resultsWithSplits)
         {
@@ -170,7 +193,7 @@ public class SplitProcessingService(
                 }
             }
         }
-        else if (results.Any())
+        else if (resultsToProcess.Any())
         {
             // No splits detected, but we still need to proceed with upscaling if configured
             var chapter = await dbContext

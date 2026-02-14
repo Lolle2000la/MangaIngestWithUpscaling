@@ -269,10 +269,16 @@ public class SplitProcessingCoordinator(
         // Update state to Applied
         await stateManager.SetAppliedAsync(chapterId, detectorVersion, null, cancellationToken);
 
+        // Load chapter with all necessary navigation properties for upscale task creation
+        // UpscalerProfilePreference is required for EffectiveUpscalerProfile to work correctly
+        // Note: We need two separate .Include(c => c.Manga) calls because EF Core requires a new
+        // Include statement for each branch when loading nested navigation properties
         var chapter = await dbContext
             .Chapters.Include(c => c.Manga)
                 .ThenInclude(m => m.Library)
                     .ThenInclude(l => l.UpscalerProfile)
+            .Include(c => c.Manga)
+                .ThenInclude(m => m.UpscalerProfilePreference)
             .Include(c => c.UpscalerProfile)
             .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
 
