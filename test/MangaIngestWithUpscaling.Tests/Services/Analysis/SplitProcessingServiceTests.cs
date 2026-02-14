@@ -351,7 +351,7 @@ public class SplitProcessingServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ProcessDetectionResultsAsync_SetsStatusToFailed_WhenErrorsExist()
+    public async Task ProcessDetectionResultsAsync_SetsStatusToFailed_WhenAllResultsHaveErrors()
     {
         // Arrange
         var library = new Library
@@ -376,10 +376,11 @@ public class SplitProcessingServiceTests : IDisposable
         _dbContext.Chapters.Add(chapter);
         await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
+        // All results have errors - complete failure
         var results = new List<SplitDetectionResult>
         {
             new() { ImagePath = "page1.png", Error = "Something went wrong" },
-            new() { ImagePath = "page2.png", Splits = [] },
+            new() { ImagePath = "page2.png", Error = "Another error" },
         };
 
         // Act
@@ -402,5 +403,75 @@ public class SplitProcessingServiceTests : IDisposable
             .StripSplitFindings.Where(f => f.ChapterId == chapter.Id)
             .ToListAsync(TestContext.Current.CancellationToken);
         Assert.Empty(findings);
+    }
+
+    [Fact]
+    public async Task ProcessDetectionResultsAsync_ContinuesProcessing_WhenSomeResultsHaveErrors()
+    {
+        // Arrange
+        var library = new Library
+        {
+            Name = "Test Library",
+            NotUpscaledLibraryPath = "/test/path",
+            StripDetectionMode = StripDetectionMode.DetectOnly,
+        };
+        _dbContext.Libraries.Add(library);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var manga = new Manga
+        {
+            PrimaryTitle = "Test Manga",
+            LibraryId = library.Id,
+            Library = library,
+        };
+        _dbContext.MangaSeries.Add(manga);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var chapter = new Chapter { FileName = "Test.cbz", Manga = manga };
+        _dbContext.Chapters.Add(chapter);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Some results have errors, but some succeed - partial failure
+        var results = new List<SplitDetectionResult>
+        {
+            new() { ImagePath = "page1.png", Error = "Corrupt image file" },
+            new()
+            {
+                ImagePath = "page2.png",
+                Splits = [],
+                OriginalHeight = 800,
+                OriginalWidth = 600,
+            },
+            new()
+            {
+                ImagePath = "page3.png",
+                Splits = [new DetectedSplit { YOriginal = 400, Confidence = 0.9 }],
+                OriginalHeight = 1000,
+                OriginalWidth = 500,
+            },
+        };
+
+        // Act
+        await _service.ProcessDetectionResultsAsync(
+            chapter.Id,
+            results,
+            1,
+            TestContext.Current.CancellationToken
+        );
+
+        // Assert
+        var state = await _dbContext.ChapterSplitProcessingStates.FirstAsync(
+            s => s.ChapterId == chapter.Id,
+            TestContext.Current.CancellationToken
+        );
+        // Should be Detected because we found splits in page3
+        Assert.Equal(SplitProcessingStatus.Detected, state.Status);
+
+        // Should save finding for page3 (has splits), but not page1 (error) or page2 (no splits)
+        var findings = await _dbContext
+            .StripSplitFindings.Where(f => f.ChapterId == chapter.Id)
+            .ToListAsync(TestContext.Current.CancellationToken);
+        Assert.Single(findings);
+        Assert.Equal("page3", findings[0].PageFileName);
     }
 }
