@@ -186,7 +186,7 @@ public class MangaMetadataChangerTests : IDisposable
 
         // Mock dialog service to return true for merge consent
         _mockDialogService
-            .ShowMessageBox(
+            .ShowMessageBoxAsync(
                 "Merge into existing manga of same name?",
                 "The title you are trying to rename to already has an existing entry. Do you want to merge this manga into the existing one?",
                 "Merge",
@@ -229,7 +229,7 @@ public class MangaMetadataChangerTests : IDisposable
 
         // Mock dialog service to return false for merge consent
         _mockDialogService
-            .ShowMessageBox(
+            .ShowMessageBoxAsync(
                 Arg.Any<string>(),
                 Arg.Any<string>(),
                 Arg.Any<string>(),

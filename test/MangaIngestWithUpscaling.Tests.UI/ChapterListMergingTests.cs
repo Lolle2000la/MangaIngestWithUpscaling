@@ -775,7 +775,7 @@ public class ChapterListMergingTests : BunitContext
 
         // Setup dialog service to confirm the merge (simulate user clicking "Yes")
         _subDialogService
-            .ShowMessageBox(
+            .ShowMessageBoxAsync(
                 Arg.Is<string>(title => title.Contains("Latest Chapter")),
                 Arg.Any<string>(),
                 Arg.Any<string>(),

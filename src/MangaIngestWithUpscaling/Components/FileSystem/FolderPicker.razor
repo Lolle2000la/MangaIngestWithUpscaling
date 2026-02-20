@@ -48,7 +48,7 @@
         <ItemTemplate>
             <MudTreeViewItem T="DirectoryItem ?" @key="context.Value?.Path" Value="@context.Value"
                 Text="@context.Value?.Name" Icon="@Icons.Material.Filled.FolderOpen"
-                ItemsChanged="@(new Action<IReadOnlyCollection<TreeItemData<DirectoryItem?>>?>(items => ViewModel?.HandleItemsLoaded(context, items)))"
+                ItemsChanged="@(new Action<IReadOnlyCollection<ITreeItemData<DirectoryItem?>>>(items => ViewModel?.HandleItemsLoaded(context, items)))"
                 CanExpand="@context.Expandable" @bind-Expanded="@context.Expanded" Items="@context.Children"
                 OnDoubleClick="@(() => ViewModel!.RootDirectory = context.Value!.Path)" />
         </ItemTemplate>
