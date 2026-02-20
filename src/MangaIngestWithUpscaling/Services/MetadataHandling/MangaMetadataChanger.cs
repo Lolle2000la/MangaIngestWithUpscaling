@@ -87,7 +87,7 @@ public class MangaMetadataChanger(
 
         if (possibleCurrent != null)
         {
-            bool? consentToMerge = await dialogService.ShowMessageBox(
+            bool? consentToMerge = await dialogService.ShowMessageBoxAsync(
                 loc["Dialog_MergeManga_Title"],
                 loc["Dialog_MergeManga_Content"],
                 yesText: loc["Dialog_MergeManga_Merge"],

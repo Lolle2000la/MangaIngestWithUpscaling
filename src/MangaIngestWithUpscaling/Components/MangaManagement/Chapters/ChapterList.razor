@@ -135,7 +135,7 @@
                     {
                         <MudMenu ActivationEvent="@MouseEvent.MouseOver" AnchorOrigin="Origin.BottomCenter"
                             TransformOrigin="Origin.TopCenter">
-                            <ActivatorContent>
+                            <ActivatorContent Context="menuContext">
                                 <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Filled">
                                     @Loc["Chip_Detected"]</MudChip>
                             </ActivatorContent>
@@ -253,7 +253,7 @@
 
     private async Task DeleteSelected()
     {
-        var result = await DialogService.ShowMessageBox(Loc["Dialog_DeleteSelected_Title"],
+        var result = await DialogService.ShowMessageBoxAsync(Loc["Dialog_DeleteSelected_Title"],
         Loc["Dialog_DeleteSelected_Content"], yesText: SharedLoc["Yes"], cancelText: SharedLoc["No"]);
         if (result == true)
         {
@@ -276,7 +276,7 @@
 
     private async Task DeleteSelectedUpscaled()
     {
-        var result = await DialogService.ShowMessageBox(Loc["Dialog_DeleteUpscaledSelected_Title"],
+        var result = await DialogService.ShowMessageBoxAsync(Loc["Dialog_DeleteUpscaledSelected_Title"],
         Loc["Dialog_DeleteUpscaledSelected_Content"], SharedLoc["Yes"], cancelText: SharedLoc["No"]);
         if (result == true)
         {
@@ -299,7 +299,7 @@
             return;
         }
 
-        var result = await DialogService.ShowMessageBox(
+        var result = await DialogService.ShowMessageBoxAsync(
         Loc["Dialog_RevertSelectedMerged_Title"],
         string.Format(Loc["Dialog_RevertSelectedMerged_Content"],
         Loc["Word_MergedChapter"].Value.ToLocalizedQuantity(mergedChapters.Count, CultureInfo.CurrentUICulture)),
@@ -342,7 +342,7 @@
 
     private async Task DeleteChapterConfirm(Chapter chapter)
     {
-        var result = await DialogService.ShowMessageBox(Loc["Dialog_DeleteChapter_Title"], Loc["Dialog_DeleteChapter_Content"],
+        var result = await DialogService.ShowMessageBoxAsync(Loc["Dialog_DeleteChapter_Title"], Loc["Dialog_DeleteChapter_Content"],
         yesText: SharedLoc["Yes"], cancelText: SharedLoc["No"]);
         if (result == true)
         {
@@ -352,7 +352,7 @@
 
     private async Task RevertMergedChapterConfirm(Chapter chapter)
     {
-        var result = await DialogService.ShowMessageBox(
+        var result = await DialogService.ShowMessageBoxAsync(
         Loc["Dialog_RevertMergedChapter_Title"],
         Loc["Dialog_RevertMergedChapter_Content"],
         SharedLoc["Yes"],
@@ -520,7 +520,7 @@
 
     private async Task DeleteUpscaledConfirm(Chapter chapter)
     {
-        var result = await DialogService.ShowMessageBox(Loc["Dialog_DeleteUpscaledChapter_Title"],
+        var result = await DialogService.ShowMessageBoxAsync(Loc["Dialog_DeleteUpscaledChapter_Title"],
         Loc["Dialog_DeleteUpscaledChapter_Content"], yesText: SharedLoc["Yes"], cancelText: SharedLoc["No"]);
         if (result == true)
         {
@@ -964,7 +964,7 @@
 
         if (totalActionsWithLatest > totalActionsWithoutLatest)
         {
-            var result = await DialogService.ShowMessageBox(
+            var result = await DialogService.ShowMessageBoxAsync(
             Loc["Dialog_LatestChapter_Title"],
             Loc["Dialog_LatestChapter_Content"],
             SharedLoc["Yes"], SharedLoc["No"]);
@@ -1039,7 +1039,7 @@
 
         if (!hasActionsWithoutLatest)
         {
-            var result = await DialogService.ShowMessageBox(
+            var result = await DialogService.ShowMessageBoxAsync(
             Loc["Dialog_LatestChapter_Title"],
             string.Format(Loc["Dialog_LatestChapterSpecific_Content"], mergeType, baseNumber),
             SharedLoc["Yes"], SharedLoc["No"]);
@@ -1311,7 +1311,7 @@
 
     private async Task ApplySplits(Chapter chapter)
     {
-        var result = await DialogService.ShowMessageBox(
+        var result = await DialogService.ShowMessageBoxAsync(
         Loc["Dialog_ApplySplits_Title"],
         Loc["Dialog_ApplySplits_Content"],
         SharedLoc["Yes"],

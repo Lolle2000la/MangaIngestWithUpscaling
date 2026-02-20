@@ -149,13 +149,14 @@ public class FolderPickerViewModel : ViewModelBase
     }
 
     public void HandleItemsLoaded(
-        TreeItemData<DirectoryItem> parent,
-        IReadOnlyCollection<TreeItemData<DirectoryItem?>>? children
+        ITreeItemData<DirectoryItem> parent,
+        IReadOnlyCollection<ITreeItemData<DirectoryItem?>> children
     )
     {
-        parent.Children = children
-            ?.OfType<TreeItemData<DirectoryItem>>() // remove nullable annotation
-            .ToList();
+        if (parent is TreeItemData<DirectoryItem> treeItemData)
+        {
+            treeItemData.Children = children.OfType<ITreeItemData<DirectoryItem>>().ToList();
+        }
     }
 
     private bool DirectoryHasSubdirectories(string path)
