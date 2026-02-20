@@ -219,7 +219,7 @@
 
     protected async Task OnDeleteLibraryEntry(Library library)
     {
-        var result = await DialogService.ShowMessageBox(
+        var result = await DialogService.ShowMessageBoxAsync(
         Loc["DeleteDialog_Title"],
         Loc["DeleteDialog_Content"],
         SharedLoc["Generic_OK"], cancelText: SharedLoc["Generic_Cancel"],

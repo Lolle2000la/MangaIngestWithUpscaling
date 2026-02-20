@@ -54,7 +54,7 @@
 
     private async Task OnDeleteProfile(UpscalerProfile profile)
     {
-        var result = await DialogService.ShowMessageBox(
+        var result = await DialogService.ShowMessageBoxAsync(
         Loc["DeleteDialog_Title"],
         Loc["DeleteDialog_Content"],
         Loc["Button_OK"], cancelText: Loc["Button_Cancel"],
