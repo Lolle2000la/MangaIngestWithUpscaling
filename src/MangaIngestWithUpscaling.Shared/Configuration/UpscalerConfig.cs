@@ -28,7 +28,7 @@ public record UpscalerConfig
 
     /// <summary>
     ///     When enabled, forces acceptance of existing Python environments without version or backend checks.
-    ///     This is useful for Docker containers with pre-built environments that should not be recreated.
+    ///     This is useful when using a manually managed Python environment that should not be recreated automatically.
     /// </summary>
     public bool ForceAcceptExistingEnvironment { get; set; } = false;
 
