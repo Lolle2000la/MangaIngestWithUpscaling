@@ -325,17 +325,18 @@ var app = builder.Build();
 
 app.UseForwardedHeaders();
 
-// Warn users who are running a deprecated backend-specific image variant
+// Warn users who are running a deprecated image variant
 if (app.Configuration.GetValue<bool>("DeprecatedImageVariant"))
 {
     var deprecationLogger = app.Services.GetRequiredService<ILogger<Program>>();
     deprecationLogger.LogWarning(
-        "DEPRECATION WARNING: You are using a backend-specific Docker image variant. "
+        "DEPRECATION WARNING: You are using a deprecated Docker image variant. "
             + "These images are deprecated and will be removed in a future release. "
             + "Please switch to the standard image (ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest) "
-            + "and configure your GPU backend by setting the Ingest_Upscaler__PreferredGpuBackend "
-            + "environment variable (e.g. CUDA, CUDA_12_8, ROCm, XPU). "
-            + "See docs/GPU_BACKEND_CONFIGURATION.md for full migration details."
+            + "and apply your desired configuration via environment variables. "
+            + "For GPU backend selection set Ingest_Upscaler__PreferredGpuBackend (e.g. CUDA, CUDA_12_8, ROCm, XPU). "
+            + "For remote-only mode set Ingest_Upscaler__RemoteOnly=true. "
+            + "See docs/GPU_BACKEND_CONFIGURATION.md and docs/REMOTE_ONLY_VARIANT.md for full migration details."
     );
 }
 
