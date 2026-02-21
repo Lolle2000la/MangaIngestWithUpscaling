@@ -1,3 +1,5 @@
+# GPU Backend Configuration
+
 ## Docker Images
 
 ### Standard Image (Recommended)
@@ -32,15 +34,13 @@ The backend-specific image tags (`:latest-cuda-12.8`, `:latest-rocm`, `:latest-x
 
 A deprecation warning is logged on startup when using one of these variant images.
 
-
-
-# GPU Backend Configuration Examples
+## Backend Configuration Examples
 
 The enhanced Python environment management system now supports automatic detection and manual configuration of GPU backends for PyTorch using OpenGL-based GPU detection.
 
-## Configuration Options
+### Configuration Options
 
-### Automatic Detection (Default)
+#### Automatic Detection (Default)
 ```json
 {
   "Upscaler": {
