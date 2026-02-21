@@ -326,7 +326,7 @@ var app = builder.Build();
 app.UseForwardedHeaders();
 
 // Warn users who are running a deprecated backend-specific image variant
-if (app.Configuration["DeprecatedImageVariant"] == "true")
+if (app.Configuration.GetValue<bool>("DeprecatedImageVariant"))
 {
     var deprecationLogger = app.Services.GetRequiredService<ILogger<Program>>();
     deprecationLogger.LogWarning(
