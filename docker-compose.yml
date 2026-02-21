@@ -6,7 +6,7 @@ services:
       dockerfile: src/MangaIngestWithUpscaling/Dockerfile
     environment:
       - TZ=Etc/UTC
-      - Ingest_Upscaler__PythonEnvironmentDirectory=/app/pyenv
+      - Ingest_Upscaler__PythonEnvironmentDirectory=/data/pyenv
       - Ingest_Kavita__BaseUrl=http://kavita:5000
       - Ingest_Kavita__ApiKey=8d5f292a-a1ef-4557-8986-6319ccc80eb9 # Generate your own for your local testing
       - Ingest_Kavita__Enabled=True # Generate your own for your local testing
@@ -16,7 +16,6 @@ services:
     volumes:
       - ./test_data:/data
       - ./test_data/models:/models
-      - ./test_data/pyenv:/app/pyenv
     deploy:
       resources:
         reservations:

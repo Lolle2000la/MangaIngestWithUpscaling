@@ -107,6 +107,20 @@ builder.Services.RegisterRemoteWorkerServices();
 
 var app = builder.Build();
 
+// Warn users who are running a deprecated backend-specific image variant
+if (app.Configuration.GetValue<bool>("DeprecatedImageVariant"))
+{
+    var deprecationLogger = app.Services.GetRequiredService<ILogger<Program>>();
+    deprecationLogger.LogWarning(
+        "DEPRECATION WARNING: You are using a backend-specific Docker image variant. "
+            + "These images are deprecated and will be removed in a future release. "
+            + "Please switch to the standard image (ghcr.io/lolle2000la/manga-ingest-with-upscaling-remote-worker:latest-cuda) "
+            + "and configure your GPU backend by setting the Ingest_Upscaler__PreferredGpuBackend "
+            + "environment variable (e.g. CUDA, CUDA_12_8, ROCm, XPU). "
+            + "See docs/GPU_BACKEND_CONFIGURATION.md for full migration details."
+    );
+}
+
 // Uncomment if the remote worker should at some point expose an API for configuration or status.
 // // Configure the HTTP request pipeline.
 // app.MapGet("/",
