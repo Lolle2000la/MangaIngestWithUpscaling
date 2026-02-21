@@ -191,7 +191,7 @@ jobs:
       contents: read
       packages: write 
     runs-on: ubuntu-latest
-    needs: [generate-tag]
+    needs: [generate-tag, build-and-push-x86]
     env:
       IMAGE_NAME: manga-ingest-with-upscaling
       REGISTRY: ghcr.io
@@ -221,6 +221,7 @@ jobs:
         with:
           context: .
           file: remoteonly.Dockerfile
+          build-args: BASE_IMAGE=${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-amd64
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:${{ env.TAG }}-remote-only,${{ env.REGISTRY }}/${{ env.OWNER }}/${{ env.IMAGE_NAME }}:latest-dev-remote-only
           # cache-from: type=gha
