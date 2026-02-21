@@ -1,3 +1,39 @@
+## Docker Images
+
+### Standard Image (Recommended)
+
+The standard image supports all GPU backends via a single environment variable. Use it for all deployments:
+
+```yaml
+services:
+  manga-ingest:
+    image: ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest
+    environment:
+      - Ingest_Upscaler__PreferredGpuBackend=CUDA      # NVIDIA (CUDA 11.8)
+      # - Ingest_Upscaler__PreferredGpuBackend=CUDA_12_8  # NVIDIA (CUDA 12.8)
+      # - Ingest_Upscaler__PreferredGpuBackend=ROCm       # AMD
+      # - Ingest_Upscaler__PreferredGpuBackend=XPU        # Intel Arc
+      # - Ingest_Upscaler__PreferredGpuBackend=CPU        # CPU fallback
+```
+
+The Python environment (including the GPU-specific PyTorch build) is installed automatically into your data volume on first startup, according to the configured backend.
+
+### Deprecated Backend-Specific Images
+
+The backend-specific image tags (`:latest-cuda-12.8`, `:latest-rocm`, `:latest-xpu`) are **deprecated** and will be removed in a future release. They now simply re-tag the standard image with a pre-set `Ingest_Upscaler__PreferredGpuBackend` value and carry no other differences.
+
+**To migrate**, replace the variant image with the standard image and set the backend via the environment variable:
+
+| Old image tag | Replacement |
+|---|---|
+| `:latest-cuda-12.8` | `:latest` + `Ingest_Upscaler__PreferredGpuBackend=CUDA_12_8` |
+| `:latest-rocm` | `:latest` + `Ingest_Upscaler__PreferredGpuBackend=ROCm` |
+| `:latest-xpu` | `:latest` + `Ingest_Upscaler__PreferredGpuBackend=XPU` |
+
+A deprecation warning is logged on startup when using one of these variant images.
+
+
+
 # GPU Backend Configuration Examples
 
 The enhanced Python environment management system now supports automatic detection and manual configuration of GPU backends for PyTorch using OpenGL-based GPU detection.
@@ -76,7 +112,7 @@ The system will automatically detect available hardware using **Silk.NET.OpenGL*
 }
 ```
 
-#### Force Accept Existing Environment (Docker/Pre-built)
+#### Force Accept Existing Environment
 ```json
 {
   "Upscaler": {
@@ -86,11 +122,10 @@ The system will automatically detect available hardware using **Silk.NET.OpenGL*
 ```
 
 This option forces the system to accept any existing Python environment without version or backend checks. This is useful for:
-- **Docker containers** with pre-built Python environments
 - **Pre-configured systems** where dependencies should not be modified
 - **Offline environments** where package downloads are not possible
 
-Note that even if the environment is broken, no a attempt at fixing it will be made. The system will continue to use the existing environment as-is. Use with caution.
+Note that even if the environment is broken, no attempt at fixing it will be made. The system will continue to use the existing environment as-is. Use with caution.
 
 ## Environment Tracking
 
