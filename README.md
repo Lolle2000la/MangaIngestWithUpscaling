@@ -28,17 +28,36 @@ For information about the remote-only server variant without ML dependencies, se
 
 ## Installation
 
-The preferred way to run the application is through Docker. Below is an example docker-compose file to get you started with CUDA. See below for ROCm (AMD) support.
+The preferred way to run the application is through Docker. The standard image supports all GPU backends — you select the backend via an environment variable.
+
+### Python Environment Storage
+
+On first startup, the application automatically downloads and installs the GPU-specific Python/PyTorch environment into the `/data/pyenv` directory inside your data volume. This means:
+
+- **No large image downloads** for GPU backends — only a lightweight image is pulled
+- **Environment persists across image updates** — PyTorch is not re-downloaded unless the required version changes
+- **Configurable location** — if you want to store the Python environment on a separate volume (e.g. a larger disk), map it explicitly and override `Ingest_Upscaler__PythonEnvironmentDirectory`:
 
 ```yaml
-version: '3.9'
+    volumes:
+      - /path/to/store/appdata:/data
+      - /path/to/store/pyenv:/pyenv   # separate volume for the Python environment
+    environment:
+      Ingest_Upscaler__PythonEnvironmentDirectory: /pyenv
+```
 
+### NVIDIA GPU (CUDA)
+
+The default backend. Uses CUDA 11.8-compatible PyTorch wheels.
+
+```yaml
 services:
   mangaingestwithupscaling:
     image: ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest
     restart: unless-stopped
     environment:
       TZ: #your timezone here
+      Ingest_Upscaler__PreferredGpuBackend: CUDA    # or CUDA_12_8 for CUDA 12.8 drivers
       Ingest_Upscaler__SelectedDeviceIndex: 0 # if you have multiple GPUs, you can select which one to use
       Ingest_Upscaler__UseFp16: true # if you want to use fp16 instead of fp32, preferred if you have a GPU that supports it
       Ingest_Upscaler__UseCPU: false # if you want to use the CPU instead of the GPU
@@ -54,8 +73,8 @@ services:
       #Ingest_OIDC__MetadataAddress: # Optional: Full URL to the OIDC discovery document (e.g., https://authentik.yourdomain.com/application/o/your-app/.well-known/openid-configuration)
                                    # Usually not needed if Authority is set correctly.
     volumes:
-      - /path/to/store/appdata:/data # for storing the database and logs
-      - /path/to/store/models:/models # for storing the upscaling models. 
+      - /path/to/store/appdata:/data # for storing the database, logs, and Python environment
+      - /path/to/store/models:/models # for storing the upscaling models.
       # ... other folders you want to be able to access from the container
       - /path/to/ingest:/ingest
       - /path/to/target:/target
@@ -72,35 +91,27 @@ services:
               capabilities: [gpu]
 ```
 
-If you run a ROCm-compatible AMD GPU, you can use the following docker-compose file:
+### AMD GPU (ROCm)
+
+Use the same image and set `Ingest_Upscaler__PreferredGpuBackend: ROCm`:
 
 ```yaml
-version: '3.9'
-
 services:
   mangaingestwithupscaling:
-    image: ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest-rocm
+    image: ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest
     restart: unless-stopped
     environment:
       TZ: #your timezone here
+      Ingest_Upscaler__PreferredGpuBackend: ROCm    # installs ROCm PyTorch on first startup
       Ingest_Upscaler__SelectedDeviceIndex: 0 # if you have multiple GPUs, you can select which one to use
       Ingest_Upscaler__UseFp16: true # if you want to use fp16 instead of fp32, preferred if you have a GPU that supports it
-      Ingest_Upscaler__UseCPU: false # if you want to use the CPU instead of the GPU
       # Kavita integration
       #Ingest_Kavita__BaseUrl: http://kavita:5000 # the base URL of your Kavita instance
       #Ingest_Kavita__ApiKey: #Your API key here
       #Ingest_Kavita__Enabled: True # defaults to false
-      # OIDC Authentication (v0.12.0+)
-      #Ingest_OIDC__Enabled: false # Set to true to enable OIDC authentication
-      #Ingest_OIDC__Authority: # Your OIDC provider's authority URL (e.g., https://authentik.yourdomain.com/application/o/your-app/)
-      #Ingest_OIDC__ClientId: # Your OIDC client ID
-      #Ingest_OIDC__ClientSecret: # Your OIDC client secret
-      #Ingest_OIDC__MetadataAddress: # Optional: Full URL to the OIDC discovery document (e.g., https://authentik.yourdomain.com/application/o/your-app/.well-known/openid-configuration)
-                                   # Usually not needed if Authority is set correctly.
-      # Rest is same as for the CUDA version
     volumes:
-      - /path/to/store/appdata:/data # for storing the database and logs
-      - /path/to/store/models:/models # for storing the upscaling models. 
+      - /path/to/store/appdata:/data # for storing the database, logs, and Python environment
+      - /path/to/store/models:/models # for storing the upscaling models.
       # ... other folders you want to be able to access from the container
       - /path/to/ingest:/ingest
       - /path/to/target:/target
@@ -117,7 +128,50 @@ services:
       - seccomp:unconfined
 ```
 
+> **Note:** The ROCm PyTorch build is large. On first startup, it will be downloaded and installed into your data volume. This may take several minutes.
+
 I do not have an AMD GPU, so I cannot test this. If you have any issues, please open an issue.
+
+### Intel Arc GPU (XPU)
+
+Use the same image and set `Ingest_Upscaler__PreferredGpuBackend: XPU`:
+
+```yaml
+services:
+  mangaingestwithupscaling:
+    image: ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest
+    restart: unless-stopped
+    environment:
+      TZ: #your timezone here
+      Ingest_Upscaler__PreferredGpuBackend: XPU    # installs Intel XPU PyTorch on first startup
+      Ingest_Upscaler__SelectedDeviceIndex: 0
+      # ... other configuration
+    volumes:
+      - /path/to/store/appdata:/data
+      - /path/to/store/models:/models
+      - /path/to/ingest:/ingest
+      - /path/to/target:/target
+    ports:
+      - 8080:8080
+```
+
+### Switching GPU Backends
+
+To switch backends (e.g. from CUDA to CUDA 12.8), change the `Ingest_Upscaler__PreferredGpuBackend` environment variable and restart the container. The old Python environment will be replaced automatically.
+
+| Value | Backend |
+|---|---|
+| `CUDA` | NVIDIA (CUDA 11.8) — default |
+| `CUDA_12_8` | NVIDIA (CUDA 12.8) |
+| `ROCm` | AMD |
+| `XPU` | Intel Arc |
+| `CPU` | CPU-only fallback |
+
+See [GPU Backend Configuration](./docs/GPU_BACKEND_CONFIGURATION.md) for full details.
+
+### Deprecated Backend-Specific Images
+
+The variant image tags (`:latest-cuda-12.8`, `:latest-rocm`, `:latest-xpu`) are **deprecated** and will be removed in a future release. Migrate to the standard image with the appropriate `Ingest_Upscaler__PreferredGpuBackend` environment variable as shown above.
 
 ### Remote-Only Variant
 
@@ -229,7 +283,7 @@ Without this, after being redirected back to the application, you might be faced
 
 ## Building Prerequisites
 
-- .NET 9.0 SDK or later
+- .NET 10.0 SDK or later
 
 ## Running from Source
 
