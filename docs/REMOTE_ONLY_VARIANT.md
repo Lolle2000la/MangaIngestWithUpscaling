@@ -38,7 +38,7 @@ services:
       - "8081:8081"  # gRPC for remote workers (required!)
 ```
 
-> **Note:** The standard image includes Python and ML dependencies, so it is larger than the old remote-only image (~7-8 GB vs ~500 MB). If image size is a concern, you can use the deprecated `-remote-only` tag until it is removed, or build a custom image from the standard one with `Ingest_Upscaler__RemoteOnly=true`.
+> **Note:** The standard image includes `python3` and basic OS libraries, but the heavy ML dependencies (PyTorch, etc.) are downloaded and installed at runtime into the data volume on first startup. When running in remote-only mode, this runtime venv setup is skipped entirely, so the standard image is a good fit for remote-only deployments without any size concerns.
 
 ## Overview
 
