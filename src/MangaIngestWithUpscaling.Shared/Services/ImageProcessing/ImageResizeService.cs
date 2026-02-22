@@ -168,6 +168,7 @@ public class ImageResizeService : IImageResizeService
 
         var needsResize =
             options.MaxDimension.HasValue
+            && options.MaxDimension.Value > 0
             && (
                 image.Width > options.MaxDimension.Value
                 || image.Height > options.MaxDimension.Value
