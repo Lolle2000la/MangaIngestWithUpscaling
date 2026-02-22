@@ -15,11 +15,17 @@ using Microsoft.Extensions.Localization;
 using MudBlazor;
 using MudBlazor.Services;
 using NSubstitute;
+using ReactiveUI.Builder;
 
 namespace MangaIngestWithUpscaling.Tests.UI.Libraries;
 
 public class SimpleComponentTests : BunitContext
 {
+    static SimpleComponentTests()
+    {
+        RxAppBuilder.CreateReactiveUIBuilder().BuildApp();
+    }
+
     private ApplicationDbContext _dbContext = null!;
     private ITaskQueue _mockTaskQueue = null!;
     private IImageFilterService _mockImageFilterService = null!;
