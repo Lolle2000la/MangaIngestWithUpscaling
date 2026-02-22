@@ -261,6 +261,11 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
             StandardErrorEncoding = Encoding.UTF8,
         };
 
+        if (!startInfo.EnvironmentVariables.ContainsKey("USER"))
+        {
+            startInfo.EnvironmentVariables["USER"] = "mangaingest";
+        }
+
         using var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         var errorBuilder = new StringBuilder();
         DateTime lastActivity = DateTime.UtcNow;
@@ -517,6 +522,11 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         process.StartInfo.StandardErrorEncoding = Encoding.UTF8;
         process.StartInfo.WorkingDirectory = Directory.GetParent(environmentPath)!.FullName;
 
+        if (!process.StartInfo.EnvironmentVariables.ContainsKey("USER"))
+        {
+            process.StartInfo.EnvironmentVariables["USER"] = "mangaingest";
+        }
+
         process.Start();
 
         string? line;
@@ -620,6 +630,11 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         process.StartInfo.StandardErrorEncoding = Encoding.UTF8;
         process.StartInfo.WorkingDirectory = Directory.GetParent(environmentPath)!.FullName;
 
+        if (!process.StartInfo.EnvironmentVariables.ContainsKey("USER"))
+        {
+            process.StartInfo.EnvironmentVariables["USER"] = "mangaingest";
+        }
+
         process.Start();
         string? line;
         while (
@@ -695,6 +710,11 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
             process.StartInfo.UseShellExecute = false;
             process.StartInfo.CreateNoWindow = true;
 
+            if (!process.StartInfo.EnvironmentVariables.ContainsKey("USER"))
+            {
+                process.StartInfo.EnvironmentVariables["USER"] = "mangaingest";
+            }
+
             process.Start();
             var output = await process.StandardOutput.ReadToEndAsync();
             await process.WaitForExitAsync();
@@ -723,6 +743,11 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
             process.StartInfo.RedirectStandardError = true;
             process.StartInfo.UseShellExecute = false;
             process.StartInfo.CreateNoWindow = true;
+
+            if (!process.StartInfo.EnvironmentVariables.ContainsKey("USER"))
+            {
+                process.StartInfo.EnvironmentVariables["USER"] = "mangaingest";
+            }
 
             process.Start();
             var output = await process.StandardOutput.ReadToEndAsync();
