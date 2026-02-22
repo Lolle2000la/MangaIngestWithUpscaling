@@ -23,7 +23,7 @@ public class SimpleComponentTests : BunitContext
 {
     static SimpleComponentTests()
     {
-        RxAppBuilder.CreateReactiveUIBuilder().BuildApp();
+        RxAppBuilder.CreateReactiveUIBuilder().WithBlazor().BuildApp();
     }
 
     private ApplicationDbContext _dbContext = null!;

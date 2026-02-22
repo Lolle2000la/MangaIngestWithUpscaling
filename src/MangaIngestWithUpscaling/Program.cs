@@ -27,6 +27,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using MudBlazor.Services;
 using MudBlazor.Translations;
+using ReactiveUI.Builder;
 using Serilog;
 
 // Configure the HTTP client factory to use HTTP/2 for unencrypted connections
@@ -320,6 +321,17 @@ builder.Services.AddAuthorization(options =>
 
 // Add the services used by the app
 builder.Services.RegisterAppServices();
+
+var rxApp = RxAppBuilder.CreateReactiveUIBuilder().WithBlazor().BuildApp();
+
+if (rxApp.MainThreadScheduler != null)
+{
+    builder.Services.AddSingleton(rxApp.MainThreadScheduler);
+}
+if (rxApp.TaskpoolScheduler != null)
+{
+    builder.Services.AddSingleton(rxApp.TaskpoolScheduler);
+}
 
 var app = builder.Build();
 
