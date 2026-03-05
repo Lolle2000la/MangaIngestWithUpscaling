@@ -22,7 +22,7 @@
     <PackageReference Include="AutoRegisterInject" Version="1.4.1" />
     <PackageReference Include="DynamicData" Version="9.4.1" />
     <PackageReference Include="Grpc.AspNetCore" Version="2.76.0" />
-    <PackageReference Include="Humanizer" Version="3.0.1" />
+    <PackageReference Include="Humanizer" Version="3.0.8" />
     <PackageReference
       Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore"
       Version="10.0.3"
