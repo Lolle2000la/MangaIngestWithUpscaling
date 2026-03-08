@@ -284,7 +284,7 @@ else
             return;
         }
 
-        await form.Validate();
+        await form.ValidateAsync();
         if (!isValid)
         {
             Snackbar.Add(Loc["Error_FormValidation"], Severity.Error);
