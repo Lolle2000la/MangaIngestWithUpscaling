@@ -371,20 +371,27 @@ public class MangaMerger(
         }
 
         // Clean up empty subdirectories in all affected library paths
-        _ = Task.Run(() =>
-        {
-            foreach (
-                var uniqueLibraryPath in mergedInto
-                    .SelectMany(m =>
-                        new[] { m.Library?.NotUpscaledLibraryPath, m.Library?.UpscaledLibraryPath }
-                    )
-                    .Where(path => path is not null)
-                    .Distinct()
-            )
+        await Task.Run(
+            () =>
             {
-                FileSystemHelpers.DeleteEmptySubfolders(uniqueLibraryPath!, logger);
-            }
-        });
+                foreach (
+                    var uniqueLibraryPath in mergedInto
+                        .SelectMany(m =>
+                            new[]
+                            {
+                                m.Library?.NotUpscaledLibraryPath,
+                                m.Library?.UpscaledLibraryPath,
+                            }
+                        )
+                        .Where(path => path is not null)
+                        .Distinct()
+                )
+                {
+                    FileSystemHelpers.DeleteEmptySubfolders(uniqueLibraryPath!, logger);
+                }
+            },
+            cancellationToken
+        );
     }
 
     private List<string> GetTitlesToTransfer(Manga sourceManga, Manga targetManga)
