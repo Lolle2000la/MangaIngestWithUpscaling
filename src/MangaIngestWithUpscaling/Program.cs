@@ -76,13 +76,8 @@ var loggingConnectionReadOnlyStringBuilder = new SQLiteConnectionStringBuilder(
 );
 var loggingConnectionReadOnlyString = loggingConnectionReadOnlyStringBuilder.ConnectionString;
 
-// Set WAL mode on both databases as early as possible.
-// For the logging database this must happen before builder.Build(), which is when
-// Serilog.Sinks.SQLite initializes and opens logs.db (it then sets its own journal mode).
-// WAL mode is stored persistently in the database file header and survives connection closes.
-// If the database file doesn't exist yet, this creates it in WAL mode from the start.
-// Cannot use the app logger here (Serilog not yet built), so errors are silently ignored;
-// the post-migration step re-verifies and logs the result for the main database.
+// Set WAL before app startup. This is idempotent and safe for existing databases.
+// Do it before builder.Build() so logs.db is configured before Serilog opens it.
 foreach (
     var earlyDbPath in new[]
     {
@@ -449,12 +444,8 @@ using (var scope = app.Services.CreateScope())
             );
         }
 
-        // Enable WAL mode for resilience against database corruption on unexpected shutdowns
-        // (e.g., during application updates). WAL mode is stored in the database file and
-        // persists across connections, so this only needs to be set once per database.
-        // We read the return value to confirm WAL mode was actually enabled, since SQLite
-        // silently returns the current mode without throwing when the change cannot be made
-        // (e.g., on network file systems).
+        // Re-assert and verify WAL mode for the main database.
+        // SQLite returns the active journal mode, so check the returned value.
         try
         {
             dbContext.Database.OpenConnection();
@@ -484,10 +475,7 @@ using (var scope = app.Services.CreateScope())
             dbContext.Database.CloseConnection();
         }
 
-        // Best-effort: re-apply WAL mode to the logging database after migrations.
-        // Note: Serilog.Sinks.SQLite uses System.Data.SQLite and explicitly manages
-        // its own journal mode, so this may be overridden between server restarts.
-        // However it provides protection during the current run if the PRAGMA succeeds.
+        // Best-effort: re-apply WAL mode for the logging database.
         try
         {
             var loggingDbContext = scope.ServiceProvider.GetRequiredService<LoggingDbContext>();
