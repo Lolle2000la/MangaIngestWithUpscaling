@@ -22,6 +22,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Localization;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
@@ -74,6 +75,30 @@ var loggingConnectionReadOnlyStringBuilder = new SQLiteConnectionStringBuilder(
     loggingConnectionString
 );
 var loggingConnectionReadOnlyString = loggingConnectionReadOnlyStringBuilder.ConnectionString;
+
+// Set WAL before app startup. This is idempotent and safe for existing databases.
+// Do it before builder.Build() so logs.db is configured before Serilog opens it.
+foreach (
+    var earlyDbPath in new[]
+    {
+        Path.GetFullPath(sqliteConnectionStringBuilder.DataSource),
+        Path.GetFullPath(loggingConnectionReadOnlyStringBuilder.DataSource),
+    }
+)
+{
+    try
+    {
+        using var earlyConn = new SqliteConnection($"Data Source={earlyDbPath}");
+        earlyConn.Open();
+        using var earlyCmd = earlyConn.CreateCommand();
+        earlyCmd.CommandText = "PRAGMA journal_mode=WAL";
+        earlyCmd.ExecuteScalar();
+    }
+    catch
+    {
+        // Non-critical: WAL mode will be re-verified with logging after migrations
+    }
+}
 
 //Log.Logger = new LoggerConfiguration()
 //    .ReadFrom.Configuration(builder.Configuration)
@@ -417,6 +442,66 @@ using (var scope = app.Services.CreateScope())
                 ex,
                 "Failed to create upgrade marker file, but migration completed successfully"
             );
+        }
+
+        // Re-assert and verify WAL mode for the main database.
+        // SQLite returns the active journal mode, so check the returned value.
+        try
+        {
+            dbContext.Database.OpenConnection();
+            var mainConn = dbContext.Database.GetDbConnection();
+            using var walCmd = mainConn.CreateCommand();
+            walCmd.CommandText = "PRAGMA journal_mode=WAL";
+            var mode = (string?)await walCmd.ExecuteScalarAsync() ?? "unknown";
+            if (mode == "wal")
+                logger.LogDebug("WAL journal mode enabled for main database.");
+            else
+                logger.LogWarning(
+                    "WAL journal mode could not be enabled for the main database (current mode: {Mode}). "
+                        + "The database may be more susceptible to corruption on unexpected shutdowns.",
+                    mode
+                );
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to enable WAL journal mode for the main database. "
+                    + "The database may be more susceptible to corruption on unexpected shutdowns."
+            );
+        }
+        finally
+        {
+            dbContext.Database.CloseConnection();
+        }
+
+        // Best-effort: re-apply WAL mode for the logging database.
+        try
+        {
+            var loggingDbContext = scope.ServiceProvider.GetRequiredService<LoggingDbContext>();
+            loggingDbContext.Database.OpenConnection();
+            try
+            {
+                var loggingConn = loggingDbContext.Database.GetDbConnection();
+                using var walCmd = loggingConn.CreateCommand();
+                walCmd.CommandText = "PRAGMA journal_mode=WAL";
+                var mode = (string?)await walCmd.ExecuteScalarAsync() ?? "unknown";
+                if (mode == "wal")
+                    logger.LogDebug("WAL journal mode enabled for logging database.");
+                else
+                    logger.LogWarning(
+                        "WAL journal mode could not be enabled for the logging database (current mode: {Mode}).",
+                        mode
+                    );
+            }
+            finally
+            {
+                loggingDbContext.Database.CloseConnection();
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to enable WAL journal mode for logging database.");
         }
 
         if (app.Environment.IsProduction())
