@@ -22,6 +22,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Localization;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
@@ -74,6 +75,35 @@ var loggingConnectionReadOnlyStringBuilder = new SQLiteConnectionStringBuilder(
     loggingConnectionString
 );
 var loggingConnectionReadOnlyString = loggingConnectionReadOnlyStringBuilder.ConnectionString;
+
+// Set WAL mode on both databases as early as possible.
+// For the logging database this must happen before builder.Build(), which is when
+// Serilog.Sinks.SQLite initializes and opens logs.db (it then sets its own journal mode).
+// WAL mode is stored persistently in the database file header and survives connection closes.
+// If the database file doesn't exist yet, this creates it in WAL mode from the start.
+// Cannot use the app logger here (Serilog not yet built), so errors are silently ignored;
+// the post-migration step re-verifies and logs the result for the main database.
+foreach (
+    var earlyDbPath in new[]
+    {
+        Path.GetFullPath(sqliteConnectionStringBuilder.DataSource),
+        Path.GetFullPath(loggingConnectionReadOnlyStringBuilder.DataSource),
+    }
+)
+{
+    try
+    {
+        using var earlyConn = new SqliteConnection($"Data Source={earlyDbPath}");
+        earlyConn.Open();
+        using var earlyCmd = earlyConn.CreateCommand();
+        earlyCmd.CommandText = "PRAGMA journal_mode=WAL";
+        earlyCmd.ExecuteScalar();
+    }
+    catch
+    {
+        // Non-critical: WAL mode will be re-verified with logging after migrations
+    }
+}
 
 //Log.Logger = new LoggerConfiguration()
 //    .ReadFrom.Configuration(builder.Configuration)
@@ -417,6 +447,73 @@ using (var scope = app.Services.CreateScope())
                 ex,
                 "Failed to create upgrade marker file, but migration completed successfully"
             );
+        }
+
+        // Enable WAL mode for resilience against database corruption on unexpected shutdowns
+        // (e.g., during application updates). WAL mode is stored in the database file and
+        // persists across connections, so this only needs to be set once per database.
+        // We read the return value to confirm WAL mode was actually enabled, since SQLite
+        // silently returns the current mode without throwing when the change cannot be made
+        // (e.g., on network file systems).
+        try
+        {
+            dbContext.Database.OpenConnection();
+            var mainConn = dbContext.Database.GetDbConnection();
+            using var walCmd = mainConn.CreateCommand();
+            walCmd.CommandText = "PRAGMA journal_mode=WAL";
+            var mode = (string?)await walCmd.ExecuteScalarAsync() ?? "unknown";
+            if (mode == "wal")
+                logger.LogDebug("WAL journal mode enabled for main database.");
+            else
+                logger.LogWarning(
+                    "WAL journal mode could not be enabled for the main database (current mode: {Mode}). "
+                        + "The database may be more susceptible to corruption on unexpected shutdowns.",
+                    mode
+                );
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to enable WAL journal mode for the main database. "
+                    + "The database may be more susceptible to corruption on unexpected shutdowns."
+            );
+        }
+        finally
+        {
+            dbContext.Database.CloseConnection();
+        }
+
+        // Best-effort: re-apply WAL mode to the logging database after migrations.
+        // Note: Serilog.Sinks.SQLite uses System.Data.SQLite and explicitly manages
+        // its own journal mode, so this may be overridden between server restarts.
+        // However it provides protection during the current run if the PRAGMA succeeds.
+        try
+        {
+            var loggingDbContext = scope.ServiceProvider.GetRequiredService<LoggingDbContext>();
+            loggingDbContext.Database.OpenConnection();
+            try
+            {
+                var loggingConn = loggingDbContext.Database.GetDbConnection();
+                using var walCmd = loggingConn.CreateCommand();
+                walCmd.CommandText = "PRAGMA journal_mode=WAL";
+                var mode = (string?)await walCmd.ExecuteScalarAsync() ?? "unknown";
+                if (mode == "wal")
+                    logger.LogDebug("WAL journal mode enabled for logging database.");
+                else
+                    logger.LogWarning(
+                        "WAL journal mode could not be enabled for the logging database (current mode: {Mode}).",
+                        mode
+                    );
+            }
+            finally
+            {
+                loggingDbContext.Database.CloseConnection();
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to enable WAL journal mode for logging database.");
         }
 
         if (app.Environment.IsProduction())
