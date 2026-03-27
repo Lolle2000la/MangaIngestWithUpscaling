@@ -450,6 +450,10 @@
                 chapter.NewFileName = Path.GetFileNameWithoutExtension(chapter.Chapter.FileName);
             }
         }
+
+        // RowEditCommit is Action<object?> (not EventCallback), so this callback runs fire-and-forget.
+        // StateHasChanged must be called explicitly so the UI reflects the updated data after all async operations complete.
+        StateHasChanged();
     }
 
     private void OnChapterMetadataDiscard(ChapterItem? chapter)
