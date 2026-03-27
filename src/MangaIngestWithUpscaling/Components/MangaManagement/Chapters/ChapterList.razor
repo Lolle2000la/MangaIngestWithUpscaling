@@ -452,8 +452,20 @@
         }
 
         // RowEditCommit is Action<object?> (not EventCallback), so this callback runs fire-and-forget.
-        // StateHasChanged must be called explicitly so the UI reflects the updated data after all async operations complete.
-        StateHasChanged();
+        // InvokeAsync marshals back to the renderer thread; the try/catch guards against the component
+        // being disposed mid-flight (e.g., the user navigated away while the async operations ran).
+        try
+        {
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (ObjectDisposedException)
+        {
+            // Component was disposed before the render could be applied; safe to ignore.
+        }
+        catch (InvalidOperationException)
+        {
+            // Renderer is no longer available (e.g., during shutdown or navigation); safe to ignore.
+        }
     }
 
     private void OnChapterMetadataDiscard(ChapterItem? chapter)

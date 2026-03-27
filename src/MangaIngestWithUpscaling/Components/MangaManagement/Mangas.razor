@@ -351,7 +351,19 @@
 
         // RowEditCommit is Action<object?> (not EventCallback), so this callback runs fire-and-forget.
         // ReloadServerData must be called explicitly so the table reflects the saved state after all async operations complete.
-        await table.ReloadServerData();
+        // The try/catch guards against the component being disposed mid-flight (e.g., the user navigated away).
+        try
+        {
+            await table.ReloadServerData();
+        }
+        catch (ObjectDisposedException)
+        {
+            // Component was disposed before the reload could complete; safe to ignore.
+        }
+        catch (InvalidOperationException)
+        {
+            // Renderer is no longer available (e.g., during shutdown or navigation); safe to ignore.
+        }
     }
 
     public void Dispose()

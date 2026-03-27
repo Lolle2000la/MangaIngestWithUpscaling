@@ -912,6 +912,89 @@ public class ChapterListMergingTests : BunitContext
         );
     }
 
+    [Fact]
+    public async Task ChapterList_InlineEditCommit_ShouldShowUpdatedTitleWithoutNavigation()
+    {
+        // Arrange
+        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+
+        const string initialTitle = "Test Chapter";
+        const string updatedTitle = "Updated Chapter";
+
+        // Initial title is already set up in SetupMocks() to return "Test Chapter".
+        _subMetadataHandler
+            .GetSeriesAndTitleFromComicInfoAsync(Arg.Any<string>())
+            .Returns(Task.FromResult(new ExtractedMetadata("Test Series", initialTitle, "1")));
+
+#pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+        _subMergeCoordinator
+            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .Returns(new MergeActionInfo());
+#pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+
+        IRenderedComponent<ChapterList> component = RenderComponentWithProviders<ChapterList>(
+            parameters => parameters.Add(p => p.Manga, manga)
+        );
+
+        // Verify the initial title is shown in the row template before any editing
+        component.WaitForAssertion(() =>
+        {
+            Assert.True(
+                component.FindAll("td").Any(td => td.TextContent.Contains(initialTitle)),
+                "Initial title should be visible in the table before editing"
+            );
+        });
+
+        // Enter inline edit mode by clicking the first data row that shows the initial title.
+        // The td check distinguishes data rows (using <td>) from header rows (using <th>).
+        IElement? editableRow = component
+            .FindAll("tr")
+            .FirstOrDefault(tr =>
+                tr.QuerySelectorAll("td").Any() && tr.TextContent.Contains(initialTitle)
+            );
+        Assert.NotNull(editableRow);
+        await editableRow.ClickAsync(new MouseEventArgs());
+
+        // Wait for the row editing template to appear (MudInput components render in edit mode)
+        component.WaitForAssertion(() =>
+            Assert.True(
+                component.FindComponents<MudInput<string>>().Count > 0,
+                "MudInput fields should appear once the row enters edit mode"
+            )
+        );
+
+        // Set the chapter title using the first MudInput's ValueChanged EventCallback.
+        // This is the reliable bunit approach for setting bound values — it invokes the
+        // binding's setter directly without triggering DOM-level events that can be misrouted.
+        IRenderedComponent<MudInput<string>> titleInputComponent = component
+            .FindComponents<MudInput<string>>()
+            .First();
+        await component.InvokeAsync(() =>
+            titleInputComponent.Instance.ValueChanged.InvokeAsync(updatedTitle)
+        );
+
+        // Find the commit button by MudBlazor's default English aria-label "Commit edit".
+        // This label is set by MudBlazor's InternalMudLocalizer for LanguageResource.MudTable_CommitRow.
+        IElement? commitButton = component
+            .FindAll("button")
+            .FirstOrDefault(b => b.GetAttribute("aria-label")?.Contains("Commit edit") == true);
+        Assert.NotNull(commitButton);
+        await commitButton.ClickAsync(new MouseEventArgs());
+
+        // Assert: the updated title must appear in the rendered row template after committing,
+        // without any navigation. This is the regression case — without the explicit
+        // InvokeAsync(StateHasChanged) call at the end of the fire-and-forget RowEditCommit
+        // handler, the UI would revert to showing the old title.
+        component.WaitForAssertion(() =>
+        {
+            Assert.True(
+                component.FindAll("td").Any(td => td.TextContent.Contains(updatedTitle)),
+                "Updated title should be visible in the row template after committing the inline "
+                    + "edit without requiring navigation"
+            );
+        });
+    }
+
     #region Helper Methods
 
     private static FoundChapter CreateFoundChapter(string fileName, string chapterNumber)
