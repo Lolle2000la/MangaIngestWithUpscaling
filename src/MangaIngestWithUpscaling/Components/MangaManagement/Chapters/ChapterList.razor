@@ -450,6 +450,15 @@
                 chapter.NewFileName = Path.GetFileNameWithoutExtension(chapter.Chapter.FileName);
             }
         }
+
+        // RowEditCommit is Action<object?>, so async handlers run fire-and-forget. InvokeAsync
+        // marshals back to the renderer; catches handle disposal if the user navigated away.
+        try
+        {
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (ObjectDisposedException) { }
+        catch (InvalidOperationException) { }
     }
 
     private void OnChapterMetadataDiscard(ChapterItem? chapter)

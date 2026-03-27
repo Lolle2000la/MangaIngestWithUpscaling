@@ -348,6 +348,15 @@
             Snackbar.Add($"Error: {e.Message}", Severity.Error);
             Logger.LogError(e, Loc["Error_Saving"], manga.Id);
         }
+
+        // RowEditCommit is Action<object?>, so this runs fire-and-forget. Reload explicitly so
+        // the table reflects saved state; catches handle disposal on navigation.
+        try
+        {
+            await table.ReloadServerData();
+        }
+        catch (ObjectDisposedException) { }
+        catch (InvalidOperationException) { }
     }
 
     public void Dispose()
