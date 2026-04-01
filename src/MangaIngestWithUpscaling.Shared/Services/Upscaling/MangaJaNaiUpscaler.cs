@@ -367,14 +367,16 @@ public class MangaJaNaiUpscaler(
             profile.Name
         );
 
-        TimeSpan scaledTimeout = await ComputeScaledTimeoutAsync(inputPath, cancellationToken);
-
         string arguments = $"--settings \"{configPath}\"";
         try
         {
             // If caller provided a progress reporter, use streaming mode; otherwise run non-streaming
             if (progress is null)
             {
+                TimeSpan scaledTimeout = await ComputeScaledTimeoutAsync(
+                    inputPath,
+                    cancellationToken
+                );
                 string output = await pythonService.RunPythonScript(
                     RunScriptPath,
                     arguments,
@@ -389,6 +391,32 @@ public class MangaJaNaiUpscaler(
                 int? total = null;
                 int current = 0;
                 string? lastPhase = null;
+
+                IReadOnlyList<long> orderedPixelCounts =
+                    await imageResizeService.GetOrderedPixelCountsFromCbzAsync(
+                        inputPath,
+                        cancellationToken
+                    ) ?? [];
+
+                TimeSpan? GetTimeoutForCurrentImage()
+                {
+                    if (current >= orderedPixelCounts.Count)
+                    {
+                        logger.LogDebug(
+                            "Timeout requested for image index {Index} but only {Count} images were read from {CbzPath}; using base timeout",
+                            current,
+                            orderedPixelCounts.Count,
+                            inputPath
+                        );
+                        return sharedConfig.Value.UpscaleTimeout;
+                    }
+
+                    long pixels = orderedPixelCounts[current];
+                    if (pixels <= 0)
+                        return sharedConfig.Value.UpscaleTimeout;
+                    double factor = Math.Max(1.0, pixels / 1_000_000.0);
+                    return sharedConfig.Value.UpscaleTimeout * factor;
+                }
 
                 await pythonService.RunPythonScriptStreaming(
                     RunScriptPath,
@@ -459,7 +487,7 @@ public class MangaJaNaiUpscaler(
                         return Task.CompletedTask;
                     },
                     cancellationToken,
-                    scaledTimeout
+                    GetTimeoutForCurrentImage
                 );
 
                 fileSystem.ApplyPermissions(outputPath);
@@ -497,6 +525,7 @@ public class MangaJaNaiUpscaler(
 
     /// <summary>
     /// Calculates the upscale timeout scaled by the size of the largest image in the CBZ.
+    /// Used for the non-streaming (no-progress) path where per-image timeouts are not available.
     /// The base <see cref="UpscalerConfig.UpscaleTimeout"/> is treated as the per-million-pixel
     /// allowance, so larger images automatically receive proportionally more time.
     /// The timeout is never reduced below the base value.

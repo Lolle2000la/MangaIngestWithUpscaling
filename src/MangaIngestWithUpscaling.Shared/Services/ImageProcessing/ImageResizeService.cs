@@ -139,6 +139,45 @@ public class ImageResizeService : IImageResizeService
         return Task.FromResult(maxPixels);
     }
 
+    public Task<IReadOnlyList<long>> GetOrderedPixelCountsFromCbzAsync(
+        string cbzPath,
+        CancellationToken cancellationToken
+    )
+    {
+        var counts = new List<long>();
+
+        using var zipArchive = ZipFile.OpenRead(cbzPath);
+        foreach (var entry in zipArchive.Entries)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var ext = Path.GetExtension(entry.Name).ToLowerInvariant();
+            if (!SupportedImageExtensions.Contains(ext))
+                continue;
+
+            try
+            {
+                using var stream = entry.Open();
+                using var image = Image.NewFromStream(stream);
+                counts.Add((long)image.Width * image.Height);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Failed to read dimensions of image {Entry} in {CbzPath}; using 0 as placeholder",
+                    entry.Name,
+                    cbzPath
+                );
+                // Include a zero placeholder so the list length stays aligned with the number
+                // of image entries the Python process will iterate.
+                counts.Add(0L);
+            }
+        }
+
+        return Task.FromResult<IReadOnlyList<long>>(counts);
+    }
+
     public void CleanupTempFile(string tempFilePath)
     {
         try

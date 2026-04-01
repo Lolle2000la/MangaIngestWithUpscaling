@@ -45,4 +45,16 @@ public interface IImageResizeService
     /// <param name="cbzPath">Path to the CBZ file</param>
     /// <param name="cancellationToken">Cancellation token</param>
     Task<long> GetMaxPixelCountFromCbzAsync(string cbzPath, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Returns the pixel count (width × height) for each supported image in the CBZ file,
+    /// in the order they appear as zip entries. Entries that cannot be read are skipped.
+    /// Returns an empty list when the archive contains no supported images.
+    /// </summary>
+    /// <param name="cbzPath">Path to the CBZ file</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    Task<IReadOnlyList<long>> GetOrderedPixelCountsFromCbzAsync(
+        string cbzPath,
+        CancellationToken cancellationToken
+    );
 }
