@@ -179,8 +179,8 @@ public class MangaJaNaiUpscalerTests : IDisposable
 
         // Mock Python service to simulate progress output
         _mockImageResize
-            .GetOrderedPixelCountsFromCbzAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<IReadOnlyList<long>>([1_000_000L, 1_000_000L, 1_000_000L]));
+            .GetMaxPixelCountFromCbzAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(1_000_000L));
 
         _mockPythonService
             .RunPythonScriptStreaming(
@@ -792,75 +792,6 @@ public class MangaJaNaiUpscalerTests : IDisposable
         // Assert – base timeout must be used unchanged
         Assert.NotNull(capturedTimeout);
         Assert.Equal(45.0, capturedTimeout!.Value.TotalSeconds, precision: 1);
-    }
-
-    [Fact]
-    [Trait("Category", "Unit")]
-    public async Task Upscale_WithProgress_TimeoutScalesPerImage()
-    {
-        // Arrange
-        var inputPath = Path.Combine(_tempDir, "input.cbz");
-        var outputPath = Path.Combine(_tempDir, "output.cbz");
-        await File.WriteAllTextAsync(
-            inputPath,
-            "dummy content",
-            TestContext.Current.CancellationToken
-        );
-
-        _mockConfig.Value.UpscaleTimeout = TimeSpan.FromMinutes(1); // 1 min per 1 MP
-
-        var profile = new UpscalerProfile
-        {
-            Name = "Test Profile",
-            ScalingFactor = ScaleFactor.TwoX,
-            CompressionFormat = CompressionFormat.Png,
-            Quality = 80,
-        };
-
-        var progress = new Progress<UpscaleProgress>(_ => { });
-
-        _mockMetadataHandling
-            .PagesEqualAsync(Arg.Any<string>(), Arg.Any<string>())
-            .Returns(Task.FromResult(false));
-
-        // Two images: 2 MP (→ 2 min) and 0.5 MP (→ 1 min, clamped to base)
-        _mockImageResize
-            .GetOrderedPixelCountsFromCbzAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
-            .Returns(Task.FromResult<IReadOnlyList<long>>([2_000_000L, 500_000L]));
-
-        var timeoutsObserved = new List<TimeSpan?>();
-        _mockPythonService
-            .RunPythonScriptStreaming(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<Func<string, Task>>(),
-                Arg.Any<CancellationToken>(),
-                Arg.Any<Func<TimeSpan?>?>()
-            )
-            .Returns(async call =>
-            {
-                var onStdout = call.Arg<Func<string, Task>>();
-                var getTimeout = call.Arg<Func<TimeSpan?>?>();
-
-                // Before any progress: current=0, so timeout applies to image 0 (2 MP → 2 min)
-                timeoutsObserved.Add(getTimeout?.Invoke());
-
-                // Image 0 completes; current becomes 1
-                await onStdout("PROGRESS=postprocess_worker_zip_image item1");
-
-                // After first progress: current=1, timeout applies to image 1 (0.5 MP → 1 min)
-                timeoutsObserved.Add(getTimeout?.Invoke());
-            });
-
-        // Act
-        await _upscaler.Upscale(inputPath, outputPath, profile, progress, CancellationToken.None);
-
-        // Assert
-        Assert.Equal(2, timeoutsObserved.Count);
-        Assert.NotNull(timeoutsObserved[0]);
-        Assert.NotNull(timeoutsObserved[1]);
-        Assert.Equal(120.0, timeoutsObserved[0]!.Value.TotalSeconds, precision: 1); // 2 MP → 2 min
-        Assert.Equal(60.0, timeoutsObserved[1]!.Value.TotalSeconds, precision: 1); // 0.5 MP → 1 min (clamped)
     }
 
     [Fact]

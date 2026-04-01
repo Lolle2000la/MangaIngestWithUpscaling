@@ -51,13 +51,12 @@ public record UpscalerConfig
 
     /// <summary>
     ///     Per-million-pixel inactivity timeout used to guard long-running upscaling operations.
-    ///     When progress/streaming is available, this timeout is applied individually to each image.
-    ///     The effective timeout for each image in that case is:
-    ///     <c>effectiveTimeout = UpscaleTimeout × max(1, imagePixelCount / 1_000_000)</c>.
-    ///     For example, with the default of 1 minute, a 2-megapixel image gets 2 minutes,
-    ///     while a 0.5-megapixel image still gets the full 1 minute.
-    ///     When progress/streaming is not used, a single inactivity timeout is computed from the
-    ///     largest image in the batch and applied to the entire upscaling operation.
+    ///     The effective timeout is scaled by the largest image in the archive:
+    ///     <c>effectiveTimeout = UpscaleTimeout × max(1, maxImagePixelCount / 1_000_000)</c>.
+    ///     For example, with the default of 1 minute, an archive whose largest image is 2 MP
+    ///     gets a 2-minute inactivity budget; an archive with only 0.5 MP images still gets
+    ///     the full 1 minute.
+    ///     The timeout fires when the upscaling process produces no output for the computed duration.
     /// </summary>
     public TimeSpan UpscaleTimeout { get; set; } = TimeSpan.FromMinutes(1);
 

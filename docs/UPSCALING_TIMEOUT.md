@@ -8,24 +8,20 @@
 The upscaling timeout controls how long the upscaler waits without receiving any output from the
 underlying Python process before considering the run stuck and aborting it.
 
-The timeout is **per-image, per-million pixels**: each image in the archive gets its own
-inactivity budget proportional to its own pixel count. This ensures that a small image in an
-archive also containing a very large image is not given an unreasonably long timeout.
-
-> **Note:** When progress reporting is disabled or unavailable (non-streaming execution), the
-> upscaler falls back to a single inactivity timeout derived from the largest image in the
-> archive. In that mode, smaller images can effectively share this larger timeout budget.
+The timeout is **scaled by the largest image in the archive**: the pixel count of the biggest
+image determines the inactivity budget for the entire upscaling run, ensuring that large images
+are given adequate time without requiring a fixed, overly conservative timeout.
 
 ### Scaling formula
 
 ```
-effectiveTimeout = UpscaleTimeout × max(1.0, thisImagePixels / 1_000_000)
+effectiveTimeout = UpscaleTimeout × max(1.0, largestImagePixels / 1_000_000)
 ```
 
 Examples with the default `UpscaleTimeout` of 1 minute:
 
-| Image size | Effective timeout |
-|--------------------|-------------------|
+| Largest image in archive | Effective timeout |
+|--------------------------|-------------------|
 | 500 × 800 (0.4 MP) | 1 minute (never reduced below the base) |
 | 1000 × 1000 (1 MP) | 1 minute |
 | 1920 × 1080 (≈2 MP) | ≈2 minutes |
@@ -49,7 +45,7 @@ Set `UpscaleTimeout` in the `Upscaler` section of `appsettings.json`. The value 
 
 ### Default
 
-`00:01:00` (1 minute per million pixels)
+`00:01:00` (1 minute per million pixels of the largest image)
 
 ### Choosing a value
 

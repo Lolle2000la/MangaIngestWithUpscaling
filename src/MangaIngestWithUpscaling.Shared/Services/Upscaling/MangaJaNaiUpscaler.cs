@@ -392,35 +392,10 @@ public class MangaJaNaiUpscaler(
                 int current = 0;
                 string? lastPhase = null;
 
-                IReadOnlyList<long> orderedPixelCounts =
-                    await imageResizeService.GetOrderedPixelCountsFromCbzAsync(
-                        inputPath,
-                        cancellationToken
-                    ) ?? [];
-
-                TimeSpan? GetTimeoutForCurrentImage()
-                {
-                    // Snapshot `current` to avoid a race with the stdout callback that may
-                    // call Interlocked.Increment on it concurrently from a different thread.
-                    int snapshot = Volatile.Read(ref current);
-
-                    if (snapshot >= orderedPixelCounts.Count)
-                    {
-                        logger.LogDebug(
-                            "Timeout requested for image index {Index} but only {Count} images were read from {CbzPath}; using base timeout",
-                            snapshot,
-                            orderedPixelCounts.Count,
-                            inputPath
-                        );
-                        return sharedConfig.Value.UpscaleTimeout;
-                    }
-
-                    long pixels = orderedPixelCounts[snapshot];
-                    if (pixels <= 0)
-                        return sharedConfig.Value.UpscaleTimeout;
-                    double factor = Math.Max(1.0, pixels / 1_000_000.0);
-                    return sharedConfig.Value.UpscaleTimeout * factor;
-                }
+                TimeSpan scaledTimeout = await ComputeScaledTimeoutAsync(
+                    inputPath,
+                    cancellationToken
+                );
 
                 await pythonService.RunPythonScriptStreaming(
                     RunScriptPath,
@@ -474,7 +449,7 @@ public class MangaJaNaiUpscaler(
                                     )
                                 )
                                 {
-                                    Interlocked.Increment(ref current);
+                                    current++;
                                 }
 
                                 progress.Report(
@@ -491,7 +466,7 @@ public class MangaJaNaiUpscaler(
                         return Task.CompletedTask;
                     },
                     cancellationToken,
-                    GetTimeoutForCurrentImage
+                    () => scaledTimeout
                 );
 
                 fileSystem.ApplyPermissions(outputPath);
