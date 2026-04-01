@@ -307,6 +307,8 @@ Without this, after being redirected back to the application, you might be faced
 
 ## Configuration
 
+For a full reference of all upscaler settings and their corresponding environment variables (the recommended approach for Docker deployments), see [Upscaler Configuration](./docs/UPSCALER_CONFIGURATION.md).
+
 The application relies on `appsettings.json` for configuration. Modify the connection strings and other parameters as needed.
 Alternatively, you can use environment variables to override the configuration values.
 

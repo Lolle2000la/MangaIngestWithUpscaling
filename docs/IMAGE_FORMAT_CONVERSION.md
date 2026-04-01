@@ -1,5 +1,8 @@
 # Image Format Conversion Feature
 
+> For a complete overview of all upscaler settings in one place, see
+> [Upscaler Configuration](UPSCALER_CONFIGURATION.md).
+
 ## Overview
 
 The Image Format Conversion feature allows you to automatically convert specific image formats to other formats during the upscaling preprocessing step. This conversion happens on a temporary working copy of the images, so your original files remain unchanged.

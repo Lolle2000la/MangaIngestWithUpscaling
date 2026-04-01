@@ -1,5 +1,8 @@
 # Upscaling Timeout Configuration
 
+> For a complete overview of all upscaler settings in one place, see
+> [Upscaler Configuration](UPSCALER_CONFIGURATION.md).
+
 ## Overview
 
 The upscaling timeout controls how long the upscaler waits without receiving any output from the

@@ -1,5 +1,8 @@
 # GPU Backend Configuration
 
+> For a complete overview of all upscaler settings in one place, see
+> [Upscaler Configuration](UPSCALER_CONFIGURATION.md).
+
 ## Docker Images
 
 ### Standard Image (Recommended)
