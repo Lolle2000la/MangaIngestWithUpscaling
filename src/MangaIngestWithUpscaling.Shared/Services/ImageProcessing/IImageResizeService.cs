@@ -47,9 +47,12 @@ public interface IImageResizeService
     Task<long> GetMaxPixelCountFromCbzAsync(string cbzPath, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Returns the pixel count (width × height) for each supported image in the CBZ file,
-    /// in the order they appear as zip entries. Entries that cannot be read are skipped.
-    /// Returns an empty list when the archive contains no supported images.
+    /// Returns the pixel count (width × height) for each image entry in the CBZ file,
+    /// in the order they appear as zip entries. For entries whose dimensions cannot be read
+    /// (e.g., unsupported or corrupted images), a value of 0 is returned in that position
+    /// to preserve alignment with per-image processing/progress events. The returned list
+    /// therefore has the same length as the sequence of image entries in the archive.
+    /// Returns an empty list when the archive contains no image entries.
     /// </summary>
     /// <param name="cbzPath">Path to the CBZ file</param>
     /// <param name="cancellationToken">Cancellation token</param>

@@ -400,18 +400,22 @@ public class MangaJaNaiUpscaler(
 
                 TimeSpan? GetTimeoutForCurrentImage()
                 {
-                    if (current >= orderedPixelCounts.Count)
+                    // Snapshot `current` to avoid a race with the stdout callback that may
+                    // call Interlocked.Increment on it concurrently from a different thread.
+                    int snapshot = Volatile.Read(ref current);
+
+                    if (snapshot >= orderedPixelCounts.Count)
                     {
                         logger.LogDebug(
                             "Timeout requested for image index {Index} but only {Count} images were read from {CbzPath}; using base timeout",
-                            current,
+                            snapshot,
                             orderedPixelCounts.Count,
                             inputPath
                         );
                         return sharedConfig.Value.UpscaleTimeout;
                     }
 
-                    long pixels = orderedPixelCounts[current];
+                    long pixels = orderedPixelCounts[snapshot];
                     if (pixels <= 0)
                         return sharedConfig.Value.UpscaleTimeout;
                     double factor = Math.Max(1.0, pixels / 1_000_000.0);
@@ -470,7 +474,7 @@ public class MangaJaNaiUpscaler(
                                     )
                                 )
                                 {
-                                    current++;
+                                    Interlocked.Increment(ref current);
                                 }
 
                                 progress.Report(

@@ -12,6 +12,10 @@ The timeout is **per-image, per-million pixels**: each image in the archive gets
 inactivity budget proportional to its own pixel count. This ensures that a small image in an
 archive also containing a very large image is not given an unreasonably long timeout.
 
+> **Note:** When progress reporting is disabled or unavailable (non-streaming execution), the
+> upscaler falls back to a single inactivity timeout derived from the largest image in the
+> archive. In that mode, smaller images can effectively share this larger timeout budget.
+
 ### Scaling formula
 
 ```

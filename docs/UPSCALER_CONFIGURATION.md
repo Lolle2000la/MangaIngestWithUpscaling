@@ -129,7 +129,7 @@ Example — store the Python environment on a separate (larger) volume:
 | Setting | ENV variable | Default | Description |
 |---|---|---|---|
 | `MaxDimensionBeforeUpscaling` | `Ingest_Upscaler__MaxDimensionBeforeUpscaling` | *(disabled)* | Downscale images so that neither width nor height exceeds this value before upscaling. Helps limit VRAM usage. Leave unset or set to `0` to disable. |
-| `UpscaleTimeout` | `Ingest_Upscaler__UpscaleTimeout` | `00:01:00` | Per-image, per-million-pixel inactivity timeout (`hh:mm:ss`). Each image gets its own budget proportional to its own size — see [Upscaling Timeout](UPSCALING_TIMEOUT.md). |
+| `UpscaleTimeout` | `Ingest_Upscaler__UpscaleTimeout` | `00:01:00` | Per-image, per-million-pixel inactivity timeout (`hh:mm:ss`). In streaming modes, each image gets its own budget proportional to its size; in non-streaming modes, a single timeout based on the largest image in the batch is applied instead — see [Upscaling Timeout](UPSCALING_TIMEOUT.md) for details. |
 
 ```yaml
     environment:
