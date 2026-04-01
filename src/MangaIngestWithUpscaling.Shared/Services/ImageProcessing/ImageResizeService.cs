@@ -101,7 +101,7 @@ public class ImageResizeService : IImageResizeService
         }
     }
 
-    public async Task<long> GetMaxPixelCountFromCbzAsync(
+    public Task<long> GetMaxPixelCountFromCbzAsync(
         string cbzPath,
         CancellationToken cancellationToken
     )
@@ -120,10 +120,7 @@ public class ImageResizeService : IImageResizeService
             try
             {
                 using var stream = entry.Open();
-                using var ms = new MemoryStream();
-                await stream.CopyToAsync(ms, cancellationToken);
-
-                using var image = Image.NewFromBuffer(ms.ToArray());
+                using var image = Image.NewFromStream(stream);
                 long pixels = (long)image.Width * image.Height;
                 if (pixels > maxPixels)
                     maxPixels = pixels;
@@ -139,7 +136,7 @@ public class ImageResizeService : IImageResizeService
             }
         }
 
-        return maxPixels;
+        return Task.FromResult(maxPixels);
     }
 
     public void CleanupTempFile(string tempFilePath)
