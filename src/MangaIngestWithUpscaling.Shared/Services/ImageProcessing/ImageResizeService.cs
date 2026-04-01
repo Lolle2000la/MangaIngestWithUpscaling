@@ -101,6 +101,47 @@ public class ImageResizeService : IImageResizeService
         }
     }
 
+    public async Task<long> GetMaxPixelCountFromCbzAsync(
+        string cbzPath,
+        CancellationToken cancellationToken
+    )
+    {
+        long maxPixels = 0;
+
+        using var zipArchive = ZipFile.OpenRead(cbzPath);
+        foreach (var entry in zipArchive.Entries)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var ext = Path.GetExtension(entry.Name).ToLowerInvariant();
+            if (!SupportedImageExtensions.Contains(ext))
+                continue;
+
+            try
+            {
+                using var stream = entry.Open();
+                using var ms = new MemoryStream();
+                await stream.CopyToAsync(ms, cancellationToken);
+
+                using var image = Image.NewFromBuffer(ms.ToArray());
+                long pixels = (long)image.Width * image.Height;
+                if (pixels > maxPixels)
+                    maxPixels = pixels;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Failed to read dimensions of image {Entry} in {CbzPath}",
+                    entry.Name,
+                    cbzPath
+                );
+            }
+        }
+
+        return maxPixels;
+    }
+
     public void CleanupTempFile(string tempFilePath)
     {
         try
