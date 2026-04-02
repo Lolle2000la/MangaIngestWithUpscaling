@@ -504,7 +504,7 @@ public class MangaJaNaiUpscaler(
 
     /// <summary>
     /// Calculates the upscale timeout scaled by the size of the largest image in the CBZ.
-    /// Used for the non-streaming (no-progress) path where per-image timeouts are not available.
+    /// Used by both streaming and non-streaming execution paths.
     /// The base <see cref="UpscalerConfig.UpscaleTimeout"/> is treated as the per-million-pixel
     /// allowance, so larger images automatically receive proportionally more time.
     /// The timeout is never reduced below the base value.

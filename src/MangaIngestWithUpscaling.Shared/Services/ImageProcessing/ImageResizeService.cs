@@ -106,37 +106,43 @@ public class ImageResizeService : IImageResizeService
         CancellationToken cancellationToken
     )
     {
-        long maxPixels = 0;
-
-        using var zipArchive = ZipFile.OpenRead(cbzPath);
-        foreach (var entry in zipArchive.Entries)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var ext = Path.GetExtension(entry.Name).ToLowerInvariant();
-            if (!SupportedImageExtensions.Contains(ext))
-                continue;
-
-            try
+        return Task.Run(
+            () =>
             {
-                using var stream = entry.Open();
-                using var image = Image.NewFromStream(stream);
-                long pixels = (long)image.Width * image.Height;
-                if (pixels > maxPixels)
-                    maxPixels = pixels;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(
-                    ex,
-                    "Failed to read dimensions of image {Entry} in {CbzPath}",
-                    entry.Name,
-                    cbzPath
-                );
-            }
-        }
+                long maxPixels = 0;
 
-        return Task.FromResult(maxPixels);
+                using var zipArchive = ZipFile.OpenRead(cbzPath);
+                foreach (var entry in zipArchive.Entries)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    var ext = Path.GetExtension(entry.Name).ToLowerInvariant();
+                    if (!SupportedImageExtensions.Contains(ext))
+                        continue;
+
+                    try
+                    {
+                        using var stream = entry.Open();
+                        using var image = Image.NewFromStream(stream);
+                        long pixels = (long)image.Width * image.Height;
+                        if (pixels > maxPixels)
+                            maxPixels = pixels;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(
+                            ex,
+                            "Failed to read dimensions of image {Entry} in {CbzPath}",
+                            entry.Name,
+                            cbzPath
+                        );
+                    }
+                }
+
+                return maxPixels;
+            },
+            cancellationToken
+        );
     }
 
     public void CleanupTempFile(string tempFilePath)
