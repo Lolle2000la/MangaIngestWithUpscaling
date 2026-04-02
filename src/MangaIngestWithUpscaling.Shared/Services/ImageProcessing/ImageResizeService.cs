@@ -101,6 +101,62 @@ public class ImageResizeService : IImageResizeService
         }
     }
 
+    public Task<long> GetMaxPixelCountFromCbzAsync(
+        string cbzPath,
+        CancellationToken cancellationToken
+    )
+    {
+        return Task.Run(
+            () =>
+            {
+                long maxPixels = 0;
+
+                try
+                {
+                    using var zipArchive = ZipFile.OpenRead(cbzPath);
+                    foreach (var entry in zipArchive.Entries)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+
+                        var ext = Path.GetExtension(entry.Name).ToLowerInvariant();
+                        if (!SupportedImageExtensions.Contains(ext))
+                            continue;
+
+                        try
+                        {
+                            using var stream = entry.Open();
+                            using var image = Image.NewFromStream(stream);
+                            long pixels = (long)image.Width * image.Height;
+                            if (pixels > maxPixels)
+                                maxPixels = pixels;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(
+                                ex,
+                                "Failed to read dimensions of image {Entry} in {CbzPath}",
+                                entry.Name,
+                                cbzPath
+                            );
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "Failed to open or enumerate CBZ archive {CbzPath}",
+                        cbzPath
+                    );
+
+                    return 0L;
+                }
+                return maxPixels;
+            },
+            cancellationToken
+        );
+    }
+
     public void CleanupTempFile(string tempFilePath)
     {
         try

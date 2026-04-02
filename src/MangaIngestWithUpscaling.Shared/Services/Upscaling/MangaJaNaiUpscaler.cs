@@ -373,11 +373,15 @@ public class MangaJaNaiUpscaler(
             // If caller provided a progress reporter, use streaming mode; otherwise run non-streaming
             if (progress is null)
             {
+                TimeSpan scaledTimeout = await ComputeScaledTimeoutAsync(
+                    inputPath,
+                    cancellationToken
+                );
                 string output = await pythonService.RunPythonScript(
                     RunScriptPath,
                     arguments,
                     cancellationToken,
-                    sharedConfig.Value.UpscaleTimeout
+                    scaledTimeout
                 );
                 fileSystem.ApplyPermissions(outputPath);
                 logger.LogDebug("Upscaling Output {inputPath}: {output}", inputPath, output);
@@ -387,6 +391,11 @@ public class MangaJaNaiUpscaler(
                 int? total = null;
                 int current = 0;
                 string? lastPhase = null;
+
+                TimeSpan scaledTimeout = await ComputeScaledTimeoutAsync(
+                    inputPath,
+                    cancellationToken
+                );
 
                 await pythonService.RunPythonScriptStreaming(
                     RunScriptPath,
@@ -457,7 +466,7 @@ public class MangaJaNaiUpscaler(
                         return Task.CompletedTask;
                     },
                     cancellationToken,
-                    sharedConfig.Value.UpscaleTimeout
+                    scaledTimeout
                 );
 
                 fileSystem.ApplyPermissions(outputPath);
@@ -491,6 +500,41 @@ public class MangaJaNaiUpscaler(
         {
             File.Delete(configPath);
         }
+    }
+
+    /// <summary>
+    /// Calculates the upscale timeout scaled by the size of the largest image in the CBZ.
+    /// Used by both streaming and non-streaming execution paths.
+    /// The base <see cref="UpscalerConfig.UpscaleTimeout"/> is treated as the per-million-pixel
+    /// allowance, so larger images automatically receive proportionally more time.
+    /// The timeout is never reduced below the base value.
+    /// </summary>
+    private async Task<TimeSpan> ComputeScaledTimeoutAsync(
+        string cbzPath,
+        CancellationToken cancellationToken
+    )
+    {
+        long maxPixels = await imageResizeService.GetMaxPixelCountFromCbzAsync(
+            cbzPath,
+            cancellationToken
+        );
+
+        if (maxPixels <= 0)
+            return sharedConfig.Value.UpscaleTimeout;
+
+        double scalingFactor = Math.Max(1.0, maxPixels / 1_000_000.0);
+        TimeSpan scaledTimeout = sharedConfig.Value.UpscaleTimeout * scalingFactor;
+
+        logger.LogDebug(
+            "Scaled upscale timeout for {CbzPath}: {BaseTimeout} × {ScalingFactor:F2} = {ScaledTimeout} (max image: {MaxPixels} px)",
+            cbzPath,
+            sharedConfig.Value.UpscaleTimeout,
+            scalingFactor,
+            scaledTimeout,
+            maxPixels
+        );
+
+        return scaledTimeout;
     }
 
     private async Task<bool> ShouldDownloadPackage(

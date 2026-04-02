@@ -338,7 +338,8 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
                     }
 
                     throw new TimeoutException(
-                        $"Python process timed out after {timeout.Value} of no output:\n" + $"{err}"
+                        $"Python process timed out after {DateTime.UtcNow - lastActivity} of no output (limit: {timeout.Value}):\n"
+                            + $"{err}"
                     );
                 }
             }

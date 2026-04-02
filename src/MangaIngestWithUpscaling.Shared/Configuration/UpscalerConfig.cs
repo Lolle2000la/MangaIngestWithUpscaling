@@ -49,6 +49,15 @@ public record UpscalerConfig
             "Python-Env"
         );
 
+    /// <summary>
+    ///     Per-million-pixel inactivity timeout used to guard long-running upscaling operations.
+    ///     The effective timeout is scaled by the largest image in the archive:
+    ///     <c>effectiveTimeout = UpscaleTimeout × max(1, maxImagePixelCount / 1_000_000)</c>.
+    ///     For example, with the default of 1 minute, an archive whose largest image is 2 MP
+    ///     gets a 2-minute inactivity budget; an archive with only 0.5 MP images still gets
+    ///     the full 1 minute.
+    ///     The timeout fires when the upscaling process produces no output for the computed duration.
+    /// </summary>
     public TimeSpan UpscaleTimeout { get; set; } = TimeSpan.FromMinutes(1);
 
     /// <summary>

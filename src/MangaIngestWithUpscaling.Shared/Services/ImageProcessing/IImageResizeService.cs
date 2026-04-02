@@ -37,4 +37,12 @@ public interface IImageResizeService
     /// </summary>
     /// <param name="tempFilePath">Path to the temporary file to delete</param>
     void CleanupTempFile(string tempFilePath);
+
+    /// <summary>
+    /// Returns the maximum pixel count (width × height) of any single image in the CBZ file.
+    /// Returns 0 if the archive contains no supported images or if all dimension reads fail.
+    /// </summary>
+    /// <param name="cbzPath">Path to the CBZ file</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    Task<long> GetMaxPixelCountFromCbzAsync(string cbzPath, CancellationToken cancellationToken);
 }

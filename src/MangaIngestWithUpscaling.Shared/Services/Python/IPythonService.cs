@@ -52,7 +52,10 @@ public interface IPythonService
     /// <param name="arguments">The arguments to the script</param>
     /// <param name="onStdout">Callback receiving each stdout line as it arrives.</param>
     /// <param name="cancellationToken">A cancellation token that can be used to cancel the operation</param>
-    /// <param name="timeout">A timeout that cancels when there is no stdout activity within the specified duration.</param>
+    /// <param name="timeout">
+    /// Optional inactivity timeout. When set, the process is killed if no output is received
+    /// within the given duration. Pass <c>null</c> to disable the timeout.
+    /// </param>
     Task RunPythonScriptStreaming(
         string script,
         string arguments,
