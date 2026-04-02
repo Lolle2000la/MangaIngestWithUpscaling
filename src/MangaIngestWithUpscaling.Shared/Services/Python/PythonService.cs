@@ -198,7 +198,7 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
                     return Task.CompletedTask;
                 },
                 cancellationToken,
-                timeout.HasValue ? () => timeout : null
+                timeout
             );
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("Python process exited"))
@@ -215,7 +215,7 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         string arguments,
         Func<string, Task> onStdout,
         CancellationToken? cancellationToken = null,
-        Func<TimeSpan?>? getTimeout = null
+        TimeSpan? timeout = null
     )
     {
         if (Environment == null)
@@ -231,7 +231,7 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
             arguments,
             onStdout,
             cancellationToken,
-            getTimeout
+            timeout
         );
     }
 
@@ -241,7 +241,7 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         string arguments,
         Func<string, Task> onStdout,
         CancellationToken? cancellationToken = null,
-        Func<TimeSpan?>? getTimeout = null
+        TimeSpan? timeout = null
     )
     {
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(
@@ -323,11 +323,7 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
             while (!process.HasExited)
             {
                 await Task.Delay(200, cts.Token);
-                var currentTimeout = getTimeout?.Invoke();
-                if (
-                    currentTimeout.HasValue
-                    && DateTime.UtcNow - lastActivity > currentTimeout.Value
-                )
+                if (timeout.HasValue && DateTime.UtcNow - lastActivity > timeout.Value)
                 {
                     try
                     {
@@ -342,7 +338,7 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
                     }
 
                     throw new TimeoutException(
-                        $"Python process timed out after {DateTime.UtcNow - lastActivity} of no output (limit: {currentTimeout.Value}):\n"
+                        $"Python process timed out after {DateTime.UtcNow - lastActivity} of no output (limit: {timeout.Value}):\n"
                             + $"{err}"
                     );
                 }

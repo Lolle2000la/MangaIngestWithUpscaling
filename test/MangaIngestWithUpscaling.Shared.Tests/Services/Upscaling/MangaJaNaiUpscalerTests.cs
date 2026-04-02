@@ -188,7 +188,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
                 Arg.Any<string>(),
                 Arg.Any<Func<string, Task>>(),
                 Arg.Any<CancellationToken>(),
-                Arg.Any<Func<TimeSpan?>?>()
+                Arg.Any<TimeSpan?>()
             )
             .Returns(async call =>
             {
@@ -279,7 +279,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
                 Arg.Any<string>(),
                 Arg.Any<Func<string, Task>>(),
                 Arg.Any<CancellationToken>(),
-                Arg.Any<Func<TimeSpan?>?>()
+                Arg.Any<TimeSpan?>()
             );
 
         // Verify output file still exists (wasn't deleted)

@@ -466,7 +466,7 @@ public class MangaJaNaiUpscaler(
                         return Task.CompletedTask;
                     },
                     cancellationToken,
-                    () => scaledTimeout
+                    scaledTimeout
                 );
 
                 fileSystem.ApplyPermissions(outputPath);
