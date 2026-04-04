@@ -95,7 +95,7 @@
     />
     <PackageReference
       Include="NetVips.Native.linux-arm64"
-      Version="8.18.1"
+      Version="8.18.2"
       Condition="'$(RuntimeIdentifier)' == 'linux-arm64'"
     />
     <PackageReference
