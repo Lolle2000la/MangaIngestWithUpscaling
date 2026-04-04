@@ -6,7 +6,7 @@
   "packageRules": [
     {
       "description": "Bundle all NetVips updates",
-      "matchPackageNames": ["NetVips*"],
+      "matchPackageNames": ["/netvips/"],
       "automerge": true
     },
     {
