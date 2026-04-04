@@ -121,7 +121,7 @@
     <!-- Fallback for AnyCPU builds - includes all platforms -->
     <PackageReference
       Include="NetVips.Native"
-      Version="8.18.1"
+      Version="8.18.2"
       Condition="'$(RuntimeIdentifier)' == '' OR '$(RuntimeIdentifier)' == 'any'"
     />
     <PackageReference
