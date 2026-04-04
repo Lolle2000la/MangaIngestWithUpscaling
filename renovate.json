@@ -6,32 +6,38 @@
   "packageRules": [
     {
       "description": "Bundle all NetVips updates",
-      "matchPackageNames": ["/netvips/"],
+      "matchPackageNames": ["NetVips*"],
+      "groupName": "NetVips",
       "automerge": true
     },
     {
       "description": "Bundle all ReactiveUI updates",
       "matchPackageNames": ["ReactiveUI", "ReactiveUI.Blazor", "ReactiveUI*"],
+      "groupName": "ReactiveUI",
       "automerge": true
     },
     {
       "description": "Bundle all MudBlazor updates",
       "matchPackageNames": ["MudBlazor*"],
+      "groupName": "MudBlazor",
       "automerge": true
     },
     {
       "description": "Bundle all EFCore updates",
       "matchPackageNames": ["Microsoft.EntityFrameworkCore*"],
+      "groupName": "Entity Framework Core",
       "automerge": true
     },
     {
       "description": "Bundle all ASP.NET Core updates",
       "matchPackageNames": ["Microsoft.AspNetCore*"],
+      "groupName": "ASP.NET Core",
       "automerge": true
     },
     {
       "description": "Bundle all Serilog updates",
       "matchPackageNames": ["Serilog*"],
+      "groupName": "Serilog",
       "automerge": true
     },
     {
