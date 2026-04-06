@@ -567,8 +567,9 @@ public class ImageResizeService : IImageResizeService
 
         // Flatten alpha before converting to greyscale so alpha does not produce an extra band
         // that would cause WriteToMemory to return w*h*2 bytes and overflow the Complex array.
-        using Image flat = crop.HasAlpha() ? crop.Flatten() : crop.Copy();
-        using Image grey = flat.Colourspace(Enums.Interpretation.Bw);
+        using Image? flattenedCrop = crop.HasAlpha() ? crop.Flatten() : null;
+        Image fftSource = flattenedCrop ?? crop;
+        using Image grey = fftSource.Colourspace(Enums.Interpretation.Bw);
 
         using Image uchar = grey.Cast(Enums.BandFormat.Uchar);
         byte[] pixels = uchar.WriteToMemory<byte>();
