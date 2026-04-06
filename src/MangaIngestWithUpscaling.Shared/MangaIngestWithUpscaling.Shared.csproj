@@ -9,6 +9,7 @@
   <ItemGroup>
     <PackageReference Include="AutoRegisterInject" Version="1.4.1" />
     <PackageReference Include="Humanizer.Core" Version="3.0.10" />
+    <PackageReference Include="MathNet.Numerics" Version="5.0.0" />
     <PackageReference Include="Microsoft.Build" Version="18.4.0" />
     <PackageReference Include="Microsoft.Build.Framework" Version="18.4.0" />
     <PackageReference Include="Microsoft.Build.Tasks.Core" Version="18.4.0" />

@@ -64,4 +64,10 @@
   <data name="Error_MaxDimensionMustBePositive" xml:space="preserve">
     <value>最大寸法は0より大きい必要があります</value>
   </data>
+  <data name="Error_SmartDownscaleThresholdMustBePositive" xml:space="preserve">
+    <value>SmartDownscaleThresholdは0より大きい必要があります</value>
+  </data>
+  <data name="Error_SmartDownscaleFactorOutOfRange" xml:space="preserve">
+    <value>SmartDownscaleFactorは(0, 1)の範囲内である必要があります</value>
+  </data>
 </root>

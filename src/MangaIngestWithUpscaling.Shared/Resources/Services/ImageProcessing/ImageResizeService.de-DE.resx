@@ -64,4 +64,10 @@
   <data name="Error_MaxDimensionMustBePositive" xml:space="preserve">
     <value>Die maximale Abmessung muss größer als 0 sein</value>
   </data>
+  <data name="Error_SmartDownscaleThresholdMustBePositive" xml:space="preserve">
+    <value>SmartDownscaleThreshold muss größer als 0 sein</value>
+  </data>
+  <data name="Error_SmartDownscaleFactorOutOfRange" xml:space="preserve">
+    <value>SmartDownscaleFactor muss im Bereich (0, 1) liegen</value>
+  </data>
 </root>

@@ -7,6 +7,7 @@ first as an **environment variable** and then as the equivalent `appsettings.jso
 > **See also:** detailed deep-dives in
 > [GPU Backend Configuration](GPU_BACKEND_CONFIGURATION.md) ·
 > [Image Format Conversion](IMAGE_FORMAT_CONVERSION.md) ·
+> [Smart Downscale](SMART_DOWNSCALE.md) ·
 > [Upscaling Timeout](UPSCALING_TIMEOUT.md) ·
 > [Remote-Only Variant](REMOTE_ONLY_VARIANT.md)
 
@@ -130,6 +131,9 @@ Example — store the Python environment on a separate (larger) volume:
 |---|---|---|---|
 | `MaxDimensionBeforeUpscaling` | `Ingest_Upscaler__MaxDimensionBeforeUpscaling` | *(disabled)* | Downscale images so that neither width nor height exceeds this value before upscaling. Helps limit VRAM usage. Leave unset or set to `0` to disable. |
 | `UpscaleTimeout` | `Ingest_Upscaler__UpscaleTimeout` | `00:01:00` | Per-million-pixel inactivity timeout (`hh:mm:ss`), scaled by the largest image in the archive — see [Upscaling Timeout](UPSCALING_TIMEOUT.md). |
+| `EnableSmartDownscale` | `Ingest_Upscaler__EnableSmartDownscale` | `false` | Detect and downscale cheaply-upscaled images before AI upscaling — see [Smart Downscale](SMART_DOWNSCALE.md). |
+| `SmartDownscaleThreshold` | `Ingest_Upscaler__SmartDownscaleThreshold` | `15.0` | Laplacian std-dev below which an image is considered cheaply upscaled. Lower = stricter; higher = more aggressive. |
+| `SmartDownscaleFactor` | `Ingest_Upscaler__SmartDownscaleFactor` | `0.75` | Fallback scale factor (e.g. `0.75` = 75 %) used when the FFT cliff detector finds no clear cutoff frequency. |
 
 ```yaml
     environment:
@@ -198,6 +202,9 @@ to your `appsettings.json`:
     "ForceAcceptExistingEnvironment": false,
     "UpscaleTimeout": "00:01:00",
     "MaxDimensionBeforeUpscaling": null,
+    "EnableSmartDownscale": false,
+    "SmartDownscaleThreshold": 15.0,
+    "SmartDownscaleFactor": 0.75,
     "ImageFormatConversionRules": [
       { "FromFormat": ".png",  "ToFormat": ".jpg", "Quality": 98 },
       { "FromFormat": ".avif", "ToFormat": ".jpg", "Quality": 98 }
@@ -214,6 +221,7 @@ Environment variables always take precedence over `appsettings.json` values.
 
 - [GPU Backend Configuration](GPU_BACKEND_CONFIGURATION.md) — auto-detection details, PyTorch version matrix, environment recreation logic
 - [Image Format Conversion](IMAGE_FORMAT_CONVERSION.md) — supported formats, quality settings, troubleshooting
+- [Smart Downscale](SMART_DOWNSCALE.md) — detecting and correcting cheaply-upscaled source images
 - [Upscaling Timeout](UPSCALING_TIMEOUT.md) — per-pixel scaling formula and how to tune it
 - [Remote-Only Variant](REMOTE_ONLY_VARIANT.md) — running without local ML dependencies
 - [Remote Worker](REMOTE_WORKER.md) — setting up a dedicated upscaling machine
