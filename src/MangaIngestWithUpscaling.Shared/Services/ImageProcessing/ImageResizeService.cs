@@ -451,9 +451,9 @@ public class ImageResizeService : IImageResizeService
     /// </para>
     /// </summary>
     /// <returns>
-    /// A <see cref="NetVips.Image"/> that the caller must dispose, plus the actual pixel
-    /// dimensions of the returned tile (which may be smaller than
-    /// <see cref="SmartDownscaleCropSize"/> near the image boundary).
+    /// A <see cref="NetVips.Image"/> containing the selected crop that the caller must
+    /// dispose. The returned tile may be smaller than
+    /// <see cref="SmartDownscaleCropSize"/> near the image boundary.
     /// </returns>
     private static Image FindContentCrop(Image image)
     {
