@@ -287,12 +287,26 @@ public class ImageResizeService : IImageResizeService
             if (sharpness < options.SmartDownscaleThreshold)
             {
                 // Secondary check (precise): FFT cliff detection to find the exact scale factor.
-                double? fftFactor = ComputeFftDownscaleFactor(image, cancellationToken);
+                // OperationCanceledException is caught here so that a mid-FFT cancellation gracefully
+                // falls back to the configured factor rather than surfacing as a processing error.
+                double? fftFactor = null;
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    try
+                    {
+                        fftFactor = ComputeFftDownscaleFactor(image, cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        fftFactor = null;
+                    }
+                }
+
                 if (fftFactor.HasValue)
                 {
                     _logger.LogInformation(
                         "Image {ImagePath} appears cheaply upscaled (sharpness {StdDev:F2} < {Threshold}); "
-                            + "FFT cliff detected at {FftFactor:P0} of Nyquist – will downscale by {FftFactor:F3}",
+                            + "FFT cliff detected at {FftPercent:P0} of Nyquist – will downscale by {FftFactor:F3}",
                         imagePath,
                         sharpness,
                         options.SmartDownscaleThreshold,
@@ -329,40 +343,40 @@ public class ImageResizeService : IImageResizeService
 
         Image processedImage = image;
 
-        if (needsResize)
+        // Apply both max-dimension and smart-downscale constraints in one resize pass so the
+        // image is only resampled once (each generation loses quality). We take the more
+        // restrictive (smaller) of the two scale factors.
+        if (needsResize || needsSmartDownscale)
         {
-            var (newWidth, newHeight) = CalculateNewDimensions(
-                image.Width,
-                image.Height,
-                options.MaxDimension!.Value
-            );
+            double scaleFactor = 1.0;
+
+            if (needsResize)
+            {
+                var (newWidth, newHeight) = CalculateNewDimensions(
+                    image.Width,
+                    image.Height,
+                    options.MaxDimension!.Value
+                );
+                scaleFactor = (double)newWidth / image.Width;
+            }
+
+            if (needsSmartDownscale)
+                scaleFactor = Math.Min(scaleFactor, smartDownscaleFactor);
+
+            int targetWidth = (int)Math.Round(image.Width * scaleFactor);
+            int targetHeight = (int)Math.Round(image.Height * scaleFactor);
 
             _logger.LogDebug(
-                "Resizing image {ImagePath} from {OriginalWidth}x{OriginalHeight} to {NewWidth}x{NewHeight}",
+                "Resizing image {ImagePath} from {OriginalWidth}x{OriginalHeight} to {NewWidth}x{NewHeight} (scale {ScaleFactor:F3})",
                 imagePath,
                 image.Width,
                 image.Height,
-                newWidth,
-                newHeight
+                targetWidth,
+                targetHeight,
+                scaleFactor
             );
 
-            processedImage = image.Resize((double)newWidth / image.Width);
-        }
-
-        // Applied after any explicit resize; Cubic kernel avoids ringing artefacts.
-        if (needsSmartDownscale)
-        {
-            Image source = processedImage;
-            processedImage = source.Resize(smartDownscaleFactor, kernel: Enums.Kernel.Cubic);
-            if (source != image)
-                source.Dispose();
-
-            _logger.LogDebug(
-                "Smart-downscaled {ImagePath} to {NewWidth}x{NewHeight}",
-                imagePath,
-                processedImage.Width,
-                processedImage.Height
-            );
+            processedImage = image.Resize(scaleFactor, kernel: Enums.Kernel.Cubic);
         }
 
         if (needsFormatConversion)
