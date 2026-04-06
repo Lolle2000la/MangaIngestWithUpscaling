@@ -13,8 +13,8 @@ namespace MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
 [RegisterScoped]
 public class ImageResizeService(
     ILogger<ImageResizeService> logger,
-    IStringLocalizer<ImageResizeService> localizer)
-    : IImageResizeService
+    IStringLocalizer<ImageResizeService> localizer
+) : IImageResizeService
 {
     private static readonly string[] SupportedImageExtensions =
         ImageConstants.SupportedImageExtensions.ToArray();
