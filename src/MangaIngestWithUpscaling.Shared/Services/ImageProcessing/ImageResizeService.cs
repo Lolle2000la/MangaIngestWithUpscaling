@@ -239,7 +239,9 @@ public class ImageResizeService : IImageResizeService
         var needsFormatConversion = conversionRule != null;
 
         // Smart downscale: detect cheaply-upscaled images and reduce them before AI upscaling.
+        // Primary check (fast): Laplacian variance. If suspicious, fall through to FFT analysis.
         bool needsSmartDownscale = false;
+        double smartDownscaleFactor = options.SmartDownscaleFactor;
         if (options.EnableSmartDownscale)
         {
             double sharpness = ComputeLaplacianStdDev(image);
@@ -251,13 +253,32 @@ public class ImageResizeService : IImageResizeService
             );
             if (sharpness < options.SmartDownscaleThreshold)
             {
-                _logger.LogInformation(
-                    "Image {ImagePath} appears cheaply upscaled (sharpness {StdDev:F2} < {Threshold}); will downscale by {Factor}",
-                    imagePath,
-                    sharpness,
-                    options.SmartDownscaleThreshold,
-                    options.SmartDownscaleFactor
-                );
+                // Secondary check (precise): FFT cliff detection to find the exact scale factor.
+                double? fftFactor = ComputeFftDownscaleFactor(image);
+                if (fftFactor.HasValue)
+                {
+                    _logger.LogInformation(
+                        "Image {ImagePath} appears cheaply upscaled (sharpness {StdDev:F2} < {Threshold}); "
+                            + "FFT cliff detected at {FftFactor:P0} of Nyquist – will downscale by {FftFactor:F3}",
+                        imagePath,
+                        sharpness,
+                        options.SmartDownscaleThreshold,
+                        fftFactor.Value,
+                        fftFactor.Value
+                    );
+                    smartDownscaleFactor = fftFactor.Value;
+                }
+                else
+                {
+                    _logger.LogInformation(
+                        "Image {ImagePath} appears cheaply upscaled (sharpness {StdDev:F2} < {Threshold}); "
+                            + "FFT found no clear cliff, falling back to configured factor {Factor}",
+                        imagePath,
+                        sharpness,
+                        options.SmartDownscaleThreshold,
+                        options.SmartDownscaleFactor
+                    );
+                }
                 needsSmartDownscale = true;
             }
         }
@@ -299,9 +320,8 @@ public class ImageResizeService : IImageResizeService
         // Apply smart downscale (after any explicit resize, using Kernel.Cubic for clean results)
         if (needsSmartDownscale)
         {
-            double factor = options.SmartDownscaleFactor;
             Image source = processedImage;
-            processedImage = source.Resize(factor, kernel: Enums.Kernel.Cubic);
+            processedImage = source.Resize(smartDownscaleFactor, kernel: Enums.Kernel.Cubic);
             if (source != image)
                 source.Dispose();
 
@@ -392,8 +412,7 @@ public class ImageResizeService : IImageResizeService
         using Image crop = image.ExtractArea(cropX, cropY, cropW, cropH);
 
         // Convert to single-band (grayscale) so the Laplacian is unambiguous.
-        using Image grey =
-            crop.Bands > 1 ? crop.Colourspace(Enums.Interpretation.Bw) : crop.Copy();
+        using Image grey = crop.Bands > 1 ? crop.Colourspace(Enums.Interpretation.Bw) : crop.Copy();
 
         // A mild Gaussian blur (σ ≈ 0.5) suppresses screentone halftone dots so they don't
         // inflate the sharpness score and trigger false negatives.
@@ -416,6 +435,132 @@ public class ImageResizeService : IImageResizeService
         using Image stats = laplacian.Stats();
         double stdDev = stats.Getpoint(5, 0)[0];
         return Math.Abs(stdDev);
+    }
+
+    /// <summary>
+    /// Uses a forward FFT on a greyscale centre crop to find the "frequency cliff" that indicates
+    /// a cheap (bicubic/bilinear) upscale. When an image has been upscaled, its power spectrum
+    /// contains a dead zone above the original Nyquist frequency; native images taper off gradually
+    /// all the way to the true Nyquist.
+    /// <para>
+    /// Returns the inferred scale factor s ∈ (0, 1) – i.e. the ratio of the original resolution
+    /// to the current resolution – or <c>null</c> when no clear cliff is detected (native image,
+    /// indeterminate), or when the underlying libvips build does not include FFT support.
+    /// The caller should fall back to the configured
+    /// <see cref="ImagePreprocessingOptions.SmartDownscaleFactor"/> in that case.
+    /// </para>
+    /// </summary>
+    private static double? ComputeFftDownscaleFactor(Image image)
+    {
+        try
+        {
+            return ComputeFftDownscaleFactorCore(image);
+        }
+        catch (VipsException)
+        {
+            // FFT is not available in this libvips build (requires FFTW). Return null so the
+            // caller falls back to the configured SmartDownscaleFactor.
+            return null;
+        }
+    }
+
+    private static double? ComputeFftDownscaleFactorCore(Image image)
+    {
+        const int cropSize = 512;
+        int cropX = Math.Max(0, (image.Width - cropSize) / 2);
+        int cropY = Math.Max(0, (image.Height - cropSize) / 2);
+        int cropW = Math.Min(cropSize, image.Width);
+        int cropH = Math.Min(cropSize, image.Height);
+
+        using Image crop = image.ExtractArea(cropX, cropY, cropW, cropH);
+        using Image grey = crop.Bands > 1 ? crop.Colourspace(Enums.Interpretation.Bw) : crop.Copy();
+
+        // FFT requires a float input; output is DPCOMPLEX regardless of input precision.
+        using Image floatImg = grey.Cast(Enums.BandFormat.Float);
+
+        // Forward FFT: complex output (DPCOMPLEX), DC at (0, 0).
+        using Image fft = floatImg.Fwfft();
+
+        // Convert complex to real magnitude (DOUBLE format).
+        using Image magnitude = fft.Abs();
+
+        // Write magnitude to a flat buffer for C# analysis.
+        // The image is DOUBLE format (8 bytes/pixel), so we read as double[].
+        double[] buffer = magnitude.WriteToMemory<double>();
+        int w = magnitude.Width;
+        int h = magnitude.Height;
+
+        // Build a radial power profile (mean magnitude at each integer radius from DC).
+        // Pixels in the second half of each axis represent negative frequencies and are
+        // mapped back to their positive-frequency equivalent via modular distance.
+        int maxRadius = Math.Min(w, h) / 2;
+        double[] radialSum = new double[maxRadius + 1];
+        int[] radialCount = new int[maxRadius + 1];
+
+        for (int y = 0; y < h; y++)
+        {
+            int dy = y <= h / 2 ? y : h - y;
+            for (int x = 0; x < w; x++)
+            {
+                int dx = x <= w / 2 ? x : w - x;
+                int r = (int)Math.Round(Math.Sqrt((double)dx * dx + (double)dy * dy));
+                if (r <= maxRadius)
+                {
+                    radialSum[r] += buffer[y * w + x];
+                    radialCount[r]++;
+                }
+            }
+        }
+
+        // Average magnitude per shell (skip r=0 which is the DC component).
+        double[] profile = new double[maxRadius + 1];
+        for (int r = 1; r <= maxRadius; r++)
+            profile[r] = radialCount[r] > 0 ? radialSum[r] / radialCount[r] : 0.0;
+
+        // The "noise floor" is the average energy in the outermost 10 % of the spectrum.
+        int outerStart = (int)(maxRadius * 0.9);
+        double noiseFloor = 0.0;
+        int outerCount = 0;
+        for (int r = outerStart; r <= maxRadius; r++)
+        {
+            noiseFloor += profile[r];
+            outerCount++;
+        }
+        if (outerCount > 0)
+            noiseFloor /= outerCount;
+
+        // Cliff threshold: energy must be significantly above the noise floor.
+        // We use 6× the noise floor, clamped to at least 1 % of the non-DC peak.
+        double peakNonDC = 0.0;
+        for (int r = 1; r <= maxRadius; r++)
+            if (profile[r] > peakNonDC)
+                peakNonDC = profile[r];
+
+        double cliffThreshold = Math.Max(noiseFloor * 6.0, peakNonDC * 0.01);
+
+        // The cliff is the highest radius where the profile is still above the threshold.
+        int cliffRadius = -1;
+        for (int r = maxRadius; r >= 1; r--)
+        {
+            if (profile[r] >= cliffThreshold)
+            {
+                cliffRadius = r;
+                break;
+            }
+        }
+
+        if (cliffRadius < 0)
+            return null;
+
+        double scaleFactor = (double)cliffRadius / maxRadius;
+
+        // Only act if the cliff is meaningfully below Nyquist (i.e. clear upscale detected).
+        // A scale factor above 0.9 is treated as "native" and returned as null so the caller
+        // skips the downscale.
+        if (scaleFactor >= 0.9)
+            return null;
+
+        return Math.Clamp(scaleFactor, 0.25, 0.95);
     }
 
     private void SaveImageWithFormat(
