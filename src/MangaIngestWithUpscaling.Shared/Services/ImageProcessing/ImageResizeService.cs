@@ -16,10 +16,23 @@ public class ImageResizeService : IImageResizeService
         ImageConstants.SupportedImageExtensions.ToArray();
 
     /// <summary>
-    /// Size of the center crop (in pixels, both width and height) used for the sharpness and FFT
-    /// checks in the smart downscale analysis. Keeping this at 512 balances accuracy and speed.
+    /// Side length (px) of the square centre crop used for the Laplacian sharpness check and
+    /// FFT cliff detection. 512 px balances accuracy against per-image CPU cost.
     /// </summary>
     private const int SmartDownscaleCropSize = 512;
+
+    /// <summary>
+    /// Cached to avoid a native libvips allocation per image. Intentionally not disposed:
+    /// static fields have process lifetime and are not eligible for deterministic disposal.
+    /// </summary>
+    private static readonly Image LaplacianMask = Image.NewFromArray(
+        new int[,]
+        {
+            { 0, 1, 0 },
+            { 1, -4, 1 },
+            { 0, 1, 0 },
+        }
+    );
 
     private readonly IFileSystem _fileSystem;
     private readonly ILogger<ImageResizeService> _logger;
@@ -68,7 +81,25 @@ public class ImageResizeService : IImageResizeService
             );
         }
 
-        // Create temporary directory for processing
+        if (options.EnableSmartDownscale)
+        {
+            if (options.SmartDownscaleThreshold <= 0)
+            {
+                throw new ArgumentException(
+                    _localizer["Error_SmartDownscaleThresholdMustBePositive"],
+                    nameof(options)
+                );
+            }
+
+            if (options.SmartDownscaleFactor <= 0 || options.SmartDownscaleFactor >= 1)
+            {
+                throw new ArgumentException(
+                    _localizer["Error_SmartDownscaleFactorOutOfRange"],
+                    nameof(options)
+                );
+            }
+        }
+
         string tempDir = Path.Combine(Path.GetTempPath(), $"manga_preprocess_{Guid.NewGuid()}");
         string tempCbzPath = Path.Combine(
             Path.GetTempPath(),
@@ -87,13 +118,10 @@ public class ImageResizeService : IImageResizeService
                 options.EnableSmartDownscale
             );
 
-            // Extract CBZ to temporary directory
             ZipFile.ExtractToDirectory(inputCbzPath, tempDir);
 
-            // Process all images in the extracted directory
             await ProcessImagesInDirectory(tempDir, options, cancellationToken);
 
-            // Create new CBZ with processed images
             ZipFile.CreateFromDirectory(tempDir, tempCbzPath);
 
             _logger.LogDebug("Created preprocessed temporary CBZ at {TempPath}", tempCbzPath);
@@ -102,7 +130,6 @@ public class ImageResizeService : IImageResizeService
         }
         finally
         {
-            // Clean up temporary extraction directory
             if (Directory.Exists(tempDir))
             {
                 Directory.Delete(tempDir, true);
@@ -228,7 +255,6 @@ public class ImageResizeService : IImageResizeService
         CancellationToken cancellationToken
     )
     {
-        // Load image using NetVips
         using var image = Image.NewFromFile(imagePath);
 
         var needsResize =
@@ -246,8 +272,7 @@ public class ImageResizeService : IImageResizeService
 
         var needsFormatConversion = conversionRule != null;
 
-        // Smart downscale: detect cheaply-upscaled images and reduce them before AI upscaling.
-        // Primary check (fast): Laplacian variance. If suspicious, fall through to FFT analysis.
+        // Fast Laplacian check first; if suspicious, confirm with FFT cliff detection.
         bool needsSmartDownscale = false;
         double smartDownscaleFactor = options.SmartDownscaleFactor;
         if (options.EnableSmartDownscale)
@@ -262,7 +287,7 @@ public class ImageResizeService : IImageResizeService
             if (sharpness < options.SmartDownscaleThreshold)
             {
                 // Secondary check (precise): FFT cliff detection to find the exact scale factor.
-                double? fftFactor = ComputeFftDownscaleFactor(image);
+                double? fftFactor = ComputeFftDownscaleFactor(image, cancellationToken);
                 if (fftFactor.HasValue)
                 {
                     _logger.LogInformation(
@@ -304,7 +329,6 @@ public class ImageResizeService : IImageResizeService
 
         Image processedImage = image;
 
-        // Apply resizing if needed
         if (needsResize)
         {
             var (newWidth, newHeight) = CalculateNewDimensions(
@@ -325,7 +349,7 @@ public class ImageResizeService : IImageResizeService
             processedImage = image.Resize((double)newWidth / image.Width);
         }
 
-        // Apply smart downscale (after any explicit resize, using Kernel.Cubic for clean results)
+        // Applied after any explicit resize; Cubic kernel avoids ringing artefacts.
         if (needsSmartDownscale)
         {
             Image source = processedImage;
@@ -341,7 +365,6 @@ public class ImageResizeService : IImageResizeService
             );
         }
 
-        // Apply format conversion if needed
         if (needsFormatConversion)
         {
             string targetExtension = conversionRule!.ToFormat.ToLowerInvariant();
@@ -374,7 +397,6 @@ public class ImageResizeService : IImageResizeService
                 targetExtension
             );
 
-            // Save the image with the new format
             SaveImageWithFormat(
                 processedImage,
                 newImagePath,
@@ -382,7 +404,6 @@ public class ImageResizeService : IImageResizeService
                 conversionRule.Quality
             );
 
-            // Delete the original file
             if (processedImage != image)
             {
                 processedImage.Dispose();
@@ -392,7 +413,6 @@ public class ImageResizeService : IImageResizeService
         }
         else
         {
-            // Save the resized image back to the same path
             processedImage.WriteToFile(imagePath);
 
             if (processedImage != image)
@@ -410,7 +430,6 @@ public class ImageResizeService : IImageResizeService
     /// </summary>
     private static double ComputeLaplacianStdDev(Image image)
     {
-        // Crop a representative area from the center to keep computation fast.
         int cropX = Math.Max(0, (image.Width - SmartDownscaleCropSize) / 2);
         int cropY = Math.Max(0, (image.Height - SmartDownscaleCropSize) / 2);
         int cropW = Math.Min(SmartDownscaleCropSize, image.Width);
@@ -425,16 +444,7 @@ public class ImageResizeService : IImageResizeService
         // inflate the sharpness score and trigger false negatives.
         using Image blurred = grey.Gaussblur(0.5);
 
-        // Laplacian kernel – highlights edges and fine detail.
-        using Image mask = Image.NewFromArray(
-            new int[,]
-            {
-                { 0, 1, 0 },
-                { 1, -4, 1 },
-                { 0, 1, 0 },
-            }
-        );
-        using Image laplacian = blurred.Conv(mask, precision: Enums.Precision.Float);
+        using Image laplacian = blurred.Conv(LaplacianMask, precision: Enums.Precision.Float);
 
         // Stats() returns a 6 × (bands + 1) image.
         // Column indices: 0=min, 1=max, 2=sum, 3=sum², 4=mean, 5=std-dev.
@@ -461,7 +471,10 @@ public class ImageResizeService : IImageResizeService
     /// <see cref="ImagePreprocessingOptions.SmartDownscaleFactor"/> in that case.
     /// </para>
     /// </summary>
-    private static double? ComputeFftDownscaleFactor(Image image)
+    private static double? ComputeFftDownscaleFactor(
+        Image image,
+        CancellationToken cancellationToken
+    )
     {
         int cropX = Math.Max(0, (image.Width - SmartDownscaleCropSize) / 2);
         int cropY = Math.Max(0, (image.Height - SmartDownscaleCropSize) / 2);
@@ -471,24 +484,21 @@ public class ImageResizeService : IImageResizeService
         using Image crop = image.ExtractArea(cropX, cropY, cropW, cropH);
         using Image grey = crop.Bands > 1 ? crop.Colourspace(Enums.Interpretation.Bw) : crop.Copy();
 
-        // Normalise to single-byte pixels so we get exactly one byte per pixel.
         using Image uchar = grey.Cast(Enums.BandFormat.Uchar);
         byte[] pixels = uchar.WriteToMemory<byte>();
         int w = uchar.Width;
         int h = uchar.Height;
 
-        // Build the complex input array (pixel values scaled to [0, 1]).
         var data = new Complex[h * w];
         for (int i = 0; i < pixels.Length; i++)
             data[i] = new Complex(pixels[i] / 255.0, 0.0);
 
-        // 2-D FFT via two passes of 1-D FFT (separable property).
-        // Math.NET's managed provider only supports 1-D FFT, so we apply it row-by-row
-        // then column-by-column to obtain the same result as a direct 2-D transform.
-        // DC ends up at index [0,0] with FourierOptions.Default.
+        // 2-D FFT as two 1-D passes (Math.NET Numerics only provides 1-D; separable property
+        // makes this equivalent). DC component lands at index [0,0] with FourierOptions.Default.
         var rowBuf = new Complex[w];
         for (int y = 0; y < h; y++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             Array.Copy(data, y * w, rowBuf, 0, w);
             Fourier.Forward(rowBuf, FourierOptions.Default);
             Array.Copy(rowBuf, 0, data, y * w, w);
@@ -497,6 +507,7 @@ public class ImageResizeService : IImageResizeService
         var colBuf = new Complex[h];
         for (int x = 0; x < w; x++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             for (int y = 0; y < h; y++)
                 colBuf[y] = data[y * w + x];
             Fourier.Forward(colBuf, FourierOptions.Default);
@@ -513,6 +524,7 @@ public class ImageResizeService : IImageResizeService
 
         for (int y = 0; y < h; y++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             int dy = y <= h / 2 ? y : h - y;
             for (int x = 0; x < w; x++)
             {
@@ -552,7 +564,6 @@ public class ImageResizeService : IImageResizeService
 
         double cliffThreshold = Math.Max(noiseFloor * 6.0, peakNonDC * 0.01);
 
-        // The cliff is the highest radius where the profile is still above the threshold.
         int cliffRadius = -1;
         for (int r = maxRadius; r >= 1; r--)
         {
@@ -568,9 +579,7 @@ public class ImageResizeService : IImageResizeService
 
         double scaleFactor = (double)cliffRadius / maxRadius;
 
-        // Only act if the cliff is meaningfully below Nyquist (i.e. clear upscale detected).
-        // A scale factor above 0.9 is treated as "native" and returned as null so the caller
-        // skips the downscale.
+        // ≥ 0.9 Nyquist is treated as native (no clear upscale detected); skip downscale.
         if (scaleFactor >= 0.9)
             return null;
 
@@ -627,14 +636,12 @@ public class ImageResizeService : IImageResizeService
 
         if (originalWidth > originalHeight)
         {
-            // Width is the limiting dimension
             int newWidth = maxDimension;
             int newHeight = (int)Math.Round(newWidth / aspectRatio);
             return (newWidth, newHeight);
         }
         else
         {
-            // Height is the limiting dimension
             int newHeight = maxDimension;
             int newWidth = (int)Math.Round(newHeight * aspectRatio);
             return (newWidth, newHeight);
