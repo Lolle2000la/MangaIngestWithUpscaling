@@ -72,10 +72,11 @@ public class ImageResizeService : IImageResizeService
             Directory.CreateDirectory(tempDir);
 
             _logger.LogInformation(
-                "Preprocessing images in {InputPath} (MaxDimension={MaxDimension}, ConversionRules={RuleCount})",
+                "Preprocessing images in {InputPath} (MaxDimension={MaxDimension}, ConversionRules={RuleCount}, SmartDownscale={SmartDownscale})",
                 inputCbzPath,
                 options.MaxDimension?.ToString() ?? "none",
-                options.FormatConversionRules.Count
+                options.FormatConversionRules.Count,
+                options.EnableSmartDownscale
             );
 
             // Extract CBZ to temporary directory
@@ -237,7 +238,31 @@ public class ImageResizeService : IImageResizeService
 
         var needsFormatConversion = conversionRule != null;
 
-        if (!needsResize && !needsFormatConversion)
+        // Smart downscale: detect cheaply-upscaled images and reduce them before AI upscaling.
+        bool needsSmartDownscale = false;
+        if (options.EnableSmartDownscale)
+        {
+            double sharpness = ComputeLaplacianStdDev(image);
+            _logger.LogDebug(
+                "Smart downscale check for {ImagePath}: Laplacian std-dev = {StdDev:F2} (threshold {Threshold})",
+                imagePath,
+                sharpness,
+                options.SmartDownscaleThreshold
+            );
+            if (sharpness < options.SmartDownscaleThreshold)
+            {
+                _logger.LogInformation(
+                    "Image {ImagePath} appears cheaply upscaled (sharpness {StdDev:F2} < {Threshold}); will downscale by {Factor}",
+                    imagePath,
+                    sharpness,
+                    options.SmartDownscaleThreshold,
+                    options.SmartDownscaleFactor
+                );
+                needsSmartDownscale = true;
+            }
+        }
+
+        if (!needsResize && !needsFormatConversion && !needsSmartDownscale)
         {
             _logger.LogDebug(
                 "Image {ImagePath} ({Width}x{Height}) needs no preprocessing, skipping",
@@ -269,6 +294,23 @@ public class ImageResizeService : IImageResizeService
             );
 
             processedImage = image.Resize((double)newWidth / image.Width);
+        }
+
+        // Apply smart downscale (after any explicit resize, using Kernel.Cubic for clean results)
+        if (needsSmartDownscale)
+        {
+            double factor = options.SmartDownscaleFactor;
+            Image source = processedImage;
+            processedImage = source.Resize(factor, kernel: Enums.Kernel.Cubic);
+            if (source != image)
+                source.Dispose();
+
+            _logger.LogDebug(
+                "Smart-downscaled {ImagePath} to {NewWidth}x{NewHeight}",
+                imagePath,
+                processedImage.Width,
+                processedImage.Height
+            );
         }
 
         // Apply format conversion if needed
@@ -330,6 +372,50 @@ public class ImageResizeService : IImageResizeService
                 processedImage.Dispose();
             }
         }
+    }
+
+    /// <summary>
+    /// Estimates sharpness by computing the standard deviation of the Laplacian over a 512×512
+    /// centre crop of the image. A small Gaussian blur (σ = 0.5) is applied first so that
+    /// screentone halftone dots do not inflate the score.
+    /// Returns a value ≥ 0; lower means blurrier / more likely to be cheaply upscaled.
+    /// </summary>
+    private static double ComputeLaplacianStdDev(Image image)
+    {
+        // Crop a representative area from the centre to keep computation fast.
+        const int cropSize = 512;
+        int cropX = Math.Max(0, (image.Width - cropSize) / 2);
+        int cropY = Math.Max(0, (image.Height - cropSize) / 2);
+        int cropW = Math.Min(cropSize, image.Width);
+        int cropH = Math.Min(cropSize, image.Height);
+
+        using Image crop = image.ExtractArea(cropX, cropY, cropW, cropH);
+
+        // Convert to single-band (grayscale) so the Laplacian is unambiguous.
+        using Image grey =
+            crop.Bands > 1 ? crop.Colourspace(Enums.Interpretation.Bw) : crop.Copy();
+
+        // A mild Gaussian blur (σ ≈ 0.5) suppresses screentone halftone dots so they don't
+        // inflate the sharpness score and trigger false negatives.
+        using Image blurred = grey.Gaussblur(0.5);
+
+        // Laplacian kernel – highlights edges and fine detail.
+        using Image mask = Image.NewFromArray(
+            new int[,]
+            {
+                { 0, 1, 0 },
+                { 1, -4, 1 },
+                { 0, 1, 0 },
+            }
+        );
+        using Image laplacian = blurred.Conv(mask, precision: Enums.Precision.Float);
+
+        // Stats() returns a 6 × (bands + 1) image.
+        // Column indices: 0=min, 1=max, 2=sum, 3=sum², 4=mean, 5=std-dev.
+        // Row 0 corresponds to band 0.
+        using Image stats = laplacian.Stats();
+        double stdDev = stats.Getpoint(5, 0)[0];
+        return Math.Abs(stdDev);
     }
 
     private void SaveImageWithFormat(

@@ -285,7 +285,8 @@ public class MangaJaNaiUpscaler(
             || (
                 sharedConfig.Value.ImageFormatConversionRules != null
                 && sharedConfig.Value.ImageFormatConversionRules.Count > 0
-            );
+            )
+            || sharedConfig.Value.EnableSmartDownscale;
 
         if (needsPreprocessing)
         {
@@ -295,12 +296,16 @@ public class MangaJaNaiUpscaler(
                 FormatConversionRules =
                     sharedConfig.Value.ImageFormatConversionRules
                     ?? new List<ImageFormatConversionRule>(),
+                EnableSmartDownscale = sharedConfig.Value.EnableSmartDownscale,
+                SmartDownscaleThreshold = sharedConfig.Value.SmartDownscaleThreshold,
+                SmartDownscaleFactor = sharedConfig.Value.SmartDownscaleFactor,
             };
 
             logger.LogInformation(
-                "Creating temporary preprocessed CBZ (max dimension: {MaxDimension}, conversion rules: {RuleCount}) for {InputPath}",
+                "Creating temporary preprocessed CBZ (max dimension: {MaxDimension}, conversion rules: {RuleCount}, smart downscale: {SmartDownscale}) for {InputPath}",
                 preprocessingOptions.MaxDimension?.ToString() ?? "none",
                 preprocessingOptions.FormatConversionRules.Count,
+                preprocessingOptions.EnableSmartDownscale,
                 inputPath
             );
 

@@ -88,4 +88,27 @@ public record UpscalerConfig
             Quality = 98,
         },
     ];
+
+    /// <summary>
+    ///     When enabled, images that appear to have been cheaply upscaled (e.g. bicubic/bilinear) are
+    ///     detected via a Laplacian-variance sharpness check and downscaled back toward their likely
+    ///     native resolution before AI upscaling. This prevents double-upscaling artefacts and lets
+    ///     the model see clean, high-contrast edges.
+    /// </summary>
+    public bool EnableSmartDownscale { get; set; } = false;
+
+    /// <summary>
+    ///     Sharpness threshold used by the smart downscale check. A standard deviation of the
+    ///     Laplacian below this value is treated as evidence of a cheap upscale.
+    ///     Lower values make detection stricter (fewer images downscaled);
+    ///     higher values are more aggressive. Default is 15.0 – calibrate against your sources.
+    /// </summary>
+    public double SmartDownscaleThreshold { get; set; } = 15.0;
+
+    /// <summary>
+    ///     Scale factor applied when a cheap upscale is detected. 0.75 means the image is
+    ///     reduced to 75 % of its current dimensions before being passed to the AI model.
+    ///     Must be in the range (0, 1).
+    /// </summary>
+    public double SmartDownscaleFactor { get; set; } = 0.75;
 }
