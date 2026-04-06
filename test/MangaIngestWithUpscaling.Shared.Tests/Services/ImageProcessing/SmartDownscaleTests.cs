@@ -24,7 +24,6 @@ public class SmartDownscaleTests : IDisposable
         Directory.CreateDirectory(_tempDir);
 
         var logger = Substitute.For<ILogger<ImageResizeService>>();
-        var fs = Substitute.For<IFileSystem>();
         var localizer = Substitute.For<IStringLocalizer<ImageResizeService>>();
 
         localizer["Error_MaxDimensionMustBePositive"]
@@ -40,7 +39,7 @@ public class SmartDownscaleTests : IDisposable
                 $"File not found: {x.Arg<object[]>()[0]}"
             ));
 
-        _service = new ImageResizeService(logger, fs, localizer);
+        _service = new ImageResizeService(logger, localizer);
     }
 
     public void Dispose()

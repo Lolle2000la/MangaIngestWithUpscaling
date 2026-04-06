@@ -11,7 +11,6 @@ namespace MangaIngestWithUpscaling.Shared.Tests.Services.ImageProcessing;
 
 public class ImageResizeServiceTests
 {
-    private readonly IFileSystem _mockFileSystem;
     private readonly ILogger<ImageResizeService> _mockLogger;
     private readonly IStringLocalizer<ImageResizeService> _mockLocalizer;
     private readonly ImageResizeService _service;
@@ -19,7 +18,6 @@ public class ImageResizeServiceTests
     public ImageResizeServiceTests()
     {
         _mockLogger = Substitute.For<ILogger<ImageResizeService>>();
-        _mockFileSystem = Substitute.For<IFileSystem>();
         _mockLocalizer = Substitute.For<IStringLocalizer<ImageResizeService>>();
 
         _mockLocalizer["Error_MaxDimensionMustBePositive"]
@@ -52,7 +50,7 @@ public class ImageResizeServiceTests
                 )
             );
 
-        _service = new ImageResizeService(_mockLogger, _mockFileSystem, _mockLocalizer);
+        _service = new ImageResizeService(_mockLogger, _mockLocalizer);
     }
 
     [Theory]

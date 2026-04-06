@@ -11,7 +11,10 @@ using NetVips;
 namespace MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
 
 [RegisterScoped]
-public class ImageResizeService : IImageResizeService
+public class ImageResizeService(
+    ILogger<ImageResizeService> logger,
+    IStringLocalizer<ImageResizeService> localizer)
+    : IImageResizeService
 {
     private static readonly string[] SupportedImageExtensions =
         ImageConstants.SupportedImageExtensions.ToArray();
@@ -48,21 +51,6 @@ public class ImageResizeService : IImageResizeService
         }
     );
 
-    private readonly IFileSystem _fileSystem;
-    private readonly ILogger<ImageResizeService> _logger;
-    private readonly IStringLocalizer<ImageResizeService> _localizer;
-
-    public ImageResizeService(
-        ILogger<ImageResizeService> logger,
-        IFileSystem fileSystem,
-        IStringLocalizer<ImageResizeService> localizer
-    )
-    {
-        _logger = logger;
-        _fileSystem = fileSystem;
-        _localizer = localizer;
-    }
-
     public async Task<TempResizedCbz> CreateResizedTempCbzAsync(
         string inputCbzPath,
         int maxDimension,
@@ -84,13 +72,13 @@ public class ImageResizeService : IImageResizeService
     {
         if (!File.Exists(inputCbzPath))
         {
-            throw new FileNotFoundException(_localizer["Error_InputCbzFileNotFound", inputCbzPath]);
+            throw new FileNotFoundException(localizer["Error_InputCbzFileNotFound", inputCbzPath]);
         }
 
         if (options.MaxDimension.HasValue && options.MaxDimension.Value < 0)
         {
             throw new ArgumentException(
-                _localizer["Error_MaxDimensionMustBePositive"],
+                localizer["Error_MaxDimensionMustBePositive"],
                 nameof(options)
             );
         }
@@ -100,7 +88,7 @@ public class ImageResizeService : IImageResizeService
             if (options.SmartDownscaleThreshold <= 0)
             {
                 throw new ArgumentException(
-                    _localizer["Error_SmartDownscaleThresholdMustBePositive"],
+                    localizer["Error_SmartDownscaleThresholdMustBePositive"],
                     nameof(options)
                 );
             }
@@ -108,7 +96,7 @@ public class ImageResizeService : IImageResizeService
             if (options.SmartDownscaleFactor <= 0 || options.SmartDownscaleFactor >= 1)
             {
                 throw new ArgumentException(
-                    _localizer["Error_SmartDownscaleFactorOutOfRange"],
+                    localizer["Error_SmartDownscaleFactorOutOfRange"],
                     nameof(options)
                 );
             }
@@ -124,7 +112,7 @@ public class ImageResizeService : IImageResizeService
         {
             Directory.CreateDirectory(tempDir);
 
-            _logger.LogInformation(
+            logger.LogInformation(
                 "Preprocessing images in {InputPath} (MaxDimension={MaxDimension}, ConversionRules={RuleCount}, SmartDownscale={SmartDownscale})",
                 inputCbzPath,
                 options.MaxDimension?.ToString() ?? "none",
@@ -138,7 +126,7 @@ public class ImageResizeService : IImageResizeService
 
             ZipFile.CreateFromDirectory(tempDir, tempCbzPath);
 
-            _logger.LogDebug("Created preprocessed temporary CBZ at {TempPath}", tempCbzPath);
+            logger.LogDebug("Created preprocessed temporary CBZ at {TempPath}", tempCbzPath);
 
             return new TempResizedCbz(tempCbzPath, this);
         }
@@ -182,7 +170,7 @@ public class ImageResizeService : IImageResizeService
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogWarning(
+                            logger.LogWarning(
                                 ex,
                                 "Failed to read dimensions of image {Entry} in {CbzPath}",
                                 entry.Name,
@@ -193,7 +181,7 @@ public class ImageResizeService : IImageResizeService
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(
+                    logger.LogWarning(
                         ex,
                         "Failed to open or enumerate CBZ archive {CbzPath}",
                         cbzPath
@@ -214,12 +202,12 @@ public class ImageResizeService : IImageResizeService
             if (File.Exists(tempFilePath))
             {
                 File.Delete(tempFilePath);
-                _logger.LogDebug("Cleaned up temporary file: {TempFilePath}", tempFilePath);
+                logger.LogDebug("Cleaned up temporary file: {TempFilePath}", tempFilePath);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(
+            logger.LogWarning(
                 ex,
                 "Failed to clean up temporary file: {TempFilePath}",
                 tempFilePath
@@ -238,7 +226,7 @@ public class ImageResizeService : IImageResizeService
             .Where(f => SupportedImageExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
             .ToList();
 
-        _logger.LogDebug("Found {Count} image files to process", imageFiles.Count);
+        logger.LogDebug("Found {Count} image files to process", imageFiles.Count);
 
         await Parallel.ForEachAsync(
             imageFiles,
@@ -258,7 +246,7 @@ public class ImageResizeService : IImageResizeService
                 {
                     if (ex is OperationCanceledException)
                         throw;
-                    _logger.LogWarning(ex, "Failed to process image: {ImagePath}", imagePath);
+                    logger.LogWarning(ex, "Failed to process image: {ImagePath}", imagePath);
                     return ValueTask.CompletedTask; // Continue processing other images even if one fails
                 }
             }
@@ -294,7 +282,7 @@ public class ImageResizeService : IImageResizeService
         if (options.EnableSmartDownscale)
         {
             double sharpness = ComputeLaplacianStdDev(image);
-            _logger.LogDebug(
+            logger.LogDebug(
                 "Smart downscale check for {ImagePath}: Laplacian std-dev = {StdDev:F2} (threshold {Threshold})",
                 imagePath,
                 sharpness,
@@ -307,7 +295,7 @@ public class ImageResizeService : IImageResizeService
 
                 if (fftFactor.HasValue)
                 {
-                    _logger.LogInformation(
+                    logger.LogInformation(
                         "Image {ImagePath} appears cheaply upscaled (sharpness {StdDev:F2} < {Threshold}); "
                             + "FFT cliff detected at {FftPercent:P0} of Nyquist – will downscale by {FftFactor:F3}",
                         imagePath,
@@ -320,7 +308,7 @@ public class ImageResizeService : IImageResizeService
                 }
                 else
                 {
-                    _logger.LogInformation(
+                    logger.LogInformation(
                         "Image {ImagePath} appears cheaply upscaled (sharpness {StdDev:F2} < {Threshold}); "
                             + "FFT found no clear cliff, falling back to configured factor {Factor}",
                         imagePath,
@@ -335,7 +323,7 @@ public class ImageResizeService : IImageResizeService
 
         if (!needsResize && !needsFormatConversion && !needsSmartDownscale)
         {
-            _logger.LogDebug(
+            logger.LogDebug(
                 "Image {ImagePath} ({Width}x{Height}) needs no preprocessing, skipping",
                 imagePath,
                 image.Width,
@@ -369,7 +357,7 @@ public class ImageResizeService : IImageResizeService
             int targetWidth = (int)Math.Round(image.Width * scaleFactor);
             int targetHeight = (int)Math.Round(image.Height * scaleFactor);
 
-            _logger.LogDebug(
+            logger.LogDebug(
                 "Resizing image {ImagePath} from {OriginalWidth}x{OriginalHeight} to {NewWidth}x{NewHeight} (scale {ScaleFactor:F3})",
                 imagePath,
                 image.Width,
@@ -407,7 +395,7 @@ public class ImageResizeService : IImageResizeService
                 suffix++;
             }
 
-            _logger.LogDebug(
+            logger.LogDebug(
                 "Converting image {ImagePath} from {FromFormat} to {ToFormat}",
                 imagePath,
                 currentExtension,
