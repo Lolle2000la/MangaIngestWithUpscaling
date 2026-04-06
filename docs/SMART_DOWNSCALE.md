@@ -115,10 +115,19 @@ environment:
 }
 ```
 
-When both are active, the processing order is:
+When both are active, the two constraints are resolved into a **single resize pass**.
+The effective scale factor is the smaller (more restrictive) of:
 
-1. Max-dimension resize (if the image exceeds the limit)
-2. Smart downscale (if the image appears cheaply upscaled)
+- the max-dimension scale factor (e.g. 0.5 to fit a 4096-wide image into 2048 px), and
+- the smart-downscale factor inferred by Laplacian + FFT analysis (or `SmartDownscaleFactor` as fallback).
+
+Detection always runs on the original image. The single combined resize is then applied once
+to the original, avoiding the quality loss that would come from two sequential resampling steps.
+
+The processing order is:
+
+1. Detect scale factors (Laplacian sharpness + FFT cliff on the original image; max-dimension constraint)
+2. Apply the single combined resize (min of both scale factors), if any resize is needed
 3. Format conversion (if a matching rule exists)
 4. AI upscaling
 
@@ -132,6 +141,8 @@ Extract to temp dir
      │
      ▼ for each image:
  ┌──────────────────────────────────────────────────────┐
+ │  Detection (runs on original image)                  │
+ │                                                      │
  │  Stage 1: Laplacian sharpness check (fast)           │
  │    score ≥ threshold → image is sharp → skip         │
  │    score < threshold → proceed to Stage 2            │
@@ -140,6 +151,11 @@ Extract to temp dir
  │    cliff found   → use inferred factor (e.g. 0.31)   │
  │    no clear cliff → use SmartDownscaleFactor (0.75)  │
  └──────────────────────────────────────────────────────┘
+      │
+      ▼
+ Combine smart-downscale factor and max-dimension factor
+ → take the smaller (more restrictive) scale factor
+ → apply ONE resize to the original image (or skip if scale ≥ 1)
      │
      ▼
 Pack into temp CBZ → AI upscaler → output
