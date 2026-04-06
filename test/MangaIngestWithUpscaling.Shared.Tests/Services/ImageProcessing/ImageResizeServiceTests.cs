@@ -33,6 +33,22 @@ public class ImageResizeServiceTests
                 $"File not found: {x.Arg<object[]>()[0]}"
             ));
 
+        _mockLocalizer["Error_SmartDownscaleThresholdMustBePositive"]
+            .Returns(
+                new LocalizedString(
+                    "Error_SmartDownscaleThresholdMustBePositive",
+                    "SmartDownscaleThreshold must be greater than 0"
+                )
+            );
+
+        _mockLocalizer["Error_SmartDownscaleFactorOutOfRange"]
+            .Returns(
+                new LocalizedString(
+                    "Error_SmartDownscaleFactorOutOfRange",
+                    "SmartDownscaleFactor must be in the range (0, 1)"
+                )
+            );
+
         _service = new ImageResizeService(_mockLogger, _mockFileSystem, _mockLocalizer);
     }
 
@@ -177,6 +193,129 @@ public class ImageResizeServiceTests
         finally
         {
             // Cleanup
+            if (File.Exists(tempInputPath))
+                File.Delete(tempInputPath);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task CreatePreprocessedTempCbzAsync_SmartDownscaleThresholdZero_ShouldThrowArgumentException()
+    {
+        var tempInputPath = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}.cbz");
+        await File.WriteAllTextAsync(
+            tempInputPath,
+            "dummy content",
+            TestContext.Current.CancellationToken
+        );
+
+        try
+        {
+            var options = new ImagePreprocessingOptions
+            {
+                EnableSmartDownscale = true,
+                SmartDownscaleThreshold = 0,
+                SmartDownscaleFactor = 0.75,
+            };
+
+            var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+                _service.CreatePreprocessedTempCbzAsync(
+                    tempInputPath,
+                    options,
+                    TestContext.Current.CancellationToken
+                )
+            );
+
+            Assert.Equal("options", exception.ParamName);
+            Assert.Contains("SmartDownscaleThreshold", exception.Message);
+        }
+        finally
+        {
+            if (File.Exists(tempInputPath))
+                File.Delete(tempInputPath);
+        }
+    }
+
+    [Theory]
+    [InlineData(-1.0)]
+    [InlineData(0.0)]
+    [InlineData(1.0)]
+    [InlineData(1.5)]
+    [Trait("Category", "Unit")]
+    public async Task CreatePreprocessedTempCbzAsync_SmartDownscaleFactorOutOfRange_ShouldThrowArgumentException(
+        double factor
+    )
+    {
+        var tempInputPath = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}.cbz");
+        await File.WriteAllTextAsync(
+            tempInputPath,
+            "dummy content",
+            TestContext.Current.CancellationToken
+        );
+
+        try
+        {
+            var options = new ImagePreprocessingOptions
+            {
+                EnableSmartDownscale = true,
+                SmartDownscaleThreshold = 15.0,
+                SmartDownscaleFactor = factor,
+            };
+
+            var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+                _service.CreatePreprocessedTempCbzAsync(
+                    tempInputPath,
+                    options,
+                    TestContext.Current.CancellationToken
+                )
+            );
+
+            Assert.Equal("options", exception.ParamName);
+            Assert.Contains("SmartDownscaleFactor", exception.Message);
+        }
+        finally
+        {
+            if (File.Exists(tempInputPath))
+                File.Delete(tempInputPath);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task CreatePreprocessedTempCbzAsync_SmartDownscaleDisabled_DoesNotValidateSmartDownscaleParams()
+    {
+        var tempInputPath = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}.cbz");
+        await File.WriteAllTextAsync(
+            tempInputPath,
+            "dummy content",
+            TestContext.Current.CancellationToken
+        );
+
+        try
+        {
+            // Invalid smart downscale values that should be ignored when disabled
+            var options = new ImagePreprocessingOptions
+            {
+                EnableSmartDownscale = false,
+                SmartDownscaleThreshold = 0,
+                SmartDownscaleFactor = 2.0,
+            };
+
+            var exception = await Record.ExceptionAsync(() =>
+                _service.CreatePreprocessedTempCbzAsync(
+                    tempInputPath,
+                    options,
+                    TestContext.Current.CancellationToken
+                )
+            );
+
+            Assert.False(
+                exception is ArgumentException argEx && argEx.ParamName == "options",
+                "Should not validate smart downscale params when feature is disabled"
+            );
+        }
+        finally
+        {
             if (File.Exists(tempInputPath))
                 File.Delete(tempInputPath);
         }

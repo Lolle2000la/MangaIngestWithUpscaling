@@ -437,8 +437,10 @@ public class ImageResizeService : IImageResizeService
 
         using Image crop = image.ExtractArea(cropX, cropY, cropW, cropH);
 
-        // Convert to single-band (grayscale) so the Laplacian is unambiguous.
-        using Image grey = crop.Bands > 1 ? crop.Colourspace(Enums.Interpretation.Bw) : crop.Copy();
+        // Flatten alpha before converting to greyscale so the alpha band does not skew
+        // the sharpness score (same pattern as NetVipsPerceptualHash).
+        using Image flat = crop.HasAlpha() ? crop.Flatten() : crop.Copy();
+        using Image grey = flat.Colourspace(Enums.Interpretation.Bw);
 
         // A mild Gaussian blur (σ ≈ 0.5) suppresses screentone halftone dots so they don't
         // inflate the sharpness score and trigger false negatives.
@@ -446,9 +448,7 @@ public class ImageResizeService : IImageResizeService
 
         using Image laplacian = blurred.Conv(LaplacianMask, precision: Enums.Precision.Float);
 
-        // Stats() returns a 6 × (bands + 1) image.
-        // Column indices: 0=min, 1=max, 2=sum, 3=sum², 4=mean, 5=std-dev.
-        // Row 0 corresponds to band 0.
+        // Column 5 of Stats() is the per-band standard deviation; row 0 is band 0.
         using Image stats = laplacian.Stats();
         double stdDev = stats.Getpoint(5, 0)[0];
         return Math.Abs(stdDev);
@@ -482,12 +482,19 @@ public class ImageResizeService : IImageResizeService
         int cropH = Math.Min(SmartDownscaleCropSize, image.Height);
 
         using Image crop = image.ExtractArea(cropX, cropY, cropW, cropH);
-        using Image grey = crop.Bands > 1 ? crop.Colourspace(Enums.Interpretation.Bw) : crop.Copy();
+
+        // Flatten alpha before converting to greyscale so alpha does not produce an extra band
+        // that would cause WriteToMemory to return w*h*2 bytes and overflow the Complex array.
+        using Image flat = crop.HasAlpha() ? crop.Flatten() : crop.Copy();
+        using Image grey = flat.Colourspace(Enums.Interpretation.Bw);
 
         using Image uchar = grey.Cast(Enums.BandFormat.Uchar);
         byte[] pixels = uchar.WriteToMemory<byte>();
         int w = uchar.Width;
         int h = uchar.Height;
+
+        if (pixels.Length != w * h)
+            return null;
 
         var data = new Complex[h * w];
         for (int i = 0; i < pixels.Length; i++)
