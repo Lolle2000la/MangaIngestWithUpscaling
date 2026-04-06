@@ -15,18 +15,21 @@ scans that were upscaled before being distributed.
 
 ## How It Works
 
-Detection runs in two stages on a 512 × 512 centre crop of each image:
+Detection runs in two stages on a 512 × 512 analysis crop selected from each image. The
+implementation tries the centre crop first, then can search up to 9 positions in a 3 × 3 grid
+to avoid blank or mostly white regions before running detection:
 
 1. **Laplacian sharpness check** (fast) — measures the standard deviation of a Laplacian edge
    filter. A small value indicates a blurry, low-detail image typical of cheap upscales. A mild
    Gaussian pre-blur suppresses screentone halftone dots so they do not inflate the score.
 
 2. **FFT frequency-cliff detection** (precise, only when Stage 1 triggers) — performs a 2-D
-   forward FFT on the greyscale crop using [Math.NET Numerics](https://numerics.mathdotnet.com/)
-   (pure C#, no native FFTW dependency). When an image has been cheaply upscaled, its power
-   spectrum has a sharp "dead zone" above the original Nyquist frequency. The algorithm measures
-   where this cliff sits and infers the exact scale factor from it. If no clear cliff is found the
-   configured `SmartDownscaleFactor` is used as a fallback.
+   forward FFT on the selected greyscale crop using
+   [Math.NET Numerics](https://numerics.mathdotnet.com/) (pure C#, no native FFTW dependency).
+   When an image has been cheaply upscaled, its power spectrum has a sharp "dead zone" above the
+   original Nyquist frequency. The algorithm measures where this cliff sits and infers the exact
+   scale factor from it. If no clear cliff is found the configured `SmartDownscaleFactor` is used
+   as a fallback.
 
 All processing is performed on a **temporary working copy**; your original CBZ files are never
 modified.
