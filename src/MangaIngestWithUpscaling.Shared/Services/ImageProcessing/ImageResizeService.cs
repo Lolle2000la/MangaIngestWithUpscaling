@@ -242,6 +242,8 @@ public class ImageResizeService : IImageResizeService
                 }
                 catch (Exception ex)
                 {
+                    if (ex is OperationCanceledException)
+                        throw;
                     _logger.LogWarning(ex, "Failed to process image: {ImagePath}", imagePath);
                     return ValueTask.CompletedTask; // Continue processing other images even if one fails
                 }
@@ -287,20 +289,7 @@ public class ImageResizeService : IImageResizeService
             if (sharpness < options.SmartDownscaleThreshold)
             {
                 // Secondary check (precise): FFT cliff detection to find the exact scale factor.
-                // OperationCanceledException is caught here so that a mid-FFT cancellation gracefully
-                // falls back to the configured factor rather than surfacing as a processing error.
-                double? fftFactor = null;
-                if (!cancellationToken.IsCancellationRequested)
-                {
-                    try
-                    {
-                        fftFactor = ComputeFftDownscaleFactor(image, cancellationToken);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        fftFactor = null;
-                    }
-                }
+                double? fftFactor = ComputeFftDownscaleFactor(image, cancellationToken);
 
                 if (fftFactor.HasValue)
                 {
