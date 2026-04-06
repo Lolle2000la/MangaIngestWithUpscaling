@@ -1,7 +1,9 @@
+using System.Reflection;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
 using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
+using NetVips;
 using NSubstitute;
 
 namespace MangaIngestWithUpscaling.Shared.Tests.Services.ImageProcessing;
@@ -349,5 +351,89 @@ public class ImageResizeServiceTests
         // Act & Assert - Should not throw
         var exception = Record.Exception(() => _service.CleanupTempFile(nonExistentPath));
         Assert.Null(exception);
+    }
+
+    /// <summary>
+    /// Helper to invoke the private static FindContentCrop method via reflection.
+    /// </summary>
+    private static Image InvokeFindContentCrop(Image image)
+    {
+        var method =
+            typeof(ImageResizeService).GetMethod(
+                "FindContentCrop",
+                BindingFlags.NonPublic | BindingFlags.Static
+            ) ?? throw new MissingMethodException(nameof(ImageResizeService), "FindContentCrop");
+
+        return (Image)method.Invoke(null, [image])!;
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void FindContentCrop_ReturnsCenterTile_WhenCenterHasContent()
+    {
+        // Create a 1024×1024 greyscale image with a horizontal ramp (x-coordinate as
+        // pixel value 0–255), giving mean ≈ 128 and stdDev > 5 in every tile.
+        byte[] pixelData = new byte[1024 * 1024];
+        for (int y = 0; y < 1024; y++)
+        for (int x = 0; x < 1024; x++)
+            pixelData[y * 1024 + x] = (byte)(x & 0xFF);
+
+        using Image img = Image.NewFromMemory(
+            pixelData,
+            1024,
+            1024,
+            1,
+            NetVips.Enums.BandFormat.Uchar
+        );
+
+        using Image result = InvokeFindContentCrop(img);
+
+        // Result must be a valid 512×512 tile.
+        Assert.Equal(512, result.Width);
+        Assert.Equal(512, result.Height);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void FindContentCrop_SkipsBlankCenter_WhenOffCenterTileHasContent()
+    {
+        // Build a 2048×2048 all-white image (mean=255, stdDev=0 everywhere).
+        using Image white = Image.Black(2048, 2048).Invert();
+
+        // Paint a 512×512 block of mid-grey (value=128) starting at pixel (0,0).
+        // The top-left corner corresponds to one of the 3×3 grid candidates, so
+        // FindContentCrop should prefer it over the all-white centre.
+        using Image patch = Image.Black(512, 512).Linear([0.0], [128.0]);
+        using Image composite = white.Insert(patch, 0, 0);
+
+        using Image result = InvokeFindContentCrop(composite);
+
+        // The returned tile must have sufficient content (mean < 250 and stdDev > 0),
+        // proving the scanner moved away from the blank centre.
+        using Image flat = result.HasAlpha() ? result.Flatten() : result.Copy();
+        using Image grey = flat.Colourspace(Enums.Interpretation.Bw);
+        using Image uchar = grey.Cast(Enums.BandFormat.Uchar);
+        using Image stats = uchar.Stats();
+        double mean = stats.Getpoint(4, 0)[0];
+
+        Assert.True(
+            mean < 250,
+            $"Expected a content-rich tile (mean < 250) but got mean={mean:F1}"
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void FindContentCrop_FallsBackToCenter_WhenAllTilesAreBlank()
+    {
+        // A completely white image — all tiles will fail the content check, so the
+        // method should fall back to the centre crop rather than throwing.
+        using Image white = Image.Black(2048, 2048).Invert();
+
+        using Image result = InvokeFindContentCrop(white);
+
+        // Should still return a valid 512×512 tile (the centre fallback).
+        Assert.Equal(512, result.Width);
+        Assert.Equal(512, result.Height);
     }
 }

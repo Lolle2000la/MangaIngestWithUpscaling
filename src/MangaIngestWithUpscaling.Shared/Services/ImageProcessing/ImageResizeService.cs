@@ -355,7 +355,7 @@ public class ImageResizeService : IImageResizeService
 
             if (needsResize)
             {
-                var (newWidth, newHeight) = CalculateNewDimensions(
+                var (newWidth, _) = CalculateNewDimensions(
                     image.Width,
                     image.Height,
                     options.MaxDimension!.Value
