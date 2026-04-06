@@ -578,8 +578,11 @@ public class ImageResizeService : IImageResizeService
 
         int totalPixels = w * h;
         Complex[] data = ArrayPool<Complex>.Shared.Rent(totalPixels);
-        Complex[] rowBuf = ArrayPool<Complex>.Shared.Rent(w);
-        Complex[] colBuf = ArrayPool<Complex>.Shared.Rent(h);
+        // Exact-size allocations are required here: Fourier.Forward operates on the full
+        // array length, so pooled buffers (which may be larger than requested) would
+        // silently transform the wrong number of points.
+        Complex[] rowBuf = new Complex[w];
+        Complex[] colBuf = new Complex[h];
 
         try
         {
@@ -681,8 +684,6 @@ public class ImageResizeService : IImageResizeService
         finally
         {
             ArrayPool<Complex>.Shared.Return(data);
-            ArrayPool<Complex>.Shared.Return(rowBuf);
-            ArrayPool<Complex>.Shared.Return(colBuf);
         }
     }
 
