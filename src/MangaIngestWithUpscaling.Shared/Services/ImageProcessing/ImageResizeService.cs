@@ -23,6 +23,19 @@ public class ImageResizeService : IImageResizeService
     private const int SmartDownscaleCropSize = 512;
 
     /// <summary>
+    /// A greyscale tile whose mean pixel value (0–255) is above this threshold is considered
+    /// "too white" (blank page, speech bubble, margin) and will be skipped when searching for
+    /// a content-rich crop region.
+    /// </summary>
+    private const double CropMaxMean = 250.0;
+
+    /// <summary>
+    /// A greyscale tile whose pixel standard deviation is below this threshold lacks enough
+    /// contrast to yield a meaningful FFT or Laplacian result and will also be skipped.
+    /// </summary>
+    private const double CropMinStdDev = 5.0;
+
+    /// <summary>
     /// Cached to avoid a native libvips allocation per image. Intentionally not disposed:
     /// static fields have process lifetime and are not eligible for deterministic disposal.
     /// </summary>
@@ -427,6 +440,79 @@ public class ImageResizeService : IImageResizeService
     }
 
     /// <summary>
+    /// Selects a <see cref="SmartDownscaleCropSize"/>×<see cref="SmartDownscaleCropSize"/>
+    /// region of <paramref name="image"/> that contains meaningful ink content (not a blank
+    /// margin or speech-bubble background).
+    /// <para>
+    /// The search tries the centre first, then eight additional positions on a 3×3 grid. The
+    /// first candidate whose greyscale mean is ≤ <see cref="CropMaxMean"/> <em>and</em> whose
+    /// standard deviation is ≥ <see cref="CropMinStdDev"/> is returned. If no candidate
+    /// qualifies the centre crop is returned as a safe fallback.
+    /// </para>
+    /// </summary>
+    /// <returns>
+    /// A <see cref="NetVips.Image"/> that the caller must dispose, plus the actual pixel
+    /// dimensions of the returned tile (which may be smaller than
+    /// <see cref="SmartDownscaleCropSize"/> near the image boundary).
+    /// </returns>
+    private static Image FindContentCrop(Image image)
+    {
+        int imgW = image.Width;
+        int imgH = image.Height;
+        int tileSize = SmartDownscaleCropSize;
+
+        // Centre is always the first candidate; eight grid positions follow.
+        // Grid divides the image into a 3×3 set of anchor points (¼, ½, ¾ in each axis).
+        var candidates = new List<(int x, int y)>(9)
+        {
+            (Math.Max(0, (imgW - tileSize) / 2), Math.Max(0, (imgH - tileSize) / 2)),
+        };
+        foreach (int qy in new[] { 1, 2, 3 })
+        {
+            foreach (int qx in new[] { 1, 2, 3 })
+            {
+                int cx = Math.Max(0, Math.Min(imgW - tileSize, imgW * qx / 4 - tileSize / 2));
+                int cy = Math.Max(0, Math.Min(imgH - tileSize, imgH * qy / 4 - tileSize / 2));
+                // Avoid an exact duplicate of the centre candidate already added.
+                if (cx != candidates[0].x || cy != candidates[0].y)
+                    candidates.Add((cx, cy));
+            }
+        }
+
+        int tileW = Math.Min(tileSize, imgW);
+        int tileH = Math.Min(tileSize, imgH);
+
+        Image? fallback = null;
+        foreach ((int x, int y) in candidates)
+        {
+            Image tile = image.ExtractArea(x, y, tileW, tileH);
+
+            using Image tileFlat = tile.HasAlpha() ? tile.Flatten() : tile.Copy();
+            using Image tileGrey = tileFlat.Colourspace(Enums.Interpretation.Bw);
+            using Image tileUchar = tileGrey.Cast(Enums.BandFormat.Uchar);
+            using Image tileStats = tileUchar.Stats();
+
+            double mean = tileStats.Getpoint(4, 0)[0];
+            double stdDev = tileStats.Getpoint(5, 0)[0];
+
+            if (mean <= CropMaxMean && stdDev >= CropMinStdDev)
+            {
+                fallback?.Dispose();
+                return tile;
+            }
+
+            // Keep the centre crop as the fallback in case nothing better is found.
+            if (fallback == null && x == candidates[0].x && y == candidates[0].y)
+                fallback = tile;
+            else
+                tile.Dispose();
+        }
+
+        // Nothing was content-rich enough; return the centre crop.
+        return fallback ?? image.ExtractArea(candidates[0].x, candidates[0].y, tileW, tileH);
+    }
+
+    /// <summary>
     /// Estimates sharpness by computing the standard deviation of the Laplacian over a
     /// center crop of the image. A small Gaussian blur (σ = 0.5) is applied first so that
     /// screentone halftone dots do not inflate the score.
@@ -434,12 +520,7 @@ public class ImageResizeService : IImageResizeService
     /// </summary>
     private static double ComputeLaplacianStdDev(Image image)
     {
-        int cropX = Math.Max(0, (image.Width - SmartDownscaleCropSize) / 2);
-        int cropY = Math.Max(0, (image.Height - SmartDownscaleCropSize) / 2);
-        int cropW = Math.Min(SmartDownscaleCropSize, image.Width);
-        int cropH = Math.Min(SmartDownscaleCropSize, image.Height);
-
-        using Image crop = image.ExtractArea(cropX, cropY, cropW, cropH);
+        using Image crop = FindContentCrop(image);
 
         // Flatten alpha before converting to greyscale so the alpha band does not skew
         // the sharpness score (same pattern as NetVipsPerceptualHash).
@@ -480,12 +561,7 @@ public class ImageResizeService : IImageResizeService
         CancellationToken cancellationToken
     )
     {
-        int cropX = Math.Max(0, (image.Width - SmartDownscaleCropSize) / 2);
-        int cropY = Math.Max(0, (image.Height - SmartDownscaleCropSize) / 2);
-        int cropW = Math.Min(SmartDownscaleCropSize, image.Width);
-        int cropH = Math.Min(SmartDownscaleCropSize, image.Height);
-
-        using Image crop = image.ExtractArea(cropX, cropY, cropW, cropH);
+        using Image crop = FindContentCrop(image);
 
         // Flatten alpha before converting to greyscale so alpha does not produce an extra band
         // that would cause WriteToMemory to return w*h*2 bytes and overflow the Complex array.
