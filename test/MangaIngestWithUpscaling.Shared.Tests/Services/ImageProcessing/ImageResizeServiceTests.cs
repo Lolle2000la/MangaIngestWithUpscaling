@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Reflection;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
@@ -287,11 +288,9 @@ public class ImageResizeServiceTests
     public async Task CreatePreprocessedTempCbzAsync_SmartDownscaleDisabled_DoesNotValidateSmartDownscaleParams()
     {
         var tempInputPath = Path.Combine(Path.GetTempPath(), $"test_{Guid.NewGuid()}.cbz");
-        await File.WriteAllTextAsync(
-            tempInputPath,
-            "dummy content",
-            TestContext.Current.CancellationToken
-        );
+
+        // Create a minimal valid empty ZIP so the method can get past archive-open logic.
+        using (ZipFile.Open(tempInputPath, ZipArchiveMode.Create)) { }
 
         try
         {
@@ -303,6 +302,8 @@ public class ImageResizeServiceTests
                 SmartDownscaleFactor = 2.0,
             };
 
+            // The method must not throw an ArgumentException about smart-downscale options;
+            // any other exception (e.g. no images found) is acceptable here.
             var exception = await Record.ExceptionAsync(() =>
                 _service.CreatePreprocessedTempCbzAsync(
                     tempInputPath,
@@ -401,24 +402,31 @@ public class ImageResizeServiceTests
         using Image white = Image.Black(2048, 2048).Invert();
 
         // Paint a 512×512 block of mid-grey (value=128) starting at pixel (0,0).
-        // The top-left corner corresponds to one of the 3×3 grid candidates, so
-        // FindContentCrop should prefer it over the all-white centre.
+        // This patch is not itself a candidate anchor, but it overlaps one of the
+        // scanned 3×3 tiles, so FindContentCrop should select that tile instead of
+        // the all-white centre tile.
         using Image patch = Image.Black(512, 512).Linear([0.0], [128.0]);
         using Image composite = white.Insert(patch, 0, 0);
 
         using Image result = InvokeFindContentCrop(composite);
 
-        // The returned tile must have sufficient content (mean < 250 and stdDev > 0),
-        // proving the scanner moved away from the blank centre.
+        // The returned tile must satisfy the same content thresholds used by
+        // FindContentCrop (mean < 250 and stdDev >= 5), proving the scanner
+        // moved away from the blank centre.
         using Image flat = result.HasAlpha() ? result.Flatten() : result.Copy();
         using Image grey = flat.Colourspace(Enums.Interpretation.Bw);
         using Image uchar = grey.Cast(Enums.BandFormat.Uchar);
         using Image stats = uchar.Stats();
         double mean = stats.Getpoint(4, 0)[0];
+        double stdDev = stats.Getpoint(5, 0)[0];
 
         Assert.True(
             mean < 250,
             $"Expected a content-rich tile (mean < 250) but got mean={mean:F1}"
+        );
+        Assert.True(
+            stdDev >= 5,
+            $"Expected a content-rich tile (stdDev >= 5) but got stdDev={stdDev:F1}"
         );
     }
 

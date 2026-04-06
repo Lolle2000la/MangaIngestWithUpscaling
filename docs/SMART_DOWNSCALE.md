@@ -72,7 +72,7 @@ Enable debug logging to see the Laplacian score for each image:
 ```
 [DBG] Smart downscale check for page001.jpg: Laplacian std-dev = 3.18 (threshold 15)
 [INF] Image page001.jpg appears cheaply upscaled (sharpness 3.18 < 15);
-      FFT cliff detected at 31 % of Nyquist – will downscale by 0.313
+      FFT cliff detected at 63 % of Nyquist – will downscale by 0.630
 ```
 
 A high-contrast manga page typically scores **200 – 600**; a heavily blurred or interpolated page
@@ -151,7 +151,7 @@ Extract to temp dir
  │    score < threshold → proceed to Stage 2            │
  ├──────────────────────────────────────────────────────┤
  │  Stage 2: FFT frequency-cliff detection (precise)    │
- │    cliff found   → use inferred factor (e.g. 0.31)   │
+ │    cliff found   → use inferred factor (e.g. 0.63)   │
  │    no clear cliff → use SmartDownscaleFactor (0.75)  │
  └──────────────────────────────────────────────────────┘
       │
