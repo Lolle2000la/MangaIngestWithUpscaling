@@ -463,18 +463,19 @@ public class ImageResizeService : IImageResizeService
 
         // Centre is always the first candidate; eight grid positions follow.
         // Grid divides the image into a 3×3 set of anchor points (¼, ½, ¾ in each axis).
-        var candidates = new List<(int x, int y)>(9)
-        {
-            (Math.Max(0, (imgW - tileSize) / 2), Math.Max(0, (imgH - tileSize) / 2)),
-        };
+        (int x, int y) centerCandidate = (
+            Math.Max(0, (imgW - tileSize) / 2),
+            Math.Max(0, (imgH - tileSize) / 2)
+        );
+        var candidates = new List<(int x, int y)>(9) { centerCandidate };
+        var seenCandidates = new HashSet<(int x, int y)> { centerCandidate };
         foreach (int qy in new[] { 1, 2, 3 })
         {
             foreach (int qx in new[] { 1, 2, 3 })
             {
                 int cx = Math.Max(0, Math.Min(imgW - tileSize, imgW * qx / 4 - tileSize / 2));
                 int cy = Math.Max(0, Math.Min(imgH - tileSize, imgH * qy / 4 - tileSize / 2));
-                // Avoid an exact duplicate of the centre candidate already added.
-                if (cx != candidates[0].x || cy != candidates[0].y)
+                if (seenCandidates.Add((cx, cy)))
                     candidates.Add((cx, cy));
             }
         }
