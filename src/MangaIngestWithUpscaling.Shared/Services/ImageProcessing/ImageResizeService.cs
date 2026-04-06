@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.IO.Compression;
 using System.Numerics;
 using MangaIngestWithUpscaling.Shared.Constants;
@@ -365,7 +366,7 @@ public class ImageResizeService : IImageResizeService
                 scaleFactor
             );
 
-            processedImage = image.Resize(scaleFactor, kernel: Enums.Kernel.Cubic);
+            processedImage = image.Resize(scaleFactor, kernel: Enums.Kernel.Linear);
         }
 
         if (needsFormatConversion)
@@ -499,101 +500,112 @@ public class ImageResizeService : IImageResizeService
         if (pixels.Length != w * h)
             return null;
 
-        var data = new Complex[h * w];
-        for (int i = 0; i < pixels.Length; i++)
-            data[i] = new Complex(pixels[i] / 255.0, 0.0);
+        int totalPixels = w * h;
+        Complex[] data = ArrayPool<Complex>.Shared.Rent(totalPixels);
+        Complex[] rowBuf = ArrayPool<Complex>.Shared.Rent(w);
+        Complex[] colBuf = ArrayPool<Complex>.Shared.Rent(h);
 
-        // 2-D FFT as two 1-D passes (Math.NET Numerics only provides 1-D; separable property
-        // makes this equivalent). DC component lands at index [0,0] with FourierOptions.Default.
-        var rowBuf = new Complex[w];
-        for (int y = 0; y < h; y++)
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            Array.Copy(data, y * w, rowBuf, 0, w);
-            Fourier.Forward(rowBuf, FourierOptions.Default);
-            Array.Copy(rowBuf, 0, data, y * w, w);
-        }
+            for (int i = 0; i < pixels.Length; i++)
+                data[i] = new Complex(pixels[i] / 255.0, 0.0);
 
-        var colBuf = new Complex[h];
-        for (int x = 0; x < w; x++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
+            // 2-D FFT as two 1-D passes (Math.NET Numerics only provides 1-D; separable property
+            // makes this equivalent). DC component lands at index [0,0] with FourierOptions.Default.
             for (int y = 0; y < h; y++)
-                colBuf[y] = data[y * w + x];
-            Fourier.Forward(colBuf, FourierOptions.Default);
-            for (int y = 0; y < h; y++)
-                data[y * w + x] = colBuf[y];
-        }
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Array.Copy(data, y * w, rowBuf, 0, w);
+                Fourier.Forward(rowBuf, FourierOptions.Default);
+                Array.Copy(rowBuf, 0, data, y * w, w);
+            }
 
-        // Build a radial power profile (mean magnitude at each integer radius from DC).
-        // Pixels in the second half of each axis represent negative frequencies and are
-        // mapped back to their positive-frequency equivalent via modular distance.
-        int maxRadius = Math.Min(w, h) / 2;
-        double[] radialSum = new double[maxRadius + 1];
-        int[] radialCount = new int[maxRadius + 1];
-
-        for (int y = 0; y < h; y++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            int dy = y <= h / 2 ? y : h - y;
             for (int x = 0; x < w; x++)
             {
-                int dx = x <= w / 2 ? x : w - x;
-                int r = (int)Math.Round(Math.Sqrt((double)dx * dx + (double)dy * dy));
-                if (r <= maxRadius)
+                cancellationToken.ThrowIfCancellationRequested();
+                for (int y = 0; y < h; y++)
+                    colBuf[y] = data[y * w + x];
+                Fourier.Forward(colBuf, FourierOptions.Default);
+                for (int y = 0; y < h; y++)
+                    data[y * w + x] = colBuf[y];
+            }
+
+            // Build a radial power profile (mean magnitude at each integer radius from DC).
+            // Pixels in the second half of each axis represent negative frequencies and are
+            // mapped back to their positive-frequency equivalent via modular distance.
+            int maxRadius = Math.Min(w, h) / 2;
+            double[] radialSum = new double[maxRadius + 1];
+            int[] radialCount = new int[maxRadius + 1];
+
+            for (int y = 0; y < h; y++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                int dy = y <= h / 2 ? y : h - y;
+                for (int x = 0; x < w; x++)
                 {
-                    radialSum[r] += data[y * w + x].Magnitude;
-                    radialCount[r]++;
+                    int dx = x <= w / 2 ? x : w - x;
+                    int r = (int)Math.Round(Math.Sqrt((double)dx * dx + (double)dy * dy));
+                    if (r <= maxRadius)
+                    {
+                        radialSum[r] += data[y * w + x].Magnitude;
+                        radialCount[r]++;
+                    }
                 }
             }
-        }
 
-        // Average magnitude per shell (skip r=0 which is the DC component).
-        double[] profile = new double[maxRadius + 1];
-        for (int r = 1; r <= maxRadius; r++)
-            profile[r] = radialCount[r] > 0 ? radialSum[r] / radialCount[r] : 0.0;
+            // Average magnitude per shell (skip r=0 which is the DC component).
+            double[] profile = new double[maxRadius + 1];
+            for (int r = 1; r <= maxRadius; r++)
+                profile[r] = radialCount[r] > 0 ? radialSum[r] / radialCount[r] : 0.0;
 
-        // The "noise floor" is the average energy in the outermost 10 % of the spectrum.
-        int outerStart = (int)(maxRadius * 0.9);
-        double noiseFloor = 0.0;
-        int outerCount = 0;
-        for (int r = outerStart; r <= maxRadius; r++)
-        {
-            noiseFloor += profile[r];
-            outerCount++;
-        }
-        if (outerCount > 0)
-            noiseFloor /= outerCount;
-
-        // Cliff threshold: energy must be significantly above the noise floor.
-        // We use 6× the noise floor, clamped to at least 1 % of the non-DC peak.
-        double peakNonDC = 0.0;
-        for (int r = 1; r <= maxRadius; r++)
-            if (profile[r] > peakNonDC)
-                peakNonDC = profile[r];
-
-        double cliffThreshold = Math.Max(noiseFloor * 6.0, peakNonDC * 0.01);
-
-        int cliffRadius = -1;
-        for (int r = maxRadius; r >= 1; r--)
-        {
-            if (profile[r] >= cliffThreshold)
+            // The "noise floor" is the average energy in the outermost 10 % of the spectrum.
+            int outerStart = (int)(maxRadius * 0.9);
+            double noiseFloor = 0.0;
+            int outerCount = 0;
+            for (int r = outerStart; r <= maxRadius; r++)
             {
-                cliffRadius = r;
-                break;
+                noiseFloor += profile[r];
+                outerCount++;
             }
+            if (outerCount > 0)
+                noiseFloor /= outerCount;
+
+            // Cliff threshold: energy must be significantly above the noise floor.
+            // We use 6× the noise floor, clamped to at least 1 % of the non-DC peak.
+            double peakNonDC = 0.0;
+            for (int r = 1; r <= maxRadius; r++)
+                if (profile[r] > peakNonDC)
+                    peakNonDC = profile[r];
+
+            double cliffThreshold = Math.Max(noiseFloor * 6.0, peakNonDC * 0.01);
+
+            int cliffRadius = -1;
+            for (int r = maxRadius; r >= 1; r--)
+            {
+                if (profile[r] >= cliffThreshold)
+                {
+                    cliffRadius = r;
+                    break;
+                }
+            }
+
+            if (cliffRadius < 0)
+                return null;
+
+            double scaleFactor = (double)cliffRadius / maxRadius;
+
+            // ≥ 0.9 Nyquist is treated as native (no clear upscale detected); skip downscale.
+            if (scaleFactor >= 0.9)
+                return null;
+
+            return Math.Clamp(scaleFactor, 0.25, 0.95);
         }
-
-        if (cliffRadius < 0)
-            return null;
-
-        double scaleFactor = (double)cliffRadius / maxRadius;
-
-        // ≥ 0.9 Nyquist is treated as native (no clear upscale detected); skip downscale.
-        if (scaleFactor >= 0.9)
-            return null;
-
-        return Math.Clamp(scaleFactor, 0.25, 0.95);
+        finally
+        {
+            ArrayPool<Complex>.Shared.Return(data);
+            ArrayPool<Complex>.Shared.Return(rowBuf);
+            ArrayPool<Complex>.Shared.Return(colBuf);
+        }
     }
 
     private void SaveImageWithFormat(
