@@ -17,6 +17,7 @@ services:
       - Ingest_Upscaler__PreferredGpuBackend=CUDA      # NVIDIA (CUDA 11.8)
       # - Ingest_Upscaler__PreferredGpuBackend=CUDA_12_8  # NVIDIA (CUDA 12.8)
       # - Ingest_Upscaler__PreferredGpuBackend=ROCm       # AMD
+      # - Ingest_Upscaler__PreferredGpuBackend=ROCm_GFX120X # AMD 9000-series nightly
       # - Ingest_Upscaler__PreferredGpuBackend=XPU        # Intel Arc
       # - Ingest_Upscaler__PreferredGpuBackend=CPU        # CPU fallback
 ```
@@ -93,6 +94,15 @@ The system will automatically detect available hardware using **Silk.NET.OpenGL*
 {
   "Upscaler": {
     "PreferredGpuBackend": "ROCm"
+  }
+}
+```
+
+#### Force ROCm GFX120X Backend
+```json
+{
+  "Upscaler": {
+    "PreferredGpuBackend": "ROCm_GFX120X"
   }
 }
 ```

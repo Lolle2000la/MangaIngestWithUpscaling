@@ -116,7 +116,7 @@ if (app.Configuration.GetValue<bool>("DeprecatedImageVariant"))
             + "These images are deprecated and will be removed in a future release. "
             + "Please switch to the standard image (ghcr.io/lolle2000la/manga-ingest-with-upscaling-remote-worker:latest-cuda) "
             + "and configure your GPU backend by setting the Ingest_Upscaler__PreferredGpuBackend "
-            + "environment variable (e.g. CUDA, CUDA_12_8, ROCm, XPU). "
+            + "environment variable (e.g. CUDA, CUDA_12_8, ROCm, ROCm_GFX120X, XPU). "
             + "See docs/GPU_BACKEND_CONFIGURATION.md for full migration details."
     );
 }

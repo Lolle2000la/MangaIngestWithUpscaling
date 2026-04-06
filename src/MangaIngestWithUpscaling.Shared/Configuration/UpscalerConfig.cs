@@ -6,6 +6,7 @@ public enum GpuBackend
     CUDA,
     CUDA_12_8,
     ROCm,
+    ROCm_GFX120X,
     XPU,
     CPU,
 }

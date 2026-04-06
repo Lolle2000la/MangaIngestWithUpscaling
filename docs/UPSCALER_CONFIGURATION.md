@@ -105,6 +105,7 @@ The environment variable for each setting follows the ASP.NET Core convention:
 | `CUDA` | NVIDIA — CUDA 11.8 |
 | `CUDA_12_8` | NVIDIA — CUDA 12.8 (requires ≥ 12.8 drivers) |
 | `ROCm` | AMD |
+| `ROCm_GFX120X` | AMD 9000-series nightly ROCm build |
 | `XPU` | Intel Arc / Xe discrete |
 | `CPU` | CPU-only fallback |
 
