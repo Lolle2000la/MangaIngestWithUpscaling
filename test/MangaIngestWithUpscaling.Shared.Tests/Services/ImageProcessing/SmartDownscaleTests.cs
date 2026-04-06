@@ -156,6 +156,47 @@ public class SmartDownscaleTests : IDisposable
     }
 
     // -------------------------------------------------------------------------
+    // Integration: content-aware crop selection skips blank centre
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Verifies that <c>FindContentCrop</c> skips a blank/white centre tile and selects
+    /// an off-centre tile with real content. The test image is 1600×1600 so that the
+    /// centre crop (at offset 544,544) is entirely white, while the top-left 512×512
+    /// quadrant contains a sharp alternating pattern that satisfies the content criteria
+    /// (mean ≤ 250, std-dev ≥ 5). Because the selected tile is sharp, ComputeLaplacianStdDev
+    /// returns a high score and the image is <em>not</em> downscaled.
+    /// </summary>
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task PreprocessedTempCbz_WhiteCentreWithSharpCorner_IsNotDownscaled()
+    {
+        // Arrange: 1600×1600 image – white everywhere except the top-left 512×512 which has
+        // alternating columns (very sharp). The centre tile (offset 544,544) is all white so
+        // FindContentCrop must skip it and use an off-centre candidate that contains the sharp content.
+        string cbzPath = CreateCbzWithImage(CreateImageWithWhiteCentreAndSharpCorner(1600, 1600));
+
+        var options = new ImagePreprocessingOptions
+        {
+            EnableSmartDownscale = true,
+            SmartDownscaleThreshold = 5.0, // the sharp tile has a Laplacian stddev >> 5
+            SmartDownscaleFactor = 0.5,
+        };
+
+        // Act
+        using var result = await _service.CreatePreprocessedTempCbzAsync(
+            cbzPath,
+            options,
+            TestContext.Current.CancellationToken
+        );
+
+        // Assert: the sharp tile must be selected, so the image is NOT downscaled.
+        var (outW, outH) = ReadFirstImageDimensions(result.FilePath);
+        Assert.Equal(1600, outW);
+        Assert.Equal(1600, outH);
+    }
+
+    // -------------------------------------------------------------------------
     // Integration: smart downscale disabled – blurry image is left untouched
     // -------------------------------------------------------------------------
 
@@ -196,6 +237,32 @@ public class SmartDownscaleTests : IDisposable
         using var stream = entry.Open();
         stream.Write(jpegBytes);
         return cbzPath;
+    }
+
+    /// <summary>
+    /// Creates a JPEG where the centre <c>512×512</c> tile is pure white and the top-left
+    /// <c>512×512</c> corner contains sharp alternating black/white columns.
+    /// For <paramref name="width"/> and <paramref name="height"/> &gt; 1536 the two regions do
+    /// not overlap, so <c>FindContentCrop</c> must skip the blank centre and return the corner.
+    /// </summary>
+    private static byte[] CreateImageWithWhiteCentreAndSharpCorner(int width, int height)
+    {
+        // Fill entire image with white.
+        byte[] pixels = new byte[width * height];
+        Array.Fill(pixels, (byte)255);
+
+        // Paint alternating columns in the top-left 512×512 tile.
+        int tileSize = 512;
+        for (int y = 0; y < Math.Min(tileSize, height); y++)
+        {
+            for (int x = 0; x < Math.Min(tileSize, width); x++)
+            {
+                pixels[y * width + x] = (byte)(x % 2 == 0 ? 255 : 0);
+            }
+        }
+
+        using var image = Image.NewFromMemory(pixels, width, height, 1, Enums.BandFormat.Uchar);
+        return image.JpegsaveBuffer(q: 95);
     }
 
     /// <summary>Creates a JPEG of alternating black/white pixel columns (very sharp).</summary>

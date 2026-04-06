@@ -674,7 +674,9 @@ public class ImageResizeService : IImageResizeService
             if (scaleFactor >= 0.9)
                 return null;
 
-            return Math.Clamp(scaleFactor, 0.25, 0.95);
+            // Clamp to the plausible range for cheap upscales (1.1× – 2×).
+            // Values below 0.5 are more likely FFT noise than genuine 3× upscales.
+            return Math.Clamp(scaleFactor, 0.5, 0.9);
         }
         finally
         {
