@@ -2,7 +2,6 @@ using System.Buffers;
 using System.IO.Compression;
 using System.Numerics;
 using MangaIngestWithUpscaling.Shared.Constants;
-using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MathNet.Numerics.IntegralTransforms;
 using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
