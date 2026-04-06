@@ -13,6 +13,12 @@ public class ImageResizeService : IImageResizeService
     private static readonly string[] SupportedImageExtensions =
         ImageConstants.SupportedImageExtensions.ToArray();
 
+    /// <summary>
+    /// Size of the center crop (in pixels, both width and height) used for the sharpness and FFT
+    /// checks in the smart downscale analysis. Keeping this at 512 balances accuracy and speed.
+    /// </summary>
+    private const int SmartDownscaleCropSize = 512;
+
     private readonly IFileSystem _fileSystem;
     private readonly ILogger<ImageResizeService> _logger;
     private readonly IStringLocalizer<ImageResizeService> _localizer;
@@ -395,19 +401,18 @@ public class ImageResizeService : IImageResizeService
     }
 
     /// <summary>
-    /// Estimates sharpness by computing the standard deviation of the Laplacian over a 512×512
-    /// centre crop of the image. A small Gaussian blur (σ = 0.5) is applied first so that
+    /// Estimates sharpness by computing the standard deviation of the Laplacian over a
+    /// center crop of the image. A small Gaussian blur (σ = 0.5) is applied first so that
     /// screentone halftone dots do not inflate the score.
     /// Returns a value ≥ 0; lower means blurrier / more likely to be cheaply upscaled.
     /// </summary>
     private static double ComputeLaplacianStdDev(Image image)
     {
-        // Crop a representative area from the centre to keep computation fast.
-        const int cropSize = 512;
-        int cropX = Math.Max(0, (image.Width - cropSize) / 2);
-        int cropY = Math.Max(0, (image.Height - cropSize) / 2);
-        int cropW = Math.Min(cropSize, image.Width);
-        int cropH = Math.Min(cropSize, image.Height);
+        // Crop a representative area from the center to keep computation fast.
+        int cropX = Math.Max(0, (image.Width - SmartDownscaleCropSize) / 2);
+        int cropY = Math.Max(0, (image.Height - SmartDownscaleCropSize) / 2);
+        int cropW = Math.Min(SmartDownscaleCropSize, image.Width);
+        int cropH = Math.Min(SmartDownscaleCropSize, image.Height);
 
         using Image crop = image.ExtractArea(cropX, cropY, cropW, cropH);
 
@@ -466,11 +471,10 @@ public class ImageResizeService : IImageResizeService
 
     private static double? ComputeFftDownscaleFactorCore(Image image)
     {
-        const int cropSize = 512;
-        int cropX = Math.Max(0, (image.Width - cropSize) / 2);
-        int cropY = Math.Max(0, (image.Height - cropSize) / 2);
-        int cropW = Math.Min(cropSize, image.Width);
-        int cropH = Math.Min(cropSize, image.Height);
+        int cropX = Math.Max(0, (image.Width - SmartDownscaleCropSize) / 2);
+        int cropY = Math.Max(0, (image.Height - SmartDownscaleCropSize) / 2);
+        int cropW = Math.Min(SmartDownscaleCropSize, image.Width);
+        int cropH = Math.Min(SmartDownscaleCropSize, image.Height);
 
         using Image crop = image.ExtractArea(cropX, cropY, cropW, cropH);
         using Image grey = crop.Bands > 1 ? crop.Colourspace(Enums.Interpretation.Bw) : crop.Copy();
