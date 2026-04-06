@@ -121,7 +121,22 @@ public class GpuDetectionService(ILogger<GpuDetectionService> logger) : IGpuDete
             || rendererLower.Contains("ati")
         )
         {
-            logger.LogInformation("AMD GPU detected via OpenGL");
+            if (
+                rendererLower.Contains("gfx120")
+                || rendererLower.Contains("navi 48")
+                || rendererLower.Contains("navi48")
+                || rendererLower.Contains("rx 90")
+                || rendererLower.Contains("rx90")
+                || rendererLower.Contains("9000")
+            )
+            {
+                logger.LogInformation(
+                    "AMD RDNA4 / 9000-series GPU detected via OpenGL, using ROCm GFX120X backend"
+                );
+                return GpuBackend.ROCm_GFX120X;
+            }
+
+            logger.LogInformation("AMD GPU detected via OpenGL, using standard ROCm backend");
             return GpuBackend.ROCm;
         }
 

@@ -55,7 +55,7 @@ The enhanced Python environment management system now supports automatic detecti
 
 The system will automatically detect available hardware using **Silk.NET.OpenGL**:
 - If NVIDIA GPU is detected (via OpenGL vendor/renderer strings), CUDA backend will be used
-- If AMD GPU is detected (via OpenGL vendor/renderer strings), ROCm backend will be used  
+- If AMD GPU is detected (via OpenGL vendor/renderer strings), ROCm backend will be used, or ROCm_GFX120X for newer 9000-series / gfx120X cards
 - If Intel discrete GPU is detected (Arc series), XPU backend will be used
 - If Intel integrated GPU is detected, CPU backend will be used (integrated GPUs not optimally supported for ML)
 - If no compatible GPU is found, CPU backend will be used
@@ -167,20 +167,24 @@ The environment will be automatically recreated when:
 - Compatible with NVIDIA GPUs
 
 ### CUDA 12.8 Backend
-- Installs: `torch==2.10.0 torchvision==0.25.0` from CUDA 12.8 index  
+- Installs: `torch==2.11.0 torchvision==0.26.0` from CUDA 12.8 index  
 - Compatible with NVIDIA GPUs (requires CUDA 12.8+ drivers)
 - Must be manually configured (not auto-detected)
 
 ### ROCm Backend  
-- Installs: `torch==2.10.0 torchvision==0.25.0` from ROCm 7.1 index
+- Installs: `torch==2.11.0 torchvision==0.26.0` from ROCm 7.1 index
 - Compatible with AMD GPUs
 
+### ROCm GFX120X Backend
+- Installs: prerelease `torch` and `torchvision` from the AMD gfx120X nightly index
+- Compatible with AMD 9000-series / gfx120X GPUs
+
 ### Intel XPU Backend
-- Installs: `torch==2.10.0 torchvision==0.25.0` from Intel XPU index
+- Installs: `torch==2.11.0 torchvision==0.26.0` from Intel XPU index
 - Compatible with Intel Arc discrete GPUs and Intel Xe GPUs
 
 ### CPU Backend
-- Installs: `torch==2.10.0 torchvision==0.25.0` from CPU-only index
+- Installs: `torch==2.11.0 torchvision==0.26.0` from CPU-only index
 - Compatible with any system
 
 ## Environment Variables
@@ -190,6 +194,7 @@ You can also set the backend via environment variables:
 export Ingest_Upscaler__PreferredGpuBackend=CUDA
 export Ingest_Upscaler__PreferredGpuBackend=CUDA_12_8
 export Ingest_Upscaler__PreferredGpuBackend=ROCm
+export Ingest_Upscaler__PreferredGpuBackend=ROCm_GFX120X
 export Ingest_Upscaler__PreferredGpuBackend=XPU
 export Ingest_Upscaler__PreferredGpuBackend=CPU
 ```
