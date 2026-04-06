@@ -525,8 +525,9 @@ public class ImageResizeService : IImageResizeService
 
         // Flatten alpha before converting to greyscale so the alpha band does not skew
         // the sharpness score (same pattern as NetVipsPerceptualHash).
-        using Image flat = crop.HasAlpha() ? crop.Flatten() : crop.Copy();
-        using Image grey = flat.Colourspace(Enums.Interpretation.Bw);
+        using Image? flattened = crop.HasAlpha() ? crop.Flatten() : null;
+        Image analysisSource = flattened ?? crop;
+        using Image grey = analysisSource.Colourspace(Enums.Interpretation.Bw);
 
         // A mild Gaussian blur (σ ≈ 0.5) suppresses screentone halftone dots so they don't
         // inflate the sharpness score and trigger false negatives.
