@@ -1,6 +1,8 @@
 using System.IO.Compression;
+using System.Numerics;
 using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
+using MathNet.Numerics.IntegralTransforms;
 using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
 using NetVips;
@@ -443,33 +445,23 @@ public class ImageResizeService : IImageResizeService
     }
 
     /// <summary>
-    /// Uses a forward FFT on a greyscale centre crop to find the "frequency cliff" that indicates
-    /// a cheap (bicubic/bilinear) upscale. When an image has been upscaled, its power spectrum
-    /// contains a dead zone above the original Nyquist frequency; native images taper off gradually
-    /// all the way to the true Nyquist.
+    /// Uses a forward 2-D FFT on a greyscale centre crop to find the "frequency cliff" that
+    /// indicates a cheap (bicubic/bilinear) upscale. When an image has been upscaled, its power
+    /// spectrum contains a dead zone above the original Nyquist frequency; native images taper
+    /// off gradually all the way to the true Nyquist.
+    /// <para>
+    /// The FFT is performed entirely in managed code via Math.NET Numerics, so this method works
+    /// with any libvips build (including the standard <c>NetVips.Native</c> NuGet packages which
+    /// are compiled without FFTW).
+    /// </para>
     /// <para>
     /// Returns the inferred scale factor s ∈ (0, 1) – i.e. the ratio of the original resolution
-    /// to the current resolution – or <c>null</c> when no clear cliff is detected (native image,
-    /// indeterminate), or when the underlying libvips build does not include FFT support.
-    /// The caller should fall back to the configured
+    /// to the current resolution – or <c>null</c> when no clear cliff is detected (native image
+    /// or indeterminate). The caller should fall back to the configured
     /// <see cref="ImagePreprocessingOptions.SmartDownscaleFactor"/> in that case.
     /// </para>
     /// </summary>
     private static double? ComputeFftDownscaleFactor(Image image)
-    {
-        try
-        {
-            return ComputeFftDownscaleFactorCore(image);
-        }
-        catch (VipsException)
-        {
-            // FFT is not available in this libvips build (requires FFTW). Return null so the
-            // caller falls back to the configured SmartDownscaleFactor.
-            return null;
-        }
-    }
-
-    private static double? ComputeFftDownscaleFactorCore(Image image)
     {
         int cropX = Math.Max(0, (image.Width - SmartDownscaleCropSize) / 2);
         int cropY = Math.Max(0, (image.Height - SmartDownscaleCropSize) / 2);
@@ -479,20 +471,38 @@ public class ImageResizeService : IImageResizeService
         using Image crop = image.ExtractArea(cropX, cropY, cropW, cropH);
         using Image grey = crop.Bands > 1 ? crop.Colourspace(Enums.Interpretation.Bw) : crop.Copy();
 
-        // FFT requires a float input; output is DPCOMPLEX regardless of input precision.
-        using Image floatImg = grey.Cast(Enums.BandFormat.Float);
+        // Normalise to single-byte pixels so we get exactly one byte per pixel.
+        using Image uchar = grey.Cast(Enums.BandFormat.Uchar);
+        byte[] pixels = uchar.WriteToMemory<byte>();
+        int w = uchar.Width;
+        int h = uchar.Height;
 
-        // Forward FFT: complex output (DPCOMPLEX), DC at (0, 0).
-        using Image fft = floatImg.Fwfft();
+        // Build the complex input array (pixel values scaled to [0, 1]).
+        var data = new Complex[h * w];
+        for (int i = 0; i < pixels.Length; i++)
+            data[i] = new Complex(pixels[i] / 255.0, 0.0);
 
-        // Convert complex to real magnitude (DOUBLE format).
-        using Image magnitude = fft.Abs();
+        // 2-D FFT via two passes of 1-D FFT (separable property).
+        // Math.NET's managed provider only supports 1-D FFT, so we apply it row-by-row
+        // then column-by-column to obtain the same result as a direct 2-D transform.
+        // DC ends up at index [0,0] with FourierOptions.Default.
+        var rowBuf = new Complex[w];
+        for (int y = 0; y < h; y++)
+        {
+            Array.Copy(data, y * w, rowBuf, 0, w);
+            Fourier.Forward(rowBuf, FourierOptions.Default);
+            Array.Copy(rowBuf, 0, data, y * w, w);
+        }
 
-        // Write magnitude to a flat buffer for C# analysis.
-        // The image is DOUBLE format (8 bytes/pixel), so we read as double[].
-        double[] buffer = magnitude.WriteToMemory<double>();
-        int w = magnitude.Width;
-        int h = magnitude.Height;
+        var colBuf = new Complex[h];
+        for (int x = 0; x < w; x++)
+        {
+            for (int y = 0; y < h; y++)
+                colBuf[y] = data[y * w + x];
+            Fourier.Forward(colBuf, FourierOptions.Default);
+            for (int y = 0; y < h; y++)
+                data[y * w + x] = colBuf[y];
+        }
 
         // Build a radial power profile (mean magnitude at each integer radius from DC).
         // Pixels in the second half of each axis represent negative frequencies and are
@@ -510,7 +520,7 @@ public class ImageResizeService : IImageResizeService
                 int r = (int)Math.Round(Math.Sqrt((double)dx * dx + (double)dy * dy));
                 if (r <= maxRadius)
                 {
-                    radialSum[r] += buffer[y * w + x];
+                    radialSum[r] += data[y * w + x].Magnitude;
                     radialCount[r]++;
                 }
             }

@@ -9,6 +9,7 @@
   <ItemGroup>
     <PackageReference Include="AutoRegisterInject" Version="1.4.1" />
     <PackageReference Include="Humanizer.Core" Version="3.0.10" />
+    <PackageReference Include="MathNet.Numerics" Version="5.0.0" />
     <PackageReference Include="Microsoft.Build" Version="18.4.0" />
     <PackageReference Include="Microsoft.Build.Framework" Version="18.4.0" />
     <PackageReference Include="Microsoft.Build.Tasks.Core" Version="18.4.0" />
@@ -24,62 +25,18 @@
     <PackageReference Include="Silk.NET.Windowing" Version="2.23.0" />
     <PackageReference Include="NetVips" Version="3.2.0" />
     <!-- Platform-specific NetVips native libraries -->
-    <PackageReference
-      Include="NetVips.Native.win-x64"
-      Version="8.18.2"
-      Condition="'$(RuntimeIdentifier)' == 'win-x64'"
-    />
-    <PackageReference
-      Include="NetVips.Native.win-x86"
-      Version="8.18.2"
-      Condition="'$(RuntimeIdentifier)' == 'win-x86'"
-    />
-    <PackageReference
-      Include="NetVips.Native.win-arm64"
-      Version="8.18.2"
-      Condition="'$(RuntimeIdentifier)' == 'win-arm64'"
-    />
-    <PackageReference
-      Include="NetVips.Native.linux-x64"
-      Version="8.18.2"
-      Condition="'$(RuntimeIdentifier)' == 'linux-x64'"
-    />
-    <PackageReference
-      Include="NetVips.Native.linux-arm"
-      Version="8.18.2"
-      Condition="'$(RuntimeIdentifier)' == 'linux-arm'"
-    />
-    <PackageReference
-      Include="NetVips.Native.linux-arm64"
-      Version="8.18.2"
-      Condition="'$(RuntimeIdentifier)' == 'linux-arm64'"
-    />
-    <PackageReference
-      Include="NetVips.Native.linux-musl-x64"
-      Version="8.18.2"
-      Condition="'$(RuntimeIdentifier)' == 'linux-musl-x64'"
-    />
-    <PackageReference
-      Include="NetVips.Native.linux-musl-arm64"
-      Version="8.18.2"
-      Condition="'$(RuntimeIdentifier)' == 'linux-musl-arm64'"
-    />
-    <PackageReference
-      Include="NetVips.Native.osx-x64"
-      Version="8.18.2"
-      Condition="'$(RuntimeIdentifier)' == 'osx-x64'"
-    />
-    <PackageReference
-      Include="NetVips.Native.osx-arm64"
-      Version="8.18.2"
-      Condition="'$(RuntimeIdentifier)' == 'osx-arm64'"
-    />
+    <PackageReference Include="NetVips.Native.win-x64" Version="8.18.2" Condition="'$(RuntimeIdentifier)' == 'win-x64'" />
+    <PackageReference Include="NetVips.Native.win-x86" Version="8.18.2" Condition="'$(RuntimeIdentifier)' == 'win-x86'" />
+    <PackageReference Include="NetVips.Native.win-arm64" Version="8.18.2" Condition="'$(RuntimeIdentifier)' == 'win-arm64'" />
+    <PackageReference Include="NetVips.Native.linux-x64" Version="8.18.2" Condition="'$(RuntimeIdentifier)' == 'linux-x64'" />
+    <PackageReference Include="NetVips.Native.linux-arm" Version="8.18.2" Condition="'$(RuntimeIdentifier)' == 'linux-arm'" />
+    <PackageReference Include="NetVips.Native.linux-arm64" Version="8.18.2" Condition="'$(RuntimeIdentifier)' == 'linux-arm64'" />
+    <PackageReference Include="NetVips.Native.linux-musl-x64" Version="8.18.2" Condition="'$(RuntimeIdentifier)' == 'linux-musl-x64'" />
+    <PackageReference Include="NetVips.Native.linux-musl-arm64" Version="8.18.2" Condition="'$(RuntimeIdentifier)' == 'linux-musl-arm64'" />
+    <PackageReference Include="NetVips.Native.osx-x64" Version="8.18.2" Condition="'$(RuntimeIdentifier)' == 'osx-x64'" />
+    <PackageReference Include="NetVips.Native.osx-arm64" Version="8.18.2" Condition="'$(RuntimeIdentifier)' == 'osx-arm64'" />
     <!-- Fallback for AnyCPU builds - includes all platforms -->
-    <PackageReference
-      Include="NetVips.Native"
-      Version="8.18.2"
-      Condition="'$(RuntimeIdentifier)' == '' OR '$(RuntimeIdentifier)' == 'any'"
-    />
+    <PackageReference Include="NetVips.Native" Version="8.18.2" Condition="'$(RuntimeIdentifier)' == '' OR '$(RuntimeIdentifier)' == 'any'" />
   </ItemGroup>
 
   <ItemGroup>
