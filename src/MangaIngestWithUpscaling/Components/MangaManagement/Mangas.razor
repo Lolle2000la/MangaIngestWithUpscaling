@@ -1,5 +1,6 @@
 ﻿@page "/mangas"
 @using System.Web
+@using System.Reactive.Subjects
 @using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks
@@ -40,9 +41,8 @@
             </MudItem>
             <MudItem xs="12" sm="12" lg="3">
                 <MudTextField Label="@Loc["SearchLabel"]" Placeholder="@Loc["SearchPlaceholder"]"
-                    Variant="Variant.Outlined" @bind-Value="SearchString"
-                    @bind-Value:after="async () => await table.ReloadServerData()" Immediate="true"
-                    OnInternalInputChanged="async () => await table.ReloadServerData()" />
+                    Variant="Variant.Outlined" @bind-Value="_searchInput"
+                    @bind-Value:after="OnSearchInputChanged" Immediate="true" />
             </MudItem>
             <MudItem xs="12">
                 <MudStack Row="true">
@@ -123,6 +123,10 @@
 @code {
     private Library? selectedLibrary;
 
+    private string _searchInput = "";
+    private string _urlSearchValue = "";
+    private bool _parametersInitialized = false;
+    private readonly Subject<string> _searchSubject = new();
 
     [Parameter]
     [SupplyParameterFromQuery(Name = "search")]
@@ -135,6 +139,62 @@
     private Manga? mangaBeforeEdit;
 
     private CompositeDisposable disposables = new();
+
+    protected override void OnInitialized()
+    {
+        _searchSubject
+            .Throttle(TimeSpan.FromMilliseconds(250))
+            .Subscribe(s =>
+            {
+                InvokeAsync(() =>
+                {
+                    if (
+                        HttpUtility
+                            .ParseQueryString(new Uri(NavigationManager.Uri).Query)
+                            .Get("search") != s
+                    )
+                    {
+                        _urlSearchValue = s;
+                        NavigationManager.NavigateTo(
+                            NavigationManager.GetUriWithQueryParameter("search", s),
+                            forceLoad: false,
+                            replace: true
+                        );
+                    }
+                });
+            })
+            .DisposeWith(disposables);
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (!_parametersInitialized)
+        {
+            _searchInput = SearchString;
+            _urlSearchValue = SearchString;
+            _parametersInitialized = true;
+            return;
+        }
+
+        // Only sync from URL when it changed externally (e.g. browser back/forward),
+        // not when NavigateTo was called as a result of the user typing.
+        if (SearchString != _urlSearchValue)
+        {
+            _searchInput = SearchString;
+            _urlSearchValue = SearchString;
+            if (table != null)
+                _ = table.ReloadServerData();
+        }
+    }
+
+    private async Task OnSearchInputChanged()
+    {
+        // Pre-set _urlSearchValue so that OnParametersSet does not reset _searchInput
+        // when NavigateTo triggers a re-render after the debounce fires.
+        _urlSearchValue = _searchInput;
+        _searchSubject.OnNext(_searchInput);
+        await table.ReloadServerData();
+    }
 
     private async Task<TableData<Manga>> GetMangas(TableState state, CancellationToken cancellationToken)
     {
@@ -150,9 +210,9 @@
             query = query.Where(x => x.LibraryId == selectedLibrary.Id);
         }
 
-        if (!string.IsNullOrWhiteSpace(SearchString))
+        if (!string.IsNullOrWhiteSpace(_searchInput))
         {
-            string trimmedSearchString = SearchString.Trim();
+            string trimmedSearchString = _searchInput.Trim();
             query = query.Where(x => x.PrimaryTitle.ToLower().Contains(trimmedSearchString.ToLower()) || x.OtherTitles.Any(s =>
             s.Title.ToLower().Contains(trimmedSearchString.ToLower())));
         }
@@ -164,16 +224,6 @@
             "chapters_field" => query.OrderByDirection(state.SortDirection, x => x.Chapters.Count()),
             _ => query
         };
-
-        this.WhenAnyValue(x => x.SearchString)
-        .Throttle(TimeSpan.FromMilliseconds(250))
-        .Where(s => HttpUtility.ParseQueryString(new Uri(NavigationManager.Uri).Query).Get("search") != s)
-        .Subscribe(s =>
-        {
-            string newUrl = NavigationManager.GetUriWithQueryParameter("search", s);
-            NavigationManager.NavigateTo(newUrl, forceLoad: false, replace: true);
-        })
-        .DisposeWith(disposables);
 
         try
         {
