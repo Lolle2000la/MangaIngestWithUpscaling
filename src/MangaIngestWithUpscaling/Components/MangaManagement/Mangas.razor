@@ -148,7 +148,7 @@
             .Throttle(TimeSpan.FromMilliseconds(250))
             .Subscribe(s =>
             {
-                InvokeAsync(async () =>
+                _ = InvokeAsync(async () =>
                 {
                     if (
                         HttpUtility
@@ -180,8 +180,10 @@
         // Ignore navigations that leave this page (e.g. clicking into mangas/{id}).
         // The component is about to be disposed; touching the table or _searchInput
         // would cause unnecessary DB work and potential exceptions during teardown.
-        var newPath = new Uri(e.Location).AbsolutePath;
-        if (!newPath.Equals("/mangas", StringComparison.OrdinalIgnoreCase))
+        // Use ToBaseRelativePath so PathBase-hosted deployments work correctly.
+        var relative = NavigationManager.ToBaseRelativePath(e.Location);
+        var path = relative.Split('?', '#')[0].Trim('/');
+        if (!path.Equals("mangas", StringComparison.OrdinalIgnoreCase))
         {
             _isOwnNavigation = false;
             return;
