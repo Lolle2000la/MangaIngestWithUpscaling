@@ -148,7 +148,7 @@
             .Throttle(TimeSpan.FromMilliseconds(250))
             .Subscribe(s =>
             {
-                InvokeAsync(() =>
+                InvokeAsync(async () =>
                 {
                     if (
                         HttpUtility
@@ -166,7 +166,8 @@
                     else
                     {
                         // URL didn't change; still reload the table so results stay up to date.
-                        _ = table?.ReloadServerData();
+                        if (table != null)
+                            await table.ReloadServerData();
                     }
                 });
             })
@@ -176,6 +177,16 @@
 
     private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
     {
+        // Ignore navigations that leave this page (e.g. clicking into mangas/{id}).
+        // The component is about to be disposed; touching the table or _searchInput
+        // would cause unnecessary DB work and potential exceptions during teardown.
+        var newPath = new Uri(e.Location).AbsolutePath;
+        if (!newPath.Equals("/mangas", StringComparison.OrdinalIgnoreCase))
+        {
+            _isOwnNavigation = false;
+            return;
+        }
+
         if (_isOwnNavigation)
         {
             // This location change was triggered by our own NavigateTo call while the
