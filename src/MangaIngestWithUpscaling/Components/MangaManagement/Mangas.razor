@@ -124,8 +124,8 @@
     private Library? selectedLibrary;
 
     private string _searchInput = "";
-    private string _urlSearchValue = "";
     private bool _parametersInitialized = false;
+    private bool _isOwnNavigation = false;
     private readonly Subject<string> _searchSubject = new();
 
     [Parameter]
@@ -142,6 +142,8 @@
 
     protected override void OnInitialized()
     {
+        NavigationManager.LocationChanged += OnLocationChanged;
+
         _searchSubject
             .Throttle(TimeSpan.FromMilliseconds(250))
             .Subscribe(s =>
@@ -154,12 +156,17 @@
                             .Get("search") != s
                     )
                     {
-                        _urlSearchValue = s;
+                        _isOwnNavigation = true;
                         NavigationManager.NavigateTo(
                             NavigationManager.GetUriWithQueryParameter("search", s),
                             forceLoad: false,
                             replace: true
                         );
+                    }
+                    else
+                    {
+                        // URL didn't change; still reload the table so results stay up to date.
+                        _ = table?.ReloadServerData();
                     }
                 });
             })
@@ -167,34 +174,44 @@
         _searchSubject.DisposeWith(disposables);
     }
 
-    protected override void OnParametersSet()
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
     {
-        if (!_parametersInitialized)
+        if (_isOwnNavigation)
         {
-            _searchInput = SearchString;
-            _urlSearchValue = SearchString;
-            _parametersInitialized = true;
+            // This location change was triggered by our own NavigateTo call while the
+            // user was typing.  Don't touch _searchInput — doing so would reset the
+            // field and interrupt any ongoing IME composition.
+            _isOwnNavigation = false;
+            _ = InvokeAsync(() => table?.ReloadServerData() ?? Task.CompletedTask);
             return;
         }
 
-        // Only sync from URL when it changed externally (e.g. browser back/forward),
-        // not when NavigateTo was called as a result of the user typing.
-        if (SearchString != _urlSearchValue)
+        // External navigation (e.g. browser back / forward): sync the search field
+        // from the new URL and reload the table.
+        _ = InvokeAsync(async () =>
+        {
+            _searchInput =
+                HttpUtility.ParseQueryString(new Uri(e.Location).Query).Get("search") ?? "";
+            await (table?.ReloadServerData() ?? Task.CompletedTask);
+            StateHasChanged();
+        });
+    }
+
+    protected override void OnParametersSet()
+    {
+        // Assign _searchInput from the URL exactly once so the field shows the
+        // correct initial value (e.g. when landing on /mangas?search=foo).
+        // All subsequent URL changes are handled by OnLocationChanged.
+        if (!_parametersInitialized)
         {
             _searchInput = SearchString;
-            _urlSearchValue = SearchString;
-            if (table != null)
-                _ = table.ReloadServerData();
+            _parametersInitialized = true;
         }
     }
 
-    private async Task OnSearchInputChanged()
+    private void OnSearchInputChanged()
     {
-        // Pre-set _urlSearchValue so that OnParametersSet does not reset _searchInput
-        // when NavigateTo triggers a re-render after the debounce fires.
-        _urlSearchValue = _searchInput;
         _searchSubject.OnNext(_searchInput);
-        await table.ReloadServerData();
     }
 
     private async Task<TableData<Manga>> GetMangas(TableState state, CancellationToken cancellationToken)
@@ -412,6 +429,7 @@
 
     public void Dispose()
     {
+        NavigationManager.LocationChanged -= OnLocationChanged;
         disposables.Dispose();
     }
 
