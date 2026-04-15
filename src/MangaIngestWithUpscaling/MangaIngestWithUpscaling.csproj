@@ -25,15 +25,15 @@
     <PackageReference Include="Humanizer" Version="3.0.10" />
     <PackageReference
       Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore"
-      Version="10.0.5"
+      Version="10.0.6"
     />
     <PackageReference
       Include="Microsoft.AspNetCore.Diagnostics.EntityFrameworkCore"
-      Version="10.0.5"
+      Version="10.0.6"
     />
     <PackageReference
       Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore"
-      Version="10.0.5"
+      Version="10.0.6"
     />
     <PackageReference Include="Microsoft.Build" Version="18.4.0" />
     <PackageReference Include="Microsoft.Build.Framework" Version="18.4.0" />
@@ -126,7 +126,7 @@
     />
     <PackageReference
       Include="Microsoft.AspNetCore.Authentication.OpenIdConnect"
-      Version="10.0.5"
+      Version="10.0.6"
     />
   </ItemGroup>
   <ItemGroup>
