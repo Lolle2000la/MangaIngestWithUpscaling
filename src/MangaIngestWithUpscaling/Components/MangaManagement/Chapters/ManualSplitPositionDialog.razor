@@ -6,14 +6,13 @@
         <MudStack>
             <MudText Typo="Typo.h6">@Loc["Title_EnterSplitPosition"]</MudText>
             
-            <MudTextField T="int" Label="@Loc["Label_Position"]" 
+            <MudNumericField T="int" Label="@Loc["Label_Position"]" 
                 Value="_position" 
                 ValueChanged="(val) => _position = val" 
-                type="NumberInputType.Number" 
-                min="0" max="@MaxHeight" 
+                Min="0" Max="@MaxHeight" 
                 HelperText="@string.Format(Loc["Helper_PositionRange"], 0, MaxHeight)" 
                 Style="width: 100%; margin-top: 16px; margin-bottom: 16px;">
-            </MudTextField>
+            </MudNumericField>
             
             <MudSlider T="int" Min="0" Max="@MaxHeight" Value="_position" 
                 ValueChanged="(val) => _position = val" 

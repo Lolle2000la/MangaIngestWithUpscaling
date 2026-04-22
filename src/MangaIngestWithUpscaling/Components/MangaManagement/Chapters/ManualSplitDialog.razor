@@ -177,6 +177,7 @@
     private string? _activeDragImage;
     private int _activeDragOriginalPosition;
     private DotNetObjectReference<ManualSplitDialog>? _dotNetHelper;
+    private readonly List<string> _tempDirectories = []; // Store temp directories for cleanup
 
     protected override async Task OnInitializedAsync()
     {
@@ -213,6 +214,7 @@
                     Guid.NewGuid().ToString()
                 );
                 Directory.CreateDirectory(tempDir);
+                _tempDirectories.Add(tempDir); // Store for cleanup
 
                 using var archive = ZipFile.OpenRead(chapterPath);
                 var imageEntries = archive.Entries
@@ -441,6 +443,22 @@
     public void Dispose()
     {
         _dotNetHelper?.Dispose();
+        // Clean up temp directories
+        foreach (var tempDir in _tempDirectories)
+        {
+            try
+            {
+                if (Directory.Exists(tempDir))
+                {
+                    Directory.Delete(tempDir, true);
+                }
+            }
+            catch (Exception ex)
+            {
+                // Log error but't throw to avoid breaking the dispose process
+                Console.Error.WriteLine($"Error cleaning up temp directory {tempDir}: " + ex.Message);
+            }
+        }
     }
 
     private async Task Save()
@@ -475,6 +493,7 @@
                 Guid.NewGuid().ToString()
             );
             Directory.CreateDirectory(tempDir);
+            _tempDirectories.Add(tempDir); // Store for cleanup
 
             // Process each image with splits
             var detectionResults = new List<SplitDetectionResult>();

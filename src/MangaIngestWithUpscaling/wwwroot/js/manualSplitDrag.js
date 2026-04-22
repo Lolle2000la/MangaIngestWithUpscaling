@@ -214,6 +214,7 @@ window.manualSplitDrag = {
             // Clean up event listeners
             document.removeEventListener('mousemove', mouseMoveHandler);
             document.removeEventListener('mouseup', mouseUpHandler);
+            document.removeEventListener('keydown', keyDownHandler);
             
             // Prevent the subsequent click event from removing the split
             e.stopPropagation();

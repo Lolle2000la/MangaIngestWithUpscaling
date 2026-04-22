@@ -1302,7 +1302,22 @@
             {
                 // Use the detector version from the chapter's split state to handle both auto and manual splits
                 var splitState = await SplitStateManager.GetStateAsync(chapter.Id, null, CancellationToken.None);
-                int detectorVersion = splitState?.LastProcessedDetectorVersion ?? SplitDetectionService.CURRENT_DETECTOR_VERSION;
+                
+                // Check for the latest detector version from actual findings to handle manual splits
+                var latestFindingDetectorVersion = await DbContext
+                    .Set<StripSplitFinding>()
+                    .Where(f => f.ChapterId == chapter.Id)
+                    .OrderByDescending(f => f.DetectorVersion)
+                    .Select(f => (int?)f.DetectorVersion)
+                    .FirstOrDefaultAsync(CancellationToken.None);
+                
+                // Prefer the detector version that is actually present on persisted findings for the chapter.
+                // This ensures manually saved splits are not skipped when the processing state still points to an older version.
+                int detectorVersion = 
+                    latestFindingDetectorVersion
+                    ?? splitState?.LastProcessedDetectorVersion
+                    ?? SplitDetectionService.CURRENT_DETECTOR_VERSION;
+                
                 await SplitApplicationService.ApplySplitsAsync(chapter.Id, detectorVersion, CancellationToken.None);
                 Snackbar.Add(string.Format(Loc["Snackbar_SplitApplicationQueued"], chapter.FileName), Severity.Success);
 
