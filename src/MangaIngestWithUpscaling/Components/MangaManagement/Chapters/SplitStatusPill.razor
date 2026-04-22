@@ -2,6 +2,8 @@
 @using MangaIngestWithUpscaling.Data.Analysis
 @using MudBlazor
 
+@inject IStringLocalizer<SplitStatusPill> Loc;
+
 @switch (Status)
 {
     case SplitProcessingStatus.Pending:
@@ -113,8 +115,6 @@
     [Parameter] public EventCallback ManualSplitCallback { get; set; }
     [Parameter] public EventCallback DetectSplitsCallback { get; set; }
     [Parameter] public EventCallback ApplySplitsCallback { get; set; }
-
-    [Inject] private IStringLocalizer<SplitStatusPill> Loc { get; set; } = default!;
 
     private bool ShouldShowViewEdit()
     {
