@@ -68,7 +68,7 @@
                                                 data-keyboard-instruction="@Loc["Instruction_KeyboardControls"]"
                                                 @onmousedown:preventDefault
                                                 @onmousedown:stopPropagation
-                                                @onmousedown="() => InitializeDragForSplit(image, split, splitId)"></div>
+                                                @onmousedown="(e) => StartDragWithPosition(image, split, splitId, e)"></div>
                                         }
                                     }
                                 </div>
@@ -387,6 +387,25 @@
     }
 
     // EndDragOperation method removed - no longer needed
+
+    private async Task StartDragWithPosition(string imagePath, int splitPosition, string splitId, MouseEventArgs e)
+    {
+        _activeDragImage = imagePath;
+        _activeDragOriginalPosition = splitPosition;
+        
+        // Create dotnet helper if not exists
+        _dotNetHelper ??= DotNetObjectReference.Create(this);
+        
+        // Call JS to start drag with initial mouse position
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("manualSplitDrag.startDragWithPosition", splitId, _dotNetHelper, e.ClientY);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("Error starting drag for split " + splitId + ": " + ex.Message);
+        }
+    }
 
     private async Task InitializeDragForSplit(string imagePath, int splitPosition, string splitId)
     {
