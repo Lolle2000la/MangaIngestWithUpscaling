@@ -6,9 +6,29 @@
 
 @switch (Status)
 {
+    case null:
+        <MudMenu ActivationEvent="@MouseEvent.MouseOver" AnchorOrigin="Origin.BottomCenter"
+            TransformOrigin="Origin.TopCenter">
+            <ActivatorContent Context="menuContext">
+                <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined">
+                    @Loc["Chip_Default"]
+                </MudChip>
+            </ActivatorContent>
+            <ChildContent>
+                <MudMenuItem OnClick="ManualSplitCallback">@Loc["Menu_ManualSplit"]</MudMenuItem>
+                <MudMenuItem OnClick="DetectSplitsCallback">@Loc["Menu_DetectSplits"]</MudMenuItem>
+            </ChildContent>
+        </MudMenu>
+        break;
     case SplitProcessingStatus.Pending:
         <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined">
             @Loc["Chip_Pending"]
+        </MudChip>
+        <MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Info" />
+        break;
+    case SplitProcessingStatus.Processing:
+        <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Filled">
+            @Loc["Chip_Processing"]
         </MudChip>
         <MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Info" />
         break;
@@ -109,7 +129,7 @@
 }
 
 @code {
-    [Parameter] public SplitProcessingStatus Status { get; set; }
+    [Parameter] public SplitProcessingStatus? Status { get; set; }
     [Parameter] public bool HasSplits { get; set; }
     [Parameter] public EventCallback ViewSplitsCallback { get; set; }
     [Parameter] public EventCallback ManualSplitCallback { get; set; }

@@ -128,7 +128,7 @@
             }
         </MudTd>
         <MudTd DataLabel="@Loc["Header_Splits"]">
-            <SplitStatusPill Status="context.SplitState?.Status ?? SplitProcessingStatus.Pending"
+            <SplitStatusPill Status="context.SplitState?.Status"
                              HasSplits="context.SplitFindingsCount > 0"
                              ViewSplitsCallback="EventCallback.Factory.Create(this, () => ViewSplits(context.Chapter))"
                              ApplySplitsCallback="EventCallback.Factory.Create(this, () => ApplySplits(context.Chapter))"
@@ -195,7 +195,7 @@
             @(context.Chapter.UpscalerProfile?.Deleted == true ? $"{context.Chapter.UpscalerProfile.Name}            {Loc["Suffix_Old"]}" : context.Chapter.UpscalerProfile?.Name)
         </MudTd>
         <MudTd DataLabel="@Loc["Header_Splits"]">
-            <SplitStatusPill Status="context.SplitState?.Status ?? SplitProcessingStatus.Pending"
+            <SplitStatusPill Status="context.SplitState?.Status"
                              HasSplits="context.SplitFindingsCount > 0"
                              ViewSplitsCallback="EventCallback.Factory.Create(this, () => ViewSplits(context.Chapter))"
                              ApplySplitsCallback="EventCallback.Factory.Create(this, () => ApplySplits(context.Chapter))"
@@ -1300,8 +1300,10 @@
         {
             try
             {
-                await SplitApplicationService.ApplySplitsAsync(chapter.Id, SplitDetectionService.CURRENT_DETECTOR_VERSION,
-                    CancellationToken.None);
+                // Use the detector version from the chapter's split state to handle both auto and manual splits
+                var splitState = await SplitStateManager.GetStateAsync(chapter.Id, null, CancellationToken.None);
+                int detectorVersion = splitState?.LastProcessedDetectorVersion ?? SplitDetectionService.CURRENT_DETECTOR_VERSION;
+                await SplitApplicationService.ApplySplitsAsync(chapter.Id, detectorVersion, CancellationToken.None);
                 Snackbar.Add(string.Format(Loc["Snackbar_SplitApplicationQueued"], chapter.FileName), Severity.Success);
 
                 // Reset the state using the state manager
