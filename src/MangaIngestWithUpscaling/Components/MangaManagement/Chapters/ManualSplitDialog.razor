@@ -11,8 +11,10 @@
 @using NetVips
 @using Microsoft.JSInterop
 @using System.Text.Json
-@inject IManualSplitService ManualSplitService
 
+@implements IDisposable
+
+@inject IManualSplitService ManualSplitService
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
 @inject IStringLocalizer<ManualSplitDialog> Loc
@@ -590,6 +592,4 @@
         var ext = Path.GetExtension(filename);
         return ImageConstants.SupportedImageExtensions.Contains(ext);
     }
-
-
 }
