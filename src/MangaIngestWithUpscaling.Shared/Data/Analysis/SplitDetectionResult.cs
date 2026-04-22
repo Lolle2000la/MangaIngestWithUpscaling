@@ -43,18 +43,22 @@ public static class SplitDetectionResultHelper
     /// <param name="existing">The existing detection result</param>
     /// <param name="newResult">The new detection result to merge</param>
     /// <returns>A new detection result containing all unique splits from both inputs</returns>
-    public static SplitDetectionResult Merge(SplitDetectionResult existing, SplitDetectionResult newResult)
+    public static SplitDetectionResult Merge(
+        SplitDetectionResult existing,
+        SplitDetectionResult newResult
+    )
     {
         if (existing == null)
             return newResult;
-        
+
         if (newResult == null)
             return existing;
 
         // Merge splits: combine existing and new splits, removing duplicates
-        var allSplits = existing.Splits.Concat(newResult.Splits)
+        var allSplits = existing
+            .Splits.Concat(newResult.Splits)
             .GroupBy(s => s.YOriginal) // Group by position to remove duplicates
-            .Select(g => g.First())    // Take first of each group
+            .Select(g => g.First()) // Take first of each group
             .OrderBy(s => s.YOriginal) // Order by position
             .ToList();
 
@@ -62,11 +66,13 @@ public static class SplitDetectionResultHelper
         return new SplitDetectionResult
         {
             ImagePath = newResult.ImagePath ?? existing.ImagePath,
-            OriginalHeight = newResult.OriginalHeight != 0 ? newResult.OriginalHeight : existing.OriginalHeight,
-            OriginalWidth = newResult.OriginalWidth != 0 ? newResult.OriginalWidth : existing.OriginalWidth,
+            OriginalHeight =
+                newResult.OriginalHeight != 0 ? newResult.OriginalHeight : existing.OriginalHeight,
+            OriginalWidth =
+                newResult.OriginalWidth != 0 ? newResult.OriginalWidth : existing.OriginalWidth,
             Splits = allSplits,
             Count = allSplits.Count,
-            Error = newResult.Error ?? existing.Error
+            Error = newResult.Error ?? existing.Error,
         };
     }
 
@@ -76,11 +82,14 @@ public static class SplitDetectionResultHelper
     /// <param name="original">The original detection result</param>
     /// <param name="newSplits">The new splits to use</param>
     /// <returns>A new detection result with the updated splits</returns>
-    public static SplitDetectionResult WithSplits(SplitDetectionResult original, List<DetectedSplit> newSplits)
+    public static SplitDetectionResult WithSplits(
+        SplitDetectionResult original,
+        List<DetectedSplit> newSplits
+    )
     {
         if (original == null)
             throw new ArgumentNullException(nameof(original));
-        
+
         if (newSplits == null)
             throw new ArgumentNullException(nameof(newSplits));
 
@@ -91,7 +100,7 @@ public static class SplitDetectionResultHelper
             OriginalWidth = original.OriginalWidth,
             Splits = newSplits,
             Count = newSplits.Count,
-            Error = original.Error
+            Error = original.Error,
         };
     }
 }
