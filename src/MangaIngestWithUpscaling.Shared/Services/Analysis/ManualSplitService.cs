@@ -6,9 +6,13 @@ namespace MangaIngestWithUpscaling.Shared.Services.Analysis;
 
 public interface IManualSplitService
 {
-    List<string> ApplyManualSplitsToImage(string imagePath, List<int> splitPositions, string outputDir);
+    List<string> ApplyManualSplitsToImage(
+        string imagePath,
+        List<int> splitPositions,
+        string outputDir
+    );
     List<string> ApplyEqualSplitsToImage(string imagePath, int numberOfSplits, string outputDir);
-    
+
     /// <summary>
     /// Version constant for manual splits (different from auto-detection)
     /// </summary>
@@ -19,6 +23,7 @@ public interface IManualSplitService
 public class ManualSplitService : IManualSplitService
 {
     public int ManualSplitVersion => 2; // Different from auto-detection (which is 1)
+
     public List<string> ApplyManualSplitsToImage(
         string imagePath,
         List<int> splitPositions,

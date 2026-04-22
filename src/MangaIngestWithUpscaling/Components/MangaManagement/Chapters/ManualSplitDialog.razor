@@ -34,6 +34,10 @@
             }
             else
             {
+                <MudAlert Severity="Severity.Info" Style="margin-bottom: 16px;">
+                    @Loc["Instruction_DragToAdjust"]
+                </MudAlert>
+                
                 <MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" TabPanelsClass="pa-6" @bind-ActivePanelIndex="_activeTabIndex">
                     @foreach (var image in _images)
                     {
