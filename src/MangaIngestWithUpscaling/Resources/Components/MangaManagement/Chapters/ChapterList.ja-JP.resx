@@ -130,6 +130,18 @@
   <data name="Menu_ApplySplits" xml:space="preserve">
     <value>分割を適用</value>
   </data>
+  <data name="Menu_ManualSplit" xml:space="preserve">
+    <value>手動分割</value>
+  </data>
+  <data name="Menu_DetectSplits" xml:space="preserve">
+    <value>分割を検出</value>
+  </data>
+  <data name="Menu_RedetectSplits" xml:space="preserve">
+    <value>分割を再検出</value>
+  </data>
+  <data name="Menu_RetryDetection" xml:space="preserve">
+    <value>検出を再試行</value>
+  </data>
   <data name="Tooltip_RedetectSplits" xml:space="preserve">
     <value>分割を再検出</value>
   </data>

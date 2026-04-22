@@ -112,6 +112,18 @@
   <data name="Menu_ApplySplits" xml:space="preserve">
     <value>Apply Splits</value>
   </data>
+  <data name="Menu_ManualSplit" xml:space="preserve">
+    <value>Manual Split</value>
+  </data>
+  <data name="Menu_DetectSplits" xml:space="preserve">
+    <value>Detect Splits</value>
+  </data>
+  <data name="Menu_RetryDetection" xml:space="preserve">
+    <value>Retry Detection</value>
+  </data>
+  <data name="Menu_RedetectSplits" xml:space="preserve">
+    <value>Redetect Splits</value>
+  </data>
   <data name="Chip_NoSplits" xml:space="preserve">
     <value>No Splits</value>
   </data>
@@ -309,6 +321,9 @@
   </data>
   <data name="Dialog_ApplySplits_Content" xml:space="preserve">
     <value>Are you sure you want to apply the detected splits? This will split the chapter into multiple files and delete the original.</value>
+  </data>
+  <data name="Dialog_ManualSplit_Title" xml:space="preserve">
+    <value>Manual Image Splitting</value>
   </data>
   <data name="Snackbar_SplitApplicationQueued" xml:space="preserve">
     <value>Queued split application for {0}</value>

@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xs:schema id="root" xmlns="" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xs:import namespace="http://www.w3.org/2001/XMLSchema" />
+    <xs:element name="root" msdata:IsDataSet="true">
+      <xs:complexType>
+        <xs:choice maxOccurs="unbounded">
+          <xs:element name="metadata">
+            <xs:complexType>
+              <xs:sequence>
+                <xs:element name="value" type="xs:string" minOccurs="0" />
+              </xs:sequence>
+              <xs:attribute name="name" type="xs:string" use="required" />
+            </xs:complexType>
+          </xs:element>
+          <xs:element name="data">
+            <xs:complexType>
+              <xs:sequence>
+                <xs:element name="value" type="xs:string" minOccurs="0" msdata:Ordinal="0" />
+                <xs:element name="comment" type="xs:string" minOccurs="0" msdata:Ordinal="1" />
+              </xs:sequence>
+              <xs:attribute name="name" type="xs:string" use="required" msdata:Ordinal="1" />
+              <xs:attribute name="type" type="xs:string" msdata:Ordinal="3" />
+              <xs:attribute name="mimetype" type="xs:string" msdata:Ordinal="4" />
+            </xs:complexType>
+          </xs:element>
+          <xs:element name="resheader">
+            <xs:complexType>
+              <xs:sequence>
+                <xs:element name="value" type="xs:string" minOccurs="0" msdata:Ordinal="0" />
+              </xs:sequence>
+              <xs:attribute name="name" type="xs:string" use="required" />
+            </xs:complexType>
+          </xs:element>
+        </xs:choice>
+      </xs:complexType>
+    </xs:element>
+  </xs:schema>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="NoImagesFound" xml:space="preserve">
+    <value>No images found in this chapter.</value>
+  </data>
+  <data name="Label_NumberOfEqualSplits" xml:space="preserve">
+    <value>Number of splits</value>
+  </data>
+  <data name="Button_ApplyEqualSplits" xml:space="preserve">
+    <value>Apply Equal Splits</value>
+  </data>
+  <data name="Button_AddManualSplit" xml:space="preserve">
+    <value>Add Manual Split</value>
+  </data>
+  <data name="Button_ClearSplits" xml:space="preserve">
+    <value>Clear Splits</value>
+  </data>
+  <data name="Label_CurrentSplits" xml:space="preserve">
+    <value>Current Splits</value>
+  </data>
+  <data name="Error_ChapterNotFound" xml:space="preserve">
+    <value>Chapter not found.</value>
+  </data>
+  <data name="Error_LoadImagesFailure" xml:space="preserve">
+    <value>Failed to load chapter images: {0}</value>
+  </data>
+  <data name="Error_NoSplitsToApply" xml:space="preserve">
+    <value>No splits to apply.</value>
+  </data>
+  <data name="Error_ApplySplitsFailure" xml:space="preserve">
+    <value>Failed to apply splits: {0}</value>
+  </data>
+  <data name="Success_SplitsApplied" xml:space="preserve">
+    <value>Manual splits applied successfully.</value>
+  </data>
+  <data name="Instruction_DragToAdjust" xml:space="preserve">
+    <value>Drag split lines up/down to adjust positions. Use the "Clear Splits" button to remove all splits for an image.</value>
+  </data>
+  <data name="Dialog_AddSplit_Title" xml:space="preserve">
+    <value>Add Split Position</value>
+  </data>
+  <data name="Button_Cancel" xml:space="preserve">
+    <value>Cancel</value>
+  </data>
+  <data name="Button_Save" xml:space="preserve">
+    <value>Save</value>
+  </data>
+  <data name="Dialog_ManualSplit_Title" xml:space="preserve">
+    <value>Manual Image Splitting</value>
+  </data>
+  <data name="Instruction_KeyboardControls" xml:space="preserve">
+    <value>Use Arrow Keys for Fine Adjustment (Shift+Arrow for 10px)</value>
+  </data>
+</root>

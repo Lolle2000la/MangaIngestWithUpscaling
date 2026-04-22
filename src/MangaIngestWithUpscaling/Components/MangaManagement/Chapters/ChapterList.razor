@@ -18,6 +18,7 @@
 @using MangaIngestWithUpscaling.Shared.Helpers
 @using Humanizer
 @using System.Globalization
+@using MudBlazor
 @inject ISplitApplicationService SplitApplicationService
 @inject ApplicationDbContext DbContext
 @inject IMetadataHandlingService MetadataHandler
@@ -35,6 +36,7 @@
 @inject ISplitProcessingService SplitProcessingService
 @inject ISplitProcessingCoordinator SplitProcessingCoordinator
 @inject ISplitProcessingStateManager SplitStateManager
+@inject IManualSplitService ManualSplitService
 @inject IStringLocalizer<ChapterList> Loc
 @inject IStringLocalizer<SharedResource> SharedLoc
 
@@ -142,40 +144,76 @@
                             <ChildContent>
                                 <MudMenuItem OnClick="@(() => ViewSplits(context.Chapter))">@Loc["Menu_ViewEdit"]</MudMenuItem>
                                 <MudMenuItem OnClick="@(() => ApplySplits(context.Chapter))">@Loc["Menu_ApplySplits"]</MudMenuItem>
+                                <MudMenuItem OnClick="@(() => ManualSplit(context.Chapter))">@Loc["Menu_ManualSplit"]</MudMenuItem>
                             </ChildContent>
                         </MudMenu>
                     }
                     else
                     {
-                        <MudChip T="string" Size="Size.Small" Color="Color.Surface" Variant="Variant.Outlined">@Loc["Chip_NoSplits"]
-                        </MudChip>
-                        <MudTooltip Text="@Loc["Tooltip_RedetectSplits"]">
-                            <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small"
-                                OnClick="@(() => DetectSplits(context.Chapter))" />
-                        </MudTooltip>
+                        <MudMenu ActivationEvent="@MouseEvent.MouseOver" AnchorOrigin="Origin.BottomCenter"
+                            TransformOrigin="Origin.TopCenter">
+                            <ActivatorContent Context="menuContext">
+                                <MudChip T="string" Size="Size.Small" Color="Color.Surface" Variant="Variant.Outlined">@Loc["Chip_NoSplits"]
+                                </MudChip>
+                            </ActivatorContent>
+                            <ChildContent>
+                                <MudMenuItem OnClick="@(() => ManualSplit(context.Chapter))">@Loc["Menu_ManualSplit"]</MudMenuItem>
+                                <MudMenuItem OnClick="@(() => DetectSplits(context.Chapter))">@Loc["Menu_DetectSplits"]</MudMenuItem>
+                            </ChildContent>
+                        </MudMenu>
                     }
                     break;
                 case SplitProcessingStatus.NoSplitsFound:
-                    <MudChip T="string" Size="Size.Small" Color="Color.Surface" Variant="Variant.Outlined">@Loc["Chip_NoSplits"]
-                    </MudChip>
-                    <MudTooltip Text="@Loc["Tooltip_RedetectSplits"]">
-                        <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small"
-                            OnClick="@(() => DetectSplits(context.Chapter))" />
-                    </MudTooltip>
+                    <MudMenu ActivationEvent="@MouseEvent.MouseOver" AnchorOrigin="Origin.BottomCenter"
+                        TransformOrigin="Origin.TopCenter">
+                        <ActivatorContent Context="menuContext">
+                            <MudChip T="string" Size="Size.Small" Color="Color.Surface" Variant="Variant.Outlined">@Loc["Chip_NoSplits"]
+                            </MudChip>
+                        </ActivatorContent>
+                        <ChildContent>
+                            <MudMenuItem OnClick="@(() => ManualSplit(context.Chapter))">@Loc["Menu_ManualSplit"]</MudMenuItem>
+                            <MudMenuItem OnClick="@(() => DetectSplits(context.Chapter))">@Loc["Menu_DetectSplits"]</MudMenuItem>
+                        </ChildContent>
+                    </MudMenu>
                     break;
                 case SplitProcessingStatus.Applied:
-                    <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Filled">@Loc["Chip_Applied"]
-                    </MudChip>
+                    <MudMenu ActivationEvent="@MouseEvent.MouseOver" AnchorOrigin="Origin.BottomCenter"
+                        TransformOrigin="Origin.TopCenter">
+                        <ActivatorContent Context="menuContext">
+                            <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Filled">@Loc["Chip_Applied"]
+                            </MudChip>
+                        </ActivatorContent>
+                        <ChildContent>
+                            <MudMenuItem OnClick="@(() => ManualSplit(context.Chapter))">@Loc["Menu_ManualSplit"]</MudMenuItem>
+                            <MudMenuItem OnClick="@(() => DetectSplits(context.Chapter))">@Loc["Menu_RedetectSplits"]</MudMenuItem>
+                        </ChildContent>
+                    </MudMenu>
                     break;
                 case SplitProcessingStatus.Failed:
-                    <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Filled">@Loc["Chip_Failed"]
-                    </MudChip>
-                    <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small"
-                        OnClick="@(() => DetectSplits(context.Chapter))" Title="@Loc["Tooltip_RetryDetection"]" />
+                    <MudMenu ActivationEvent="@MouseEvent.MouseOver" AnchorOrigin="Origin.BottomCenter"
+                        TransformOrigin="Origin.TopCenter">
+                        <ActivatorContent Context="menuContext">
+                            <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Filled">@Loc["Chip_Failed"]
+                            </MudChip>
+                        </ActivatorContent>
+                        <ChildContent>
+                            <MudMenuItem OnClick="@(() => ManualSplit(context.Chapter))">@Loc["Menu_ManualSplit"]</MudMenuItem>
+                            <MudMenuItem OnClick="@(() => DetectSplits(context.Chapter))">@Loc["Menu_RetryDetection"]</MudMenuItem>
+                        </ChildContent>
+                    </MudMenu>
                     break;
                 default:
-                    <MudIconButton Icon="@Icons.Material.Filled.Search" Size="Size.Small"
-                        OnClick="@(() => DetectSplits(context.Chapter))" Title="@Loc["Tooltip_DetectSplits"]" />
+                    <MudMenu ActivationEvent="@MouseEvent.MouseOver" AnchorOrigin="Origin.BottomCenter"
+                        TransformOrigin="Origin.TopCenter">
+                        <ActivatorContent Context="menuContext">
+                            <MudIconButton Icon="@Icons.Material.Filled.Search" Size="Size.Small"
+                                title="@Loc["Tooltip_DetectSplits"]" />
+                        </ActivatorContent>
+                        <ChildContent>
+                            <MudMenuItem OnClick="@(() => ManualSplit(context.Chapter))">@Loc["Menu_ManualSplit"]</MudMenuItem>
+                            <MudMenuItem OnClick="@(() => DetectSplits(context.Chapter))">@Loc["Menu_DetectSplits"]</MudMenuItem>
+                        </ChildContent>
+                    </MudMenu>
                     break;
             }
         </MudTd>
@@ -1355,6 +1393,25 @@
                 Logger.LogError(ex, "Failed to apply splits for chapter {ChapterId}", chapter.Id);
                 Snackbar.Add(string.Format(Loc["Snackbar_SplitApplicationFailure"], ex.Message), Severity.Error);
             }
+        }
+    }
+
+    private async Task ManualSplit(Chapter chapter)
+    {
+        var parameters = new DialogParameters
+        {
+            { "ChapterId", chapter.Id }
+        };
+
+        var options = new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseButton = true };
+
+        var dialog = await DialogService.ShowAsync<ManualSplitDialog>(Loc["Dialog_ManualSplit_Title"], parameters, options);
+        var result = await dialog.Result;
+
+        if (!result.Canceled)
+        {
+            // Refresh the chapter to show the new split state
+            await LoadChapters();
         }
     }
 
