@@ -18,6 +18,7 @@
 @using MangaIngestWithUpscaling.Shared.Helpers
 @using Humanizer
 @using System.Globalization
+@using MudBlazor
 @inject ISplitApplicationService SplitApplicationService
 @inject ApplicationDbContext DbContext
 @inject IMetadataHandlingService MetadataHandler
@@ -35,35 +36,37 @@
 @inject ISplitProcessingService SplitProcessingService
 @inject ISplitProcessingCoordinator SplitProcessingCoordinator
 @inject ISplitProcessingStateManager SplitStateManager
+@inject IManualSplitService ManualSplitService
 @inject IStringLocalizer<ChapterList> Loc
 @inject IStringLocalizer<SharedResource> SharedLoc
 
 <MudTable T="ChapterItem" @bind-SelectedItems="selectedChapters" Items="@chapterItems" Dense="true"
-    MultiSelection="true" CanCancelEdit="true" RowEditCommit="r => _ = OnChapterMetadataCommit(r as ChapterItem)"
-    RowEditCancel="r => OnChapterMetadataDiscard(r as ChapterItem)">
+          MultiSelection="true" CanCancelEdit="true" RowEditCommit="r => _ = OnChapterMetadataCommit(r as ChapterItem)"
+          RowEditCancel="r => OnChapterMetadataDiscard(r as ChapterItem)">
     <ToolBarContent>
         <MudStack Row>
             <MudButton StartIcon="@Icons.Material.Filled.Delete" Color="Color.Error" Variant="Variant.Text"
-                Disabled="selectedChapters.Count == 0" OnClick="@(async () => await DeleteSelected())">
+                       Disabled="selectedChapters.Count == 0" OnClick="@(async () => await DeleteSelected())">
                 @Loc["Button_DeleteSelected"]
             </MudButton>
             <MudButton StartIcon="@Icons.Material.Filled.ArrowUpward" Color="Color.Primary" Variant="Variant.Text"
-                Disabled="selectedChapters.Count == 0 || selectedChapters.All(c => c.Chapter.IsUpscaled)"
-                OnClick="@UpscaleSelectedChapters">
+                       Disabled="selectedChapters.Count == 0 || selectedChapters.All(c => c.Chapter.IsUpscaled)"
+                       OnClick="@UpscaleSelectedChapters">
                 @Loc["Button_UpscaleSelected"]
             </MudButton>
             <MudButton StartIcon="@Icons.Material.Filled.ArrowDownward" Color="Color.Secondary" Variant="Variant.Text"
-                Disabled="selectedChapters.Count == 0 || !selectedChapters.Any(c => c.Chapter.IsUpscaled)"
-                OnClick="@DeleteSelectedUpscaled">
+                       Disabled="selectedChapters.Count == 0 || !selectedChapters.Any(c => c.Chapter.IsUpscaled)"
+                       OnClick="@DeleteSelectedUpscaled">
                 @Loc["Button_DeleteUpscaledSelected"]
             </MudButton>
             <MudButton StartIcon="@Icons.Material.Filled.Undo" Color="Color.Warning" Variant="Variant.Text"
-                Disabled="selectedChapters.Count == 0 || !selectedChapters.Any(c => c.IsMerged)"
-                OnClick="@RevertSelectedMergedChapters">
+                       Disabled="selectedChapters.Count == 0 || !selectedChapters.Any(c => c.IsMerged)"
+                       OnClick="@RevertSelectedMergedChapters">
                 @Loc["Button_RevertSelectedMerged"]
             </MudButton>
             <MudButton StartIcon="@Icons.Material.Filled.MergeType" Color="Color.Info" Variant="Variant.Text"
-                Disabled="selectedChapters.Count == 0 || !CanAnySelectedBeMerged" OnClick="@MergeSelectedChapters">
+                       Disabled="selectedChapters.Count == 0 || !CanAnySelectedBeMerged"
+                       OnClick="@MergeSelectedChapters">
                 @Loc["Button_MergeSelected"]
             </MudButton>
         </MudStack>
@@ -102,7 +105,7 @@
                 @if (context.IsMerged)
                 {
                     <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Filled">
-                        <MudIcon Icon="@Icons.Material.Filled.CallMerge" Size="Size.Small" />
+                        <MudIcon Icon="@Icons.Material.Filled.CallMerge" Size="Size.Small"/>
                         @Loc["Chip_Merged"]
                     </MudChip>
                 }
@@ -110,105 +113,59 @@
         </MudTd>
         <MudTd DataLabel="@Loc["Header_ChapterPath"]">@context.Chapter.RelativePath</MudTd>
         <MudTd DataLabel="@Loc["Header_Upscaled"]">
-            @(context.Chapter.IsUpscaled? Loc["Status_Yes"] : Loc["Status_No"])
+            @(context.Chapter.IsUpscaled ? Loc["Status_Yes"] : Loc["Status_No"])
             @if (!context.Chapter.IsUpscaled)
             {
                 <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Color="Color.Primary" Variant="Variant.Text"
-                    OnClick="@(() => UpscaleChapter(context.Chapter))" title="@Loc["Tooltip_Upscale"]" />
+                               OnClick="@(() => UpscaleChapter(context.Chapter))" title="@Loc["Tooltip_Upscale"]"/>
             }
             else
             {
-                <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward" Color="Color.Secondary" Variant="Variant.Text"
-                    OnClick="@(() => DeleteUpscaledConfirm(context.Chapter))" title="@Loc["Tooltip_DeleteUpscaled"]" />
+                <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward" Color="Color.Secondary"
+                               Variant="Variant.Text"
+                               OnClick="@(() => DeleteUpscaledConfirm(context.Chapter))"
+                               title="@Loc["Tooltip_DeleteUpscaled"]"/>
             }
         </MudTd>
         <MudTd DataLabel="@Loc["Header_Splits"]">
-            @switch (context.SplitState?.Status)
-            {
-                case SplitProcessingStatus.Pending:
-                    <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined">@Loc["Chip_Pending"]
-                    </MudChip>
-                    <MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Info" />
-                    break;
-                case SplitProcessingStatus.Detected:
-                    if (context.SplitFindingsCount > 0)
-                    {
-                        <MudMenu ActivationEvent="@MouseEvent.MouseOver" AnchorOrigin="Origin.BottomCenter"
-                            TransformOrigin="Origin.TopCenter">
-                            <ActivatorContent Context="menuContext">
-                                <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Filled">
-                                    @Loc["Chip_Detected"]</MudChip>
-                            </ActivatorContent>
-                            <ChildContent>
-                                <MudMenuItem OnClick="@(() => ViewSplits(context.Chapter))">@Loc["Menu_ViewEdit"]</MudMenuItem>
-                                <MudMenuItem OnClick="@(() => ApplySplits(context.Chapter))">@Loc["Menu_ApplySplits"]</MudMenuItem>
-                            </ChildContent>
-                        </MudMenu>
-                    }
-                    else
-                    {
-                        <MudChip T="string" Size="Size.Small" Color="Color.Surface" Variant="Variant.Outlined">@Loc["Chip_NoSplits"]
-                        </MudChip>
-                        <MudTooltip Text="@Loc["Tooltip_RedetectSplits"]">
-                            <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small"
-                                OnClick="@(() => DetectSplits(context.Chapter))" />
-                        </MudTooltip>
-                    }
-                    break;
-                case SplitProcessingStatus.NoSplitsFound:
-                    <MudChip T="string" Size="Size.Small" Color="Color.Surface" Variant="Variant.Outlined">@Loc["Chip_NoSplits"]
-                    </MudChip>
-                    <MudTooltip Text="@Loc["Tooltip_RedetectSplits"]">
-                        <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small"
-                            OnClick="@(() => DetectSplits(context.Chapter))" />
-                    </MudTooltip>
-                    break;
-                case SplitProcessingStatus.Applied:
-                    <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Filled">@Loc["Chip_Applied"]
-                    </MudChip>
-                    break;
-                case SplitProcessingStatus.Failed:
-                    <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Filled">@Loc["Chip_Failed"]
-                    </MudChip>
-                    <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small"
-                        OnClick="@(() => DetectSplits(context.Chapter))" Title="@Loc["Tooltip_RetryDetection"]" />
-                    break;
-                default:
-                    <MudIconButton Icon="@Icons.Material.Filled.Search" Size="Size.Small"
-                        OnClick="@(() => DetectSplits(context.Chapter))" Title="@Loc["Tooltip_DetectSplits"]" />
-                    break;
-            }
+            <SplitStatusPill Status="context.SplitState?.Status"
+                             HasSplits="context.SplitFindingsCount > 0"
+                             ViewSplitsCallback="EventCallback.Factory.Create(this, () => ViewSplits(context.Chapter))"
+                             ApplySplitsCallback="EventCallback.Factory.Create(this, () => ApplySplits(context.Chapter))"
+                             DetectSplitsCallback="EventCallback.Factory.Create(this, () => DetectSplits(context.Chapter))"
+                             ManualSplitCallback="EventCallback.Factory.Create(this, () => ManualSplit(context.Chapter))"/>
         </MudTd>
         <MudTd DataLabel="@Loc["Header_UpscalerProfile"]">
-            @(context.Chapter.UpscalerProfile?.Deleted == true ? $"{context.Chapter.UpscalerProfile.Name}            {Loc["Suffix_Old"]}" :
-                        context.Chapter.UpscalerProfile?.Name)
+            @(context.Chapter.UpscalerProfile?.Deleted == true ? $"{context.Chapter.UpscalerProfile.Name}            {Loc["Suffix_Old"]}" : context.Chapter.UpscalerProfile?.Name)
         </MudTd>
         <MudTd DataLabel="@Loc["Header_Actions"]">
             <MudStack Row="true" Spacing="1">
                 @if (context.IsMerged)
                 {
                     <MudIconButton Icon="@Icons.Material.Filled.Undo" Color="Color.Warning" Variant="Variant.Text"
-                        OnClick="@(() => RevertMergedChapterConfirm(context.Chapter))"
-                        title="@Loc["Tooltip_RevertMerged"]" />
+                                   OnClick="@(() => RevertMergedChapterConfirm(context.Chapter))"
+                                   title="@Loc["Tooltip_RevertMerged"]"/>
                 }
                 @if (CanManualMergeChapterSync(context.Chapter))
                 {
                     <MudIconButton Icon="@Icons.Material.Filled.MergeType" Color="Color.Info" Variant="Variant.Text"
-                        OnClick="@(() => MergeChapterConfirm(context.Chapter))" title="@Loc["Tooltip_MergeChapter"]" />
+                                   OnClick="@(() => MergeChapterConfirm(context.Chapter))"
+                                   title="@Loc["Tooltip_MergeChapter"]"/>
                 }
                 <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Variant="Variant.Text"
-                    OnClick="@(() => DeleteChapterConfirm(context.Chapter))" title="@Loc["Tooltip_DeleteChapter"]" />
+                               OnClick="@(() => DeleteChapterConfirm(context.Chapter))"
+                               title="@Loc["Tooltip_DeleteChapter"]"/>
             </MudStack>
         </MudTd>
     </RowTemplate>
     <RowEditingTemplate>
         <MudTd DataLabel="@Loc["Header_ChapterTitle"]">
             <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="1">
-                <MudInput @bind-Value="context.NewTitle" />
+                <MudInput @bind-Value="context.NewTitle"/>
                 @if (context.IsMerged)
                 {
                     <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Filled">
-                        <MudIcon Icon="@Icons.Material.Filled.CallMerge" Size="Size.Small" />
+                        <MudIcon Icon="@Icons.Material.Filled.CallMerge" Size="Size.Small"/>
                         @Loc["Chip_Merged"]
                     </MudChip>
                 }
@@ -216,7 +173,7 @@
         </MudTd>
         <MudTd DataLabel="@Loc["Header_ChapterPath"]">
             <MudInput @bind-Value="context.NewFileName" Label="@Loc["Label_Filename"]"
-                HelperText="@Loc["Label_Filename"]" />
+                      HelperText="@Loc["Label_Filename"]"/>
             .cbz
         </MudTd>
         <MudTd DataLabel="@Loc["Header_Upscaled"]">
@@ -224,21 +181,30 @@
             @if (!context.Chapter.IsUpscaled)
             {
                 <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Color="Color.Primary" Variant="Variant.Text"
-                    OnClick="@(() => UpscaleChapter(context.Chapter))" title="@Loc["Tooltip_Upscale"]" />
+                               OnClick="@(() => UpscaleChapter(context.Chapter))" title="@Loc["Tooltip_Upscale"]"/>
             }
             else
             {
-                <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward" Color="Color.Secondary" Variant="Variant.Text"
-                    OnClick="@(() => DeleteUpscaledConfirm(context.Chapter))" title="@Loc["Tooltip_DeleteUpscaled"]" />
+                <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward" Color="Color.Secondary"
+                               Variant="Variant.Text"
+                               OnClick="@(() => DeleteUpscaledConfirm(context.Chapter))"
+                               title="@Loc["Tooltip_DeleteUpscaled"]"/>
             }
         </MudTd>
         <MudTd DataLabel="@Loc["Header_UpscalerProfile"]">
-            @(context.Chapter.UpscalerProfile?.Deleted == true ? $"{context.Chapter.UpscalerProfile.Name}            {Loc["Suffix_Old"]}" :
-                        context.Chapter.UpscalerProfile?.Name)
+            @(context.Chapter.UpscalerProfile?.Deleted == true ? $"{context.Chapter.UpscalerProfile.Name}            {Loc["Suffix_Old"]}" : context.Chapter.UpscalerProfile?.Name)
+        </MudTd>
+        <MudTd DataLabel="@Loc["Header_Splits"]">
+            <SplitStatusPill Status="context.SplitState?.Status"
+                             HasSplits="context.SplitFindingsCount > 0"
+                             ViewSplitsCallback="EventCallback.Factory.Create(this, () => ViewSplits(context.Chapter))"
+                             ApplySplitsCallback="EventCallback.Factory.Create(this, () => ApplySplits(context.Chapter))"
+                             DetectSplitsCallback="EventCallback.Factory.Create(this, () => DetectSplits(context.Chapter))"
+                             ManualSplitCallback="EventCallback.Factory.Create(this, () => ManualSplit(context.Chapter))"/>
         </MudTd>
     </RowEditingTemplate>
     <PagerContent>
-        <MudTablePager />
+        <MudTablePager/>
     </PagerContent>
 </MudTable>
 
@@ -254,7 +220,7 @@
     private async Task DeleteSelected()
     {
         var result = await DialogService.ShowMessageBoxAsync(Loc["Dialog_DeleteSelected_Title"],
-        Loc["Dialog_DeleteSelected_Content"], yesText: SharedLoc["Yes"], cancelText: SharedLoc["No"]);
+            Loc["Dialog_DeleteSelected_Content"], yesText: SharedLoc["Yes"], cancelText: SharedLoc["No"]);
         if (result == true)
         {
             var chaptersToDelete = selectedChapters.ToList();
@@ -277,7 +243,7 @@
     private async Task DeleteSelectedUpscaled()
     {
         var result = await DialogService.ShowMessageBoxAsync(Loc["Dialog_DeleteUpscaledSelected_Title"],
-        Loc["Dialog_DeleteUpscaledSelected_Content"], SharedLoc["Yes"], cancelText: SharedLoc["No"]);
+            Loc["Dialog_DeleteUpscaledSelected_Content"], SharedLoc["Yes"], cancelText: SharedLoc["No"]);
         if (result == true)
         {
             var chaptersToProcess = selectedChapters.ToList();
@@ -300,11 +266,11 @@
         }
 
         var result = await DialogService.ShowMessageBoxAsync(
-        Loc["Dialog_RevertSelectedMerged_Title"],
-        string.Format(Loc["Dialog_RevertSelectedMerged_Content"],
-        Loc["Word_MergedChapter"].Value.ToLocalizedQuantity(mergedChapters.Count, CultureInfo.CurrentUICulture)),
-        SharedLoc["Yes"],
-        cancelText: SharedLoc["No"]);
+            Loc["Dialog_RevertSelectedMerged_Title"],
+            string.Format(Loc["Dialog_RevertSelectedMerged_Content"],
+                Loc["Word_MergedChapter"].Value.ToLocalizedQuantity(mergedChapters.Count, CultureInfo.CurrentUICulture)),
+            SharedLoc["Yes"],
+            cancelText: SharedLoc["No"]);
 
         if (result == true)
         {
@@ -343,7 +309,7 @@
     private async Task DeleteChapterConfirm(Chapter chapter)
     {
         var result = await DialogService.ShowMessageBoxAsync(Loc["Dialog_DeleteChapter_Title"], Loc["Dialog_DeleteChapter_Content"],
-        yesText: SharedLoc["Yes"], cancelText: SharedLoc["No"]);
+            yesText: SharedLoc["Yes"], cancelText: SharedLoc["No"]);
         if (result == true)
         {
             await DeleteChapter(chapter);
@@ -353,10 +319,10 @@
     private async Task RevertMergedChapterConfirm(Chapter chapter)
     {
         var result = await DialogService.ShowMessageBoxAsync(
-        Loc["Dialog_RevertMergedChapter_Title"],
-        Loc["Dialog_RevertMergedChapter_Content"],
-        SharedLoc["Yes"],
-        cancelText: SharedLoc["No"]);
+            Loc["Dialog_RevertMergedChapter_Title"],
+            Loc["Dialog_RevertMergedChapter_Content"],
+            SharedLoc["Yes"],
+            cancelText: SharedLoc["No"]);
 
         if (result == true)
         {
@@ -381,7 +347,7 @@
             foreach (var restoredChapter in restoredChapters)
             {
                 var extractedMetadata = await MetadataHandler.GetSeriesAndTitleFromComicInfoAsync(
-                Path.Combine(Manga.Library.NotUpscaledLibraryPath, restoredChapter.RelativePath));
+                    Path.Combine(Manga.Library.NotUpscaledLibraryPath, restoredChapter.RelativePath));
 
                 chapters.Add(new ChapterItem
                 {
@@ -403,7 +369,7 @@
                 catch (Exception ex)
                 {
                     Logger.LogError(ex, "Failed to notify connected service of chapter change for merged chapter {ChapterId}",
-                    restoredChapter.Id);
+                        restoredChapter.Id);
                     Snackbar.Add(string.Format(Loc["Snackbar_NotifyChange_Failure"], restoredChapter.FileName), Severity.Error);
                 }
             }
@@ -418,7 +384,7 @@
             await UpdateMergePossibilitiesAsync();
 
             Snackbar.Add(string.Format(Loc["Snackbar_RevertMergedChapter_Success"], restoredChapters.Count),
-            Severity.Success);
+                Severity.Success);
 
             // Final UI refresh to ensure all button states are correct
             StateHasChanged();
@@ -457,8 +423,12 @@
         {
             await InvokeAsync(StateHasChanged);
         }
-        catch (ObjectDisposedException) { }
-        catch (InvalidOperationException) { }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
     }
 
     private void OnChapterMetadataDiscard(ChapterItem? chapter)
@@ -524,13 +494,13 @@
         }
 
         await TaskQueue.EnqueueAsync(
-        new UpscaleTask(chapter));
+            new UpscaleTask(chapter));
     }
 
     private async Task DeleteUpscaledConfirm(Chapter chapter)
     {
         var result = await DialogService.ShowMessageBoxAsync(Loc["Dialog_DeleteUpscaledChapter_Title"],
-        Loc["Dialog_DeleteUpscaledChapter_Content"], yesText: SharedLoc["Yes"], cancelText: SharedLoc["No"]);
+            Loc["Dialog_DeleteUpscaledChapter_Content"], yesText: SharedLoc["Yes"], cancelText: SharedLoc["No"]);
         if (result == true)
         {
             await DeleteUpscaled(chapter);
@@ -669,7 +639,7 @@
                 {
                     Logger.LogError(e, "Failed to revert rename of upscaled file of Chapter {ChapterId}", chapter.Id);
                     Snackbar.Add(string.Format(Loc["Snackbar_RevertRenameUpscaled_Failure"], chapter.FileName),
-                    Severity.Error);
+                        Severity.Error);
                 }
             }
         }
@@ -693,9 +663,9 @@
 
         // Set up the reactive binding BEFORE updating merge cache so UI elements exist
         chapters.Connect()
-        .Sort(new NaturalSortComparer<ChapterItem>(ci => ci.ExtractedMetadata?.ChapterTitle ?? string.Empty))
-        .Bind(out chapterItems)
-        .Subscribe();
+            .Sort(new NaturalSortComparer<ChapterItem>(ci => ci.ExtractedMetadata?.ChapterTitle ?? string.Empty))
+            .Bind(out chapterItems)
+            .Subscribe();
 
         // Force initial cache update and UI state refresh to ensure merge buttons appear
         await ForceUpdateMergePossibilitiesAsync();
@@ -711,12 +681,12 @@
             if (t.Result) // t.Result is the boolean from CheckIntegrity
             {
                 await InvokeAsync(async () =>
-        {
-            await LoadChapters();
-            InvalidateMergePossibilitiesCache();
-            await UpdateMergePossibilitiesAsync();
-            StateHasChanged();
-        });
+                {
+                    await LoadChapters();
+                    InvalidateMergePossibilitiesCache();
+                    await UpdateMergePossibilitiesAsync();
+                    StateHasChanged();
+                });
             }
         }, TaskScheduler.FromCurrentSynchronizationContext());
     }
@@ -732,14 +702,14 @@
         }
 
         var splitStates = await DbContext.ChapterSplitProcessingStates
-        .Where(s => s.Chapter.MangaId == Manga.Id)
-        .ToDictionaryAsync(s => s.ChapterId);
+            .Where(s => s.Chapter.MangaId == Manga.Id)
+            .ToDictionaryAsync(s => s.ChapterId);
 
         var splitFindingsCounts = await DbContext.StripSplitFindings
-        .Where(f => f.Chapter.MangaId == Manga.Id)
-        .GroupBy(f => f.ChapterId)
-        .Select(g => new { ChapterId = g.Key, Count = g.Count() })
-        .ToDictionaryAsync(x => x.ChapterId, x => x.Count);
+            .Where(f => f.Chapter.MangaId == Manga.Id)
+            .GroupBy(f => f.ChapterId)
+            .Select(g => new { ChapterId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.ChapterId, x => x.Count);
 
         foreach (var chapter in Manga.Chapters.ToList()) // ToList() を追加して、コレクションの変更を許可します
         {
@@ -748,7 +718,7 @@
             {
                 // The following is used to ignore soft deleted profiles
                 loadProfile = DbContext.UpscalerProfiles.IgnoreQueryFilters()
-                .FirstOrDefaultAsync(p => p.Id == chapter.UpscalerProfileId);
+                    .FirstOrDefaultAsync(p => p.Id == chapter.UpscalerProfileId);
             }
 
             try
@@ -767,15 +737,15 @@
                 }
 
                 var extractedMetadata = await
-                MetadataHandler.GetSeriesAndTitleFromComicInfoAsync(Path.Combine(Manga.Library.NotUpscaledLibraryPath,
-                chapter.RelativePath));
+                    MetadataHandler.GetSeriesAndTitleFromComicInfoAsync(Path.Combine(Manga.Library.NotUpscaledLibraryPath,
+                        chapter.RelativePath));
                 chapter.UpscalerProfile = await loadProfile;
 
                 // Check if this chapter is a merged chapter
                 var isMerged = await ChapterMergeRevertService.CanRevertChapterAsync(chapter);
 
                 Logger.LogDebug("LoadChapters: Chapter {FileName} (ID: {ChapterId}) - IsMerged: {IsMerged}",
-                chapter.FileName, chapter.Id, isMerged);
+                    chapter.FileName, chapter.Id, isMerged);
 
                 chapters.Add(new ChapterItem
                 {
@@ -824,11 +794,11 @@
 
         // Check if this chapter can form new merge groups
         bool canFormNewMerge = _cachedMergePossibilities.NewMergeGroups.Values
-        .Any(chapterList => chapterList.Any(c => c.Id == chapter.Id));
+            .Any(chapterList => chapterList.Any(c => c.Id == chapter.Id));
 
         // Check if this chapter can be added to existing merged chapters
         bool canAddToExisting = _cachedMergePossibilities.AdditionsToExistingMerged.Values
-        .Any(chapterList => chapterList.Any(c => c.Id == chapter.Id));
+            .Any(chapterList => chapterList.Any(c => c.Id == chapter.Id));
 
         return canFormNewMerge || canAddToExisting;
     }
@@ -858,7 +828,7 @@
         if (DateTime.UtcNow - _lastMergePossibilitiesUpdate < _mergePossibilitiesCacheTimeout)
         {
             Logger.LogDebug("UpdateMergePossibilitiesAsync: Skipping update, cache still valid (age: {Age}ms)",
-            (DateTime.UtcNow - _lastMergePossibilitiesUpdate).TotalMilliseconds);
+                (DateTime.UtcNow - _lastMergePossibilitiesUpdate).TotalMilliseconds);
             return;
         }
 
@@ -870,35 +840,35 @@
             foreach (var ci in chapterItems)
             {
                 Logger.LogDebug("UpdateMergePossibilitiesAsync: Chapter {FileName} (ID: {ChapterId}) - IsMerged: {IsMerged}",
-                ci.Chapter.FileName, ci.Chapter.Id, ci.IsMerged);
+                    ci.Chapter.FileName, ci.Chapter.Id, ci.IsMerged);
             }
 
             var allChapters = chapterItems.Where(ci => !ci.IsMerged).Select(ci => ci.Chapter).ToList();
             Logger.LogDebug("UpdateMergePossibilitiesAsync: Found {ChapterCount} non-merged chapters: [{ChapterNames}]",
-            allChapters.Count, string.Join(", ", allChapters.Select(c => c.FileName)));
+                allChapters.Count, string.Join(", ", allChapters.Select(c => c.FileName)));
 
             if (allChapters.Any())
             {
                 Logger.LogDebug("UpdateMergePossibilitiesAsync: Calling GetPossibleMergeActionsAsync with {ChapterCount} chapters",
-                allChapters.Count);
+                    allChapters.Count);
                 _cachedMergePossibilities = await ChapterMergeCoordinator.GetPossibleMergeActionsAsync(allChapters,
-                includeLatestChapters: true);
+                    includeLatestChapters: true);
 
                 Logger.LogDebug("Updated merge possibilities cache: {NewMergeGroups} new merge groups, {AdditionsToExisting} additions to existing, HasAnyMergePossibilities: {HasAny}",
-                _cachedMergePossibilities.NewMergeGroups.Count, _cachedMergePossibilities.AdditionsToExistingMerged.Count,
-                _cachedMergePossibilities.HasAnyMergePossibilities);
+                    _cachedMergePossibilities.NewMergeGroups.Count, _cachedMergePossibilities.AdditionsToExistingMerged.Count,
+                    _cachedMergePossibilities.HasAnyMergePossibilities);
 
                 // Log detailed merge group information
                 foreach (var (baseNumber, chapterList) in _cachedMergePossibilities.NewMergeGroups)
                 {
                     Logger.LogDebug("New merge group {BaseNumber}: [{ChapterNames}]",
-                    baseNumber, string.Join(", ", chapterList.Select(c => c.FileName)));
+                        baseNumber, string.Join(", ", chapterList.Select(c => c.FileName)));
                 }
 
                 foreach (var (baseNumber, chapterList) in _cachedMergePossibilities.AdditionsToExistingMerged)
                 {
                     Logger.LogDebug("Addition to existing merged {BaseNumber}: [{ChapterNames}]",
-                    baseNumber, string.Join(", ", chapterList.Select(c => c.FileName)));
+                        baseNumber, string.Join(", ", chapterList.Select(c => c.FileName)));
                 }
             }
             else
@@ -922,7 +892,7 @@
         var num1 = ExtractNumericPrefix(fileName1);
         var num2 = ExtractNumericPrefix(fileName2);
         return !string.IsNullOrEmpty(num1) && !string.IsNullOrEmpty(num2) &&
-        Math.Floor(decimal.Parse(num1)) == Math.Floor(decimal.Parse(num2));
+               Math.Floor(decimal.Parse(num1)) == Math.Floor(decimal.Parse(num2));
     }
 
     private string? ExtractNumericPrefix(string fileName)
@@ -950,12 +920,12 @@
 
         // Get possible merge actions for the selected chapters
         var mergeActionsWithoutLatest = await ChapterMergeCoordinator.GetPossibleMergeActionsAsync(
-        selectedChapterList,
-        includeLatestChapters: false);
+            selectedChapterList,
+            includeLatestChapters: false);
 
         var mergeActionsWithLatest = await ChapterMergeCoordinator.GetPossibleMergeActionsAsync(
-        selectedChapterList,
-        includeLatestChapters: true);
+            selectedChapterList,
+            includeLatestChapters: true);
 
         if (!mergeActionsWithLatest.HasAnyMergePossibilities)
         {
@@ -967,16 +937,16 @@
 
         // If there's a difference, ask the user about latest chapters
         var totalActionsWithoutLatest = mergeActionsWithoutLatest.NewMergeGroups.Count +
-        mergeActionsWithoutLatest.AdditionsToExistingMerged.Count;
+                                        mergeActionsWithoutLatest.AdditionsToExistingMerged.Count;
         var totalActionsWithLatest = mergeActionsWithLatest.NewMergeGroups.Count +
-        mergeActionsWithLatest.AdditionsToExistingMerged.Count;
+                                     mergeActionsWithLatest.AdditionsToExistingMerged.Count;
 
         if (totalActionsWithLatest > totalActionsWithoutLatest)
         {
             var result = await DialogService.ShowMessageBoxAsync(
-            Loc["Dialog_LatestChapter_Title"],
-            Loc["Dialog_LatestChapter_Content"],
-            SharedLoc["Yes"], SharedLoc["No"]);
+                Loc["Dialog_LatestChapter_Title"],
+                Loc["Dialog_LatestChapter_Content"],
+                SharedLoc["Yes"], SharedLoc["No"]);
 
             if (result != true)
                 return;
@@ -990,8 +960,8 @@
         // Get all chapters in the series to properly identify merge actions
         var allChapters = chapterItems.Where(ci => !ci.IsMerged).Select(ci => ci.Chapter).ToList();
         var mergeActions = await ChapterMergeCoordinator.GetPossibleMergeActionsAsync(
-        allChapters,
-        includeLatestChapters: true);
+            allChapters,
+            includeLatestChapters: true);
 
         if (!mergeActions.HasAnyMergePossibilities)
         {
@@ -1039,19 +1009,19 @@
 
         // Check if latest chapter is involved
         var mergeActionsWithoutLatest = await ChapterMergeCoordinator.GetPossibleMergeActionsAsync(
-        chaptersToMerge,
-        includeLatestChapters: false);
+            chaptersToMerge,
+            includeLatestChapters: false);
 
         bool includeLatest = true;
         var hasActionsWithoutLatest = mergeActionsWithoutLatest.NewMergeGroups.ContainsKey(baseNumber) ||
-        mergeActionsWithoutLatest.AdditionsToExistingMerged.ContainsKey(baseNumber);
+                                      mergeActionsWithoutLatest.AdditionsToExistingMerged.ContainsKey(baseNumber);
 
         if (!hasActionsWithoutLatest)
         {
             var result = await DialogService.ShowMessageBoxAsync(
-            Loc["Dialog_LatestChapter_Title"],
-            string.Format(Loc["Dialog_LatestChapterSpecific_Content"], mergeType, baseNumber),
-            SharedLoc["Yes"], SharedLoc["No"]);
+                Loc["Dialog_LatestChapter_Title"],
+                string.Format(Loc["Dialog_LatestChapterSpecific_Content"], mergeType, baseNumber),
+                SharedLoc["Yes"], SharedLoc["No"]);
 
             if (result != true)
                 return;
@@ -1072,8 +1042,8 @@
         try
         {
             var completedMerges = await ChapterMergeCoordinator.MergeSelectedChaptersAsync(
-            chaptersToMerge,
-            includeLatestChapters);
+                chaptersToMerge,
+                includeLatestChapters);
 
             if (!completedMerges.Any())
             {
@@ -1106,7 +1076,7 @@
                     await DbContext.Entry(mergedChapter).ReloadAsync();
 
                     var extractedMetadata = await MetadataHandler.GetSeriesAndTitleFromComicInfoAsync(
-                    Path.Combine(Manga.Library.NotUpscaledLibraryPath, mergedChapter.RelativePath));
+                        Path.Combine(Manga.Library.NotUpscaledLibraryPath, mergedChapter.RelativePath));
 
                     // Properly determine if the chapter is merged by checking the database
                     var isMerged = await ChapterMergeRevertService.CanRevertChapterAsync(mergedChapter);
@@ -1131,15 +1101,15 @@
                     catch (Exception ex)
                     {
                         Logger.LogError(ex, "Failed to notify connected service of chapter change for merged chapter {ChapterId}",
-                        mergedChapter.Id);
+                            mergedChapter.Id);
                         Snackbar.Add(string.Format(Loc["Snackbar_NotifyChange_Failure"], mergedChapter.FileName), Severity.Error);
                     }
                 }
             }
 
             var message = completedMerges.Count == 1
-            ? string.Format(Loc["Snackbar_MergeSuccess_Single"], totalProcessedChapters)
-            : string.Format(Loc["Snackbar_MergeSuccess_Multiple"], totalProcessedChapters, completedMerges.Count);
+                ? string.Format(Loc["Snackbar_MergeSuccess_Single"], totalProcessedChapters)
+                : string.Format(Loc["Snackbar_MergeSuccess_Multiple"], totalProcessedChapters, completedMerges.Count);
 
             // Clear merge cache to ensure fresh recalculation
             InvalidateMergePossibilitiesCache();
@@ -1231,8 +1201,8 @@
 
             // Find and update the merged chapter in the UI
             var mergedChapter = Manga.Chapters.FirstOrDefault(c =>
-            chapterItems.Any(ci => ci.Chapter.Id == c.Id && ci.IsMerged) &&
-            c.FileName.StartsWith(baseNumber + ".") || c.FileName == baseNumber + ".cbz");
+                chapterItems.Any(ci => ci.Chapter.Id == c.Id && ci.IsMerged) &&
+                c.FileName.StartsWith(baseNumber + ".") || c.FileName == baseNumber + ".cbz");
 
             if (mergedChapter != null)
             {
@@ -1244,7 +1214,7 @@
                 {
                     // Update the existing item
                     var extractedMetadata = await MetadataHandler.GetSeriesAndTitleFromComicInfoAsync(
-                    Path.Combine(Manga.Library.NotUpscaledLibraryPath, mergedChapter.RelativePath));
+                        Path.Combine(Manga.Library.NotUpscaledLibraryPath, mergedChapter.RelativePath));
 
                     existingItem.ExtractedMetadata = extractedMetadata;
                     existingItem.NewTitle = extractedMetadata?.ChapterTitle ?? string.Empty;
@@ -1261,7 +1231,7 @@
                     catch (Exception ex)
                     {
                         Logger.LogError(ex, "Failed to notify connected service of chapter change for updated merged chapter {ChapterId}",
-                        mergedChapter.Id);
+                            mergedChapter.Id);
                         Snackbar.Add(string.Format(Loc["Snackbar_NotifyChange_Failure"], mergedChapter.FileName), Severity.Error);
                     }
                 }
@@ -1271,13 +1241,13 @@
             await UpdateMergePossibilitiesAsync();
 
             Snackbar.Add(string.Format(Loc["Snackbar_AddChaptersSuccess"], chaptersToAdd.Count, baseNumber),
-            Severity.Success);
+                Severity.Success);
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Failed to add chapters to existing merged chapter {BaseNumber}", baseNumber);
             Snackbar.Add(string.Format(Loc["Snackbar_AddChaptersFailure"], baseNumber),
-            Severity.Error);
+                Severity.Error);
         }
     }
 
@@ -1308,9 +1278,9 @@
     private async Task ViewSplits(Chapter chapter)
     {
         var parameters = new DialogParameters
-{
-{ "ChapterId", chapter.Id }
-};
+        {
+            { "ChapterId", chapter.Id }
+        };
 
         var options = new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseButton = true };
 
@@ -1321,17 +1291,34 @@
     private async Task ApplySplits(Chapter chapter)
     {
         var result = await DialogService.ShowMessageBoxAsync(
-        Loc["Dialog_ApplySplits_Title"],
-        Loc["Dialog_ApplySplits_Content"],
-        SharedLoc["Yes"],
-        cancelText: SharedLoc["No"]);
+            Loc["Dialog_ApplySplits_Title"],
+            Loc["Dialog_ApplySplits_Content"],
+            SharedLoc["Yes"],
+            cancelText: SharedLoc["No"]);
 
         if (result == true)
         {
             try
             {
-                await SplitApplicationService.ApplySplitsAsync(chapter.Id, SplitDetectionService.CURRENT_DETECTOR_VERSION,
-                CancellationToken.None);
+                // Use the detector version from the chapter's split state to handle both auto and manual splits
+                var splitState = await SplitStateManager.GetStateAsync(chapter.Id, null, CancellationToken.None);
+                
+                // Check for the latest detector version from actual findings to handle manual splits
+                var latestFindingDetectorVersion = await DbContext
+                    .Set<StripSplitFinding>()
+                    .Where(f => f.ChapterId == chapter.Id)
+                    .OrderByDescending(f => f.DetectorVersion)
+                    .Select(f => (int?)f.DetectorVersion)
+                    .FirstOrDefaultAsync(CancellationToken.None);
+                
+                // Prefer the detector version that is actually present on persisted findings for the chapter.
+                // This ensures manually saved splits are not skipped when the processing state still points to an older version.
+                int detectorVersion = 
+                    latestFindingDetectorVersion
+                    ?? splitState?.LastProcessedDetectorVersion
+                    ?? SplitDetectionService.CURRENT_DETECTOR_VERSION;
+                
+                await SplitApplicationService.ApplySplitsAsync(chapter.Id, detectorVersion, CancellationToken.None);
                 Snackbar.Add(string.Format(Loc["Snackbar_SplitApplicationQueued"], chapter.FileName), Severity.Success);
 
                 // Reset the state using the state manager
@@ -1355,6 +1342,30 @@
                 Logger.LogError(ex, "Failed to apply splits for chapter {ChapterId}", chapter.Id);
                 Snackbar.Add(string.Format(Loc["Snackbar_SplitApplicationFailure"], ex.Message), Severity.Error);
             }
+        }
+    }
+
+    private async Task ManualSplit(Chapter chapter)
+    {
+        var parameters = new DialogParameters
+        {
+            { "ChapterId", chapter.Id }
+        };
+
+        var options = new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseButton = true };
+
+        var dialog = await DialogService.ShowAsync<ManualSplitDialog>(Loc["Dialog_ManualSplit_Title"], parameters, options);
+
+        var result = await dialog.Result;
+
+        if (result is { Canceled: false })
+        {
+            // Refresh the chapter to show the new split state
+            await LoadChapters();
+        }
+        else if (result == null)
+        {
+            Logger.LogWarning("Dialog result was null for ManualSplitDialog");
         }
     }
 

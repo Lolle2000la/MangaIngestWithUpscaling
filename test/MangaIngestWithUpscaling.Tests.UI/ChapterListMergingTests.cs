@@ -15,9 +15,11 @@ using MangaIngestWithUpscaling.Services.ChapterMerging;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.LibraryIntegrity;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Tests.Services.Analysis;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Hosting;
@@ -45,6 +47,7 @@ public class ChapterListMergingTests : BunitContext
     private ISplitProcessingService _subSplitProcessingService = null!;
     private ISplitProcessingCoordinator _subSplitProcessingCoordinator = null!;
     private ISplitProcessingStateManager _subSplitStateManager = null!;
+    private IManualSplitService _subManualSplitService = null!;
     private ITaskQueue _subTaskQueue = null!;
     private IWebHostEnvironment _subWebHostEnvironment = null!;
 
@@ -71,6 +74,7 @@ public class ChapterListMergingTests : BunitContext
         _subSplitProcessingService = Substitute.For<ISplitProcessingService>();
         _subSplitProcessingCoordinator = Substitute.For<ISplitProcessingCoordinator>();
         _subSplitStateManager = Substitute.For<ISplitProcessingStateManager>();
+        _subManualSplitService = new MockManualSplitService(); // Use real mock implementation
         _subDialogService = Substitute.For<IDialogService>();
 
         // Setup common mock behaviors
@@ -110,6 +114,7 @@ public class ChapterListMergingTests : BunitContext
         Services.AddSingleton(_subSplitProcessingService);
         Services.AddSingleton(_subSplitProcessingCoordinator);
         Services.AddSingleton(_subSplitStateManager);
+        Services.AddSingleton(_subManualSplitService);
         Services.AddSingleton(_subDialogService);
         Services.AddSingleton(_subFileSystem);
 

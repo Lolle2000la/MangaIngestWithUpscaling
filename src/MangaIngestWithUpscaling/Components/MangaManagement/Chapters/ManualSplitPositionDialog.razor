@@ -1,0 +1,48 @@
+@using MudBlazor
+@inject IStringLocalizer<ManualSplitPositionDialog> Loc
+
+<MudDialog>
+    <DialogContent>
+        <MudStack>
+            <MudText Typo="Typo.h6">@Loc["Title_EnterSplitPosition"]</MudText>
+            
+            <MudNumericField T="int" Label="@Loc["Label_Position"]" 
+                Value="_position" 
+                ValueChanged="(val) => _position = val" 
+                Min="0" Max="@MaxHeight" 
+                HelperText="@string.Format(Loc["Helper_PositionRange"], 0, MaxHeight)" 
+                Style="width: 100%; margin-top: 16px; margin-bottom: 16px;">
+            </MudNumericField>
+            
+            <MudSlider T="int" Min="0" Max="@MaxHeight" Value="_position" 
+                ValueChanged="(val) => _position = val" 
+                Style="width: 100%; margin-bottom: 16px;">
+                <ChildContent>
+                    <MudText>@_position px (@((double)_position / MaxHeight * 100).ToString("F1"))%</MudText>
+                </ChildContent>
+            </MudSlider>
+        </MudStack>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">@Loc["Button_Cancel"]</MudButton>
+        <MudButton Color="Color.Primary" OnClick="Save">@Loc["Button_OK"]</MudButton>
+    </DialogActions>
+</MudDialog>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public string ImagePath { get; set; } = string.Empty;
+    [Parameter] public int DefaultPosition { get; set; }
+    [Parameter] public int MaxHeight { get; set; }
+
+    private int _position;
+
+    protected override void OnParametersSet()
+    {
+        _position = DefaultPosition;
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private void Save() => MudDialog.Close(DialogResult.Ok(_position));
+}

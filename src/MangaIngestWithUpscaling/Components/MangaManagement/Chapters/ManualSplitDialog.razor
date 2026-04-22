@@ -1,0 +1,614 @@
+@using MangaIngestWithUpscaling.Data
+@using MangaIngestWithUpscaling.Data.Analysis
+@using MangaIngestWithUpscaling.Services.Analysis
+@using MangaIngestWithUpscaling.Shared.Data.Analysis
+@using MangaIngestWithUpscaling.Shared.Services.Analysis
+@using MangaIngestWithUpscaling.Shared.Services.FileSystem
+@using MangaIngestWithUpscaling.Shared.Constants
+@using MudBlazor
+@using System.IO.Compression
+@using Microsoft.Extensions.DependencyInjection
+@using NetVips
+@using Microsoft.JSInterop
+@using System.Text.Json
+
+@implements IDisposable
+
+@inject IManualSplitService ManualSplitService
+@inject IDialogService DialogService
+@inject ISnackbar Snackbar
+@inject IStringLocalizer<ManualSplitDialog> Loc
+@inject IStringLocalizer<SharedResource> SharedLoc
+@inject IFileSystem FileSystem
+@inject IServiceProvider Services
+@inject IJSRuntime JSRuntime
+
+<MudDialog>
+    <TitleContent>@Loc["Dialog_ManualSplit_Title"]</TitleContent>
+    <DialogContent>
+        <MudContainer MaxWidth="MaxWidth.False" Style="height: 80vh; overflow-y: auto;">
+            @if (_isLoading)
+            {
+                <MudProgressCircular Indeterminate="true" />
+            }
+            else if (_images == null || !_images.Any())
+            {
+                <MudText>@Loc["NoImagesFound"]</MudText>
+            }
+            else
+            {
+                <MudAlert Severity="Severity.Info" Style="margin-bottom: 16px;">
+                    @Loc["Instruction_DragToAdjust"]
+                </MudAlert>
+                
+                <MudTabs Elevation="2" Rounded="true" ApplyEffectsToContainer="true" TabPanelsClass="pa-6" @bind-ActivePanelIndex="_activeTabIndex">
+                    @foreach (var image in _images)
+                    {
+                        <MudTabPanel Text="@Path.GetFileName(image)">
+                            <MudStack>
+                                <MudText Typo="Typo.h6">@Path.GetFileName(image)</MudText>
+                                <MudAlert Severity="Severity.Info" Style="margin-bottom: 8px;">
+                                    @Loc["Instruction_DragToAdjust"]
+                                </MudAlert>
+                                
+                                <!-- Image Display -->
+                                <div class="image-container" style="position: relative; width: 100%; border: 1px solid #ccc; margin-bottom: 16px;">
+                                    <MudImage Src="@($"/api/images/chapter/{ChapterId}/file/{Path.GetFileName(image)}")" Fluid="true"
+                                        Style="display: block; width: 100%;" 
+                                        @onload="() => OnImageLoad(image)" />
+                                    
+                                    <!-- Split Lines -->
+                                    @if (_imageDimensions.TryGetValue(image, out var dimensions))
+                                    {
+                                        @foreach (var split in _manualSplits.GetValueOrDefault(image, new List<int>()))
+                                        {
+                                            var top = (double)split / dimensions.Height * 100;
+                                            var splitId = $"split-{image.GetHashCode()}-{split}";
+                                            <div id="@splitId" 
+                                                class="split-line"
+                                                style="position: absolute; left: 0; right: 0; top: @(top)%; height: 4px; background-color: rgba(0, 0, 255, 0.7); z-index: 10; cursor: row-resize;"
+                                                title="@Loc["Instruction_KeyboardControls"]"
+                                                data-keyboard-instruction="@Loc["Instruction_KeyboardControls"]"
+                                                @onmousedown:preventDefault
+                                                @onmousedown:stopPropagation
+                                                @onmousedown="(e) => StartDragWithPosition(image, split, splitId, e)"></div>
+                                        }
+                                    }
+                                </div>
+
+                                <!-- Split Controls -->
+                                <MudStack Row Spacing="2" Style="margin-bottom: 16px;">
+                                    <MudTextField T="int?" Label="@Loc["Label_NumberOfEqualSplits"]" 
+                                        Value="_equalSplitCount" 
+                                        ValueChanged="(val) => _equalSplitCount = val" 
+                                        type="NumberInputType.Number" 
+                                        min="1" max="20" 
+                                        Style="width: 150px;">
+                                    </MudTextField>
+                                    
+                                    <MudButton Color="Color.Primary" Variant="Variant.Outlined" 
+                                        OnClick="() => ApplyEqualSplits(image)" 
+                                        Disabled="_equalSplitCount == null || _equalSplitCount < 1">
+                                        @Loc["Button_ApplyEqualSplits"]
+                                    </MudButton>
+                                    
+                                    <MudButton Color="Color.Secondary" Variant="Variant.Outlined" 
+                                        OnClick="() => AddManualSplit(image)">
+                                        @Loc["Button_AddManualSplit"]
+                                    </MudButton>
+                                    
+                                    <MudButton Color="Color.Error" Variant="Variant.Outlined" 
+                                        OnClick="() => ClearSplits(image)" 
+                                        Disabled="!_manualSplits.ContainsKey(image) || !_manualSplits[image].Any()">
+                                        @Loc["Button_ClearSplits"]
+                                    </MudButton>
+                                </MudStack>
+
+                                <!-- Current Splits List -->
+                                @if (_manualSplits.TryGetValue(image, out var splits) && splits.Any())
+                                {
+                                    <MudText Typo="Typo.subtitle2" Style="margin-bottom: 8px;">@Loc["Label_CurrentSplits"]</MudText>
+                                    <MudList Dense="true" T="string">
+                                        @foreach (var split in splits)
+                                        {
+                                            <MudListItem T="string">
+                                                <MudText>@($"{split} px ({(double)split / dimensions.Height * 100:F1}%)")</MudText>
+                                            </MudListItem>
+                                        }
+                                    </MudList>
+                                }
+                            </MudStack>
+                        </MudTabPanel>
+                    }
+                </MudTabs>
+            }
+        </MudContainer>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">@Loc["Button_Cancel"]</MudButton>
+        <MudButton Color="Color.Primary" OnClick="Save" Disabled="!HasAnySplits">@Loc["Button_Save"]</MudButton>
+    </DialogActions>
+</MudDialog>
+
+<style>
+    .split-line {
+        transition: background-color 0.1s ease;
+    }
+    
+    .split-line.dragging {
+        background-color: rgba(255, 0, 0, 0.7) !important;
+        height: 4px !important;
+        position: relative;
+    }
+    
+    .split-line.dragging::before {
+        content: attr(data-keyboard-instruction);
+        position: absolute;
+        left: -50px;
+        right: -50px;
+        top: -30px;
+        background-color: rgba(0, 0, 0, 0.7);
+        color: white;
+        font-size: 12px;
+        padding: 4px 8px;
+        border-radius: 4px;
+        text-align: center;
+        pointer-events: none;
+        z-index: 10000;
+    }
+    
+    .image-container {
+        user-select: none;
+    }
+</style>
+
+@code {
+    [CascadingParameter] IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public int ChapterId { get; set; }
+
+    private bool _isLoading = true;
+    private List<string> _images = new();
+    private Dictionary<string, (int Width, int Height)> _imageDimensions = new();
+    private Dictionary<string, List<int>> _manualSplits = new();
+    private int? _equalSplitCount = 2;
+    private int _activeTabIndex = 0;
+
+    private bool HasAnySplits => _manualSplits.Values.Any(splits => splits != null && splits.Any());
+    private string? _activeDragImage;
+    private int _activeDragOriginalPosition;
+    private DotNetObjectReference<ManualSplitDialog>? _dotNetHelper;
+    private readonly List<string> _tempDirectories = []; // Store temp directories for cleanup
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadChapterImages();
+    }
+
+    private async Task LoadChapterImages()
+    {
+        _isLoading = true;
+        try
+        {
+            var dbContext = Services.GetRequiredService<ApplicationDbContext>();
+            var chapter = await dbContext.Chapters
+                .Include(c => c.Manga)
+                    .ThenInclude(m => m.Library)
+                .FirstOrDefaultAsync(c => c.Id == ChapterId);
+
+            if (chapter == null)
+            {
+                Snackbar.Add(Loc["Error_ChapterNotFound"], Severity.Error);
+                MudDialog.Cancel();
+                return;
+            }
+
+            var libraryPath = chapter.Manga.Library.NotUpscaledLibraryPath;
+            var chapterPath = Path.Combine(libraryPath, chapter.RelativePath);
+
+            if (File.Exists(chapterPath))
+            {
+                // Extract CBZ to get images
+                var tempDir = Path.Combine(
+                    Path.GetTempPath(),
+                    "mangaingest_manual_split",
+                    Guid.NewGuid().ToString()
+                );
+                Directory.CreateDirectory(tempDir);
+                _tempDirectories.Add(tempDir); // Store for cleanup
+
+                using var archive = ZipFile.OpenRead(chapterPath);
+                var imageEntries = archive.Entries
+                    .Where(entry => IsImage(entry.Name))
+                    .OrderBy(entry => entry.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                
+                foreach (var entry in imageEntries)
+                {
+                    var destPath = Path.Combine(tempDir, entry.Name);
+                    var destDir = Path.GetDirectoryName(destPath);
+                    if (destDir != null)
+                        Directory.CreateDirectory(destDir);
+                    entry.ExtractToFile(destPath);
+                    _images.Add(destPath);
+                }
+            }
+            else if (Directory.Exists(chapterPath))
+            {
+                // It's a directory, get all images
+                _images = Directory.GetFiles(chapterPath)
+                    .Where(f => IsImage(f))
+                    .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(string.Format(Loc["Error_LoadImagesFailure"], ex.Message), Severity.Error);
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void OnImageLoad(string imagePath)
+    {
+        try
+        {
+            using var image = Image.NewFromFile(imagePath);
+            _imageDimensions[imagePath] = (image.Width, image.Height);
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(ex);
+        }
+    }
+
+    private async Task AddManualSplit(string imagePath)
+    {
+        if (!_imageDimensions.TryGetValue(imagePath, out var dimensions))
+            return;
+
+        var currentSplits = _manualSplits.GetValueOrDefault(imagePath, new List<int>());
+        
+        // Calculate a reasonable default position (middle if no splits, or between existing splits)
+        int defaultPosition = dimensions.Height / 2;
+        if (currentSplits.Any())
+        {
+            var sortedSplits = currentSplits.OrderBy(s => s).ToList();
+            // Find the largest gap
+            int maxGap = 0;
+            int bestPosition = dimensions.Height / 2;
+            
+            // Check gap before first split
+            int gap = sortedSplits[0];
+            if (gap > maxGap)
+            {
+                maxGap = gap;
+                bestPosition = gap / 2;
+            }
+            
+            // Check gaps between splits
+            for (int i = 0; i < sortedSplits.Count - 1; i++)
+            {
+                gap = sortedSplits[i + 1] - sortedSplits[i];
+                if (gap > maxGap)
+                {
+                    maxGap = gap;
+                    bestPosition = sortedSplits[i] + (gap / 2);
+                }
+            }
+            
+            // Check gap after last split
+            gap = dimensions.Height - sortedSplits[^1];
+            if (gap > maxGap)
+            {
+                bestPosition = sortedSplits[^1] + (gap / 2);
+            }
+            
+            defaultPosition = bestPosition;
+        }
+
+        // Show prompt for split position
+        await ShowSplitPositionPrompt(imagePath, defaultPosition);
+    }
+
+    private async Task ShowSplitPositionPrompt(string imagePath, int defaultPosition)
+    {
+        var parameters = new DialogParameters
+        {
+            { "ImagePath", imagePath },
+            { "DefaultPosition", defaultPosition },
+            { "MaxHeight", _imageDimensions[imagePath].Height }
+        };
+
+        var options = new DialogOptions { MaxWidth = MaxWidth.Small };
+        var dialog = await DialogService.ShowAsync<ManualSplitPositionDialog>(Loc["Dialog_AddSplit_Title"], parameters, options);
+
+        var result = await dialog.Result;
+
+        if (result is { Canceled: false, Data: int position })
+        {
+            if (!_manualSplits.ContainsKey(imagePath))
+                _manualSplits[imagePath] = new List<int>();
+
+            _manualSplits[imagePath].Add(position);
+            _manualSplits[imagePath].Sort();
+            StateHasChanged();
+        }
+    }
+
+    // RemoveSplit method removed - functionality no longer needed
+    // Users can use "Clear Splits" button to remove all splits for an image
+
+    private void ClearSplits(string imagePath)
+    {
+        _manualSplits.Remove(imagePath);
+        StateHasChanged();
+    }
+
+    private void ApplyEqualSplits(string imagePath)
+    {
+        if (_equalSplitCount == null || _equalSplitCount < 1)
+            return;
+
+        if (!_imageDimensions.TryGetValue(imagePath, out var dimensions))
+            return;
+
+        int numberOfSplits = _equalSplitCount.Value;
+        var splits = new List<int>();
+        
+        int partHeight = dimensions.Height / numberOfSplits;
+        for (int i = 1; i < numberOfSplits; i++)
+        {
+            splits.Add(partHeight * i);
+        }
+
+        _manualSplits[imagePath] = splits;
+        StateHasChanged();
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+
+    [JSInvokable]
+    public void UpdateDragPosition(double percentage)
+    {
+        if (_activeDragImage == null || !_imageDimensions.TryGetValue(_activeDragImage, out var dimensions))
+            return;
+        
+        if (!_manualSplits.ContainsKey(_activeDragImage))
+            return;
+        
+        var newPosition = (int)(percentage * dimensions.Height);
+        
+        // Update the split position
+        _manualSplits[_activeDragImage].Remove(_activeDragOriginalPosition);
+        _manualSplits[_activeDragImage].Add(newPosition);
+        _manualSplits[_activeDragImage].Sort();
+        
+        _activeDragOriginalPosition = newPosition;
+        StateHasChanged();
+    }
+
+    // EndDragOperation method removed - no longer needed
+
+    private async Task StartDragWithPosition(string imagePath, int splitPosition, string splitId, MouseEventArgs e)
+    {
+        _activeDragImage = imagePath;
+        _activeDragOriginalPosition = splitPosition;
+        
+        // Create dotnet helper if not exists
+        _dotNetHelper ??= DotNetObjectReference.Create(this);
+        
+        // Call JS to start drag with initial mouse position
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("manualSplitDrag.startDragWithPosition", splitId, _dotNetHelper, e.ClientY);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("Error starting drag for split " + splitId + ": " + ex.Message);
+        }
+    }
+
+    private async Task InitializeDragForSplit(string imagePath, int splitPosition, string splitId)
+    {
+        _activeDragImage = imagePath;
+        _activeDragOriginalPosition = splitPosition;
+        
+        // Create dotnet helper if not exists
+        _dotNetHelper ??= DotNetObjectReference.Create(this);
+        
+        // Call JS to initialize drag
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("manualSplitDrag.initDrag", splitId, _dotNetHelper);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("Error initializing drag: " + ex.Message);
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // Load the JavaScript file
+            await JSRuntime.InvokeVoidAsync("import", "/js/manualSplitDrag.js");
+        }
+    }
+
+    public void Dispose()
+    {
+        _dotNetHelper?.Dispose();
+        // Clean up temp directories
+        foreach (var tempDir in _tempDirectories)
+        {
+            try
+            {
+                if (Directory.Exists(tempDir))
+                {
+                    Directory.Delete(tempDir, true);
+                }
+            }
+            catch (Exception ex)
+            {
+                // Log error but't throw to avoid breaking the dispose process
+                Console.Error.WriteLine($"Error cleaning up temp directory {tempDir}: " + ex.Message);
+            }
+        }
+    }
+
+    private async Task Save()
+    {
+        if (!HasAnySplits)
+        {
+            Snackbar.Add(Loc["Error_NoSplitsToApply"], Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            var dbContext = Services.GetRequiredService<ApplicationDbContext>();
+            var chapter = await dbContext.Chapters
+                .Include(c => c.Manga)
+                    .ThenInclude(m => m.Library)
+                .FirstOrDefaultAsync(c => c.Id == ChapterId);
+
+            if (chapter == null)
+            {
+                Snackbar.Add(Loc["Error_ChapterNotFound"], Severity.Error);
+                return;
+            }
+
+            var libraryPath = chapter.Manga.Library.NotUpscaledLibraryPath;
+            var chapterPath = Path.Combine(libraryPath, chapter.RelativePath);
+
+            // Create temp directory for processing
+            var tempDir = Path.Combine(
+                Path.GetTempPath(),
+                "mangaingest_manual_split_processing",
+                Guid.NewGuid().ToString()
+            );
+            Directory.CreateDirectory(tempDir);
+            _tempDirectories.Add(tempDir); // Store for cleanup
+
+            // Process each image with splits
+            var detectionResults = new List<SplitDetectionResult>();
+            
+            foreach (var imageEntry in _manualSplits)
+            {
+                var imagePath = imageEntry.Key;
+                var splits = imageEntry.Value;
+                
+                if (splits == null || !splits.Any())
+                    continue;
+
+                // Get just the filename to use in the CBZ
+                var imageFileName = Path.GetFileName(imagePath);
+                var outputDir = Path.Combine(tempDir, Path.GetDirectoryName(imagePath) ?? string.Empty);
+                Directory.CreateDirectory(outputDir);
+
+                // Apply the splits
+                var resultPaths = ManualSplitService.ApplyManualSplitsToImage(imagePath, splits, outputDir);
+
+                // Create detection result for this image
+                var detectionResult = new SplitDetectionResult
+                {
+                    ImagePath = imageFileName,
+                    OriginalHeight = _imageDimensions[imagePath].Height,
+                    OriginalWidth = _imageDimensions[imagePath].Width,
+                    Splits = splits.Select(pos => new DetectedSplit
+                    {
+                        YOriginal = pos,
+                        Confidence = 1.0 // Manual splits have full confidence
+                    }).ToList(),
+                    Count = splits.Count
+                };
+
+                detectionResults.Add(detectionResult);
+            }
+
+            // Save the detection results to database
+            // For manual splits, we should NOT change the automatic detection state
+            // Manual splits are user actions, not automatic detection results
+            // We merge manual splits with existing findings (both manual and automatic)
+            
+            foreach (var res in detectionResults)
+            {
+                // We use the file name without extension as the identity
+                var pageFileName = Path.GetFileNameWithoutExtension(res.ImagePath);
+
+                // Check if we already have a manual split finding for this page
+                var existingManualFinding = dbContext.StripSplitFindings
+                    .FirstOrDefault(f => 
+                        f.ChapterId == ChapterId &&
+                        f.PageFileName == pageFileName &&
+                        f.DetectorVersion == ManualSplitService.ManualSplitVersion
+                    );
+
+                if (existingManualFinding != null)
+                {
+                    // Parse existing split data
+                    SplitDetectionResult? existingResult = null;
+                    try
+                    {
+                        existingResult = JsonSerializer.Deserialize<SplitDetectionResult>(existingManualFinding.SplitJson);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine("Error deserializing existing split data: " + ex.Message);
+                    }
+
+                    if (existingResult != null)
+                    {
+                        // Merge splits using the helper method
+                        var mergedResult = SplitDetectionResultHelper.Merge(existingResult, res);
+
+                        // Update with merged data
+                        existingManualFinding.SplitJson = JsonSerializer.Serialize(mergedResult);
+                        existingManualFinding.CreatedAt = DateTime.UtcNow;
+                        dbContext.StripSplitFindings.Update(existingManualFinding);
+                    }
+                    else
+                    {
+                        // If we can't parse existing data, just update with new data
+                        existingManualFinding.SplitJson = JsonSerializer.Serialize(res);
+                        existingManualFinding.CreatedAt = DateTime.UtcNow;
+                        dbContext.StripSplitFindings.Update(existingManualFinding);
+                    }
+                }
+                else
+                {
+                    // Add new manual finding
+                    var finding = new StripSplitFinding
+                    {
+                        ChapterId = ChapterId,
+                        PageFileName = pageFileName,
+                        SplitJson = JsonSerializer.Serialize(res),
+                        DetectorVersion = ManualSplitService.ManualSplitVersion, // Use manual split version
+                        CreatedAt = DateTime.UtcNow,
+                    };
+                    dbContext.StripSplitFindings.Add(finding);
+                }
+            }
+
+            await dbContext.SaveChangesAsync(CancellationToken.None);
+
+            Snackbar.Add(Loc["Success_SplitsApplied"], Severity.Success);
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add(string.Format(Loc["Error_ApplySplitsFailure"], ex.Message), Severity.Error);
+        }
+    }
+
+    private bool IsImage(string filename)
+    {
+        var ext = Path.GetExtension(filename);
+        return ImageConstants.SupportedImageExtensions.Contains(ext);
+    }
+}

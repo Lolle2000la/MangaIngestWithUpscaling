@@ -130,6 +130,18 @@
   <data name="Menu_ApplySplits" xml:space="preserve">
     <value>Aufteilungen anwenden</value>
   </data>
+  <data name="Menu_ManualSplit" xml:space="preserve">
+    <value>Manuelle Aufteilung</value>
+  </data>
+  <data name="Menu_DetectSplits" xml:space="preserve">
+    <value>Aufteilungen erkennen</value>
+  </data>
+  <data name="Menu_RedetectSplits" xml:space="preserve">
+    <value>Aufteilungen erneut erkennen</value>
+  </data>
+  <data name="Menu_RetryDetection" xml:space="preserve">
+    <value>Erkennung wiederholen</value>
+  </data>
   <data name="Tooltip_RedetectSplits" xml:space="preserve">
     <value>Aufteilungen neu erkennen</value>
   </data>

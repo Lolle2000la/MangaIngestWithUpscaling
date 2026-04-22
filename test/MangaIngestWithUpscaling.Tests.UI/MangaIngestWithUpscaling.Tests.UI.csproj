@@ -36,5 +36,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\MangaIngestWithUpscaling\MangaIngestWithUpscaling.csproj" />
     <ProjectReference Include="..\..\src\MangaIngestWithUpscaling.Shared\MangaIngestWithUpscaling.Shared.csproj" />
+    <ProjectReference Include="..\..\test\MangaIngestWithUpscaling.Tests\MangaIngestWithUpscaling.Tests.csproj" />
   </ItemGroup>
 </Project>

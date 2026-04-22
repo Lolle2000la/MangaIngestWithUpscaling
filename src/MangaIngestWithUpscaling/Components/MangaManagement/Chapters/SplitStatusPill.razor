@@ -1,0 +1,149 @@
+@using MangaIngestWithUpscaling.Data
+@using MangaIngestWithUpscaling.Data.Analysis
+@using MudBlazor
+
+@inject IStringLocalizer<SplitStatusPill> Loc;
+
+@switch (Status)
+{
+    case null:
+        <MudMenu ActivationEvent="@MouseEvent.MouseOver" AnchorOrigin="Origin.BottomCenter"
+            TransformOrigin="Origin.TopCenter">
+            <ActivatorContent Context="menuContext">
+                <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined">
+                    @Loc["Chip_Default"]
+                </MudChip>
+            </ActivatorContent>
+            <ChildContent>
+                <MudMenuItem OnClick="ManualSplitCallback">@Loc["Menu_ManualSplit"]</MudMenuItem>
+                <MudMenuItem OnClick="DetectSplitsCallback">@Loc["Menu_DetectSplits"]</MudMenuItem>
+            </ChildContent>
+        </MudMenu>
+        break;
+    case SplitProcessingStatus.Pending:
+        <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined">
+            @Loc["Chip_Pending"]
+        </MudChip>
+        <MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Info" />
+        break;
+    case SplitProcessingStatus.Processing:
+        <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Filled">
+            @Loc["Chip_Processing"]
+        </MudChip>
+        <MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Info" />
+        break;
+    case SplitProcessingStatus.Detected when HasSplits:
+        <MudMenu ActivationEvent="@MouseEvent.MouseOver" AnchorOrigin="Origin.BottomCenter"
+            TransformOrigin="Origin.TopCenter">
+            <ActivatorContent Context="menuContext">
+                <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Filled">
+                    @Loc["Chip_Detected"]
+                </MudChip>
+            </ActivatorContent>
+            <ChildContent>
+                @if (ShouldShowViewEdit())
+                {
+                    <MudMenuItem OnClick="ViewSplitsCallback">@Loc["Menu_ViewEdit"]</MudMenuItem>
+                }
+                <MudMenuItem OnClick="ManualSplitCallback">@Loc["Menu_ManualSplit"]</MudMenuItem>
+                @if (ShouldShowApplySplits())
+                {
+                    <MudMenuItem OnClick="ApplySplitsCallback">@Loc["Menu_ApplySplits"]</MudMenuItem>
+                }
+            </ChildContent>
+        </MudMenu>
+        break;
+    case SplitProcessingStatus.Detected:
+        <MudMenu ActivationEvent="@MouseEvent.MouseOver" AnchorOrigin="Origin.BottomCenter"
+            TransformOrigin="Origin.TopCenter">
+            <ActivatorContent Context="menuContext">
+                <MudChip T="string" Size="Size.Small" Color="Color.Surface" Variant="Variant.Outlined">
+                    @Loc["Chip_NoSplits"]
+                </MudChip>
+            </ActivatorContent>
+            <ChildContent>
+                <MudMenuItem OnClick="ManualSplitCallback">@Loc["Menu_ManualSplit"]</MudMenuItem>
+                <MudMenuItem OnClick="DetectSplitsCallback">@Loc["Menu_DetectSplits"]</MudMenuItem>
+            </ChildContent>
+        </MudMenu>
+        break;
+    case SplitProcessingStatus.NoSplitsFound:
+        <MudMenu ActivationEvent="@MouseEvent.MouseOver" AnchorOrigin="Origin.BottomCenter"
+            TransformOrigin="Origin.TopCenter">
+            <ActivatorContent Context="menuContext">
+                <MudChip T="string" Size="Size.Small" Color="Color.Surface" Variant="Variant.Outlined">
+                    @Loc["Chip_NoSplits"]
+                </MudChip>
+            </ActivatorContent>
+            <ChildContent>
+                <MudMenuItem OnClick="ManualSplitCallback">@Loc["Menu_ManualSplit"]</MudMenuItem>
+                <MudMenuItem OnClick="DetectSplitsCallback">@Loc["Menu_DetectSplits"]</MudMenuItem>
+            </ChildContent>
+        </MudMenu>
+        break;
+    case SplitProcessingStatus.Applied:
+        <MudMenu ActivationEvent="@MouseEvent.MouseOver" AnchorOrigin="Origin.BottomCenter"
+            TransformOrigin="Origin.TopCenter">
+            <ActivatorContent Context="menuContext">
+                <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Filled">
+                    @Loc["Chip_Split"]
+                </MudChip>
+            </ActivatorContent>
+            <ChildContent>
+                <MudMenuItem OnClick="ManualSplitCallback">@Loc["Menu_ManualSplit"]</MudMenuItem>
+            </ChildContent>
+        </MudMenu>
+        break;
+    case SplitProcessingStatus.Failed:
+        <MudMenu ActivationEvent="@MouseEvent.MouseOver" AnchorOrigin="Origin.BottomCenter"
+            TransformOrigin="Origin.TopCenter">
+            <ActivatorContent Context="menuContext">
+                <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Filled">
+                    @Loc["Chip_Failed"]
+                </MudChip>
+            </ActivatorContent>
+            <ChildContent>
+                @if (ShouldShowViewEdit())
+                {
+                    <MudMenuItem OnClick="ViewSplitsCallback">@Loc["Menu_ViewEdit"]</MudMenuItem>
+                }
+                <MudMenuItem OnClick="ManualSplitCallback">@Loc["Menu_ManualSplit"]</MudMenuItem>
+                <MudMenuItem OnClick="DetectSplitsCallback">@Loc["Menu_RetryDetection"]</MudMenuItem>
+            </ChildContent>
+        </MudMenu>
+        break;
+    default:
+        <MudMenu ActivationEvent="@MouseEvent.MouseOver" AnchorOrigin="Origin.BottomCenter"
+            TransformOrigin="Origin.TopCenter">
+            <ActivatorContent Context="menuContext">
+                <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Outlined">
+                    @Loc["Chip_Default"]
+                </MudChip>
+            </ActivatorContent>
+            <ChildContent>
+                <MudMenuItem OnClick="ManualSplitCallback">@Loc["Menu_ManualSplit"]</MudMenuItem>
+                <MudMenuItem OnClick="DetectSplitsCallback">@Loc["Menu_DetectSplits"]</MudMenuItem>
+            </ChildContent>
+        </MudMenu>
+        break;
+}
+
+@code {
+    [Parameter] public SplitProcessingStatus? Status { get; set; }
+    [Parameter] public bool HasSplits { get; set; }
+    [Parameter] public EventCallback ViewSplitsCallback { get; set; }
+    [Parameter] public EventCallback ManualSplitCallback { get; set; }
+    [Parameter] public EventCallback DetectSplitsCallback { get; set; }
+    [Parameter] public EventCallback ApplySplitsCallback { get; set; }
+
+    private bool ShouldShowViewEdit()
+    {
+        return (Status == SplitProcessingStatus.Detected && HasSplits) ||
+               Status == SplitProcessingStatus.Failed;
+    }
+
+    private bool ShouldShowApplySplits()
+    {
+        return Status == SplitProcessingStatus.Detected && HasSplits;
+    }
+}
