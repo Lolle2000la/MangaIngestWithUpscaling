@@ -10,8 +10,9 @@
 @using Microsoft.Extensions.DependencyInjection
 @using NetVips
 @using Microsoft.JSInterop
+@using System.Text.Json
 @inject IManualSplitService ManualSplitService
-@inject ISplitProcessingService SplitProcessingService
+
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
 @inject IStringLocalizer<ManualSplitDialog> Loc
@@ -510,12 +511,70 @@
             }
 
             // Save the detection results to database
-            await SplitProcessingService.ProcessDetectionResultsAsync(
-                ChapterId,
-                detectionResults,
-                ManualSplitService.ManualSplitVersion,
-                CancellationToken.None
-            );
+            // For manual splits, we should NOT change the automatic detection state
+            // Manual splits are user actions, not automatic detection results
+            // We merge manual splits with existing findings (both manual and automatic)
+            
+            foreach (var res in detectionResults)
+            {
+                // We use the file name without extension as the identity
+                var pageFileName = Path.GetFileNameWithoutExtension(res.ImagePath);
+
+                // Check if we already have a manual split finding for this page
+                var existingManualFinding = dbContext.StripSplitFindings
+                    .FirstOrDefault(f => 
+                        f.ChapterId == ChapterId &&
+                        f.PageFileName == pageFileName &&
+                        f.DetectorVersion == ManualSplitService.ManualSplitVersion
+                    );
+
+                if (existingManualFinding != null)
+                {
+                    // Parse existing split data
+                    SplitDetectionResult? existingResult = null;
+                    try
+                    {
+                        existingResult = JsonSerializer.Deserialize<SplitDetectionResult>(existingManualFinding.SplitJson);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine("Error deserializing existing split data: " + ex.Message);
+                    }
+
+                    if (existingResult != null)
+                    {
+                        // Merge splits using the helper method
+                        var mergedResult = SplitDetectionResultHelper.Merge(existingResult, res);
+
+                        // Update with merged data
+                        existingManualFinding.SplitJson = JsonSerializer.Serialize(mergedResult);
+                        existingManualFinding.CreatedAt = DateTime.UtcNow;
+                        dbContext.StripSplitFindings.Update(existingManualFinding);
+                    }
+                    else
+                    {
+                        // If we can't parse existing data, just update with new data
+                        existingManualFinding.SplitJson = JsonSerializer.Serialize(res);
+                        existingManualFinding.CreatedAt = DateTime.UtcNow;
+                        dbContext.StripSplitFindings.Update(existingManualFinding);
+                    }
+                }
+                else
+                {
+                    // Add new manual finding
+                    var finding = new StripSplitFinding
+                    {
+                        ChapterId = ChapterId,
+                        PageFileName = pageFileName,
+                        SplitJson = JsonSerializer.Serialize(res),
+                        DetectorVersion = ManualSplitService.ManualSplitVersion, // Use manual split version
+                        CreatedAt = DateTime.UtcNow,
+                    };
+                    dbContext.StripSplitFindings.Add(finding);
+                }
+            }
+
+            await dbContext.SaveChangesAsync(CancellationToken.None);
 
             Snackbar.Add(Loc["Success_SplitsApplied"], Severity.Success);
             MudDialog.Close(DialogResult.Ok(true));
