@@ -113,16 +113,18 @@
         </MudTd>
         <MudTd DataLabel="@Loc["Header_ChapterPath"]">@context.Chapter.RelativePath</MudTd>
         <MudTd DataLabel="@Loc["Header_Upscaled"]">
-            @(context.Chapter.IsUpscaled? Loc["Status_Yes"] : Loc["Status_No"])
+            @(context.Chapter.IsUpscaled ? Loc["Status_Yes"] : Loc["Status_No"])
             @if (!context.Chapter.IsUpscaled)
             {
                 <MudIconButton Icon="@Icons.Material.Filled.ArrowUpward" Color="Color.Primary" Variant="Variant.Text"
-                    OnClick="@(() => UpscaleChapter(context.Chapter))" title="@Loc["Tooltip_Upscale"]" />
+                               OnClick="@(() => UpscaleChapter(context.Chapter))" title="@Loc["Tooltip_Upscale"]"/>
             }
             else
             {
-                <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward" Color="Color.Secondary" Variant="Variant.Text"
-                    OnClick="@(() => DeleteUpscaledConfirm(context.Chapter))" title="@Loc["Tooltip_DeleteUpscaled"]" />
+                <MudIconButton Icon="@Icons.Material.Filled.ArrowDownward" Color="Color.Secondary"
+                               Variant="Variant.Text"
+                               OnClick="@(() => DeleteUpscaledConfirm(context.Chapter))"
+                               title="@Loc["Tooltip_DeleteUpscaled"]"/>
             }
         </MudTd>
         <MudTd DataLabel="@Loc["Header_Splits"]">
@@ -673,19 +675,19 @@
             if (t.IsFaulted)
             {
                 Logger.LogError(t.Exception, "Error checking library integrity for Manga ID {MangaId}", Manga?.Id);
-                    return;
-                }
-                
+                return;
+            }
+
             if (t.Result) // t.Result is the boolean from CheckIntegrity
+            {
+                await InvokeAsync(async () =>
                 {
-                    await InvokeAsync(async () =>
-                    {
-                            await LoadChapters();
-                            InvalidateMergePossibilitiesCache();
-                            await UpdateMergePossibilitiesAsync();
-                            StateHasChanged();
-                    });
-                }
+                    await LoadChapters();
+                    InvalidateMergePossibilitiesCache();
+                    await UpdateMergePossibilitiesAsync();
+                    StateHasChanged();
+                });
+            }
         }, TaskScheduler.FromCurrentSynchronizationContext());
     }
 
@@ -1336,12 +1338,17 @@
         var options = new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseButton = true };
 
         var dialog = await DialogService.ShowAsync<ManualSplitDialog>(Loc["Dialog_ManualSplit_Title"], parameters, options);
+
         var result = await dialog.Result;
 
-        if (!result.Canceled)
+        if (result is { Canceled: false })
         {
             // Refresh the chapter to show the new split state
             await LoadChapters();
+        }
+        else if (result == null)
+        {
+            Logger.LogWarning("Dialog result was null for ManualSplitDialog");
         }
     }
 
