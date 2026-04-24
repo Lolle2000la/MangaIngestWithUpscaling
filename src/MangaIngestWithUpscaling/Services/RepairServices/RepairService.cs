@@ -35,8 +35,23 @@ public class RepairService : IRepairService
         Directory.CreateDirectory(tempMissingDir);
 
         // Extract both archives
-        ZipFile.ExtractToDirectory(originalPath, tempOriginalDir);
-        ZipFile.ExtractToDirectory(upscaledPath, tempUpscaledDir);
+        if (File.Exists(originalPath))
+        {
+            ZipFile.ExtractToDirectory(originalPath, tempOriginalDir);
+        }
+        else
+        {
+            logger.LogWarning("Original archive not found for repair: {path}", originalPath);
+        }
+
+        if (File.Exists(upscaledPath))
+        {
+            ZipFile.ExtractToDirectory(upscaledPath, tempUpscaledDir);
+        }
+        else
+        {
+            logger.LogWarning("Upscaled archive not found for repair: {path}", upscaledPath);
+        }
 
         // Remove extra pages from upscaled version
         foreach (var extraPage in differences.ExtraPages)
@@ -105,12 +120,22 @@ public class RepairService : IRepairService
                 .Any();
             if (!alreadyPopulated)
             {
-                // Overwrite any existing files to be safe
-                ZipFile.ExtractToDirectory(
-                    context.UpscaledMissingCbz,
-                    tempUpscaledMissingDir,
-                    true
-                );
+                if (File.Exists(context.UpscaledMissingCbz))
+                {
+                    // Overwrite any existing files to be safe
+                    ZipFile.ExtractToDirectory(
+                        context.UpscaledMissingCbz,
+                        tempUpscaledMissingDir,
+                        true
+                    );
+                }
+                else
+                {
+                    logger.LogError(
+                        "Upscaled missing pages CBZ not found for merging: {path}",
+                        context.UpscaledMissingCbz
+                    );
+                }
             }
 
             // Copy upscaled missing pages back to the upscaled directory
@@ -130,7 +155,10 @@ public class RepairService : IRepairService
         ZipFile.CreateFromDirectory(context.UpscaledDirectory, tempRepairedCbz);
 
         // Replace the original upscaled file
-        File.Delete(finalUpscaledPath);
+        if (File.Exists(finalUpscaledPath))
+        {
+            File.Delete(finalUpscaledPath);
+        }
         File.Move(tempRepairedCbz, finalUpscaledPath);
     }
 

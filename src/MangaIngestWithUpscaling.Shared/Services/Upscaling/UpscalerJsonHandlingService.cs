@@ -19,6 +19,11 @@ public class UpscalerJsonHandlingService(ILogger<UpscalerJsonHandlingService> lo
             return null;
         }
 
+        if (!File.Exists(cbzFilePath))
+        {
+            return null;
+        }
+
         try
         {
             await using ZipArchive archive = await ZipFile.OpenReadAsync(
@@ -51,6 +56,11 @@ public class UpscalerJsonHandlingService(ILogger<UpscalerJsonHandlingService> lo
         CancellationToken cancellationToken
     )
     {
+        if (!File.Exists(cbzFilePath))
+        {
+            return;
+        }
+
         await using ZipArchive archive = await ZipFile.OpenAsync(
             cbzFilePath,
             ZipArchiveMode.Update,

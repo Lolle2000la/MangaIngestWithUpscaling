@@ -14,6 +14,12 @@ public class MetadataHandlingService(ILogger<MetadataHandlingService> logger)
         var title = string.Empty;
         var series = string.Empty;
         var number = string.Empty;
+
+        if (!File.Exists(file))
+        {
+            return new ExtractedMetadata(series, title, number);
+        }
+
         if (file.EndsWith(".cbz"))
         {
             await using ZipArchive archive = await ZipFile.OpenReadAsync(file);
@@ -89,28 +95,41 @@ public class MetadataHandlingService(ILogger<MetadataHandlingService> logger)
 
         try
         {
-            await using ZipArchive archive1 = await ZipFile.OpenReadAsync(file1);
-            await using ZipArchive archive2 = await ZipFile.OpenReadAsync(file2);
-
-            var files1 = archive1
-                .Entries.Where(e =>
-                    ImageConstants.IsSupportedImageExtension(
-                        Path.GetExtension(e.FullName).ToLowerInvariant()
+            List<string> files1 = [];
+            if (File.Exists(file1))
+            {
+                await using ZipArchive archive1 = await ZipFile.OpenReadAsync(file1);
+                files1 = archive1
+                    .Entries.Where(e =>
+                        ImageConstants.IsSupportedImageExtension(
+                            Path.GetExtension(e.FullName).ToLowerInvariant()
+                        )
                     )
-                )
-                .Select(e => Path.GetFileNameWithoutExtension(e.FullName)) // upscaled images can have different formats
-                .OrderBy(e => e)
-                .ToList();
+                    .Select(e => Path.GetFileNameWithoutExtension(e.FullName)) // upscaled images can have different formats
+                    .OrderBy(e => e)
+                    .ToList();
+            }
 
-            var files2 = archive2
-                .Entries.Where(e =>
-                    ImageConstants.IsSupportedImageExtension(
-                        Path.GetExtension(e.FullName).ToLowerInvariant()
+            List<string> files2 = [];
+            if (File.Exists(file2))
+            {
+                await using ZipArchive archive2 = await ZipFile.OpenReadAsync(file2);
+                files2 = archive2
+                    .Entries.Where(e =>
+                        ImageConstants.IsSupportedImageExtension(
+                            Path.GetExtension(e.FullName).ToLowerInvariant()
+                        )
                     )
-                )
-                .Select(e => Path.GetFileNameWithoutExtension(e.FullName))
-                .OrderBy(e => e)
-                .ToList();
+                    .Select(e => Path.GetFileNameWithoutExtension(e.FullName))
+                    .OrderBy(e => e)
+                    .ToList();
+            }
+
+            if (files1.Count == 0 && files2.Count == 0)
+            {
+                // If neither exists or neither has images, we consider them "equal" only if both don't exist
+                return !File.Exists(file1) && !File.Exists(file2);
+            }
 
             if (files1.Count != files2.Count)
             {
@@ -158,28 +177,35 @@ public class MetadataHandlingService(ILogger<MetadataHandlingService> logger)
 
         try
         {
-            await using ZipArchive originalArchive = await ZipFile.OpenReadAsync(originalFile);
-            await using ZipArchive upscaledArchive = await ZipFile.OpenReadAsync(upscaledFile);
-
-            var originalPages = originalArchive
-                .Entries.Where(e =>
-                    ImageConstants.IsSupportedImageExtension(
-                        Path.GetExtension(e.FullName).ToLowerInvariant()
+            List<string> originalPages = [];
+            if (File.Exists(originalFile))
+            {
+                await using ZipArchive originalArchive = await ZipFile.OpenReadAsync(originalFile);
+                originalPages = originalArchive
+                    .Entries.Where(e =>
+                        ImageConstants.IsSupportedImageExtension(
+                            Path.GetExtension(e.FullName).ToLowerInvariant()
+                        )
                     )
-                )
-                .Select(e => Path.GetFileNameWithoutExtension(e.FullName))
-                .OrderBy(e => e)
-                .ToList();
+                    .Select(e => Path.GetFileNameWithoutExtension(e.FullName))
+                    .OrderBy(e => e)
+                    .ToList();
+            }
 
-            var upscaledPages = upscaledArchive
-                .Entries.Where(e =>
-                    ImageConstants.IsSupportedImageExtension(
-                        Path.GetExtension(e.FullName).ToLowerInvariant()
+            List<string> upscaledPages = [];
+            if (File.Exists(upscaledFile))
+            {
+                await using ZipArchive upscaledArchive = await ZipFile.OpenReadAsync(upscaledFile);
+                upscaledPages = upscaledArchive
+                    .Entries.Where(e =>
+                        ImageConstants.IsSupportedImageExtension(
+                            Path.GetExtension(e.FullName).ToLowerInvariant()
+                        )
                     )
-                )
-                .Select(e => Path.GetFileNameWithoutExtension(e.FullName))
-                .OrderBy(e => e)
-                .ToList();
+                    .Select(e => Path.GetFileNameWithoutExtension(e.FullName))
+                    .OrderBy(e => e)
+                    .ToList();
+            }
 
             var missingPages = originalPages.Except(upscaledPages).ToList();
             var extraPages = upscaledPages.Except(originalPages).ToList();
@@ -212,6 +238,11 @@ public class MetadataHandlingService(ILogger<MetadataHandlingService> logger)
 
     public async Task WriteComicInfoAsync(string file, ExtractedMetadata metadata)
     {
+        if (!File.Exists(file))
+        {
+            return;
+        }
+
         metadata = metadata.CheckAndCorrect();
         if (file.EndsWith(".cbz"))
         {
