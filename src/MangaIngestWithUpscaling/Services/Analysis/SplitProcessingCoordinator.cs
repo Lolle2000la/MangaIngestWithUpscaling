@@ -295,13 +295,10 @@ public class SplitProcessingCoordinator(
             && chapter.Manga.Library.UpscalerProfileId != null
         )
         {
-            if (
-                chapter.IsUpscaled
-                || (
-                    chapter.UpscaledFullPath != null
-                    && fileSystem.FileExists(chapter.UpscaledFullPath)
-                )
-            )
+            // Only enqueue a repair task when the upscaled file actually exists on disk.
+            // If IsUpscaled is true but the file is missing (state inconsistency), fall back to
+            // a full upscale so that RepairUpscaleTask does not fail with FileNotFoundException.
+            if (chapter.UpscaledFullPath != null && fileSystem.FileExists(chapter.UpscaledFullPath))
             {
                 await taskQueue.EnqueueAsync(new RepairUpscaleTask(chapter));
             }

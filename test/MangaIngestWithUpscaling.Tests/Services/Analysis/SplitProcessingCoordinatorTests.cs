@@ -9,6 +9,7 @@ using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
+using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using Microsoft.EntityFrameworkCore;
@@ -176,5 +177,117 @@ public class SplitProcessingCoordinatorTests : IDisposable
                     && t.DetectorVersion == SplitDetectionService.CURRENT_DETECTOR_VERSION
                 )
             );
+    }
+
+    private async Task<(
+        Chapter chapter,
+        UpscalerProfile profile
+    )> CreateUpscaleConfiguredChapterAsync(
+        bool isUpscaled,
+        string upscaledLibraryPath = "/upscaled"
+    )
+    {
+        var profile = new UpscalerProfile
+        {
+            Name = "Test Profile",
+            ScalingFactor = ScaleFactor.TwoX,
+            CompressionFormat = CompressionFormat.Png,
+            Quality = 90,
+        };
+        _dbContext.UpscalerProfiles.Add(profile);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var library = new Library
+        {
+            Name = "Test Lib",
+            NotUpscaledLibraryPath = "/originals",
+            UpscaledLibraryPath = upscaledLibraryPath,
+            UpscaleOnIngest = true,
+            UpscalerProfileId = profile.Id,
+            UpscalerProfile = profile,
+        };
+        _dbContext.Libraries.Add(library);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var manga = new Manga
+        {
+            PrimaryTitle = "Test Manga",
+            LibraryId = library.Id,
+            Library = library,
+        };
+        _dbContext.MangaSeries.Add(manga);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var chapter = new Chapter
+        {
+            FileName = "ch1.cbz",
+            RelativePath = "manga/ch1.cbz",
+            MangaId = manga.Id,
+            Manga = manga,
+            IsUpscaled = isUpscaled,
+            UpscalerProfileId = isUpscaled ? profile.Id : null,
+            UpscalerProfile = isUpscaled ? profile : null,
+        };
+        _dbContext.Chapters.Add(chapter);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        return (chapter, profile);
+    }
+
+    [Fact]
+    public async Task OnSplitsAppliedAsync_WhenIsUpscaledTrueButFileDoesNotExist_EnqueuesUpscaleTask()
+    {
+        // Arrange: chapter is marked as upscaled, but the upscaled file is missing (state inconsistency)
+        var (chapter, _) = await CreateUpscaleConfiguredChapterAsync(isUpscaled: true);
+        _fileSystem.FileExists(Arg.Any<string>()).Returns(false);
+
+        // Act
+        await _coordinator.OnSplitsAppliedAsync(
+            chapter.Id,
+            1,
+            TestContext.Current.CancellationToken
+        );
+
+        // Assert: should enqueue UpscaleTask, NOT RepairUpscaleTask, because the file is missing
+        await _taskQueue.Received(1).EnqueueAsync(Arg.Any<UpscaleTask>());
+        await _taskQueue.DidNotReceive().EnqueueAsync(Arg.Any<RepairUpscaleTask>());
+    }
+
+    [Fact]
+    public async Task OnSplitsAppliedAsync_WhenIsUpscaledFalseAndNoFile_EnqueuesUpscaleTask()
+    {
+        // Arrange: unupscaled chapter with no upscaled file (the normal unupscaled case)
+        var (chapter, _) = await CreateUpscaleConfiguredChapterAsync(isUpscaled: false);
+        _fileSystem.FileExists(Arg.Any<string>()).Returns(false);
+
+        // Act
+        await _coordinator.OnSplitsAppliedAsync(
+            chapter.Id,
+            1,
+            TestContext.Current.CancellationToken
+        );
+
+        // Assert: should enqueue UpscaleTask
+        await _taskQueue.Received(1).EnqueueAsync(Arg.Any<UpscaleTask>());
+        await _taskQueue.DidNotReceive().EnqueueAsync(Arg.Any<RepairUpscaleTask>());
+    }
+
+    [Fact]
+    public async Task OnSplitsAppliedAsync_WhenUpscaledFileExists_EnqueuesRepairUpscaleTask()
+    {
+        // Arrange: upscaled chapter whose file exists on disk
+        var (chapter, _) = await CreateUpscaleConfiguredChapterAsync(isUpscaled: true);
+        _fileSystem.FileExists(Arg.Any<string>()).Returns(true);
+
+        // Act
+        await _coordinator.OnSplitsAppliedAsync(
+            chapter.Id,
+            1,
+            TestContext.Current.CancellationToken
+        );
+
+        // Assert: should enqueue RepairUpscaleTask because the file exists and needs repair
+        await _taskQueue.Received(1).EnqueueAsync(Arg.Any<RepairUpscaleTask>());
+        await _taskQueue.DidNotReceive().EnqueueAsync(Arg.Any<UpscaleTask>());
     }
 }

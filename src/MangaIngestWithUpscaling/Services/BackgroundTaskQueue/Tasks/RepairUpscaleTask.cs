@@ -103,6 +103,18 @@ public class RepairUpscaleTask : BaseTask
         string upscaleTargetPath = chapter.UpscaledFullPath;
         string currentStoragePath = chapter.NotUpscaledFullPath;
 
+        if (!File.Exists(upscaleTargetPath))
+        {
+            logger.LogInformation(
+                "Upscaled file for chapter \"{chapterFileName}\" of {seriesTitle} does not exist. Falling back to full upscale.",
+                chapter.FileName,
+                chapter.Manga.PrimaryTitle
+            );
+            var fallbackTask = new UpscaleTask(chapter, upscalerProfile);
+            await fallbackTask.ProcessAsync(services, cancellationToken);
+            return;
+        }
+
         logger.LogInformation(
             "Starting repair of chapter \"{chapterFileName}\" of {seriesTitle}",
             chapter.FileName,
