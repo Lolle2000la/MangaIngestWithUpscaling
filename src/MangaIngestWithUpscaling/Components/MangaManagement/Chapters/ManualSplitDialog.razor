@@ -5,6 +5,8 @@
 @using MangaIngestWithUpscaling.Shared.Services.Analysis
 @using MangaIngestWithUpscaling.Shared.Services.FileSystem
 @using MangaIngestWithUpscaling.Shared.Constants
+@using MangaIngestWithUpscaling.Services.BackgroundTaskQueue
+@using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks
 @using MudBlazor
 @using System.IO.Compression
 @using Microsoft.Extensions.DependencyInjection
@@ -596,6 +598,12 @@
             }
 
             await dbContext.SaveChangesAsync(CancellationToken.None);
+
+            var taskQueue = Services.GetRequiredService<ITaskQueue>();
+            var stateManager = Services.GetRequiredService<ISplitProcessingStateManager>();
+            
+            await taskQueue.EnqueueAsync(new ApplySplitsTask(chapter, ManualSplitService.ManualSplitVersion));
+            await stateManager.SetProcessingAsync(chapter.Id, ManualSplitService.ManualSplitVersion);
 
             Snackbar.Add(Loc["Success_SplitsApplied"], Severity.Success);
             MudDialog.Close(DialogResult.Ok(true));
