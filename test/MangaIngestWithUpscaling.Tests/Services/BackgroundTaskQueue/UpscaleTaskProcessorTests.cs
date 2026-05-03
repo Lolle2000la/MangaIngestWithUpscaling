@@ -28,15 +28,25 @@ public class UpscaleTaskProcessorTests : IDisposable
         services.AddDbContext<ApplicationDbContext>(options => options.UseInMemoryDatabase(dbName));
 
         _mockPersistence = Substitute.For<ITaskPersistenceService>();
-        // Simulate production: claiming only succeeds if the task is Pending.
-        // Rerouted tasks are already 'Processing' when they reach UpscaleTaskProcessor.
+        // Simulate production: claiming only succeeds if the task is Pending in the database.
         _mockPersistence
             .ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
-            .Returns(x =>
+            .Returns(async x =>
             {
                 var taskId = (int)x[0];
-                // In production this would check the DB.
-                // We'll trust the logic in ProcessTaskAsync to only call this for non-Processing tasks.
+                var task = await _dbContext.PersistedTasks.FindAsync(taskId);
+                if (task == null)
+                {
+                    return false;
+                }
+
+                if (task.Status != PersistedTaskStatus.Pending)
+                {
+                    return false;
+                }
+                // Simulate claim by updating status
+                task.Status = PersistedTaskStatus.Processing;
+                await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
                 return true;
             });
 

@@ -41,14 +41,7 @@ public class TaskRegistry : IHostedService, IDisposable
         // Standard view: non-upscale tasks, sorted by status priority, then Order, then CreatedAt
         _tasks
             .Connect()
-            .Filter(t =>
-                t.Data
-                    is not UpscaleTask
-                        and not RenameUpscaledChaptersSeriesTask
-                        and not RepairUpscaleTask
-                        and not DetectSplitCandidatesTask
-                        and not ApplySplitsTask
-            )
+            .Filter(t => !TaskQueue.IsUpscaleTask(t.Data))
             .SortAndBind(
                 out ReadOnlyObservableCollection<PersistedTask> standard,
                 SortExpressionComparer<PersistedTask>
@@ -63,14 +56,7 @@ public class TaskRegistry : IHostedService, IDisposable
         // Upscale view: upscale tasks, sorted by status priority, then Order, then CreatedAt
         _tasks
             .Connect()
-            .Filter(t =>
-                t.Data
-                    is UpscaleTask
-                        or RenameUpscaledChaptersSeriesTask
-                        or RepairUpscaleTask
-                        or DetectSplitCandidatesTask
-                        or ApplySplitsTask
-            )
+            .Filter(t => TaskQueue.IsUpscaleTask(t.Data))
             .SortAndBind(
                 out ReadOnlyObservableCollection<PersistedTask> upscale,
                 SortExpressionComparer<PersistedTask>

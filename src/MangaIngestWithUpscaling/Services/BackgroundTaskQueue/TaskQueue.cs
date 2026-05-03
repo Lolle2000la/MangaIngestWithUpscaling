@@ -100,6 +100,14 @@ public class TaskQueue : ITaskQueue, IHostedService
         }
     }
 
+    public static bool IsUpscaleTask(BaseTask data) =>
+        data
+            is UpscaleTask
+                or RenameUpscaledChaptersSeriesTask
+                or RepairUpscaleTask
+                or DetectSplitCandidatesTask
+                or ApplySplitsTask;
+
     public async Task EnqueueAsync<T>(T taskData)
         where T : BaseTask
     {
@@ -114,14 +122,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         await dbContext.SaveChangesAsync();
 
         // Add to the appropriate sorted set and notify via signal
-        if (
-            taskData
-            is UpscaleTask
-                or RenameUpscaledChaptersSeriesTask
-                or RepairUpscaleTask
-                or DetectSplitCandidatesTask
-                or ApplySplitsTask
-        )
+        if (IsUpscaleTask(taskData))
         {
             bool added;
             lock (_upscaleTasksLock)
@@ -165,12 +166,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         // Determine which set to modify
-        (SortedSet<PersistedTask> tasks, object lockObj) = task.Data
-            is UpscaleTask
-                or RenameUpscaledChaptersSeriesTask
-                or RepairUpscaleTask
-                or DetectSplitCandidatesTask
-                or ApplySplitsTask
+        (SortedSet<PersistedTask> tasks, object lockObj) = IsUpscaleTask(task.Data)
             ? (_upscaleTasks, _upscaleTasksLock)
             : (_standardTasks, _standardTasksLock);
 
@@ -229,12 +225,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         dbContext.PersistedTasks.Remove(task);
         await dbContext.SaveChangesAsync();
 
-        (SortedSet<PersistedTask> tasks, object lockObj) = task.Data
-            is UpscaleTask
-                or RenameUpscaledChaptersSeriesTask
-                or RepairUpscaleTask
-                or DetectSplitCandidatesTask
-                or ApplySplitsTask
+        (SortedSet<PersistedTask> tasks, object lockObj) = IsUpscaleTask(task.Data)
             ? (_upscaleTasks, _upscaleTasksLock)
             : (_standardTasks, _standardTasksLock);
 
@@ -258,14 +249,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         dbContext.Update(task);
         await dbContext.SaveChangesAsync();
 
-        if (
-            task.Data
-            is UpscaleTask
-                or RenameUpscaledChaptersSeriesTask
-                or RepairUpscaleTask
-                or DetectSplitCandidatesTask
-                or ApplySplitsTask
-        )
+        if (IsUpscaleTask(task.Data))
         {
             bool added;
             lock (_upscaleTasksLock)
@@ -299,26 +283,29 @@ public class TaskQueue : ITaskQueue, IHostedService
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         // Only consider Pending and retryable Failed tasks here; we will explicitly recover stranded Processing elsewhere
-        var pendingTasks = await dbContext
+        var allTasks = await dbContext
             .PersistedTasks.OrderBy(t => t.Order)
-            .AsAsyncEnumerable()
+            .ToListAsync(cancellationToken);
+
+        var pendingTasks = allTasks
             .Where(t =>
                 t.Status == PersistedTaskStatus.Pending
                 || (t.Status == PersistedTaskStatus.Failed && t.RetryCount < t.Data.RetryFor)
             )
-            .ToListAsync(cancellationToken);
+            .ToList();
 
         // Load tasks into sorted sets and signal their presence
+        bool dbChanged = false;
         foreach (var task in pendingTasks)
         {
-            if (
-                task.Data
-                is UpscaleTask
-                    or RenameUpscaledChaptersSeriesTask
-                    or RepairUpscaleTask
-                    or DetectSplitCandidatesTask
-                    or ApplySplitsTask
-            )
+            if (task.Status == PersistedTaskStatus.Failed)
+            {
+                task.Status = PersistedTaskStatus.Pending;
+                dbContext.Update(task);
+                dbChanged = true;
+            }
+
+            if (IsUpscaleTask(task.Data))
             {
                 bool added;
                 lock (_upscaleTasksLock)
@@ -342,6 +329,11 @@ public class TaskQueue : ITaskQueue, IHostedService
                     _standardChannel.Writer.TryWrite(Signal);
                 }
             }
+        }
+
+        if (dbChanged)
+        {
+            await dbContext.SaveChangesAsync(cancellationToken);
         }
     }
 

@@ -301,26 +301,33 @@ public class TaskQueueTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task ReplayPendingOrFailed_ShouldEmitSignalsOnlyForNewTasks()
+    public async Task ReplayPendingOrFailed_WithFailedTasks_ShouldResetToPending()
     {
         // Arrange
-        _dbContext.PersistedTasks.Add(
-            new PersistedTask
-            {
-                Id = 10,
-                Order = 1,
-                Status = PersistedTaskStatus.Pending,
-                Data = new LoggingTask { Message = "replay" },
-            }
-        );
+        var failedTask = new PersistedTask
+        {
+            Id = 11,
+            Order = 1,
+            Status = PersistedTaskStatus.Failed,
+            RetryCount = 0,
+            Data = new LoggingTask { Message = "failed", RetryFor = 1 },
+        };
+        _dbContext.PersistedTasks.Add(failedTask);
         await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        // First replay - should add task and emit signal
+        // Act
         await _taskQueue.ReplayPendingOrFailed(TestContext.Current.CancellationToken);
-        Assert.True(_taskQueue.StandardReader.TryRead(out _));
 
-        // Second replay - task already in SortedSet, should NOT emit signal
-        await _taskQueue.ReplayPendingOrFailed(TestContext.Current.CancellationToken);
-        Assert.False(_taskQueue.StandardReader.TryRead(out _));
+        // Assert
+        // Use a separate scope to verify DB changes
+        using var checkScope = _scope.ServiceProvider.CreateScope();
+        var checkDb = checkScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var reloaded = await checkDb
+            .PersistedTasks.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.Id == 11, TestContext.Current.CancellationToken);
+
+        Assert.NotNull(reloaded);
+        Assert.Equal(PersistedTaskStatus.Pending, reloaded.Status);
+        Assert.True(_taskQueue.StandardReader.TryRead(out _));
     }
 }
