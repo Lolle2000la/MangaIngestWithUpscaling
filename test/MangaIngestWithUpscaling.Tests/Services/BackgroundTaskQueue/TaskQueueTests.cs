@@ -62,7 +62,7 @@ public class TaskQueueTests : IDisposable
 
         // Act & Assert
         Exception? exception = await Record.ExceptionAsync(() =>
-            _taskQueue.SendToLocalUpscaleAsync(task, CancellationToken.None).AsTask()
+            _taskQueue.SendToLocalUpscaleAsync(task, TestContext.Current.CancellationToken).AsTask()
         );
         Assert.Null(exception);
     }
@@ -102,7 +102,7 @@ public class TaskQueueTests : IDisposable
     {
         // Act & Assert - This method handles database operations, should not throw
         Exception? exception = await Record.ExceptionAsync(() =>
-            _taskQueue.ReplayPendingOrFailed(CancellationToken.None)
+            _taskQueue.ReplayPendingOrFailed(TestContext.Current.CancellationToken)
         );
         Assert.Null(exception);
     }
@@ -157,7 +157,7 @@ public class TaskQueueTests : IDisposable
     {
         // Act & Assert - StartAsync calls ReplayPendingOrFailed and should complete
         Exception? exception = await Record.ExceptionAsync(() =>
-            _taskQueue.StartAsync(CancellationToken.None)
+            _taskQueue.StartAsync(TestContext.Current.CancellationToken)
         );
         Assert.Null(exception);
     }
@@ -207,5 +207,118 @@ public class TaskQueueTests : IDisposable
 
         // Act & Assert - Should throw exception when trying to update non-existent entity
         await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => _taskQueue.RetryAsync(task));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task EnqueueAsync_ShouldEmitSignal()
+    {
+        // Arrange
+        var logTask = new LoggingTask { Message = "test" };
+
+        // Act
+        await _taskQueue.EnqueueAsync(logTask);
+
+        // Assert
+        bool hasSignal = _taskQueue.StandardReader.TryRead(out _);
+        Assert.True(hasSignal);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task DequeueStandard_ShouldReturnHighestPriorityTask()
+    {
+        // Arrange
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "task2" }); // Order 1
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "task1" }); // Order 2
+        
+        var snapshot = _taskQueue.GetStandardSnapshot();
+        var task1 = snapshot.First(t => ((LoggingTask)t.Data).Message == "task1");
+        var task2 = snapshot.First(t => ((LoggingTask)t.Data).Message == "task2");
+
+        // Force task1 to have higher priority (lower order)
+        await _taskQueue.ReorderTaskAsync(task1, 0);
+
+        // Act
+        var dequeued = _taskQueue.DequeueStandard();
+
+        // Assert
+        Assert.NotNull(dequeued);
+        Assert.Equal("task1", ((LoggingTask)dequeued.Data).Message);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task EnqueueAsync_DetectSplitCandidatesTask_ShouldRouteToUpscale()
+    {
+        // Arrange
+        var splitTask = new DetectSplitCandidatesTask(1, 1);
+
+        // Act
+        await _taskQueue.EnqueueAsync(splitTask);
+
+        // Assert
+        Assert.Single(_taskQueue.GetUpscaleSnapshot());
+        Assert.Empty(_taskQueue.GetStandardSnapshot());
+        Assert.True(_taskQueue.UpscaleReader.TryRead(out _));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ReorderTaskAsync_DetectSplitCandidatesTask_ShouldUpdateUpscaleSet()
+    {
+        // Arrange
+        var splitTaskData = new DetectSplitCandidatesTask(1, 1);
+        await _taskQueue.EnqueueAsync(splitTaskData);
+        var task = _taskQueue.GetUpscaleSnapshot().First();
+
+        // Act
+        await _taskQueue.ReorderTaskAsync(task, -10);
+
+        // Assert
+        var dequeued = _taskQueue.DequeueUpscale();
+        Assert.NotNull(dequeued);
+        Assert.Equal(-10, dequeued.Order);
+        Assert.IsType<DetectSplitCandidatesTask>(dequeued.Data);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RemoveTaskAsync_ApplySplitsTask_ShouldRemoveFromUpscaleSet()
+    {
+        // Arrange
+        var splitTaskData = new ApplySplitsTask(1, 1);
+        await _taskQueue.EnqueueAsync(splitTaskData);
+        var task = _taskQueue.GetUpscaleSnapshot().First();
+
+        // Act
+        await _taskQueue.RemoveTaskAsync(task);
+
+        // Assert
+        Assert.Empty(_taskQueue.GetUpscaleSnapshot());
+        Assert.Null(_taskQueue.DequeueUpscale());
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ReplayPendingOrFailed_ShouldEmitSignalsOnlyForNewTasks()
+    {
+        // Arrange
+        _dbContext.PersistedTasks.Add(new PersistedTask 
+        { 
+            Id = 10, 
+            Order = 1, 
+            Status = PersistedTaskStatus.Pending, 
+            Data = new LoggingTask { Message = "replay" } 
+        });
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // First replay - should add task and emit signal
+        await _taskQueue.ReplayPendingOrFailed(TestContext.Current.CancellationToken);
+        Assert.True(_taskQueue.StandardReader.TryRead(out _));
+
+        // Second replay - task already in SortedSet, should NOT emit signal
+        await _taskQueue.ReplayPendingOrFailed(TestContext.Current.CancellationToken);
+        Assert.False(_taskQueue.StandardReader.TryRead(out _));
     }
 }

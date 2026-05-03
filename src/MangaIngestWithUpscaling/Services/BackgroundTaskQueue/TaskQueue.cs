@@ -172,6 +172,8 @@ public class TaskQueue : ITaskQueue, IHostedService
             is UpscaleTask
                 or RenameUpscaledChaptersSeriesTask
                 or RepairUpscaleTask
+                or DetectSplitCandidatesTask
+                or ApplySplitsTask
             ? (_upscaleTasks, _upscaleTasksLock)
             : (_standardTasks, _standardTasksLock);
 
@@ -234,6 +236,8 @@ public class TaskQueue : ITaskQueue, IHostedService
             is UpscaleTask
                 or RenameUpscaledChaptersSeriesTask
                 or RepairUpscaleTask
+                or DetectSplitCandidatesTask
+                or ApplySplitsTask
             ? (_upscaleTasks, _upscaleTasksLock)
             : (_standardTasks, _standardTasksLock);
 
