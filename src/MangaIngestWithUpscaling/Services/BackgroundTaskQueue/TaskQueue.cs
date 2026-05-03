@@ -126,19 +126,27 @@ public class TaskQueue : ITaskQueue, IHostedService
                 or ApplySplitsTask
         )
         {
+            bool added;
             lock (_upscaleTasksLock)
             {
-                _upscaleTasks.Add(taskItem);
+                added = _upscaleTasks.Add(taskItem);
             }
-            await _upscaleChannel.Writer.WriteAsync(Signal);
+            if (added)
+            {
+                await _upscaleChannel.Writer.WriteAsync(Signal);
+            }
         }
         else
         {
+            bool added;
             lock (_standardTasksLock)
             {
-                _standardTasks.Add(taskItem);
+                added = _standardTasks.Add(taskItem);
             }
-            await _standardChannel.Writer.WriteAsync(Signal);
+            if (added)
+            {
+                await _standardChannel.Writer.WriteAsync(Signal);
+            }
         }
 
         TaskEnqueuedOrChanged?.Invoke(taskItem);
@@ -249,21 +257,36 @@ public class TaskQueue : ITaskQueue, IHostedService
         dbContext.Update(task);
         await dbContext.SaveChangesAsync();
 
-        if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask)
+        if (
+            task.Data
+            is UpscaleTask
+                or RenameUpscaledChaptersSeriesTask
+                or RepairUpscaleTask
+                or DetectSplitCandidatesTask
+                or ApplySplitsTask
+        )
         {
+            bool added;
             lock (_upscaleTasksLock)
             {
-                _upscaleTasks.Add(task);
+                added = _upscaleTasks.Add(task);
             }
-            await _upscaleChannel.Writer.WriteAsync(Signal);
+            if (added)
+            {
+                await _upscaleChannel.Writer.WriteAsync(Signal);
+            }
         }
         else
         {
+            bool added;
             lock (_standardTasksLock)
             {
-                _standardTasks.Add(task);
+                added = _standardTasks.Add(task);
             }
-            await _standardChannel.Writer.WriteAsync(Signal);
+            if (added)
+            {
+                await _standardChannel.Writer.WriteAsync(Signal);
+            }
         }
 
         TaskEnqueuedOrChanged?.Invoke(task);
@@ -287,21 +310,36 @@ public class TaskQueue : ITaskQueue, IHostedService
         // Load tasks into sorted sets and signal their presence
         foreach (var task in pendingTasks)
         {
-            if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask)
+            if (
+                task.Data
+                is UpscaleTask
+                    or RenameUpscaledChaptersSeriesTask
+                    or RepairUpscaleTask
+                    or DetectSplitCandidatesTask
+                    or ApplySplitsTask
+            )
             {
+                bool added;
                 lock (_upscaleTasksLock)
                 {
-                    _upscaleTasks.Add(task);
+                    added = _upscaleTasks.Add(task);
                 }
-                _upscaleChannel.Writer.TryWrite(Signal);
+                if (added)
+                {
+                    _upscaleChannel.Writer.TryWrite(Signal);
+                }
             }
             else
             {
+                bool added;
                 lock (_standardTasksLock)
                 {
-                    _standardTasks.Add(task);
+                    added = _standardTasks.Add(task);
                 }
-                _standardChannel.Writer.TryWrite(Signal);
+                if (added)
+                {
+                    _standardChannel.Writer.TryWrite(Signal);
+                }
             }
         }
     }
