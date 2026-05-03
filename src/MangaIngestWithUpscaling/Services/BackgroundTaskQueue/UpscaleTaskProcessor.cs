@@ -5,7 +5,6 @@ using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Open.ChannelExtensions;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 
@@ -19,7 +18,7 @@ public class UpscaleTaskProcessor(
 {
     private readonly Lock _lock = new();
     private readonly TimeSpan _progressDebounce = TimeSpan.FromMilliseconds(250);
-    private readonly ChannelReader<PersistedTask> _reader = taskQueue.UpscaleReader;
+    private readonly ChannelReader<object> _reader = taskQueue.UpscaleReader;
     private readonly ChannelReader<PersistedTask> _reroutedReader = taskQueue.ReroutedUpscaleReader;
     private CancellationTokenSource? currentStoppingToken;
     private PersistedTask? currentTask;
@@ -54,30 +53,47 @@ public class UpscaleTaskProcessor(
 
         serviceStoppingToken = stoppingToken;
 
-        // Merge the rerouted and regular upscale channels into a single reader using Open.ChannelExtensions
-        var merged = Channel.CreateBounded<PersistedTask>(
-            new BoundedChannelOptions(1)
-            {
-                SingleReader = true,
-                SingleWriter = false,
-                AllowSynchronousContinuations = true,
-            }
-        );
-
-        // Start piping both sources into the merged channel (will complete when sources complete)
-        _ = _reroutedReader.PipeTo(merged, stoppingToken);
-        _ = _reader.PipeTo(merged, stoppingToken);
-
         while (!stoppingToken.IsCancellationRequested)
         {
-            PersistedTask task;
-            if (_reroutedReader.TryRead(out PersistedTask? rerouted))
+            PersistedTask? task = null;
+
+            // Priority 1: Rerouted tasks (already claimed or specialized)
+            if (_reroutedReader.TryRead(out var rerouted))
             {
                 task = rerouted;
             }
             else
             {
-                task = await merged.Reader.ReadAsync(stoppingToken);
+                // Wait for either a rerouted task OR a signal from the main upscale queue
+                var reroutedWait = _reroutedReader.WaitToReadAsync(stoppingToken).AsTask();
+                var signalWait = _reader.WaitToReadAsync(stoppingToken).AsTask();
+
+                var completed = await Task.WhenAny(reroutedWait, signalWait);
+
+                if (completed == reroutedWait && await reroutedWait)
+                {
+                    if (_reroutedReader.TryRead(out var r))
+                    {
+                        task = r;
+                    }
+                }
+                else if (completed == signalWait && await signalWait)
+                {
+                    // Check rerouted one last time before consuming a signal
+                    if (_reroutedReader.TryRead(out var r))
+                    {
+                        task = r;
+                    }
+                    else if (_reader.TryRead(out _))
+                    {
+                        task = taskQueue.DequeueUpscale();
+                    }
+                }
+            }
+
+            if (task == null)
+            {
+                continue;
             }
 
             using (_lock.EnterScope())

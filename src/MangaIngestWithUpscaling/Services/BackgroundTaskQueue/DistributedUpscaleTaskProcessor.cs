@@ -27,7 +27,7 @@ public class DistributedUpscaleTaskProcessor(
 ) : BackgroundService
 {
     private readonly Lock _lock = new();
-    private readonly ChannelReader<PersistedTask> _reader = taskQueue.UpscaleReader;
+    private readonly ChannelReader<object> _reader = taskQueue.UpscaleReader;
 
     private readonly Channel<(
         TaskCompletionSource<PersistedTask>,
@@ -173,7 +173,13 @@ public class DistributedUpscaleTaskProcessor(
                 bool completed = false;
                 while (!completed && !stoppingToken.IsCancellationRequested)
                 {
-                    PersistedTask task = await _reader.ReadAsync(linkedCts.Token);
+                    await _reader.ReadAsync(linkedCts.Token);
+                    PersistedTask? task = taskQueue.DequeueUpscale();
+
+                    if (task == null)
+                    {
+                        continue;
+                    }
 
                     bool taskClaimed = false;
                     using (IServiceScope scope = scopeFactory.CreateScope())

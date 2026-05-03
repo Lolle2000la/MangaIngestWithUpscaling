@@ -22,6 +22,9 @@ public interface ITaskQueue
 
     IReadOnlyList<PersistedTask> GetUpscaleSnapshot();
 
+    PersistedTask? DequeueStandard();
+    PersistedTask? DequeueUpscale();
+
     // Convenience to move a task to the front of its queue safely
     Task MoveToFrontAsync(PersistedTask task, CancellationToken cancellationToken = default);
 }
@@ -31,11 +34,11 @@ public class TaskQueue : ITaskQueue, IHostedService
     private readonly ILogger<TaskQueue> _logger;
     private readonly Channel<PersistedTask> _reroutedUpscaleChannel;
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly Channel<PersistedTask> _standardChannel;
+    private readonly Channel<object> _standardChannel;
 
     private readonly SortedSet<PersistedTask> _standardTasks;
     private readonly object _standardTasksLock = new();
-    private readonly Channel<PersistedTask> _upscaleChannel;
+    private readonly Channel<object> _upscaleChannel;
     private readonly SortedSet<PersistedTask> _upscaleTasks;
     private readonly object _upscaleTasksLock = new();
 
@@ -44,14 +47,10 @@ public class TaskQueue : ITaskQueue, IHostedService
         _scopeFactory = scopeFactory;
         _logger = logger;
 
-        // Create bounded channels to control concurrency
-        var channelOptions = new BoundedChannelOptions(1)
-        {
-            FullMode = BoundedChannelFullMode.Wait,
-        };
-        _standardChannel = Channel.CreateBounded<PersistedTask>(channelOptions);
-        _upscaleChannel = Channel.CreateBounded<PersistedTask>(channelOptions);
-        // Reroute channel is unbounded: it's fed only by DistributedUpscaleTaskProcessor and consumed by the local UpscaleTaskProcessor
+        // Use unbounded channels for signals; signals do not carry tasks, but notify consumers to pull from sorted sets.
+        _standardChannel = Channel.CreateUnbounded<object>();
+        _upscaleChannel = Channel.CreateUnbounded<object>();
+        // Reroute channel remains carrying tasks: it's fed only by DistributedUpscaleTaskProcessor and consumed by the local UpscaleTaskProcessor
         _reroutedUpscaleChannel = Channel.CreateUnbounded<PersistedTask>();
 
         // Initialize sorted sets with a stable comparer
@@ -75,27 +74,13 @@ public class TaskQueue : ITaskQueue, IHostedService
         _upscaleTasks = new SortedSet<PersistedTask>(comparer);
     }
 
-    public ChannelReader<PersistedTask> StandardReader => _standardChannel.Reader;
-    public ChannelReader<PersistedTask> UpscaleReader => _upscaleChannel.Reader;
+    public ChannelReader<object> StandardReader => _standardChannel.Reader;
+    public ChannelReader<object> UpscaleReader => _upscaleChannel.Reader;
     public ChannelReader<PersistedTask> ReroutedUpscaleReader => _reroutedUpscaleChannel.Reader;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         await ReplayPendingOrFailed(cancellationToken);
-
-        // Start background processing
-        _ = ProcessChannelAsync(
-            _standardChannel,
-            _standardTasks,
-            _standardTasksLock,
-            cancellationToken
-        );
-        _ = ProcessChannelAsync(
-            _upscaleChannel,
-            _upscaleTasks,
-            _upscaleTasksLock,
-            cancellationToken
-        );
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
@@ -130,7 +115,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         await dbContext.PersistedTasks.AddAsync(taskItem);
         await dbContext.SaveChangesAsync();
 
-        // Add to the appropriate sorted set
+        // Add to the appropriate sorted set and notify via signal
         if (
             taskData
             is UpscaleTask
@@ -144,6 +129,7 @@ public class TaskQueue : ITaskQueue, IHostedService
             {
                 _upscaleTasks.Add(taskItem);
             }
+            await _upscaleChannel.Writer.WriteAsync(new object());
         }
         else
         {
@@ -151,6 +137,7 @@ public class TaskQueue : ITaskQueue, IHostedService
             {
                 _standardTasks.Add(taskItem);
             }
+            await _standardChannel.Writer.WriteAsync(new object());
         }
 
         TaskEnqueuedOrChanged?.Invoke(taskItem);
@@ -261,16 +248,21 @@ public class TaskQueue : ITaskQueue, IHostedService
         dbContext.Update(task);
         await dbContext.SaveChangesAsync();
 
-        (SortedSet<PersistedTask> tasks, object lockObj) = task.Data
-            is UpscaleTask
-                or RenameUpscaledChaptersSeriesTask
-                or RepairUpscaleTask
-            ? (_upscaleTasks, _upscaleTasksLock)
-            : (_standardTasks, _standardTasksLock);
-
-        lock (lockObj)
+        if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask)
         {
-            tasks.Add(task);
+            lock (_upscaleTasksLock)
+            {
+                _upscaleTasks.Add(task);
+            }
+            await _upscaleChannel.Writer.WriteAsync(new object());
+        }
+        else
+        {
+            lock (_standardTasksLock)
+            {
+                _standardTasks.Add(task);
+            }
+            await _standardChannel.Writer.WriteAsync(new object());
         }
 
         TaskEnqueuedOrChanged?.Invoke(task);
@@ -291,19 +283,49 @@ public class TaskQueue : ITaskQueue, IHostedService
             )
             .ToListAsync(cancellationToken);
 
-        // Load tasks into sorted sets
+        // Load tasks into sorted sets and signal their presence
         foreach (var task in pendingTasks)
         {
             if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask)
             {
                 lock (_upscaleTasksLock)
+                {
                     _upscaleTasks.Add(task);
+                }
+                _upscaleChannel.Writer.TryWrite(new object());
             }
             else
             {
                 lock (_standardTasksLock)
+                {
                     _standardTasks.Add(task);
+                }
+                _standardChannel.Writer.TryWrite(new object());
             }
+        }
+    }
+
+    public PersistedTask? DequeueStandard()
+    {
+        lock (_standardTasksLock)
+        {
+            if (_standardTasks.Count == 0)
+                return null;
+            var task = _standardTasks.Min;
+            _standardTasks.Remove(task!);
+            return task;
+        }
+    }
+
+    public PersistedTask? DequeueUpscale()
+    {
+        lock (_upscaleTasksLock)
+        {
+            if (_upscaleTasks.Count == 0)
+                return null;
+            var task = _upscaleTasks.Min;
+            _upscaleTasks.Remove(task!);
+            return task;
         }
     }
 
@@ -318,34 +340,4 @@ public class TaskQueue : ITaskQueue, IHostedService
 
     public event Func<PersistedTask, Task>? TaskEnqueuedOrChanged;
     public event Func<PersistedTask, Task>? TaskRemoved;
-
-    private async Task ProcessChannelAsync(
-        Channel<PersistedTask> channel,
-        SortedSet<PersistedTask> tasks,
-        object lockObj,
-        CancellationToken cancellationToken
-    )
-    {
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            PersistedTask? task = null;
-            lock (lockObj)
-            {
-                if (tasks.Count > 0)
-                {
-                    task = tasks.Min;
-                    tasks.Remove(task!);
-                }
-            }
-
-            if (task != null)
-            {
-                await channel.Writer.WriteAsync(task, cancellationToken);
-            }
-            else
-            {
-                await Task.Delay(100, cancellationToken);
-            }
-        }
-    }
 }
