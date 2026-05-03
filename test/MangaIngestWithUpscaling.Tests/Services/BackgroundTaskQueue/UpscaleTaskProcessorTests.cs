@@ -111,8 +111,9 @@ public class UpscaleTaskProcessorTests : IDisposable
         var runTask = _processor.StartAsync(cts.Token);
 
         // Wait for first task to be processed
-        await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5), cts.Token);
-        cts.Cancel();
+        await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await cts.CancelAsync();
+        await runTask;
 
         // Assert
         Assert.NotNull(firstProcessed);
@@ -140,8 +141,12 @@ public class UpscaleTaskProcessorTests : IDisposable
 
         // Act
         var runTask = _processor.StartAsync(cts.Token);
-        var processed = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5), cts.Token);
-        cts.Cancel();
+        var processed = await tcs.Task.WaitAsync(
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken
+        );
+        await cts.CancelAsync();
+        await runTask;
 
         // Assert
         Assert.NotNull(processed);
