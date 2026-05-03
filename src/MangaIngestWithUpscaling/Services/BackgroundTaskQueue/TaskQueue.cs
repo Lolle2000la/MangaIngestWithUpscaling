@@ -22,9 +22,6 @@ public interface ITaskQueue
 
     IReadOnlyList<PersistedTask> GetUpscaleSnapshot();
 
-    PersistedTask? DequeueStandard();
-    PersistedTask? DequeueUpscale();
-
     // Convenience to move a task to the front of its queue safely
     Task MoveToFrontAsync(PersistedTask task, CancellationToken cancellationToken = default);
 }
