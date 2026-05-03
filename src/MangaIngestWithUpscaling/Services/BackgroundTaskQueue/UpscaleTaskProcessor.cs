@@ -64,9 +64,11 @@ public class UpscaleTaskProcessor(
             }
             else
             {
-                // Use a linked CTS to ensure that the "losing" waiter is cancelled and removed 
+                // Use a linked CTS to ensure that the "losing" waiter is cancelled and removed
                 // from its channel when one of them completes.
-                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+                    stoppingToken
+                );
                 var reroutedWait = _reroutedReader.WaitToReadAsync(linkedCts.Token).AsTask();
                 var signalWait = _reader.WaitToReadAsync(linkedCts.Token).AsTask();
 

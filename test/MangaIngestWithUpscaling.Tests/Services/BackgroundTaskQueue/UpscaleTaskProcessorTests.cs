@@ -26,7 +26,7 @@ public class UpscaleTaskProcessorTests : IDisposable
         var services = new ServiceCollection();
         var dbName = $"TestDb_Processor_{Guid.NewGuid()}";
         services.AddDbContext<ApplicationDbContext>(options => options.UseInMemoryDatabase(dbName));
-        
+
         _mockPersistence = Substitute.For<ITaskPersistenceService>();
         _mockPersistence.ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(true);
 
@@ -34,14 +34,16 @@ public class UpscaleTaskProcessorTests : IDisposable
         _mockOptions.Value.Returns(new UpscalerConfig { RemoteOnly = false });
 
         var mockQueueCleanup = Substitute.For<IQueueCleanup>();
-        mockQueueCleanup.CleanupAsync().Returns(Task.FromResult<IReadOnlyList<int>>(Array.Empty<int>()));
+        mockQueueCleanup
+            .CleanupAsync()
+            .Returns(Task.FromResult<IReadOnlyList<int>>(Array.Empty<int>()));
         services.AddScoped<IQueueCleanup>(_ => mockQueueCleanup);
         services.AddSingleton(_mockPersistence);
 
         var serviceProvider = services.BuildServiceProvider();
         _scope = serviceProvider.CreateScope();
         _dbContext = _scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        
+
         _mockLogger = Substitute.For<ILogger<UpscaleTaskProcessor>>();
         var queueLogger = Substitute.For<ILogger<TaskQueue>>();
 
@@ -70,21 +72,21 @@ public class UpscaleTaskProcessorTests : IDisposable
     {
         // Arrange
         var cts = new CancellationTokenSource();
-        
+
         var upscaleTask = new PersistedTask
         {
             Id = 1,
             Order = 10,
             Status = PersistedTaskStatus.Pending,
-            Data = new UpscaleTask { ChapterId = 1, UpscalerProfileId = 1 }
+            Data = new UpscaleTask { ChapterId = 1, UpscalerProfileId = 1 },
         };
-        
+
         var reroutedTask = new PersistedTask
         {
             Id = 2,
             Order = 100, // Much lower priority by order
             Status = PersistedTaskStatus.Pending,
-            Data = new RepairUpscaleTask { ChapterId = 1, UpscalerProfileId = 1 }
+            Data = new RepairUpscaleTask { ChapterId = 1, UpscalerProfileId = 1 },
         };
 
         // Enqueue upscale task (will emit signal)
@@ -125,7 +127,7 @@ public class UpscaleTaskProcessorTests : IDisposable
         var cts = new CancellationTokenSource();
         var upscaleTask = new UpscaleTask { ChapterId = 1, UpscalerProfileId = 1 };
         await _taskQueue.EnqueueAsync(upscaleTask);
-        
+
         var tcs = new TaskCompletionSource<PersistedTask>();
         _processor.StatusChanged += (task) =>
         {
