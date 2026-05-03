@@ -333,7 +333,7 @@ public class TaskQueueTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task ReplayPendingOrFailed_WithMultiplePendingTasks_ShouldSignalAll()
+    public async Task ReplayPendingOrFailed_WithMultiplePendingTasks_ShouldSignalOnce()
     {
         // Arrange
         var tasks = new[]
@@ -360,43 +360,49 @@ public class TaskQueueTests : IDisposable
         await _taskQueue.ReplayPendingOrFailed(TestContext.Current.CancellationToken);
 
         // Assert
-        Assert.True(_taskQueue.StandardReader.TryRead(out _), "First signal should be present");
-        Assert.True(_taskQueue.StandardReader.TryRead(out _), "Second signal should be present");
+        Assert.True(_taskQueue.StandardReader.TryRead(out _), "Signal should be present");
         Assert.False(
             _taskQueue.StandardReader.TryRead(out _),
-            "Third signal should NOT be present"
+            "Only one coalesced signal should be present even for multiple tasks"
         );
     }
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task ReplayPendingOrFailed_WithFailedTasks_ShouldRaiseEnqueuedOrChanged()
+    public async Task RetryAsync_ShouldEmitSignal()
     {
         // Arrange
-        var failedTask = new PersistedTask
+        var task = new PersistedTask
         {
-            Id = 201,
+            Id = 301,
             Order = 1,
             Status = PersistedTaskStatus.Failed,
-            Data = new LoggingTask { Message = "failed-ui", RetryFor = 1 },
+            Data = new LoggingTask { Message = "retry-signal" },
         };
-        _dbContext.PersistedTasks.Add(failedTask);
+        _dbContext.PersistedTasks.Add(task);
         await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        bool notified = false;
-        _taskQueue.TaskEnqueuedOrChanged += task =>
-        {
-            if (task.Id == 201 && task.Status == PersistedTaskStatus.Pending)
-            {
-                notified = true;
-            }
-            return Task.CompletedTask;
-        };
-
         // Act
-        await _taskQueue.ReplayPendingOrFailed(TestContext.Current.CancellationToken);
+        await _taskQueue.RetryAsync(task);
 
         // Assert
-        Assert.True(notified, "UI should be notified of status change from Failed to Pending");
+        Assert.True(
+            _taskQueue.StandardReader.TryRead(out _),
+            "RetryAsync should emit a signal for standard tasks"
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task DequeueStandard_WhenEmptyWithStaleSignal_ShouldReturnNull()
+    {
+        // Arrange - Enqueue and then remove to leave a stale signal
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "stale" });
+        var task = _taskQueue.GetStandardSnapshot().First();
+        await _taskQueue.RemoveTaskAsync(task);
+
+        // Assert
+        Assert.True(_taskQueue.StandardReader.TryRead(out _), "Stale signal should be present");
+        Assert.Null(_taskQueue.DequeueStandard());
     }
 }

@@ -173,20 +173,26 @@ public class DistributedUpscaleTaskProcessor(
                 bool completed = false;
                 while (!completed && !stoppingToken.IsCancellationRequested)
                 {
-                    try
-                    {
-                        await _reader.ReadAsync(linkedCts.Token);
-                    }
-                    catch (OperationCanceledException)
-                        when (linkedCts.IsCancellationRequested
-                            && !stoppingToken.IsCancellationRequested
-                        )
-                    {
-                        // The specific request timed out or was cancelled, but the processor should keep running.
-                        break;
-                    }
-
                     PersistedTask? task = taskQueue.DequeueUpscale();
+
+                    if (task == null)
+                    {
+                        try
+                        {
+                            await _reader.WaitToReadAsync(linkedCts.Token);
+                            _reader.TryRead(out _);
+                        }
+                        catch (OperationCanceledException)
+                            when (linkedCts.IsCancellationRequested
+                                && !stoppingToken.IsCancellationRequested
+                            )
+                        {
+                            // The specific request timed out or was cancelled, but the processor should keep running.
+                            break;
+                        }
+
+                        task = taskQueue.DequeueUpscale();
+                    }
 
                     if (task == null)
                     {
