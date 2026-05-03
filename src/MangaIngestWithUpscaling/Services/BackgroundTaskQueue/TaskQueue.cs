@@ -300,6 +300,7 @@ public class TaskQueue : ITaskQueue, IHostedService
 
         // Load tasks into sorted sets and signal their presence
         bool dbChanged = false;
+        var changedTasks = new List<PersistedTask>();
         foreach (var task in pendingTasks)
         {
             if (task.Status == PersistedTaskStatus.Failed)
@@ -307,6 +308,7 @@ public class TaskQueue : ITaskQueue, IHostedService
                 task.Status = PersistedTaskStatus.Pending;
                 dbContext.Update(task);
                 dbChanged = true;
+                changedTasks.Add(task);
             }
         }
 
@@ -315,7 +317,16 @@ public class TaskQueue : ITaskQueue, IHostedService
             // Save status changes before they are added to the in-memory queue and signaled.
             // This prevents a processor from seeing the old 'Failed' status if it wakes up immediately.
             await dbContext.SaveChangesAsync(cancellationToken);
+
+            // Notify listeners (TaskRegistry/UI) that Failed tasks are now Pending
+            foreach (var task in changedTasks)
+            {
+                TaskEnqueuedOrChanged?.Invoke(task);
+            }
         }
+
+        bool standardSignaled = false;
+        bool upscaleSignaled = false;
 
         foreach (var task in pendingTasks)
         {
@@ -326,9 +337,10 @@ public class TaskQueue : ITaskQueue, IHostedService
                 {
                     added = _upscaleTasks.Add(task);
                 }
-                if (added)
+                if (added && !upscaleSignaled)
                 {
                     _upscaleChannel.Writer.TryWrite(Signal);
+                    upscaleSignaled = true;
                 }
             }
             else
@@ -338,9 +350,10 @@ public class TaskQueue : ITaskQueue, IHostedService
                 {
                     added = _standardTasks.Add(task);
                 }
-                if (added)
+                if (added && !standardSignaled)
                 {
                     _standardChannel.Writer.TryWrite(Signal);
+                    standardSignaled = true;
                 }
             }
         }
