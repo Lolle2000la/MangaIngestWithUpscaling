@@ -330,4 +330,73 @@ public class TaskQueueTests : IDisposable
         Assert.Equal(PersistedTaskStatus.Pending, reloaded.Status);
         Assert.True(_taskQueue.StandardReader.TryRead(out _));
     }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ReplayPendingOrFailed_WithMultiplePendingTasks_ShouldSignalAll()
+    {
+        // Arrange
+        var tasks = new[]
+        {
+            new PersistedTask
+            {
+                Id = 101,
+                Order = 1,
+                Status = PersistedTaskStatus.Pending,
+                Data = new LoggingTask { Message = "1" },
+            },
+            new PersistedTask
+            {
+                Id = 102,
+                Order = 2,
+                Status = PersistedTaskStatus.Pending,
+                Data = new LoggingTask { Message = "2" },
+            },
+        };
+        _dbContext.PersistedTasks.AddRange(tasks);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Act
+        await _taskQueue.ReplayPendingOrFailed(TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.True(_taskQueue.StandardReader.TryRead(out _), "First signal should be present");
+        Assert.True(_taskQueue.StandardReader.TryRead(out _), "Second signal should be present");
+        Assert.False(
+            _taskQueue.StandardReader.TryRead(out _),
+            "Third signal should NOT be present"
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ReplayPendingOrFailed_WithFailedTasks_ShouldRaiseEnqueuedOrChanged()
+    {
+        // Arrange
+        var failedTask = new PersistedTask
+        {
+            Id = 201,
+            Order = 1,
+            Status = PersistedTaskStatus.Failed,
+            Data = new LoggingTask { Message = "failed-ui", RetryFor = 1 },
+        };
+        _dbContext.PersistedTasks.Add(failedTask);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        bool notified = false;
+        _taskQueue.TaskEnqueuedOrChanged += task =>
+        {
+            if (task.Id == 201 && task.Status == PersistedTaskStatus.Pending)
+            {
+                notified = true;
+            }
+            return Task.CompletedTask;
+        };
+
+        // Act
+        await _taskQueue.ReplayPendingOrFailed(TestContext.Current.CancellationToken);
+
+        // Assert
+        Assert.True(notified, "UI should be notified of status change from Failed to Pending");
+    }
 }

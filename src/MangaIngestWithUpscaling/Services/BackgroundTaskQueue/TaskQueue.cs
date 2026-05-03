@@ -325,9 +325,6 @@ public class TaskQueue : ITaskQueue, IHostedService
             }
         }
 
-        bool standardSignaled = false;
-        bool upscaleSignaled = false;
-
         foreach (var task in pendingTasks)
         {
             if (IsUpscaleTask(task.Data))
@@ -337,10 +334,9 @@ public class TaskQueue : ITaskQueue, IHostedService
                 {
                     added = _upscaleTasks.Add(task);
                 }
-                if (added && !upscaleSignaled)
+                if (added)
                 {
                     _upscaleChannel.Writer.TryWrite(Signal);
-                    upscaleSignaled = true;
                 }
             }
             else
@@ -350,10 +346,9 @@ public class TaskQueue : ITaskQueue, IHostedService
                 {
                     added = _standardTasks.Add(task);
                 }
-                if (added && !standardSignaled)
+                if (added)
                 {
                     _standardChannel.Writer.TryWrite(Signal);
-                    standardSignaled = true;
                 }
             }
         }
