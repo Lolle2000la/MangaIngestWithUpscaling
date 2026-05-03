@@ -43,16 +43,8 @@ public class StandardTaskProcessor(
         serviceStoppingToken = stoppingToken;
         while (!stoppingToken.IsCancellationRequested)
         {
-            // Check for tasks first before waiting for a signal
+            await _reader.ReadAsync(stoppingToken);
             var task = taskQueue.DequeueStandard();
-
-            if (task == null)
-            {
-                // Wait for a pulse signal and then consume it
-                await _reader.WaitToReadAsync(stoppingToken);
-                _reader.TryRead(out _);
-                task = taskQueue.DequeueStandard();
-            }
 
             if (task == null)
             {

@@ -45,17 +45,9 @@ public class TaskQueue : ITaskQueue, IHostedService
         _scopeFactory = scopeFactory;
         _logger = logger;
 
-        // Use bounded channels of size 1 with DropWrite for coalescing signals.
-        // A single signal in the channel notifies processors that "at least one task is available".
-        // Processors must drain the queue until Dequeue* returns null.
-        var signalOptions = new BoundedChannelOptions(1)
-        {
-            FullMode = BoundedChannelFullMode.DropWrite,
-            SingleReader = false,
-            SingleWriter = false,
-        };
-        _standardChannel = Channel.CreateBounded<object>(signalOptions);
-        _upscaleChannel = Channel.CreateBounded<object>(signalOptions);
+        // Use unbounded channels for signals; signals do not carry tasks, but notify consumers to pull from sorted sets.
+        _standardChannel = Channel.CreateUnbounded<object>();
+        _upscaleChannel = Channel.CreateUnbounded<object>();
         // Reroute channel remains carrying tasks: it's fed only by DistributedUpscaleTaskProcessor and consumed by the local UpscaleTaskProcessor
         _reroutedUpscaleChannel = Channel.CreateUnbounded<PersistedTask>();
 
@@ -333,40 +325,32 @@ public class TaskQueue : ITaskQueue, IHostedService
             }
         }
 
-        bool standardAdded = false;
-        bool upscaleAdded = false;
-
         foreach (var task in pendingTasks)
         {
             if (IsUpscaleTask(task.Data))
             {
+                bool added;
                 lock (_upscaleTasksLock)
                 {
-                    if (_upscaleTasks.Add(task))
-                    {
-                        upscaleAdded = true;
-                    }
+                    added = _upscaleTasks.Add(task);
+                }
+                if (added)
+                {
+                    _upscaleChannel.Writer.TryWrite(Signal);
                 }
             }
             else
             {
+                bool added;
                 lock (_standardTasksLock)
                 {
-                    if (_standardTasks.Add(task))
-                    {
-                        standardAdded = true;
-                    }
+                    added = _standardTasks.Add(task);
+                }
+                if (added)
+                {
+                    _standardChannel.Writer.TryWrite(Signal);
                 }
             }
-        }
-
-        if (standardAdded)
-        {
-            _standardChannel.Writer.TryWrite(Signal);
-        }
-        if (upscaleAdded)
-        {
-            _upscaleChannel.Writer.TryWrite(Signal);
         }
     }
 

@@ -64,12 +64,6 @@ public class UpscaleTaskProcessor(
             }
             else
             {
-                // Priority 2: Standard upscale queue
-                task = taskQueue.DequeueUpscale();
-            }
-
-            if (task == null)
-            {
                 // Use a linked CTS to ensure that the "losing" waiter is cancelled and removed
                 // from its channel when one of them completes.
                 using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(

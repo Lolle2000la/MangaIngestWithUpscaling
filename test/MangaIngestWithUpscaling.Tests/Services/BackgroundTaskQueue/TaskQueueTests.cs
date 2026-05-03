@@ -333,7 +333,7 @@ public class TaskQueueTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task ReplayPendingOrFailed_WithMultiplePendingTasks_ShouldSignalOnce()
+    public async Task ReplayPendingOrFailed_WithMultiplePendingTasks_ShouldSignalAll()
     {
         // Arrange
         var tasks = new[]
@@ -360,10 +360,11 @@ public class TaskQueueTests : IDisposable
         await _taskQueue.ReplayPendingOrFailed(TestContext.Current.CancellationToken);
 
         // Assert
-        Assert.True(_taskQueue.StandardReader.TryRead(out _), "Signal should be present");
+        Assert.True(_taskQueue.StandardReader.TryRead(out _), "First signal should be present");
+        Assert.True(_taskQueue.StandardReader.TryRead(out _), "Second signal should be present");
         Assert.False(
             _taskQueue.StandardReader.TryRead(out _),
-            "Only one coalesced signal should be present even for multiple tasks"
+            "Third signal should NOT be present"
         );
     }
 
