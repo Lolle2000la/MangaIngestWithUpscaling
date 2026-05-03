@@ -61,34 +61,50 @@ public class StandardTaskProcessorTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task ExecuteAsync_ShouldProcessTaskFromSignal()
+    public async Task ExecuteAsync_ShouldRespectPriorityChangeAfterSignal()
     {
         // Arrange
         var cts = new CancellationTokenSource();
-        var logTask = new LoggingTask { Message = "standard test" };
-        await _taskQueue.EnqueueAsync(logTask);
 
-        var tcs = new TaskCompletionSource<PersistedTask>();
+        // 1. Enqueue two tasks
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "low" });
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "high" });
+
+        // 2. Get the tasks from the snapshot and reorder them
+        var tasks = _taskQueue.GetStandardSnapshot();
+        var lowTask = tasks.First(t => ((LoggingTask)t.Data).Message == "low");
+        var highTask = tasks.First(t => ((LoggingTask)t.Data).Message == "high");
+
+        // Make "high" priority 0 (higher than "low" which is likely 1)
+        await _taskQueue.ReorderTaskAsync(highTask, 0);
+
+        var processedTasks = new List<PersistedTask>();
+        var tcs = new TaskCompletionSource();
+
         _processor.StatusChanged += (task) =>
         {
             if (task.Status == PersistedTaskStatus.Processing)
             {
-                tcs.TrySetResult(task);
+                processedTasks.Add(task);
+                if (processedTasks.Count == 2)
+                {
+                    tcs.TrySetResult();
+                }
             }
             return Task.CompletedTask;
         };
 
-        // Act
+        // 3. Start processor
         var runTask = _processor.StartAsync(cts.Token);
-        var processed = await tcs.Task.WaitAsync(
-            TimeSpan.FromSeconds(5),
-            TestContext.Current.CancellationToken
-        );
+
+        // 4. Wait for processing to complete
+        await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await cts.CancelAsync();
         await runTask;
 
         // Assert
-        Assert.NotNull(processed);
-        Assert.Equal("standard test", ((LoggingTask)processed.Data).Message);
+        Assert.Equal(2, processedTasks.Count);
+        Assert.Equal("high", ((LoggingTask)processedTasks[0].Data).Message);
+        Assert.Equal("low", ((LoggingTask)processedTasks[1].Data).Message);
     }
 }

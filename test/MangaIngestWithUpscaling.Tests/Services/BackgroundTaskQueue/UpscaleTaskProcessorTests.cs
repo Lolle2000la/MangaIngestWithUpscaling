@@ -83,25 +83,26 @@ public class UpscaleTaskProcessorTests : IDisposable
         // Arrange
         var cts = new CancellationTokenSource();
 
-        var upscaleTask = new PersistedTask
-        {
-            Id = 1,
-            Order = 10,
-            Status = PersistedTaskStatus.Pending,
-            Data = new UpscaleTask { ChapterId = 1, UpscalerProfileId = 1 },
-        };
+        // 1. Enqueue a normal upscale task (will stay in main queue)
+        await _taskQueue.EnqueueAsync(new UpscaleTask { ChapterId = 1, UpscalerProfileId = 1 });
 
-        var reroutedTask = new PersistedTask
-        {
-            Id = 2,
-            Order = 100, // Much lower priority by order
-            Status = PersistedTaskStatus.Processing, // Mark as already claimed
-            Data = new RepairUpscaleTask { ChapterId = 1, UpscalerProfileId = 1 },
-        };
+        // 2. Enqueue another task that we will simulate as being "rerouted"
+        await _taskQueue.EnqueueAsync(
+            new RepairUpscaleTask { ChapterId = 1, UpscalerProfileId = 1 }
+        );
 
-        // Enqueue upscale task (will emit signal)
-        await _taskQueue.EnqueueAsync((UpscaleTask)upscaleTask.Data);
-        // Send rerouted task
+        // Get the tasks from the DB to make them "real"
+        var tasks = await _dbContext
+            .PersistedTasks.OrderBy(t => t.Id)
+            .ToListAsync(TestContext.Current.CancellationToken);
+        var upscaleTask = tasks[0];
+        var reroutedTask = tasks[1];
+
+        // Simulate DistributedUpscaleTaskProcessor behavior:
+        // Mark the task as Processing (already claimed) before sending it to the local processor.
+        reroutedTask.Status = PersistedTaskStatus.Processing;
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        // 3. Send rerouted task directly to the local channel
         await _taskQueue.SendToLocalUpscaleAsync(reroutedTask, cts.Token);
 
         PersistedTask? firstProcessed = null;
@@ -132,34 +133,50 @@ public class UpscaleTaskProcessorTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task ExecuteAsync_ShouldProcessMainQueueWhenNoReroutedTasks()
+    public async Task ExecuteAsync_ShouldRespectPriorityChangeAfterSignal()
     {
         // Arrange
         var cts = new CancellationTokenSource();
-        var upscaleTask = new UpscaleTask { ChapterId = 1, UpscalerProfileId = 1 };
-        await _taskQueue.EnqueueAsync(upscaleTask);
 
-        var tcs = new TaskCompletionSource<PersistedTask>();
+        // 1. Enqueue two tasks
+        await _taskQueue.EnqueueAsync(new UpscaleTask { ChapterId = 1, UpscalerProfileId = 1 });
+        await _taskQueue.EnqueueAsync(new UpscaleTask { ChapterId = 2, UpscalerProfileId = 1 });
+
+        // 2. Get tasks from snapshot and reorder
+        var tasks = _taskQueue.GetUpscaleSnapshot();
+        var task1 = tasks.First(t => ((UpscaleTask)t.Data).ChapterId == 1);
+        var task2 = tasks.First(t => ((UpscaleTask)t.Data).ChapterId == 2);
+
+        // Make task 2 higher priority
+        await _taskQueue.ReorderTaskAsync(task2, 0);
+
+        var processedTasks = new List<PersistedTask>();
+        var tcs = new TaskCompletionSource();
+
         _processor.StatusChanged += (task) =>
         {
             if (task.Status == PersistedTaskStatus.Processing)
             {
-                tcs.TrySetResult(task);
+                processedTasks.Add(task);
+                if (processedTasks.Count == 2)
+                {
+                    tcs.TrySetResult();
+                }
             }
             return Task.CompletedTask;
         };
 
-        // Act
+        // 3. Start processor
         var runTask = _processor.StartAsync(cts.Token);
-        var processed = await tcs.Task.WaitAsync(
-            TimeSpan.FromSeconds(5),
-            TestContext.Current.CancellationToken
-        );
+
+        // 4. Wait for processing to complete
+        await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         await cts.CancelAsync();
         await runTask;
 
         // Assert
-        Assert.NotNull(processed);
-        Assert.IsType<UpscaleTask>(processed.Data);
+        Assert.Equal(2, processedTasks.Count);
+        Assert.Equal(2, ((UpscaleTask)processedTasks[0].Data).ChapterId);
+        Assert.Equal(1, ((UpscaleTask)processedTasks[1].Data).ChapterId);
     }
 }

@@ -68,21 +68,30 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task GetTask_ShouldReturnTaskFromSignal()
+    public async Task GetTask_ShouldRespectPriorityChangeAfterSignal()
     {
         // Arrange
         var cts = new CancellationTokenSource();
-        // Use DetectSplitCandidatesTask as it's an upscale task but not specifically handled
-        // by the DB-check logic in DistributedUpscaleTaskProcessor.ExecuteAsync
-        var splitTask = new DetectSplitCandidatesTask(1, 1);
-        await _taskQueue.EnqueueAsync(splitTask);
+
+        // 1. Enqueue two tasks
+        await _taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(1, 1));
+        await _taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(2, 1));
+
+        // 2. Get tasks from snapshot and reorder
+        var tasks = _taskQueue.GetUpscaleSnapshot();
+        var task1 = tasks.First(t => ((DetectSplitCandidatesTask)t.Data).ChapterId == 1);
+        var task2 = tasks.First(t => ((DetectSplitCandidatesTask)t.Data).ChapterId == 2);
+
+        // Make task 2 higher priority
+        await _taskQueue.ReorderTaskAsync(task2, 0);
 
         // Act
         var runTask = _processor.StartAsync(cts.Token);
 
-        // GetTask will write to _taskRequests, which ExecuteAsync will pick up,
-        // then it will wait for signal on upscale queue, then dequeue.
-        var taskResult = await _processor.GetTask(cts.Token);
+        // First worker request should get high priority task (task 2)
+        var result1 = await _processor.GetTask(cts.Token);
+        // Second worker request should get low priority task (task 1)
+        var result2 = await _processor.GetTask(cts.Token);
 
         await cts.CancelAsync();
         try
@@ -92,7 +101,9 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
         catch (OperationCanceledException) { }
 
         // Assert
-        Assert.NotNull(taskResult);
-        Assert.IsType<DetectSplitCandidatesTask>(taskResult.Data);
+        Assert.NotNull(result1);
+        Assert.NotNull(result2);
+        Assert.Equal(2, ((DetectSplitCandidatesTask)result1.Data).ChapterId);
+        Assert.Equal(1, ((DetectSplitCandidatesTask)result2.Data).ChapterId);
     }
 }
