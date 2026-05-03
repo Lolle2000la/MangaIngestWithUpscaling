@@ -28,6 +28,21 @@ public class UpscaleTaskProcessorTests : IDisposable
         services.AddDbContext<ApplicationDbContext>(options => options.UseInMemoryDatabase(dbName));
 
         _mockPersistence = Substitute.For<ITaskPersistenceService>();
+        _mockOptions = Substitute.For<IOptions<UpscalerConfig>>();
+        _mockOptions.Value.Returns(new UpscalerConfig { RemoteOnly = false });
+
+        var mockQueueCleanup = Substitute.For<IQueueCleanup>();
+        mockQueueCleanup
+            .CleanupAsync()
+            .Returns(Task.FromResult<IReadOnlyList<int>>(Array.Empty<int>()));
+
+        services.AddScoped<IQueueCleanup>(_ => mockQueueCleanup);
+        services.AddSingleton(_mockPersistence);
+
+        var serviceProvider = services.BuildServiceProvider();
+        _scope = serviceProvider.CreateScope();
+        _dbContext = _scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
         // Simulate production: claiming only succeeds if the task is Pending in the database.
         _mockPersistence
             .ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
@@ -49,20 +64,6 @@ public class UpscaleTaskProcessorTests : IDisposable
                 await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
                 return true;
             });
-
-        _mockOptions = Substitute.For<IOptions<UpscalerConfig>>();
-        _mockOptions.Value.Returns(new UpscalerConfig { RemoteOnly = false });
-
-        var mockQueueCleanup = Substitute.For<IQueueCleanup>();
-        mockQueueCleanup
-            .CleanupAsync()
-            .Returns(Task.FromResult<IReadOnlyList<int>>(Array.Empty<int>()));
-        services.AddScoped<IQueueCleanup>(_ => mockQueueCleanup);
-        services.AddSingleton(_mockPersistence);
-
-        var serviceProvider = services.BuildServiceProvider();
-        _scope = serviceProvider.CreateScope();
-        _dbContext = _scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         _mockLogger = Substitute.For<ILogger<UpscaleTaskProcessor>>();
         var queueLogger = Substitute.For<ILogger<TaskQueue>>();

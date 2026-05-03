@@ -283,11 +283,15 @@ public class TaskQueue : ITaskQueue, IHostedService
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         // Only consider Pending and retryable Failed tasks here; we will explicitly recover stranded Processing elsewhere
-        var allTasks = await dbContext
-            .PersistedTasks.OrderBy(t => t.Order)
+        // Filter by Status in DB to avoid full table scan
+        var candidateTasks = await dbContext
+            .PersistedTasks.Where(t =>
+                t.Status == PersistedTaskStatus.Pending || t.Status == PersistedTaskStatus.Failed
+            )
+            .OrderBy(t => t.Order)
             .ToListAsync(cancellationToken);
 
-        var pendingTasks = allTasks
+        var pendingTasks = candidateTasks
             .Where(t =>
                 t.Status == PersistedTaskStatus.Pending
                 || (t.Status == PersistedTaskStatus.Failed && t.RetryCount < t.Data.RetryFor)
@@ -304,7 +308,17 @@ public class TaskQueue : ITaskQueue, IHostedService
                 dbContext.Update(task);
                 dbChanged = true;
             }
+        }
 
+        if (dbChanged)
+        {
+            // Save status changes before they are added to the in-memory queue and signaled.
+            // This prevents a processor from seeing the old 'Failed' status if it wakes up immediately.
+            await dbContext.SaveChangesAsync(cancellationToken);
+        }
+
+        foreach (var task in pendingTasks)
+        {
             if (IsUpscaleTask(task.Data))
             {
                 bool added;
@@ -329,11 +343,6 @@ public class TaskQueue : ITaskQueue, IHostedService
                     _standardChannel.Writer.TryWrite(Signal);
                 }
             }
-        }
-
-        if (dbChanged)
-        {
-            await dbContext.SaveChangesAsync(cancellationToken);
         }
     }
 
