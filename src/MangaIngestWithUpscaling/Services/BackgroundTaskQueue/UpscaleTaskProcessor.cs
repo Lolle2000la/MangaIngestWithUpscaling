@@ -64,9 +64,11 @@ public class UpscaleTaskProcessor(
             }
             else
             {
-                // Wait for either a rerouted task OR a signal from the main upscale queue
-                var reroutedWait = _reroutedReader.WaitToReadAsync(stoppingToken).AsTask();
-                var signalWait = _reader.WaitToReadAsync(stoppingToken).AsTask();
+                // Use a linked CTS to ensure that the "losing" waiter is cancelled and removed 
+                // from its channel when one of them completes.
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                var reroutedWait = _reroutedReader.WaitToReadAsync(linkedCts.Token).AsTask();
+                var signalWait = _reader.WaitToReadAsync(linkedCts.Token).AsTask();
 
                 var completed = await Task.WhenAny(reroutedWait, signalWait);
 
@@ -89,6 +91,9 @@ public class UpscaleTaskProcessor(
                         task = taskQueue.DequeueUpscale();
                     }
                 }
+
+                // Cancel the CTS to remove any abandoned waiter from the channels
+                await linkedCts.CancelAsync();
             }
 
             if (task == null)
