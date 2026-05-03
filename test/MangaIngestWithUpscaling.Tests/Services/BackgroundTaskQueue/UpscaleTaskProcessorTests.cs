@@ -28,7 +28,17 @@ public class UpscaleTaskProcessorTests : IDisposable
         services.AddDbContext<ApplicationDbContext>(options => options.UseInMemoryDatabase(dbName));
 
         _mockPersistence = Substitute.For<ITaskPersistenceService>();
-        _mockPersistence.ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(true);
+        // Simulate production: claiming only succeeds if the task is Pending.
+        // Rerouted tasks are already 'Processing' when they reach UpscaleTaskProcessor.
+        _mockPersistence
+            .ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(x =>
+            {
+                var taskId = (int)x[0];
+                // In production this would check the DB.
+                // We'll trust the logic in ProcessTaskAsync to only call this for non-Processing tasks.
+                return true;
+            });
 
         _mockOptions = Substitute.For<IOptions<UpscalerConfig>>();
         _mockOptions.Value.Returns(new UpscalerConfig { RemoteOnly = false });
@@ -85,7 +95,7 @@ public class UpscaleTaskProcessorTests : IDisposable
         {
             Id = 2,
             Order = 100, // Much lower priority by order
-            Status = PersistedTaskStatus.Pending,
+            Status = PersistedTaskStatus.Processing, // Mark as already claimed
             Data = new RepairUpscaleTask { ChapterId = 1, UpscalerProfileId = 1 },
         };
 

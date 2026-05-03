@@ -117,14 +117,17 @@ public class UpscaleTaskProcessor(
 
     protected async Task ProcessTaskAsync(PersistedTask task, CancellationToken stoppingToken)
     {
-        // Atomically claim the task
-        if (!await taskPersistenceService.ClaimTaskAsync(task.Id, stoppingToken))
+        // Atomically claim the task if not already claimed (e.g. by DistributedUpscaleTaskProcessor before rerouting)
+        if (task.Status != PersistedTaskStatus.Processing)
         {
-            logger.LogInformation(
-                "Task {TaskId} could not be claimed (already processed or concurrency conflict)",
-                task.Id
-            );
-            return;
+            if (!await taskPersistenceService.ClaimTaskAsync(task.Id, stoppingToken))
+            {
+                logger.LogInformation(
+                    "Task {TaskId} could not be claimed (already processed or concurrency conflict)",
+                    task.Id
+                );
+                return;
+            }
         }
 
         // Update the in-memory task status
