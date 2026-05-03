@@ -31,6 +31,7 @@ public interface ITaskQueue
 
 public class TaskQueue : ITaskQueue, IHostedService
 {
+    private static readonly object Signal = new();
     private readonly ILogger<TaskQueue> _logger;
     private readonly Channel<PersistedTask> _reroutedUpscaleChannel;
     private readonly IServiceScopeFactory _scopeFactory;
@@ -129,7 +130,7 @@ public class TaskQueue : ITaskQueue, IHostedService
             {
                 _upscaleTasks.Add(taskItem);
             }
-            await _upscaleChannel.Writer.WriteAsync(new object());
+            await _upscaleChannel.Writer.WriteAsync(Signal);
         }
         else
         {
@@ -137,7 +138,7 @@ public class TaskQueue : ITaskQueue, IHostedService
             {
                 _standardTasks.Add(taskItem);
             }
-            await _standardChannel.Writer.WriteAsync(new object());
+            await _standardChannel.Writer.WriteAsync(Signal);
         }
 
         TaskEnqueuedOrChanged?.Invoke(taskItem);
@@ -254,7 +255,7 @@ public class TaskQueue : ITaskQueue, IHostedService
             {
                 _upscaleTasks.Add(task);
             }
-            await _upscaleChannel.Writer.WriteAsync(new object());
+            await _upscaleChannel.Writer.WriteAsync(Signal);
         }
         else
         {
@@ -262,7 +263,7 @@ public class TaskQueue : ITaskQueue, IHostedService
             {
                 _standardTasks.Add(task);
             }
-            await _standardChannel.Writer.WriteAsync(new object());
+            await _standardChannel.Writer.WriteAsync(Signal);
         }
 
         TaskEnqueuedOrChanged?.Invoke(task);
@@ -292,7 +293,7 @@ public class TaskQueue : ITaskQueue, IHostedService
                 {
                     _upscaleTasks.Add(task);
                 }
-                _upscaleChannel.Writer.TryWrite(new object());
+                _upscaleChannel.Writer.TryWrite(Signal);
             }
             else
             {
@@ -300,7 +301,7 @@ public class TaskQueue : ITaskQueue, IHostedService
                 {
                     _standardTasks.Add(task);
                 }
-                _standardChannel.Writer.TryWrite(new object());
+                _standardChannel.Writer.TryWrite(Signal);
             }
         }
     }
