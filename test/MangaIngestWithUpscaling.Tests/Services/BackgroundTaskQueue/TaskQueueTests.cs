@@ -231,7 +231,7 @@ public class TaskQueueTests : IDisposable
         // Arrange
         await _taskQueue.EnqueueAsync(new LoggingTask { Message = "task2" }); // Order 1
         await _taskQueue.EnqueueAsync(new LoggingTask { Message = "task1" }); // Order 2
-        
+
         var snapshot = _taskQueue.GetStandardSnapshot();
         var task1 = snapshot.First(t => ((LoggingTask)t.Data).Message == "task1");
         var task2 = snapshot.First(t => ((LoggingTask)t.Data).Message == "task2");
@@ -304,13 +304,15 @@ public class TaskQueueTests : IDisposable
     public async Task ReplayPendingOrFailed_ShouldEmitSignalsOnlyForNewTasks()
     {
         // Arrange
-        _dbContext.PersistedTasks.Add(new PersistedTask 
-        { 
-            Id = 10, 
-            Order = 1, 
-            Status = PersistedTaskStatus.Pending, 
-            Data = new LoggingTask { Message = "replay" } 
-        });
+        _dbContext.PersistedTasks.Add(
+            new PersistedTask
+            {
+                Id = 10,
+                Order = 1,
+                Status = PersistedTaskStatus.Pending,
+                Data = new LoggingTask { Message = "replay" },
+            }
+        );
         await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         // First replay - should add task and emit signal
