@@ -28,14 +28,15 @@ public interface ITaskQueue
 
 public class TaskQueue : ITaskQueue, IHostedService
 {
+    private static readonly object Signal = new();
     private readonly ILogger<TaskQueue> _logger;
     private readonly Channel<PersistedTask> _reroutedUpscaleChannel;
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly Channel<PersistedTask> _standardChannel;
+    private readonly Channel<object> _standardChannel;
 
     private readonly SortedSet<PersistedTask> _standardTasks;
     private readonly object _standardTasksLock = new();
-    private readonly Channel<PersistedTask> _upscaleChannel;
+    private readonly Channel<object> _upscaleChannel;
     private readonly SortedSet<PersistedTask> _upscaleTasks;
     private readonly object _upscaleTasksLock = new();
 
@@ -44,14 +45,10 @@ public class TaskQueue : ITaskQueue, IHostedService
         _scopeFactory = scopeFactory;
         _logger = logger;
 
-        // Create bounded channels to control concurrency
-        var channelOptions = new BoundedChannelOptions(1)
-        {
-            FullMode = BoundedChannelFullMode.Wait,
-        };
-        _standardChannel = Channel.CreateBounded<PersistedTask>(channelOptions);
-        _upscaleChannel = Channel.CreateBounded<PersistedTask>(channelOptions);
-        // Reroute channel is unbounded: it's fed only by DistributedUpscaleTaskProcessor and consumed by the local UpscaleTaskProcessor
+        // Use unbounded channels for signals; signals do not carry tasks, but notify consumers to pull from sorted sets.
+        _standardChannel = Channel.CreateUnbounded<object>();
+        _upscaleChannel = Channel.CreateUnbounded<object>();
+        // Reroute channel remains carrying tasks: it's fed only by DistributedUpscaleTaskProcessor and consumed by the local UpscaleTaskProcessor
         _reroutedUpscaleChannel = Channel.CreateUnbounded<PersistedTask>();
 
         // Initialize sorted sets with a stable comparer
@@ -75,27 +72,13 @@ public class TaskQueue : ITaskQueue, IHostedService
         _upscaleTasks = new SortedSet<PersistedTask>(comparer);
     }
 
-    public ChannelReader<PersistedTask> StandardReader => _standardChannel.Reader;
-    public ChannelReader<PersistedTask> UpscaleReader => _upscaleChannel.Reader;
+    public ChannelReader<object> StandardReader => _standardChannel.Reader;
+    public ChannelReader<object> UpscaleReader => _upscaleChannel.Reader;
     public ChannelReader<PersistedTask> ReroutedUpscaleReader => _reroutedUpscaleChannel.Reader;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         await ReplayPendingOrFailed(cancellationToken);
-
-        // Start background processing
-        _ = ProcessChannelAsync(
-            _standardChannel,
-            _standardTasks,
-            _standardTasksLock,
-            cancellationToken
-        );
-        _ = ProcessChannelAsync(
-            _upscaleChannel,
-            _upscaleTasks,
-            _upscaleTasksLock,
-            cancellationToken
-        );
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
@@ -117,6 +100,14 @@ public class TaskQueue : ITaskQueue, IHostedService
         }
     }
 
+    public static bool IsUpscaleTask(BaseTask data) =>
+        data
+            is UpscaleTask
+                or RenameUpscaledChaptersSeriesTask
+                or RepairUpscaleTask
+                or DetectSplitCandidatesTask
+                or ApplySplitsTask;
+
     public async Task EnqueueAsync<T>(T taskData)
         where T : BaseTask
     {
@@ -130,26 +121,29 @@ public class TaskQueue : ITaskQueue, IHostedService
         await dbContext.PersistedTasks.AddAsync(taskItem);
         await dbContext.SaveChangesAsync();
 
-        // Add to the appropriate sorted set
-        if (
-            taskData
-            is UpscaleTask
-                or RenameUpscaledChaptersSeriesTask
-                or RepairUpscaleTask
-                or DetectSplitCandidatesTask
-                or ApplySplitsTask
-        )
+        // Add to the appropriate sorted set and notify via signal
+        if (IsUpscaleTask(taskData))
         {
+            bool added;
             lock (_upscaleTasksLock)
             {
-                _upscaleTasks.Add(taskItem);
+                added = _upscaleTasks.Add(taskItem);
+            }
+            if (added)
+            {
+                await _upscaleChannel.Writer.WriteAsync(Signal);
             }
         }
         else
         {
+            bool added;
             lock (_standardTasksLock)
             {
-                _standardTasks.Add(taskItem);
+                added = _standardTasks.Add(taskItem);
+            }
+            if (added)
+            {
+                await _standardChannel.Writer.WriteAsync(Signal);
             }
         }
 
@@ -172,10 +166,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         // Determine which set to modify
-        (SortedSet<PersistedTask> tasks, object lockObj) = task.Data
-            is UpscaleTask
-                or RenameUpscaledChaptersSeriesTask
-                or RepairUpscaleTask
+        (SortedSet<PersistedTask> tasks, object lockObj) = IsUpscaleTask(task.Data)
             ? (_upscaleTasks, _upscaleTasksLock)
             : (_standardTasks, _standardTasksLock);
 
@@ -234,10 +225,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         dbContext.PersistedTasks.Remove(task);
         await dbContext.SaveChangesAsync();
 
-        (SortedSet<PersistedTask> tasks, object lockObj) = task.Data
-            is UpscaleTask
-                or RenameUpscaledChaptersSeriesTask
-                or RepairUpscaleTask
+        (SortedSet<PersistedTask> tasks, object lockObj) = IsUpscaleTask(task.Data)
             ? (_upscaleTasks, _upscaleTasksLock)
             : (_standardTasks, _standardTasksLock);
 
@@ -261,16 +249,29 @@ public class TaskQueue : ITaskQueue, IHostedService
         dbContext.Update(task);
         await dbContext.SaveChangesAsync();
 
-        (SortedSet<PersistedTask> tasks, object lockObj) = task.Data
-            is UpscaleTask
-                or RenameUpscaledChaptersSeriesTask
-                or RepairUpscaleTask
-            ? (_upscaleTasks, _upscaleTasksLock)
-            : (_standardTasks, _standardTasksLock);
-
-        lock (lockObj)
+        if (IsUpscaleTask(task.Data))
         {
-            tasks.Add(task);
+            bool added;
+            lock (_upscaleTasksLock)
+            {
+                added = _upscaleTasks.Add(task);
+            }
+            if (added)
+            {
+                await _upscaleChannel.Writer.WriteAsync(Signal);
+            }
+        }
+        else
+        {
+            bool added;
+            lock (_standardTasksLock)
+            {
+                added = _standardTasks.Add(task);
+            }
+            if (added)
+            {
+                await _standardChannel.Writer.WriteAsync(Signal);
+            }
         }
 
         TaskEnqueuedOrChanged?.Invoke(task);
@@ -282,28 +283,98 @@ public class TaskQueue : ITaskQueue, IHostedService
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         // Only consider Pending and retryable Failed tasks here; we will explicitly recover stranded Processing elsewhere
-        var pendingTasks = await dbContext
-            .PersistedTasks.OrderBy(t => t.Order)
-            .AsAsyncEnumerable()
+        // Filter by Status in DB to avoid full table scan
+        var candidateTasks = await dbContext
+            .PersistedTasks.Where(t =>
+                t.Status == PersistedTaskStatus.Pending || t.Status == PersistedTaskStatus.Failed
+            )
+            .OrderBy(t => t.Order)
+            .ToListAsync(cancellationToken);
+
+        var pendingTasks = candidateTasks
             .Where(t =>
                 t.Status == PersistedTaskStatus.Pending
                 || (t.Status == PersistedTaskStatus.Failed && t.RetryCount < t.Data.RetryFor)
             )
-            .ToListAsync(cancellationToken);
+            .ToList();
 
-        // Load tasks into sorted sets
+        // Load tasks into sorted sets and signal their presence
+        bool dbChanged = false;
+        var changedTasks = new List<PersistedTask>();
         foreach (var task in pendingTasks)
         {
-            if (task.Data is UpscaleTask or RenameUpscaledChaptersSeriesTask or RepairUpscaleTask)
+            if (task.Status == PersistedTaskStatus.Failed)
             {
+                task.Status = PersistedTaskStatus.Pending;
+                dbContext.Update(task);
+                dbChanged = true;
+                changedTasks.Add(task);
+            }
+        }
+
+        if (dbChanged)
+        {
+            // Save status changes before they are added to the in-memory queue and signaled.
+            // This prevents a processor from seeing the old 'Failed' status if it wakes up immediately.
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            // Notify listeners (TaskRegistry/UI) that Failed tasks are now Pending
+            foreach (var task in changedTasks)
+            {
+                TaskEnqueuedOrChanged?.Invoke(task);
+            }
+        }
+
+        foreach (var task in pendingTasks)
+        {
+            if (IsUpscaleTask(task.Data))
+            {
+                bool added;
                 lock (_upscaleTasksLock)
-                    _upscaleTasks.Add(task);
+                {
+                    added = _upscaleTasks.Add(task);
+                }
+                if (added)
+                {
+                    _upscaleChannel.Writer.TryWrite(Signal);
+                }
             }
             else
             {
+                bool added;
                 lock (_standardTasksLock)
-                    _standardTasks.Add(task);
+                {
+                    added = _standardTasks.Add(task);
+                }
+                if (added)
+                {
+                    _standardChannel.Writer.TryWrite(Signal);
+                }
             }
+        }
+    }
+
+    public PersistedTask? DequeueStandard()
+    {
+        lock (_standardTasksLock)
+        {
+            if (_standardTasks.Count == 0)
+                return null;
+            var task = _standardTasks.Min;
+            _standardTasks.Remove(task!);
+            return task;
+        }
+    }
+
+    public PersistedTask? DequeueUpscale()
+    {
+        lock (_upscaleTasksLock)
+        {
+            if (_upscaleTasks.Count == 0)
+                return null;
+            var task = _upscaleTasks.Min;
+            _upscaleTasks.Remove(task!);
+            return task;
         }
     }
 
@@ -318,34 +389,4 @@ public class TaskQueue : ITaskQueue, IHostedService
 
     public event Func<PersistedTask, Task>? TaskEnqueuedOrChanged;
     public event Func<PersistedTask, Task>? TaskRemoved;
-
-    private async Task ProcessChannelAsync(
-        Channel<PersistedTask> channel,
-        SortedSet<PersistedTask> tasks,
-        object lockObj,
-        CancellationToken cancellationToken
-    )
-    {
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            PersistedTask? task = null;
-            lock (lockObj)
-            {
-                if (tasks.Count > 0)
-                {
-                    task = tasks.Min;
-                    tasks.Remove(task!);
-                }
-            }
-
-            if (task != null)
-            {
-                await channel.Writer.WriteAsync(task, cancellationToken);
-            }
-            else
-            {
-                await Task.Delay(100, cancellationToken);
-            }
-        }
-    }
 }

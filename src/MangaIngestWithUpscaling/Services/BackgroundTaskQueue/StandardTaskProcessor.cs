@@ -14,7 +14,7 @@ public class StandardTaskProcessor(
 {
     private readonly Lock _lock = new();
     private readonly TimeSpan _progressDebounce = TimeSpan.FromMilliseconds(250);
-    private readonly ChannelReader<PersistedTask> _reader = taskQueue.StandardReader;
+    private readonly ChannelReader<object> _reader = taskQueue.StandardReader;
     private CancellationTokenSource? currentStoppingToken;
     private PersistedTask? currentTask;
     private CancellationToken serviceStoppingToken;
@@ -43,7 +43,14 @@ public class StandardTaskProcessor(
         serviceStoppingToken = stoppingToken;
         while (!stoppingToken.IsCancellationRequested)
         {
-            var task = await _reader.ReadAsync(stoppingToken);
+            await _reader.ReadAsync(stoppingToken);
+            var task = taskQueue.DequeueStandard();
+
+            if (task == null)
+            {
+                continue;
+            }
+
             using (_lock.EnterScope())
             {
                 currentStoppingToken = CancellationTokenSource.CreateLinkedTokenSource(

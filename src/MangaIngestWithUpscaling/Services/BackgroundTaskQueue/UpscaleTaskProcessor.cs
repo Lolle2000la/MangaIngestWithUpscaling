@@ -5,7 +5,6 @@ using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using Open.ChannelExtensions;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 
@@ -19,7 +18,7 @@ public class UpscaleTaskProcessor(
 {
     private readonly Lock _lock = new();
     private readonly TimeSpan _progressDebounce = TimeSpan.FromMilliseconds(250);
-    private readonly ChannelReader<PersistedTask> _reader = taskQueue.UpscaleReader;
+    private readonly ChannelReader<object> _reader = taskQueue.UpscaleReader;
     private readonly ChannelReader<PersistedTask> _reroutedReader = taskQueue.ReroutedUpscaleReader;
     private CancellationTokenSource? currentStoppingToken;
     private PersistedTask? currentTask;
@@ -54,30 +53,54 @@ public class UpscaleTaskProcessor(
 
         serviceStoppingToken = stoppingToken;
 
-        // Merge the rerouted and regular upscale channels into a single reader using Open.ChannelExtensions
-        var merged = Channel.CreateBounded<PersistedTask>(
-            new BoundedChannelOptions(1)
-            {
-                SingleReader = true,
-                SingleWriter = false,
-                AllowSynchronousContinuations = true,
-            }
-        );
-
-        // Start piping both sources into the merged channel (will complete when sources complete)
-        _ = _reroutedReader.PipeTo(merged, stoppingToken);
-        _ = _reader.PipeTo(merged, stoppingToken);
-
         while (!stoppingToken.IsCancellationRequested)
         {
-            PersistedTask task;
-            if (_reroutedReader.TryRead(out PersistedTask? rerouted))
+            PersistedTask? task = null;
+
+            // Priority 1: Rerouted tasks (already claimed or specialized)
+            if (_reroutedReader.TryRead(out var rerouted))
             {
                 task = rerouted;
             }
             else
             {
-                task = await merged.Reader.ReadAsync(stoppingToken);
+                // Use a linked CTS to ensure that the "losing" waiter is cancelled and removed
+                // from its channel when one of them completes.
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+                    stoppingToken
+                );
+                var reroutedWait = _reroutedReader.WaitToReadAsync(linkedCts.Token).AsTask();
+                var signalWait = _reader.WaitToReadAsync(linkedCts.Token).AsTask();
+
+                var completed = await Task.WhenAny(reroutedWait, signalWait);
+
+                if (completed == reroutedWait && await reroutedWait)
+                {
+                    if (_reroutedReader.TryRead(out var r))
+                    {
+                        task = r;
+                    }
+                }
+                else if (completed == signalWait && await signalWait)
+                {
+                    // Check rerouted one last time before consuming a signal
+                    if (_reroutedReader.TryRead(out var r))
+                    {
+                        task = r;
+                    }
+                    else if (_reader.TryRead(out _))
+                    {
+                        task = taskQueue.DequeueUpscale();
+                    }
+                }
+
+                // Cancel the CTS to remove any abandoned waiter from the channels
+                await linkedCts.CancelAsync();
+            }
+
+            if (task == null)
+            {
+                continue;
             }
 
             using (_lock.EnterScope())
@@ -94,14 +117,17 @@ public class UpscaleTaskProcessor(
 
     protected async Task ProcessTaskAsync(PersistedTask task, CancellationToken stoppingToken)
     {
-        // Atomically claim the task
-        if (!await taskPersistenceService.ClaimTaskAsync(task.Id, stoppingToken))
+        // Atomically claim the task if not already claimed (e.g. by DistributedUpscaleTaskProcessor before rerouting)
+        if (task.Status != PersistedTaskStatus.Processing)
         {
-            logger.LogInformation(
-                "Task {TaskId} could not be claimed (already processed or concurrency conflict)",
-                task.Id
-            );
-            return;
+            if (!await taskPersistenceService.ClaimTaskAsync(task.Id, stoppingToken))
+            {
+                logger.LogInformation(
+                    "Task {TaskId} could not be claimed (already processed or concurrency conflict)",
+                    task.Id
+                );
+                return;
+            }
         }
 
         // Update the in-memory task status
