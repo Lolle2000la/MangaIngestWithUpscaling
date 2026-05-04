@@ -641,7 +641,7 @@ app.UseAntiforgery();
 
 app.MapApiEndpoints();
 app.MapControllers();
-app.MapHealthChecks("/health");
+app.MapHealthChecks("/health").AllowAnonymous();
 app.MapStaticAssets();
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 
