@@ -137,6 +137,7 @@ builder.Services.AddControllers();
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 
 builder.Services.AddGrpc();
+builder.Services.AddHealthChecks();
 
 builder.Services.AddMudServices();
 builder.Services.AddMudTranslations();
@@ -640,6 +641,7 @@ app.UseAntiforgery();
 
 app.MapApiEndpoints();
 app.MapControllers();
+app.MapHealthChecks("/health");
 app.MapStaticAssets();
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 

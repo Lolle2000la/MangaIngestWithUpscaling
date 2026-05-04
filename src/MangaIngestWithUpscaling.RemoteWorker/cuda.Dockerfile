@@ -39,5 +39,9 @@ ENV Ingest_Upscaler__ModelsDirectory=/models/MangaJaNai
 VOLUME /models
 VOLUME /data
 ENV ASPNETCORE_ENVIRONMENT=Production
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=300s --retries=3 \
+  CMD wget -qO- http://localhost:8080/health || exit 1
+
 LABEL org.opencontainers.image.source="https://github.com/Lolle2000la/MangaIngestWithUpscaling"
 ENTRYPOINT ["dotnet", "MangaIngestWithUpscaling.RemoteWorker.dll"]
