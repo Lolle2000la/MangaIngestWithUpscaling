@@ -84,6 +84,7 @@ builder.Services.Configure<WorkerConfig>(
 
 // Add services to the container.
 builder.Services.AddGrpc();
+builder.Services.AddHealthChecks();
 
 // Read config once for client configuration to avoid per-call ServiceProvider usage (prevents disposed-service issues)
 var boundWorkerConfig = new WorkerConfig();
@@ -191,5 +192,7 @@ using (var scope = app.Services.CreateScope())
     var upscaler = scope.ServiceProvider.GetRequiredService<IUpscaler>();
     await upscaler.DownloadModelsIfNecessary(CancellationToken.None);
 }
+
+app.MapHealthChecks("/health");
 
 app.Run();
