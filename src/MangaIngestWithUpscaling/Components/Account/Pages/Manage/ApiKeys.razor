@@ -77,9 +77,13 @@
             return;
         }
 
-        apiKey.IsActive = false;
         await using var dbContext = await DbContextFactory.CreateDbContextAsync();
-        await dbContext.SaveChangesAsync();
+        var trackedKey = await dbContext.ApiKeys.FindAsync(apiKey.Id);
+        if (trackedKey != null)
+        {
+            trackedKey.IsActive = false;
+            await dbContext.SaveChangesAsync();
+        }
         apiKey = await ApiKeyService.CreateApiKeyAsync(user.Id, dbContext);
 
         await SignInManager.RefreshSignInAsync(user);

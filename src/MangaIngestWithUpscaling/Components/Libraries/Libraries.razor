@@ -235,8 +235,12 @@
         if (result.HasValue && result.Value)
         {
             await using var dbContext = await DbContextFactory.CreateDbContextAsync();
-            dbContext.Libraries.Remove(library);
-            await dbContext.SaveChangesAsync();
+            var tracked = await dbContext.Libraries.FindAsync(library.Id);
+            if (tracked != null)
+            {
+                dbContext.Libraries.Remove(tracked);
+                await dbContext.SaveChangesAsync();
+            }
         }
 
         await OnLibraryChanged();

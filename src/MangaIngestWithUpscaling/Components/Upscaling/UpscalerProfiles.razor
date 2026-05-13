@@ -68,9 +68,13 @@
 
         if (result.HasValue && result.Value)
         {
-            profile.Deleted = true;
             await using var dbContext = await DbContextFactory.CreateDbContextAsync();
-            await dbContext.SaveChangesAsync();
+            var tracked = await dbContext.UpscalerProfiles.FindAsync(profile.Id);
+            if (tracked != null)
+            {
+                tracked.Deleted = true;
+                await dbContext.SaveChangesAsync();
+            }
         }
 
         await using var dbContext2 = await DbContextFactory.CreateDbContextAsync();

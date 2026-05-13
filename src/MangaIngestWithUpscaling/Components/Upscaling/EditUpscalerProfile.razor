@@ -93,6 +93,7 @@
         Profile.ModifiedAt = DateTime.UtcNow;
 
         dbContext.UpscalerProfiles.Add(Profile);
+        dbContext.Attach(existingProfile);
         existingProfile.Deleted = true;
         await dbContext.SaveChangesAsync();
         // change all references to existingProfile to Profile, except for concrete chapters

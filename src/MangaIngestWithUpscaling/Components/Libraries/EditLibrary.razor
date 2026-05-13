@@ -67,6 +67,7 @@
         if (Library == null) return;
 
         await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+        dbContext.Attach(Library);
         await dbContext.SaveChangesAsync();
         NavigationManager.NavigateTo("/libraries");
     }

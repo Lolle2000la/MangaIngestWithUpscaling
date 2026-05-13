@@ -406,10 +406,12 @@
     {
         Manga manga = (Manga)m;
         if (mangaBeforeEdit == null) return;
+
+        await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+
         // if the primary title was changed, change it back and then use the metadata changer.
         if (manga.PrimaryTitle != mangaBeforeEdit.PrimaryTitle)
         {
-            await using var dbContext = await DbContextFactory.CreateDbContextAsync();
             await dbContext.Entry(manga).Collection(x => x.OtherTitles).LoadAsync();
             var newTitle = manga.PrimaryTitle;
             manga.PrimaryTitle = mangaBeforeEdit.PrimaryTitle;
@@ -428,11 +430,14 @@
                 Logger.LogError(e, Loc["Error_ChangingTitle"], manga.Id, newTitle);
             }
         }
+        else
+        {
+            dbContext.Attach(manga);
+        }
 
         try
         {
-            await using var dbContext2 = await DbContextFactory.CreateDbContextAsync();
-            await dbContext2.SaveChangesAsync();
+            await dbContext.SaveChangesAsync();
         }
         catch (Exception e)
         {

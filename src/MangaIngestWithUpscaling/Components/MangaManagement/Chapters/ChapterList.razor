@@ -463,9 +463,12 @@
         }
 
         await using var dbContext = await DbContextFactory.CreateDbContextAsync();
-        dbContext.Remove(chapter);
-
-        await dbContext.SaveChangesAsync();
+        var tracked = await dbContext.Chapters.FindAsync(chapter.Id);
+        if (tracked != null)
+        {
+            dbContext.Remove(tracked);
+            await dbContext.SaveChangesAsync();
+        }
 
         chapters.Remove(chapterItems.First(ci => ci.Chapter == chapter));
 
@@ -544,6 +547,7 @@
         chapter.IsUpscaled = false;
 
         await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+        dbContext.Attach(chapter);
         await dbContext.SaveChangesAsync();
     }
 
@@ -614,6 +618,7 @@
             chapter.RelativePath = targetRelativePath;
             chapter.FileName = newFileName;
             await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+            dbContext.Attach(chapter);
             await dbContext.SaveChangesAsync();
             _ = ChapterChangedNotifier.Notify(chapter, false);
             if (chapter.IsUpscaled)

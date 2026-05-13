@@ -276,6 +276,7 @@
         if (result is not null && !result.Canceled)
         {
             await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+            dbContext.Attach(filteredImage);
             await dbContext.SaveChangesAsync();
             await table.ReloadServerData();
             Snackbar.Add(Loc["Snackbar_FilterUpdated"], Severity.Success);
@@ -292,9 +293,12 @@
         if (confirm == true)
         {
             await using var dbContext = await DbContextFactory.CreateDbContextAsync();
-            Library!.FilteredImages.Remove(filteredImage);
-            dbContext.FilteredImages.Remove(filteredImage);
-            await dbContext.SaveChangesAsync();
+            var tracked = await dbContext.FilteredImages.FindAsync(filteredImage.Id);
+            if (tracked != null)
+            {
+                dbContext.FilteredImages.Remove(tracked);
+                await dbContext.SaveChangesAsync();
+            }
             await table.ReloadServerData();
             Snackbar.Add(Loc["Snackbar_FilterDeleted"], Severity.Success);
         }

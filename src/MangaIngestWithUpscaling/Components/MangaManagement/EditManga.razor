@@ -308,6 +308,10 @@ else
                     return;
                 }
             }
+            else
+            {
+                dbContext.Attach(manga);
+            }
 
             await dbContext.SaveChangesAsync();
 
