@@ -310,13 +310,7 @@
 
                 await using var dbContext = await DbContextFactory.CreateDbContextAsync();
 
-                // Ensure the Library's FilteredImages collection is loaded
-                if (!dbContext.Entry(Library).Collection(l => l.FilteredImages).IsLoaded)
-                {
-                    await dbContext.Entry(Library).Collection(l => l.FilteredImages).LoadAsync();
-                }
-
-                Library.FilteredImages.Add(filteredImage);
+                dbContext.Attach(Library);
                 dbContext.FilteredImages.Add(filteredImage);
                 await dbContext.SaveChangesAsync();
                 Logger.LogInformation("Successfully saved filtered image to database");

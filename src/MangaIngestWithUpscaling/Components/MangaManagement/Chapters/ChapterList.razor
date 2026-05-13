@@ -661,18 +661,6 @@
 
     protected override async Task OnInitializedAsync()
     {
-        await using var dbContext = await DbContextFactory.CreateDbContextAsync();
-
-        if (!dbContext.Entry(Manga).Collection(m => m.Chapters).IsLoaded)
-        {
-            await dbContext.Entry(Manga).Collection(m => m.Chapters).LoadAsync();
-        }
-
-        if (!dbContext.Entry(Manga).Reference(m => m.Library).IsLoaded)
-        {
-            await dbContext.Entry(Manga).Reference(m => m.Library).LoadAsync();
-        }
-
         await LoadChapters();
 
         // Set up the reactive binding BEFORE updating merge cache so UI elements exist

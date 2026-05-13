@@ -55,15 +55,19 @@ public class MangaMerger(
             if (!dbContext.Entry(manga).Reference(m => m.Library).IsLoaded)
                 await dbContext.Entry(manga).Reference(m => m.Library).LoadAsync(cancellationToken);
             if (!dbContext.Entry(manga).Collection(m => m.Chapters).IsLoaded)
+            {
                 await dbContext
                     .Entry(manga)
                     .Collection(m => m.Chapters)
                     .LoadAsync(cancellationToken);
+            }
             if (!dbContext.Entry(manga).Collection(m => m.OtherTitles).IsLoaded)
+            {
                 await dbContext
                     .Entry(manga)
                     .Collection(m => m.OtherTitles)
                     .LoadAsync(cancellationToken);
+            }
 
             var chaptersToMove = new List<ChapterMoveOperation>();
             var canMoveAllChapters = true;

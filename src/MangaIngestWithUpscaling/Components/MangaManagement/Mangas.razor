@@ -412,6 +412,7 @@
         // if the primary title was changed, change it back and then use the metadata changer.
         if (manga.PrimaryTitle != mangaBeforeEdit.PrimaryTitle)
         {
+            manga.OtherTitles.Clear();
             await dbContext.Entry(manga).Collection(x => x.OtherTitles).LoadAsync();
             var newTitle = manga.PrimaryTitle;
             manga.PrimaryTitle = mangaBeforeEdit.PrimaryTitle;
