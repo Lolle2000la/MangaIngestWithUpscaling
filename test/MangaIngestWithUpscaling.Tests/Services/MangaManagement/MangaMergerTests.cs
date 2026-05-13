@@ -102,8 +102,8 @@ public class MangaMergerTests : IDisposable
         await _mangaMerger.MergeAsync(
             primaryManga,
             [mergedManga],
-            TestContext.Current.CancellationToken,
-            dbContext: _dbContext
+            _dbContext,
+            TestContext.Current.CancellationToken
         );
 
         // Assert
@@ -175,8 +175,8 @@ public class MangaMergerTests : IDisposable
         await _mangaMerger.MergeAsync(
             primaryManga,
             [mergedManga],
-            TestContext.Current.CancellationToken,
-            dbContext: _dbContext
+            _dbContext,
+            TestContext.Current.CancellationToken
         );
 
         // Assert
@@ -226,8 +226,8 @@ public class MangaMergerTests : IDisposable
         await _mangaMerger.MergeAsync(
             primaryManga,
             [mergedManga],
-            TestContext.Current.CancellationToken,
-            dbContext: _dbContext
+            _dbContext,
+            TestContext.Current.CancellationToken
         );
 
         // Assert
@@ -295,8 +295,8 @@ public class MangaMergerTests : IDisposable
         await _mangaMerger.MergeAsync(
             primaryManga,
             [mergedManga],
-            TestContext.Current.CancellationToken,
-            dbContext: _dbContext
+            _dbContext,
+            TestContext.Current.CancellationToken
         );
 
         // Assert
@@ -345,8 +345,8 @@ public class MangaMergerTests : IDisposable
         await _mangaMerger.MergeAsync(
             primaryManga,
             [mergedManga],
-            TestContext.Current.CancellationToken,
-            dbContext: _dbContext
+            _dbContext,
+            TestContext.Current.CancellationToken
         );
 
         // Assert
@@ -398,8 +398,8 @@ public class MangaMergerTests : IDisposable
         await _mangaMerger.MergeAsync(
             primaryManga,
             [mergedManga],
-            TestContext.Current.CancellationToken,
-            dbContext: _dbContext
+            _dbContext,
+            TestContext.Current.CancellationToken
         );
 
         // Assert
@@ -446,8 +446,8 @@ public class MangaMergerTests : IDisposable
         await _mangaMerger.MergeAsync(
             primaryManga,
             [mergedManga],
-            TestContext.Current.CancellationToken,
-            dbContext: _dbContext
+            _dbContext,
+            TestContext.Current.CancellationToken
         );
 
         // Assert

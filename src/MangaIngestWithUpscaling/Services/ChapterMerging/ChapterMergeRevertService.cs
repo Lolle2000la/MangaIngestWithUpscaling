@@ -25,14 +25,14 @@ public class ChapterMergeRevertService(
 {
     public async Task<List<Chapter>> RevertMergedChapterAsync(
         Chapter chapter,
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext dbContext = null!
+        ApplicationDbContext dbContext,
+        CancellationToken cancellationToken = default
     )
     {
         MergedChapterInfo? mergeInfo = await GetMergeInfoAsync(
             chapter,
-            cancellationToken,
-            dbContext
+            dbContext,
+            cancellationToken
         );
         if (mergeInfo == null)
         {
@@ -177,22 +177,22 @@ public class ChapterMergeRevertService(
 
     public async Task<bool> CanRevertChapterAsync(
         Chapter chapter,
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext dbContext = null!
+        ApplicationDbContext dbContext,
+        CancellationToken cancellationToken = default
     )
     {
         MergedChapterInfo? mergeInfo = await GetMergeInfoAsync(
             chapter,
-            cancellationToken,
-            dbContext
+            dbContext,
+            cancellationToken
         );
         return mergeInfo != null;
     }
 
     public async Task<MergedChapterInfo?> GetMergeInfoAsync(
         Chapter chapter,
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext dbContext = null!
+        ApplicationDbContext dbContext,
+        CancellationToken cancellationToken = default
     )
     {
         return await dbContext.MergedChapterInfos.FirstOrDefaultAsync(

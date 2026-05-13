@@ -14,8 +14,8 @@ public interface IChapterMergeCoordinator
     /// <param name="cancellationToken">Cancellation token</param>
     Task ProcessExistingChapterPartsForMergingAsync(
         Manga manga,
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext dbContext = null!
+        ApplicationDbContext dbContext,
+        CancellationToken cancellationToken = default
     );
 
     /// <summary>
@@ -29,8 +29,8 @@ public interface IChapterMergeCoordinator
     Task UpdateDatabaseForMergeAsync(
         MergeInfo mergeInfo,
         List<Chapter> originalChapters,
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext dbContext = null!
+        ApplicationDbContext dbContext,
+        CancellationToken cancellationToken = default
     );
 
     /// <summary>
@@ -43,8 +43,8 @@ public interface IChapterMergeCoordinator
     Task MergeChaptersAsync(
         List<Chapter> chapters,
         Library library,
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext dbContext = null!
+        ApplicationDbContext dbContext,
+        CancellationToken cancellationToken = default
     );
 
     /// <summary>
@@ -57,9 +57,9 @@ public interface IChapterMergeCoordinator
     /// <returns>Information about completed merge operations</returns>
     Task<List<MergeInfo>> MergeSelectedChaptersAsync(
         List<Chapter> selectedChapters,
+        ApplicationDbContext dbContext,
         bool includeLatestChapters = false,
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext dbContext = null!
+        CancellationToken cancellationToken = default
     );
 
     /// <summary>
@@ -71,9 +71,9 @@ public interface IChapterMergeCoordinator
     /// <returns>Dictionary of merge groups, where key is base chapter number and value is list of chapters to merge</returns>
     Task<Dictionary<string, List<Chapter>>> GetValidMergeGroupsAsync(
         List<Chapter> selectedChapters,
+        ApplicationDbContext dbContext,
         bool includeLatestChapters = false,
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext dbContext = null!
+        CancellationToken cancellationToken = default
     );
 
     /// <summary>
@@ -84,8 +84,8 @@ public interface IChapterMergeCoordinator
     /// <returns>True if the chapter can be added to an existing merged chapter</returns>
     Task<bool> CanChapterBeAddedToExistingMergedAsync(
         Chapter chapter,
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext dbContext = null!
+        ApplicationDbContext dbContext,
+        CancellationToken cancellationToken = default
     );
 
     /// <summary>
@@ -97,9 +97,9 @@ public interface IChapterMergeCoordinator
     /// <returns>Information about all possible merge actions</returns>
     Task<MergeActionInfo> GetPossibleMergeActionsAsync(
         List<Chapter> chapters,
+        ApplicationDbContext dbContext,
         bool includeLatestChapters = false,
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext dbContext = null!
+        CancellationToken cancellationToken = default
     );
 
     /// <summary>
@@ -112,8 +112,8 @@ public interface IChapterMergeCoordinator
     Task<bool> IsChapterPartAlreadyMergedAsync(
         string chapterFileName,
         Manga manga,
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext dbContext = null!
+        ApplicationDbContext dbContext,
+        CancellationToken cancellationToken = default
     );
 }
 

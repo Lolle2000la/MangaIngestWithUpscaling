@@ -72,9 +72,9 @@ public class MangaMetadataChanger(
     public async Task<RenameResult> ChangeMangaTitle(
         Manga manga,
         string newTitle,
+        ApplicationDbContext dbContext,
         bool addOldToAlternative = true,
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext dbContext = null!
+        CancellationToken cancellationToken = default
     )
     {
         var possibleCurrent = await dbContext.MangaSeries.FirstOrDefaultAsync(
@@ -371,7 +371,7 @@ public class MangaMetadataChanger(
     public async Task ChangeChapterTitle(
         Chapter chapter,
         string newTitle,
-        ApplicationDbContext dbContext = null!
+        ApplicationDbContext dbContext
     )
     {
         await dbContext.Entry(chapter).Reference(c => c.Manga).LoadAsync();

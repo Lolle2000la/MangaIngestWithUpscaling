@@ -15,7 +15,7 @@ public interface IMangaLibraryMover
     Task MoveMangaAsync(
         Manga manga,
         Library targetLibrary,
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext dbContext = null!
+        ApplicationDbContext dbContext,
+        CancellationToken cancellationToken = default
     );
 }

@@ -301,7 +301,7 @@ else
             {
                 var newTitle = manga.PrimaryTitle;
                 manga.PrimaryTitle = originalTitle;
-                var result = await MetadataChanger.ChangeMangaTitle(manga, newTitle, addOldTitleToOtherTitles, dbContext: dbContext);
+                var result = await MetadataChanger.ChangeMangaTitle(manga, newTitle, dbContext, addOldTitleToOtherTitles);
                 if (result is not RenameResult.Ok)
                 {
                     Snackbar.Add(Loc["Error_ChangeTitle"], Severity.Error);

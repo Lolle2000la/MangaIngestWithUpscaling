@@ -66,6 +66,6 @@ public class MergeMangaTask : BaseTask
             );
         }
 
-        await merger.MergeAsync(into, toMerge, cancellationToken, dbContext);
+        await merger.MergeAsync(into, toMerge, dbContext, cancellationToken);
     }
 }

@@ -19,9 +19,9 @@ public class ChapterMergeUpscaleTaskManager(
         List<Chapter> originalChapters,
         MergeInfo mergeInfo,
         Library library,
+        ApplicationDbContext dbContext,
         UpscaledMergeResult? upscaledMergeResult = null,
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext dbContext = null!
+        CancellationToken cancellationToken = default
     )
     {
         List<int> chapterIds = originalChapters.Select(c => c.Id).ToList();
@@ -147,8 +147,8 @@ public class ChapterMergeUpscaleTaskManager(
 
     public async Task<UpscaleCompatibilityResult> CheckUpscaleCompatibilityForMergeAsync(
         List<Chapter> chapters,
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext dbContext = null!
+        ApplicationDbContext dbContext,
+        CancellationToken cancellationToken = default
     )
     {
         // Check if any chapters have pending or in-progress upscale tasks for logging purposes

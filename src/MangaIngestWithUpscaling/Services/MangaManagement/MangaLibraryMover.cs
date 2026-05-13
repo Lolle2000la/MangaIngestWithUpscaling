@@ -17,8 +17,8 @@ public class MangaLibraryMover(
     public async Task MoveMangaAsync(
         Manga manga,
         Library targetLibrary,
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext dbContext = null!
+        ApplicationDbContext dbContext,
+        CancellationToken cancellationToken = default
     )
     {
         // A manga library change is very close to a rename in how it is handled.

@@ -15,7 +15,7 @@ public interface IMangaMerger
     Task MergeAsync(
         Manga primary,
         IEnumerable<Manga> mergedInto,
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext dbContext = null!
+        ApplicationDbContext dbContext,
+        CancellationToken cancellationToken = default
     );
 }

@@ -24,9 +24,9 @@ public interface IMangaMetadataChanger
     Task<RenameResult> ChangeMangaTitle(
         Manga manga,
         string newTitle,
+        ApplicationDbContext dbContext,
         bool addOldToAlternative = true,
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext dbContext = null!
+        CancellationToken cancellationToken = default
     );
 
     /// <summary>
@@ -46,11 +46,7 @@ public interface IMangaMetadataChanger
     /// </summary>
     /// <param name="chapter">The chapter whose metadata to change.</param>
     /// <param name="newTitle">The new title to apply.</param>
-    Task ChangeChapterTitle(
-        Chapter chapter,
-        string newTitle,
-        ApplicationDbContext dbContext = null!
-    );
+    Task ChangeChapterTitle(Chapter chapter, string newTitle, ApplicationDbContext dbContext);
 }
 
 public enum RenameResult

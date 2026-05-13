@@ -16,8 +16,8 @@ public class BackwardCompatibilityService(ILogger<BackwardCompatibilityService> 
     /// Validates and ensures existing merged chapter records are compatible with enhanced functionality
     /// </summary>
     public async Task ValidateAndUpgradeExistingRecordsAsync(
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext dbContext = null!
+        ApplicationDbContext dbContext,
+        CancellationToken cancellationToken = default
     )
     {
         logger.LogInformation(
@@ -267,7 +267,7 @@ public interface IBackwardCompatibilityService
     /// Validates and ensures existing merged chapter records are compatible with enhanced functionality
     /// </summary>
     Task ValidateAndUpgradeExistingRecordsAsync(
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext dbContext = null!
+        ApplicationDbContext dbContext,
+        CancellationToken cancellationToken = default
     );
 }

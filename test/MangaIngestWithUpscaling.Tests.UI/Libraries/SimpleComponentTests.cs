@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading;
 using MangaIngestWithUpscaling.Components.Libraries;
 using MangaIngestWithUpscaling.Components.Libraries.FilteredImages;
 using MangaIngestWithUpscaling.Data;
@@ -66,6 +67,9 @@ public class SimpleComponentTests : BunitContext
     {
         Services.AddMudServices();
         Services.AddSingleton(typeof(IStringLocalizer<>), typeof(MockStringLocalizer<>));
+        var dbContextFactory = Substitute.For<IDbContextFactory<ApplicationDbContext>>();
+        dbContextFactory.CreateDbContextAsync(Arg.Any<CancellationToken>()).Returns(_dbContext);
+        Services.AddSingleton(dbContextFactory);
         Services.AddSingleton(_dbContext);
         Services.AddSingleton(_mockTaskQueue);
         Services.AddSingleton(_mockImageFilterService);

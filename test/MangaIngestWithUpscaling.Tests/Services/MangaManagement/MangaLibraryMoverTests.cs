@@ -62,8 +62,8 @@ public class MangaLibraryMoverTests : IDisposable
         await _libraryMover.MoveMangaAsync(
             manga,
             library,
-            TestContext.Current.CancellationToken,
-            _dbContext
+            _dbContext,
+            TestContext.Current.CancellationToken
         );
 
         // Assert
@@ -113,8 +113,8 @@ public class MangaLibraryMoverTests : IDisposable
         await _libraryMover.MoveMangaAsync(
             manga,
             targetLibrary,
-            TestContext.Current.CancellationToken,
-            _dbContext
+            _dbContext,
+            TestContext.Current.CancellationToken
         );
 
         // Assert
@@ -194,8 +194,8 @@ public class MangaLibraryMoverTests : IDisposable
         await _libraryMover.MoveMangaAsync(
             manga,
             targetLibrary,
-            TestContext.Current.CancellationToken,
-            _dbContext
+            _dbContext,
+            TestContext.Current.CancellationToken
         );
 
         // Assert
@@ -244,8 +244,8 @@ public class MangaLibraryMoverTests : IDisposable
         await _libraryMover.MoveMangaAsync(
             manga,
             targetLibrary,
-            TestContext.Current.CancellationToken,
-            _dbContext
+            _dbContext,
+            TestContext.Current.CancellationToken
         );
 
         // Assert
@@ -301,8 +301,8 @@ public class MangaLibraryMoverTests : IDisposable
         await _libraryMover.MoveMangaAsync(
             manga,
             targetLibrary,
-            TestContext.Current.CancellationToken,
-            _dbContext
+            _dbContext,
+            TestContext.Current.CancellationToken
         );
 
         // Assert
@@ -359,8 +359,8 @@ public class MangaLibraryMoverTests : IDisposable
         await _libraryMover.MoveMangaAsync(
             manga,
             targetLibrary,
-            TestContext.Current.CancellationToken,
-            _dbContext
+            _dbContext,
+            TestContext.Current.CancellationToken
         );
 
         // Assert
@@ -406,8 +406,8 @@ public class MangaLibraryMoverTests : IDisposable
         await _libraryMover.MoveMangaAsync(
             manga,
             targetLibrary,
-            TestContext.Current.CancellationToken,
-            _dbContext
+            _dbContext,
+            TestContext.Current.CancellationToken
         );
 
         // Assert

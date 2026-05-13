@@ -18,9 +18,9 @@ public interface IChapterMergeUpscaleTaskManager
         List<Chapter> originalChapters,
         MergeInfo mergeInfo,
         Library library,
+        ApplicationDbContext dbContext,
         UpscaledMergeResult? upscaledMergeResult = null,
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext dbContext = null!
+        CancellationToken cancellationToken = default
     );
 
     /// <summary>
@@ -32,7 +32,7 @@ public interface IChapterMergeUpscaleTaskManager
     /// <returns>Result indicating if merging is compatible</returns>
     Task<UpscaleCompatibilityResult> CheckUpscaleCompatibilityForMergeAsync(
         List<Chapter> chapters,
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext dbContext = null!
+        ApplicationDbContext dbContext,
+        CancellationToken cancellationToken = default
     );
 }

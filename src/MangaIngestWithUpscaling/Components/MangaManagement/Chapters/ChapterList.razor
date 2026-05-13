@@ -335,7 +335,7 @@
         try
         {
             await using var revertDbContext = await DbContextFactory.CreateDbContextAsync();
-            var restoredChapters = await ChapterMergeRevertService.RevertMergedChapterAsync(chapter, CancellationToken.None, revertDbContext);
+            var restoredChapters = await ChapterMergeRevertService.RevertMergedChapterAsync(chapter, revertDbContext, CancellationToken.None);
 
             // Remove the merged chapter from the UI
             var chapterItem = chapterItems.FirstOrDefault(ci => ci.Chapter.Id == chapter.Id);
@@ -756,7 +756,7 @@
 
                 // Check if this chapter is a merged chapter
                 await using var mergeCheckDbContext = await DbContextFactory.CreateDbContextAsync();
-                var isMerged = await ChapterMergeRevertService.CanRevertChapterAsync(chapter, CancellationToken.None, mergeCheckDbContext);
+                var isMerged = await ChapterMergeRevertService.CanRevertChapterAsync(chapter, mergeCheckDbContext, CancellationToken.None);
 
                 Logger.LogDebug("LoadChapters: Chapter {FileName} (ID: {ChapterId}) - IsMerged: {IsMerged}",
                     chapter.FileName, chapter.Id, isMerged);
@@ -1062,7 +1062,8 @@
         {
             var completedMerges = await ChapterMergeCoordinator.MergeSelectedChaptersAsync(
                 chaptersToMerge,
-                includeLatestChapters, dbContext: dbContext);
+                dbContext,
+                includeLatestChapters);
 
             if (!completedMerges.Any())
             {

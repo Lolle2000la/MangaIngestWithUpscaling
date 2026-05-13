@@ -22,8 +22,8 @@ public class MangaMerger(
     public async Task MergeAsync(
         Manga primary,
         IEnumerable<Manga> mergedInto,
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext dbContext = null!
+        ApplicationDbContext dbContext,
+        CancellationToken cancellationToken = default
     )
     {
         if (!dbContext.Entry(primary).Reference(m => m.Library).IsLoaded)

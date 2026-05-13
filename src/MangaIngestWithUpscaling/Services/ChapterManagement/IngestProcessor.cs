@@ -398,8 +398,8 @@ public partial class IngestProcessor(
                     await chapterMergeCoordinator.IsChapterPartAlreadyMergedAsync(
                         renamedChapter.FileName,
                         seriesEntity,
-                        cancellationToken,
-                        dbContext
+                        dbContext,
+                        cancellationToken
                     )
                 )
                 {
@@ -782,8 +782,8 @@ public partial class IngestProcessor(
         {
             await chapterMergeCoordinator.ProcessExistingChapterPartsForMergingAsync(
                 seriesEntity,
-                cancellationToken,
-                dbContext: dbContext
+                dbContext,
+                cancellationToken
             );
         }
 
