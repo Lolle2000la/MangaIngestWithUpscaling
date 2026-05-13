@@ -66,7 +66,7 @@ public class SplitProcessingCoordinator(
                     await stateManager.SetNoSplitsFoundAsync(
                         chapterId,
                         SplitDetectionService.CURRENT_DETECTOR_VERSION,
-                        null,
+                        dbContext,
                         cancellationToken
                     );
                     return false;
