@@ -30,11 +30,9 @@ public class ChapterMergeCoordinator(
     {
         try
         {
-            // Load the library if not already loaded
-            if (!dbContext.Entry(manga).Reference(m => m.Library).IsLoaded)
-            {
-                await dbContext.Entry(manga).Reference(m => m.Library).LoadAsync(cancellationToken);
-            }
+            manga.Library = (
+                await dbContext.Libraries.FindAsync(manga.LibraryId, cancellationToken)
+            )!;
 
             Library library = manga.Library;
 
@@ -203,22 +201,12 @@ public class ChapterMergeCoordinator(
         Chapter primaryChapter = originalChapters.First();
         primaryChapter.FileName = mergeInfo.MergedChapter.FileName;
 
-        // Load library reference if not already loaded
-        if (!dbContext.Entry(primaryChapter).Reference(c => c.Manga).IsLoaded)
-        {
-            await dbContext
-                .Entry(primaryChapter)
-                .Reference(c => c.Manga)
-                .LoadAsync(cancellationToken);
-        }
-
-        if (!dbContext.Entry(primaryChapter.Manga).Reference(m => m.Library).IsLoaded)
-        {
-            await dbContext
-                .Entry(primaryChapter.Manga)
-                .Reference(m => m.Library)
-                .LoadAsync(cancellationToken);
-        }
+        primaryChapter.Manga = (
+            await dbContext.MangaSeries.FindAsync(primaryChapter.MangaId, cancellationToken)
+        )!;
+        primaryChapter.Manga.Library = (
+            await dbContext.Libraries.FindAsync(primaryChapter.Manga.LibraryId, cancellationToken)
+        )!;
 
         Library library = primaryChapter.Manga.Library;
         string seriesLibraryPath = Path.Combine(
@@ -1499,19 +1487,20 @@ public class ChapterMergeCoordinator(
             return;
         }
 
-        // Load necessary references
-        await dbContext
-            .Entry(existingMergedChapter)
-            .Reference(c => c.Manga)
-            .LoadAsync(cancellationToken);
-        await dbContext
-            .Entry(existingMergedChapter.Manga)
-            .Reference(m => m.Library)
-            .LoadAsync(cancellationToken);
-        await dbContext
-            .Entry(existingMergedChapter.Manga.Library)
-            .Reference(l => l.UpscalerProfile)
-            .LoadAsync(cancellationToken);
+        existingMergedChapter.Manga = (
+            await dbContext.MangaSeries.FindAsync(existingMergedChapter.MangaId, cancellationToken)
+        )!;
+        existingMergedChapter.Manga.Library = (
+            await dbContext.Libraries.FindAsync(
+                existingMergedChapter.Manga.LibraryId,
+                cancellationToken
+            )
+        )!;
+        existingMergedChapter.Manga.Library.UpscalerProfile =
+            await dbContext.UpscalerProfiles.FindAsync(
+                existingMergedChapter.Manga.Library.UpscalerProfileId,
+                cancellationToken
+            );
 
         // Check if the manga should be upscaled
         bool shouldUpscale =
@@ -1609,34 +1598,25 @@ public class ChapterMergeCoordinator(
     {
         foreach (Chapter chapter in chapters)
         {
-            if (!dbContext.Entry(chapter).Reference(c => c.Manga).IsLoaded)
-            {
-                await dbContext.Entry(chapter).Reference(c => c.Manga).LoadAsync(cancellationToken);
-            }
+            chapter.Manga = (
+                await dbContext.MangaSeries.FindAsync(chapter.MangaId, cancellationToken)
+            )!;
         }
 
-        // Load library and chapters collection reference for the first chapter's manga (all chapters should be from same manga)
         if (chapters.Any())
         {
             Manga manga = chapters.First().Manga;
-            if (!dbContext.Entry(manga).Reference(m => m.Library).IsLoaded)
-            {
-                await dbContext.Entry(manga).Reference(m => m.Library).LoadAsync(cancellationToken);
-            }
+            manga.Library = (
+                await dbContext.Libraries.FindAsync(manga.LibraryId, cancellationToken)
+            )!;
 
-            // **CRITICAL FIX**: Load the Manga.Chapters collection so we have access to all chapters
-            if (!dbContext.Entry(manga).Collection(m => m.Chapters).IsLoaded)
-            {
-                await dbContext
-                    .Entry(manga)
-                    .Collection(m => m.Chapters)
-                    .LoadAsync(cancellationToken);
-                logger.LogDebug(
-                    "LoadChapterReferencesAsync: Loaded {ChapterCount} chapters for manga {MangaId}",
-                    manga.Chapters.Count,
-                    manga.Id
-                );
-            }
+            manga.Chapters.Clear();
+            foreach (
+                var c in await dbContext
+                    .Chapters.Where(c => c.MangaId == manga.Id)
+                    .ToListAsync(cancellationToken)
+            )
+                manga.Chapters.Add(c);
         }
     }
 

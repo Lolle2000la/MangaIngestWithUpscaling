@@ -205,15 +205,16 @@ public class ChapterMergeUpscaleTaskManager(
         }
 
         Chapter primaryChapter = originalChapters.First();
-        await dbContext.Entry(primaryChapter).Reference(x => x.Manga).LoadAsync(cancellationToken);
-        await dbContext
-            .Entry(primaryChapter.Manga)
-            .Reference(x => x.Library)
-            .LoadAsync(cancellationToken);
-        await dbContext
-            .Entry(primaryChapter.Manga.Library)
-            .Reference(x => x.UpscalerProfile)
-            .LoadAsync(cancellationToken);
+        primaryChapter.Manga = (
+            await dbContext.MangaSeries.FindAsync(primaryChapter.MangaId, cancellationToken)
+        )!;
+        primaryChapter.Manga.Library = (
+            await dbContext.Libraries.FindAsync(primaryChapter.Manga.LibraryId, cancellationToken)
+        )!;
+        primaryChapter.Manga.Library.UpscalerProfile = await dbContext.UpscalerProfiles.FindAsync(
+            primaryChapter.Manga.Library.UpscalerProfileId,
+            cancellationToken
+        );
 
         bool shouldUpscale =
             (primaryChapter.Manga.ShouldUpscale ?? primaryChapter.Manga.Library.UpscaleOnIngest)

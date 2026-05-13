@@ -102,16 +102,13 @@ public class MangaMetadataChanger(
             return RenameResult.Cancelled;
         }
 
-        // Load library and chapters if not already loaded
-        if (!dbContext.Entry(manga).Reference(m => m.Library).IsLoaded)
-        {
-            await dbContext.Entry(manga).Reference(m => m.Library).LoadAsync(cancellationToken);
-        }
-
-        if (!dbContext.Entry(manga).Collection(m => m.Chapters).IsLoaded)
-        {
-            await dbContext.Entry(manga).Collection(m => m.Chapters).LoadAsync(cancellationToken);
-        }
+        manga.Library = (await dbContext.Libraries.FindAsync(manga.LibraryId, cancellationToken))!;
+        manga.Chapters.Clear();
+        var chapters = await dbContext
+            .Chapters.Where(c => c.MangaId == manga.Id)
+            .ToListAsync(cancellationToken);
+        manga.Chapters.AddRange(chapters);
+        dbContext.Attach(manga);
 
         if (manga.Library == null)
         {
@@ -374,8 +371,8 @@ public class MangaMetadataChanger(
         ApplicationDbContext dbContext
     )
     {
-        await dbContext.Entry(chapter).Reference(c => c.Manga).LoadAsync();
-        await dbContext.Entry(chapter.Manga).Reference(m => m.Library).LoadAsync();
+        chapter.Manga = (await dbContext.MangaSeries.FindAsync(chapter.MangaId))!;
+        chapter.Manga.Library = (await dbContext.Libraries.FindAsync(chapter.Manga.LibraryId))!;
 
         try
         {

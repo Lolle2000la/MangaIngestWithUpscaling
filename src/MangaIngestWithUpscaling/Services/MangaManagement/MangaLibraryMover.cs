@@ -4,6 +4,7 @@ using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
+using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Services.MangaManagement;
 
@@ -30,16 +31,14 @@ public class MangaLibraryMover(
             return;
         }
 
-        // first, let's load the chapters and the library if they are not already loaded.
-        if (!dbContext.Entry(manga).Collection(m => m.Chapters).IsLoaded)
-        {
-            await dbContext.Entry(manga).Collection(m => m.Chapters).LoadAsync(cancellationToken);
-        }
-
-        if (!dbContext.Entry(manga).Reference(m => m.Library).IsLoaded)
-        {
-            await dbContext.Entry(manga).Reference(m => m.Library).LoadAsync(cancellationToken);
-        }
+        // first, let's load the chapters and the library
+        manga.Chapters.Clear();
+        var chapters = await dbContext
+            .Chapters.Where(c => c.MangaId == manga.Id)
+            .ToListAsync(cancellationToken);
+        manga.Chapters.AddRange(chapters);
+        manga.Library = (await dbContext.Libraries.FindAsync(manga.LibraryId, cancellationToken))!;
+        dbContext.Attach(manga);
 
         // We should keep the old library for later use.
         var oldLibrary = manga.Library;

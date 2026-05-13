@@ -485,15 +485,8 @@
 
         await using var dbContext = await DbContextFactory.CreateDbContextAsync();
 
-        if (!dbContext.Entry(Manga.Library).Reference(l => l.UpscalerProfile).IsLoaded)
-        {
-            await dbContext.Entry(Manga.Library).Reference(l => l.UpscalerProfile).LoadAsync();
-        }
-
-        if (!dbContext.Entry(Manga).Reference(m => m.UpscalerProfilePreference).IsLoaded)
-        {
-            await dbContext.Entry(Manga).Reference(m => m.UpscalerProfilePreference).LoadAsync();
-        }
+        Manga.Library.UpscalerProfile = await dbContext.UpscalerProfiles.FindAsync(Manga.Library.UpscalerProfileId);
+        Manga.UpscalerProfilePreference = await dbContext.UpscalerProfiles.FindAsync(Manga.UpscalerProfilePreferenceId);
 
         if (Manga.EffectiveUpscalerProfile == null)
         {

@@ -5,6 +5,7 @@ using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 
 namespace MangaIngestWithUpscaling.Services.MangaManagement;
@@ -26,15 +27,15 @@ public class MangaMerger(
         CancellationToken cancellationToken = default
     )
     {
-        if (!dbContext.Entry(primary).Reference(m => m.Library).IsLoaded)
-            await dbContext.Entry(primary).Reference(m => m.Library).LoadAsync(cancellationToken);
-        if (!dbContext.Entry(primary).Collection(m => m.OtherTitles).IsLoaded)
-        {
-            await dbContext
-                .Entry(primary)
-                .Collection(m => m.OtherTitles)
-                .LoadAsync(cancellationToken);
-        }
+        primary.Library = (
+            await dbContext.Libraries.FindAsync(primary.LibraryId, cancellationToken)
+        )!;
+        primary.OtherTitles.Clear();
+        var primaryOtherTitles = await dbContext
+            .MangaAlternativeTitles.Where(t => t.MangaId == primary.Id)
+            .ToListAsync(cancellationToken);
+        primary.OtherTitles.AddRange(primaryOtherTitles);
+        dbContext.Attach(primary);
 
         if (primary.Library == null)
         {
@@ -52,22 +53,20 @@ public class MangaMerger(
 
         foreach (var manga in mergedInto)
         {
-            if (!dbContext.Entry(manga).Reference(m => m.Library).IsLoaded)
-                await dbContext.Entry(manga).Reference(m => m.Library).LoadAsync(cancellationToken);
-            if (!dbContext.Entry(manga).Collection(m => m.Chapters).IsLoaded)
-            {
-                await dbContext
-                    .Entry(manga)
-                    .Collection(m => m.Chapters)
-                    .LoadAsync(cancellationToken);
-            }
-            if (!dbContext.Entry(manga).Collection(m => m.OtherTitles).IsLoaded)
-            {
-                await dbContext
-                    .Entry(manga)
-                    .Collection(m => m.OtherTitles)
-                    .LoadAsync(cancellationToken);
-            }
+            manga.Library = (
+                await dbContext.Libraries.FindAsync(manga.LibraryId, cancellationToken)
+            )!;
+            manga.Chapters.Clear();
+            var mangaChapters = await dbContext
+                .Chapters.Where(c => c.MangaId == manga.Id)
+                .ToListAsync(cancellationToken);
+            manga.Chapters.AddRange(mangaChapters);
+            manga.OtherTitles.Clear();
+            var mangaOtherTitles = await dbContext
+                .MangaAlternativeTitles.Where(t => t.MangaId == manga.Id)
+                .ToListAsync(cancellationToken);
+            manga.OtherTitles.AddRange(mangaOtherTitles);
+            dbContext.Attach(manga);
 
             var chaptersToMove = new List<ChapterMoveOperation>();
             var canMoveAllChapters = true;

@@ -413,7 +413,8 @@
         if (manga.PrimaryTitle != mangaBeforeEdit.PrimaryTitle)
         {
             manga.OtherTitles.Clear();
-            await dbContext.Entry(manga).Collection(x => x.OtherTitles).LoadAsync();
+            var otherTitles = await dbContext.MangaAlternativeTitles.Where(t => t.MangaId == manga.Id).ToListAsync();
+            manga.OtherTitles.AddRange(otherTitles);
             var newTitle = manga.PrimaryTitle;
             manga.PrimaryTitle = mangaBeforeEdit.PrimaryTitle;
             try

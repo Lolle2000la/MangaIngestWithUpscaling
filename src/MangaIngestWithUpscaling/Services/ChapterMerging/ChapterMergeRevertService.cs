@@ -41,19 +41,12 @@ public class ChapterMergeRevertService(
             );
         }
 
-        // Load chapter dependencies
-        if (!dbContext.Entry(chapter).Reference(c => c.Manga).IsLoaded)
-        {
-            await dbContext.Entry(chapter).Reference(c => c.Manga).LoadAsync(cancellationToken);
-        }
-
-        if (!dbContext.Entry(chapter.Manga).Reference(m => m.Library).IsLoaded)
-        {
-            await dbContext
-                .Entry(chapter.Manga)
-                .Reference(m => m.Library)
-                .LoadAsync(cancellationToken);
-        }
+        chapter.Manga = (
+            await dbContext.MangaSeries.FindAsync(chapter.MangaId, cancellationToken)
+        )!;
+        chapter.Manga.Library = (
+            await dbContext.Libraries.FindAsync(chapter.Manga.LibraryId, cancellationToken)
+        )!;
 
         Library library = chapter.Manga.Library;
         string mergedChapterPath = Path.Combine(

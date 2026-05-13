@@ -51,37 +51,35 @@ public partial class IngestProcessor(
         ApplicationDbContext dbContext
     )
     {
-        if (!dbContext.Entry(library).Reference(l => l.UpscalerProfile).IsLoaded)
-        {
-            await dbContext
-                .Entry(library)
-                .Reference(l => l.UpscalerProfile)
-                .LoadAsync(cancellationToken);
-        }
+        if (library.UpscalerProfileId != null)
+            library.UpscalerProfile = await dbContext.UpscalerProfiles.FindAsync(
+                library.UpscalerProfileId,
+                cancellationToken
+            );
 
-        if (!dbContext.Entry(library).Collection(l => l.FilterRules).IsLoaded)
-        {
-            await dbContext
-                .Entry(library)
-                .Collection(l => l.FilterRules)
-                .LoadAsync(cancellationToken);
-        }
+        library.FilterRules.Clear();
+        foreach (
+            var rule in await dbContext
+                .LibraryFilterRules.Where(f => f.LibraryId == library.Id)
+                .ToListAsync(cancellationToken)
+        )
+            library.FilterRules.Add(rule);
 
-        if (!dbContext.Entry(library).Collection(l => l.RenameRules).IsLoaded)
-        {
-            await dbContext
-                .Entry(library)
-                .Collection(l => l.RenameRules)
-                .LoadAsync(cancellationToken);
-        }
+        library.RenameRules.Clear();
+        foreach (
+            var rule in await dbContext
+                .LibraryRenameRules.Where(r => r.LibraryId == library.Id)
+                .ToListAsync(cancellationToken)
+        )
+            library.RenameRules.Add(rule);
 
-        if (!dbContext.Entry(library).Collection(l => l.FilteredImages).IsLoaded)
-        {
-            await dbContext
-                .Entry(library)
-                .Collection(l => l.FilteredImages)
-                .LoadAsync(cancellationToken);
-        }
+        library.FilteredImages.Clear();
+        foreach (
+            var image in await dbContext
+                .FilteredImages.Where(f => f.LibraryId == library.Id)
+                .ToListAsync(cancellationToken)
+        )
+            library.FilteredImages.Add(image);
 
         var foundChapters = chapterRecognitionService.FindAllChaptersAt(
             library.IngestPath,
@@ -635,7 +633,9 @@ public partial class IngestProcessor(
                     && library.UpscalerProfileId is not null
                 )
                 {
-                    dbContext.Entry(chapterEntity).Reference(c => c.UpscalerProfile).Load();
+                    chapterEntity.UpscalerProfile = dbContext.UpscalerProfiles.Find(
+                        library.UpscalerProfileId!.Value
+                    );
                     chaptersToUpscale.Add(chapterEntity);
                 }
             }
@@ -710,10 +710,9 @@ public partial class IngestProcessor(
                             && library.UpscalerProfileId is not null
                         )
                         {
-                            dbContext
-                                .Entry(mergedChapterEntity)
-                                .Reference(c => c.UpscalerProfile)
-                                .Load();
+                            mergedChapterEntity.UpscalerProfile = dbContext.UpscalerProfiles.Find(
+                                library.UpscalerProfileId!.Value
+                            );
                             chaptersToUpscale.Add(mergedChapterEntity);
                         }
 
