@@ -536,7 +536,9 @@ using (var scope = app.Services.CreateScope())
         {
             var backwardCompatibilityService =
                 scope.ServiceProvider.GetRequiredService<IBackwardCompatibilityService>();
-            await backwardCompatibilityService.ValidateAndUpgradeExistingRecordsAsync();
+            await backwardCompatibilityService.ValidateAndUpgradeExistingRecordsAsync(
+                dbContext: dbContext
+            );
             logger.LogDebug("Backward compatibility validation completed successfully.");
         }
         catch (Exception ex)

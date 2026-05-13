@@ -295,11 +295,13 @@ else
 
         try
         {
+            await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+
             if (manga.PrimaryTitle != originalTitle)
             {
                 var newTitle = manga.PrimaryTitle;
                 manga.PrimaryTitle = originalTitle;
-                var result = await MetadataChanger.ChangeMangaTitle(manga, newTitle, addOldTitleToOtherTitles);
+                var result = await MetadataChanger.ChangeMangaTitle(manga, newTitle, addOldTitleToOtherTitles, dbContext: dbContext);
                 if (result is not RenameResult.Ok)
                 {
                     Snackbar.Add(Loc["Error_ChangeTitle"], Severity.Error);
@@ -307,7 +309,6 @@ else
                 }
             }
 
-            await using var dbContext = await DbContextFactory.CreateDbContextAsync();
             await dbContext.SaveChangesAsync();
 
             Snackbar.Add(Loc["Success_Update"], Severity.Success);

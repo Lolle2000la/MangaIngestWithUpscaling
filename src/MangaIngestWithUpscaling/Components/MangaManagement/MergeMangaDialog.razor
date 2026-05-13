@@ -1,7 +1,9 @@
-﻿@using MangaIngestWithUpscaling.Data.LibraryManagement
+﻿@using MangaIngestWithUpscaling.Data
+@using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.MangaManagement
 @using Microsoft.Extensions.Localization
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IMangaMerger MangaMerger
 @inject IStringLocalizer<MergeMangaDialog> Loc
 
@@ -39,7 +41,8 @@
             return;
         }
         var toBeMerged = Mangas.Where(m => m != primary);
-        await MangaMerger.MergeAsync(primary, toBeMerged);
+        await using var mergeDbContext = await DbContextFactory.CreateDbContextAsync();
+        await MangaMerger.MergeAsync(primary, toBeMerged, cancellationToken: CancellationToken.None, dbContext: mergeDbContext);
         MudDialog.Close(DialogResult.Ok(true));
     }
 

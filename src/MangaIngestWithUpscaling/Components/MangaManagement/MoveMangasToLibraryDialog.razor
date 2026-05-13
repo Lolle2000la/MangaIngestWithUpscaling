@@ -54,7 +54,8 @@
 
         foreach (var manga in Mangas)
         {
-            await MangaMover.MoveMangaAsync(manga, selected);
+            await using var moveDbContext = await DbContextFactory.CreateDbContextAsync();
+            await MangaMover.MoveMangaAsync(manga, selected, cancellationToken: CancellationToken.None, dbContext: moveDbContext);
         }
         MudDialog.Close(DialogResult.Ok(true));
     }

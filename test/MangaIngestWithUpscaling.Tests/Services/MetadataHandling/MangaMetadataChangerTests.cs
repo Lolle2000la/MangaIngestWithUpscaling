@@ -859,6 +859,20 @@ public class MangaMetadataChangerTests : IDisposable
 #pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ChangeChapterTitle_WithNullDbContext_ShouldThrowNullReferenceException()
+    {
+        var chapter = CreateTestChapter(
+            CreateTestManga(CreateTestLibrary(), "TestNullDb"),
+            "Chapter 1.cbz"
+        );
+
+        await Assert.ThrowsAnyAsync<NullReferenceException>(() =>
+            _metadataChanger.ChangeChapterTitle(chapter, "New Title", null!)
+        );
+    }
+
     private Library CreateTestLibrary()
     {
         var notUpscaledPath = Path.Combine(_tempDir, "not_upscaled");

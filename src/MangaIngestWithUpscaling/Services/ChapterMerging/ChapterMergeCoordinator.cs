@@ -289,7 +289,8 @@ public class ChapterMergeCoordinator(
             UpscaleCompatibilityResult compatibility =
                 await upscaleTaskManager.CheckUpscaleCompatibilityForMergeAsync(
                     chapters,
-                    cancellationToken
+                    cancellationToken,
+                    dbContext
                 );
 
             if (!compatibility.CanMerge)
@@ -309,7 +310,7 @@ public class ChapterMergeCoordinator(
             );
 
             // Update database records to reflect the merge
-            await UpdateDatabaseForMergeAsync(mergeInfo, chapters, cancellationToken);
+            await UpdateDatabaseForMergeAsync(mergeInfo, chapters, cancellationToken, dbContext);
 
             // Handle upscale task management with information about partial merging
             await upscaleTaskManager.HandleUpscaleTaskManagementAsync(
@@ -317,7 +318,8 @@ public class ChapterMergeCoordinator(
                 mergeInfo,
                 library,
                 upscaledMergeResult,
-                cancellationToken
+                cancellationToken,
+                dbContext
             );
 
             await dbContext.SaveChangesAsync(cancellationToken);
@@ -426,7 +428,8 @@ public class ChapterMergeCoordinator(
                 UpscaleCompatibilityResult compatibility =
                     await upscaleTaskManager.CheckUpscaleCompatibilityForMergeAsync(
                         originalChapters,
-                        cancellationToken
+                        cancellationToken,
+                        dbContext
                     );
 
                 if (!compatibility.CanMerge)
@@ -440,7 +443,12 @@ public class ChapterMergeCoordinator(
                 }
 
                 // Update database for the merge
-                await UpdateDatabaseForMergeAsync(mergeInfo, originalChapters, cancellationToken);
+                await UpdateDatabaseForMergeAsync(
+                    mergeInfo,
+                    originalChapters,
+                    cancellationToken,
+                    dbContext
+                );
 
                 // Delete original chapter part files after successful merging
                 DeleteOriginalChapterPartFiles(mergeInfo, library);
@@ -460,7 +468,8 @@ public class ChapterMergeCoordinator(
                     mergeInfo,
                     library,
                     upscaledMergeResult,
-                    cancellationToken
+                    cancellationToken,
+                    dbContext
                 );
 
                 completedMerges.Add(mergeInfo);
@@ -1149,7 +1158,8 @@ public class ChapterMergeCoordinator(
             UpscaleCompatibilityResult compatibility =
                 await upscaleTaskManager.CheckUpscaleCompatibilityForMergeAsync(
                     newChapterParts,
-                    cancellationToken
+                    cancellationToken,
+                    dbContext
                 );
 
             if (!compatibility.CanMerge)
@@ -1196,7 +1206,8 @@ public class ChapterMergeCoordinator(
                 mergeInfo,
                 library,
                 null,
-                cancellationToken
+                cancellationToken,
+                dbContext
             );
 
             // Handle upscaling for the existing merged chapter that now has new parts
@@ -1708,7 +1719,8 @@ public class ChapterMergeCoordinator(
         UpscaleCompatibilityResult compatibility =
             await upscaleTaskManager.CheckUpscaleCompatibilityForMergeAsync(
                 originalChapters,
-                cancellationToken
+                cancellationToken,
+                dbContext
             );
 
         if (!compatibility.CanMerge)
@@ -1731,7 +1743,12 @@ public class ChapterMergeCoordinator(
         );
 
         // Update database records to reflect the merge
-        await UpdateDatabaseForMergeAsync(mergeInfo, originalChapters, cancellationToken);
+        await UpdateDatabaseForMergeAsync(
+            mergeInfo,
+            originalChapters,
+            cancellationToken,
+            dbContext
+        );
 
         // Handle upscale task management with information about partial merging
         await upscaleTaskManager.HandleUpscaleTaskManagementAsync(
@@ -1739,7 +1756,8 @@ public class ChapterMergeCoordinator(
             mergeInfo,
             library,
             upscaledMergeResult,
-            cancellationToken
+            cancellationToken,
+            dbContext
         );
     }
 

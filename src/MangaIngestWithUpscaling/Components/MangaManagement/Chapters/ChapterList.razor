@@ -334,7 +334,8 @@
     {
         try
         {
-            var restoredChapters = await ChapterMergeRevertService.RevertMergedChapterAsync(chapter);
+            await using var revertDbContext = await DbContextFactory.CreateDbContextAsync();
+            var restoredChapters = await ChapterMergeRevertService.RevertMergedChapterAsync(chapter, CancellationToken.None, revertDbContext);
 
             // Remove the merged chapter from the UI
             var chapterItem = chapterItems.FirstOrDefault(ci => ci.Chapter.Id == chapter.Id);
@@ -754,7 +755,8 @@
                 chapter.UpscalerProfile = await loadProfile;
 
                 // Check if this chapter is a merged chapter
-                var isMerged = await ChapterMergeRevertService.CanRevertChapterAsync(chapter);
+                await using var mergeCheckDbContext = await DbContextFactory.CreateDbContextAsync();
+                var isMerged = await ChapterMergeRevertService.CanRevertChapterAsync(chapter, CancellationToken.None, mergeCheckDbContext);
 
                 Logger.LogDebug("LoadChapters: Chapter {FileName} (ID: {ChapterId}) - IsMerged: {IsMerged}",
                     chapter.FileName, chapter.Id, isMerged);
@@ -863,8 +865,9 @@
             {
                 Logger.LogDebug("UpdateMergePossibilitiesAsync: Calling GetPossibleMergeActionsAsync with {ChapterCount} chapters",
                     allChapters.Count);
+                await using var mergePossibilitiesDbContext = await DbContextFactory.CreateDbContextAsync();
                 _cachedMergePossibilities = await ChapterMergeCoordinator.GetPossibleMergeActionsAsync(allChapters,
-                    includeLatestChapters: true);
+                    includeLatestChapters: true, dbContext: mergePossibilitiesDbContext);
 
                 Logger.LogDebug("Updated merge possibilities cache: {NewMergeGroups} new merge groups, {AdditionsToExisting} additions to existing, HasAnyMergePossibilities: {HasAny}",
                     _cachedMergePossibilities.NewMergeGroups.Count, _cachedMergePossibilities.AdditionsToExistingMerged.Count,
@@ -931,13 +934,14 @@
         }
 
         // Get possible merge actions for the selected chapters
+        await using var mergeActionsDbContext = await DbContextFactory.CreateDbContextAsync();
         var mergeActionsWithoutLatest = await ChapterMergeCoordinator.GetPossibleMergeActionsAsync(
             selectedChapterList,
-            includeLatestChapters: false);
+            includeLatestChapters: false, dbContext: mergeActionsDbContext);
 
         var mergeActionsWithLatest = await ChapterMergeCoordinator.GetPossibleMergeActionsAsync(
             selectedChapterList,
-            includeLatestChapters: true);
+            includeLatestChapters: true, dbContext: mergeActionsDbContext);
 
         if (!mergeActionsWithLatest.HasAnyMergePossibilities)
         {
@@ -971,9 +975,10 @@
     {
         // Get all chapters in the series to properly identify merge actions
         var allChapters = chapterItems.Where(ci => !ci.IsMerged).Select(ci => ci.Chapter).ToList();
+        await using var mergeActionsDbContext2 = await DbContextFactory.CreateDbContextAsync();
         var mergeActions = await ChapterMergeCoordinator.GetPossibleMergeActionsAsync(
             allChapters,
-            includeLatestChapters: true);
+            includeLatestChapters: true, dbContext: mergeActionsDbContext2);
 
         if (!mergeActions.HasAnyMergePossibilities)
         {
@@ -1020,9 +1025,10 @@
         }
 
         // Check if latest chapter is involved
+        await using var mergeActionsDbContext3 = await DbContextFactory.CreateDbContextAsync();
         var mergeActionsWithoutLatest = await ChapterMergeCoordinator.GetPossibleMergeActionsAsync(
             chaptersToMerge,
-            includeLatestChapters: false);
+            includeLatestChapters: false, dbContext: mergeActionsDbContext3);
 
         bool includeLatest = true;
         var hasActionsWithoutLatest = mergeActionsWithoutLatest.NewMergeGroups.ContainsKey(baseNumber) ||
@@ -1056,7 +1062,7 @@
         {
             var completedMerges = await ChapterMergeCoordinator.MergeSelectedChaptersAsync(
                 chaptersToMerge,
-                includeLatestChapters);
+                includeLatestChapters, dbContext: dbContext);
 
             if (!completedMerges.Any())
             {
@@ -1093,7 +1099,7 @@
                         Path.Combine(Manga.Library.NotUpscaledLibraryPath, mergedChapter.RelativePath));
 
                     // Properly determine if the chapter is merged by checking the database
-                    var isMerged = await ChapterMergeRevertService.CanRevertChapterAsync(mergedChapter);
+                    var isMerged = await ChapterMergeRevertService.CanRevertChapterAsync(mergedChapter, dbContext: addDbContext);
 
                     chapters.Add(new ChapterItem
                     {
@@ -1202,7 +1208,7 @@
         try
         {
             // Use the chapter merging coordinator to add chapters to existing merged chapter
-            await ChapterMergeCoordinator.ProcessExistingChapterPartsForMergingAsync(Manga);
+            await ChapterMergeCoordinator.ProcessExistingChapterPartsForMergingAsync(Manga, dbContext: dbContext);
 
             // Remove the added chapters from UI since they're now part of the merged chapter
             foreach (var chapter in chaptersToAdd)
