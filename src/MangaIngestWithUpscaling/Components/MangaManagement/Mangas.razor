@@ -10,7 +10,7 @@
 @using System.Globalization
 @implements IDisposable
 
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IDialogService DialogService
 @inject NavigationManager NavigationManager
 @inject IMangaMetadataChanger MangaMetadataChanger
@@ -33,7 +33,7 @@
                 <MudSelect Label="@Loc["LibraryToBrowse"]" T="Library ?" @bind-Value="selectedLibrary"
                     @bind-Value:after="async () => await table.ReloadServerData()">
                     <MudSelectItem T="Library?" Value="null">@Loc["Library_All"]</MudSelectItem>
-                    @foreach (var library in DbContext.Libraries)
+                    @foreach (var library in _libraries)
                     {
                         <MudSelectItem T="Library?" Value="@library">@library.Name</MudSelectItem>
                     }
@@ -127,6 +127,7 @@
     private bool _parametersInitialized = false;
     private bool _isOwnNavigation = false;
     private readonly Subject<string> _searchSubject = new();
+    private List<Library> _libraries = [];
 
     [Parameter]
     [SupplyParameterFromQuery(Name = "search")]
@@ -173,6 +174,12 @@
             })
             .DisposeWith(disposables);
         _searchSubject.DisposeWith(disposables);
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+        _libraries = await dbContext.Libraries.ToListAsync();
     }
 
     private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
@@ -229,7 +236,8 @@
 
     private async Task<TableData<Manga>> GetMangas(TableState state, CancellationToken cancellationToken)
     {
-        var query = DbContext.MangaSeries
+        await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+        var query = dbContext.MangaSeries
         .Include(x => x.Library)
         .ThenInclude(x => x.UpscalerProfile)
         .Include(x => x.Chapters)
@@ -401,7 +409,8 @@
         // if the primary title was changed, change it back and then use the metadata changer.
         if (manga.PrimaryTitle != mangaBeforeEdit.PrimaryTitle)
         {
-            await DbContext.Entry(manga).Collection(x => x.OtherTitles).LoadAsync();
+            await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+            await dbContext.Entry(manga).Collection(x => x.OtherTitles).LoadAsync();
             var newTitle = manga.PrimaryTitle;
             manga.PrimaryTitle = mangaBeforeEdit.PrimaryTitle;
             try
@@ -422,7 +431,8 @@
 
         try
         {
-            await DbContext.SaveChangesAsync();
+            await using var dbContext2 = await DbContextFactory.CreateDbContextAsync();
+            await dbContext2.SaveChangesAsync();
         }
         catch (Exception e)
         {

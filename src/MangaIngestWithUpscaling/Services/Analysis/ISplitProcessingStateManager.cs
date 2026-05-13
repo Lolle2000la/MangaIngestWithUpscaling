@@ -14,7 +14,7 @@ public interface ISplitProcessingStateManager
     /// </summary>
     Task<ChapterSplitProcessingState> GetOrCreateStateAsync(
         int chapterId,
-        ApplicationDbContext? context = null,
+        ApplicationDbContext context,
         CancellationToken cancellationToken = default
     );
 
@@ -25,7 +25,7 @@ public interface ISplitProcessingStateManager
     Task SetDetectedAsync(
         int chapterId,
         int detectorVersion,
-        ApplicationDbContext? context = null,
+        ApplicationDbContext context,
         CancellationToken cancellationToken = default
     );
 
@@ -36,7 +36,7 @@ public interface ISplitProcessingStateManager
     Task SetNoSplitsFoundAsync(
         int chapterId,
         int detectorVersion,
-        ApplicationDbContext? context = null,
+        ApplicationDbContext context,
         CancellationToken cancellationToken = default
     );
 
@@ -48,7 +48,7 @@ public interface ISplitProcessingStateManager
     Task SetAppliedAsync(
         int chapterId,
         int detectorVersion,
-        ApplicationDbContext? context = null,
+        ApplicationDbContext context,
         CancellationToken cancellationToken = default
     );
 
@@ -58,7 +58,7 @@ public interface ISplitProcessingStateManager
     /// </summary>
     Task SetFailedAsync(
         int chapterId,
-        ApplicationDbContext? context = null,
+        ApplicationDbContext context,
         CancellationToken cancellationToken = default
     );
 
@@ -69,7 +69,7 @@ public interface ISplitProcessingStateManager
     Task SetProcessingAsync(
         int chapterId,
         int detectorVersion,
-        ApplicationDbContext? context = null,
+        ApplicationDbContext context,
         CancellationToken cancellationToken = default
     );
 
@@ -78,7 +78,7 @@ public interface ISplitProcessingStateManager
     /// </summary>
     Task<ChapterSplitProcessingState?> GetStateAsync(
         int chapterId,
-        ApplicationDbContext? context = null,
+        ApplicationDbContext context,
         CancellationToken cancellationToken = default
     );
 
@@ -88,7 +88,7 @@ public interface ISplitProcessingStateManager
     Task UpdateStatusAsync(
         int chapterId,
         SplitProcessingStatus newStatus,
-        ApplicationDbContext? context = null,
+        ApplicationDbContext context,
         CancellationToken cancellationToken = default
     );
 
@@ -98,7 +98,7 @@ public interface ISplitProcessingStateManager
     /// </summary>
     Task ResetToPendingAsync(
         int chapterId,
-        ApplicationDbContext? context = null,
+        ApplicationDbContext context,
         CancellationToken cancellationToken = default
     );
 
@@ -108,7 +108,7 @@ public interface ISplitProcessingStateManager
     /// </summary>
     Task DeleteStateAsync(
         int chapterId,
-        ApplicationDbContext? context = null,
+        ApplicationDbContext context,
         CancellationToken cancellationToken = default
     );
 }

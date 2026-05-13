@@ -23,13 +23,16 @@ public class StandardTaskProcessorTests : IDisposable
         var services = new ServiceCollection();
         var dbName = $"TestDb_StandardProcessor_{Guid.NewGuid()}";
         services.AddDbContext<ApplicationDbContext>(options => options.UseInMemoryDatabase(dbName));
+        services.AddDbContextFactory<ApplicationDbContext>(options =>
+            options.UseInMemoryDatabase(dbName)
+        );
 
         _mockPersistence = Substitute.For<ITaskPersistenceService>();
         _mockPersistence.ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(true);
 
         var mockQueueCleanup = Substitute.For<IQueueCleanup>();
         mockQueueCleanup
-            .CleanupAsync()
+            .CleanupAsync(Arg.Any<ApplicationDbContext>())
             .Returns(Task.FromResult<IReadOnlyList<int>>(Array.Empty<int>()));
         services.AddScoped<IQueueCleanup>(_ => mockQueueCleanup);
         services.AddSingleton(_mockPersistence);
@@ -42,6 +45,7 @@ public class StandardTaskProcessorTests : IDisposable
         var queueLogger = Substitute.For<ILogger<TaskQueue>>();
 
         _taskQueue = new TaskQueue(
+            serviceProvider.GetRequiredService<IDbContextFactory<ApplicationDbContext>>(),
             serviceProvider.GetRequiredService<IServiceScopeFactory>(),
             queueLogger
         );

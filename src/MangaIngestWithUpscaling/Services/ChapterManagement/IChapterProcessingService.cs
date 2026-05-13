@@ -1,3 +1,4 @@
+using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
@@ -30,7 +31,8 @@ public interface IChapterProcessingService
     /// <returns>The upscaler profile, or null if creation failed</returns>
     Task<UpscalerProfile?> FindOrCreateUpscalerProfileAsync(
         UpscalerProfileJsonDto dto,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     );
 
     /// <summary>
@@ -45,7 +47,8 @@ public interface IChapterProcessingService
         Library library,
         string seriesTitle,
         string? originalSeriesTitle,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     );
 
     /// <summary>

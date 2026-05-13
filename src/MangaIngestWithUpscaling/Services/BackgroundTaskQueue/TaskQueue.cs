@@ -29,6 +29,7 @@ public interface ITaskQueue
 public class TaskQueue : ITaskQueue, IHostedService
 {
     private static readonly object Signal = new();
+    private readonly IDbContextFactory<ApplicationDbContext> _dbContextFactory;
     private readonly ILogger<TaskQueue> _logger;
     private readonly Channel<PersistedTask> _reroutedUpscaleChannel;
     private readonly IServiceScopeFactory _scopeFactory;
@@ -40,8 +41,13 @@ public class TaskQueue : ITaskQueue, IHostedService
     private readonly SortedSet<PersistedTask> _upscaleTasks;
     private readonly object _upscaleTasksLock = new();
 
-    public TaskQueue(IServiceScopeFactory scopeFactory, ILogger<TaskQueue> logger)
+    public TaskQueue(
+        IDbContextFactory<ApplicationDbContext> dbContextFactory,
+        IServiceScopeFactory scopeFactory,
+        ILogger<TaskQueue> logger
+    )
     {
+        _dbContextFactory = dbContextFactory;
         _scopeFactory = scopeFactory;
         _logger = logger;
 
@@ -111,8 +117,7 @@ public class TaskQueue : ITaskQueue, IHostedService
     public async Task EnqueueAsync<T>(T taskData)
         where T : BaseTask
     {
-        using IServiceScope scope = _scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        await using var dbContext = await _dbContextFactory.CreateDbContextAsync();
 
         // Determine the next order value
         int maxOrder = await dbContext.PersistedTasks.MaxAsync(t => (int?)t.Order) ?? 0;
@@ -149,8 +154,10 @@ public class TaskQueue : ITaskQueue, IHostedService
 
         TaskEnqueuedOrChanged?.Invoke(taskItem);
 
+        using IServiceScope scope = _scopeFactory.CreateScope();
         var queueCleanup = scope.ServiceProvider.GetRequiredService<IQueueCleanup>();
-        var removedTaskIds = await queueCleanup.CleanupAsync();
+        await using var cleanupDbContext = await _dbContextFactory.CreateDbContextAsync();
+        var removedTaskIds = await queueCleanup.CleanupAsync(cleanupDbContext);
 
         if (TaskRemoved != null && removedTaskIds.Count > 0)
         {
@@ -162,8 +169,7 @@ public class TaskQueue : ITaskQueue, IHostedService
 
     public async Task ReorderTaskAsync(PersistedTask task, int newOrder)
     {
-        using var scope = _scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        await using var dbContext = await _dbContextFactory.CreateDbContextAsync();
 
         // Determine which set to modify
         (SortedSet<PersistedTask> tasks, object lockObj) = IsUpscaleTask(task.Data)
@@ -208,8 +214,7 @@ public class TaskQueue : ITaskQueue, IHostedService
     )
     {
         // Compute global minimum order from DB to ensure consistent ordering
-        using IServiceScope scope = _scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
 
         int minOrder =
             await dbContext.PersistedTasks.MinAsync(t => (int?)t.Order, cancellationToken) ?? 0;
@@ -219,8 +224,7 @@ public class TaskQueue : ITaskQueue, IHostedService
 
     public async Task RemoveTaskAsync(PersistedTask task)
     {
-        using var scope = _scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        await using var dbContext = await _dbContextFactory.CreateDbContextAsync();
 
         dbContext.PersistedTasks.Remove(task);
         await dbContext.SaveChangesAsync();
@@ -242,8 +246,7 @@ public class TaskQueue : ITaskQueue, IHostedService
 
     public async Task RetryAsync(PersistedTask task)
     {
-        using var scope = _scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        await using var dbContext = await _dbContextFactory.CreateDbContextAsync();
 
         task.Status = PersistedTaskStatus.Pending;
         dbContext.Update(task);
@@ -279,8 +282,7 @@ public class TaskQueue : ITaskQueue, IHostedService
 
     public async Task ReplayPendingOrFailed(CancellationToken cancellationToken = default)
     {
-        using var scope = _scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        await using var dbContext = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
 
         // Only consider Pending and retryable Failed tasks here; we will explicitly recover stranded Processing elsewhere
         // Filter by Status in DB to avoid full table scan

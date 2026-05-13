@@ -17,7 +17,6 @@ namespace MangaIngestWithUpscaling.Services.Analysis;
 
 [RegisterScoped]
 public class SplitProcessingCoordinator(
-    ApplicationDbContext dbContext,
     ITaskQueue taskQueue,
     IChapterChangedNotifier chapterChangedNotifier,
     IFileSystem fileSystem,
@@ -28,7 +27,7 @@ public class SplitProcessingCoordinator(
     public async Task<bool> ShouldProcessAsync(
         int chapterId,
         StripDetectionMode mode,
-        ApplicationDbContext? context = null,
+        ApplicationDbContext dbContext,
         CancellationToken cancellationToken = default
     )
     {
@@ -37,8 +36,7 @@ public class SplitProcessingCoordinator(
             return false;
         }
 
-        var db = context ?? dbContext;
-        var state = await db
+        var state = await dbContext
             .ChapterSplitProcessingStates.AsNoTracking()
             .FirstOrDefaultAsync(s => s.ChapterId == chapterId, cancellationToken);
 
@@ -49,13 +47,13 @@ public class SplitProcessingCoordinator(
         )
         {
             // Check if there is already a pending detection task for this chapter
-            if (await HasExistingDetectionTaskAsync(db, chapterId, cancellationToken))
+            if (await HasExistingDetectionTaskAsync(dbContext, chapterId, cancellationToken))
             {
                 return false;
             }
 
             // Check if the chapter actually needs splitting based on aspect ratio
-            var chapter = await db
+            var chapter = await dbContext
                 .Chapters.Include(c => c.Manga)
                     .ThenInclude(m => m.Library)
                 .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
@@ -122,6 +120,7 @@ public class SplitProcessingCoordinator(
 
     public async Task<bool> EnqueueDetectionIfPlausibleAsync(
         int chapterId,
+        ApplicationDbContext dbContext,
         CancellationToken cancellationToken = default
     )
     {
@@ -145,7 +144,7 @@ public class SplitProcessingCoordinator(
             await stateManager.SetNoSplitsFoundAsync(
                 chapterId,
                 SplitDetectionService.CURRENT_DETECTOR_VERSION,
-                null,
+                dbContext,
                 cancellationToken
             );
 
@@ -162,12 +161,13 @@ public class SplitProcessingCoordinator(
             return false;
         }
 
-        await EnqueueDetectionAsync(chapterId, cancellationToken);
+        await EnqueueDetectionAsync(chapterId, dbContext, cancellationToken);
         return true;
     }
 
     public async Task EnqueueDetectionAsync(
         int chapterId,
+        ApplicationDbContext dbContext,
         CancellationToken cancellationToken = default
     )
     {
@@ -203,6 +203,7 @@ public class SplitProcessingCoordinator(
 
     public async Task EnqueueDetectionBatchAsync(
         IEnumerable<int> chapterIds,
+        ApplicationDbContext dbContext,
         CancellationToken cancellationToken = default
     )
     {
@@ -263,11 +264,17 @@ public class SplitProcessingCoordinator(
     public async Task OnSplitsAppliedAsync(
         int chapterId,
         int detectorVersion,
+        ApplicationDbContext dbContext,
         CancellationToken cancellationToken = default
     )
     {
         // Update state to Applied
-        await stateManager.SetAppliedAsync(chapterId, detectorVersion, null, cancellationToken);
+        await stateManager.SetAppliedAsync(
+            chapterId,
+            detectorVersion,
+            dbContext,
+            cancellationToken
+        );
 
         // Load chapter with all necessary navigation properties for upscale task creation
         // UpscalerProfilePreference is required for EffectiveUpscalerProfile to work correctly

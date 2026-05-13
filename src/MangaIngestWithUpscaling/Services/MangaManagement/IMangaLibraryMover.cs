@@ -1,4 +1,5 @@
-﻿using MangaIngestWithUpscaling.Data.LibraryManagement;
+﻿using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.LibraryManagement;
 
 namespace MangaIngestWithUpscaling.Services.MangaManagement;
 
@@ -14,6 +15,7 @@ public interface IMangaLibraryMover
     Task MoveMangaAsync(
         Manga manga,
         Library targetLibrary,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
     );
 }

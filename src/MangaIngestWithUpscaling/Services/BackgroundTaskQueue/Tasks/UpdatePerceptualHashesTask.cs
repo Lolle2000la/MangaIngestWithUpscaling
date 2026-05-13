@@ -1,4 +1,6 @@
+using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Services.ImageFiltering;
+using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 
@@ -13,8 +15,11 @@ public class UpdatePerceptualHashesTask : BaseTask
     )
     {
         using var scope = serviceProvider.CreateScope();
+        await using var dbContext = await scope
+            .ServiceProvider.GetRequiredService<IDbContextFactory<ApplicationDbContext>>()
+            .CreateDbContextAsync(cancellationToken);
         var migrationService =
             scope.ServiceProvider.GetRequiredService<PerceptualHashMigrationService>();
-        await migrationService.UpdateExistingFilteredImagesAsync(cancellationToken);
+        await migrationService.UpdateExistingFilteredImagesAsync(dbContext, cancellationToken);
     }
 }

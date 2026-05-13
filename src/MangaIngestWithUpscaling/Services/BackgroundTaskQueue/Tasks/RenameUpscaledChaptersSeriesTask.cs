@@ -44,7 +44,9 @@ public class RenameUpscaledChaptersSeriesTask : BaseTask
         >();
         var fileSystem = services.GetRequiredService<IFileSystem>();
 
-        var dbContext = services.GetRequiredService<ApplicationDbContext>();
+        await using var dbContext = await services
+            .GetRequiredService<IDbContextFactory<ApplicationDbContext>>()
+            .CreateDbContextAsync(cancellationToken);
         Chapter? chapter = await dbContext
             .Chapters.Include(c => c.Manga)
                 .ThenInclude(m => m.Library)

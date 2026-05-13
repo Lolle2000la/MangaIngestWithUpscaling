@@ -5,10 +5,9 @@ using Microsoft.EntityFrameworkCore;
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 
 [RegisterScoped]
-public class QueueCleanup(ApplicationDbContext dbContext, ILogger<QueueCleanup> _logger)
-    : IQueueCleanup
+public class QueueCleanup(ILogger<QueueCleanup> _logger) : IQueueCleanup
 {
-    public async Task<IReadOnlyList<int>> CleanupAsync()
+    public async Task<IReadOnlyList<int>> CleanupAsync(ApplicationDbContext dbContext)
     {
         // In QueueCleanup.cs
         var cutoffDate = await dbContext

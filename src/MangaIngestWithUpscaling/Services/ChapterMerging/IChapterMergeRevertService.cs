@@ -1,3 +1,4 @@
+using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 
 namespace MangaIngestWithUpscaling.Services.ChapterMerging;
@@ -11,7 +12,8 @@ public interface IChapterMergeRevertService
     /// <returns>List of restored chapter entities</returns>
     Task<List<Chapter>> RevertMergedChapterAsync(
         Chapter chapter,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
     );
 
     /// <summary>
@@ -21,7 +23,8 @@ public interface IChapterMergeRevertService
     /// <returns>True if the chapter can be reverted</returns>
     Task<bool> CanRevertChapterAsync(
         Chapter chapter,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
     );
 
     /// <summary>
@@ -31,6 +34,7 @@ public interface IChapterMergeRevertService
     /// <returns>Merge information or null if not a merged chapter</returns>
     Task<MergedChapterInfo?> GetMergeInfoAsync(
         Chapter chapter,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
     );
 }

@@ -11,7 +11,6 @@ namespace MangaIngestWithUpscaling.Services.MangaManagement;
 
 [RegisterScoped]
 public class MangaMerger(
-    ApplicationDbContext dbContext,
     IMetadataHandlingService metadataHandling,
     IMangaMetadataChanger metadataChanger,
     ILogger<MangaMerger> logger,
@@ -23,7 +22,8 @@ public class MangaMerger(
     public async Task MergeAsync(
         Manga primary,
         IEnumerable<Manga> mergedInto,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
     )
     {
         if (!dbContext.Entry(primary).Reference(m => m.Library).IsLoaded)

@@ -2,7 +2,7 @@
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using Microsoft.Extensions.Localization
 
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject NavigationManager NavigationManager
 @inject IStringLocalizer<EditUpscalerProfile> Loc
 
@@ -55,7 +55,8 @@
     {
         if (ProfileId.HasValue)
         {
-            existingProfile = await DbContext.UpscalerProfiles.FindAsync(ProfileId.Value);
+            await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+            existingProfile = await dbContext.UpscalerProfiles.FindAsync(ProfileId.Value);
             if (existingProfile != null)
             {
                 Profile = new UpscalerProfile
@@ -85,24 +86,26 @@
             return;
         }
 
+        await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+
         // Preserve the original creation date for the new profile
         Profile.CreatedAt = existingProfile.CreatedAt;
         Profile.ModifiedAt = DateTime.UtcNow;
 
-        DbContext.UpscalerProfiles.Add(Profile);
+        dbContext.UpscalerProfiles.Add(Profile);
         existingProfile.Deleted = true;
-        await DbContext.SaveChangesAsync();
+        await dbContext.SaveChangesAsync();
         // change all references to existingProfile to Profile, except for concrete chapters
         // (right now this is only the upscaler profile id in the library))
-        await DbContext.Libraries
+        await dbContext.Libraries
         .Where(l => l.UpscalerProfileId == existingProfile.Id)
         .ExecuteUpdateAsync(s => s.SetProperty(l => l.UpscalerProfileId, Profile.Id));
 
-        await DbContext.MangaSeries
+        await dbContext.MangaSeries
         .Where(m => m.UpscalerProfilePreferenceId == existingProfile.Id)
         .ExecuteUpdateAsync(s => s.SetProperty(m => m.UpscalerProfilePreferenceId, Profile.Id));
 
-        await DbContext.SaveChangesAsync();
+        await dbContext.SaveChangesAsync();
         NavigationManager.NavigateTo("/upscaling/profiles");
     }
 

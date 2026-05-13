@@ -9,7 +9,7 @@
 @inject IdentityUserAccessor UserAccessor
 @inject IdentityRedirectManager RedirectManager
 @inject IApiKeyService ApiKeyService
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IStringLocalizer<ApiKeys> Loc
 
 <PageTitle>@Loc["PageTitle"]</PageTitle>
@@ -54,11 +54,12 @@
         Input ??= new InputModel();
 
         user = await UserAccessor.GetRequiredUserAsync(HttpContext);
-        apiKey = await DbContext.ApiKeys.FirstOrDefaultAsync(k => k.User == user && k.IsActive);
+        await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+        apiKey = await dbContext.ApiKeys.FirstOrDefaultAsync(k => k.User == user && k.IsActive);
 
         if (apiKey == null)
         {
-            apiKey = await ApiKeyService.CreateApiKeyAsync(user.Id);
+            apiKey = await ApiKeyService.CreateApiKeyAsync(user.Id, dbContext);
         }
 
         if (Input == null)
@@ -77,8 +78,9 @@
         }
 
         apiKey.IsActive = false;
-        await DbContext.SaveChangesAsync();
-        apiKey = await ApiKeyService.CreateApiKeyAsync(user.Id);
+        await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+        await dbContext.SaveChangesAsync();
+        apiKey = await ApiKeyService.CreateApiKeyAsync(user.Id, dbContext);
 
         await SignInManager.RefreshSignInAsync(user);
         RedirectManager.RedirectToCurrentPage();

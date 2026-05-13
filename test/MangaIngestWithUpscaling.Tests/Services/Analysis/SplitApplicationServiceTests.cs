@@ -47,7 +47,6 @@ public class SplitApplicationServiceTests : IDisposable
         _logger = Substitute.For<ILogger<SplitApplicationService>>();
 
         _service = new SplitApplicationService(
-            _dbContext,
             _coordinator,
             _splitApplier,
             _upscaler,
@@ -178,7 +177,12 @@ public class SplitApplicationServiceTests : IDisposable
             });
 
         // Act
-        await _service.ApplySplitsAsync(chapter.Id, 1, TestContext.Current.CancellationToken);
+        await _service.ApplySplitsAsync(
+            chapter.Id,
+            1,
+            TestContext.Current.CancellationToken,
+            _dbContext
+        );
 
         // Assert
         // Verify upscaler was called to upscale the split pages
@@ -197,7 +201,12 @@ public class SplitApplicationServiceTests : IDisposable
         // Verify coordinator was notified
         await _coordinator
             .Received(1)
-            .OnSplitsAppliedAsync(chapter.Id, 1, Arg.Any<CancellationToken>());
+            .OnSplitsAppliedAsync(
+                chapter.Id,
+                1,
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Any<CancellationToken>()
+            );
     }
 
     [Fact]
@@ -274,7 +283,12 @@ public class SplitApplicationServiceTests : IDisposable
             });
 
         // Act
-        await _service.ApplySplitsAsync(chapter.Id, 1, TestContext.Current.CancellationToken);
+        await _service.ApplySplitsAsync(
+            chapter.Id,
+            1,
+            TestContext.Current.CancellationToken,
+            _dbContext
+        );
 
         // Assert
         await _dbContext.Entry(chapter).ReloadAsync(TestContext.Current.CancellationToken);
@@ -282,7 +296,12 @@ public class SplitApplicationServiceTests : IDisposable
 
         await _coordinator
             .Received(1)
-            .OnSplitsAppliedAsync(chapter.Id, 1, Arg.Any<CancellationToken>());
+            .OnSplitsAppliedAsync(
+                chapter.Id,
+                1,
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Any<CancellationToken>()
+            );
     }
 
     [Fact]
@@ -359,7 +378,12 @@ public class SplitApplicationServiceTests : IDisposable
             });
 
         // Act
-        await _service.ApplySplitsAsync(chapter.Id, 1, TestContext.Current.CancellationToken);
+        await _service.ApplySplitsAsync(
+            chapter.Id,
+            1,
+            TestContext.Current.CancellationToken,
+            _dbContext
+        );
 
         // Assert - the split should have been applied despite case mismatch
         _splitApplier
@@ -372,7 +396,12 @@ public class SplitApplicationServiceTests : IDisposable
 
         await _coordinator
             .Received(1)
-            .OnSplitsAppliedAsync(chapter.Id, 1, Arg.Any<CancellationToken>());
+            .OnSplitsAppliedAsync(
+                chapter.Id,
+                1,
+                Arg.Any<ApplicationDbContext>(),
+                Arg.Any<CancellationToken>()
+            );
     }
 
     private void CreateTestCbz(string path, params string[] imageNames)

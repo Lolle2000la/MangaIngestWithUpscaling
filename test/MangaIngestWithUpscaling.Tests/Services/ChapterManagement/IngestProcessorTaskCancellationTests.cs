@@ -19,6 +19,7 @@ using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
@@ -72,7 +73,13 @@ public class IngestProcessorTaskCancellationTests : IDisposable
         services.AddScoped<IQueueCleanup, QueueCleanup>();
         ServiceProvider provider = services.BuildServiceProvider();
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
-        var taskQueue = new TaskQueue(scopeFactory, Substitute.For<ILogger<TaskQueue>>());
+        var dbContextFactory = Substitute.For<IDbContextFactory<ApplicationDbContext>>();
+        dbContextFactory.CreateDbContextAsync(Arg.Any<CancellationToken>()).Returns(async x => db);
+        var taskQueue = new TaskQueue(
+            dbContextFactory,
+            scopeFactory,
+            Substitute.For<ILogger<TaskQueue>>()
+        );
         IOptions<UpscalerConfig> upscalerOptions = Options.Create(
             new UpscalerConfig { RemoteOnly = true }
         );
@@ -100,7 +107,6 @@ public class IngestProcessorTaskCancellationTests : IDisposable
 
         var splitCoordinator = Substitute.For<ISplitProcessingCoordinator>();
         var ingest = new IngestProcessor(
-            db,
             chapterRecognition,
             renaming,
             cbz,
@@ -155,7 +161,8 @@ public class IngestProcessorTaskCancellationTests : IDisposable
                 Arg.Any<Library>(),
                 Arg.Any<string>(),
                 Arg.Any<string>(),
-                Arg.Any<CancellationToken>()
+                Arg.Any<CancellationToken>(),
+                Arg.Any<ApplicationDbContext>()
             )
             .Returns(Task.FromResult(manga));
 
@@ -264,7 +271,7 @@ public class IngestProcessorTaskCancellationTests : IDisposable
         await taskQueue.EnqueueAsync(new UpscaleTask(ch12));
 
         // Act: process ingest which will merge the two parts
-        await ingest.ProcessAsync(lib, TestContext.Current.CancellationToken);
+        await ingest.ProcessAsync(lib, TestContext.Current.CancellationToken, db);
 
         // Assert: original UpscaleTasks should be gone, only merged chapter task should exist
         IReadOnlyList<PersistedTask> snapshot = taskQueue.GetUpscaleSnapshot();

@@ -84,7 +84,6 @@ public class MangaMetadataChangerTests : IDisposable
 
         _metadataChanger = new MangaMetadataChanger(
             _mockMetadataHandling,
-            _dbContext,
             _mockDialogService,
             _mockLogger,
             _mockTaskQueue,
@@ -145,7 +144,8 @@ public class MangaMetadataChangerTests : IDisposable
             manga,
             newTitle,
             addOldToAlternative: true,
-            cancellationToken: TestContext.Current.CancellationToken
+            cancellationToken: TestContext.Current.CancellationToken,
+            dbContext: _dbContext
         );
 
         // Assert
@@ -198,7 +198,8 @@ public class MangaMetadataChangerTests : IDisposable
         var result = await _metadataChanger.ChangeMangaTitle(
             currentManga,
             "Existing Title",
-            cancellationToken: TestContext.Current.CancellationToken
+            cancellationToken: TestContext.Current.CancellationToken,
+            dbContext: _dbContext
         );
 
         // Assert
@@ -241,7 +242,8 @@ public class MangaMetadataChangerTests : IDisposable
         var result = await _metadataChanger.ChangeMangaTitle(
             currentManga,
             "Existing Title",
-            cancellationToken: TestContext.Current.CancellationToken
+            cancellationToken: TestContext.Current.CancellationToken,
+            dbContext: _dbContext
         );
 
         // Assert
@@ -289,7 +291,7 @@ public class MangaMetadataChangerTests : IDisposable
         var newTitle = "New Chapter Title";
 
         // Act
-        await _metadataChanger.ChangeChapterTitle(chapter, newTitle);
+        await _metadataChanger.ChangeChapterTitle(chapter, newTitle, _dbContext);
 
         // Assert
         // Verify both files were updated
@@ -339,7 +341,7 @@ public class MangaMetadataChangerTests : IDisposable
         var newTitle = "New Chapter Title";
 
         // Act
-        await _metadataChanger.ChangeChapterTitle(chapter, newTitle);
+        await _metadataChanger.ChangeChapterTitle(chapter, newTitle, _dbContext);
 
         // Assert
         // Verify only not-upscaled file was updated
@@ -453,7 +455,8 @@ public class MangaMetadataChangerTests : IDisposable
         var result = await _metadataChanger.ChangeMangaTitle(
             manga,
             newTitle,
-            cancellationToken: TestContext.Current.CancellationToken
+            cancellationToken: TestContext.Current.CancellationToken,
+            dbContext: _dbContext
         );
 
         // Assert
@@ -527,7 +530,8 @@ public class MangaMetadataChangerTests : IDisposable
             manga,
             newTitle,
             addOldToAlternative: true,
-            cancellationToken: TestContext.Current.CancellationToken
+            cancellationToken: TestContext.Current.CancellationToken,
+            dbContext: _dbContext
         );
 
         // Assert
@@ -581,7 +585,8 @@ public class MangaMetadataChangerTests : IDisposable
             manga,
             newTitle,
             addOldToAlternative: true,
-            cancellationToken: TestContext.Current.CancellationToken
+            cancellationToken: TestContext.Current.CancellationToken,
+            dbContext: _dbContext
         );
 
         // Assert
@@ -643,7 +648,8 @@ public class MangaMetadataChangerTests : IDisposable
             manga,
             newTitle,
             addOldToAlternative: true,
-            cancellationToken: TestContext.Current.CancellationToken
+            cancellationToken: TestContext.Current.CancellationToken,
+            dbContext: _dbContext
         );
 
         // Assert
@@ -699,7 +705,8 @@ public class MangaMetadataChangerTests : IDisposable
             manga,
             newTitle,
             addOldToAlternative: true,
-            cancellationToken: TestContext.Current.CancellationToken
+            cancellationToken: TestContext.Current.CancellationToken,
+            dbContext: _dbContext
         );
 
         // Assert
@@ -765,7 +772,8 @@ public class MangaMetadataChangerTests : IDisposable
             manga,
             newTitle,
             addOldToAlternative: true,
-            cancellationToken: TestContext.Current.CancellationToken
+            cancellationToken: TestContext.Current.CancellationToken,
+            dbContext: _dbContext
         );
 
         // Assert
@@ -829,7 +837,8 @@ public class MangaMetadataChangerTests : IDisposable
             manga,
             newTitle,
             addOldToAlternative: true,
-            cancellationToken: TestContext.Current.CancellationToken
+            cancellationToken: TestContext.Current.CancellationToken,
+            dbContext: _dbContext
         );
 
         // Assert

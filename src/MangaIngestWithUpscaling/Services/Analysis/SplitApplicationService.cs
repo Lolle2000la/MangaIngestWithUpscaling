@@ -18,7 +18,6 @@ namespace MangaIngestWithUpscaling.Services.Analysis;
 
 [RegisterScoped]
 public class SplitApplicationService(
-    ApplicationDbContext dbContext,
     ISplitProcessingCoordinator splitProcessingCoordinator,
     ISplitApplier splitApplier,
     IUpscaler upscaler,
@@ -29,7 +28,8 @@ public class SplitApplicationService(
     public async Task ApplySplitsAsync(
         int chapterId,
         int detectorVersion,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         var chapter = await dbContext
@@ -59,6 +59,7 @@ public class SplitApplicationService(
             await splitProcessingCoordinator.OnSplitsAppliedAsync(
                 chapterId,
                 detectorVersion,
+                dbContext,
                 cancellationToken
             );
             return;
@@ -262,6 +263,7 @@ public class SplitApplicationService(
             await splitProcessingCoordinator.OnSplitsAppliedAsync(
                 chapterId,
                 detectorVersion,
+                dbContext,
                 cancellationToken
             );
         }

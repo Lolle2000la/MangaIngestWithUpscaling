@@ -2,7 +2,7 @@
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.MangaManagement
 @using Microsoft.Extensions.Localization
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IMangaLibraryMover MangaMover
 @inject IStringLocalizer<MoveMangasToLibraryDialog> Loc
 
@@ -17,7 +17,7 @@
                 @((MarkupString)Loc["Warning_MoveFiles"].Value)
             </MudText>
             <MudSelect Label="@Loc["SelectLibrary"]" T="Library" @bind-Value="selected">
-                @foreach (var library in DbContext.Libraries)
+                @foreach (var library in _libraries)
                 {
                     <MudSelectItem T="Library" Value="@library">@library.Name</MudSelectItem>
                 }
@@ -37,6 +37,13 @@
     [Parameter] public required List<Manga> Mangas { get; set; }
 
     private Library? selected;
+    private List<Library> _libraries = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+        _libraries = await dbContext.Libraries.ToListAsync();
+    }
 
     async Task Submit()
     {

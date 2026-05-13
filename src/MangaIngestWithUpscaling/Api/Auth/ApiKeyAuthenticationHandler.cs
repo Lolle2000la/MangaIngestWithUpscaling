@@ -9,17 +9,17 @@ namespace MangaIngestWithUpscaling.Api.Auth;
 
 public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationSchemeOptions>
 {
-    private readonly ApplicationDbContext _context;
+    private readonly IDbContextFactory<ApplicationDbContext> _contextFactory;
 
     public ApiKeyAuthenticationHandler(
         IOptionsMonitor<AuthenticationSchemeOptions> options,
         ILoggerFactory logger,
         UrlEncoder encoder,
-        ApplicationDbContext context
+        IDbContextFactory<ApplicationDbContext> contextFactory
     )
         : base(options, logger, encoder)
     {
-        _context = context;
+        _contextFactory = contextFactory;
     }
 
     /// <summary>
@@ -44,7 +44,8 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationS
         if (string.IsNullOrEmpty(apiKeyValue))
             return AuthenticateResult.Fail("Invalid API Key");
 
-        var apiKey = await _context
+        await using var dbContext = await _contextFactory.CreateDbContextAsync();
+        var apiKey = await dbContext
             .ApiKeys.Include(k => k.User)
             .FirstOrDefaultAsync(k => k.Key == apiKeyValue);
 
@@ -64,7 +65,7 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationS
             new Claim("ApiKey", apiKey.Key),
         };
 
-        var roles = await _context
+        var roles = await dbContext
             .UserRoles.Where(ur => ur.UserId == apiKey.UserId)
             .Select(ur => ur.RoleId)
             .ToListAsync();

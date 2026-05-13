@@ -15,7 +15,6 @@ namespace MangaIngestWithUpscaling.Services.ChapterMerging;
 
 [RegisterScoped]
 public class ChapterMergeRevertService(
-    ApplicationDbContext dbContext,
     IChapterPartMerger chapterPartMerger,
     IChapterChangedNotifier chapterChangedNotifier,
     IUpscalerJsonHandlingService upscalerJsonHandlingService,
@@ -26,10 +25,15 @@ public class ChapterMergeRevertService(
 {
     public async Task<List<Chapter>> RevertMergedChapterAsync(
         Chapter chapter,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
     )
     {
-        MergedChapterInfo? mergeInfo = await GetMergeInfoAsync(chapter, cancellationToken);
+        MergedChapterInfo? mergeInfo = await GetMergeInfoAsync(
+            chapter,
+            cancellationToken,
+            dbContext
+        );
         if (mergeInfo == null)
         {
             throw new InvalidOperationException(
@@ -65,7 +69,7 @@ public class ChapterMergeRevertService(
         }
 
         // If a partial upscaling repair task was scheduled for this merged chapter, cancel it now to avoid wasted work
-        await CancelPendingRepairTaskForChapterAsync(chapter.Id, cancellationToken);
+        await CancelPendingRepairTaskForChapterAsync(chapter.Id, cancellationToken, dbContext);
 
         try
         {
@@ -101,7 +105,8 @@ public class ChapterMergeRevertService(
                 restoredChapters,
                 chapter.MangaId,
                 chapter.IsUpscaled,
-                cancellationToken
+                cancellationToken,
+                dbContext
             );
 
             // Create Chapter entities for the restored parts
@@ -172,16 +177,22 @@ public class ChapterMergeRevertService(
 
     public async Task<bool> CanRevertChapterAsync(
         Chapter chapter,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
     )
     {
-        MergedChapterInfo? mergeInfo = await GetMergeInfoAsync(chapter, cancellationToken);
+        MergedChapterInfo? mergeInfo = await GetMergeInfoAsync(
+            chapter,
+            cancellationToken,
+            dbContext
+        );
         return mergeInfo != null;
     }
 
     public async Task<MergedChapterInfo?> GetMergeInfoAsync(
         Chapter chapter,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
     )
     {
         return await dbContext.MergedChapterInfos.FirstOrDefaultAsync(
@@ -497,7 +508,8 @@ public class ChapterMergeRevertService(
         List<FoundChapter> restoredChapters,
         int mangaId,
         bool shouldCleanupUpscaledToo,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         // Get the filenames of the chapters we're about to restore
@@ -524,7 +536,8 @@ public class ChapterMergeRevertService(
 
     private async Task CancelPendingRepairTaskForChapterAsync(
         int chapterId,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         try

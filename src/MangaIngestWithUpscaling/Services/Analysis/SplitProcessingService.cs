@@ -14,7 +14,6 @@ namespace MangaIngestWithUpscaling.Services.Analysis;
 
 [RegisterScoped]
 public class SplitProcessingService(
-    ApplicationDbContext dbContext,
     ILogger<SplitProcessingService> logger,
     ITaskQueue taskQueue,
     IFileSystem fileSystem,
@@ -25,19 +24,27 @@ public class SplitProcessingService(
         int chapterId,
         SplitDetectionResult result,
         int detectorVersion,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         // This overload is for single image processing if needed, but we prefer batch.
         // For now, let's just wrap it in a list.
-        await ProcessDetectionResultsAsync(chapterId, [result], detectorVersion, cancellationToken);
+        await ProcessDetectionResultsAsync(
+            chapterId,
+            [result],
+            detectorVersion,
+            cancellationToken,
+            dbContext
+        );
     }
 
     public async Task ProcessDetectionResultsAsync(
         int chapterId,
         IEnumerable<SplitDetectionResult> results,
         int detectorVersion,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         var resultList = results.ToList();
@@ -49,7 +56,7 @@ public class SplitProcessingService(
         // Only fail completely if ALL results have errors
         if (failedResults.Count > 0 && successfulResults.Count == 0)
         {
-            await stateManager.SetFailedAsync(chapterId, null, cancellationToken);
+            await stateManager.SetFailedAsync(chapterId, dbContext, cancellationToken);
 
             var uniqueErrors = failedResults
                 .Select(r => $"{Path.GetFileName(r.ImagePath)}: {r.Error}")
@@ -115,7 +122,7 @@ public class SplitProcessingService(
             await stateManager.SetNoSplitsFoundAsync(
                 chapterId,
                 detectorVersion,
-                null,
+                dbContext,
                 cancellationToken
             );
         }
@@ -124,13 +131,13 @@ public class SplitProcessingService(
             await stateManager.SetDetectedAsync(
                 chapterId,
                 detectorVersion,
-                null,
+                dbContext,
                 cancellationToken
             );
         }
 
         // Get the status that was just set for logging
-        var state = await stateManager.GetStateAsync(chapterId, null, cancellationToken);
+        var state = await stateManager.GetStateAsync(chapterId, dbContext, cancellationToken);
         var statusForLogging = state?.Status.ToString() ?? "Unknown";
 
         logger.LogInformation(
@@ -165,7 +172,7 @@ public class SplitProcessingService(
                 await stateManager.SetProcessingAsync(
                     chapterId,
                     detectorVersion,
-                    null,
+                    dbContext,
                     cancellationToken
                 );
             }
@@ -230,7 +237,7 @@ public class SplitProcessingService(
         }
     }
 
-    public async Task QueueSplitDetectionAsync(int chapterId)
+    public async Task QueueSplitDetectionAsync(int chapterId, ApplicationDbContext dbContext)
     {
         var chapter = await dbContext
             .Chapters.Include(c => c.Manga)
@@ -256,7 +263,10 @@ public class SplitProcessingService(
         }
     }
 
-    public async Task<List<StripSplitFinding>> GetSplitFindingsAsync(int chapterId)
+    public async Task<List<StripSplitFinding>> GetSplitFindingsAsync(
+        int chapterId,
+        ApplicationDbContext dbContext
+    )
     {
         return await dbContext
             .StripSplitFindings.Where(f => f.ChapterId == chapterId)

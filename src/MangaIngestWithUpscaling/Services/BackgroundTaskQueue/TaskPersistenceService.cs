@@ -17,15 +17,15 @@ public interface ITaskPersistenceService
 }
 
 [RegisterSingleton]
-public class TaskPersistenceService(IServiceScopeFactory scopeFactory) : ITaskPersistenceService
+public class TaskPersistenceService(IDbContextFactory<ApplicationDbContext> dbContextFactory)
+    : ITaskPersistenceService
 {
     public async Task<bool> ClaimTaskAsync(
         int taskId,
         CancellationToken cancellationToken = default
     )
     {
-        using var scope = scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync(cancellationToken);
 
         var task = await dbContext.PersistedTasks.FirstOrDefaultAsync(
             t => t.Id == taskId,
@@ -50,8 +50,7 @@ public class TaskPersistenceService(IServiceScopeFactory scopeFactory) : ITaskPe
 
     public async Task CompleteTaskAsync(int taskId, CancellationToken cancellationToken = default)
     {
-        using var scope = scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync(cancellationToken);
 
         var task = await dbContext.PersistedTasks.FirstOrDefaultAsync(
             t => t.Id == taskId,
@@ -67,8 +66,7 @@ public class TaskPersistenceService(IServiceScopeFactory scopeFactory) : ITaskPe
 
     public async Task FailTaskAsync(int taskId, CancellationToken cancellationToken = default)
     {
-        using var scope = scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync(cancellationToken);
 
         var task = await dbContext.PersistedTasks.FirstOrDefaultAsync(
             t => t.Id == taskId,
@@ -88,8 +86,7 @@ public class TaskPersistenceService(IServiceScopeFactory scopeFactory) : ITaskPe
         CancellationToken cancellationToken = default
     )
     {
-        using var scope = scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync(cancellationToken);
 
         var task = await dbContext.PersistedTasks.FirstOrDefaultAsync(
             t => t.Id == taskId,

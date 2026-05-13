@@ -59,7 +59,9 @@ public class UpscaleTask : BaseTask
     {
         var logger = services.GetRequiredService<ILogger<UpscaleTask>>();
         var localizer = services.GetRequiredService<IStringLocalizer<UpscaleTask>>();
-        var dbContext = services.GetRequiredService<ApplicationDbContext>();
+        await using var dbContext = await services
+            .GetRequiredService<IDbContextFactory<ApplicationDbContext>>()
+            .CreateDbContextAsync(cancellationToken);
         var metadataChanger = services.GetRequiredService<IMangaMetadataChanger>();
         var metadataHandling = services.GetRequiredService<IMetadataHandlingService>();
         var chapterChangedNotifier = services.GetRequiredService<IChapterChangedNotifier>();

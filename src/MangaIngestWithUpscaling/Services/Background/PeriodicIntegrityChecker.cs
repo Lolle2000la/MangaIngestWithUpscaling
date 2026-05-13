@@ -1,5 +1,7 @@
 using AutoRegisterInject;
+using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Services.LibraryIntegrity;
+using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Services.Background;
 
@@ -26,7 +28,10 @@ public class PeriodicIntegrityChecker : BackgroundService
                 scope.ServiceProvider.GetRequiredService<ILibraryIntegrityChecker>();
             try
             {
-                await libraryIntegrityChecker.CheckIntegrity(stoppingToken);
+                await using var dbContext = await scope
+                    .ServiceProvider.GetRequiredService<IDbContextFactory<ApplicationDbContext>>()
+                    .CreateDbContextAsync(stoppingToken);
+                await libraryIntegrityChecker.CheckIntegrity(stoppingToken, dbContext);
             }
             catch (OperationCanceledException)
             {

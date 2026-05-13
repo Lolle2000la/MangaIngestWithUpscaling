@@ -1,7 +1,8 @@
 @page "/libraries/edit/{LibraryId:int}"
 @using MangaIngestWithUpscaling.Data.LibraryManagement
+@using Microsoft.EntityFrameworkCore
 
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject NavigationManager NavigationManager
 @inject IStringLocalizer<EditLibrary> Loc
 
@@ -44,7 +45,8 @@
     {
         if (LibraryId.HasValue)
         {
-            Library = await DbContext.Libraries
+            await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+            Library = await dbContext.Libraries
             .Include(l => l.MangaSeries)
             .Include(l => l.FilterRules)
             .Include(l => l.RenameRules)
@@ -64,7 +66,8 @@
     {
         if (Library == null) return;
 
-        await DbContext.SaveChangesAsync();
+        await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+        await dbContext.SaveChangesAsync();
         NavigationManager.NavigateTo("/libraries");
     }
 }

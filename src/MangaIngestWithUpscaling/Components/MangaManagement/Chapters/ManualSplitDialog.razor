@@ -191,7 +191,7 @@
         _isLoading = true;
         try
         {
-            var dbContext = Services.GetRequiredService<ApplicationDbContext>();
+            var dbContext = await Services.GetRequiredService<IDbContextFactory<ApplicationDbContext>>().CreateDbContextAsync();
             var chapter = await dbContext.Chapters
                 .Include(c => c.Manga)
                     .ThenInclude(m => m.Library)
@@ -473,7 +473,7 @@
 
         try
         {
-            var dbContext = Services.GetRequiredService<ApplicationDbContext>();
+            var dbContext = await Services.GetRequiredService<IDbContextFactory<ApplicationDbContext>>().CreateDbContextAsync();
             var chapter = await dbContext.Chapters
                 .Include(c => c.Manga)
                     .ThenInclude(m => m.Library)
@@ -603,7 +603,7 @@
             var stateManager = Services.GetRequiredService<ISplitProcessingStateManager>();
             
             await taskQueue.EnqueueAsync(new ApplySplitsTask(chapter, ManualSplitService.ManualSplitVersion));
-            await stateManager.SetProcessingAsync(chapter.Id, ManualSplitService.ManualSplitVersion);
+            await stateManager.SetProcessingAsync(chapter.Id, ManualSplitService.ManualSplitVersion, dbContext, CancellationToken.None);
 
             Snackbar.Add(Loc["Success_SplitsApplied"], Severity.Success);
             MudDialog.Close(DialogResult.Ok(true));

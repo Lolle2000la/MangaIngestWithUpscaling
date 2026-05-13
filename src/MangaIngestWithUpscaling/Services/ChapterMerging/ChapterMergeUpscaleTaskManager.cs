@@ -10,7 +10,6 @@ namespace MangaIngestWithUpscaling.Services.ChapterMerging;
 
 [RegisterScoped]
 public class ChapterMergeUpscaleTaskManager(
-    ApplicationDbContext dbContext,
     ITaskQueue taskQueue,
     UpscaleTaskProcessor upscaleTaskProcessor,
     ILogger<ChapterMergeUpscaleTaskManager> logger
@@ -21,7 +20,8 @@ public class ChapterMergeUpscaleTaskManager(
         MergeInfo mergeInfo,
         Library library,
         UpscaledMergeResult? upscaledMergeResult = null,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
     )
     {
         List<int> chapterIds = originalChapters.Select(c => c.Id).ToList();
@@ -140,13 +140,15 @@ public class ChapterMergeUpscaleTaskManager(
             mergeInfo,
             library,
             upscaledMergeResult,
-            cancellationToken
+            cancellationToken,
+            dbContext
         );
     }
 
     public async Task<UpscaleCompatibilityResult> CheckUpscaleCompatibilityForMergeAsync(
         List<Chapter> chapters,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
     )
     {
         // Check if any chapters have pending or in-progress upscale tasks for logging purposes
@@ -193,7 +195,8 @@ public class ChapterMergeUpscaleTaskManager(
         MergeInfo mergeInfo,
         Library library,
         UpscaledMergeResult? upscaledMergeResult,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         if (string.IsNullOrEmpty(library.UpscaledLibraryPath) || library.UpscalerProfile is null)

@@ -3,11 +3,12 @@
 @using MangaIngestWithUpscaling.Configuration
 @using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Shared.Data.Analysis
+@using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Shared.Helpers
 @using Microsoft.Extensions.Options
 @using Humanizer
 @using System.Globalization
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IOptions<KavitaConfiguration> KavitaConfig
 @inject IDialogService DialogService
 @inject IStringLocalizer<EditLibraryForm> Loc
@@ -110,7 +111,7 @@
                         @bind-Value="Library.UpscalerProfileId" @bind-Value:after="OnInputChanged" Clearable="true"
                         Variant="Variant.Outlined">
                         <MudSelectItem T="int?" Value="null">@Loc["Option_None"]</MudSelectItem>
-                        @foreach (var upscalerConfig in DbContext.UpscalerProfiles)
+                        @foreach (var upscalerConfig in _upscalerProfiles)
                         {
                             <MudSelectItem T="int?" Value="@upscalerConfig.Id">@upscalerConfig.Name</MudSelectItem>
                         }
@@ -241,6 +242,14 @@
 
     [Parameter] public bool IsValid { get; set; } = false;
     [Parameter] public EventCallback<bool> IsValidChanged { get; set; }
+
+    private List<UpscalerProfile> _upscalerProfiles = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+        _upscalerProfiles = await dbContext.UpscalerProfiles.ToListAsync();
+    }
 
     private void IsValidChangedHandler(bool isValid)
     {

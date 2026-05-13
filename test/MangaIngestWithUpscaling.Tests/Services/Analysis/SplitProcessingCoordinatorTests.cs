@@ -44,10 +44,9 @@ public class SplitProcessingCoordinatorTests : IDisposable
         _fileSystem = Substitute.For<IFileSystem>();
         _logger = Substitute.For<ILogger<SplitProcessingCoordinator>>();
         _stateManagerLogger = Substitute.For<ILogger<SplitProcessingStateManager>>();
-        _stateManager = new SplitProcessingStateManager(_dbContext, _stateManagerLogger);
+        _stateManager = new SplitProcessingStateManager(_stateManagerLogger);
 
         _coordinator = new SplitProcessingCoordinator(
-            _dbContext,
             _taskQueue,
             _chapterChangedNotifier,
             _fileSystem,
@@ -99,7 +98,8 @@ public class SplitProcessingCoordinatorTests : IDisposable
         var result = await _coordinator.ShouldProcessAsync(
             chapterId,
             StripDetectionMode.DetectOnly,
-            cancellationToken: TestContext.Current.CancellationToken
+            _dbContext,
+            TestContext.Current.CancellationToken
         );
 
         // Assert
@@ -125,7 +125,8 @@ public class SplitProcessingCoordinatorTests : IDisposable
         var result = await _coordinator.ShouldProcessAsync(
             chapter.Id,
             StripDetectionMode.DetectOnly,
-            cancellationToken: TestContext.Current.CancellationToken
+            _dbContext,
+            TestContext.Current.CancellationToken
         );
 
         // Assert
@@ -151,7 +152,8 @@ public class SplitProcessingCoordinatorTests : IDisposable
         var result = await _coordinator.ShouldProcessAsync(
             chapter.Id,
             StripDetectionMode.DetectOnly,
-            cancellationToken: TestContext.Current.CancellationToken
+            _dbContext,
+            TestContext.Current.CancellationToken
         );
 
         // Assert
@@ -165,7 +167,11 @@ public class SplitProcessingCoordinatorTests : IDisposable
         var chapterId = 1;
 
         // Act
-        await _coordinator.EnqueueDetectionAsync(chapterId, TestContext.Current.CancellationToken);
+        await _coordinator.EnqueueDetectionAsync(
+            chapterId,
+            _dbContext,
+            TestContext.Current.CancellationToken
+        );
 
         // Assert
         await _taskQueue

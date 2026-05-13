@@ -26,7 +26,9 @@ public class LibraryIntegrityCheckTask : BaseTask
     )
     {
         var integrityChecker = services.GetRequiredService<ILibraryIntegrityChecker>();
-        var dbContext = services.GetRequiredService<ApplicationDbContext>();
+        await using var dbContext = await services
+            .GetRequiredService<IDbContextFactory<ApplicationDbContext>>()
+            .CreateDbContextAsync(cancellationToken);
         var localizer = services.GetRequiredService<IStringLocalizer<LibraryIntegrityCheckTask>>();
 
         var library = await dbContext
@@ -55,6 +57,6 @@ public class LibraryIntegrityCheckTask : BaseTask
             }
         });
 
-        await integrityChecker.CheckIntegrity(library, reporter, cancellationToken);
+        await integrityChecker.CheckIntegrity(library, reporter, cancellationToken, dbContext);
     }
 }

@@ -10,20 +10,16 @@ namespace MangaIngestWithUpscaling.Services.Analysis;
 /// for chapter split processing, ensuring proper initialization and versioning.
 /// </summary>
 [RegisterScoped]
-public class SplitProcessingStateManager(
-    ApplicationDbContext dbContext,
-    ILogger<SplitProcessingStateManager> logger
-) : ISplitProcessingStateManager
+public class SplitProcessingStateManager(ILogger<SplitProcessingStateManager> logger)
+    : ISplitProcessingStateManager
 {
-    private ApplicationDbContext GetContext(ApplicationDbContext? context) => context ?? dbContext;
-
     public async Task<ChapterSplitProcessingState> GetOrCreateStateAsync(
         int chapterId,
-        ApplicationDbContext? context = null,
+        ApplicationDbContext context,
         CancellationToken cancellationToken = default
     )
     {
-        var ctx = GetContext(context);
+        var ctx = context;
         var state = await ctx.ChapterSplitProcessingStates.FirstOrDefaultAsync(
             s => s.ChapterId == chapterId,
             cancellationToken
@@ -54,11 +50,11 @@ public class SplitProcessingStateManager(
     public async Task SetDetectedAsync(
         int chapterId,
         int detectorVersion,
-        ApplicationDbContext? context = null,
+        ApplicationDbContext context,
         CancellationToken cancellationToken = default
     )
     {
-        var ctx = GetContext(context);
+        var ctx = context;
         var state = await GetOrCreateStateAsync(chapterId, context, cancellationToken);
 
         state.LastProcessedDetectorVersion = detectorVersion;
@@ -78,11 +74,11 @@ public class SplitProcessingStateManager(
     public async Task SetNoSplitsFoundAsync(
         int chapterId,
         int detectorVersion,
-        ApplicationDbContext? context = null,
+        ApplicationDbContext context,
         CancellationToken cancellationToken = default
     )
     {
-        var ctx = GetContext(context);
+        var ctx = context;
         var state = await GetOrCreateStateAsync(chapterId, context, cancellationToken);
 
         state.LastProcessedDetectorVersion = detectorVersion;
@@ -102,11 +98,11 @@ public class SplitProcessingStateManager(
     public async Task SetAppliedAsync(
         int chapterId,
         int detectorVersion,
-        ApplicationDbContext? context = null,
+        ApplicationDbContext context,
         CancellationToken cancellationToken = default
     )
     {
-        var ctx = GetContext(context);
+        var ctx = context;
         var state = await GetOrCreateStateAsync(chapterId, context, cancellationToken);
 
         // Ensure LastProcessedDetectorVersion is set if not already
@@ -131,11 +127,11 @@ public class SplitProcessingStateManager(
 
     public async Task SetFailedAsync(
         int chapterId,
-        ApplicationDbContext? context = null,
+        ApplicationDbContext context,
         CancellationToken cancellationToken = default
     )
     {
-        var ctx = GetContext(context);
+        var ctx = context;
         var state = await GetOrCreateStateAsync(chapterId, context, cancellationToken);
 
         state.Status = SplitProcessingStatus.Failed;
@@ -150,11 +146,11 @@ public class SplitProcessingStateManager(
     public async Task SetProcessingAsync(
         int chapterId,
         int detectorVersion,
-        ApplicationDbContext? context = null,
+        ApplicationDbContext context,
         CancellationToken cancellationToken = default
     )
     {
-        var ctx = GetContext(context);
+        var ctx = context;
         var state = await GetOrCreateStateAsync(chapterId, context, cancellationToken);
 
         state.LastProcessedDetectorVersion = detectorVersion;
@@ -173,11 +169,11 @@ public class SplitProcessingStateManager(
 
     public async Task<ChapterSplitProcessingState?> GetStateAsync(
         int chapterId,
-        ApplicationDbContext? context = null,
+        ApplicationDbContext context,
         CancellationToken cancellationToken = default
     )
     {
-        var ctx = GetContext(context);
+        var ctx = context;
         return await ctx.ChapterSplitProcessingStates.FirstOrDefaultAsync(
             s => s.ChapterId == chapterId,
             cancellationToken
@@ -187,11 +183,11 @@ public class SplitProcessingStateManager(
     public async Task UpdateStatusAsync(
         int chapterId,
         SplitProcessingStatus newStatus,
-        ApplicationDbContext? context = null,
+        ApplicationDbContext context,
         CancellationToken cancellationToken = default
     )
     {
-        var ctx = GetContext(context);
+        var ctx = context;
         var state = await GetOrCreateStateAsync(chapterId, context, cancellationToken);
 
         state.Status = newStatus;
@@ -209,11 +205,11 @@ public class SplitProcessingStateManager(
 
     public async Task ResetToPendingAsync(
         int chapterId,
-        ApplicationDbContext? context = null,
+        ApplicationDbContext context,
         CancellationToken cancellationToken = default
     )
     {
-        var ctx = GetContext(context);
+        var ctx = context;
         var state = await GetOrCreateStateAsync(chapterId, context, cancellationToken);
 
         state.Status = SplitProcessingStatus.Pending;
@@ -232,11 +228,11 @@ public class SplitProcessingStateManager(
 
     public async Task DeleteStateAsync(
         int chapterId,
-        ApplicationDbContext? context = null,
+        ApplicationDbContext context,
         CancellationToken cancellationToken = default
     )
     {
-        var ctx = GetContext(context);
+        var ctx = context;
         var state = await ctx.ChapterSplitProcessingStates.FirstOrDefaultAsync(
             s => s.ChapterId == chapterId,
             cancellationToken

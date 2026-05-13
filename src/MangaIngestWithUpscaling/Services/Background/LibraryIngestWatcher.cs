@@ -10,12 +10,19 @@ namespace MangaIngestWithUpscaling.Services.Background;
 
 public class LibraryIngestWatcher : BackgroundService
 {
+    private readonly IDbContextFactory<ApplicationDbContext> _dbContextFactory;
     private readonly IServiceScopeFactory _serviceScopeFactory;
 
     private readonly List<IDisposable> fileSystemWatchers = new();
 
-    public LibraryIngestWatcher(IServiceScopeFactory serviceScopeFactory) =>
+    public LibraryIngestWatcher(
+        IDbContextFactory<ApplicationDbContext> dbContextFactory,
+        IServiceScopeFactory serviceScopeFactory
+    )
+    {
+        _dbContextFactory = dbContextFactory;
         _serviceScopeFactory = serviceScopeFactory;
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -35,8 +42,7 @@ public class LibraryIngestWatcher : BackgroundService
         {
             if (fileSystemWatchers.Count == 0)
             {
-                using var scope = _serviceScopeFactory.CreateScope();
-                var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                using var dbContext = _dbContextFactory.CreateDbContext();
                 var libraries = dbContext.Libraries.ToList();
                 foreach (var library in libraries)
                 {
@@ -60,8 +66,8 @@ public class LibraryIngestWatcher : BackgroundService
                         {
                             // process the new file
                             using var scope = _serviceScopeFactory.CreateScope();
-                            var dbContext =
-                                scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                            await using var dbContext =
+                                await _dbContextFactory.CreateDbContextAsync(stoppingToken);
                             var taskQueue = scope.ServiceProvider.GetRequiredService<ITaskQueue>();
                             // ensure the library still exists
                             if (

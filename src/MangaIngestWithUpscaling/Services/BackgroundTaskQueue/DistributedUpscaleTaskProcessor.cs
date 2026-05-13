@@ -22,6 +22,7 @@ namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 public class DistributedUpscaleTaskProcessor(
     TaskQueue taskQueue,
     IServiceScopeFactory scopeFactory,
+    IDbContextFactory<ApplicationDbContext> dbContextFactory,
     IOptions<UpscalerConfig> upscalerConfig,
     ITaskPersistenceService taskPersistenceService
 ) : BackgroundService
@@ -124,8 +125,9 @@ public class DistributedUpscaleTaskProcessor(
 
                     foreach (PersistedTask task in deadTasksToRequeue)
                     {
-                        using IServiceScope scope2 = scopeFactory.CreateScope();
-                        var db2 = scope2.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                        await using var db2 = await dbContextFactory.CreateDbContextAsync(
+                            stoppingToken
+                        );
                         // Re-check the current status in DB to avoid re-enqueueing tasks that already completed or were cancelled
                         PersistedTask? current = await db2
                             .PersistedTasks.AsNoTracking()
@@ -289,8 +291,9 @@ public class DistributedUpscaleTaskProcessor(
                         var logger = scope.ServiceProvider.GetRequiredService<
                             ILogger<DistributedUpscaleTaskProcessor>
                         >();
-                        var dbContext =
-                            scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                        await using var dbContext = await dbContextFactory.CreateDbContextAsync(
+                            linkedCts.Token
+                        );
                         Chapter? chapter = await dbContext
                             .Chapters.Include(t => t.Manga)
                                 .ThenInclude(t => t.Library)
@@ -321,8 +324,9 @@ public class DistributedUpscaleTaskProcessor(
                         var logger = scope.ServiceProvider.GetRequiredService<
                             ILogger<DistributedUpscaleTaskProcessor>
                         >();
-                        var dbContext =
-                            scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                        await using var dbContext = await dbContextFactory.CreateDbContextAsync(
+                            linkedCts.Token
+                        );
                         Chapter? chapter = await dbContext
                             .Chapters.Include(t => t.Manga)
                                 .ThenInclude(t => t.Library)
@@ -573,8 +577,7 @@ public class DistributedUpscaleTaskProcessor(
             runningTasks.Remove(taskId);
         }
 
-        using IServiceScope scope = scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync();
         PersistedTask? dbTask = await dbContext.PersistedTasks.FirstOrDefaultAsync(t =>
             t.Id == taskId
         );
@@ -586,10 +589,11 @@ public class DistributedUpscaleTaskProcessor(
         bool repairSuccess = true;
         if (dbTask.Data is RepairUpscaleTask repairTask)
         {
+            using IServiceScope repairScope = scopeFactory.CreateScope();
             repairSuccess = await HandleRepairTaskCompletion(
                 repairTask,
                 dbTask,
-                scope.ServiceProvider
+                repairScope.ServiceProvider
             );
         }
 
@@ -614,7 +618,9 @@ public class DistributedUpscaleTaskProcessor(
     )
     {
         var logger = services.GetRequiredService<ILogger<DistributedUpscaleTaskProcessor>>();
-        var dbContext = services.GetRequiredService<ApplicationDbContext>();
+        await using var dbContext = await services
+            .GetRequiredService<IDbContextFactory<ApplicationDbContext>>()
+            .CreateDbContextAsync();
         var repairService = services.GetRequiredService<IRepairService>();
         var metadataHandling = services.GetRequiredService<IMetadataHandlingService>();
 
@@ -836,8 +842,7 @@ public class DistributedUpscaleTaskProcessor(
         // Fetch the updated task from the database to notify listeners (e.g., UI).
         // This ensures the UI reflects the 'Failed' status and updated retry count,
         // even if the task wasn't tracked in the 'runningTasks' dictionary.
-        using IServiceScope dbScope = scopeFactory.CreateScope();
-        var dbContext = dbScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync();
         PersistedTask? localTask = await dbContext
             .PersistedTasks.AsNoTracking()
             .FirstOrDefaultAsync(t => t.Id == taskId);
@@ -860,7 +865,9 @@ public class DistributedUpscaleTaskProcessor(
     )
     {
         var logger = services.GetRequiredService<ILogger<DistributedUpscaleTaskProcessor>>();
-        var dbContext = services.GetRequiredService<ApplicationDbContext>();
+        await using var dbContext = await services
+            .GetRequiredService<IDbContextFactory<ApplicationDbContext>>()
+            .CreateDbContextAsync(cancellationToken);
 
         try
         {

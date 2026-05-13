@@ -10,17 +10,14 @@ namespace MangaIngestWithUpscaling.Services.ImageFiltering;
 [RegisterScoped]
 public class PerceptualHashMigrationService
 {
-    private readonly ApplicationDbContext _dbContext;
     private readonly IImageFilterService _imageFilterService;
     private readonly ILogger<PerceptualHashMigrationService> _logger;
 
     public PerceptualHashMigrationService(
-        ApplicationDbContext dbContext,
         IImageFilterService imageFilterService,
         ILogger<PerceptualHashMigrationService> logger
     )
     {
-        _dbContext = dbContext;
         _imageFilterService = imageFilterService;
         _logger = logger;
     }
@@ -30,10 +27,11 @@ public class PerceptualHashMigrationService
     /// This method reconstructs the perceptual hash from the thumbnail image
     /// </summary>
     public async Task UpdateExistingFilteredImagesAsync(
+        ApplicationDbContext dbContext,
         CancellationToken cancellationToken = default
     )
     {
-        var filteredImagesWithoutPerceptualHash = await _dbContext
+        var filteredImagesWithoutPerceptualHash = await dbContext
             .FilteredImages.Where(f =>
                 !f.PerceptualHash.HasValue && !string.IsNullOrEmpty(f.ThumbnailBase64)
             )
@@ -80,7 +78,7 @@ public class PerceptualHashMigrationService
 
         if (updated > 0)
         {
-            await _dbContext.SaveChangesAsync(cancellationToken);
+            await dbContext.SaveChangesAsync(cancellationToken);
             _logger.LogInformation(
                 "Updated {UpdatedCount} filtered images with perceptual hashes",
                 updated

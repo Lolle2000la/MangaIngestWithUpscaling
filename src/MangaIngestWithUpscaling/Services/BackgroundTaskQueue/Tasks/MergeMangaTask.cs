@@ -29,7 +29,9 @@ public class MergeMangaTask : BaseTask
     )
     {
         var merger = services.GetRequiredService<IMangaMerger>();
-        var dbContext = services.GetRequiredService<ApplicationDbContext>();
+        await using var dbContext = await services
+            .GetRequiredService<IDbContextFactory<ApplicationDbContext>>()
+            .CreateDbContextAsync(cancellationToken);
         var logger = services.GetRequiredService<ILogger<MergeMangaTask>>();
         var into = await dbContext.MangaSeries.FindAsync(IntoMangaId, cancellationToken);
         var toMerge = await dbContext

@@ -14,6 +14,7 @@ using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
@@ -1388,7 +1389,6 @@ public class ChapterMergeRevertServiceTests : IDisposable
 
         // Create service under test
         _revertService = new ChapterMergeRevertService(
-            _dbContext,
             _mockChapterPartMerger,
             null!,
             null!,
@@ -1432,7 +1432,8 @@ public class ChapterMergeRevertServiceTests : IDisposable
         // Act
         bool canRevert = await _revertService.CanRevertChapterAsync(
             mergedChapter,
-            TestContext.Current.CancellationToken
+            TestContext.Current.CancellationToken,
+            dbContext: _dbContext
         );
 
         // Assert
@@ -1451,7 +1452,8 @@ public class ChapterMergeRevertServiceTests : IDisposable
         // Act
         bool canRevert = await _revertService.CanRevertChapterAsync(
             normalChapter,
-            TestContext.Current.CancellationToken
+            TestContext.Current.CancellationToken,
+            dbContext: _dbContext
         );
 
         // Assert
@@ -1485,7 +1487,8 @@ public class ChapterMergeRevertServiceTests : IDisposable
         // Act
         MergedChapterInfo? result = await _revertService.GetMergeInfoAsync(
             mergedChapter,
-            TestContext.Current.CancellationToken
+            TestContext.Current.CancellationToken,
+            dbContext: _dbContext
         );
 
         // Assert
@@ -1508,7 +1511,8 @@ public class ChapterMergeRevertServiceTests : IDisposable
         // Act
         MergedChapterInfo? result = await _revertService.GetMergeInfoAsync(
             normalChapter,
-            TestContext.Current.CancellationToken
+            TestContext.Current.CancellationToken,
+            dbContext: _dbContext
         );
 
         // Assert
@@ -2184,7 +2188,6 @@ public class UpscaledChapterHandlingTests : IDisposable
                 partMergerLogger
             );
             var revertService = new ChapterMergeRevertService(
-                context,
                 chapterPartMerger,
                 chapterChangedNotifier,
                 upscalerJsonService,
@@ -2196,7 +2199,8 @@ public class UpscaledChapterHandlingTests : IDisposable
             // Act - Revert the merged chapter
             List<Chapter> restoredChapters = await revertService.RevertMergedChapterAsync(
                 chapter,
-                TestContext.Current.CancellationToken
+                TestContext.Current.CancellationToken,
+                dbContext: context
             );
 
             // Assert - Verify both regular and upscaled parts were restored
@@ -2328,7 +2332,6 @@ public class UpscaledChapterHandlingTests : IDisposable
                 partMergerLogger
             );
             var revertService = new ChapterMergeRevertService(
-                context,
                 chapterPartMerger,
                 chapterChangedNotifier,
                 upscalerJsonService,
@@ -2340,7 +2343,8 @@ public class UpscaledChapterHandlingTests : IDisposable
             // Act - Revert the merged chapter
             List<Chapter> restoredChapters = await revertService.RevertMergedChapterAsync(
                 chapter,
-                TestContext.Current.CancellationToken
+                TestContext.Current.CancellationToken,
+                dbContext: context
             );
 
             // Assert - Verify only regular parts were restored
@@ -2462,7 +2466,6 @@ public class PartialUpscalingMergeTests : IDisposable
         var taskQueueStub = Substitute.For<ITaskQueue>();
 
         var coordinator = new ChapterMergeCoordinator(
-            context,
             chapterPartMerger,
             upscaleTaskManager,
             taskQueueStub,
@@ -2591,7 +2594,12 @@ public class PartialUpscalingMergeTests : IDisposable
         services.AddScoped<IQueueCleanup, QueueCleanup>();
         var provider = services.BuildServiceProvider();
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+        var dbContextFactory = Substitute.For<IDbContextFactory<ApplicationDbContext>>();
+        dbContextFactory
+            .CreateDbContextAsync(Arg.Any<CancellationToken>())
+            .Returns(async x => context);
         var realQueueForProcessor = new TaskQueue(
+            dbContextFactory,
             scopeFactory,
             Substitute.For<ILogger<TaskQueue>>()
         );
@@ -2607,7 +2615,6 @@ public class PartialUpscalingMergeTests : IDisposable
         );
 
         var realTaskManager = new ChapterMergeUpscaleTaskManager(
-            context,
             taskQueue,
             processor,
             taskManagerLogger
@@ -2618,7 +2625,8 @@ public class PartialUpscalingMergeTests : IDisposable
             mergeInfo,
             library,
             result,
-            TestContext.Current.CancellationToken
+            TestContext.Current.CancellationToken,
+            dbContext: context
         );
 
         // Assert
@@ -2659,7 +2667,6 @@ public class PartialUpscalingMergeTests : IDisposable
         var taskQueueStub2 = Substitute.For<ITaskQueue>();
 
         var coordinator = new ChapterMergeCoordinator(
-            context,
             chapterPartMerger,
             upscaleTaskManager,
             taskQueueStub2,
@@ -2763,7 +2770,6 @@ public class PartialUpscalingMergeTests : IDisposable
         var taskQueueStub3 = Substitute.For<ITaskQueue>();
 
         var coordinator = new ChapterMergeCoordinator(
-            context,
             chapterPartMerger,
             upscaleTaskManager,
             taskQueueStub3,
@@ -2969,7 +2975,6 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         var taskQueue = Substitute.For<ITaskQueue>();
 
         var revertService = new ChapterMergeRevertService(
-            context,
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -3083,7 +3088,8 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         // Act
         var result = await revertService.RevertMergedChapterAsync(
             chapter,
-            TestContext.Current.CancellationToken
+            TestContext.Current.CancellationToken,
+            dbContext: context
         );
 
         // Assert
@@ -3116,7 +3122,6 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         var taskQueue2 = Substitute.For<ITaskQueue>();
 
         var revertService = new ChapterMergeRevertService(
-            context,
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -3235,7 +3240,8 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         // Act
         var result = await revertService.RevertMergedChapterAsync(
             chapter,
-            TestContext.Current.CancellationToken
+            TestContext.Current.CancellationToken,
+            dbContext: context
         );
 
         // Assert
@@ -3266,7 +3272,6 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         var taskQueue = Substitute.For<ITaskQueue>();
 
         var revertService = new ChapterMergeRevertService(
-            context,
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -3362,7 +3367,8 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         // Act
         var restored = await revertService.RevertMergedChapterAsync(
             chapter,
-            TestContext.Current.CancellationToken
+            TestContext.Current.CancellationToken,
+            dbContext: context
         );
 
         // Assert
@@ -3405,7 +3411,6 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         var taskQueue = Substitute.For<ITaskQueue>();
 
         var revertService = new ChapterMergeRevertService(
-            context,
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -3448,7 +3453,8 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         await Assert.ThrowsAsync<FileNotFoundException>(async () =>
             await revertService.RevertMergedChapterAsync(
                 chapter,
-                TestContext.Current.CancellationToken
+                TestContext.Current.CancellationToken,
+                dbContext: context
             )
         );
     }
@@ -3466,7 +3472,6 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         var taskQueue = Substitute.For<ITaskQueue>();
 
         var revertService = new ChapterMergeRevertService(
-            context,
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -3532,7 +3537,8 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         // Act
         var restored = await revertService.RevertMergedChapterAsync(
             chapter,
-            TestContext.Current.CancellationToken
+            TestContext.Current.CancellationToken,
+            dbContext: context
         );
 
         // Assert
@@ -3558,7 +3564,6 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
             .Returns(new LocalizedString("Error_NotAMergedChapter", "is not a merged chapter"));
 
         var revertService = new ChapterMergeRevertService(
-            context,
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -3637,7 +3642,8 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         // Act: First run should succeed
         var restoredFirst = await revertService.RevertMergedChapterAsync(
             chapter,
-            TestContext.Current.CancellationToken
+            TestContext.Current.CancellationToken,
+            dbContext: context
         );
         Assert.Equal(2, restoredFirst.Count);
 
@@ -3645,7 +3651,8 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         var ex2 = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await revertService.RevertMergedChapterAsync(
                 chapter,
-                TestContext.Current.CancellationToken
+                TestContext.Current.CancellationToken,
+                dbContext: context
             )
         );
         Assert.Contains("is not a merged chapter", ex2.Message);
@@ -3672,7 +3679,6 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
             .Do(_ => throw new InvalidOperationException("Queue failure"));
 
         var revertService = new ChapterMergeRevertService(
-            context,
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -3760,7 +3766,8 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             await revertService.RevertMergedChapterAsync(
                 chapter,
-                TestContext.Current.CancellationToken
+                TestContext.Current.CancellationToken,
+                dbContext: context
             )
         );
         Assert.Equal("Queue failure", ex.Message);
@@ -3791,10 +3798,17 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         services.AddScoped<IQueueCleanup, QueueCleanup>();
         ServiceProvider provider = services.BuildServiceProvider();
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
-        var taskQueue = new TaskQueue(scopeFactory, Substitute.For<ILogger<TaskQueue>>());
+        var dbContextFactory = Substitute.For<IDbContextFactory<ApplicationDbContext>>();
+        dbContextFactory
+            .CreateDbContextAsync(Arg.Any<CancellationToken>())
+            .Returns(async x => context);
+        var taskQueue = new TaskQueue(
+            dbContextFactory,
+            scopeFactory,
+            Substitute.For<ILogger<TaskQueue>>()
+        );
 
         var revertService = new ChapterMergeRevertService(
-            context,
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -3893,7 +3907,8 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         // Act
         List<Chapter> restored = await revertService.RevertMergedChapterAsync(
             merged,
-            TestContext.Current.CancellationToken
+            TestContext.Current.CancellationToken,
+            dbContext: context
         );
 
         // Assert: the pending RepairUpscaleTask should be removed from the queue
@@ -3924,7 +3939,6 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         var taskQueue = Substitute.For<ITaskQueue>();
 
         var revertService = new ChapterMergeRevertService(
-            context,
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -4041,7 +4055,8 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         // Act
         var restored = await revertService.RevertMergedChapterAsync(
             chapterA,
-            TestContext.Current.CancellationToken
+            TestContext.Current.CancellationToken,
+            dbContext: context
         );
 
         // Assert

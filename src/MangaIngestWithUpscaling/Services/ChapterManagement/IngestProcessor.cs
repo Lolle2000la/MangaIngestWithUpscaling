@@ -28,7 +28,6 @@ namespace MangaIngestWithUpscaling.Services.ChapterManagement;
 
 [RegisterScoped]
 public partial class IngestProcessor(
-    ApplicationDbContext dbContext,
     IChapterInIngestRecognitionService chapterRecognitionService,
     ILibraryRenamingService renamingService,
     ICbzConverter cbzConverter,
@@ -46,7 +45,11 @@ public partial class IngestProcessor(
     IStringLocalizer<IngestProcessor> localizer
 ) : IIngestProcessor
 {
-    public async Task ProcessAsync(Library library, CancellationToken cancellationToken)
+    public async Task ProcessAsync(
+        Library library,
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
+    )
     {
         if (!dbContext.Entry(library).Reference(l => l.UpscalerProfile).IsLoaded)
         {
@@ -145,7 +148,8 @@ public partial class IngestProcessor(
                 library,
                 series,
                 originalSeriesTitle,
-                cancellationToken
+                cancellationToken,
+                dbContext
             );
             processedSeriesEntities.Add(seriesEntity); // Track this series
 
@@ -314,7 +318,8 @@ public partial class IngestProcessor(
                     {
                         await CancelUpscaleTasksForOriginalPartsAsync(
                             originalsForMerge,
-                            cancellationToken
+                            cancellationToken,
+                            dbContext
                         );
                     }
                 }
@@ -425,7 +430,8 @@ public partial class IngestProcessor(
                         library,
                         pci.UpscalerProfile,
                         upscalerProfileCache,
-                        cancellationToken
+                        cancellationToken,
+                        dbContext
                     );
                     if (foundMatch != null)
                     {
@@ -735,6 +741,7 @@ public partial class IngestProcessor(
             bool deferForSplitDetection = await splitProcessingCoordinator.ShouldProcessAsync(
                 chapterTuple.Id,
                 library.StripDetectionMode,
+                dbContext,
                 cancellationToken: cancellationToken
             );
 
@@ -753,12 +760,14 @@ public partial class IngestProcessor(
                     await splitProcessingCoordinator.ShouldProcessAsync(
                         chapter.Id,
                         library.StripDetectionMode,
+                        dbContext,
                         cancellationToken: cancellationToken
                     )
                 )
                 {
                     await splitProcessingCoordinator.EnqueueDetectionAsync(
                         chapter.Id,
+                        dbContext,
                         cancellationToken
                     );
                 }
@@ -792,7 +801,8 @@ public partial class IngestProcessor(
     /// </summary>
     private async Task CancelUpscaleTasksForOriginalPartsAsync(
         List<Chapter> originals,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         foreach (Chapter ch in originals)
@@ -859,7 +869,8 @@ public partial class IngestProcessor(
         Library library,
         UpscalerProfileJsonDto? upscalerProfileDto,
         Dictionary<UpscalerProfileJsonDto, UpscalerProfile> upscalerProfileCache,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         // Path to the upscaled CBZ file in the ingest directory (using original path info)

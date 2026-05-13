@@ -116,12 +116,10 @@ public class LibraryIntegrityCheckerTests : IDisposable
         Assert.Equal(upscaledPath, chapter.UpscaledFullPath);
 
         var checker = new LibraryIntegrityChecker(
-            ctx,
             _factory,
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -132,11 +130,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
-        bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
+        bool changed = await checker.CheckIntegrity(
+            chapter,
+            TestContext.Current.CancellationToken,
+            ctx
+        );
 
         // Since IsUpscaled was already true and pages equal, we don't mark corrected; metadata could be fixed
         Assert.False(changed);
@@ -203,12 +205,10 @@ public class LibraryIntegrityCheckerTests : IDisposable
             .Returns(Task.FromResult(false));
 
         var checker = new LibraryIntegrityChecker(
-            ctx,
             _factory,
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -219,11 +219,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
-        bool result = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
+        bool result = await checker.CheckIntegrity(
+            chapter,
+            TestContext.Current.CancellationToken,
+            ctx
+        );
 
         Assert.True(result); // MaybeInProgress counts as needs attention
         Chapter reloaded = await ctx
@@ -272,12 +276,10 @@ public class LibraryIntegrityCheckerTests : IDisposable
             .Returns(new ExtractedMetadata("Series", "Ch1", null));
 
         var checker = new LibraryIntegrityChecker(
-            ctx,
             _factory,
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -288,12 +290,16 @@ public class LibraryIntegrityCheckerTests : IDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
         // Act - file does not exist
-        bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
+        bool changed = await checker.CheckIntegrity(
+            chapter,
+            TestContext.Current.CancellationToken,
+            ctx
+        );
 
         // Assert
         Assert.True(changed);
@@ -349,12 +355,10 @@ public class LibraryIntegrityCheckerTests : IDisposable
             .Returns(new ExtractedMetadata("Series", "Ch1", null));
 
         var checker = new LibraryIntegrityChecker(
-            ctx,
             _factory,
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -365,12 +369,16 @@ public class LibraryIntegrityCheckerTests : IDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
         // Act
-        bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
+        bool changed = await checker.CheckIntegrity(
+            chapter,
+            TestContext.Current.CancellationToken,
+            ctx
+        );
 
         // Assert
         Assert.True(changed);
@@ -429,12 +437,10 @@ public class LibraryIntegrityCheckerTests : IDisposable
             .Returns(new ExtractedMetadata("Series", "Ch", null));
 
         var checker = new LibraryIntegrityChecker(
-            ctx,
             _factory,
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -445,7 +451,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -468,7 +474,8 @@ public class LibraryIntegrityCheckerTests : IDisposable
         bool changed = await checker.CheckIntegrity(
             lib,
             reporter,
-            TestContext.Current.CancellationToken
+            TestContext.Current.CancellationToken,
+            ctx
         );
 
         // Assert
@@ -534,12 +541,10 @@ public class LibraryIntegrityCheckerTests : IDisposable
             .Returns(ci => new PageDifferenceResult(new[] { "001.png" }, Array.Empty<string>()));
 
         var checker = new LibraryIntegrityChecker(
-            ctx,
             _factory,
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -550,11 +555,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
-        bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
+        bool changed = await checker.CheckIntegrity(
+            chapter,
+            TestContext.Current.CancellationToken,
+            ctx
+        );
 
         Assert.True(changed);
 #pragma warning disable xUnit1051 // Mocked API doesn't accept token
@@ -615,12 +624,10 @@ public class LibraryIntegrityCheckerTests : IDisposable
             .Returns(ci => new PageDifferenceResult(Array.Empty<string>(), new[] { "X.png" }));
 
         var checker = new LibraryIntegrityChecker(
-            ctx,
             _factory,
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -631,11 +638,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
-        bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
+        bool changed = await checker.CheckIntegrity(
+            chapter,
+            TestContext.Current.CancellationToken,
+            ctx
+        );
 
         Assert.True(changed);
         // Should have cleared IsUpscaled and deleted file
@@ -718,12 +729,10 @@ public class LibraryIntegrityCheckerTests : IDisposable
             .Returns(ci => new PageDifferenceResult(new[] { "001.png" }, Array.Empty<string>()));
 
         var checker = new LibraryIntegrityChecker(
-            ctx,
             _factory,
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -734,11 +743,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
-        bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
+        bool changed = await checker.CheckIntegrity(
+            chapter,
+            TestContext.Current.CancellationToken,
+            ctx
+        );
         Assert.True(changed);
 
         // Should not enqueue a duplicate
@@ -789,12 +802,10 @@ public class LibraryIntegrityCheckerTests : IDisposable
             .Returns(new ExtractedMetadata("Series", "Ch1", null));
 
         var checker = new LibraryIntegrityChecker(
-            ctx,
             _factory,
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -805,11 +816,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
-        bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
+        bool changed = await checker.CheckIntegrity(
+            chapter,
+            TestContext.Current.CancellationToken,
+            ctx
+        );
 
         Assert.True(changed);
         await using (ApplicationDbContext verifyCtx = _db.CreateContext())
@@ -880,12 +895,10 @@ public class LibraryIntegrityCheckerTests : IDisposable
             .Returns(ci => new PageDifferenceResult(Array.Empty<string>(), new[] { "extra.png" }));
 
         var checker = new LibraryIntegrityChecker(
-            ctx,
             _factory,
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -896,11 +909,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
-        bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
+        bool changed = await checker.CheckIntegrity(
+            chapter,
+            TestContext.Current.CancellationToken,
+            ctx
+        );
 
         Assert.True(changed);
         // Should enqueue a repair task and keep the upscaled file
@@ -949,12 +966,10 @@ public class LibraryIntegrityCheckerTests : IDisposable
         await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
 
         var checker = new LibraryIntegrityChecker(
-            ctx,
             _factory,
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -965,11 +980,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
-        bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
+        bool changed = await checker.CheckIntegrity(
+            chapter,
+            TestContext.Current.CancellationToken,
+            ctx
+        );
 
         Assert.True(changed);
         var inDb = await ctx.Chapters.FirstOrDefaultAsync(
@@ -1044,12 +1063,10 @@ public class LibraryIntegrityCheckerTests : IDisposable
         Assert.Equal(0, await ctx.Chapters.CountAsync(TestContext.Current.CancellationToken));
 
         var checker = new LibraryIntegrityChecker(
-            ctx,
             _factory,
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -1060,11 +1077,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
-        bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
+        bool changed = await checker.CheckIntegrity(
+            lib,
+            TestContext.Current.CancellationToken,
+            ctx
+        );
 
         // Should have detected and created the missing chapter entity
         Assert.True(changed);
@@ -1172,12 +1193,10 @@ public class LibraryIntegrityCheckerTests : IDisposable
         Assert.Equal(0, await ctx.Chapters.CountAsync(TestContext.Current.CancellationToken));
 
         var checker = new LibraryIntegrityChecker(
-            ctx,
             _factory,
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -1188,11 +1207,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
-        bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
+        bool changed = await checker.CheckIntegrity(
+            lib,
+            TestContext.Current.CancellationToken,
+            ctx
+        );
 
         // Should have detected and created a single chapter entity representing both files
         Assert.True(changed);
@@ -1295,12 +1318,10 @@ public class LibraryIntegrityCheckerTests : IDisposable
             .Returns(Task.FromResult<UpscalerProfileJsonDto?>(upscalerProfileDto));
 
         var checker = new LibraryIntegrityChecker(
-            ctx,
             _factory,
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -1311,11 +1332,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
-        bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
+        bool changed = await checker.CheckIntegrity(
+            lib,
+            TestContext.Current.CancellationToken,
+            ctx
+        );
 
         // Should have detected the upscaled file and updated the existing chapter
         Assert.True(changed);
@@ -1402,12 +1427,10 @@ public class LibraryIntegrityCheckerTests : IDisposable
         Assert.Equal(0, await ctx.Chapters.CountAsync(TestContext.Current.CancellationToken));
 
         var checker = new LibraryIntegrityChecker(
-            ctx,
             _factory,
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -1418,11 +1441,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
-        bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
+        bool changed = await checker.CheckIntegrity(
+            lib,
+            TestContext.Current.CancellationToken,
+            ctx
+        );
 
         // Should NOT have created a chapter entity because there's no original
         Assert.False(changed);
@@ -1530,12 +1557,10 @@ public class LibraryIntegrityCheckerTests : IDisposable
         Assert.Equal(0, await ctx.Chapters.CountAsync(TestContext.Current.CancellationToken));
 
         var checker = new LibraryIntegrityChecker(
-            ctx,
             _factory,
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -1546,11 +1571,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
-        bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
+        bool changed = await checker.CheckIntegrity(
+            lib,
+            TestContext.Current.CancellationToken,
+            ctx
+        );
 
         // Should have detected and created a single chapter entity representing both files
         Assert.True(changed);
@@ -1612,12 +1641,10 @@ public class LibraryIntegrityCheckerTests : IDisposable
             .Returns(new[] { orphanedChapter }.ToAsyncEnumerable());
 
         var checker = new LibraryIntegrityChecker(
-            ctx,
             _factory,
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -1628,11 +1655,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
-        bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
+        bool changed = await checker.CheckIntegrity(
+            lib,
+            TestContext.Current.CancellationToken,
+            ctx
+        );
 
         // Should have moved file and created chapter entity
         Assert.True(changed);
@@ -1722,12 +1753,10 @@ public class LibraryIntegrityCheckerTests : IDisposable
             .Returns(new[] { orphanedChapter }.ToAsyncEnumerable());
 
         var checker = new LibraryIntegrityChecker(
-            ctx,
             _factory,
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -1738,11 +1767,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
-        bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
+        bool changed = await checker.CheckIntegrity(
+            lib,
+            TestContext.Current.CancellationToken,
+            ctx
+        );
 
         // Should have detected and deleted duplicate
         Assert.True(changed);
@@ -1807,12 +1840,10 @@ public class LibraryIntegrityCheckerTests : IDisposable
         _metadata.GetSeriesAndTitleFromComicInfoAsync(Arg.Any<string>()).Returns(wrongMetadata);
 
         var checker = new LibraryIntegrityChecker(
-            ctx,
             _factory,
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -1823,11 +1854,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
-        bool changed = await checker.CheckIntegrity(lib, TestContext.Current.CancellationToken);
+        bool changed = await checker.CheckIntegrity(
+            lib,
+            TestContext.Current.CancellationToken,
+            ctx
+        );
 
         // Should have created chapter with correct series title
         Assert.True(changed);
@@ -1909,12 +1944,10 @@ public class LibraryIntegrityCheckerTests : IDisposable
             .Returns(Task.FromResult(new ExtractedMetadata("Series", "Ch1", null)));
 
         var checker = new LibraryIntegrityChecker(
-            ctx,
             _factory,
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -1925,11 +1958,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
-        bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
+        bool changed = await checker.CheckIntegrity(
+            chapter,
+            TestContext.Current.CancellationToken,
+            ctx
+        );
 
         // Should return false (no correction needed) because this is a valid state:
         // detection was run, found no splits, and "applied" nothing
@@ -2003,12 +2040,10 @@ public class LibraryIntegrityCheckerTests : IDisposable
             .Returns(Task.FromResult(new ExtractedMetadata("Series", "Ch1", null)));
 
         var checker = new LibraryIntegrityChecker(
-            ctx,
             _factory,
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -2019,11 +2054,15 @@ public class LibraryIntegrityCheckerTests : IDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(NullLogger<SplitProcessingStateManager>.Instance),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
-        bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
+        bool changed = await checker.CheckIntegrity(
+            chapter,
+            TestContext.Current.CancellationToken,
+            ctx
+        );
 
         // Should return true (correction made) because this is truly corrupted
         Assert.True(changed);

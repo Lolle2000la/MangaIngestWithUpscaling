@@ -23,10 +23,13 @@ public class TaskQueueTests : IDisposable
         var services = new ServiceCollection();
         var dbName = $"TestDb_{Guid.NewGuid()}";
         services.AddDbContext<ApplicationDbContext>(options => options.UseInMemoryDatabase(dbName));
+        services.AddDbContextFactory<ApplicationDbContext>(options =>
+            options.UseInMemoryDatabase(dbName)
+        );
 
         _mockQueueCleanup = Substitute.For<IQueueCleanup>();
         _mockQueueCleanup
-            .CleanupAsync()
+            .CleanupAsync(Arg.Any<ApplicationDbContext>())
             .Returns(Task.FromResult<IReadOnlyList<int>>(Array.Empty<int>()));
         services.AddScoped<IQueueCleanup>(_ => _mockQueueCleanup);
 
@@ -37,6 +40,7 @@ public class TaskQueueTests : IDisposable
         _mockLogger = Substitute.For<ILogger<TaskQueue>>();
 
         _taskQueue = new TaskQueue(
+            serviceProvider.GetRequiredService<IDbContextFactory<ApplicationDbContext>>(),
             serviceProvider.GetRequiredService<IServiceScopeFactory>(),
             _mockLogger
         );
@@ -78,7 +82,7 @@ public class TaskQueueTests : IDisposable
         await _taskQueue.EnqueueAsync(upscaleTask);
 
         // Assert - Cleanup should be called when enqueueing tasks
-        await _mockQueueCleanup.Received(1).CleanupAsync();
+        await _mockQueueCleanup.Received(1).CleanupAsync(Arg.Any<ApplicationDbContext>());
     }
 
     [Fact]
@@ -93,7 +97,7 @@ public class TaskQueueTests : IDisposable
         Assert.Null(exception);
 
         // Verify cleanup was called
-        await _mockQueueCleanup.Received(1).CleanupAsync();
+        await _mockQueueCleanup.Received(1).CleanupAsync(Arg.Any<ApplicationDbContext>());
     }
 
     [Fact]
@@ -113,7 +117,7 @@ public class TaskQueueTests : IDisposable
     {
         // Arrange
         _mockQueueCleanup
-            .CleanupAsync()
+            .CleanupAsync(Arg.Any<ApplicationDbContext>())
             .Returns(Task.FromResult<IReadOnlyList<int>>(new List<int> { 5 }));
 
         var removalNotified = new TaskCompletionSource<int>();

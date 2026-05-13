@@ -1,4 +1,5 @@
-﻿using MangaIngestWithUpscaling.Data.LibraryManagement;
+﻿using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.LibraryManagement;
 
 namespace MangaIngestWithUpscaling.Services.MetadataHandling;
 
@@ -24,7 +25,8 @@ public interface IMangaMetadataChanger
         Manga manga,
         string newTitle,
         bool addOldToAlternative = true,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
     );
 
     /// <summary>
@@ -44,7 +46,11 @@ public interface IMangaMetadataChanger
     /// </summary>
     /// <param name="chapter">The chapter whose metadata to change.</param>
     /// <param name="newTitle">The new title to apply.</param>
-    Task ChangeChapterTitle(Chapter chapter, string newTitle);
+    Task ChangeChapterTitle(
+        Chapter chapter,
+        string newTitle,
+        ApplicationDbContext dbContext = null!
+    );
 }
 
 public enum RenameResult

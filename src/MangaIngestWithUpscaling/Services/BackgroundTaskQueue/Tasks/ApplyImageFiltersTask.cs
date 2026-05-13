@@ -24,7 +24,9 @@ public class ApplyImageFiltersTask : BaseTask
     )
     {
         using var scope = services.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        await using var dbContext = await scope
+            .ServiceProvider.GetRequiredService<IDbContextFactory<ApplicationDbContext>>()
+            .CreateDbContextAsync(cancellationToken);
         var imageFilterService = scope.ServiceProvider.GetRequiredService<IImageFilterService>();
         var logger = scope.ServiceProvider.GetRequiredService<ILogger<ApplyImageFiltersTask>>();
 

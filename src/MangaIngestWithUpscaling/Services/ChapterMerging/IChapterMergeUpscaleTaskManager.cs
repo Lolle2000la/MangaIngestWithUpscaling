@@ -1,3 +1,4 @@
+using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 
 namespace MangaIngestWithUpscaling.Services.ChapterMerging;
@@ -18,7 +19,8 @@ public interface IChapterMergeUpscaleTaskManager
         MergeInfo mergeInfo,
         Library library,
         UpscaledMergeResult? upscaledMergeResult = null,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
     );
 
     /// <summary>
@@ -30,6 +32,7 @@ public interface IChapterMergeUpscaleTaskManager
     /// <returns>Result indicating if merging is compatible</returns>
     Task<UpscaleCompatibilityResult> CheckUpscaleCompatibilityForMergeAsync(
         List<Chapter> chapters,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
     );
 }

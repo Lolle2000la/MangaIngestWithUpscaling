@@ -25,6 +25,9 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
         var services = new ServiceCollection();
         var dbName = $"TestDb_DistributedProcessor_{Guid.NewGuid()}";
         services.AddDbContext<ApplicationDbContext>(options => options.UseInMemoryDatabase(dbName));
+        services.AddDbContextFactory<ApplicationDbContext>(options =>
+            options.UseInMemoryDatabase(dbName)
+        );
 
         _mockPersistence = Substitute.For<ITaskPersistenceService>();
         _mockPersistence.ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(true);
@@ -34,7 +37,7 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
 
         var mockQueueCleanup = Substitute.For<IQueueCleanup>();
         mockQueueCleanup
-            .CleanupAsync()
+            .CleanupAsync(Arg.Any<ApplicationDbContext>())
             .Returns(Task.FromResult<IReadOnlyList<int>>(Array.Empty<int>()));
         services.AddScoped<IQueueCleanup>(_ => mockQueueCleanup);
 
@@ -49,6 +52,7 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
         var queueLogger = Substitute.For<ILogger<TaskQueue>>();
 
         _taskQueue = new TaskQueue(
+            serviceProvider.GetRequiredService<IDbContextFactory<ApplicationDbContext>>(),
             serviceProvider.GetRequiredService<IServiceScopeFactory>(),
             queueLogger
         );
@@ -56,6 +60,7 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
         _processor = new DistributedUpscaleTaskProcessor(
             _taskQueue,
             serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+            serviceProvider.GetRequiredService<IDbContextFactory<ApplicationDbContext>>(),
             _mockOptions,
             _mockPersistence
         );

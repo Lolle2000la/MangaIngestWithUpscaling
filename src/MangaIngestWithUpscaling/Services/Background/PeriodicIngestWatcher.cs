@@ -8,10 +8,17 @@ namespace MangaIngestWithUpscaling.Services.Background;
 
 public class PeriodicIngestWatcher : BackgroundService
 {
+    private readonly IDbContextFactory<ApplicationDbContext> _dbContextFactory;
     private readonly IServiceScopeFactory _serviceScopeFactory;
 
-    public PeriodicIngestWatcher(IServiceScopeFactory serviceScopeFactory) =>
+    public PeriodicIngestWatcher(
+        IDbContextFactory<ApplicationDbContext> dbContextFactory,
+        IServiceScopeFactory serviceScopeFactory
+    )
+    {
+        _dbContextFactory = dbContextFactory;
         _serviceScopeFactory = serviceScopeFactory;
+    }
 
     private List<Library> libraries = [];
 
@@ -23,7 +30,7 @@ public class PeriodicIngestWatcher : BackgroundService
         {
             using var scope = _serviceScopeFactory.CreateScope();
             var logger = scope.ServiceProvider.GetRequiredService<ILogger<PeriodicIngestWatcher>>();
-            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            await using var dbContext = await _dbContextFactory.CreateDbContextAsync(stoppingToken);
 
             var ingestProcessor = scope.ServiceProvider.GetRequiredService<IIngestProcessor>();
 
@@ -32,7 +39,7 @@ public class PeriodicIngestWatcher : BackgroundService
             {
                 try
                 {
-                    await ingestProcessor.ProcessAsync(library, stoppingToken);
+                    await ingestProcessor.ProcessAsync(library, stoppingToken, dbContext);
                 }
                 catch (OperationCanceledException)
                 {

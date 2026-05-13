@@ -17,7 +17,6 @@ namespace MangaIngestWithUpscaling.Services.MetadataHandling;
 [RegisterScoped]
 public class MangaMetadataChanger(
     IMetadataHandlingService metadataHandling,
-    ApplicationDbContext dbContext,
     IDialogService dialogService,
     ILogger<MangaMetadataChanger> logger,
     ITaskQueue taskQueue,
@@ -74,7 +73,8 @@ public class MangaMetadataChanger(
         Manga manga,
         string newTitle,
         bool addOldToAlternative = true,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
     )
     {
         var possibleCurrent = await dbContext.MangaSeries.FirstOrDefaultAsync(
@@ -368,7 +368,11 @@ public class MangaMetadataChanger(
     }
 
     /// <inheritdoc />
-    public async Task ChangeChapterTitle(Chapter chapter, string newTitle)
+    public async Task ChangeChapterTitle(
+        Chapter chapter,
+        string newTitle,
+        ApplicationDbContext dbContext = null!
+    )
     {
         await dbContext.Entry(chapter).Reference(c => c.Manga).LoadAsync();
         await dbContext.Entry(chapter.Manga).Reference(m => m.Library).LoadAsync();

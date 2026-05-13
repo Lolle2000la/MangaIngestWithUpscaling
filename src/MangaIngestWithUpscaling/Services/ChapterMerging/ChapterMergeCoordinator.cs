@@ -14,7 +14,6 @@ namespace MangaIngestWithUpscaling.Services.ChapterMerging;
 
 [RegisterScoped]
 public class ChapterMergeCoordinator(
-    ApplicationDbContext dbContext,
     IChapterPartMerger chapterPartMerger,
     IChapterMergeUpscaleTaskManager upscaleTaskManager,
     ITaskQueue taskQueue,
@@ -25,7 +24,8 @@ public class ChapterMergeCoordinator(
 {
     public async Task ProcessExistingChapterPartsForMergingAsync(
         Manga manga,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
     )
     {
         try
@@ -145,7 +145,8 @@ public class ChapterMergeCoordinator(
                         dbChaptersToUpdate,
                         library,
                         seriesLibraryPath,
-                        cancellationToken
+                        cancellationToken,
+                        dbContext
                     );
 
                     logger.LogInformation(
@@ -174,7 +175,8 @@ public class ChapterMergeCoordinator(
                     manga,
                     library,
                     seriesLibraryPath,
-                    cancellationToken
+                    cancellationToken,
+                    dbContext
                 );
             }
 
@@ -193,7 +195,8 @@ public class ChapterMergeCoordinator(
     public async Task UpdateDatabaseForMergeAsync(
         MergeInfo mergeInfo,
         List<Chapter> originalChapters,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
     )
     {
         // Keep the first chapter record and update it to represent the merged chapter
@@ -249,11 +252,12 @@ public class ChapterMergeCoordinator(
     public async Task MergeChaptersAsync(
         List<Chapter> chapters,
         Library library,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
     )
     {
         // Load necessary references
-        await LoadChapterReferencesAsync(chapters, cancellationToken);
+        await LoadChapterReferencesAsync(chapters, cancellationToken, dbContext);
 
         Manga manga = chapters.First().Manga;
         string seriesLibraryPath = BuildSeriesLibraryPath(library, manga.PrimaryTitle!);
@@ -329,7 +333,8 @@ public class ChapterMergeCoordinator(
     public async Task<List<MergeInfo>> MergeSelectedChaptersAsync(
         List<Chapter> selectedChapters,
         bool includeLatestChapters = false,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
     )
     {
         if (!selectedChapters.Any())
@@ -338,7 +343,7 @@ public class ChapterMergeCoordinator(
         }
 
         // Load necessary references
-        await LoadChapterReferencesAsync(selectedChapters, cancellationToken);
+        await LoadChapterReferencesAsync(selectedChapters, cancellationToken, dbContext);
 
         Manga manga = selectedChapters.First().Manga;
         Library library = manga.Library;
@@ -486,7 +491,8 @@ public class ChapterMergeCoordinator(
     public async Task<Dictionary<string, List<Chapter>>> GetValidMergeGroupsAsync(
         List<Chapter> selectedChapters,
         bool includeLatestChapters = false,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
     )
     {
         if (!selectedChapters.Any())
@@ -495,7 +501,7 @@ public class ChapterMergeCoordinator(
         }
 
         // Load necessary references
-        await LoadChapterReferencesAsync(selectedChapters, cancellationToken);
+        await LoadChapterReferencesAsync(selectedChapters, cancellationToken, dbContext);
 
         Manga manga = selectedChapters.First().Manga;
 
@@ -531,11 +537,12 @@ public class ChapterMergeCoordinator(
 
     public async Task<bool> CanChapterBeAddedToExistingMergedAsync(
         Chapter chapter,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
     )
     {
         // Load necessary references
-        await LoadChapterReferencesAsync([chapter], cancellationToken);
+        await LoadChapterReferencesAsync([chapter], cancellationToken, dbContext);
 
         Manga manga = chapter.Manga;
 
@@ -575,7 +582,8 @@ public class ChapterMergeCoordinator(
     public async Task<MergeActionInfo> GetPossibleMergeActionsAsync(
         List<Chapter> chapters,
         bool includeLatestChapters = false,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
     )
     {
         var result = new MergeActionInfo();
@@ -595,7 +603,7 @@ public class ChapterMergeCoordinator(
         );
 
         // Load necessary references
-        await LoadChapterReferencesAsync(chapters, cancellationToken);
+        await LoadChapterReferencesAsync(chapters, cancellationToken, dbContext);
 
         Manga manga = chapters.First().Manga;
 
@@ -726,7 +734,8 @@ public class ChapterMergeCoordinator(
     public async Task<bool> IsChapterPartAlreadyMergedAsync(
         string chapterFileName,
         Manga manga,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
     )
     {
         // Extract chapter number from filename
@@ -1092,7 +1101,8 @@ public class ChapterMergeCoordinator(
         Manga manga,
         Library library,
         string seriesLibraryPath,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         try
@@ -1167,7 +1177,8 @@ public class ChapterMergeCoordinator(
                 library,
                 seriesLibraryPath,
                 existingMergedChapter,
-                cancellationToken
+                cancellationToken,
+                dbContext
             );
 
             // Update the merged chapter info to include the new parts
@@ -1192,7 +1203,8 @@ public class ChapterMergeCoordinator(
             await HandleExistingMergedChapterUpscalingAsync(
                 existingMergedChapter,
                 library,
-                cancellationToken
+                cancellationToken,
+                dbContext
             );
 
             logger.LogInformation(
@@ -1371,7 +1383,8 @@ public class ChapterMergeCoordinator(
         Library library,
         string seriesLibraryPath,
         Chapter existingMergedChapter,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         if (string.IsNullOrEmpty(library.UpscaledLibraryPath))
@@ -1466,7 +1479,8 @@ public class ChapterMergeCoordinator(
     private async Task HandleExistingMergedChapterUpscalingAsync(
         Chapter existingMergedChapter,
         Library library,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         if (string.IsNullOrEmpty(library.UpscaledLibraryPath) || library.UpscalerProfile is null)
@@ -1578,7 +1592,8 @@ public class ChapterMergeCoordinator(
     /// </summary>
     private async Task LoadChapterReferencesAsync(
         List<Chapter> chapters,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         foreach (Chapter chapter in chapters)
@@ -1685,7 +1700,8 @@ public class ChapterMergeCoordinator(
         List<Chapter> originalChapters,
         Library library,
         string seriesLibraryPath,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         // Check upscale compatibility

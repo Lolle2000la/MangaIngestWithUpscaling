@@ -38,15 +38,9 @@ public class SplitDetectionUpscaleBugTests : IDisposable
         _taskQueue = Substitute.For<ITaskQueue>();
         _fileSystem = Substitute.For<IFileSystem>();
         _stateManagerLogger = Substitute.For<ILogger<SplitProcessingStateManager>>();
-        _stateManager = new SplitProcessingStateManager(_dbContext, _stateManagerLogger);
+        _stateManager = new SplitProcessingStateManager(_stateManagerLogger);
 
-        _service = new SplitProcessingService(
-            _dbContext,
-            _logger,
-            _taskQueue,
-            _fileSystem,
-            _stateManager
-        );
+        _service = new SplitProcessingService(_logger, _taskQueue, _fileSystem, _stateManager);
     }
 
     public void Dispose()
@@ -122,7 +116,8 @@ public class SplitDetectionUpscaleBugTests : IDisposable
             chapter.Id,
             results,
             1,
-            TestContext.Current.CancellationToken
+            TestContext.Current.CancellationToken,
+            _dbContext
         );
 
         // Assert
@@ -202,7 +197,8 @@ public class SplitDetectionUpscaleBugTests : IDisposable
             chapter.Id,
             results,
             1,
-            TestContext.Current.CancellationToken
+            TestContext.Current.CancellationToken,
+            _dbContext
         );
 
         // Assert

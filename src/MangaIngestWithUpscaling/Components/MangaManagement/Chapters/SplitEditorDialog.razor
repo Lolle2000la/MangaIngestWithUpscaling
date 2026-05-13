@@ -3,8 +3,10 @@
 @using MangaIngestWithUpscaling.Services.Analysis
 @using MangaIngestWithUpscaling.Shared.Data.Analysis
 @using System.Text.Json
+@using Microsoft.EntityFrameworkCore
 @using MudBlazor
 @inject ISplitProcessingService SplitProcessingService
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
 @inject IStringLocalizer<SplitEditorDialog> Loc
@@ -84,7 +86,8 @@
         _isLoading = true;
         try
         {
-            _findings = await SplitProcessingService.GetSplitFindingsAsync(ChapterId);
+            await using var loadDbContext = await DbContextFactory.CreateDbContextAsync();
+            _findings = await SplitProcessingService.GetSplitFindingsAsync(ChapterId, loadDbContext);
         }
         catch (Exception ex)
         {

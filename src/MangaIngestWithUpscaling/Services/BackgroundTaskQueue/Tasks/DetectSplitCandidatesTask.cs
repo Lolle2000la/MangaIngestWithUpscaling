@@ -40,7 +40,9 @@ public class DetectSplitCandidatesTask : BaseTask
         CancellationToken cancellationToken
     )
     {
-        var dbContext = services.GetRequiredService<ApplicationDbContext>();
+        await using var dbContext = await services
+            .GetRequiredService<IDbContextFactory<ApplicationDbContext>>()
+            .CreateDbContextAsync(cancellationToken);
         var splitDetectionService = services.GetRequiredService<ISplitDetectionService>();
         var splitProcessingService = services.GetRequiredService<ISplitProcessingService>();
         var logger = services.GetRequiredService<ILogger<DetectSplitCandidatesTask>>();
@@ -133,7 +135,8 @@ public class DetectSplitCandidatesTask : BaseTask
                 ChapterId,
                 results,
                 DetectorVersion,
-                cancellationToken
+                cancellationToken,
+                dbContext
             );
         }
         finally

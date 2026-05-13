@@ -8,6 +8,7 @@
 @using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition
 @using MangaIngestWithUpscaling.Shared.Services.MetadataHandling
 @inject IServiceProvider ServiceProvider
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject ISnackbar Snackbar
 @inject ILogger<PreviewLibraryRenames> Logger
 @inject IStringLocalizer<PreviewLibraryRenames> Loc
@@ -263,11 +264,10 @@
     {
         await Task.Run(async () =>
         {
-            await using var scope = ServiceProvider.CreateAsyncScope();
-            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-            var renamingService = scope.ServiceProvider.GetRequiredService<ILibraryRenamingService>();
-            var chapterRecognition = scope.ServiceProvider.GetRequiredService<IChapterInIngestRecognitionService>();
-            var metadataHandlingService = scope.ServiceProvider.GetRequiredService<IMetadataHandlingService>();
+            await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+            var renamingService = ServiceProvider.GetRequiredService<ILibraryRenamingService>();
+            var chapterRecognition = ServiceProvider.GetRequiredService<IChapterInIngestRecognitionService>();
+            var metadataHandlingService = ServiceProvider.GetRequiredService<IMetadataHandlingService>();
 
             // Clear previous previews
             await InvokeAsync(() =>

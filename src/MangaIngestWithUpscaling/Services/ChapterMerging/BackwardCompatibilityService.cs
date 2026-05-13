@@ -9,16 +9,15 @@ namespace MangaIngestWithUpscaling.Services.ChapterMerging;
 /// from before the enhanced merging functionality was added
 /// </summary>
 [RegisterScoped]
-public class BackwardCompatibilityService(
-    ApplicationDbContext dbContext,
-    ILogger<BackwardCompatibilityService> logger
-) : IBackwardCompatibilityService
+public class BackwardCompatibilityService(ILogger<BackwardCompatibilityService> logger)
+    : IBackwardCompatibilityService
 {
     /// <summary>
     /// Validates and ensures existing merged chapter records are compatible with enhanced functionality
     /// </summary>
     public async Task ValidateAndUpgradeExistingRecordsAsync(
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
     )
     {
         logger.LogInformation(
@@ -267,5 +266,8 @@ public interface IBackwardCompatibilityService
     /// <summary>
     /// Validates and ensures existing merged chapter records are compatible with enhanced functionality
     /// </summary>
-    Task ValidateAndUpgradeExistingRecordsAsync(CancellationToken cancellationToken = default);
+    Task ValidateAndUpgradeExistingRecordsAsync(
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
+    );
 }

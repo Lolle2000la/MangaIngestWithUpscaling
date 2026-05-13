@@ -11,12 +11,11 @@ public interface ISplitProcessingCoordinator
     /// </summary>
     /// <param name="chapterId">The ID of the chapter to check.</param>
     /// <param name="mode">The strip detection mode configured for the library/series.</param>
-    /// <param name="context">Optional DbContext to use for the check (useful for parallel operations).</param>
     /// <returns>True if detection is needed, false otherwise.</returns>
     Task<bool> ShouldProcessAsync(
         int chapterId,
         StripDetectionMode mode,
-        ApplicationDbContext? context = null,
+        ApplicationDbContext dbContext,
         CancellationToken cancellationToken = default
     );
 
@@ -24,7 +23,11 @@ public interface ISplitProcessingCoordinator
     /// Enqueues a split detection task for the given chapter.
     /// </summary>
     /// <param name="chapterId">The ID of the chapter.</param>
-    Task EnqueueDetectionAsync(int chapterId, CancellationToken cancellationToken = default);
+    Task EnqueueDetectionAsync(
+        int chapterId,
+        ApplicationDbContext dbContext,
+        CancellationToken cancellationToken = default
+    );
 
     /// <summary>
     /// Enqueues split detection tasks for multiple chapters.
@@ -32,6 +35,7 @@ public interface ISplitProcessingCoordinator
     /// <param name="chapterIds">The IDs of the chapters.</param>
     Task EnqueueDetectionBatchAsync(
         IEnumerable<int> chapterIds,
+        ApplicationDbContext dbContext,
         CancellationToken cancellationToken = default
     );
 
@@ -42,6 +46,7 @@ public interface ISplitProcessingCoordinator
     /// <returns>True if a task was enqueued, false if it was skipped (completed immediately).</returns>
     Task<bool> EnqueueDetectionIfPlausibleAsync(
         int chapterId,
+        ApplicationDbContext dbContext,
         CancellationToken cancellationToken = default
     );
 
@@ -52,6 +57,7 @@ public interface ISplitProcessingCoordinator
     Task OnSplitsAppliedAsync(
         int chapterId,
         int detectorVersion,
+        ApplicationDbContext dbContext,
         CancellationToken cancellationToken = default
     );
 }

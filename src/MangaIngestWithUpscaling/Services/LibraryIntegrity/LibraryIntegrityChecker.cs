@@ -24,7 +24,6 @@ namespace MangaIngestWithUpscaling.Services.LibraryIntegrity;
 
 [RegisterScoped]
 public partial class LibraryIntegrityChecker(
-    ApplicationDbContext dbContext,
     IDbContextFactory<ApplicationDbContext> dbContextFactory,
     IMetadataHandlingService metadataHandling,
     IChapterInIngestRecognitionService chapterRecognitionService,
@@ -54,15 +53,23 @@ public partial class LibraryIntegrityChecker(
     private readonly bool _fixImageExtensions = configOptions?.Value?.FixImageExtensions ?? false;
 
     /// <inheritdoc/>
-    public async Task<bool> CheckIntegrity(CancellationToken? cancellationToken = null)
+    public async Task<bool> CheckIntegrity(
+        CancellationToken? cancellationToken,
+        ApplicationDbContext dbContext
+    )
     {
-        return await CheckIntegrity(new Progress<IntegrityProgress>(_ => { }), cancellationToken);
+        return await CheckIntegrity(
+            new Progress<IntegrityProgress>(_ => { }),
+            cancellationToken,
+            dbContext
+        );
     }
 
     /// <inheritdoc />
     public async Task<bool> CheckIntegrity(
         IProgress<IntegrityProgress> progress,
-        CancellationToken? cancellationToken = null
+        CancellationToken? cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         CancellationToken ct = cancellationToken ?? CancellationToken.None;
@@ -112,7 +119,8 @@ public partial class LibraryIntegrityChecker(
                         )
                     );
                 }),
-                ct
+                ct,
+                dbContext
             );
 
             if (libraryChanged)
@@ -137,13 +145,15 @@ public partial class LibraryIntegrityChecker(
     /// <inheritdoc/>
     public async Task<bool> CheckIntegrity(
         Library library,
-        CancellationToken? cancellationToken = null
+        CancellationToken? cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         return await CheckIntegrity(
             library,
             new Progress<IntegrityProgress>(_ => { }),
-            cancellationToken
+            cancellationToken,
+            dbContext
         );
     }
 
@@ -151,7 +161,8 @@ public partial class LibraryIntegrityChecker(
     public async Task<bool> CheckIntegrity(
         Library library,
         IProgress<IntegrityProgress> progress,
-        CancellationToken? cancellationToken = null
+        CancellationToken? cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         // Parallelize per-chapter within the library using fresh DbContexts per task
@@ -215,7 +226,8 @@ public partial class LibraryIntegrityChecker(
             library,
             progress,
             totalChaptersInLibrary,
-            ct
+            ct,
+            dbContext
         );
         if (orphanedFilesFound)
         {
@@ -234,12 +246,17 @@ public partial class LibraryIntegrityChecker(
     }
 
     /// <inheritdoc/>
-    public async Task<bool> CheckIntegrity(Manga manga, CancellationToken? cancellationToken = null)
+    public async Task<bool> CheckIntegrity(
+        Manga manga,
+        CancellationToken? cancellationToken,
+        ApplicationDbContext dbContext
+    )
     {
         return await CheckIntegrity(
             manga,
             new Progress<IntegrityProgress>(_ => { }),
-            cancellationToken
+            cancellationToken,
+            dbContext
         );
     }
 
@@ -247,7 +264,8 @@ public partial class LibraryIntegrityChecker(
     public async Task<bool> CheckIntegrity(
         Manga manga,
         IProgress<IntegrityProgress> progress,
-        CancellationToken? cancellationToken = null
+        CancellationToken? cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         int totalChapters = await dbContext
@@ -308,19 +326,24 @@ public partial class LibraryIntegrityChecker(
     /// <inheritdoc/>
     public async Task<bool> CheckIntegrity(
         Chapter chapter,
-        CancellationToken? cancellationToken = null
+        CancellationToken? cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         try
         {
-            var origIntegrity = await CheckOriginalIntegrity(chapter, cancellationToken);
+            var origIntegrity = await CheckOriginalIntegrity(chapter, cancellationToken, dbContext);
             var upscaledIntegrity = IntegrityCheckResult.Ok;
             if (
                 origIntegrity != IntegrityCheckResult.Missing
                 && origIntegrity != IntegrityCheckResult.Invalid
                 && origIntegrity != IntegrityCheckResult.MaybeInProgress
             )
-                upscaledIntegrity = await CheckUpscaledIntegrity(chapter, cancellationToken);
+                upscaledIntegrity = await CheckUpscaledIntegrity(
+                    chapter,
+                    cancellationToken,
+                    dbContext
+                );
 
             if (
                 origIntegrity != IntegrityCheckResult.Ok
@@ -357,13 +380,14 @@ public partial class LibraryIntegrityChecker(
     public async Task<bool> CheckIntegrity(
         Chapter chapter,
         IProgress<IntegrityProgress> progress,
-        CancellationToken? cancellationToken = null
+        CancellationToken? cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         progress.Report(
             new IntegrityProgress(null, null, "status", $"Checking {chapter.FileName}")
         );
-        bool changed = await CheckIntegrity(chapter, cancellationToken);
+        bool changed = await CheckIntegrity(chapter, cancellationToken, dbContext);
         // Signal chapter completion; callers increment when Scope == "chapter"
         progress.Report(
             new IntegrityProgress(null, null, "chapter", $"Checked {chapter.FileName}")
@@ -392,7 +416,8 @@ public partial class LibraryIntegrityChecker(
 
     private async Task<IntegrityCheckResult> CheckOriginalIntegrity(
         Chapter chapter,
-        CancellationToken? cancellationToken = null
+        CancellationToken? cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         return await CheckOriginalIntegrity(dbContext, chapter, cancellationToken);
@@ -503,6 +528,7 @@ public partial class LibraryIntegrityChecker(
             {
                 await splitProcessingCoordinator.EnqueueDetectionAsync(
                     chapter.Id,
+                    context,
                     cancellationToken ?? CancellationToken.None
                 );
             }
@@ -744,7 +770,8 @@ public partial class LibraryIntegrityChecker(
 
     private async Task<IntegrityCheckResult> CheckUpscaledIntegrity(
         Chapter chapter,
-        CancellationToken? cancellationToken = null
+        CancellationToken? cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         return await CheckUpscaledIntegrity(dbContext, chapter, cancellationToken);
@@ -800,7 +827,8 @@ public partial class LibraryIntegrityChecker(
 
     private async Task<IntegrityCheckResult> CheckUpscaledArchiveValidity(
         Chapter chapter,
-        CancellationToken? cancellationToken = null
+        CancellationToken? cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         return await CheckUpscaledArchiveValidity(dbContext, chapter, cancellationToken);
@@ -1175,7 +1203,8 @@ public partial class LibraryIntegrityChecker(
         Library library,
         IProgress<IntegrityProgress> progress,
         int baseProgressCount,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         progress.Report(
@@ -1251,7 +1280,8 @@ public partial class LibraryIntegrityChecker(
         var chapterGroups = await GroupChaptersByCanonicalPath(
             allFoundChapters,
             library,
-            cancellationToken
+            cancellationToken,
+            dbContext
         );
 
         // Process each chapter group
@@ -1273,7 +1303,8 @@ public partial class LibraryIntegrityChecker(
                     await CreateChapterEntityForOrphanedChapterGroup(
                         library,
                         group,
-                        cancellationToken
+                        cancellationToken,
+                        dbContext
                     ) || anyChanges;
             }
             else if (group.UpscaledChapter != null && !existingChapter.IsUpscaled)
@@ -1284,7 +1315,8 @@ public partial class LibraryIntegrityChecker(
                         library,
                         group,
                         existingChapter,
-                        cancellationToken
+                        cancellationToken,
+                        dbContext
                     ) || anyChanges;
             }
         }
@@ -1299,7 +1331,8 @@ public partial class LibraryIntegrityChecker(
     private async Task<List<ChapterGroup>> GroupChaptersByCanonicalPath(
         List<(FoundChapter Chapter, bool IsFromUpscaledPath)> allFoundChapters,
         Library library,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         var groups = new Dictionary<string, ChapterGroup>();
@@ -1375,7 +1408,8 @@ public partial class LibraryIntegrityChecker(
         Library library,
         ChapterGroup group,
         FoundChapter chapterToUse,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         // Look for existing chapters with the same series title (including alternative titles)
@@ -1616,7 +1650,8 @@ public partial class LibraryIntegrityChecker(
     private async Task<bool> CreateChapterEntityForOrphanedChapterGroup(
         Library library,
         ChapterGroup group,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         try
@@ -1648,7 +1683,8 @@ public partial class LibraryIntegrityChecker(
                         library,
                         group,
                         existingOriginalChapter,
-                        cancellationToken
+                        cancellationToken,
+                        dbContext
                     );
                 }
             }
@@ -1670,7 +1706,8 @@ public partial class LibraryIntegrityChecker(
                     library,
                     group,
                     chapterToUse,
-                    cancellationToken
+                    cancellationToken,
+                    dbContext
                 )
             )
             {
@@ -1682,7 +1719,8 @@ public partial class LibraryIntegrityChecker(
                 library,
                 chapterToUse.Metadata.Series,
                 null,
-                cancellationToken
+                cancellationToken,
+                dbContext
             );
 
             // Move original file to correct location if needed
@@ -1734,7 +1772,8 @@ public partial class LibraryIntegrityChecker(
                 var upscalerProfile =
                     await chapterProcessingService.FindOrCreateUpscalerProfileAsync(
                         group.UpscalerProfileDto,
-                        cancellationToken
+                        cancellationToken,
+                        dbContext
                     );
                 if (upscalerProfile != null)
                 {
@@ -1780,7 +1819,8 @@ public partial class LibraryIntegrityChecker(
         Library library,
         ChapterGroup group,
         Chapter existingChapter,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         try
@@ -1809,7 +1849,8 @@ public partial class LibraryIntegrityChecker(
                 var upscalerProfile =
                     await chapterProcessingService.FindOrCreateUpscalerProfileAsync(
                         group.UpscalerProfileDto,
-                        cancellationToken
+                        cancellationToken,
+                        dbContext
                     );
                 if (upscalerProfile != null)
                 {

@@ -8,7 +8,7 @@
 @using Humanizer
 @using System.Globalization
 
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IDialogService DialogService
 @inject ITaskQueue TaskQueue
 @inject IImageFilterService ImageFilterService
@@ -185,7 +185,8 @@
 
     protected override async Task OnInitializedAsync()
     {
-        Library = await DbContext.Libraries
+        await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+        Library = await dbContext.Libraries
         .Include(l => l.FilteredImages)
         .FirstOrDefaultAsync(l => l.Id == LibraryId);
 
@@ -274,7 +275,8 @@
 
         if (result is not null && !result.Canceled)
         {
-            await DbContext.SaveChangesAsync();
+            await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+            await dbContext.SaveChangesAsync();
             await table.ReloadServerData();
             Snackbar.Add(Loc["Snackbar_FilterUpdated"], Severity.Success);
         }
@@ -289,9 +291,10 @@
 
         if (confirm == true)
         {
+            await using var dbContext = await DbContextFactory.CreateDbContextAsync();
             Library!.FilteredImages.Remove(filteredImage);
-            DbContext.FilteredImages.Remove(filteredImage);
-            await DbContext.SaveChangesAsync();
+            dbContext.FilteredImages.Remove(filteredImage);
+            await dbContext.SaveChangesAsync();
             await table.ReloadServerData();
             Snackbar.Add(Loc["Snackbar_FilterDeleted"], Severity.Success);
         }

@@ -15,7 +15,6 @@ namespace MangaIngestWithUpscaling.Services.ChapterManagement;
 /// </summary>
 [RegisterScoped]
 public partial class ChapterProcessingService(
-    ApplicationDbContext dbContext,
     IUpscalerJsonHandlingService upscalerJsonHandlingService,
     IFileSystem fileSystem,
     IStringLocalizer<ChapterProcessingService> localizer,
@@ -61,7 +60,8 @@ public partial class ChapterProcessingService(
     /// <returns>The upscaler profile, or null if creation failed</returns>
     public async Task<UpscalerProfile?> FindOrCreateUpscalerProfileAsync(
         UpscalerProfileJsonDto dto,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         try
@@ -112,7 +112,8 @@ public partial class ChapterProcessingService(
         Library library,
         string seriesTitle,
         string? originalSeriesTitle,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         // Try to find existing series (also considering alternate names)

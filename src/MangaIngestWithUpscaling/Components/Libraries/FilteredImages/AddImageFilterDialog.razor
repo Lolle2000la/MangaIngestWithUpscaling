@@ -3,7 +3,7 @@
 @using MangaIngestWithUpscaling.Services.ImageFiltering
 @using MangaIngestWithUpscaling.Shared.Constants
 @using Microsoft.Extensions.Localization
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IImageFilterService ImageFilterService
 @inject ILogger<AddImageFilterDialog> Logger
 @inject IStringLocalizer<AddImageFilterDialog> Loc
@@ -308,15 +308,17 @@
                 Logger.LogInformation("Saving filtered image to database - OriginalFileName: {OriginalFileName}, ContentHash: {ContentHash}",
                 filteredImage.OriginalFileName, filteredImage.ContentHash);
 
+                await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+
                 // Ensure the Library's FilteredImages collection is loaded
-                if (!DbContext.Entry(Library).Collection(l => l.FilteredImages).IsLoaded)
+                if (!dbContext.Entry(Library).Collection(l => l.FilteredImages).IsLoaded)
                 {
-                    await DbContext.Entry(Library).Collection(l => l.FilteredImages).LoadAsync();
+                    await dbContext.Entry(Library).Collection(l => l.FilteredImages).LoadAsync();
                 }
 
                 Library.FilteredImages.Add(filteredImage);
-                DbContext.FilteredImages.Add(filteredImage);
-                await DbContext.SaveChangesAsync();
+                dbContext.FilteredImages.Add(filteredImage);
+                await dbContext.SaveChangesAsync();
                 Logger.LogInformation("Successfully saved filtered image to database");
             }
 

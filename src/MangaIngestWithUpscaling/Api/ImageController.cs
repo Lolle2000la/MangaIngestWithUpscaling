@@ -7,12 +7,15 @@ namespace MangaIngestWithUpscaling.Api;
 
 [ApiController]
 [Route("api/images")]
-public class ImageController(ApplicationDbContext dbContext, ILogger<ImageController> logger)
-    : ControllerBase
+public class ImageController(
+    IDbContextFactory<ApplicationDbContext> dbContextFactory,
+    ILogger<ImageController> logger
+) : ControllerBase
 {
     [HttpGet("chapter/{chapterId}/file/{fileName}")]
     public async Task<IActionResult> GetChapterImage(int chapterId, string fileName)
     {
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync();
         var chapter = await dbContext
             .Chapters.Include(c => c.Manga)
                 .ThenInclude(m => m.Library)

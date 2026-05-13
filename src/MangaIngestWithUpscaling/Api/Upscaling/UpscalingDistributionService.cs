@@ -20,7 +20,7 @@ namespace MangaIngestWithUpscaling.Api.Upscaling;
 [Authorize(AuthenticationSchemes = "ApiKey")]
 public partial class UpscalingDistributionService(
     DistributedUpscaleTaskProcessor taskProcessor,
-    ApplicationDbContext dbContext,
+    IDbContextFactory<ApplicationDbContext> dbContextFactory,
     IFileSystem fileSystem,
     IChapterChangedNotifier chapterChangedNotifier,
     ISplitProcessingService splitProcessingService,
@@ -98,6 +98,9 @@ public partial class UpscalingDistributionService(
         }
         else if (task.Data is ApplySplitsTask applySplitsTask)
         {
+            await using var dbContext = await dbContextFactory.CreateDbContextAsync(
+                context.CancellationToken
+            );
             var findings = await dbContext
                 .StripSplitFindings.Where(f =>
                     f.ChapterId == applySplitsTask.ChapterId
@@ -123,8 +126,11 @@ public partial class UpscalingDistributionService(
             return new UpscaleTaskDelegationResponse { TaskId = -1, UpscalerProfile = null };
         }
 
+        await using var dbContext2 = await dbContextFactory.CreateDbContextAsync(
+            context.CancellationToken
+        );
         Shared.Data.LibraryManagement.UpscalerProfile? upscalerProfile =
-            await dbContext.UpscalerProfiles.FindAsync(upscalerProfileId);
+            await dbContext2.UpscalerProfiles.FindAsync(upscalerProfileId);
 
         if (upscalerProfile == null)
         {
@@ -227,6 +233,9 @@ public partial class UpscalingDistributionService(
             );
         }
 
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync(
+            context.CancellationToken
+        );
         var task = await dbContext.PersistedTasks.FindAsync(request.TaskId);
         if (task == null)
         {
@@ -342,6 +351,9 @@ public partial class UpscalingDistributionService(
         ServerCallContext context
     )
     {
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync(
+            context.CancellationToken
+        );
         var task = await dbContext.PersistedTasks.FindAsync(request.TaskId);
         if (task == null)
         {
@@ -455,6 +467,9 @@ public partial class UpscalingDistributionService(
     {
         try
         {
+            await using var dbContext = await dbContextFactory.CreateDbContextAsync(
+                context.CancellationToken
+            );
             var task = await dbContext.PersistedTasks.FindAsync(request.TaskId);
             if (task == null)
             {
@@ -491,7 +506,8 @@ public partial class UpscalingDistributionService(
                 detectTask.ChapterId,
                 results,
                 detectTask.DetectorVersion,
-                context.CancellationToken
+                context.CancellationToken,
+                dbContext
             );
 
             await taskProcessor.TaskCompleted(request.TaskId);
@@ -519,6 +535,9 @@ public partial class UpscalingDistributionService(
         ServerCallContext context
     )
     {
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync(
+            context.CancellationToken
+        );
         var taskChunks = new Dictionary<int, List<int>>();
 
         await foreach (
@@ -720,7 +739,9 @@ public partial class UpscalingDistributionService(
 
                     await splitProcessingCoordinator.OnSplitsAppliedAsync(
                         applySplitsTask.ChapterId,
-                        applySplitsTask.DetectorVersion
+                        applySplitsTask.DetectorVersion,
+                        dbContext,
+                        context.CancellationToken
                     );
 
                     await taskProcessor.TaskCompleted(taskId);

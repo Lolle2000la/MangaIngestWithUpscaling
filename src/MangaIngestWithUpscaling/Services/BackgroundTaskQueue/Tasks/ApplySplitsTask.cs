@@ -1,5 +1,8 @@
+using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.Analysis;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 
@@ -33,10 +36,15 @@ public class ApplySplitsTask : BaseTask
     )
     {
         var splitApplicationService = services.GetRequiredService<ISplitApplicationService>();
+        var dbContextFactory = services.GetRequiredService<
+            IDbContextFactory<ApplicationDbContext>
+        >();
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         await splitApplicationService.ApplySplitsAsync(
             ChapterId,
             DetectorVersion,
-            cancellationToken
+            cancellationToken,
+            dbContext
         );
     }
 }

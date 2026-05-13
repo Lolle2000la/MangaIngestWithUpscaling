@@ -1,5 +1,6 @@
 ﻿using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Services.ChapterManagement;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
@@ -18,7 +19,9 @@ public class ScanIngestTask : BaseTask
     {
         var logger = services.GetRequiredService<ILogger<ScanIngestTask>>();
         var localizer = services.GetRequiredService<IStringLocalizer<ScanIngestTask>>();
-        var dbContext = services.GetRequiredService<ApplicationDbContext>();
+        await using var dbContext = await services
+            .GetRequiredService<IDbContextFactory<ApplicationDbContext>>()
+            .CreateDbContextAsync(cancellationToken);
         var library = await dbContext.Libraries.FindAsync(
             [LibraryId],
             cancellationToken: cancellationToken
@@ -32,7 +35,7 @@ public class ScanIngestTask : BaseTask
         else
         {
             LibraryName = library.Name;
-            await ingestProcessor.ProcessAsync(library, cancellationToken);
+            await ingestProcessor.ProcessAsync(library, cancellationToken, dbContext);
         }
     }
 }

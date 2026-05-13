@@ -1,3 +1,4 @@
+using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 
@@ -9,14 +10,19 @@ public interface ISplitProcessingService
         int chapterId,
         SplitDetectionResult result,
         int detectorVersion,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     );
     Task ProcessDetectionResultsAsync(
         int chapterId,
         IEnumerable<SplitDetectionResult> results,
         int detectorVersion,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     );
-    Task QueueSplitDetectionAsync(int chapterId);
-    Task<List<StripSplitFinding>> GetSplitFindingsAsync(int chapterId);
+    Task QueueSplitDetectionAsync(int chapterId, ApplicationDbContext dbContext);
+    Task<List<StripSplitFinding>> GetSplitFindingsAsync(
+        int chapterId,
+        ApplicationDbContext dbContext
+    );
 }

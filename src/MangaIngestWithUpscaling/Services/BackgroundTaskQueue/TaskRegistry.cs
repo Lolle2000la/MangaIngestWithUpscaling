@@ -17,22 +17,22 @@ namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 public class TaskRegistry : IHostedService, IDisposable
 {
     private readonly CompositeDisposable _cleanups = new();
+    private readonly IDbContextFactory<ApplicationDbContext> _dbContextFactory;
     private readonly DistributedUpscaleTaskProcessor _distributedUpscaleProcessor;
-    private readonly IServiceScopeFactory _scopeFactory;
     private readonly StandardTaskProcessor _standardProcessor;
     private readonly TaskQueue _taskQueue;
     private readonly SourceCache<PersistedTask, int> _tasks = new(x => x.Id);
     private readonly UpscaleTaskProcessor _upscaleProcessor;
 
     public TaskRegistry(
-        IServiceScopeFactory scopeFactory,
+        IDbContextFactory<ApplicationDbContext> dbContextFactory,
         TaskQueue taskQueue,
         StandardTaskProcessor standardProcessor,
         UpscaleTaskProcessor upscalerProcessor,
         DistributedUpscaleTaskProcessor distributedUpscaleProcessor
     )
     {
-        _scopeFactory = scopeFactory;
+        _dbContextFactory = dbContextFactory;
         _taskQueue = taskQueue;
         _standardProcessor = standardProcessor;
         _upscaleProcessor = upscalerProcessor;
@@ -81,8 +81,7 @@ public class TaskRegistry : IHostedService, IDisposable
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         // Initial load of all tasks (pending, processing, completed, failed, canceled)
-        using IServiceScope scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        await using var db = await _dbContextFactory.CreateDbContextAsync(cancellationToken);
         List<PersistedTask> all = await db
             .PersistedTasks.AsNoTracking()
             .ToListAsync(cancellationToken);

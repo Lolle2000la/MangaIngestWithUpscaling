@@ -10,7 +10,6 @@ namespace MangaIngestWithUpscaling.Services.MangaManagement;
 [RegisterScoped]
 public class MangaLibraryMover(
     ILogger<MangaLibraryMover> logger,
-    ApplicationDbContext dbContext,
     ITaskQueue taskQueue,
     IFileSystem fileSystem
 ) : IMangaLibraryMover
@@ -18,7 +17,8 @@ public class MangaLibraryMover(
     public async Task MoveMangaAsync(
         Manga manga,
         Library targetLibrary,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext dbContext = null!
     )
     {
         // A manga library change is very close to a rename in how it is handled.

@@ -2,7 +2,7 @@
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.ChapterManagement
 @using Microsoft.Extensions.Localization
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IChapterDeletion DeletionService
 @inject IStringLocalizer<DeleteChaptersDialog> Loc
 
@@ -33,12 +33,14 @@
 
     private async Task Submit()
     {
+        await using var dbContext = await DbContextFactory.CreateDbContextAsync();
+
         foreach (var chapter in Chapters)
         {
-            DeletionService.DeleteChapter(chapter, DeleteOriginalFiles, DeleteUpscaledFiles);
+            DeletionService.DeleteChapter(chapter, DeleteOriginalFiles, DeleteUpscaledFiles, dbContext);
         }
 
-        await DbContext.SaveChangesAsync();
+        await dbContext.SaveChangesAsync();
 
         MudDialog.Close(DialogResult.Ok(true));
     }

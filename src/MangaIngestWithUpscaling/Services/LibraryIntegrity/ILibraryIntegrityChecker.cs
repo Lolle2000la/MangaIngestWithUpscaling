@@ -1,4 +1,5 @@
-﻿using MangaIngestWithUpscaling.Data.LibraryManagement;
+﻿using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.LibraryManagement;
 
 namespace MangaIngestWithUpscaling.Services.LibraryIntegrity;
 
@@ -10,7 +11,11 @@ public interface ILibraryIntegrityChecker
     /// <param name="library">The library to check.</param>
     /// <param name="cancellationToken"></param>
     /// <returns>Whether the check has resulted in changes. If <c>true</c> you should reload your data.</returns>
-    Task<bool> CheckIntegrity(Library library, CancellationToken? cancellationToken = null);
+    Task<bool> CheckIntegrity(
+        Library library,
+        CancellationToken? cancellationToken,
+        ApplicationDbContext dbContext
+    );
 
     /// <summary>
     ///     Checks the integrity of a library with progress reporting.
@@ -21,7 +26,8 @@ public interface ILibraryIntegrityChecker
     Task<bool> CheckIntegrity(
         Library library,
         IProgress<IntegrityProgress> progress,
-        CancellationToken? cancellationToken = null
+        CancellationToken? cancellationToken,
+        ApplicationDbContext dbContext
     );
 
     /// <summary>
@@ -30,7 +36,11 @@ public interface ILibraryIntegrityChecker
     /// <param name="manga">The manga series to check.</param>
     /// <param name="cancellationToken"></param>
     /// <returns>Whether the check has resulted in changes. If <c>true</c> you should reload your data.</returns>
-    Task<bool> CheckIntegrity(Manga manga, CancellationToken? cancellationToken = null);
+    Task<bool> CheckIntegrity(
+        Manga manga,
+        CancellationToken? cancellationToken,
+        ApplicationDbContext dbContext
+    );
 
     /// <summary>
     ///     Checks the integrity of a manga series with progress reporting.
@@ -41,7 +51,8 @@ public interface ILibraryIntegrityChecker
     Task<bool> CheckIntegrity(
         Manga manga,
         IProgress<IntegrityProgress> progress,
-        CancellationToken? cancellationToken = null
+        CancellationToken? cancellationToken,
+        ApplicationDbContext dbContext
     );
 
     /// <summary>
@@ -50,7 +61,11 @@ public interface ILibraryIntegrityChecker
     /// <param name="chapter">The chapter to check.</param>
     /// <param name="cancellationToken"></param>
     /// <returns>Whether the check has resulted in changes. If <c>true</c> you should reload your data.</returns>
-    Task<bool> CheckIntegrity(Chapter chapter, CancellationToken? cancellationToken = null);
+    Task<bool> CheckIntegrity(
+        Chapter chapter,
+        CancellationToken? cancellationToken,
+        ApplicationDbContext dbContext
+    );
 
     /// <summary>
     ///     Checks the integrity of a chapter with progress reporting.
@@ -61,7 +76,8 @@ public interface ILibraryIntegrityChecker
     Task<bool> CheckIntegrity(
         Chapter chapter,
         IProgress<IntegrityProgress> progress,
-        CancellationToken? cancellationToken = null
+        CancellationToken? cancellationToken,
+        ApplicationDbContext dbContext
     );
 
     /// <summary>
@@ -69,7 +85,7 @@ public interface ILibraryIntegrityChecker
     /// </summary>
     /// <param name="cancellationToken"></param>
     /// <returns>Whether the check has resulted in changes. If <c>true</c> you should reload your data.</returns>
-    Task<bool> CheckIntegrity(CancellationToken? cancellationToken = null);
+    Task<bool> CheckIntegrity(CancellationToken? cancellationToken, ApplicationDbContext dbContext);
 
     /// <summary>
     ///     Checks the integrity of all libraries with progress reporting.
@@ -78,6 +94,7 @@ public interface ILibraryIntegrityChecker
     /// <param name="cancellationToken"></param>
     Task<bool> CheckIntegrity(
         IProgress<IntegrityProgress> progress,
-        CancellationToken? cancellationToken = null
+        CancellationToken? cancellationToken,
+        ApplicationDbContext dbContext
     );
 }

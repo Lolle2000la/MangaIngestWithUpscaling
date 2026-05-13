@@ -145,11 +145,16 @@ public class TaskRegistryTests
         var dbName = $"TaskRegistry_{Guid.NewGuid()}";
         services.AddLogging();
         services.AddDbContext<ApplicationDbContext>(options => options.UseInMemoryDatabase(dbName));
+        services.AddDbContextFactory<ApplicationDbContext>(options =>
+            options.UseInMemoryDatabase(dbName)
+        );
         services.AddSingleton<IOptions<UpscalerConfig>>(
             Options.Create(new UpscalerConfig { RemoteOnly = true })
         );
         var cleanup = Substitute.For<IQueueCleanup>();
-        cleanup.CleanupAsync().Returns(Task.FromResult<IReadOnlyList<int>>(Array.Empty<int>()));
+        cleanup
+            .CleanupAsync(Arg.Any<ApplicationDbContext>())
+            .Returns(Task.FromResult<IReadOnlyList<int>>(Array.Empty<int>()));
         services.AddScoped<IQueueCleanup>(_ => cleanup);
         services.AddSingleton(Substitute.For<ITaskPersistenceService>());
 
@@ -157,7 +162,10 @@ public class TaskRegistryTests
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
 
         var queueLogger = provider.GetRequiredService<ILogger<TaskQueue>>();
-        var taskQueue = new TaskQueue(scopeFactory, queueLogger);
+        var dbContextFactory = provider.GetRequiredService<
+            IDbContextFactory<ApplicationDbContext>
+        >();
+        var taskQueue = new TaskQueue(dbContextFactory, scopeFactory, queueLogger);
 
         var persistence = provider.GetRequiredService<ITaskPersistenceService>();
         var standard = new StandardTaskProcessor(
@@ -176,11 +184,18 @@ public class TaskRegistryTests
         var distributed = new DistributedUpscaleTaskProcessor(
             taskQueue,
             scopeFactory,
+            dbContextFactory,
             provider.GetRequiredService<IOptions<UpscalerConfig>>(),
             persistence
         );
 
-        var registry = new TaskRegistry(scopeFactory, taskQueue, standard, upscaler, distributed);
+        var registry = new TaskRegistry(
+            dbContextFactory,
+            taskQueue,
+            standard,
+            upscaler,
+            distributed
+        );
         await registry.StartAsync(TestContext.Current.CancellationToken);
 
         // Enqueue a task so the registry gets an entry via TaskEnqueuedOrChanged

@@ -39,10 +39,9 @@ public class OnSplitsAppliedAsyncTests : IDisposable
         _fileSystem = Substitute.For<IFileSystem>();
         _logger = Substitute.For<ILogger<SplitProcessingCoordinator>>();
         _stateManagerLogger = Substitute.For<ILogger<SplitProcessingStateManager>>();
-        _stateManager = new SplitProcessingStateManager(_dbContext, _stateManagerLogger);
+        _stateManager = new SplitProcessingStateManager(_stateManagerLogger);
 
         _coordinator = new SplitProcessingCoordinator(
-            _dbContext,
             _taskQueue,
             _chapterChangedNotifier,
             _fileSystem,
@@ -111,6 +110,7 @@ public class OnSplitsAppliedAsyncTests : IDisposable
         await _coordinator.OnSplitsAppliedAsync(
             chapter.Id,
             1,
+            _dbContext,
             TestContext.Current.CancellationToken
         );
 
@@ -183,6 +183,7 @@ public class OnSplitsAppliedAsyncTests : IDisposable
         await _coordinator.OnSplitsAppliedAsync(
             chapter.Id,
             1,
+            _dbContext,
             TestContext.Current.CancellationToken
         );
 
