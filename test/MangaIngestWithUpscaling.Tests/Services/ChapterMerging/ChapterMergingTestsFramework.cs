@@ -2672,7 +2672,11 @@ public class PartialUpscalingMergeTests : IDisposable
 
         // Add a pending split detection task to the database
         var splitTask = new DetectSplitCandidatesTask(chapter.Id, 1);
-        var persistedTask = new PersistedTask { Data = splitTask, Status = PersistedTaskStatus.Pending };
+        var persistedTask = new PersistedTask
+        {
+            Data = splitTask,
+            Status = PersistedTaskStatus.Pending,
+        };
         context.PersistedTasks.Add(persistedTask);
         await context.SaveChangesAsync(TestContext.Current.CancellationToken);
 
@@ -2688,7 +2692,7 @@ public class PartialUpscalingMergeTests : IDisposable
         );
 
         var taskQueue = Substitute.For<ITaskQueue>();
-        
+
         // Build minimal services to satisfy UpscaleTaskProcessor constructor
         var services = new ServiceCollection();
         services.AddLogging();
@@ -2771,7 +2775,7 @@ public class PartialUpscalingMergeTests : IDisposable
         );
 
         var taskQueue = Substitute.For<ITaskQueue>();
-        
+
         // Build minimal services to satisfy UpscaleTaskProcessor constructor
         var services = new ServiceCollection();
         services.AddLogging();
@@ -2798,7 +2802,12 @@ public class PartialUpscalingMergeTests : IDisposable
 
         // Configure split coordinator to say split detection IS needed
         splitCoordinator
-            .ShouldProcessAsync(chapter.Id, library.StripDetectionMode, context, Arg.Any<CancellationToken>())
+            .ShouldProcessAsync(
+                chapter.Id,
+                library.StripDetectionMode,
+                context,
+                Arg.Any<CancellationToken>()
+            )
             .Returns(true);
 
         var taskManager = new ChapterMergeUpscaleTaskManager(
@@ -2825,9 +2834,7 @@ public class PartialUpscalingMergeTests : IDisposable
             .EnqueueDetectionAsync(chapter.Id, Arg.Any<CancellationToken>());
 
         // Verify upscaling was NOT enqueued directly
-        await taskQueue
-            .DidNotReceive()
-            .EnqueueAsync(Arg.Any<UpscaleTask>());
+        await taskQueue.DidNotReceive().EnqueueAsync(Arg.Any<UpscaleTask>());
     }
 
     [Fact]

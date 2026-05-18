@@ -199,7 +199,12 @@ public class ChapterMergeUpscaleTaskManager(
         {
             logger.LogInformation(
                 "Merging chapters with pending/processing tasks - these will be canceled/removed: {ChapterNames}",
-                string.Join(", ", chapters.Where(c => pendingTasks.Any(pt => GetChapterId(pt.Data) == c.Id)).Select(c => c.FileName))
+                string.Join(
+                    ", ",
+                    chapters
+                        .Where(c => pendingTasks.Any(pt => GetChapterId(pt.Data) == c.Id))
+                        .Select(c => c.FileName)
+                )
             );
         }
 
