@@ -4,11 +4,13 @@ using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
+using MangaIngestWithUpscaling.Services.Analysis;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.ChapterMerging;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
@@ -2606,10 +2608,12 @@ public class PartialUpscalingMergeTests : IDisposable
             taskPersistenceService
         );
 
+        var splitCoordinator = Substitute.For<ISplitProcessingCoordinator>();
         var realTaskManager = new ChapterMergeUpscaleTaskManager(
             context,
             taskQueue,
             processor,
+            splitCoordinator,
             taskManagerLogger
         );
 
@@ -2644,6 +2648,186 @@ public class PartialUpscalingMergeTests : IDisposable
                 Arg.Any<Func<FoundChapter, string>?>(),
                 Arg.Any<CancellationToken>()
             );
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task HandleUpscaleTaskManagement_ShouldCleanupSplitTasks_WhenMerging()
+    {
+        // Arrange
+        await using ApplicationDbContext context = CreateDbContext();
+        var library = CreateTestLibrary();
+        var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
+        context.Libraries.Add(library);
+        context.MangaSeries.Add(manga);
+
+        var chapter = new Chapter
+        {
+            FileName = "Chapter 11.cbz",
+            Manga = manga,
+            RelativePath = Path.Combine("Test Manga", "Chapter 11.cbz"),
+        };
+        context.Chapters.Add(chapter);
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Add a pending split detection task to the database
+        var splitTask = new DetectSplitCandidatesTask(chapter.Id, 1);
+        var persistedTask = new PersistedTask { Data = splitTask, Status = PersistedTaskStatus.Pending };
+        context.PersistedTasks.Add(persistedTask);
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var mergeInfo = new MergeInfo(
+            new FoundChapter(
+                "Chapter 11.cbz",
+                "Test Manga/Chapter 11.cbz",
+                ChapterStorageType.Cbz,
+                new ExtractedMetadata("Test Manga", "Chapter 11", "11")
+            ),
+            new List<OriginalChapterPart>(),
+            "11"
+        );
+
+        var taskQueue = Substitute.For<ITaskQueue>();
+        
+        // Build minimal services to satisfy UpscaleTaskProcessor constructor
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton(context);
+        var provider = services.BuildServiceProvider();
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+        var realQueueForProcessor = new TaskQueue(
+            scopeFactory,
+            Substitute.For<ILogger<TaskQueue>>()
+        );
+        var upscalerOptions = Options.Create(new UpscalerConfig { RemoteOnly = true });
+        var processorLogger = Substitute.For<ILogger<UpscaleTaskProcessor>>();
+        var taskPersistenceService = Substitute.For<ITaskPersistenceService>();
+        var upscaleTaskProcessor = new UpscaleTaskProcessor(
+            realQueueForProcessor,
+            scopeFactory,
+            upscalerOptions,
+            processorLogger,
+            taskPersistenceService
+        );
+
+        var splitCoordinator = Substitute.For<ISplitProcessingCoordinator>();
+        var taskManagerLogger = Substitute.For<ILogger<ChapterMergeUpscaleTaskManager>>();
+
+        var taskManager = new ChapterMergeUpscaleTaskManager(
+            context,
+            taskQueue,
+            upscaleTaskProcessor,
+            splitCoordinator,
+            taskManagerLogger
+        );
+
+        // Act
+        await taskManager.HandleUpscaleTaskManagementAsync(
+            new List<Chapter> { chapter },
+            mergeInfo,
+            library,
+            null,
+            TestContext.Current.CancellationToken
+        );
+
+        // Assert
+        // Verify split detection task was removed from task queue
+        await taskQueue
+            .Received(1)
+            .RemoveTaskAsync(Arg.Is<PersistedTask>(t => t.Id == persistedTask.Id));
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task HandleUpscaleTaskManagement_ShouldScheduleSplitDetection_WhenMergedChapterNeedsIt()
+    {
+        // Arrange
+        await using ApplicationDbContext context = CreateDbContext();
+        var library = CreateTestLibrary();
+        library.StripDetectionMode = StripDetectionMode.DetectAndApply;
+
+        var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
+        context.Libraries.Add(library);
+        context.MangaSeries.Add(manga);
+
+        var chapter = new Chapter
+        {
+            FileName = "Chapter 10.cbz",
+            Manga = manga,
+            RelativePath = Path.Combine("Test Manga", "Chapter 10.cbz"),
+        };
+        context.Chapters.Add(chapter);
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var mergeInfo = new MergeInfo(
+            new FoundChapter(
+                "Chapter 10.cbz",
+                "Test Manga/Chapter 10.cbz",
+                ChapterStorageType.Cbz,
+                new ExtractedMetadata("Test Manga", "Chapter 10", "10")
+            ),
+            new List<OriginalChapterPart>(),
+            "10"
+        );
+
+        var taskQueue = Substitute.For<ITaskQueue>();
+        
+        // Build minimal services to satisfy UpscaleTaskProcessor constructor
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddSingleton(context);
+        var provider = services.BuildServiceProvider();
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+        var realQueueForProcessor = new TaskQueue(
+            scopeFactory,
+            Substitute.For<ILogger<TaskQueue>>()
+        );
+        var upscalerOptions = Options.Create(new UpscalerConfig { RemoteOnly = true });
+        var processorLogger = Substitute.For<ILogger<UpscaleTaskProcessor>>();
+        var taskPersistenceService = Substitute.For<ITaskPersistenceService>();
+        var upscaleTaskProcessor = new UpscaleTaskProcessor(
+            realQueueForProcessor,
+            scopeFactory,
+            upscalerOptions,
+            processorLogger,
+            taskPersistenceService
+        );
+
+        var splitCoordinator = Substitute.For<ISplitProcessingCoordinator>();
+        var taskManagerLogger = Substitute.For<ILogger<ChapterMergeUpscaleTaskManager>>();
+
+        // Configure split coordinator to say split detection IS needed
+        splitCoordinator
+            .ShouldProcessAsync(chapter.Id, library.StripDetectionMode, context, Arg.Any<CancellationToken>())
+            .Returns(true);
+
+        var taskManager = new ChapterMergeUpscaleTaskManager(
+            context,
+            taskQueue,
+            upscaleTaskProcessor,
+            splitCoordinator,
+            taskManagerLogger
+        );
+
+        // Act
+        await taskManager.HandleUpscaleTaskManagementAsync(
+            new List<Chapter> { chapter },
+            mergeInfo,
+            library,
+            null,
+            TestContext.Current.CancellationToken
+        );
+
+        // Assert
+        // Verify split detection was enqueued
+        await splitCoordinator
+            .Received(1)
+            .EnqueueDetectionAsync(chapter.Id, Arg.Any<CancellationToken>());
+
+        // Verify upscaling was NOT enqueued directly
+        await taskQueue
+            .DidNotReceive()
+            .EnqueueAsync(Arg.Any<UpscaleTask>());
     }
 
     [Fact]
