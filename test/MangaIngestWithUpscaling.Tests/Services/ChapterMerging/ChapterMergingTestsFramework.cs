@@ -2833,8 +2833,9 @@ public class PartialUpscalingMergeTests : IDisposable
             .Received(1)
             .EnqueueDetectionAsync(chapter.Id, Arg.Any<CancellationToken>());
 
-        // Verify upscaling was NOT enqueued directly
+        // Verify upscaling-related tasks were NOT enqueued directly
         await taskQueue.DidNotReceive().EnqueueAsync(Arg.Any<UpscaleTask>());
+        await taskQueue.DidNotReceive().EnqueueAsync(Arg.Any<RepairUpscaleTask>());
     }
 
     [Fact]
