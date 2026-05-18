@@ -110,7 +110,9 @@ builder.Services.AddSerilog(
             .ReadFrom.Configuration(builder.Configuration)
             .ReadFrom.Services(services)
             .Enrich.FromLogContext()
-            .WriteTo.Console()
+            .WriteTo.Console(
+                outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}"
+            )
             .WriteTo.SQLite(
                 Path.GetFullPath(loggingConnectionReadOnlyStringBuilder.DataSource),
                 tableName: "Logs",

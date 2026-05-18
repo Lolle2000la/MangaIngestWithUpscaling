@@ -7,6 +7,7 @@ using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.Python;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.Options;
+using Serilog;
 #if VELOPACK_RELEASE
 using Velopack;
 using Velopack.Sources;
@@ -20,6 +21,17 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddEnvironmentVariables("Ingest_");
 
 builder.RegisterConfig();
+
+builder.Services.AddSerilog(
+    (services, lc) =>
+        lc
+            .ReadFrom.Configuration(builder.Configuration)
+            .ReadFrom.Services(services)
+            .Enrich.FromLogContext()
+            .WriteTo.Console(
+                outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}"
+            )
+);
 
 // Currently, no API is configured for the remote worker, so configuring Kestrel to listen on a named pipe or Unix socket is not necessary.
 // builder.WebHost.ConfigureKestrel(serverOptions =>
