@@ -228,8 +228,9 @@ public class ChapterMergeUpscaleTaskManager(
                     SELECT * FROM PersistedTasks 
                     WHERE Data->>'$.ChapterId' IN (SELECT value FROM json_each({chapterIdsJson})) 
                       AND Data->>'$.$type' IN (SELECT value FROM json_each({taskTypesJson}))
-                      AND Status IN ({(int)PersistedTaskStatus.Pending}, {(int)
-                    PersistedTaskStatus.Processing})
+                      AND Status IN ({nameof(PersistedTaskStatus.Pending)}, {nameof(
+                    PersistedTaskStatus.Processing
+                )})
                 """
             )
             .ToListAsync(cancellationToken);
