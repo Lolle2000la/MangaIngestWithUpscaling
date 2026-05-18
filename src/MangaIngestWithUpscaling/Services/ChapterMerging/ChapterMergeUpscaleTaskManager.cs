@@ -43,12 +43,14 @@ public class ChapterMergeUpscaleTaskManager(
         string chapterIdsJson = JsonSerializer.Serialize(chapterIds);
         string taskTypesJson = JsonSerializer.Serialize(ChapterScopedTaskTypes);
 
-        List<PersistedTask> allRelatedTasks = await dbContext.PersistedTasks
-            .FromSql($"""
-                          SELECT * FROM PersistedTasks 
-                          WHERE Data->>'$.ChapterId' IN (SELECT value FROM json_each({chapterIdsJson})) 
-                            AND Data->>'$.$type' IN (SELECT value FROM json_each({taskTypesJson}))
-                      """)
+        List<PersistedTask> allRelatedTasks = await dbContext
+            .PersistedTasks.FromSql(
+                $"""
+                    SELECT * FROM PersistedTasks 
+                    WHERE Data->>'$.ChapterId' IN (SELECT value FROM json_each({chapterIdsJson})) 
+                      AND Data->>'$.$type' IN (SELECT value FROM json_each({taskTypesJson}))
+                """
+            )
             .OrderBy(p => p.Status == PersistedTaskStatus.Pending ? 0 : 1)
             .ToListAsync(cancellationToken);
 
@@ -201,13 +203,16 @@ public class ChapterMergeUpscaleTaskManager(
         string chapterIdsJson = JsonSerializer.Serialize(chapterIds);
         string taskTypesJson = JsonSerializer.Serialize(ChapterScopedTaskTypes);
 
-        List<PersistedTask> pendingTasks = await dbContext.PersistedTasks
-            .FromSql($"""
-                          SELECT * FROM PersistedTasks 
-                          WHERE Data->>'$.ChapterId' IN (SELECT value FROM json_each({chapterIdsJson})) 
-                            AND Data->>'$.$type' IN (SELECT value FROM json_each({taskTypesJson}))
-                            AND Status IN ({(int)PersistedTaskStatus.Pending}, {(int)PersistedTaskStatus.Processing})
-                      """)
+        List<PersistedTask> pendingTasks = await dbContext
+            .PersistedTasks.FromSql(
+                $"""
+                    SELECT * FROM PersistedTasks 
+                    WHERE Data->>'$.ChapterId' IN (SELECT value FROM json_each({chapterIdsJson})) 
+                      AND Data->>'$.$type' IN (SELECT value FROM json_each({taskTypesJson}))
+                      AND Status IN ({(int)PersistedTaskStatus.Pending}, {(int)
+                    PersistedTaskStatus.Processing})
+                """
+            )
             .ToListAsync(cancellationToken);
 
         if (pendingTasks.Any())
