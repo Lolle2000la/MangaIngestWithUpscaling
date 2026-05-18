@@ -34,6 +34,8 @@ public class ChapterMergeUpscaleTaskManager(
         string[] taskTypes =
         {
             nameof(UpscaleTask),
+            nameof(RepairUpscaleTask),
+            nameof(RenameUpscaledChaptersSeriesTask),
             nameof(DetectSplitCandidatesTask),
             nameof(ApplySplitsTask),
         };
@@ -123,13 +125,26 @@ public class ChapterMergeUpscaleTaskManager(
             // Refresh the task status from database to see if they were properly canceled
             foreach (PersistedTask canceledTask in tasksToCancel)
             {
-                await dbContext.Entry(canceledTask).ReloadAsync(cancellationToken);
+                try
+                {
+                    await dbContext.Entry(canceledTask).ReloadAsync(cancellationToken);
+                }
+                catch
+                {
+                    // If task was already deleted, skip status check
+                    logger.LogDebug(
+                        "Task {TaskId} ({TaskType}) already removed from database during cancellation wait",
+                        canceledTask.Id,
+                        canceledTask.Data.GetType().Name
+                    );
+                }
+
                 if (canceledTask.Status != PersistedTaskStatus.Canceled)
                 {
                     upscaleTaskProcessor.CancelCurrent(canceledTask);
                 }
 
-                // Add to removal list since it was successfully canceled
+                // Add to removal list since it was successfully canceled or already removed
                 tasksToRemove.Add(canceledTask);
                 logger.LogDebug(
                     "Successfully canceled and will remove task {TaskType} for chapter {ChapterId}",
@@ -176,6 +191,8 @@ public class ChapterMergeUpscaleTaskManager(
         string[] taskTypes =
         {
             nameof(UpscaleTask),
+            nameof(RepairUpscaleTask),
+            nameof(RenameUpscaledChaptersSeriesTask),
             nameof(DetectSplitCandidatesTask),
             nameof(ApplySplitsTask),
         };
@@ -218,6 +235,7 @@ public class ChapterMergeUpscaleTaskManager(
         {
             UpscaleTask t => t.ChapterId,
             RepairUpscaleTask t => t.ChapterId,
+            RenameUpscaledChaptersSeriesTask t => t.ChapterId,
             DetectSplitCandidatesTask t => t.ChapterId,
             ApplySplitsTask t => t.ChapterId,
             _ => null,
