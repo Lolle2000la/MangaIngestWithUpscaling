@@ -125,7 +125,7 @@ public class ChapterMergeUpscaleTaskManager(
                 {
                     await dbContext.Entry(canceledTask).ReloadAsync(cancellationToken);
                 }
-                catch
+                catch (DbUpdateConcurrencyException)
                 {
                     // If task was already deleted, skip status check and removal
                     taskStillExists = false;
@@ -135,24 +135,43 @@ public class ChapterMergeUpscaleTaskManager(
                         canceledTask.Data.GetType().Name
                     );
                 }
+                catch (Exception ex)
+                {
+                    logger.LogError(
+                        ex,
+                        "Failed to reload task {TaskId} ({TaskType}) during cancellation wait",
+                        canceledTask.Id,
+                        canceledTask.Data.GetType().Name
+                    );
+                    // Continue anyway, try to cancel just in case
+                }
 
                 if (!taskStillExists)
                 {
                     continue;
                 }
 
-                if (canceledTask.Status != PersistedTaskStatus.Canceled)
+                if (canceledTask.Status == PersistedTaskStatus.Canceled)
                 {
-                    upscaleTaskProcessor.CancelCurrent(canceledTask);
+                    // Add to removal list since it was successfully canceled
+                    tasksToRemove.Add(canceledTask);
+                    logger.LogDebug(
+                        "Successfully canceled and will remove task {TaskType} for chapter {ChapterId}",
+                        canceledTask.Data.GetType().Name,
+                        GetChapterId(canceledTask.Data)
+                    );
                 }
-
-                // Add to removal list since it was successfully canceled
-                tasksToRemove.Add(canceledTask);
-                logger.LogDebug(
-                    "Successfully canceled and will remove task {TaskType} for chapter {ChapterId}",
-                    canceledTask.Data.GetType().Name,
-                    GetChapterId(canceledTask.Data)
-                );
+                else
+                {
+                    // Still processing or pending after wait, try to cancel again but don't remove yet
+                    upscaleTaskProcessor.CancelCurrent(canceledTask);
+                    logger.LogWarning(
+                        "Task {TaskType} for chapter {ChapterId} still has status {Status} after cancellation wait. Skipping removal to avoid interrupting active processing.",
+                        canceledTask.Data.GetType().Name,
+                        GetChapterId(canceledTask.Data),
+                        canceledTask.Status
+                    );
+                }
             }
         }
 
