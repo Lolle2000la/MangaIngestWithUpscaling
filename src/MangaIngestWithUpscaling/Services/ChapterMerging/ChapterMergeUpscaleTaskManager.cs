@@ -1,3 +1,4 @@
+using System.Text.Json;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
@@ -19,6 +20,15 @@ public class ChapterMergeUpscaleTaskManager(
     ILogger<ChapterMergeUpscaleTaskManager> logger
 ) : IChapterMergeUpscaleTaskManager
 {
+    private static readonly string[] ChapterScopedTaskTypes =
+    {
+        nameof(UpscaleTask),
+        nameof(RepairUpscaleTask),
+        nameof(RenameUpscaledChaptersSeriesTask),
+        nameof(DetectSplitCandidatesTask),
+        nameof(ApplySplitsTask),
+    };
+
     public async Task HandleUpscaleTaskManagementAsync(
         List<Chapter> originalChapters,
         MergeInfo mergeInfo,
@@ -30,34 +40,17 @@ public class ChapterMergeUpscaleTaskManager(
         List<int> chapterIds = originalChapters.Select(c => c.Id).ToList();
 
         // Find and handle all upscale and split-related tasks for the chapters being merged
-        var allRelatedTasks = new List<PersistedTask>();
-        string[] taskTypes =
-        {
-            nameof(UpscaleTask),
-            nameof(RepairUpscaleTask),
-            nameof(RenameUpscaledChaptersSeriesTask),
-            nameof(DetectSplitCandidatesTask),
-            nameof(ApplySplitsTask),
-        };
+        string chapterIdsJson = JsonSerializer.Serialize(chapterIds);
+        string taskTypesJson = JsonSerializer.Serialize(ChapterScopedTaskTypes);
 
-        // Use raw SQL to query JSON data for each chapter ID to get all related tasks
-        foreach (int chapterId in chapterIds)
-        {
-            foreach (string taskType in taskTypes)
-            {
-                List<PersistedTask> tasks = (
-                    await dbContext
-                        .PersistedTasks.FromSql(
-                            $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {taskType} AND Data->>'$.ChapterId' = {chapterId}"
-                        )
-                        .ToListAsync(cancellationToken)
-                )
-                    .OrderBy(p => p.Status == PersistedTaskStatus.Pending ? 0 : 1)
-                    .ToList();
-
-                allRelatedTasks.AddRange(tasks);
-            }
-        }
+        List<PersistedTask> allRelatedTasks = await dbContext.PersistedTasks
+            .FromSql($"""
+                          SELECT * FROM PersistedTasks 
+                          WHERE Data->>'$.ChapterId' IN (SELECT value FROM json_each({chapterIdsJson})) 
+                            AND Data->>'$.$type' IN (SELECT value FROM json_each({taskTypesJson}))
+                      """)
+            .OrderBy(p => p.Status == PersistedTaskStatus.Pending ? 0 : 1)
+            .ToListAsync(cancellationToken);
 
         // Process tasks based on their status
         var tasksToRemove = new List<PersistedTask>();
@@ -125,13 +118,15 @@ public class ChapterMergeUpscaleTaskManager(
             // Refresh the task status from database to see if they were properly canceled
             foreach (PersistedTask canceledTask in tasksToCancel)
             {
+                bool taskStillExists = true;
                 try
                 {
                     await dbContext.Entry(canceledTask).ReloadAsync(cancellationToken);
                 }
                 catch
                 {
-                    // If task was already deleted, skip status check
+                    // If task was already deleted, skip status check and removal
+                    taskStillExists = false;
                     logger.LogDebug(
                         "Task {TaskId} ({TaskType}) already removed from database during cancellation wait",
                         canceledTask.Id,
@@ -139,12 +134,17 @@ public class ChapterMergeUpscaleTaskManager(
                     );
                 }
 
+                if (!taskStillExists)
+                {
+                    continue;
+                }
+
                 if (canceledTask.Status != PersistedTaskStatus.Canceled)
                 {
                     upscaleTaskProcessor.CancelCurrent(canceledTask);
                 }
 
-                // Add to removal list since it was successfully canceled or already removed
+                // Add to removal list since it was successfully canceled
                 tasksToRemove.Add(canceledTask);
                 logger.LogDebug(
                     "Successfully canceled and will remove task {TaskType} for chapter {ChapterId}",
@@ -159,7 +159,18 @@ public class ChapterMergeUpscaleTaskManager(
         {
             foreach (PersistedTask persistedTask in tasksToRemove)
             {
-                await taskQueue.RemoveTaskAsync(persistedTask);
+                try
+                {
+                    await taskQueue.RemoveTaskAsync(persistedTask);
+                }
+                catch (DbUpdateConcurrencyException)
+                {
+                    // Ignore if task was already removed by another process
+                    logger.LogDebug(
+                        "Task {TaskId} already removed by another process, skipping",
+                        persistedTask.Id
+                    );
+                }
             }
 
             logger.LogInformation(
@@ -187,30 +198,17 @@ public class ChapterMergeUpscaleTaskManager(
         // Check if any chapters have pending or in-progress upscale or split tasks for logging purposes
         List<int> chapterIds = chapters.Select(c => c.Id).ToList();
 
-        var pendingTasks = new List<PersistedTask>();
-        string[] taskTypes =
-        {
-            nameof(UpscaleTask),
-            nameof(RepairUpscaleTask),
-            nameof(RenameUpscaledChaptersSeriesTask),
-            nameof(DetectSplitCandidatesTask),
-            nameof(ApplySplitsTask),
-        };
+        string chapterIdsJson = JsonSerializer.Serialize(chapterIds);
+        string taskTypesJson = JsonSerializer.Serialize(ChapterScopedTaskTypes);
 
-        // Use raw SQL to query JSON data for each chapter ID
-        foreach (int chapterId in chapterIds)
-        {
-            foreach (string taskType in taskTypes)
-            {
-                List<PersistedTask> tasks = await dbContext
-                    .PersistedTasks.FromSql(
-                        $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {taskType} AND Data->>'$.ChapterId' = {chapterId} AND (Status = {(int)PersistedTaskStatus.Pending} OR Status = {(int)PersistedTaskStatus.Processing})"
-                    )
-                    .ToListAsync(cancellationToken);
-
-                pendingTasks.AddRange(tasks);
-            }
-        }
+        List<PersistedTask> pendingTasks = await dbContext.PersistedTasks
+            .FromSql($"""
+                          SELECT * FROM PersistedTasks 
+                          WHERE Data->>'$.ChapterId' IN (SELECT value FROM json_each({chapterIdsJson})) 
+                            AND Data->>'$.$type' IN (SELECT value FROM json_each({taskTypesJson}))
+                            AND Status IN ({(int)PersistedTaskStatus.Pending}, {(int)PersistedTaskStatus.Processing})
+                      """)
+            .ToListAsync(cancellationToken);
 
         if (pendingTasks.Any())
         {
