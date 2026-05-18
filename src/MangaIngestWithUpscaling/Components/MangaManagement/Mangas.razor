@@ -23,7 +23,8 @@
 
 <MudTable T="Manga" ServerData="@GetMangas" Hover="true" MultiSelection="true" SelectOnRowClick="false"
     CanCancelEdit="true" RowEditPreview="@BackupBeforeEdit" RowEditCancel="@RestoreOnCancel"
-    RowEditCommit="async o => await OnCommitEdit(o)" @bind-SelectedItems="selectedMangas" @ref="table">
+    RowEditCommit="async o => await OnCommitEdit(o)" @bind-SelectedItems="selectedMangas" @ref="table"
+    ReadOnly="@_isProcessing" Loading="@_isProcessing">
     <ToolBarContent>
         <MudGrid>
             <MudItem xs="12" sm="6" lg="6">
@@ -31,7 +32,7 @@
             </MudItem>
             <MudItem xs="12" sm="6" lg="3">
                 <MudSelect Label="@Loc["LibraryToBrowse"]" T="Library ?" @bind-Value="selectedLibrary"
-                    @bind-Value:after="async () => await table.ReloadServerData()">
+                    @bind-Value:after="async () => await table.ReloadServerData()" Disabled="@_isProcessing">
                     <MudSelectItem T="Library?" Value="null">@Loc["Library_All"]</MudSelectItem>
                     @foreach (var library in DbContext.Libraries)
                     {
@@ -42,22 +43,24 @@
             <MudItem xs="12" sm="12" lg="3">
                 <MudTextField Label="@Loc["SearchLabel"]" Placeholder="@Loc["SearchPlaceholder"]"
                     Variant="Variant.Outlined" @bind-Value="_searchInput"
-                    @bind-Value:after="OnSearchInputChanged" Immediate="true" />
+                    @bind-Value:after="OnSearchInputChanged" Immediate="true" Disabled="@_isProcessing" />
             </MudItem>
             <MudItem xs="12">
                 <MudStack Row="true">
                     <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Merge"
-                        Disabled="@(selectedMangas == null || selectedMangas.Count < 2)" OnClick="OnMergeSelected">
+                        Disabled="@(_isProcessing || selectedMangas == null || selectedMangas.Count < 2)"
+                        OnClick="OnMergeSelected">
                         @Loc["MergeSelected"]
                     </MudButton>
                     <MudButton Variant="Variant.Filled" Color="Color.Secondary"
                         StartIcon="@Icons.Material.Filled.Shuffle"
-                        Disabled="selectedMangas == null || selectedMangas.Count == 0"
+                        Disabled="@(_isProcessing || selectedMangas == null || selectedMangas.Count == 0)"
                         OnClick="OnMoveSelectedToNewLibrary">@Loc["MoveSelected"]
                     </MudButton>
                     <MudButton Variant="Variant.Filled" Color="Color.Error" OnClick="OnDeleteSelected"
                         StartIcon="@Icons.Material.Filled.DeleteSweep"
-                        Disabled="@(selectedMangas == null || selectedMangas.Count == 0)">@Loc["DeleteSelected"]
+                        Disabled="@(_isProcessing || selectedMangas == null || selectedMangas.Count == 0)">
+                        @Loc["DeleteSelected"]
                     </MudButton>
                 </MudStack>
             </MudItem>
@@ -93,25 +96,33 @@
         <MudTd DataLabel="@Loc["Header_ShouldUpscale"]">@(context.ShouldUpscale is not null ?
                         context.ShouldUpscale.Value : Loc["UseLibrarySettings"])</MudTd>
         <MudTd>
-            <a href="mangas/@context.Id" title="@Loc["Tooltip_Edit"]">
-                <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Text" Size="Size.Small" />
-            </a>
+            @if (_isProcessing)
+            {
+                <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Text" Size="Size.Small" Disabled="true" />
+            }
+            else
+            {
+                <a href="mangas/@context.Id" title="@Loc["Tooltip_Edit"]">
+                    <MudIconButton Icon="@Icons.Material.Filled.Edit" Variant="Variant.Text" Size="Size.Small" />
+                </a>
+            }
             <MudIconButton Icon="@Icons.Material.Filled.ImageAspectRatio" Variant="Variant.Text" Size="Size.Small"
-                title="@Loc["Tooltip_Upscale"]" OnClick="_ => OnUpscaleSpecific(context)" />
+                title="@Loc["Tooltip_Upscale"]" OnClick="_ => OnUpscaleSpecific(context)" Disabled="@_isProcessing" />
             <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error" Variant="Variant.Text"
-                OnClick="_ => OnDeleteSpecific(context)" title="@Loc["Tooltip_Delete"]" Size="Size.Small" />
+                OnClick="_ => OnDeleteSpecific(context)" title="@Loc["Tooltip_Delete"]" Size="Size.Small"
+                Disabled="@_isProcessing" />
         </MudTd>
     </RowTemplate>
     <RowEditingTemplate>
         <MudTd DataLabel="@Loc["Header_Library"]">@context.Library.Name</MudTd>
         <MudTd DataLabel="@Loc["Header_Title"]">
-            <MudTextField @bind-Value="context.PrimaryTitle" Required />
+            <MudTextField @bind-Value="context.PrimaryTitle" Required Disabled="@_isProcessing" />
         </MudTd>
         <MudTd DataLabel="@Loc["Header_Chapters"]">@string.Format(Loc["ChapterCount"],
                         context.Chapters.Count(), context.Chapters.Count(c => c.IsUpscaled))
         </MudTd>
         <MudTd DataLabel="@Loc["Header_ShouldUpscale"]">
-            <MudCheckBox T="bool?" TriState="true" @bind-Value="context.ShouldUpscale" />
+            <MudCheckBox T="bool?" TriState="true" @bind-Value="context.ShouldUpscale" Disabled="@_isProcessing" />
         </MudTd>
 
     </RowEditingTemplate>
@@ -126,6 +137,7 @@
     private string _searchInput = "";
     private bool _parametersInitialized = false;
     private bool _isOwnNavigation = false;
+    private bool _isProcessing;
     private readonly Subject<string> _searchSubject = new();
 
     [Parameter]
@@ -272,14 +284,15 @@
 
     private async Task OnMergeSelected()
     {
-        if (selectedMangas == null || !selectedMangas.Any()) return;
-        var parameters = new DialogParameters<MergeMangaDialog>
-{
-{ x => x.Mangas, selectedMangas.ToList() }
-};
-
+        if (_isProcessing || selectedMangas == null || !selectedMangas.Any()) return;
+        _isProcessing = true;
         try
         {
+            var parameters = new DialogParameters<MergeMangaDialog>
+            {
+                { x => x.Mangas, selectedMangas.ToList() }
+            };
+
             var dialog = await DialogService.ShowAsync<MergeMangaDialog>(Loc["Dialog_Merge_Title"], parameters);
             var result = await dialog.Result;
 
@@ -294,17 +307,22 @@
             Logger.LogError(e, Loc["Error_Merging"]);
             await table.ReloadServerData();
         }
+        finally
+        {
+            _isProcessing = false;
+        }
     }
 
     private async Task OnMoveSelectedToNewLibrary()
     {
-        if (!selectedMangas.Any()) return;
-        var parameters = new DialogParameters<MoveMangasToLibraryDialog>
-{
-{ x => x.Mangas, selectedMangas.ToList() }
-};
+        if (_isProcessing || !selectedMangas.Any()) return;
+        _isProcessing = true;
         try
         {
+            var parameters = new DialogParameters<MoveMangasToLibraryDialog>
+            {
+                { x => x.Mangas, selectedMangas.ToList() }
+            };
             var dialog = await DialogService.ShowAsync<MoveMangasToLibraryDialog>(Loc["Dialog_Move_Title"], parameters);
             var result = await dialog.Result;
             if (result is { Canceled: false })
@@ -318,18 +336,23 @@
             Logger.LogError(e, Loc["Error_Moving"]);
             await table.ReloadServerData();
         }
+        finally
+        {
+            _isProcessing = false;
+        }
     }
 
     private async Task OnDeleteSelected()
     {
-        if (!selectedMangas.Any()) return;
-        var parameters = new DialogParameters<DeleteMangasDialog>
-{
-{ x => x.Mangas, selectedMangas }
-};
-
+        if (_isProcessing || !selectedMangas.Any()) return;
+        _isProcessing = true;
         try
         {
+            var parameters = new DialogParameters<DeleteMangasDialog>
+            {
+                { x => x.Mangas, selectedMangas }
+            };
+
             var dialog = await DialogService.ShowAsync<DeleteMangasDialog>(Loc["Dialog_Delete_Title"], parameters);
             var result = await dialog.Result;
 
@@ -344,17 +367,23 @@
             Logger.LogError(e, Loc["Error_Deleting"]);
             await table.ReloadServerData();
         }
+        finally
+        {
+            _isProcessing = false;
+        }
     }
 
     private async Task OnDeleteSpecific(Manga manga)
     {
+        if (_isProcessing) return;
+        _isProcessing = true;
         try
         {
             var dialog = await DialogService.ShowAsync<DeleteMangasDialog>(Loc["Dialog_DeleteSingle_Title"], new
             DialogParameters<DeleteMangasDialog>
-{
-{ x => x.Mangas, new List<Manga> { manga } }
-});
+            {
+                { x => x.Mangas, new List<Manga> { manga } }
+            });
             var result = await dialog.Result;
             if (result is { Canceled: false })
             {
@@ -367,16 +396,28 @@
             Logger.LogError(e, Loc["Error_DeletingSingle"], manga.Id);
             await table.ReloadServerData();
         }
+        finally
+        {
+            _isProcessing = false;
+        }
     }
 
     private async Task OnUpscaleSpecific(Manga manga)
     {
-        if (manga.EffectiveUpscalerProfile == null) return;
-        foreach (var chapter in manga.Chapters
-        .Where(chapter => !chapter.IsUpscaled || (chapter.IsUpscaled && chapter.UpscalerProfileId !=
-        manga.Library.UpscalerProfileId)))
+        if (_isProcessing || manga.EffectiveUpscalerProfile == null) return;
+        _isProcessing = true;
+        try
         {
-            await TaskQueue.EnqueueAsync(new UpscaleTask(chapter));
+            foreach (var chapter in manga.Chapters
+                .Where(chapter => !chapter.IsUpscaled || (chapter.IsUpscaled && chapter.UpscalerProfileId !=
+                manga.Library.UpscalerProfileId)))
+            {
+                await TaskQueue.EnqueueAsync(new UpscaleTask(chapter));
+            }
+        }
+        finally
+        {
+            _isProcessing = false;
         }
     }
 
@@ -396,48 +437,57 @@
 
     private async Task OnCommitEdit(object m)
     {
-        Manga manga = (Manga)m;
-        if (mangaBeforeEdit == null) return;
-        // if the primary title was changed, change it back and then use the metadata changer.
-        if (manga.PrimaryTitle != mangaBeforeEdit.PrimaryTitle)
+        if (_isProcessing) return;
+        _isProcessing = true;
+        try
         {
-            await DbContext.Entry(manga).Collection(x => x.OtherTitles).LoadAsync();
-            var newTitle = manga.PrimaryTitle;
-            manga.PrimaryTitle = mangaBeforeEdit.PrimaryTitle;
+            Manga manga = (Manga)m;
+            if (mangaBeforeEdit == null) return;
+            // if the primary title was changed, change it back and then use the metadata changer.
+            if (manga.PrimaryTitle != mangaBeforeEdit.PrimaryTitle)
+            {
+                await DbContext.Entry(manga).Collection(x => x.OtherTitles).LoadAsync();
+                var newTitle = manga.PrimaryTitle;
+                manga.PrimaryTitle = mangaBeforeEdit.PrimaryTitle;
+                try
+                {
+                    var renameResult = await MangaMetadataChanger.ChangeMangaTitle(manga, newTitle.Trim());
+                    if (renameResult is not RenameResult.Ok)
+                    {
+                        await table.ReloadServerData();
+                        return;
+                    }
+                }
+                catch (Exception e)
+                {
+                    Snackbar.Add($"Error: {e.Message}", Severity.Error);
+                    Logger.LogError(e, Loc["Error_ChangingTitle"], manga.Id, newTitle);
+                }
+            }
+
             try
             {
-                var renameResult = await MangaMetadataChanger.ChangeMangaTitle(manga, newTitle.Trim());
-                if (renameResult is not RenameResult.Ok)
-                {
-                    await table.ReloadServerData();
-                    return;
-                }
+                await DbContext.SaveChangesAsync();
             }
             catch (Exception e)
             {
                 Snackbar.Add($"Error: {e.Message}", Severity.Error);
-                Logger.LogError(e, Loc["Error_ChangingTitle"], manga.Id, newTitle);
+                Logger.LogError(e, Loc["Error_Saving"], manga.Id);
             }
-        }
 
-        try
-        {
-            await DbContext.SaveChangesAsync();
+            // RowEditCommit is Action<object?>, so this runs fire-and-forget. Reload explicitly so
+            // the table reflects saved state; catches handle disposal on navigation.
+            try
+            {
+                await table.ReloadServerData();
+            }
+            catch (ObjectDisposedException) { }
+            catch (InvalidOperationException) { }
         }
-        catch (Exception e)
+        finally
         {
-            Snackbar.Add($"Error: {e.Message}", Severity.Error);
-            Logger.LogError(e, Loc["Error_Saving"], manga.Id);
+            _isProcessing = false;
         }
-
-        // RowEditCommit is Action<object?>, so this runs fire-and-forget. Reload explicitly so
-        // the table reflects saved state; catches handle disposal on navigation.
-        try
-        {
-            await table.ReloadServerData();
-        }
-        catch (ObjectDisposedException) { }
-        catch (InvalidOperationException) { }
     }
 
     public void Dispose()
