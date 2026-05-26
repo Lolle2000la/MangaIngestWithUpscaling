@@ -1,4 +1,5 @@
 using System.Data.SQLite;
+using System.Globalization;
 using System.Security.Claims;
 using MangaIngestWithUpscaling.Api;
 using MangaIngestWithUpscaling.Api.Auth;
@@ -78,25 +79,84 @@ var loggingConnectionReadOnlyString = loggingConnectionReadOnlyStringBuilder.Con
 
 // Set WAL before app startup. This is idempotent and safe for existing databases.
 // Do it before builder.Build() so logs.db is configured before Serilog opens it.
+// For the logs database, also detect corruption and move the file aside so a fresh
+// one can be created instead of crashing the application on startup.
+var logsDbPath = Path.GetFullPath(loggingConnectionReadOnlyStringBuilder.DataSource);
 foreach (
     var earlyDbPath in new[]
     {
         Path.GetFullPath(sqliteConnectionStringBuilder.DataSource),
-        Path.GetFullPath(loggingConnectionReadOnlyStringBuilder.DataSource),
+        logsDbPath,
     }
 )
 {
+    var isLogsDb = earlyDbPath == logsDbPath;
     try
     {
         using var earlyConn = new SqliteConnection($"Data Source={earlyDbPath}");
         earlyConn.Open();
+        using var integrityCmd = earlyConn.CreateCommand();
+        integrityCmd.CommandText = "PRAGMA integrity_check";
+        var integrityResult = integrityCmd.ExecuteScalar() as string;
+        if (!string.Equals(integrityResult, "ok", StringComparison.OrdinalIgnoreCase))
+        {
+            if (isLogsDb)
+            {
+                MoveCorruptDatabaseAside(earlyDbPath);
+                continue;
+            }
+
+            throw new IOException($"Database integrity check failed: {integrityResult}");
+        }
+
         using var earlyCmd = earlyConn.CreateCommand();
         earlyCmd.CommandText = "PRAGMA journal_mode=WAL";
         earlyCmd.ExecuteScalar();
     }
+    catch when (isLogsDb)
+    {
+        MoveCorruptDatabaseAside(earlyDbPath);
+    }
     catch
     {
         // Non-critical: WAL mode will be re-verified with logging after migrations
+    }
+}
+
+static void MoveCorruptDatabaseAside(string dbPath)
+{
+    try
+    {
+        if (File.Exists(dbPath))
+        {
+            var timestamp = DateTime.UtcNow.ToString(
+                "yyyyMMddHHmmss",
+                CultureInfo.InvariantCulture
+            );
+            var backupPath = $"{dbPath}.corrupted.{timestamp}";
+            File.Move(dbPath, backupPath);
+        }
+
+        var walPath = dbPath + "-wal";
+        var shmPath = dbPath + "-shm";
+        try
+        {
+            if (File.Exists(walPath))
+                File.Delete(walPath);
+        }
+        catch { }
+
+        try
+        {
+            if (File.Exists(shmPath))
+                File.Delete(shmPath);
+        }
+        catch { }
+    }
+    catch
+    {
+        // Best effort: if we can't move/delete the files, the startup will
+        // proceed normally and may fail with the original error
     }
 }
 
