@@ -169,11 +169,11 @@ public partial class LibraryIntegrityChecker(
             )
         );
 
-        IAsyncEnumerable<int> chapterIdsStream = dbContext
+        List<int> chapterIds = await dbContext
             .Chapters.AsNoTracking()
             .Where(c => c.Manga!.Library!.Id == library.Id)
             .Select(c => c.Id)
-            .AsAsyncEnumerable();
+            .ToListAsync(cancellationToken ?? CancellationToken.None);
         int anyChange = 0;
         CancellationToken ct = cancellationToken ?? CancellationToken.None;
 
@@ -184,7 +184,7 @@ public partial class LibraryIntegrityChecker(
         };
 
         await Parallel.ForEachAsync(
-            chapterIdsStream,
+            chapterIds,
             parallelOptions,
             async (chapterId, token) =>
             {
@@ -258,11 +258,11 @@ public partial class LibraryIntegrityChecker(
             new IntegrityProgress(totalChapters, current, "manga", $"Checking {manga.PrimaryTitle}")
         );
 
-        IAsyncEnumerable<int> chapterIdsStream = dbContext
+        List<int> chapterIds = await dbContext
             .Chapters.AsNoTracking()
             .Where(c => c.MangaId == manga.Id)
             .Select(c => c.Id)
-            .AsAsyncEnumerable();
+            .ToListAsync(cancellationToken ?? CancellationToken.None);
         int anyChange = 0;
         CancellationToken ct = cancellationToken ?? CancellationToken.None;
         var parallelOptions = new ParallelOptions
@@ -272,7 +272,7 @@ public partial class LibraryIntegrityChecker(
         };
 
         await Parallel.ForEachAsync(
-            chapterIdsStream,
+            chapterIds,
             parallelOptions,
             async (chapterId, token) =>
             {
