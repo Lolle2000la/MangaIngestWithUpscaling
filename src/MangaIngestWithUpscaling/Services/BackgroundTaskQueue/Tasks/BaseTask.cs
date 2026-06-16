@@ -28,7 +28,6 @@ public class BaseTask
 
     [NotMapped]
     [JsonIgnore]
-    [Newtonsoft.Json.JsonIgnore]
     public ProgressInfo Progress { get; } = new();
 
     public virtual Task ProcessAsync(IServiceProvider services, CancellationToken cancellationToken)

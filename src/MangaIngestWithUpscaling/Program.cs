@@ -1,4 +1,3 @@
-using System.Data.SQLite;
 using System.Globalization;
 using System.Security.Claims;
 using MangaIngestWithUpscaling.Api;
@@ -67,12 +66,12 @@ string connectionString =
     builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
 
-SQLiteConnectionStringBuilder sqliteConnectionStringBuilder = new(connectionString);
+SqliteConnectionStringBuilder sqliteConnectionStringBuilder = new(connectionString);
 
 var loggingConnectionString =
     builder.Configuration.GetConnectionString("LoggingConnection") ?? "Data Source=logs.db";
 
-var loggingConnectionReadOnlyStringBuilder = new SQLiteConnectionStringBuilder(
+var loggingConnectionReadOnlyStringBuilder = new SqliteConnectionStringBuilder(
     loggingConnectionString
 );
 var loggingConnectionReadOnlyString = loggingConnectionReadOnlyStringBuilder.ConnectionString;
