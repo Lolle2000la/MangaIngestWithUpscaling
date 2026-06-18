@@ -36,7 +36,7 @@ jobs:
       TAG: ${{ needs.generate-tag.outputs.tag }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: "true"
 
@@ -75,7 +75,7 @@ jobs:
       TAG: ${{ needs.generate-tag.outputs.tag }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: "true"
 
@@ -115,7 +115,7 @@ jobs:
       TAG: ${{ needs.generate-tag.outputs.tag }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: "true"
 
@@ -155,7 +155,7 @@ jobs:
       TAG: ${{ needs.generate-tag.outputs.tag }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: "true"
 
