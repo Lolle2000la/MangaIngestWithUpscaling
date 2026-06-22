@@ -11,7 +11,7 @@ using Microsoft.Extensions.Localization;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 
-public class DetectSplitCandidatesTask : BaseTask
+public class DetectSplitCandidatesTask : BaseTask, IChapterTask
 {
     public int ChapterId { get; set; }
     public int DetectorVersion { get; set; }
