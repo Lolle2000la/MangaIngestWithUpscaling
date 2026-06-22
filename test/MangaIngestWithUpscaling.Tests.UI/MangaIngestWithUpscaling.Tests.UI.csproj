@@ -4,7 +4,6 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <NoWarn>$(NoWarn);NETSDK1206;CS8669</NoWarn>
-    <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1903</WarningsNotAsErrors>
   </PropertyGroup>
   <ItemGroup>
     <Using Include="Bunit" />
@@ -24,6 +23,7 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.9" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
     <PackageReference Include="MudBlazor" Version="9.5.0" />
     <PackageReference Include="NSubstitute" Version="5.3.0" />
   </ItemGroup>

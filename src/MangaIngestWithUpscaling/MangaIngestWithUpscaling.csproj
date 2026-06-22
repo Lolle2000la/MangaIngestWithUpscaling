@@ -9,7 +9,6 @@
     <!-- Disable nullable attribute warnings on generated code due to tooling bugs -->
     <!-- see https://github.com/dotnet/razor/issues/7286 for more details -->
     <NoWarn>$(NoWarn);NETSDK1206;CS8669</NoWarn>
-    <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1903</WarningsNotAsErrors>
   </PropertyGroup>
   <PropertyGroup>
     <BlazorWebAssemblyLoadAllGlobalizationData>true</BlazorWebAssemblyLoadAllGlobalizationData>
@@ -41,6 +40,7 @@
     <PackageReference Include="Microsoft.Build.Tasks.Core" Version="18.7.1" />
     <PackageReference Include="Microsoft.Build.Utilities.Core" Version="18.7.1" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.9" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.9" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="10.0.9">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
