@@ -4,7 +4,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
-    <NoWarn>$(NoWarn);NETSDK1206;CS8669;NU1903</NoWarn>
+    <NoWarn>$(NoWarn);NETSDK1206;CS8669</NoWarn>
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1903</WarningsNotAsErrors>
     <OutputType>Exe</OutputType>
   </PropertyGroup>
   <ItemGroup>

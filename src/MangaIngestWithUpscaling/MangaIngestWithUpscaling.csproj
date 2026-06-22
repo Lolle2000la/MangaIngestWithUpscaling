@@ -8,7 +8,8 @@
     <AssemblyName>$(AssemblyName.Replace(' ', '_'))</AssemblyName>
     <!-- Disable nullable attribute warnings on generated code due to tooling bugs -->
     <!-- see https://github.com/dotnet/razor/issues/7286 for more details -->
-    <NoWarn>$(NoWarn);NETSDK1206;CS8669;NU1903</NoWarn>
+    <NoWarn>$(NoWarn);NETSDK1206;CS8669</NoWarn>
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1903</WarningsNotAsErrors>
   </PropertyGroup>
   <PropertyGroup>
     <BlazorWebAssemblyLoadAllGlobalizationData>true</BlazorWebAssemblyLoadAllGlobalizationData>
