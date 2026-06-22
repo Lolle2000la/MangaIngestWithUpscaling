@@ -14,15 +14,14 @@ namespace MangaIngestWithUpscaling.Migrations
                 name: "ChapterSortKey",
                 table: "PersistedTasks",
                 type: "TEXT",
-                nullable: true);
+                nullable: true
+            );
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.DropColumn(
-                name: "ChapterSortKey",
-                table: "PersistedTasks");
+            migrationBuilder.DropColumn(name: "ChapterSortKey", table: "PersistedTasks");
         }
     }
 }
