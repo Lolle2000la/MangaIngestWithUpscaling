@@ -7,7 +7,7 @@ using Microsoft.Extensions.Localization;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 
-public class RenameUpscaledChaptersSeriesTask : BaseTask
+public class RenameUpscaledChaptersSeriesTask : BaseTask, IChapterTask
 {
     public RenameUpscaledChaptersSeriesTask() { }
 

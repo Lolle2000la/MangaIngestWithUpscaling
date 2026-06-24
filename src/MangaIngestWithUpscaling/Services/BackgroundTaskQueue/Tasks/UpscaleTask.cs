@@ -13,7 +13,7 @@ using Microsoft.Extensions.Localization;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 
-public class UpscaleTask : BaseTask
+public class UpscaleTask : BaseTask, IChapterTask
 {
     public UpscaleTask() { }
 

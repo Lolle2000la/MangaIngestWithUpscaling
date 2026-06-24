@@ -15,7 +15,7 @@ namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 /// Task for repairing partially corrupted upscaled chapters by upscaling only missing pages
 /// and removing extra pages, then merging them back into the existing CBZ.
 /// </summary>
-public class RepairUpscaleTask : BaseTask
+public class RepairUpscaleTask : BaseTask, IChapterTask
 {
     public RepairUpscaleTask() { }
 

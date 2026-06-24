@@ -482,7 +482,6 @@ public class ChapterMergeRevertService(
 
         foreach (Chapter partChapter in chaptersToUpscale)
         {
-            // Queue an individual upscale task for each missing part using the original chapter's profile
             var task = new UpscaleTask(partChapter, originalChapter.UpscalerProfile!);
             await taskQueue.EnqueueAsync(task);
             logger.LogInformation(

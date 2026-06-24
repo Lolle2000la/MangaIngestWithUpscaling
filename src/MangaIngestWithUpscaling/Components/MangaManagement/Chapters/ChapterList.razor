@@ -233,7 +233,10 @@
 
     private async Task UpscaleSelectedChapters()
     {
-        var chaptersToUpscale = selectedChapters.Where(c => !c.Chapter.IsUpscaled).ToList();
+        var chaptersToUpscale = selectedChapters
+            .Where(c => !c.Chapter.IsUpscaled)
+            .ToList();
+
         foreach (var c in chaptersToUpscale)
         {
             await UpscaleChapter(c.Chapter);

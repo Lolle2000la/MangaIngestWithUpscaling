@@ -2,6 +2,7 @@ using System.Threading.Channels;
 using AutoRegisterInject;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
+using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using Microsoft.EntityFrameworkCore;
 
@@ -40,36 +41,56 @@ public class TaskQueue : ITaskQueue, IHostedService
     private readonly SortedSet<PersistedTask> _upscaleTasks;
     private readonly object _upscaleTasksLock = new();
 
+    private static readonly Helpers.NaturalSortComparer<string> _naturalComparer = new(s => s);
+
     public TaskQueue(IServiceScopeFactory scopeFactory, ILogger<TaskQueue> logger)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
 
-        // Use unbounded channels for signals; signals do not carry tasks, but notify consumers to pull from sorted sets.
         _standardChannel = Channel.CreateUnbounded<object>();
         _upscaleChannel = Channel.CreateUnbounded<object>();
-        // Reroute channel remains carrying tasks: it's fed only by DistributedUpscaleTaskProcessor and consumed by the local UpscaleTaskProcessor
         _reroutedUpscaleChannel = Channel.CreateUnbounded<PersistedTask>();
 
-        // Initialize sorted sets with a stable comparer
-        // NOTE: SortedSet considers items equal when comparer returns 0 and will drop duplicates.
-        //       Comparing only by Order collapses many tasks into one when orders match.
-        //       Use Order, then Id as a tiebreaker to preserve all tasks with the same Order.
-        Comparer<PersistedTask> comparer = Comparer<PersistedTask>.Create(
+        Comparer<PersistedTask> standardComparer = Comparer<PersistedTask>.Create(
             (a, b) =>
             {
                 int byOrder = a.Order.CompareTo(b.Order);
                 if (byOrder != 0)
-                {
                     return byOrder;
-                }
 
-                // Id is unique per task (DB identity). This stabilizes ordering and avoids duplicate suppression.
                 return a.Id.CompareTo(b.Id);
             }
         );
-        _standardTasks = new SortedSet<PersistedTask>(comparer);
-        _upscaleTasks = new SortedSet<PersistedTask>(comparer);
+
+        Comparer<PersistedTask> upscaleComparer = Comparer<PersistedTask>.Create(
+            (a, b) =>
+            {
+                if (a.ChapterSortKey != null && b.ChapterSortKey != null)
+                {
+                    int byChapter = _naturalComparer.Compare(a.ChapterSortKey, b.ChapterSortKey);
+                    if (byChapter != 0)
+                        return byChapter;
+                }
+                else if (a.ChapterSortKey != null)
+                {
+                    return -1;
+                }
+                else if (b.ChapterSortKey != null)
+                {
+                    return 1;
+                }
+
+                int byOrder = a.Order.CompareTo(b.Order);
+                if (byOrder != 0)
+                    return byOrder;
+
+                return a.Id.CompareTo(b.Id);
+            }
+        );
+
+        _standardTasks = new SortedSet<PersistedTask>(standardComparer);
+        _upscaleTasks = new SortedSet<PersistedTask>(upscaleComparer);
     }
 
     public ChannelReader<object> StandardReader => _standardChannel.Reader;
@@ -114,9 +135,20 @@ public class TaskQueue : ITaskQueue, IHostedService
         using IServiceScope scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        // Determine the next order value
         int maxOrder = await dbContext.PersistedTasks.MaxAsync(t => (int?)t.Order) ?? 0;
         var taskItem = new PersistedTask { Data = taskData, Order = maxOrder + 1 };
+
+        if (taskData is IChapterTask chapterTask)
+        {
+            var chapter = await dbContext
+                .Chapters.AsNoTracking()
+                .FirstOrDefaultAsync(c => c.Id == chapterTask.ChapterId);
+
+            if (chapter != null)
+            {
+                taskItem.ChapterSortKey = chapter.FileName;
+            }
+        }
 
         await dbContext.PersistedTasks.AddAsync(taskItem);
         await dbContext.SaveChangesAsync();

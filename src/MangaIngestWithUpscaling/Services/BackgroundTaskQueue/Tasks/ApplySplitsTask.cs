@@ -3,7 +3,7 @@ using MangaIngestWithUpscaling.Services.Analysis;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 
-public class ApplySplitsTask : BaseTask
+public class ApplySplitsTask : BaseTask, IChapterTask
 {
     public int ChapterId { get; set; }
     public int DetectorVersion { get; set; }

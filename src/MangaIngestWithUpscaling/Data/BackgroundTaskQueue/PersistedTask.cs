@@ -14,6 +14,12 @@ public class PersistedTask
     public int Order { get; set; }
 
     /// <summary>
+    /// Natural sort key for chapter-related tasks, derived from the chapter's file name.
+    /// When non-null, tasks are ordered by this key (using natural sort) instead of by <see cref="Order"/>.
+    /// </summary>
+    public string? ChapterSortKey { get; set; }
+
+    /// <summary>
     /// The last time the task was kept alive.
     /// Only used for network-distributed tasks.
     /// </summary>
