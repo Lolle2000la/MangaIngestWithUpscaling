@@ -20,7 +20,7 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="AutoRegisterInject" Version="2.0.3" />
-    <PackageReference Include="DynamicData" Version="9.4.31" />
+    <PackageReference Include="DynamicData" Version="9.4.32" />
     <PackageReference Include="Grpc.AspNetCore" Version="2.80.0" />
     <PackageReference Include="Humanizer" Version="3.0.10" />
     <PackageReference
