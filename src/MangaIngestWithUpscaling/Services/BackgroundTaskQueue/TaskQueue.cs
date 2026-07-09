@@ -194,6 +194,7 @@ public class TaskQueue : ITaskQueue, IHostedService
                         && (
                             t.Status == PersistedTaskStatus.Pending
                             || t.Status == PersistedTaskStatus.Failed
+                            || t.Status == PersistedTaskStatus.Canceled
                         )
                     )
                     .ToListAsync();
