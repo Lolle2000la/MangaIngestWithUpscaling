@@ -1,4 +1,4 @@
-﻿using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
@@ -7,7 +7,7 @@ using Microsoft.Extensions.Localization;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 
-public class RenameUpscaledChaptersSeriesTask : BaseTask
+public class RenameUpscaledChaptersSeriesTask : BaseTask, IChapterTask
 {
     public RenameUpscaledChaptersSeriesTask() { }
 
