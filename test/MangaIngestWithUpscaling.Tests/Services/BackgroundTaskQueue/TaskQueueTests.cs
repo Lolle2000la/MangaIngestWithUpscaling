@@ -968,4 +968,82 @@ public class TaskQueueTests : IDisposable
         Assert.Equal(2, dbTasks[1].Order);
         Assert.Equal(3, dbTasks[2].Order);
     }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task EnqueueAsync_ShouldRaiseTaskEnqueuedOrChangedForShiftedTasks()
+    {
+        // Arrange
+        var library = new Library
+        {
+            Name = "TestLib7",
+            NotUpscaledLibraryPath = "not_upscaled7",
+            UpscaledLibraryPath = "upscaled7",
+        };
+        var upscalerProfile = new UpscalerProfile
+        {
+            Name = "TestProfile7",
+            ScalingFactor = ScaleFactor.TwoX,
+            CompressionFormat = CompressionFormat.Png,
+            Quality = 90,
+        };
+        _dbContext.Libraries.Add(library);
+        _dbContext.UpscalerProfiles.Add(upscalerProfile);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var manga = new Manga
+        {
+            PrimaryTitle = "TestManga7",
+            LibraryId = library.Id,
+            Library = library,
+            UpscalerProfilePreference = upscalerProfile,
+        };
+        _dbContext.MangaSeries.Add(manga);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var chapter2 = new Chapter
+        {
+            MangaId = manga.Id,
+            Manga = manga,
+            FileName = "Chapter 2.cbz",
+            RelativePath = "ch2.cbz",
+        };
+        var chapter1 = new Chapter
+        {
+            MangaId = manga.Id,
+            Manga = manga,
+            FileName = "Chapter 1.cbz",
+            RelativePath = "ch1.cbz",
+        };
+        _dbContext.Chapters.AddRange(chapter2, chapter1);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Enqueue Chapter 2 (Order = 1)
+        await _taskQueue.EnqueueAsync(new UpscaleTask(chapter2, upscalerProfile));
+
+        var raisedTasks = new List<PersistedTask>();
+        _taskQueue.TaskEnqueuedOrChanged += (task) =>
+        {
+            raisedTasks.Add(task);
+            return Task.CompletedTask;
+        };
+
+        // Act
+        // Enqueue Chapter 1 (Order = 1, shifting Chapter 2 to 2)
+        await _taskQueue.EnqueueAsync(new UpscaleTask(chapter1, upscalerProfile));
+
+        // Assert
+        // We expect two event triggers:
+        // 1. For Chapter 2 (order shifted to 2)
+        // 2. For Chapter 1 (newly enqueued at order 1)
+        Assert.Equal(2, raisedTasks.Count);
+
+        var shiftedTask = raisedTasks[0];
+        Assert.Equal(chapter2.Id, ((UpscaleTask)shiftedTask.Data).ChapterId);
+        Assert.Equal(2, shiftedTask.Order);
+
+        var newTask = raisedTasks[1];
+        Assert.Equal(chapter1.Id, ((UpscaleTask)newTask.Data).ChapterId);
+        Assert.Equal(1, newTask.Order);
+    }
 }

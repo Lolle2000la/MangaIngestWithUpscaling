@@ -189,7 +189,13 @@ public class TaskQueue : ITaskQueue, IHostedService
                 finalOrder = targetOrder.Value;
 
                 var tasksToShift = await dbContext
-                    .PersistedTasks.Where(t => t.Order >= finalOrder)
+                    .PersistedTasks.Where(t =>
+                        t.Order >= finalOrder
+                        && (
+                            t.Status == PersistedTaskStatus.Pending
+                            || t.Status == PersistedTaskStatus.Failed
+                        )
+                    )
                     .ToListAsync();
 
                 foreach (var t in tasksToShift)
@@ -207,6 +213,7 @@ public class TaskQueue : ITaskQueue, IHostedService
             await dbContext.PersistedTasks.AddAsync(taskItem);
             await dbContext.SaveChangesAsync();
 
+            var shiftedTasks = new List<PersistedTask>();
             bool added = false;
             lock (_upscaleTasksLock)
             {
@@ -226,6 +233,7 @@ public class TaskQueue : ITaskQueue, IHostedService
                             t.Order += 1;
                             _upscaleTasks.Add(t);
                         }
+                        shiftedTasks.AddRange(upscaleToUpdate);
 
                         var standardToUpdate = _standardTasks
                             .Where(t => t.Order >= targetOrder.Value)
@@ -239,6 +247,7 @@ public class TaskQueue : ITaskQueue, IHostedService
                             t.Order += 1;
                             _standardTasks.Add(t);
                         }
+                        shiftedTasks.AddRange(standardToUpdate);
                     }
 
                     if (isUpscale)
@@ -261,6 +270,14 @@ public class TaskQueue : ITaskQueue, IHostedService
                 else
                 {
                     await _standardChannel.Writer.WriteAsync(Signal);
+                }
+            }
+
+            if (TaskEnqueuedOrChanged != null)
+            {
+                foreach (var t in shiftedTasks)
+                {
+                    _ = TaskEnqueuedOrChanged.Invoke(t);
                 }
             }
 
