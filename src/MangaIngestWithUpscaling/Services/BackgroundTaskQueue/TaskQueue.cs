@@ -275,10 +275,6 @@ public class TaskQueue : ITaskQueue, IHostedService
                 {
                     await TaskEnqueuedOrChanged.Invoke(t);
                 }
-            }
-
-            if (TaskEnqueuedOrChanged != null)
-            {
                 await TaskEnqueuedOrChanged.Invoke(taskItem);
             }
 
