@@ -207,56 +207,54 @@ public class TaskQueue : ITaskQueue, IHostedService
             await dbContext.PersistedTasks.AddAsync(taskItem);
             await dbContext.SaveChangesAsync();
 
-            if (isUpscale)
+            bool added = false;
+            lock (_upscaleTasksLock)
             {
-                bool added;
-                lock (_upscaleTasksLock)
-                {
-                    if (targetOrder.HasValue)
-                    {
-                        var tasksToUpdate = _upscaleTasks
-                            .Where(t => t.Order >= targetOrder.Value)
-                            .ToList();
-                        foreach (var t in tasksToUpdate)
-                        {
-                            _upscaleTasks.Remove(t);
-                        }
-                        foreach (var t in tasksToUpdate)
-                        {
-                            t.Order += 1;
-                            _upscaleTasks.Add(t);
-                        }
-                    }
-                    added = _upscaleTasks.Add(taskItem);
-                }
-                if (added)
-                {
-                    await _upscaleChannel.Writer.WriteAsync(Signal);
-                }
-            }
-            else
-            {
-                bool added;
                 lock (_standardTasksLock)
                 {
                     if (targetOrder.HasValue)
                     {
-                        var tasksToUpdate = _standardTasks
-                            .Where(t => t.Order >= targetOrder.Value)
-                            .ToList();
-                        foreach (var t in tasksToUpdate)
+                        var upscaleToUpdate = _upscaleTasks.Where(t => t.Order >= targetOrder.Value).ToList();
+                        foreach (var t in upscaleToUpdate)
+                        {
+                            _upscaleTasks.Remove(t);
+                        }
+                        foreach (var t in upscaleToUpdate)
+                        {
+                            t.Order += 1;
+                            _upscaleTasks.Add(t);
+                        }
+
+                        var standardToUpdate = _standardTasks.Where(t => t.Order >= targetOrder.Value).ToList();
+                        foreach (var t in standardToUpdate)
                         {
                             _standardTasks.Remove(t);
                         }
-                        foreach (var t in tasksToUpdate)
+                        foreach (var t in standardToUpdate)
                         {
                             t.Order += 1;
                             _standardTasks.Add(t);
                         }
                     }
-                    added = _standardTasks.Add(taskItem);
+
+                    if (isUpscale)
+                    {
+                        added = _upscaleTasks.Add(taskItem);
+                    }
+                    else
+                    {
+                        added = _standardTasks.Add(taskItem);
+                    }
                 }
-                if (added)
+            }
+
+            if (added)
+            {
+                if (isUpscale)
+                {
+                    await _upscaleChannel.Writer.WriteAsync(Signal);
+                }
+                else
                 {
                     await _standardChannel.Writer.WriteAsync(Signal);
                 }
