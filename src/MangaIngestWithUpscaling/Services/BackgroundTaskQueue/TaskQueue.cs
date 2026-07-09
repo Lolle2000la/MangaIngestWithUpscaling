@@ -2,6 +2,8 @@ using System.Threading.Channels;
 using AutoRegisterInject;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
+using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using Microsoft.EntityFrameworkCore;
 
@@ -33,6 +35,7 @@ public class TaskQueue : ITaskQueue, IHostedService
     private readonly Channel<PersistedTask> _reroutedUpscaleChannel;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly Channel<object> _standardChannel;
+    private readonly SemaphoreSlim _enqueueSemaphore = new(1, 1);
 
     private readonly SortedSet<PersistedTask> _standardTasks;
     private readonly object _standardTasksLock = new();
@@ -111,52 +114,169 @@ public class TaskQueue : ITaskQueue, IHostedService
     public async Task EnqueueAsync<T>(T taskData)
         where T : BaseTask
     {
-        using IServiceScope scope = _scopeFactory.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-
-        // Determine the next order value
-        int maxOrder = await dbContext.PersistedTasks.MaxAsync(t => (int?)t.Order) ?? 0;
-        var taskItem = new PersistedTask { Data = taskData, Order = maxOrder + 1 };
-
-        await dbContext.PersistedTasks.AddAsync(taskItem);
-        await dbContext.SaveChangesAsync();
-
-        // Add to the appropriate sorted set and notify via signal
-        if (IsUpscaleTask(taskData))
+        await _enqueueSemaphore.WaitAsync();
+        try
         {
-            bool added;
-            lock (_upscaleTasksLock)
+            using IServiceScope scope = _scopeFactory.CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+            bool isUpscale = IsUpscaleTask(taskData);
+            int? newChapterId = GetChapterId(taskData);
+            int? targetOrder = null;
+            Chapter? newChapter = null;
+
+            if (newChapterId.HasValue)
             {
-                added = _upscaleTasks.Add(taskItem);
+                newChapter = await dbContext
+                    .Chapters.Include(c => c.Manga)
+                    .FirstOrDefaultAsync(c => c.Id == newChapterId.Value);
             }
-            if (added)
+
+            if (newChapter != null)
             {
-                await _upscaleChannel.Writer.WriteAsync(Signal);
+                var activeTasks = await dbContext
+                    .PersistedTasks.Where(t =>
+                        t.Status == PersistedTaskStatus.Pending
+                        || t.Status == PersistedTaskStatus.Processing
+                        || t.Status == PersistedTaskStatus.Failed
+                    )
+                    .OrderBy(t => t.Order)
+                    .ToListAsync();
+
+                var queueTasks = activeTasks
+                    .Where(t => IsUpscaleTask(t.Data) == isUpscale)
+                    .ToList();
+
+                var activeChapterIds = queueTasks
+                    .Select(t => GetChapterId(t.Data))
+                    .Where(id => id.HasValue)
+                    .Select(id => id!.Value)
+                    .Distinct()
+                    .ToList();
+
+                var chaptersMap = await dbContext
+                    .Chapters.Where(c => activeChapterIds.Contains(c.Id))
+                    .ToDictionaryAsync(c => c.Id);
+
+                foreach (var t in queueTasks)
+                {
+                    if (
+                        t.Status != PersistedTaskStatus.Pending
+                        && t.Status != PersistedTaskStatus.Failed
+                    )
+                    {
+                        continue;
+                    }
+
+                    int? existChapterId = GetChapterId(t.Data);
+                    if (
+                        existChapterId.HasValue
+                        && chaptersMap.TryGetValue(existChapterId.Value, out var existChapter)
+                    )
+                    {
+                        if (CompareChapters(newChapter, existChapter) < 0)
+                        {
+                            targetOrder = t.Order;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            int finalOrder;
+            if (targetOrder.HasValue)
+            {
+                finalOrder = targetOrder.Value;
+
+                var tasksToShift = await dbContext
+                    .PersistedTasks.Where(t => t.Order >= finalOrder)
+                    .ToListAsync();
+
+                foreach (var t in tasksToShift)
+                {
+                    t.Order += 1;
+                }
+            }
+            else
+            {
+                int maxOrder = await dbContext.PersistedTasks.MaxAsync(t => (int?)t.Order) ?? 0;
+                finalOrder = maxOrder + 1;
+            }
+
+            var taskItem = new PersistedTask { Data = taskData, Order = finalOrder };
+            await dbContext.PersistedTasks.AddAsync(taskItem);
+            await dbContext.SaveChangesAsync();
+
+            if (isUpscale)
+            {
+                bool added;
+                lock (_upscaleTasksLock)
+                {
+                    if (targetOrder.HasValue)
+                    {
+                        var tasksToUpdate = _upscaleTasks
+                            .Where(t => t.Order >= targetOrder.Value)
+                            .ToList();
+                        foreach (var t in tasksToUpdate)
+                        {
+                            _upscaleTasks.Remove(t);
+                        }
+                        foreach (var t in tasksToUpdate)
+                        {
+                            t.Order += 1;
+                            _upscaleTasks.Add(t);
+                        }
+                    }
+                    added = _upscaleTasks.Add(taskItem);
+                }
+                if (added)
+                {
+                    await _upscaleChannel.Writer.WriteAsync(Signal);
+                }
+            }
+            else
+            {
+                bool added;
+                lock (_standardTasksLock)
+                {
+                    if (targetOrder.HasValue)
+                    {
+                        var tasksToUpdate = _standardTasks
+                            .Where(t => t.Order >= targetOrder.Value)
+                            .ToList();
+                        foreach (var t in tasksToUpdate)
+                        {
+                            _standardTasks.Remove(t);
+                        }
+                        foreach (var t in tasksToUpdate)
+                        {
+                            t.Order += 1;
+                            _standardTasks.Add(t);
+                        }
+                    }
+                    added = _standardTasks.Add(taskItem);
+                }
+                if (added)
+                {
+                    await _standardChannel.Writer.WriteAsync(Signal);
+                }
+            }
+
+            TaskEnqueuedOrChanged?.Invoke(taskItem);
+
+            var queueCleanup = scope.ServiceProvider.GetRequiredService<IQueueCleanup>();
+            var removedTaskIds = await queueCleanup.CleanupAsync();
+
+            if (TaskRemoved != null && removedTaskIds.Count > 0)
+            {
+                await Task.WhenAll(
+                    removedTaskIds.Select(id => TaskRemoved(new PersistedTask { Id = id }))
+                );
             }
         }
-        else
+        finally
         {
-            bool added;
-            lock (_standardTasksLock)
-            {
-                added = _standardTasks.Add(taskItem);
-            }
-            if (added)
-            {
-                await _standardChannel.Writer.WriteAsync(Signal);
-            }
-        }
-
-        TaskEnqueuedOrChanged?.Invoke(taskItem);
-
-        var queueCleanup = scope.ServiceProvider.GetRequiredService<IQueueCleanup>();
-        var removedTaskIds = await queueCleanup.CleanupAsync();
-
-        if (TaskRemoved != null && removedTaskIds.Count > 0)
-        {
-            await Task.WhenAll(
-                removedTaskIds.Select(id => TaskRemoved(new PersistedTask { Id = id }))
-            );
+            _enqueueSemaphore.Release();
         }
     }
 
@@ -389,4 +509,36 @@ public class TaskQueue : ITaskQueue, IHostedService
 
     public event Func<PersistedTask, Task>? TaskEnqueuedOrChanged;
     public event Func<PersistedTask, Task>? TaskRemoved;
+
+    private static readonly NaturalSortComparer<Chapter> _chapterNameComparer = new(c =>
+        c.FileName
+    );
+
+    private static int? GetChapterId(BaseTask data)
+    {
+        return data is IChapterTask chapterTask ? chapterTask.ChapterId : null;
+    }
+
+    private static int CompareChapters(Chapter a, Chapter b)
+    {
+        if (a.MangaId != b.MangaId)
+        {
+            return 0;
+        }
+
+        var numAStr = ChapterNumberHelper.ExtractChapterNumber(a.FileName);
+        var numBStr = ChapterNumberHelper.ExtractChapterNumber(b.FileName);
+
+        if (
+            numAStr != null
+            && numBStr != null
+            && decimal.TryParse(numAStr, out decimal numA)
+            && decimal.TryParse(numBStr, out decimal numB)
+        )
+        {
+            return numA.CompareTo(numB);
+        }
+
+        return _chapterNameComparer.Compare(a, b);
+    }
 }
