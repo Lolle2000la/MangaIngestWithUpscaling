@@ -127,25 +127,28 @@ public class TaskQueue : ITaskQueue, IHostedService
 
             if (newChapterId.HasValue)
             {
-                newChapter = await dbContext
-                    .Chapters.Include(c => c.Manga)
-                    .FirstOrDefaultAsync(c => c.Id == newChapterId.Value);
+                newChapter = await dbContext.Chapters.FirstOrDefaultAsync(c =>
+                    c.Id == newChapterId.Value
+                );
             }
 
             if (newChapter != null)
             {
-                var activeTasks = await dbContext
-                    .PersistedTasks.Where(t =>
-                        t.Status == PersistedTaskStatus.Pending
-                        || t.Status == PersistedTaskStatus.Processing
-                        || t.Status == PersistedTaskStatus.Failed
-                    )
-                    .OrderBy(t => t.Order)
-                    .ToListAsync();
-
-                var queueTasks = activeTasks
-                    .Where(t => IsUpscaleTask(t.Data) == isUpscale)
-                    .ToList();
+                List<PersistedTask> queueTasks;
+                if (isUpscale)
+                {
+                    lock (_upscaleTasksLock)
+                    {
+                        queueTasks = _upscaleTasks.ToList();
+                    }
+                }
+                else
+                {
+                    lock (_standardTasksLock)
+                    {
+                        queueTasks = _standardTasks.ToList();
+                    }
+                }
 
                 var activeChapterIds = queueTasks
                     .Select(t => GetChapterId(t.Data))
@@ -160,14 +163,6 @@ public class TaskQueue : ITaskQueue, IHostedService
 
                 foreach (var t in queueTasks)
                 {
-                    if (
-                        t.Status != PersistedTaskStatus.Pending
-                        && t.Status != PersistedTaskStatus.Failed
-                    )
-                    {
-                        continue;
-                    }
-
                     int? existChapterId = GetChapterId(t.Data);
                     if (
                         existChapterId.HasValue
@@ -278,11 +273,14 @@ public class TaskQueue : ITaskQueue, IHostedService
             {
                 foreach (var t in shiftedTasks)
                 {
-                    _ = TaskEnqueuedOrChanged.Invoke(t);
+                    await TaskEnqueuedOrChanged.Invoke(t);
                 }
             }
 
-            TaskEnqueuedOrChanged?.Invoke(taskItem);
+            if (TaskEnqueuedOrChanged != null)
+            {
+                await TaskEnqueuedOrChanged.Invoke(taskItem);
+            }
 
             var queueCleanup = scope.ServiceProvider.GetRequiredService<IQueueCleanup>();
             var removedTaskIds = await queueCleanup.CleanupAsync();
