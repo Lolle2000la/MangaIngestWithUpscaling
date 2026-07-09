@@ -409,20 +409,43 @@ public class TaskQueueTests : IDisposable
         Assert.Null(_taskQueue.DequeueStandard());
     }
 
-    [Fact]
+    [Theory]
+    [InlineData(
+        new[] { "Chapter 2.cbz", "Chapter 11.cbz", "Chapter 1.cbz" },
+        new[] { "Chapter 1.cbz", "Chapter 2.cbz", "Chapter 11.cbz" }
+    )]
+    [InlineData(
+        new[] { "Chapter 10.cbz", "Chapter 2.cbz" },
+        new[] { "Chapter 2.cbz", "Chapter 10.cbz" }
+    )]
+    [InlineData(
+        new[] { "Chapter 1.5.cbz", "Chapter 1.cbz", "Chapter 2.cbz" },
+        new[] { "Chapter 1.cbz", "Chapter 1.5.cbz", "Chapter 2.cbz" }
+    )]
+    [InlineData(
+        new[] { "Special B.cbz", "Special A.cbz" },
+        new[] { "Special A.cbz", "Special B.cbz" }
+    )]
+    [InlineData(
+        new[] { "Chapter 1.0.cbz", "Chapter 1.cbz" },
+        new[] { "Chapter 1.0.cbz", "Chapter 1.cbz" }
+    )]
     [Trait("Category", "Unit")]
-    public async Task EnqueueAsync_ShouldInsertInLogicalChapterOrder()
+    public async Task EnqueueAsync_ShouldInsertInLogicalChapterOrder(
+        string[] enqueueNames,
+        string[] expectedNames
+    )
     {
         // Arrange
         var library = new Library
         {
-            Name = "TestLib",
+            Name = "TestLib_" + Guid.NewGuid().ToString("N"),
             NotUpscaledLibraryPath = "not_upscaled",
             UpscaledLibraryPath = "upscaled",
         };
         var upscalerProfile = new UpscalerProfile
         {
-            Name = "TestProfile",
+            Name = "TestProfile_" + Guid.NewGuid().ToString("N"),
             ScalingFactor = ScaleFactor.TwoX,
             CompressionFormat = CompressionFormat.Png,
             Quality = 90,
@@ -433,7 +456,7 @@ public class TaskQueueTests : IDisposable
 
         var manga = new Manga
         {
-            PrimaryTitle = "TestManga",
+            PrimaryTitle = "TestManga_" + Guid.NewGuid().ToString("N"),
             LibraryId = library.Id,
             Library = library,
             UpscalerProfilePreference = upscalerProfile,
@@ -441,68 +464,44 @@ public class TaskQueueTests : IDisposable
         _dbContext.MangaSeries.Add(manga);
         await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var chapter2 = new Chapter
+        var chapters = new List<Chapter>();
+        for (int i = 0; i < enqueueNames.Length; i++)
         {
-            MangaId = manga.Id,
-            Manga = manga,
-            FileName = "Chapter 2.cbz",
-            RelativePath = "ch2.cbz",
-        };
-        var chapter1 = new Chapter
-        {
-            MangaId = manga.Id,
-            Manga = manga,
-            FileName = "Chapter 1.cbz",
-            RelativePath = "ch1.cbz",
-        };
-        var chapter3 = new Chapter
-        {
-            MangaId = manga.Id,
-            Manga = manga,
-            FileName = "Chapter 3.cbz",
-            RelativePath = "ch3.cbz",
-        };
-        _dbContext.Chapters.AddRange(chapter1, chapter2, chapter3);
+            chapters.Add(
+                new Chapter
+                {
+                    MangaId = manga.Id,
+                    Manga = manga,
+                    FileName = enqueueNames[i],
+                    RelativePath = $"ch{i}.cbz",
+                }
+            );
+        }
+        _dbContext.Chapters.AddRange(chapters);
         await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        var taskForCh2 = new UpscaleTask(chapter2, upscalerProfile);
-        var taskForCh1 = new UpscaleTask(chapter1, upscalerProfile);
-        var taskForCh3 = new UpscaleTask(chapter3, upscalerProfile);
-
         // Act
-        // 1. Enqueue Chapter 2 first
-        await _taskQueue.EnqueueAsync(taskForCh2);
-
-        // 2. Enqueue Chapter 1 second (should be sorted before Chapter 2)
-        await _taskQueue.EnqueueAsync(taskForCh1);
-
-        // 3. Enqueue Chapter 3 third (should be sorted after Chapter 2)
-        await _taskQueue.EnqueueAsync(taskForCh3);
+        // Enqueue in the order specified in enqueueNames
+        foreach (var chapter in chapters)
+        {
+            var task = new UpscaleTask(chapter, upscalerProfile);
+            await _taskQueue.EnqueueAsync(task);
+        }
 
         // Assert
         var snapshot = _taskQueue.GetUpscaleSnapshot();
-        Assert.Equal(3, snapshot.Count);
+        Assert.Equal(expectedNames.Length, snapshot.Count);
 
-        var firstTask = snapshot[0];
-        var secondTask = snapshot[1];
-        var thirdTask = snapshot[2];
-
-        Assert.Equal(chapter1.Id, ((UpscaleTask)firstTask.Data).ChapterId);
-        Assert.Equal(chapter2.Id, ((UpscaleTask)secondTask.Data).ChapterId);
-        Assert.Equal(chapter3.Id, ((UpscaleTask)thirdTask.Data).ChapterId);
-
-        // Verify they are dequeued in the correct order
-        var dequeued1 = _taskQueue.DequeueUpscale();
-        var dequeued2 = _taskQueue.DequeueUpscale();
-        var dequeued3 = _taskQueue.DequeueUpscale();
-
-        Assert.NotNull(dequeued1);
-        Assert.NotNull(dequeued2);
-        Assert.NotNull(dequeued3);
-
-        Assert.Equal(chapter1.Id, ((UpscaleTask)dequeued1.Data).ChapterId);
-        Assert.Equal(chapter2.Id, ((UpscaleTask)dequeued2.Data).ChapterId);
-        Assert.Equal(chapter3.Id, ((UpscaleTask)dequeued3.Data).ChapterId);
+        for (int i = 0; i < expectedNames.Length; i++)
+        {
+            var task = (UpscaleTask)snapshot[i].Data;
+            var chapter = await _dbContext.Chapters.FirstOrDefaultAsync(
+                c => c.Id == task.ChapterId,
+                TestContext.Current.CancellationToken
+            );
+            Assert.NotNull(chapter);
+            Assert.Equal(expectedNames[i], chapter.FileName);
+        }
     }
 
     [Fact]

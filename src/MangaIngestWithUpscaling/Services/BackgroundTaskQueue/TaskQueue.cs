@@ -214,7 +214,9 @@ public class TaskQueue : ITaskQueue, IHostedService
                 {
                     if (targetOrder.HasValue)
                     {
-                        var upscaleToUpdate = _upscaleTasks.Where(t => t.Order >= targetOrder.Value).ToList();
+                        var upscaleToUpdate = _upscaleTasks
+                            .Where(t => t.Order >= targetOrder.Value)
+                            .ToList();
                         foreach (var t in upscaleToUpdate)
                         {
                             _upscaleTasks.Remove(t);
@@ -225,7 +227,9 @@ public class TaskQueue : ITaskQueue, IHostedService
                             _upscaleTasks.Add(t);
                         }
 
-                        var standardToUpdate = _standardTasks.Where(t => t.Order >= targetOrder.Value).ToList();
+                        var standardToUpdate = _standardTasks
+                            .Where(t => t.Order >= targetOrder.Value)
+                            .ToList();
                         foreach (var t in standardToUpdate)
                         {
                             _standardTasks.Remove(t);
@@ -530,11 +534,23 @@ public class TaskQueue : ITaskQueue, IHostedService
         if (
             numAStr != null
             && numBStr != null
-            && decimal.TryParse(numAStr, out decimal numA)
-            && decimal.TryParse(numBStr, out decimal numB)
+            && decimal.TryParse(
+                numAStr,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out decimal numA
+            )
+            && decimal.TryParse(
+                numBStr,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out decimal numB
+            )
         )
         {
-            return numA.CompareTo(numB);
+            int comparison = numA.CompareTo(numB);
+            if (comparison != 0)
+            {
+                return comparison;
+            }
         }
 
         return _chapterNameComparer.Compare(a, b);
