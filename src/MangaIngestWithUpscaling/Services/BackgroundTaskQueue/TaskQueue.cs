@@ -548,11 +548,13 @@ public class TaskQueue : ITaskQueue, IHostedService
             && numBStr != null
             && decimal.TryParse(
                 numAStr,
+                System.Globalization.NumberStyles.Number,
                 System.Globalization.CultureInfo.InvariantCulture,
                 out decimal numA
             )
             && decimal.TryParse(
                 numBStr,
+                System.Globalization.NumberStyles.Number,
                 System.Globalization.CultureInfo.InvariantCulture,
                 out decimal numB
             )
