@@ -14,7 +14,14 @@ public enum GpuBackend
 public record UpscalerConfig
 {
     public const string Position = "Upscaler";
-    public int SelectedDeviceIndex = 0;
+
+    /// <summary>
+    ///     Index of the device to use for upscaling.
+    ///     The device list is ordered with CPU at index 0, followed by accelerators (CUDA, ROCm, XPU, MPS).
+    ///     Defaults to 1 (the first available GPU/accelerator).
+    ///     Set to 0 to force CPU mode (equivalent to <see cref="UseCPU"/>).
+    /// </summary>
+    public int SelectedDeviceIndex = 1;
 
     /// <summary>
     ///     When enabled, the upscaler will only run on the remote worker. No local consumption will be attempted.

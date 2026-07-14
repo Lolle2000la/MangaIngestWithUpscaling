@@ -5,7 +5,7 @@
     "$type": "Avalonia.Collections.AvaloniaDictionary`2[[System.String, System.Private.CoreLib],[MangaJaNaiConverterGui.ViewModels.ReaderDevice, MangaJaNaiConverterGui]], Avalonia.Base"
   },
   "AutoUpdateEnabled": false,
-  "SelectedDeviceIndex": 0,
+  "SelectedDeviceIndex": 1,
   "UseCpu": false,
   "UseFp16": true,
   "Workflows": {

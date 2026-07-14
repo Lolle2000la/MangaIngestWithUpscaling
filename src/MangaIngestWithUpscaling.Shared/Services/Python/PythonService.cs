@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -572,38 +572,38 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         {
             GpuBackend.CUDA =>
                 "install torch==2.7.1 torchvision==0.22.1 --extra-index-url https://download.pytorch.org/whl/cu118 "
-                    + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
+                    + "chainner_ext==0.3.10 \"numpy>=2.4.0\" \"opencv-python-headless>=4.11.0.86\" "
                     + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
+                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 \"pillow>=12.0.0\" --no-warn-script-location",
             GpuBackend.CUDA_12_8 =>
                 "install torch==2.11.0 torchvision==0.26.0 --extra-index-url https://download.pytorch.org/whl/cu128 "
-                    + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
+                    + "chainner_ext==0.3.10 \"numpy>=2.4.0\" \"opencv-python-headless>=4.11.0.86\" "
                     + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
+                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 \"pillow>=12.0.0\" --no-warn-script-location",
             GpuBackend.ROCm =>
                 "install torch==2.11.0 torchvision==0.26.0 --extra-index-url https://download.pytorch.org/whl/rocm7.2 "
-                    + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
+                    + "chainner_ext==0.3.10 \"numpy>=2.4.0\" \"opencv-python-headless>=4.11.0.86\" "
                     + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
+                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 \"pillow>=12.0.0\" --no-warn-script-location",
             GpuBackend.ROCm_GFX120X =>
                 "install --pre torch torchvision --extra-index-url https://rocm.nightlies.amd.com/v2/gfx120X-all "
-                    + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
+                    + "chainner_ext==0.3.10 \"numpy>=2.4.0\" \"opencv-python-headless>=4.11.0.86\" "
                     + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
+                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 \"pillow>=12.0.0\" --no-warn-script-location",
             GpuBackend.XPU =>
                 "install torch==2.11.0 torchvision==0.26.0 --extra-index-url https://download.pytorch.org/whl/xpu "
-                    + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
+                    + "chainner_ext==0.3.10 \"numpy>=2.4.0\" \"opencv-python-headless>=4.11.0.86\" "
                     + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
+                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 \"pillow>=12.0.0\" --no-warn-script-location",
             GpuBackend.CPU =>
                 "install torch==2.11.0 torchvision==0.26.0 --extra-index-url https://download.pytorch.org/whl/cpu "
-                    + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
+                    + "chainner_ext==0.3.10 \"numpy>=2.4.0\" \"opencv-python-headless>=4.11.0.86\" "
                     + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
+                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 \"pillow>=12.0.0\" --no-warn-script-location",
             _ => "install torch==2.11.0 torchvision==0.26.0 "
-                + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
+                + "chainner_ext==0.3.10 \"numpy>=2.4.0\" \"opencv-python-headless>=4.11.0.86\" "
                 + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
+                + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 \"pillow>=12.0.0\" --no-warn-script-location",
         };
 
         logger.LogInformation(

@@ -1,4 +1,4 @@
-﻿using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 
 namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
@@ -112,6 +112,9 @@ public class MangaJaNaiUpscalerConfig
     {
         UseFp16 = config.UseFp16;
         UseCPU = config.UseCPU;
-        SelectedDeviceIndex = config.SelectedDeviceIndex;
+        // In the new device indexing scheme used by the backend, index 0 is CPU.
+        // Override SelectedDeviceIndex to 0 when CPU mode is requested so the
+        // Python script picks the correct device regardless of the configured index.
+        SelectedDeviceIndex = config.UseCPU ? 0 : config.SelectedDeviceIndex;
     }
 }
