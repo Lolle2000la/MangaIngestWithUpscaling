@@ -7,8 +7,8 @@ on:
   push:
     branches: ["main"]
     paths:
-      - "src/MangaIngestWithUpscaling.RemoteWorker/**"
-      - "src/MangaIngestWithUpscaling.Shared/**"
+      - "src/**"
+      - "submodules/**"
       - "MangaIngestWithUpscaling.sln"
 
 jobs:
