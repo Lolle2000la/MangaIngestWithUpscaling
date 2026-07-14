@@ -7,8 +7,8 @@ on:
   push:
     branches: ["main"]
     paths:
-      - "src/**"
-      - "submodules/**"
+      - "src/MangaIngestWithUpscaling/**"
+      - "src/MangaIngestWithUpscaling.Shared/**"
       - "MangaIngestWithUpscaling.sln"
       - "Dockerfile"
       - "rocm.Dockerfile"
