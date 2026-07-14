@@ -7,12 +7,14 @@ on:
   push:
     branches: ["main"]
     paths:
-      - "src/MangaIngestWithUpscaling/**"
-      - "src/MangaIngestWithUpscaling.Shared/**"
+      - "src/**"
+      - "submodules/**"
       - "MangaIngestWithUpscaling.sln"
       - "Dockerfile"
       - "rocm.Dockerfile"
       - "remoteonly.Dockerfile"
+      - "cuda128.Dockerfile"
+      - "xpu.Dockerfile"
 
 jobs:
   build:
