@@ -1,7 +1,7 @@
 [submodule "MangaJaNaiConverterGui"]
 	path = submodules/MangaJaNaiConverterGui
-	url = https://github.com/the-database/MangaJaNaiConverterGui.git
-	branch = main
+	url = https://github.com/Lolle2000la/MangaJaNaiConverterGui.git
+	branch = fix/auto-split-and-avif-export
 [submodule "submodules/manga-vert-split-nn"]
 	path = submodules/manga-vert-split-nn
 	url = https://github.com/lolle2000la/manga-vert-split-nn.git
