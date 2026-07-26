@@ -97,4 +97,7 @@
   <data name="Status_Canceled" xml:space="preserve">
     <value>キャンセル済み</value>
   </data>
+  <data name="Status_Remote" xml:space="preserve">
+    <value>リモート</value>
+  </data>
 </root>

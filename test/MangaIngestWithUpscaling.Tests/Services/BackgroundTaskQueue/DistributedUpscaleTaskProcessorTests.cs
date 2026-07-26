@@ -106,4 +106,38 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
         Assert.Equal(2, ((DetectSplitCandidatesTask)result1.Data).ChapterId);
         Assert.Equal(1, ((DetectSplitCandidatesTask)result2.Data).ChapterId);
     }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task IsRunningRemotely_ShouldReturnTrueWhileProcessingRemotely_AndFalseWhenCompleted()
+    {
+        // Arrange
+        var cts = new CancellationTokenSource();
+        await _taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(1, 1));
+
+        var runTask = _processor.StartAsync(cts.Token);
+
+        // Before GetTask, task is not running remotely
+        Assert.False(_processor.IsRunningRemotely(1));
+
+        // Act
+        var task = await _processor.GetTask(cts.Token);
+
+        // Assert while processing remotely
+        Assert.NotNull(task);
+        Assert.True(_processor.IsRunningRemotely(task.Id));
+
+        // Complete task
+        await _processor.TaskCompleted(task.Id);
+
+        // Assert after completion
+        Assert.False(_processor.IsRunningRemotely(task.Id));
+
+        await cts.CancelAsync();
+        try
+        {
+            await runTask;
+        }
+        catch (OperationCanceledException) { }
+    }
 }

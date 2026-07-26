@@ -1,7 +1,9 @@
-﻿@using MangaIngestWithUpscaling.Data.BackgroundTaskQueue
+@using MangaIngestWithUpscaling.Data.BackgroundTaskQueue
+@using MangaIngestWithUpscaling.Services.BackgroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.TaskDescribers
 @inject IStringLocalizer<TaskTable> Loc
 @inject ITaskDescriberFactory DescriberFactory
+@inject DistributedUpscaleTaskProcessor DistributedUpscaleTaskProcessor
 
 <MudTable T="PersistedTask" Items="@Tasks" RowsPerPage="10" Elevation="3" Dense="true" @ref="Table">
     <ToolBarContent>
@@ -41,6 +43,12 @@
         </MudTd>
         <MudTd DataLabel="@Loc["Header_Status"]">
             @Loc[$"Status_{context.Status}"]
+            @if (context.Status == PersistedTaskStatus.Processing && DistributedUpscaleTaskProcessor.IsRunningRemotely(context.Id))
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Outlined" Class="ml-1 my-0 pa-1" Style="font-size: 0.75rem;">
+                    @Loc["Status_Remote"]
+                </MudChip>
+            }
             @if (context.Status == PersistedTaskStatus.Processing && context.Data?.Progress is not null)
             {
                 var p = context.Data.Progress;
