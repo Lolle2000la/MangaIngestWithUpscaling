@@ -37,6 +37,7 @@ public class MockStringLocalizer<T> : IStringLocalizer<T>
         { "Status_Completed", "Completed" },
         { "Status_Failed", "Failed" },
         { "Status_Canceled", "Canceled" },
+        { "Status_Remote", "Remote" },
         // EditLibraryFilters
         { "Title", "Edit Ingest Filters" },
         {

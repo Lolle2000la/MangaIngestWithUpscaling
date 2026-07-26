@@ -517,6 +517,17 @@ public class DistributedUpscaleTaskProcessor(
     }
 
     /// <summary>
+    ///     Checks if a task is currently running on a remote processor.
+    /// </summary>
+    public bool IsRunningRemotely(int taskId)
+    {
+        using (_lock.EnterScope())
+        {
+            return runningTasks.ContainsKey(taskId);
+        }
+    }
+
+    /// <summary>
     ///     Applies progress updates coming from a remote worker to the running task, if any.
     ///     Backward-compatible usage via optional fields: only provided values are applied.
     /// </summary>
