@@ -177,6 +177,7 @@ public class TaskRegistryTests
             taskQueue,
             scopeFactory,
             provider.GetRequiredService<IOptions<UpscalerConfig>>(),
+            Substitute.For<ILogger<DistributedUpscaleTaskProcessor>>(),
             persistence
         );
 

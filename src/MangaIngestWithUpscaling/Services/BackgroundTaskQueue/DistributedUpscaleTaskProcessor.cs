@@ -23,6 +23,7 @@ public class DistributedUpscaleTaskProcessor(
     TaskQueue taskQueue,
     IServiceScopeFactory scopeFactory,
     IOptions<UpscalerConfig> upscalerConfig,
+    ILogger<DistributedUpscaleTaskProcessor> logger,
     ITaskPersistenceService taskPersistenceService
 ) : BackgroundService
 {
@@ -54,6 +55,7 @@ public class DistributedUpscaleTaskProcessor(
     /// <param name="checkAgainst">The task to check against if it is still the current task. Does so by using the Id.</param>
     public async Task CancelCurrent(PersistedTask checkAgainst)
     {
+        bool found;
         using (_lock.EnterScope())
         {
             if (
@@ -65,11 +67,17 @@ public class DistributedUpscaleTaskProcessor(
                 _ = StatusChanged?.Invoke(currentTask);
 
                 runningTasks.Remove(checkAgainst.Id);
+                found = true;
             }
             else
             {
                 return;
             }
+        }
+
+        if (found)
+        {
+            CleanupRepairFiles(checkAgainst.Id, logger);
         }
 
         await taskPersistenceService.CancelTaskAsync(checkAgainst.Id);

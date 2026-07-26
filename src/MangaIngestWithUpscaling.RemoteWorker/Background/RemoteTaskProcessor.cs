@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.IO.Compression;
 using System.Threading.Channels;
 using Google.Protobuf;
@@ -197,28 +197,43 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     id => new KeepAliveRequest { TaskId = id, Prefetch = true }
                 );
 
-                var sw = Stopwatch.StartNew();
-                AsyncServerStreamingCall<CbzFileChunk>? stream = client.GetCbzFile(
-                    new CbzToUpscaleRequest { TaskId = resp.TaskId, Prefetch = true },
-                    cancellationToken: stoppingToken
-                );
-                string file = await FetchFile(
-                    resp.TaskId,
-                    stream.ResponseStream.ReadAllAsync(stoppingToken)
-                );
-                sw.Stop();
-                _predictor.RecordDownload(sw.Elapsed);
+                try
+                {
+                    var sw = Stopwatch.StartNew();
+                    using AsyncServerStreamingCall<CbzFileChunk> stream = client.GetCbzFile(
+                        new CbzToUpscaleRequest { TaskId = resp.TaskId, Prefetch = true },
+                        cancellationToken: persistentKeepAliveCts.Token
+                    );
+                    string file = await FetchFile(
+                        resp.TaskId,
+                        stream.ResponseStream.ReadAllAsync(persistentKeepAliveCts.Token)
+                    );
+                    sw.Stop();
+                    _predictor.RecordDownload(sw.Elapsed);
 
-                var fetched = new FetchedItem(
-                    resp.TaskId,
-                    prefetchProfile,
-                    file,
-                    persistentKeepAliveCts,
-                    persistentKeepAliveTask,
-                    resp.TaskType,
-                    resp.SplitFindingsJson
-                );
-                await _toUpscale.Writer.WriteAsync(fetched, stoppingToken);
+                    var fetched = new FetchedItem(
+                        resp.TaskId,
+                        prefetchProfile,
+                        file,
+                        persistentKeepAliveCts,
+                        persistentKeepAliveTask,
+                        resp.TaskType,
+                        resp.SplitFindingsJson
+                    );
+                    await _toUpscale.Writer.WriteAsync(fetched, stoppingToken);
+                }
+                catch
+                {
+                    await persistentKeepAliveCts.CancelAsync();
+                    try
+                    {
+                        await persistentKeepAliveTask;
+                    }
+                    catch { }
+                    persistentKeepAliveCts.Dispose();
+
+                    throw;
+                }
 
                 _fetchInProgress = false;
             }
@@ -277,9 +292,31 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
             _currentTaskId = item.TaskId;
             var profile = item.Profile;
 
+            if (item.PersistentKeepAliveCts.IsCancellationRequested)
+            {
+                logger.LogInformation(
+                    "Task {TaskId} was cancelled prior to starting upscaling, skipping.",
+                    item.TaskId
+                );
+                SafeDelete(item.DownloadedFile);
+                await item.PersistentKeepAliveCts.CancelAsync();
+                try
+                {
+                    await item.PersistentKeepAliveTask;
+                }
+                catch { }
+                item.PersistentKeepAliveCts.Dispose();
+
+                _currentTaskId = null;
+                continue;
+            }
+
             // Transition the persistent keep-alive from prefetch to processing mode
             // We'll create a new keep-alive specifically for progress reporting during upscaling
-            var upscalesCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            using var upscalesCts = CancellationTokenSource.CreateLinkedTokenSource(
+                stoppingToken,
+                item.PersistentKeepAliveCts.Token
+            );
             DateTime lastProgressSend = DateTime.UtcNow.AddSeconds(-10);
             int? lastProgressCurrent = null;
             int prefetchSignaled = 0; // 0 = not signaled, 1 = signaled (atomic)
@@ -415,7 +452,10 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                                 {
                                     try
                                     {
-                                        await item.PersistentKeepAliveCts.CancelAsync();
+                                        await Task.WhenAll(
+                                            upscalesCts.CancelAsync(),
+                                            item.PersistentKeepAliveCts.CancelAsync()
+                                        );
                                     }
                                     catch { }
 
@@ -650,6 +690,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     await item.PersistentKeepAliveTask;
                 }
                 catch { }
+                item.PersistentKeepAliveCts.Dispose();
 
                 if (Interlocked.CompareExchange(ref prefetchSignaled, 1, 0) == 0)
                 {
@@ -693,6 +734,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     await item.PersistentKeepAliveTask;
                 }
                 catch { }
+                item.PersistentKeepAliveCts.Dispose();
 
                 if (Interlocked.CompareExchange(ref prefetchSignaled, 1, 0) == 0)
                 {
@@ -773,6 +815,35 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 
             _uploadInProgressTaskId = item.TaskId;
 
+            if (item.PersistentKeepAliveCts.IsCancellationRequested)
+            {
+                logger.LogInformation(
+                    "Task {TaskId} was cancelled prior to upload, skipping.",
+                    item.TaskId
+                );
+                SafeDelete(item.DownloadedFile);
+                if (item.UpscaledFile != null)
+                {
+                    SafeDelete(item.UpscaledFile);
+                }
+
+                await item.PersistentKeepAliveCts.CancelAsync();
+                try
+                {
+                    await item.PersistentKeepAliveTask;
+                }
+                catch { }
+                item.PersistentKeepAliveCts.Dispose();
+
+                _uploadInProgressTaskId = null;
+                continue;
+            }
+
+            using var uploadCts = CancellationTokenSource.CreateLinkedTokenSource(
+                stoppingToken,
+                item.PersistentKeepAliveCts.Token
+            );
+
             try
             {
                 if (item.TaskType == TaskType.SplitDetection)
@@ -787,7 +858,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                         item.TaskId,
                         item.ResultJson,
                         item.DownloadedFile,
-                        stoppingToken
+                        uploadCts.Token
                     );
                 }
                 else
@@ -803,7 +874,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                         item.UpscaledFile,
                         item.DownloadedFile,
                         item.UpscaledFile,
-                        stoppingToken
+                        uploadCts.Token
                     );
                 }
             }
@@ -842,6 +913,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     await item.PersistentKeepAliveTask;
                 }
                 catch { }
+                item.PersistentKeepAliveCts.Dispose();
 
                 _uploadInProgressTaskId = null;
             }
@@ -1079,6 +1151,11 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                             await cts.CancelAsync();
                             break;
                         }
+                    }
+                    catch (RpcException ex) when (ex.StatusCode == StatusCode.NotFound)
+                    {
+                        await cts.CancelAsync();
+                        break;
                     }
                     catch { }
 
