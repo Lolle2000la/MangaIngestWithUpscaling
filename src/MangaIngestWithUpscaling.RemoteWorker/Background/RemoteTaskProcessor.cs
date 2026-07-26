@@ -197,28 +197,42 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     id => new KeepAliveRequest { TaskId = id, Prefetch = true }
                 );
 
-                var sw = Stopwatch.StartNew();
-                AsyncServerStreamingCall<CbzFileChunk>? stream = client.GetCbzFile(
-                    new CbzToUpscaleRequest { TaskId = resp.TaskId, Prefetch = true },
-                    cancellationToken: persistentKeepAliveCts.Token
-                );
-                string file = await FetchFile(
-                    resp.TaskId,
-                    stream.ResponseStream.ReadAllAsync(persistentKeepAliveCts.Token)
-                );
-                sw.Stop();
-                _predictor.RecordDownload(sw.Elapsed);
+                try
+                {
+                    var sw = Stopwatch.StartNew();
+                    using AsyncServerStreamingCall<CbzFileChunk> stream = client.GetCbzFile(
+                        new CbzToUpscaleRequest { TaskId = resp.TaskId, Prefetch = true },
+                        cancellationToken: persistentKeepAliveCts.Token
+                    );
+                    string file = await FetchFile(
+                        resp.TaskId,
+                        stream.ResponseStream.ReadAllAsync(persistentKeepAliveCts.Token)
+                    );
+                    sw.Stop();
+                    _predictor.RecordDownload(sw.Elapsed);
 
-                var fetched = new FetchedItem(
-                    resp.TaskId,
-                    prefetchProfile,
-                    file,
-                    persistentKeepAliveCts,
-                    persistentKeepAliveTask,
-                    resp.TaskType,
-                    resp.SplitFindingsJson
-                );
-                await _toUpscale.Writer.WriteAsync(fetched, stoppingToken);
+                    var fetched = new FetchedItem(
+                        resp.TaskId,
+                        prefetchProfile,
+                        file,
+                        persistentKeepAliveCts,
+                        persistentKeepAliveTask,
+                        resp.TaskType,
+                        resp.SplitFindingsJson
+                    );
+                    await _toUpscale.Writer.WriteAsync(fetched, stoppingToken);
+                }
+                catch
+                {
+                    await persistentKeepAliveCts.CancelAsync();
+                    try
+                    {
+                        await persistentKeepAliveTask;
+                    }
+                    catch { }
+
+                    throw;
+                }
 
                 _fetchInProgress = false;
             }
@@ -297,7 +311,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 
             // Transition the persistent keep-alive from prefetch to processing mode
             // We'll create a new keep-alive specifically for progress reporting during upscaling
-            var upscalesCts = CancellationTokenSource.CreateLinkedTokenSource(
+            using var upscalesCts = CancellationTokenSource.CreateLinkedTokenSource(
                 stoppingToken,
                 item.PersistentKeepAliveCts.Token
             );

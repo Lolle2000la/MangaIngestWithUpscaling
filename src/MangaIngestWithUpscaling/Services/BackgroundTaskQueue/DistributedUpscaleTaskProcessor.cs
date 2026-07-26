@@ -54,6 +54,7 @@ public class DistributedUpscaleTaskProcessor(
     /// <param name="checkAgainst">The task to check against if it is still the current task. Does so by using the Id.</param>
     public async Task CancelCurrent(PersistedTask checkAgainst)
     {
+        bool found;
         using (_lock.EnterScope())
         {
             if (
@@ -65,12 +66,17 @@ public class DistributedUpscaleTaskProcessor(
                 _ = StatusChanged?.Invoke(currentTask);
 
                 runningTasks.Remove(checkAgainst.Id);
-                CleanupRepairFiles(checkAgainst.Id, null);
+                found = true;
             }
             else
             {
                 return;
             }
+        }
+
+        if (found)
+        {
+            CleanupRepairFiles(checkAgainst.Id, null);
         }
 
         await taskPersistenceService.CancelTaskAsync(checkAgainst.Id);
