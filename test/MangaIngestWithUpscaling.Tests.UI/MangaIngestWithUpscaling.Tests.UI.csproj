@@ -12,6 +12,7 @@
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="AngleSharp" Version="1.5.2" />
     <PackageReference Include="bunit" Version="2.7.2" />
     <PackageReference Include="Microsoft.Build" Version="18.8.2" />
     <PackageReference Include="Microsoft.Build.Framework" Version="18.8.2" />
@@ -23,7 +24,7 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.10" />
-    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.4" />
     <PackageReference Include="MudBlazor" Version="9.7.0" />
     <PackageReference Include="NSubstitute" Version="6.0.0" />
   </ItemGroup>
