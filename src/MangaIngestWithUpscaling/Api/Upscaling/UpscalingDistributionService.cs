@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
@@ -228,9 +228,9 @@ public partial class UpscalingDistributionService(
         }
 
         var task = await dbContext.PersistedTasks.FindAsync(request.TaskId);
-        if (task == null)
+        if (task == null || task.Status == PersistedTaskStatus.Canceled)
         {
-            context.Status = new Status(StatusCode.NotFound, "Task not found");
+            context.Status = new Status(StatusCode.NotFound, "Task not found or cancelled");
             return;
         }
 
@@ -323,6 +323,15 @@ public partial class UpscalingDistributionService(
         int chunkNumber = 0;
         while ((bytesRead = fileStream.Read(buffer, 0, buffer.Length)) > 0)
         {
+            if (
+                context.CancellationToken.IsCancellationRequested
+                || !taskProcessor.IsRunningRemotely(task.Id)
+            )
+            {
+                context.Status = new Status(StatusCode.NotFound, "Task cancelled");
+                return;
+            }
+
             await responseStream.WriteAsync(
                 new CbzFileChunk
                 {
@@ -343,9 +352,9 @@ public partial class UpscalingDistributionService(
     )
     {
         var task = await dbContext.PersistedTasks.FindAsync(request.TaskId);
-        if (task == null)
+        if (task == null || task.Status == PersistedTaskStatus.Canceled)
         {
-            context.Status = new Status(StatusCode.NotFound, "Task not found");
+            context.Status = new Status(StatusCode.NotFound, "Task not found or cancelled");
             return new CbzFileChunk();
         }
 
@@ -456,12 +465,12 @@ public partial class UpscalingDistributionService(
         try
         {
             var task = await dbContext.PersistedTasks.FindAsync(request.TaskId);
-            if (task == null)
+            if (task == null || task.Status == PersistedTaskStatus.Canceled)
             {
                 return new UploadDetectionResultResponse
                 {
                     Success = false,
-                    Message = "Task not found",
+                    Message = "Task not found or cancelled",
                 };
             }
 
@@ -560,14 +569,14 @@ public partial class UpscalingDistributionService(
                 }
 
                 PersistedTask? task = await dbContext.PersistedTasks.FindAsync(taskId);
-                if (task == null)
+                if (task == null || task.Status == PersistedTaskStatus.Canceled)
                 {
                     File.Delete(tempFile);
                     await responseStream.WriteAsync(
                         new UploadUpscaledCbzResponse
                         {
                             Success = false,
-                            Message = "Task not found",
+                            Message = "Task not found or cancelled",
                             TaskId = taskId,
                         }
                     );

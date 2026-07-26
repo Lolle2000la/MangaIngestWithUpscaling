@@ -65,6 +65,7 @@ public class DistributedUpscaleTaskProcessor(
                 _ = StatusChanged?.Invoke(currentTask);
 
                 runningTasks.Remove(checkAgainst.Id);
+                CleanupRepairFiles(checkAgainst.Id, null);
             }
             else
             {
@@ -756,7 +757,7 @@ public class DistributedUpscaleTaskProcessor(
     /// <summary>
     ///     Cleans up temporary files created during repair processing.
     /// </summary>
-    private void CleanupRepairFiles(int taskId, ILogger logger)
+    private void CleanupRepairFiles(int taskId, ILogger? logger)
     {
         try
         {
@@ -775,7 +776,7 @@ public class DistributedUpscaleTaskProcessor(
                 }
                 catch (Exception ex)
                 {
-                    logger.LogDebug(
+                    logger?.LogDebug(
                         ex,
                         "RepairContext dispose threw, continuing cleanup for task {taskId}",
                         taskId
@@ -791,7 +792,7 @@ public class DistributedUpscaleTaskProcessor(
             )
             {
                 File.Delete(repairState.PreparedMissingPagesCbzPath);
-                logger.LogDebug(
+                logger?.LogDebug(
                     "Cleaned up prepared missing pages CBZ: {path}",
                     repairState.PreparedMissingPagesCbzPath
                 );
@@ -803,7 +804,7 @@ public class DistributedUpscaleTaskProcessor(
             )
             {
                 File.Delete(repairState.UpscaledMissingPagesCbzPath);
-                logger.LogDebug(
+                logger?.LogDebug(
                     "Cleaned up upscaled missing pages CBZ: {path}",
                     repairState.UpscaledMissingPagesCbzPath
                 );
@@ -811,7 +812,7 @@ public class DistributedUpscaleTaskProcessor(
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Failed to clean up repair files for task {taskId}", taskId);
+            logger?.LogWarning(ex, "Failed to clean up repair files for task {taskId}", taskId);
         }
     }
 
