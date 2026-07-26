@@ -1,8 +1,9 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.Reactive;
 using System.Reactive.Linq;
 using MudBlazor;
 using ReactiveUI;
+using RxVoid = ReactiveUI.Primitives.RxVoid;
 
 namespace MangaIngestWithUpscaling.Components.FileSystem;
 
@@ -23,7 +24,7 @@ public class FolderPickerViewModel : ViewModelBase
 
         this.WhenAnyValue(x => x.RootDirectory)
             .Throttle(TimeSpan.FromMilliseconds(300))
-            .Select(_ => Unit.Default)
+            .Select(_ => RxVoid.Default)
             .InvokeCommand(LoadDirectoryItemsCommand);
 
         _canGoToParent = this.WhenAnyValue(x => x.RootDirectory)
@@ -71,8 +72,8 @@ public class FolderPickerViewModel : ViewModelBase
 
     public bool CanGoToParent => _canGoToParent.Value;
     public ObservableCollection<TreeItemData<DirectoryItem>> TreeItems { get; } = [];
-    public ReactiveCommand<Unit, Unit> LoadDirectoryItemsCommand { get; }
-    public ReactiveCommand<Unit, Unit> GoToParentCommand { get; }
+    public ReactiveCommand<RxVoid, RxVoid> LoadDirectoryItemsCommand { get; }
+    public ReactiveCommand<RxVoid, RxVoid> GoToParentCommand { get; }
     public IObservable<string?> WhenPathSelected { get; }
 
     private async Task LoadDirectoryItemsAsync()
