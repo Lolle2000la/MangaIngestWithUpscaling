@@ -230,6 +230,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                         await persistentKeepAliveTask;
                     }
                     catch { }
+                    persistentKeepAliveCts.Dispose();
 
                     throw;
                 }
@@ -304,6 +305,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     await item.PersistentKeepAliveTask;
                 }
                 catch { }
+                item.PersistentKeepAliveCts.Dispose();
 
                 _currentTaskId = null;
                 continue;
@@ -688,6 +690,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     await item.PersistentKeepAliveTask;
                 }
                 catch { }
+                item.PersistentKeepAliveCts.Dispose();
 
                 if (Interlocked.CompareExchange(ref prefetchSignaled, 1, 0) == 0)
                 {
@@ -731,6 +734,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     await item.PersistentKeepAliveTask;
                 }
                 catch { }
+                item.PersistentKeepAliveCts.Dispose();
 
                 if (Interlocked.CompareExchange(ref prefetchSignaled, 1, 0) == 0)
                 {
@@ -829,6 +833,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     await item.PersistentKeepAliveTask;
                 }
                 catch { }
+                item.PersistentKeepAliveCts.Dispose();
 
                 _uploadInProgressTaskId = null;
                 continue;
@@ -908,6 +913,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     await item.PersistentKeepAliveTask;
                 }
                 catch { }
+                item.PersistentKeepAliveCts.Dispose();
 
                 _uploadInProgressTaskId = null;
             }

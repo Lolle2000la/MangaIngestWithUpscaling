@@ -57,6 +57,7 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
             _taskQueue,
             serviceProvider.GetRequiredService<IServiceScopeFactory>(),
             _mockOptions,
+            mockLogger,
             _mockPersistence
         );
     }
