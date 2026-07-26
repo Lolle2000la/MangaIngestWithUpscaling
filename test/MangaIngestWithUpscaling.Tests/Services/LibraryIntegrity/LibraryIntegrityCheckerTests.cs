@@ -451,7 +451,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
 
         int? total = null;
         int? current = null;
-        var reporter = new Progress<IntegrityProgress>(p =>
+        var reporter = new SynchronousProgress<IntegrityProgress>(p =>
         {
             if (p.Total.HasValue)
             {
@@ -2101,5 +2101,10 @@ public class LibraryIntegrityCheckerTests : IDisposable
                 .Options;
             return new ApplicationDbContext(options);
         }
+    }
+
+    private sealed class SynchronousProgress<T>(Action<T> handler) : IProgress<T>
+    {
+        public void Report(T value) => handler(value);
     }
 }
