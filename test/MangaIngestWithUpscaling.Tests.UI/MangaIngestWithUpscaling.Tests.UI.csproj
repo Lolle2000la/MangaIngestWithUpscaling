@@ -13,7 +13,7 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="AngleSharp" Version="1.6.0" />
-    <PackageReference Include="bunit" Version="2.7.2" />
+    <PackageReference Include="bunit" Version="2.8.6" />
     <PackageReference Include="Microsoft.Build" Version="18.8.2" />
     <PackageReference Include="Microsoft.Build.Framework" Version="18.8.2" />
     <PackageReference Include="Microsoft.Build.Tasks.Core" Version="18.8.2" />
