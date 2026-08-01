@@ -123,6 +123,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     {
                         resp = await client.RequestUpscaleTaskWithHintAsync(
                             new RequestTaskRequest { Prefetch = true },
+                            deadline: DateTime.UtcNow.AddSeconds(15),
                             cancellationToken: stoppingToken
                         );
                         serverAvailable = true;
@@ -202,6 +203,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     var sw = Stopwatch.StartNew();
                     using AsyncServerStreamingCall<CbzFileChunk> stream = client.GetCbzFile(
                         new CbzToUpscaleRequest { TaskId = resp.TaskId, Prefetch = true },
+                        deadline: DateTime.UtcNow.AddMinutes(5),
                         cancellationToken: persistentKeepAliveCts.Token
                     );
                     string file = await FetchFile(
@@ -437,6 +439,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 
                                     KeepAliveResponse? resp = await client.KeepAliveAsync(
                                         req,
+                                        deadline: DateTime.UtcNow.AddSeconds(10),
                                         cancellationToken: upscalesCts.Token
                                     );
                                     if (!resp.IsAlive)
@@ -709,6 +712,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                             TaskId = item.TaskId,
                             ErrorMessage = ex.Message,
                         },
+                        deadline: DateTime.UtcNow.AddSeconds(15),
                         cancellationToken: stoppingToken
                     );
                 }
@@ -893,6 +897,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                             TaskId = item.TaskId,
                             ErrorMessage = ex.Message,
                         },
+                        deadline: DateTime.UtcNow.AddSeconds(15),
                         cancellationToken: stoppingToken
                     );
                 }
@@ -930,7 +935,10 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
     {
         await using FileStream fileStream = File.OpenRead(upscaledFile);
         AsyncDuplexStreamingCall<CbzFileChunk, UploadUpscaledCbzResponse>? uploadStream =
-            client.UploadUpscaledCbzFile(cancellationToken: stoppingToken);
+            client.UploadUpscaledCbzFile(
+                deadline: DateTime.UtcNow.AddMinutes(5),
+                cancellationToken: stoppingToken
+            );
         byte[] buffer = new byte[1024 * 1024];
         int bytesRead;
         int chunkNumber = 0;
@@ -988,6 +996,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
         {
             await client.UploadDetectionResultAsync(
                 new UploadDetectionResultRequest { TaskId = taskId, ResultJson = resultJson },
+                deadline: DateTime.UtcNow.AddSeconds(30),
                 cancellationToken: stoppingToken
             );
         }
@@ -1144,6 +1153,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 
                         KeepAliveResponse? ka = await client.KeepAliveAsync(
                             requestFactory(id.Value),
+                            deadline: DateTime.UtcNow.AddSeconds(10),
                             cancellationToken: cts.Token
                         );
                         if (!ka.IsAlive)

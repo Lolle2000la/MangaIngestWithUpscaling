@@ -321,7 +321,16 @@ public partial class UpscalingDistributionService(
         var buffer = new byte[1024 * 1024];
         int bytesRead;
         int chunkNumber = 0;
-        while ((bytesRead = fileStream.Read(buffer, 0, buffer.Length)) > 0)
+        while (
+            (
+                bytesRead = await fileStream.ReadAsync(
+                    buffer,
+                    0,
+                    buffer.Length,
+                    context.CancellationToken
+                )
+            ) > 0
+        )
         {
             if (
                 context.CancellationToken.IsCancellationRequested
@@ -442,7 +451,16 @@ public partial class UpscalingDistributionService(
         int chunkNumber = 0;
         var offset = request.ChunkNumber * buffer.Length;
         fileStream.Seek(offset, SeekOrigin.Begin);
-        if ((bytesRead = fileStream.Read(buffer, 0, buffer.Length)) > 0)
+        if (
+            (
+                bytesRead = await fileStream.ReadAsync(
+                    buffer,
+                    0,
+                    buffer.Length,
+                    context.CancellationToken
+                )
+            ) > 0
+        )
         {
             context.Status = new Status(StatusCode.OK, "Chunk sent");
             return new CbzFileChunk

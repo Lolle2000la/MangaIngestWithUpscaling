@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Reactive.Disposables;
 using AutoRegisterInject;
@@ -23,6 +24,9 @@ public class TaskRegistry : IHostedService, IDisposable
     private readonly TaskQueue _taskQueue;
     private readonly SourceCache<PersistedTask, int> _tasks = new(x => x.Id);
     private readonly UpscaleTaskProcessor _upscaleProcessor;
+    private readonly ConcurrentDictionary<int, PersistedTask> _pendingUpdates = new();
+    private readonly CancellationTokenSource _cts = new();
+    private Task? _flushTask;
 
     public TaskRegistry(
         IServiceScopeFactory scopeFactory,
@@ -74,6 +78,8 @@ public class TaskRegistry : IHostedService, IDisposable
 
     public void Dispose()
     {
+        _cts.Cancel();
+        _cts.Dispose();
         _cleanups.Dispose();
         _tasks.Dispose();
     }
@@ -95,28 +101,84 @@ public class TaskRegistry : IHostedService, IDisposable
         _standardProcessor.StatusChanged += OnTaskChanged;
         _upscaleProcessor.StatusChanged += OnTaskChanged;
         _distributedUpscaleProcessor.StatusChanged += OnTaskChanged;
+
+        _flushTask = RunFlushLoopAsync(_cts.Token);
     }
 
-    public Task StopAsync(CancellationToken cancellationToken)
+    public async Task StopAsync(CancellationToken cancellationToken)
     {
         _taskQueue.TaskEnqueuedOrChanged -= OnTaskChanged;
         _taskQueue.TaskRemoved -= OnTaskRemoved;
         _standardProcessor.StatusChanged -= OnTaskChanged;
         _upscaleProcessor.StatusChanged -= OnTaskChanged;
         _distributedUpscaleProcessor.StatusChanged -= OnTaskChanged;
-        return Task.CompletedTask;
+
+        await _cts.CancelAsync();
+        if (_flushTask != null)
+        {
+            try
+            {
+                await _flushTask;
+            }
+            catch (OperationCanceledException) { }
+        }
+
+        FlushPendingUpdates();
     }
 
     private Task OnTaskChanged(PersistedTask task)
     {
-        _tasks.AddOrUpdate(CloneShallow(task));
+        _pendingUpdates[task.Id] = CloneShallow(task);
         return Task.CompletedTask;
     }
 
     private Task OnTaskRemoved(PersistedTask task)
     {
+        _pendingUpdates.TryRemove(task.Id, out _);
         _tasks.Remove(task.Id);
         return Task.CompletedTask;
+    }
+
+    private async Task RunFlushLoopAsync(CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(100));
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                await timer.WaitForNextTickAsync(cancellationToken);
+                FlushPendingUpdates();
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch
+            {
+                // Ignore errors to keep the debouncing flush loop active
+            }
+        }
+    }
+
+    private void FlushPendingUpdates()
+    {
+        if (_pendingUpdates.IsEmpty)
+            return;
+
+        var keys = _pendingUpdates.Keys.ToList();
+        var itemsToUpdate = new List<PersistedTask>();
+        foreach (var key in keys)
+        {
+            if (_pendingUpdates.TryRemove(key, out var item))
+            {
+                itemsToUpdate.Add(item);
+            }
+        }
+
+        if (itemsToUpdate.Count > 0)
+        {
+            _tasks.Edit(updater => updater.AddOrUpdate(itemsToUpdate));
+        }
     }
 
     private static PersistedTask CloneShallow(PersistedTask src)

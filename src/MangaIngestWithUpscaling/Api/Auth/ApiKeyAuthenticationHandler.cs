@@ -1,8 +1,9 @@
-﻿using System.Security.Claims;
+using System.Security.Claims;
 using System.Text.Encodings.Web;
 using MangaIngestWithUpscaling.Data;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 
 namespace MangaIngestWithUpscaling.Api.Auth;
@@ -10,16 +11,19 @@ namespace MangaIngestWithUpscaling.Api.Auth;
 public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationSchemeOptions>
 {
     private readonly ApplicationDbContext _context;
+    private readonly IMemoryCache _cache;
 
     public ApiKeyAuthenticationHandler(
         IOptionsMonitor<AuthenticationSchemeOptions> options,
         ILoggerFactory logger,
         UrlEncoder encoder,
-        ApplicationDbContext context
+        ApplicationDbContext context,
+        IMemoryCache cache
     )
         : base(options, logger, encoder)
     {
         _context = context;
+        _cache = cache;
     }
 
     /// <summary>
@@ -43,6 +47,15 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationS
         var apiKeyValue = authHeaderValue.Substring("ApiKey ".Length).Trim();
         if (string.IsNullOrEmpty(apiKeyValue))
             return AuthenticateResult.Fail("Invalid API Key");
+
+        var cacheKey = $"ApiKeyAuth_{apiKeyValue}";
+        if (
+            _cache.TryGetValue(cacheKey, out AuthenticationTicket? cachedTicket)
+            && cachedTicket is not null
+        )
+        {
+            return AuthenticateResult.Success(cachedTicket);
+        }
 
         var apiKey = await _context
             .ApiKeys.Include(k => k.User)
@@ -74,6 +87,22 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationS
         var identity = new ClaimsIdentity(claims, Scheme.Name);
         var principal = new ClaimsPrincipal(identity);
         var ticket = new AuthenticationTicket(principal, Scheme.Name);
+
+        var cacheOptions = new MemoryCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5),
+        };
+        if (apiKey.Expiration.HasValue)
+        {
+            var remainingTime = apiKey.Expiration.Value - currentUtc;
+            if (remainingTime < TimeSpan.FromMinutes(5))
+            {
+                cacheOptions.AbsoluteExpirationRelativeToNow =
+                    remainingTime > TimeSpan.Zero ? remainingTime : TimeSpan.Zero;
+            }
+        }
+
+        _cache.Set(cacheKey, ticket, cacheOptions);
 
         return AuthenticateResult.Success(ticket);
     }
