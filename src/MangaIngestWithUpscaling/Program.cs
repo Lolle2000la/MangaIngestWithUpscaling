@@ -196,6 +196,7 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 // Add services to the container.
 builder.Services.AddControllers();
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
+builder.Services.AddMemoryCache();
 
 builder.Services.AddGrpc();
 builder.Services.AddHealthChecks();
