@@ -24,6 +24,7 @@ public class TaskRegistry : IHostedService, IDisposable
     private readonly TaskQueue _taskQueue;
     private readonly SourceCache<PersistedTask, int> _tasks = new(x => x.Id);
     private readonly UpscaleTaskProcessor _upscaleProcessor;
+    private readonly ILogger<TaskRegistry>? _logger;
     private readonly ConcurrentDictionary<int, PersistedTask> _pendingUpdates = new();
     private readonly CancellationTokenSource _cts = new();
     private Task? _flushTask;
@@ -33,7 +34,8 @@ public class TaskRegistry : IHostedService, IDisposable
         TaskQueue taskQueue,
         StandardTaskProcessor standardProcessor,
         UpscaleTaskProcessor upscalerProcessor,
-        DistributedUpscaleTaskProcessor distributedUpscaleProcessor
+        DistributedUpscaleTaskProcessor distributedUpscaleProcessor,
+        ILogger<TaskRegistry>? logger = null
     )
     {
         _scopeFactory = scopeFactory;
@@ -41,6 +43,7 @@ public class TaskRegistry : IHostedService, IDisposable
         _standardProcessor = standardProcessor;
         _upscaleProcessor = upscalerProcessor;
         _distributedUpscaleProcessor = distributedUpscaleProcessor;
+        _logger = logger;
 
         // Standard view: non-upscale tasks, sorted by status priority, then Order, then CreatedAt
         _tasks
@@ -153,9 +156,12 @@ public class TaskRegistry : IHostedService, IDisposable
             {
                 break;
             }
-            catch
+            catch (Exception ex)
             {
-                // Ignore errors to keep the debouncing flush loop active
+                _logger?.LogError(
+                    ex,
+                    "Error occurred while flushing pending task updates in TaskRegistry"
+                );
             }
         }
     }

@@ -316,7 +316,14 @@ public partial class UpscalingDistributionService(
             return;
         }
 
-        await using FileStream fileStream = File.OpenRead(filePath);
+        await using FileStream fileStream = new FileStream(
+            filePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            4096,
+            FileOptions.Asynchronous
+        );
         // Read the file in chunks of 1MB and stream it to the client
         var buffer = new byte[1024 * 1024];
         int bytesRead;
@@ -444,7 +451,14 @@ public partial class UpscalingDistributionService(
             return new CbzFileChunk();
         }
 
-        await using FileStream fileStream = File.OpenRead(filePath);
+        await using FileStream fileStream = new FileStream(
+            filePath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read,
+            4096,
+            FileOptions.Asynchronous
+        );
         // Read the file in chunks of 1MB and stream it to the client
         var buffer = new byte[1024 * 1024];
         int bytesRead;

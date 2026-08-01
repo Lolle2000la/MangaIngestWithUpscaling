@@ -88,14 +88,15 @@ public class ApiKeyAuthenticationHandler : AuthenticationHandler<AuthenticationS
         var principal = new ClaimsPrincipal(identity);
         var ticket = new AuthenticationTicket(principal, Scheme.Name);
 
+        // Cache ticket for up to 1 minute to balance revocation latency with reducing DB queries
         var cacheOptions = new MemoryCacheEntryOptions
         {
-            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5),
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1),
         };
         if (apiKey.Expiration.HasValue)
         {
             var remainingTime = apiKey.Expiration.Value - currentUtc;
-            if (remainingTime < TimeSpan.FromMinutes(5))
+            if (remainingTime < TimeSpan.FromMinutes(1))
             {
                 cacheOptions.AbsoluteExpirationRelativeToNow =
                     remainingTime > TimeSpan.Zero ? remainingTime : TimeSpan.Zero;

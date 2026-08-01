@@ -84,8 +84,19 @@ public class ApiKeyAuthenticationHandlerTests
         context.ApiKeys.Remove(apiKey);
         await context.SaveChangesAsync(TestContext.Current.CancellationToken);
 
-        // Act 2: Second call -> cache hit
-        var result2 = await handler.AuthenticateAsync();
+        // Act 2: Second call using a new handler and HttpContext to verify IMemoryCache across requests
+        var handler2 = new ApiKeyAuthenticationHandler(
+            options,
+            loggerFactory,
+            UrlEncoder.Default,
+            context,
+            memoryCache
+        );
+        var httpContext2 = new DefaultHttpContext();
+        httpContext2.Request.Headers["Authorization"] = "ApiKey valid-api-key-123";
+
+        await handler2.InitializeAsync(scheme, httpContext2);
+        var result2 = await handler2.AuthenticateAsync();
 
         // Assert 2
         Assert.True(result2.Succeeded);
