@@ -221,10 +221,30 @@ public class MangaMetadataChangerTests : IDisposable
 
         // Assert
         Assert.Equal(RenameResult.Ok, result);
-        Assert.Contains(reports, r => r.Phase == "Checking");
-        Assert.Contains(reports, r => r.Phase == "Moving");
-        Assert.Equal("Completed", reports[^1].Phase);
+        Assert.Contains(reports, r => r.Phase == RenamePhase.Checking);
+        Assert.Contains(reports, r => r.Phase == RenamePhase.Moving);
+        Assert.Equal(RenamePhase.Completed, reports[^1].Phase);
         Assert.Equal(reports[^1].Total, reports[^1].Current);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ChangeMangaTitle_WithTraversalTitle_ShouldCancel()
+    {
+        // Arrange
+        var library = CreateTestLibrary();
+        var manga = CreateTestManga(library, "Original Title");
+
+        // Act
+        var result = await _metadataChanger.ChangeMangaTitle(
+            manga,
+            "..",
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        // Assert
+        Assert.Equal(RenameResult.Cancelled, result);
+        _mockFileSystem.DidNotReceive().Move(Arg.Any<string>(), Arg.Any<string>());
     }
 
     [Fact]

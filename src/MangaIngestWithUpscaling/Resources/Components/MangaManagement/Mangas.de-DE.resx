@@ -160,7 +160,7 @@
   <data name="Rename_Moving" xml:space="preserve">
     <value>Verschiebe Kapitel {0}/{1}...</value>
   </data>
-  <data name="Rename_Finishing" xml:space="preserve">
+  <data name="Rename_Completed" xml:space="preserve">
     <value>Fertigstellen...</value>
   </data>
   <data name="Rename_Success" xml:space="preserve">

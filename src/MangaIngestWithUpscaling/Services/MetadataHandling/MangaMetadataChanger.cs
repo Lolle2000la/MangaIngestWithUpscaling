@@ -74,10 +74,20 @@ public class MangaMetadataChanger(
         Manga manga,
         string newTitle,
         bool addOldToAlternative = true,
-        IProgress<MangaRenameProgress>? progress = null,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        IProgress<MangaRenameProgress>? progress = null
     )
     {
+        if (IsTraversalTitle(newTitle))
+        {
+            logger.LogWarning(
+                "Rejecting rename to unsafe title for manga {MangaId}: {Title}",
+                manga.Id,
+                newTitle
+            );
+            return RenameResult.Cancelled;
+        }
+
         var possibleCurrent = await dbContext.MangaSeries.FirstOrDefaultAsync(
             m =>
                 m.Id != manga.Id
@@ -126,7 +136,7 @@ public class MangaMetadataChanger(
 
         var totalChapters = manga.Chapters.Count;
         var checkedChapters = 0;
-        progress?.Report(new MangaRenameProgress(totalChapters, 0, "Checking", null));
+        progress?.Report(new MangaRenameProgress(totalChapters, 0, RenamePhase.Checking, null));
 
         foreach (var chapter in manga.Chapters)
         {
@@ -135,7 +145,7 @@ public class MangaMetadataChanger(
                 new MangaRenameProgress(
                     totalChapters,
                     checkedChapters,
-                    "Checking",
+                    RenamePhase.Checking,
                     chapter.FileName
                 )
             );
@@ -256,7 +266,9 @@ public class MangaMetadataChanger(
         }
 
         // Step 2: Perform database operations in a transaction
-        progress?.Report(new MangaRenameProgress(renameOperations.Count, 0, "Moving", null));
+        progress?.Report(
+            new MangaRenameProgress(renameOperations.Count, 0, RenamePhase.Moving, null)
+        );
 
         await using IDbContextTransaction transaction =
             await dbContext.Database.BeginTransactionAsync(cancellationToken);
@@ -291,7 +303,7 @@ public class MangaMetadataChanger(
                 new MangaRenameProgress(
                     renameOperations.Count,
                     movedChapters,
-                    "Moving",
+                    RenamePhase.Moving,
                     operation.Chapter.FileName
                 )
             );
@@ -396,7 +408,7 @@ public class MangaMetadataChanger(
             new MangaRenameProgress(
                 renameOperations.Count,
                 renameOperations.Count,
-                "Completed",
+                RenamePhase.Completed,
                 null
             )
         );
@@ -478,6 +490,9 @@ public class MangaMetadataChanger(
         var newMetadata = metadata with { Series = newTitle };
         await metadataHandling.WriteComicInfoAsync(origChapterPath, newMetadata);
     }
+
+    private static bool IsTraversalTitle(string newTitle) =>
+        PathEscaper.EscapeFileName(newTitle) is "." or "..";
 
     private class ChapterRenameOperation
     {

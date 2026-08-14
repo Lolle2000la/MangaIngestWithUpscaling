@@ -488,10 +488,15 @@
                     _renameProgress = p;
                     _renameStatus = p.Phase switch
                     {
-                        "Checking" => string.Format(Loc["Rename_Checking"], p.Current, p.Total),
-                        "Moving" => string.Format(Loc["Rename_Moving"], p.Current, p.Total),
-                        _ => Loc["Rename_Finishing"],
+                        RenamePhase.Checking => string.Format(Loc["Rename_Checking"], p.Current, p.Total),
+                        RenamePhase.Moving => string.Format(Loc["Rename_Moving"], p.Current, p.Total),
+                        RenamePhase.Completed => Loc["Rename_Completed"],
+                        _ => Loc["Rename_Completed"],
                     };
+                    if (!string.IsNullOrWhiteSpace(p.StatusMessage))
+                    {
+                        _renameStatus = $"{_renameStatus} ({p.StatusMessage})";
+                    }
                     try
                     {
                         await InvokeAsync(StateHasChanged);
