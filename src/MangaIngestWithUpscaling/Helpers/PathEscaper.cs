@@ -47,9 +47,11 @@ public static class PathEscaper
         var trimmed = escaped.TrimEnd(' ', '.');
         if (trimmed.All(c => c == '.'))
         {
-            // Percent-encode dots (and spaces) so the segment is a normal, distinct
-            // name instead of "." / ".." / an empty name.
-            var encoded = escaped.Replace(".", "%2E").Replace(" ", "%20");
+            // Percent-encode the dots so the segment can't resolve to "." or "..".
+            // Only trailing spaces are dropped (from inputs like ".. "); spaces inside
+            // normal titles are left untouched because this branch only runs for
+            // dot/space-only segments.
+            var encoded = escaped.Replace(".", "%2E").TrimEnd(' ');
             return encoded.Length > 0 ? encoded : "%20";
         }
 
