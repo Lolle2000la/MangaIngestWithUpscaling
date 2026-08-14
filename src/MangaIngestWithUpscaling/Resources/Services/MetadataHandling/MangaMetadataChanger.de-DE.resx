@@ -67,6 +67,9 @@
   <data name="Error_UpscaledLibraryPathNotSet" xml:space="preserve">
     <value>Pfad für hochskalierte Bibliothek nicht gesetzt.</value>
   </data>
+  <data name="Error_UnsafeTitle" xml:space="preserve">
+    <value>Der Titel löst in ein unsicheres Pfadsegment auf und kann nicht verwendet werden.</value>
+  </data>
   <data name="Error_MangaMustHaveLibrary" xml:space="preserve">
     <value>Manga {0} (Titel: {1}) muss einer Bibliothek zugeordnet sein, um umbenannt zu werden. Umbenennung abgebrochen.</value>
   </data>

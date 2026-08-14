@@ -67,6 +67,9 @@
   <data name="Error_UpscaledLibraryPathNotSet" xml:space="preserve">
     <value>Upscaled library path not set.</value>
   </data>
+  <data name="Error_UnsafeTitle" xml:space="preserve">
+    <value>The title resolves to an unsafe path segment and cannot be used.</value>
+  </data>
   <data name="Error_MangaMustHaveLibrary" xml:space="preserve">
     <value>Manga {0} (Title: {1}) must have an associated library to be renamed. Aborting rename.</value>
   </data>

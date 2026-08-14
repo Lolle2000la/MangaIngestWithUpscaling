@@ -456,6 +456,21 @@ public class MangaMetadataChangerTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task ApplyMangaTitleToUpscaled_WithTraversalTitle_ShouldThrowArgumentException()
+    {
+        // Arrange
+        var library = CreateTestLibrary();
+        var manga = CreateTestManga(library, "Test Manga");
+        var chapter = CreateTestChapter(manga, "chapter1.cbz");
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            _metadataChanger.ApplyMangaTitleToUpscaledAsync(chapter, "..", "whatever.cbz")
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task ApplyMangaTitleToUpscaled_WithNullManga_ShouldThrowArgumentNullException()
     {
         // Arrange

@@ -67,6 +67,9 @@
   <data name="Error_UpscaledLibraryPathNotSet" xml:space="preserve">
     <value>アップスケールライブラリのパスが設定されていません。</value>
   </data>
+  <data name="Error_UnsafeTitle" xml:space="preserve">
+    <value>タイトルが安全でないパスセグメントに解決されるため使用できません。</value>
+  </data>
   <data name="Error_MangaMustHaveLibrary" xml:space="preserve">
     <value>マンガ {0} (タイトル: {1}) の名前を変更するには、関連付けられたライブラリが必要です。名前の変更を中止します。</value>
   </data>

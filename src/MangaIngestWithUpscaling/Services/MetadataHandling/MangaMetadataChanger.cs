@@ -33,6 +33,11 @@ public class MangaMetadataChanger(
         string origChapterPath
     )
     {
+        if (IsTraversalTitle(newTitle))
+        {
+            throw new ArgumentException(loc["Error_UnsafeTitle"], nameof(newTitle));
+        }
+
         if (!fileSystem.FileExists(origChapterPath))
         {
             throw new InvalidOperationException(loc["Error_ChapterFileNotFound"]);
@@ -491,8 +496,13 @@ public class MangaMetadataChanger(
         await metadataHandling.WriteComicInfoAsync(origChapterPath, newMetadata);
     }
 
-    private static bool IsTraversalTitle(string newTitle) =>
-        PathEscaper.EscapeFileName(newTitle) is "." or "..";
+    private static bool IsTraversalTitle(string newTitle)
+    {
+        // Win32 also strips trailing spaces and dots from path segments, so those
+        // variants must not slip through as "." or ".." (e.g. ".. " or "...").
+        var escaped = PathEscaper.EscapeFileName(newTitle).TrimEnd(' ', '.');
+        return escaped is "" or "." or "..";
+    }
 
     private class ChapterRenameOperation
     {
