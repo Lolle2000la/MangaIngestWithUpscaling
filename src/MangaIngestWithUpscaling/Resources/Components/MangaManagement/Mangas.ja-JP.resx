@@ -151,4 +151,25 @@
   <data name="Dialog_DeleteSingle_Title" xml:space="preserve">
     <value>マンガの削除</value>
   </data>
+  <data name="Rename_Started" xml:space="preserve">
+    <value>「{0}」へ名前を変更中...</value>
+  </data>
+  <data name="Rename_Checking" xml:space="preserve">
+    <value>チャプターを確認中 {0}/{1}...</value>
+  </data>
+  <data name="Rename_Moving" xml:space="preserve">
+    <value>チャプターを移動中 {0}/{1}...</value>
+  </data>
+  <data name="Rename_Finishing" xml:space="preserve">
+    <value>仕上げ中...</value>
+  </data>
+  <data name="Rename_Success" xml:space="preserve">
+    <value>「{0}」へ名前を変更しました（{1}秒）</value>
+  </data>
+  <data name="Rename_Merged" xml:space="preserve">
+    <value>このタイトルのマンガは既に存在します。結合をキューに入れました</value>
+  </data>
+  <data name="Rename_Cancelled" xml:space="preserve">
+    <value>名前の変更をキャンセルしました</value>
+  </data>
 </root>

@@ -17,6 +17,9 @@ public interface IMangaMetadataChanger
     /// If <c>true</c>, this will add the old title to the list of other titles.
     /// This is useful to recognize ingested chapters of the same series with different titles (i.e english and japanese).
     /// </param>
+    /// <param name="progress">
+    /// Optional progress reporter used to surface per-chapter rename progress to the UI.
+    /// </param>
     /// <param name="cancellationToken">The token to cancel the operation.</param>
     /// <exception cref="TitleAlreadyUsedException">Indicates that the title has already been used.</exception>
     /// <returns></returns>
@@ -24,6 +27,7 @@ public interface IMangaMetadataChanger
         Manga manga,
         string newTitle,
         bool addOldToAlternative = true,
+        IProgress<MangaRenameProgress>? progress = null,
         CancellationToken cancellationToken = default
     );
 
@@ -53,3 +57,17 @@ public enum RenameResult
     Merged,
     Cancelled,
 }
+
+/// <summary>
+/// Progress payload reported while a manga title rename is running.
+/// </summary>
+/// <param name="Total">Total number of chapters being processed, if known.</param>
+/// <param name="Current">Number of chapters processed so far.</param>
+/// <param name="Phase">Current phase (e.g. <c>Checking</c>, <c>Moving</c>, or <c>Completed</c>).</param>
+/// <param name="StatusMessage">Optional detail, such as the current chapter file name.</param>
+public sealed record MangaRenameProgress(
+    int? Total,
+    int? Current,
+    string? Phase,
+    string? StatusMessage
+);
