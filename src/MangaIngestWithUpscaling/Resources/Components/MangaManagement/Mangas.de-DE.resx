@@ -167,7 +167,7 @@
     <value>Umbenannt in "{0}" in {1}s</value>
   </data>
   <data name="Rename_Merged" xml:space="preserve">
-    <value>Ein Manga mit diesem Titel existiert bereits; Zusammenführung eingereiht</value>
+    <value>Ein Manga mit diesem Titel existiert bereits. Zusammenführung wurde in die Warteschlange eingereiht.</value>
   </data>
   <data name="Rename_Cancelled" xml:space="preserve">
     <value>Umbenennung abgebrochen</value>
