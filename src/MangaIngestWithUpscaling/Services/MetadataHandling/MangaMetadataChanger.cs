@@ -33,11 +33,6 @@ public class MangaMetadataChanger(
         string origChapterPath
     )
     {
-        if (IsTraversalTitle(newTitle))
-        {
-            throw new ArgumentException(loc["Error_UnsafeTitle"], nameof(newTitle));
-        }
-
         if (!fileSystem.FileExists(origChapterPath))
         {
             throw new InvalidOperationException(loc["Error_ChapterFileNotFound"]);
@@ -58,7 +53,7 @@ public class MangaMetadataChanger(
         // Move chapter to the correct directory with the new title
         var newChapterPath = Path.Combine(
             chapter.Manga.Library.UpscaledLibraryPath,
-            PathEscaper.EscapeFileName(newTitle),
+            PathEscaper.EscapeDirectoryName(newTitle),
             PathEscaper.EscapeFileName(chapter.FileName)
         );
 
@@ -83,16 +78,6 @@ public class MangaMetadataChanger(
         IProgress<MangaRenameProgress>? progress = null
     )
     {
-        if (IsTraversalTitle(newTitle))
-        {
-            logger.LogWarning(
-                "Rejecting rename to unsafe title for manga {MangaId}: {Title}",
-                manga.Id,
-                newTitle
-            );
-            return RenameResult.Cancelled;
-        }
-
         var possibleCurrent = await dbContext.MangaSeries.FirstOrDefaultAsync(
             m =>
                 m.Id != manga.Id
@@ -170,7 +155,7 @@ public class MangaMetadataChanger(
 
             var newChapterPath = Path.Combine(
                 manga.Library.NotUpscaledLibraryPath,
-                PathEscaper.EscapeFileName(newTitle),
+                PathEscaper.EscapeDirectoryName(newTitle),
                 PathEscaper.EscapeFileName(chapter.FileName)
             );
 
@@ -214,7 +199,7 @@ public class MangaMetadataChanger(
                 {
                     newUpscaledPath = Path.Combine(
                         manga.Library.UpscaledLibraryPath,
-                        PathEscaper.EscapeFileName(newTitle),
+                        PathEscaper.EscapeDirectoryName(newTitle),
                         PathEscaper.EscapeFileName(chapter.FileName)
                     );
 
@@ -494,14 +479,6 @@ public class MangaMetadataChanger(
         );
         var newMetadata = metadata with { Series = newTitle };
         await metadataHandling.WriteComicInfoAsync(origChapterPath, newMetadata);
-    }
-
-    private static bool IsTraversalTitle(string newTitle)
-    {
-        // Win32 also strips trailing spaces and dots from path segments, so those
-        // variants must not slip through as "." or ".." (e.g. ".. " or "...").
-        var escaped = PathEscaper.EscapeFileName(newTitle).TrimEnd(' ', '.');
-        return escaped is "" or "." or "..";
     }
 
     private class ChapterRenameOperation
