@@ -53,7 +53,7 @@ public class MangaMetadataChanger(
         // Move chapter to the correct directory with the new title
         var newChapterPath = Path.Combine(
             chapter.Manga.Library.UpscaledLibraryPath,
-            PathEscaper.EscapeFileName(newTitle),
+            PathEscaper.EscapeDirectoryName(newTitle),
             PathEscaper.EscapeFileName(chapter.FileName)
         );
 
@@ -74,7 +74,8 @@ public class MangaMetadataChanger(
         Manga manga,
         string newTitle,
         bool addOldToAlternative = true,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        IProgress<MangaRenameProgress>? progress = null
     )
     {
         var possibleCurrent = await dbContext.MangaSeries.FirstOrDefaultAsync(
@@ -123,8 +124,22 @@ public class MangaMetadataChanger(
         var renameOperations = new List<ChapterRenameOperation>();
         var canRenameAllChapters = true;
 
+        var totalChapters = manga.Chapters.Count;
+        var checkedChapters = 0;
+        progress?.Report(new MangaRenameProgress(totalChapters, 0, RenamePhase.Checking, null));
+
         foreach (var chapter in manga.Chapters)
         {
+            checkedChapters++;
+            progress?.Report(
+                new MangaRenameProgress(
+                    totalChapters,
+                    checkedChapters,
+                    RenamePhase.Checking,
+                    chapter.FileName
+                )
+            );
+
             var currentChapterPath = Path.Combine(
                 manga.Library.NotUpscaledLibraryPath,
                 chapter.RelativePath
@@ -140,7 +155,7 @@ public class MangaMetadataChanger(
 
             var newChapterPath = Path.Combine(
                 manga.Library.NotUpscaledLibraryPath,
-                PathEscaper.EscapeFileName(newTitle),
+                PathEscaper.EscapeDirectoryName(newTitle),
                 PathEscaper.EscapeFileName(chapter.FileName)
             );
 
@@ -184,7 +199,7 @@ public class MangaMetadataChanger(
                 {
                     newUpscaledPath = Path.Combine(
                         manga.Library.UpscaledLibraryPath,
-                        PathEscaper.EscapeFileName(newTitle),
+                        PathEscaper.EscapeDirectoryName(newTitle),
                         PathEscaper.EscapeFileName(chapter.FileName)
                     );
 
@@ -241,6 +256,10 @@ public class MangaMetadataChanger(
         }
 
         // Step 2: Perform database operations in a transaction
+        progress?.Report(
+            new MangaRenameProgress(renameOperations.Count, 0, RenamePhase.Moving, null)
+        );
+
         await using IDbContextTransaction transaction =
             await dbContext.Database.BeginTransactionAsync(cancellationToken);
         try
@@ -266,8 +285,19 @@ public class MangaMetadataChanger(
         }
 
         // Step 3: If database transaction succeeded, perform file operations
+        var movedChapters = 0;
         foreach (var operation in renameOperations)
         {
+            movedChapters++;
+            progress?.Report(
+                new MangaRenameProgress(
+                    renameOperations.Count,
+                    movedChapters,
+                    RenamePhase.Moving,
+                    operation.Chapter.FileName
+                )
+            );
+
             try
             {
                 // Create target directory if it doesn't exist
@@ -363,6 +393,15 @@ public class MangaMetadataChanger(
                 FileSystemHelpers.DeleteEmptySubfolders(libraryPath!, logger);
             }
         });
+
+        progress?.Report(
+            new MangaRenameProgress(
+                renameOperations.Count,
+                renameOperations.Count,
+                RenamePhase.Completed,
+                null
+            )
+        );
 
         return RenameResult.Ok;
     }

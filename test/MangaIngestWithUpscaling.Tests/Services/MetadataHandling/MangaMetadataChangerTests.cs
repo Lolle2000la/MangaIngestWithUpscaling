@@ -173,6 +173,122 @@ public class MangaMetadataChangerTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task ChangeMangaTitle_WithProgress_ShouldReportProgress()
+    {
+        // Arrange
+        var library = CreateTestLibrary();
+        var manga = CreateTestManga(library, "Original Title");
+        var chapter = CreateTestChapter(manga, "chapter1.cbz");
+        manga.Chapters.Add(chapter);
+
+        await _dbContext.Libraries.AddAsync(library, TestContext.Current.CancellationToken);
+        await _dbContext.MangaSeries.AddAsync(manga, TestContext.Current.CancellationToken);
+        await _dbContext.Chapters.AddAsync(chapter, TestContext.Current.CancellationToken);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var chapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(chapterPath)!);
+        await File.WriteAllTextAsync(
+            chapterPath,
+            "dummy content",
+            TestContext.Current.CancellationToken
+        );
+
+        var newTitle = "New Title";
+        var newChapterPath = Path.Combine(
+            library.NotUpscaledLibraryPath,
+            PathEscaper.EscapeFileName(newTitle),
+            PathEscaper.EscapeFileName(chapter.FileName)
+        );
+        var metadata = new ExtractedMetadata("Original Title", "Chapter 1", "1");
+
+        _mockFileSystem.FileExists(chapterPath).Returns(true);
+        _mockFileSystem.FileExists(newChapterPath).Returns(false);
+        _mockMetadataHandling
+            .GetSeriesAndTitleFromComicInfoAsync(chapterPath)
+            .Returns(Task.FromResult(metadata));
+
+        var reports = new List<MangaRenameProgress>();
+        var progress = new SynchronousProgress<MangaRenameProgress>(reports.Add);
+
+        // Act
+        var result = await _metadataChanger.ChangeMangaTitle(
+            manga,
+            newTitle,
+            progress: progress,
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        // Assert
+        Assert.Equal(RenameResult.Ok, result);
+        Assert.Contains(reports, r => r.Phase == RenamePhase.Checking);
+        Assert.Contains(reports, r => r.Phase == RenamePhase.Moving);
+        Assert.Equal(RenamePhase.Completed, reports[^1].Phase);
+        Assert.Equal(reports[^1].Total, reports[^1].Current);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ChangeMangaTitle_WithDotTitle_ShouldSanitizeDirectoryAndKeepMetadata()
+    {
+        // Arrange
+        var library = CreateTestLibrary();
+        var manga = CreateTestManga(library, "Original Title");
+        var chapter = CreateTestChapter(manga, "chapter1.cbz");
+
+        await _dbContext.Libraries.AddAsync(library, TestContext.Current.CancellationToken);
+        await _dbContext.MangaSeries.AddAsync(manga, TestContext.Current.CancellationToken);
+        await _dbContext.Chapters.AddAsync(chapter, TestContext.Current.CancellationToken);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var chapterPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(chapterPath)!);
+        await File.WriteAllTextAsync(
+            chapterPath,
+            "dummy content",
+            TestContext.Current.CancellationToken
+        );
+
+        var newTitle = "...";
+        var sanitizedDirectory = PathEscaper.EscapeDirectoryName(newTitle);
+        var newChapterPath = Path.Combine(
+            library.NotUpscaledLibraryPath,
+            sanitizedDirectory,
+            PathEscaper.EscapeFileName(chapter.FileName)
+        );
+        var metadata = new ExtractedMetadata("Original Title", "Chapter 1", "1");
+
+        _mockFileSystem.FileExists(chapterPath).Returns(true);
+        _mockFileSystem.FileExists(newChapterPath).Returns(false);
+        _mockMetadataHandling
+            .GetSeriesAndTitleFromComicInfoAsync(chapterPath)
+            .Returns(Task.FromResult(metadata));
+
+        // Act
+        var result = await _metadataChanger.ChangeMangaTitle(
+            manga,
+            newTitle,
+            addOldToAlternative: true,
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        // Assert
+        Assert.Equal(RenameResult.Ok, result);
+        Assert.Equal(newTitle, manga.PrimaryTitle);
+        Assert.NotEqual(newTitle, sanitizedDirectory);
+
+        // Metadata keeps the original title while the on-disk directory is sanitized.
+#pragma warning disable CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
+        _mockMetadataHandling
+            .Received(1)
+            .WriteComicInfoAsync(chapterPath,
+#pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
+                Arg.Is<ExtractedMetadata>(m => m.Series == newTitle));
+        _mockFileSystem.Received().Move(chapterPath, newChapterPath);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task ChangeMangaTitle_ToExistingTitle_ShouldPromptForMerge()
     {
         // Arrange
@@ -892,5 +1008,10 @@ public class MangaMetadataChangerTests : IDisposable
             MangaId = manga.Id,
             IsUpscaled = isUpscaled,
         };
+    }
+
+    private sealed class SynchronousProgress<T>(Action<T> handler) : IProgress<T>
+    {
+        public void Report(T value) => handler(value);
     }
 }

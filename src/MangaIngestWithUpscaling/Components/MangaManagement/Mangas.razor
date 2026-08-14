@@ -8,6 +8,7 @@
 @using MangaIngestWithUpscaling.Shared.Helpers
 @using Humanizer
 @using System.Globalization
+@using System.Diagnostics
 @implements IDisposable
 
 @inject ApplicationDbContext DbContext
@@ -64,6 +65,16 @@
                     </MudButton>
                 </MudStack>
             </MudItem>
+            @if (_isRenaming)
+            {
+                <MudItem xs="12">
+                    <MudStack Spacing="1" Class="mt-1">
+                        <MudProgressLinear Indeterminate="@(RenamePercent is null)" Value="@(RenamePercent ?? 0)"
+                            Color="Color.Primary" />
+                        <MudText Typo="Typo.caption" Color="Color.Info">@_renameStatus</MudText>
+                    </MudStack>
+                </MudItem>
+            }
         </MudGrid>
 
     </ToolBarContent>
@@ -138,6 +149,9 @@
     private bool _parametersInitialized = false;
     private bool _isOwnNavigation = false;
     private bool _isProcessing;
+    private bool _isRenaming;
+    private string _renameStatus = string.Empty;
+    private MangaRenameProgress? _renameProgress;
     private readonly Subject<string> _searchSubject = new();
 
     [Parameter]
@@ -421,6 +435,20 @@
         }
     }
 
+    private double? RenamePercent => _renameProgress is { Total: > 0 } p
+        ? Math.Clamp((p.Current ?? 0) * 100.0 / p.Total.Value, 0, 100)
+        : null;
+
+    private async Task RefreshAsync()
+    {
+        try
+        {
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (ObjectDisposedException) { }
+        catch (InvalidOperationException) { }
+    }
+
     private void BackupBeforeEdit(object manga)
     {
         mangaBeforeEdit = ((Manga)manga).Clone();
@@ -441,17 +469,72 @@
         _isProcessing = true;
         try
         {
+            await RefreshAsync();
+
             Manga manga = (Manga)m;
             if (mangaBeforeEdit == null) return;
             // if the primary title was changed, change it back and then use the metadata changer.
             if (manga.PrimaryTitle != mangaBeforeEdit.PrimaryTitle)
             {
                 await DbContext.Entry(manga).Collection(x => x.OtherTitles).LoadAsync();
-                var newTitle = manga.PrimaryTitle;
+                var newTitle = manga.PrimaryTitle.Trim();
                 manga.PrimaryTitle = mangaBeforeEdit.PrimaryTitle;
+
+                _isRenaming = true;
+                _renameProgress = null;
+                _renameStatus = string.Format(Loc["Rename_Started"], newTitle);
+                var renameProgress = new Progress<MangaRenameProgress>(async p =>
+                {
+                    _renameProgress = p;
+                    _renameStatus = p.Phase switch
+                    {
+                        RenamePhase.Checking => string.Format(Loc["Rename_Checking"], p.Current, p.Total),
+                        RenamePhase.Moving => string.Format(Loc["Rename_Moving"], p.Current, p.Total),
+                        RenamePhase.Completed => Loc["Rename_Completed"],
+                        _ => Loc["Rename_Completed"],
+                    };
+                    if (!string.IsNullOrWhiteSpace(p.StatusMessage))
+                    {
+                        _renameStatus = $"{_renameStatus} ({p.StatusMessage})";
+                    }
+                    try
+                    {
+                        await InvokeAsync(StateHasChanged);
+                    }
+                    catch (ObjectDisposedException) { }
+                    catch (InvalidOperationException) { }
+                });
+
+                var stopwatch = Stopwatch.StartNew();
                 try
                 {
-                    var renameResult = await MangaMetadataChanger.ChangeMangaTitle(manga, newTitle.Trim());
+                    var renameResult = await MangaMetadataChanger.ChangeMangaTitle(
+                        manga,
+                        newTitle,
+                        progress: renameProgress
+                    );
+                    stopwatch.Stop();
+
+                    switch (renameResult)
+                    {
+                        case RenameResult.Ok:
+                            Snackbar.Add(
+                                string.Format(
+                                    Loc["Rename_Success"],
+                                    newTitle,
+                                    stopwatch.Elapsed.TotalSeconds.ToString("0.0", CultureInfo.CurrentCulture)
+                                ),
+                                Severity.Success
+                            );
+                            break;
+                        case RenameResult.Merged:
+                            Snackbar.Add(Loc["Rename_Merged"], Severity.Info);
+                            break;
+                        case RenameResult.Cancelled:
+                            Snackbar.Add(Loc["Rename_Cancelled"], Severity.Warning);
+                            break;
+                    }
+
                     if (renameResult is not RenameResult.Ok)
                     {
                         await table.ReloadServerData();
@@ -460,8 +543,15 @@
                 }
                 catch (Exception e)
                 {
+                    stopwatch.Stop();
                     Snackbar.Add($"Error: {e.Message}", Severity.Error);
                     Logger.LogError(e, Loc["Error_ChangingTitle"], manga.Id, newTitle);
+                }
+                finally
+                {
+                    _isRenaming = false;
+                    _renameProgress = null;
+                    _renameStatus = string.Empty;
                 }
             }
 
@@ -487,6 +577,7 @@
         finally
         {
             _isProcessing = false;
+            await RefreshAsync();
         }
     }
 

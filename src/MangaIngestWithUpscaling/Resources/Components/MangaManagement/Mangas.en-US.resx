@@ -151,4 +151,25 @@
   <data name="Dialog_DeleteSingle_Title" xml:space="preserve">
     <value>Delete Manga</value>
   </data>
+  <data name="Rename_Started" xml:space="preserve">
+    <value>Renaming to "{0}"...</value>
+  </data>
+  <data name="Rename_Checking" xml:space="preserve">
+    <value>Checking chapters {0}/{1}...</value>
+  </data>
+  <data name="Rename_Moving" xml:space="preserve">
+    <value>Moving chapters {0}/{1}...</value>
+  </data>
+  <data name="Rename_Completed" xml:space="preserve">
+    <value>Finishing up...</value>
+  </data>
+  <data name="Rename_Success" xml:space="preserve">
+    <value>Renamed to "{0}" in {1}s</value>
+  </data>
+  <data name="Rename_Merged" xml:space="preserve">
+    <value>A manga with this title already exists; merge queued</value>
+  </data>
+  <data name="Rename_Cancelled" xml:space="preserve">
+    <value>Rename cancelled</value>
+  </data>
 </root>
