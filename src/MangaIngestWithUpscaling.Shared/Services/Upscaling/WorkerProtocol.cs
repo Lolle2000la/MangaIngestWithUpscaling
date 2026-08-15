@@ -17,8 +17,6 @@ public static class WorkerJson
     };
 }
 
-// -- events (worker -> client) ----------------------------------------------- //
-
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
 [JsonDerivedType(typeof(WorkerReadyEvent), "ready")]
 [JsonDerivedType(typeof(WorkerAcceptedEvent), "accepted")]
@@ -71,8 +69,6 @@ public sealed record WorkerDeviceInfo(
     bool UseFp16,
     string? ModelsDirectory
 );
-
-// -- requests (client -> worker) --------------------------------------------- //
 
 public sealed record WorkerJobRequest
 {

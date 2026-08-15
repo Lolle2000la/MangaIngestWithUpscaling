@@ -61,8 +61,6 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         _logger = logger;
     }
 
-    // -- public API ---------------------------------------------------------- //
-
     public async Task<UpscaleJobResult> RunJobAsync(
         UpscaleJobRequest request,
         IProgress<UpscaleProgress>? progress,
@@ -229,8 +227,6 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         await CleanupAsync(process);
     }
 
-    // -- IHostedService / disposal ------------------------------------------- //
-
     public Task StartAsync(CancellationToken cancellationToken)
     {
         _ = WatchdogLoopAsync(cancellationToken);
@@ -241,8 +237,6 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         ShutdownWorkerAsync(cancellationToken);
 
     public async ValueTask DisposeAsync() => await ShutdownWorkerAsync(CancellationToken.None);
-
-    // -- worker lifecycle ---------------------------------------------------- //
 
     private async Task EnsureWorkerAsync(CancellationToken cancellationToken)
     {
@@ -467,8 +461,6 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         _logger.LogInformation("Upscale worker process stopped.");
     }
 
-    // -- idle teardown ------------------------------------------------------- //
-
     private async Task WatchdogLoopAsync(CancellationToken cancellationToken)
     {
         var poll = TimeSpan.FromSeconds(1);
@@ -531,8 +523,6 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             _submitLock.Release();
         }
     }
-
-    // -- NDJSON framing / event handling -------------------------------------- //
 
     internal static string BuildJobLine(UpscaleJobRequest request)
     {
@@ -881,8 +871,6 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         }
     }
 
-    // -- timeout escalation ---------------------------------------------------- //
-
     private async Task MonitorTimeoutAsync(WorkerJob job, TimeSpan? timeout)
     {
         if (timeout is null || timeout.Value <= TimeSpan.Zero)
@@ -942,8 +930,6 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             }
         }
     }
-
-    // -- job state -------------------------------------------------------------- //
 
     private sealed class WorkerJob
     {
