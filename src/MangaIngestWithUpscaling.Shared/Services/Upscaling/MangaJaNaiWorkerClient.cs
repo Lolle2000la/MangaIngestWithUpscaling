@@ -5,6 +5,7 @@ using System.Text.Json;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.Python;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -22,7 +23,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     private static readonly TimeSpan ReadyTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan CancelGracePeriod = TimeSpan.FromSeconds(10);
 
-    private readonly IPythonService _pythonService;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly IOptions<UpscalerConfig> _config;
     private readonly ILogger<MangaJaNaiWorkerClient> _logger;
 
@@ -39,12 +40,12 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     private DateTime _lastActivityUtc = DateTime.UtcNow;
 
     public MangaJaNaiWorkerClient(
-        IPythonService pythonService,
+        IServiceScopeFactory scopeFactory,
         IOptions<UpscalerConfig> config,
         ILogger<MangaJaNaiWorkerClient> logger
     )
     {
-        _pythonService = pythonService;
+        _scopeFactory = scopeFactory;
         _config = config;
         _logger = logger;
     }
@@ -206,7 +207,16 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             await CleanupAsync(existing);
         }
 
-        PythonEnvironment? environment = _pythonService.GetPreparedEnvironment();
+        // IPythonService is scoped (it owns per-request GPU detection), so resolve it from a
+        // short-lived scope here instead of injecting it into this singleton.
+        PythonEnvironment? environment;
+        using (IServiceScope scope = _scopeFactory.CreateScope())
+        {
+            environment = scope
+                .ServiceProvider.GetRequiredService<IPythonService>()
+                .GetPreparedEnvironment();
+        }
+
         if (environment is null)
         {
             throw new InvalidOperationException(
