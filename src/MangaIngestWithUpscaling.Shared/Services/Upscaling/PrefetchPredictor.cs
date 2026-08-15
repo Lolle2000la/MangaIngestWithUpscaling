@@ -130,9 +130,16 @@ public sealed class PrefetchPredictor
 
     /// <summary>
     /// Whether to trigger a prefetch now, given how many pages remain in the in-flight job.
+    /// When <paramref name="finalizing"/> is set, the GPU has just freed up (only archive I/O
+    /// remains), so this always returns true regardless of page counts or statistics.
     /// </summary>
-    public bool ShouldPrefetch(int remainingPages, int totalPages)
+    public bool ShouldPrefetch(int remainingPages, int totalPages, bool finalizing = false)
     {
+        if (finalizing)
+        {
+            return true;
+        }
+
         if (totalPages <= 0)
         {
             return false;

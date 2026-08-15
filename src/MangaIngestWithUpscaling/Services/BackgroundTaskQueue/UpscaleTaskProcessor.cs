@@ -153,7 +153,13 @@ public class UpscaleTaskProcessor(
             var last = DateTime.UtcNow;
             using var progressSubscription = task.Data.Progress.Changed.Subscribe(e =>
             {
-                if (_coordinator.OnProgress(task.Data.Progress.Total, task.Data.Progress.Current))
+                if (
+                    _coordinator.OnProgress(
+                        task.Data.Progress.Total,
+                        task.Data.Progress.Current,
+                        task.Data.Progress.Phase
+                    )
+                )
                 {
                     _ = PrefetchNextAsync(task, serviceStoppingToken);
                 }

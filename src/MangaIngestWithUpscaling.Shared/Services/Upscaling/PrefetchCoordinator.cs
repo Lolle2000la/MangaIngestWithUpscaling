@@ -46,33 +46,51 @@ public sealed class PrefetchCoordinator
 
     /// <summary>
     /// Feeds a progress update and returns <c>true</c> once per job when a prefetch should be
-    /// triggered.
+    /// triggered. A <paramref name="phase"/> of "finalizing" triggers immediately: the GPU has
+    /// freed up (only archive I/O remains) even when page counts are missing or stale.
     /// </summary>
-    public bool OnProgress(int? total, int? current)
+    public bool OnProgress(int? total, int? current, string? phase = null)
     {
-        if (total is not { } totalPages || current is not { } currentPages || totalPages <= 0)
-        {
-            return false;
-        }
+        bool finalizing = string.Equals(phase, "finalizing", StringComparison.OrdinalIgnoreCase);
 
         lock (_lock)
         {
-            if (_lastCurrent is { } last && currentPages > last)
+            int totalPages;
+            int remainingPages;
+
+            if (finalizing)
             {
-                double deltaTime = (DateTime.UtcNow - _lastProgressTime).TotalSeconds;
-                int deltaPages = currentPages - last;
-                if (deltaPages > 0 && deltaTime > 0)
+                // Treat the job as having no remaining pages so both prefetch and remote claim
+                // timing act on the now-idle GPU.
+                _lastRemainingPages = 0;
+                totalPages = 0;
+                remainingPages = 0;
+            }
+            else if (total is { } tp && current is { } cp && tp > 0)
+            {
+                if (_lastCurrent is { } last && cp > last)
                 {
-                    _predictor.RecordPerPage(deltaTime / deltaPages);
+                    double deltaTime = (DateTime.UtcNow - _lastProgressTime).TotalSeconds;
+                    int deltaPages = cp - last;
+                    if (deltaPages > 0 && deltaTime > 0)
+                    {
+                        _predictor.RecordPerPage(deltaTime / deltaPages);
+                    }
                 }
+
+                _lastCurrent = cp;
+                _lastProgressTime = DateTime.UtcNow;
+                remainingPages = Math.Max(0, tp - cp);
+                _lastRemainingPages = remainingPages;
+                totalPages = tp;
+            }
+            else
+            {
+                // No usable page counts and not finalizing: nothing to decide on.
+                return false;
             }
 
-            _lastCurrent = currentPages;
-            _lastProgressTime = DateTime.UtcNow;
-
-            int remaining = Math.Max(0, totalPages - currentPages);
-            _lastRemainingPages = remaining;
-            if (_predictor.ShouldPrefetch(remaining, totalPages))
+            if (_predictor.ShouldPrefetch(remainingPages, totalPages, finalizing))
             {
                 if (_signaled == 0)
                 {

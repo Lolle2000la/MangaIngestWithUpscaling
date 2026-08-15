@@ -100,4 +100,13 @@ public class PrefetchPredictorTests
         double estimate = predictor.EstimateDownloadSeconds(1000);
         Assert.True(estimate > 1.0, $"expected a conservative (slow) estimate, got {estimate}s");
     }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ShouldPrefetch_WhenFinalizing_ReturnsTrue()
+    {
+        var predictor = new PrefetchPredictor();
+        // No statistics and no page total, but the GPU is idle during archive finalization.
+        Assert.True(predictor.ShouldPrefetch(0, 0, finalizing: true));
+    }
 }

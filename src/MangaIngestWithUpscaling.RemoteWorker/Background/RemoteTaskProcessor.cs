@@ -402,7 +402,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 
                                 // Update per-page stats and trigger prefetch when appropriate.
                                 if (
-                                    _coordinator.OnProgress(p.Total, p.Current)
+                                    _coordinator.OnProgress(p.Total, p.Current, p.Phase)
                                     && Interlocked.CompareExchange(ref prefetchSignaled, 1, 0) == 0
                                 )
                                 {
