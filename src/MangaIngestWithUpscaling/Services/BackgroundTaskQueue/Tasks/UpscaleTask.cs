@@ -285,6 +285,16 @@ public class UpscaleTask : BaseTask, IChapterTask
             return null;
         }
 
+        // Skip the speculative preprocess when the chapter already looks upscaled, so a
+        // no-op task doesn't burn CPU and make the consumer wait on a result it will discard.
+        // (The full pages-equal check still runs in ProcessAsync.)
+        if (
+            chapter.IsUpscaled && (!UpdateIfProfileNew || chapter.UpscalerProfile?.Id == profile.Id)
+        )
+        {
+            return null;
+        }
+
         string currentStoragePath = Path.Combine(
             chapter.Manga.Library.NotUpscaledLibraryPath,
             chapter.RelativePath

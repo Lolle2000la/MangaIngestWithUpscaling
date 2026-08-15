@@ -260,7 +260,12 @@ public class UpscaleTaskProcessor(
                     return;
                 }
 
-                completion.TrySetResult(preprocessed);
+                if (!completion.TrySetResult(preprocessed))
+                {
+                    // Another prefetch already completed this promise (double prefetch of the
+                    // same chapter); reclaim the unused result.
+                    preprocessed?.Dispose();
+                }
             }
             catch (OperationCanceledException)
             {

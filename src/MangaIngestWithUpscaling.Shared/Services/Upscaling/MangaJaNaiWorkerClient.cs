@@ -238,6 +238,13 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             await CleanupAsync(existing);
         }
 
+        // Start a fresh stderr buffer for the new worker so a timeout/crash report doesn't
+        // include diagnostics from the previous process.
+        lock (_stderrLock)
+        {
+            _stderrBuffer.Clear();
+        }
+
         // IPythonService is scoped (it owns per-request GPU detection), so resolve it from a
         // short-lived scope here instead of injecting it into this singleton.
         PythonEnvironment? environment;

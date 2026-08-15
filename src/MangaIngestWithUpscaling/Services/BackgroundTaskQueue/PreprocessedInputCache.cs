@@ -78,6 +78,10 @@ public sealed class PreprocessedInputCache : IPreprocessedInputCache
     {
         try
         {
+            // Wait for the prefetch to finish before starting the stale clock, so a slow
+            // prefetch on a long-running job isn't reclaimed while it's still legitimately
+            // pending consumption.
+            await tcs.Task;
             await Task.Delay(StaleTimeout);
             if (_prefetches.TryRemove(KeyValuePair.Create(chapterId, tcs)))
             {
