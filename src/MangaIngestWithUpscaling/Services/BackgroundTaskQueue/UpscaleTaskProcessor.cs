@@ -249,6 +249,17 @@ public class UpscaleTaskProcessor(
                 );
                 sw.Stop();
                 _coordinator.RecordPrefetch(sw.Elapsed);
+
+                // If another processor (e.g. the distributed one) claimed this task while we
+                // were preprocessing, don't hand over the result: the consuming task will never
+                // run locally, so dispose it and let the consumer fall back to inline instead.
+                if (next.Status != PersistedTaskStatus.Pending)
+                {
+                    preprocessed?.Dispose();
+                    completion.TrySetResult(null);
+                    return;
+                }
+
                 completion.TrySetResult(preprocessed);
             }
             catch (OperationCanceledException)
