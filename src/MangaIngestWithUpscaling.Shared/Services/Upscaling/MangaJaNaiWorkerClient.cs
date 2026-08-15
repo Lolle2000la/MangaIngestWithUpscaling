@@ -42,7 +42,10 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     private TaskCompletionSource? _readyTcs;
     private string? _currentJobId;
     private bool _shuttingDown;
-    private DateTime _lastActivityUtc = DateTime.UtcNow;
+
+    // Stored as ticks so the stdout reader, watchdog, and job loop can update/read it
+    // without torn reads on a DateTime struct.
+    private long _lastActivityTicks = DateTime.UtcNow.Ticks;
 
     private readonly Lock _stderrLock = new();
     private readonly StringBuilder _stderrBuffer = new();
@@ -72,7 +75,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         {
             // Touch the activity clock before spawning so the idle watchdog doesn't
             // race a fresh job submission and tear the worker down mid-spawn.
-            _lastActivityUtc = DateTime.UtcNow;
+            Interlocked.Exchange(ref _lastActivityTicks, DateTime.UtcNow.Ticks);
 
             await EnsureWorkerAsync(cancellationToken);
 
@@ -134,7 +137,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             {
                 _jobs.TryRemove(request.Id, out _);
                 _currentJobId = null;
-                _lastActivityUtc = DateTime.UtcNow;
+                Interlocked.Exchange(ref _lastActivityTicks, DateTime.UtcNow.Ticks);
             }
         }
         finally
@@ -321,7 +324,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             );
         }
 
-        _lastActivityUtc = DateTime.UtcNow;
+        Interlocked.Exchange(ref _lastActivityTicks, DateTime.UtcNow.Ticks);
         _logger.LogInformation(
             "Upscale worker started (pid {Pid}) using settings {SettingsPath}.",
             process.Id,
@@ -443,7 +446,9 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             }
         }
 
-        TimeSpan idleFor = DateTime.UtcNow - _lastActivityUtc;
+        TimeSpan idleFor =
+            DateTime.UtcNow
+            - new DateTime(Interlocked.Read(ref _lastActivityTicks), DateTimeKind.Utc);
         if (idle && idleFor >= _config.Value.WorkerIdleTimeout)
         {
             _logger.LogInformation(
@@ -527,7 +532,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             string? line;
             while ((line = await process.StandardOutput.ReadLineAsync()) is not null)
             {
-                _lastActivityUtc = DateTime.UtcNow;
+                Interlocked.Exchange(ref _lastActivityTicks, DateTime.UtcNow.Ticks);
                 HandleEvent(line);
             }
         }
@@ -624,6 +629,10 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                 case WorkerStartedEvent started:
                     TouchJob(started.Id);
                     break;
+                case WorkerCancelledEvent cancelled:
+                    // Acknowledge the cancel; the job completes via the subsequent done event.
+                    TouchJob(cancelled.Id);
+                    break;
             }
         }
         catch (Exception ex)
@@ -666,6 +675,25 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         var files = (done.Files ?? [])
             .Select(f => new UpscaleJobFile(f.Input ?? "", f.Output ?? "", f.Status ?? ""))
             .ToList();
+
+        if (status != "ok")
+        {
+            job.TrySetException(
+                new InvalidOperationException($"Upscale worker reported status '{status}'.")
+            );
+            return;
+        }
+
+        string[] failed = files.Where(f => f.Status == "error").Select(f => f.Input).ToArray();
+        if (failed.Length > 0)
+        {
+            job.TrySetException(
+                new InvalidOperationException(
+                    $"Upscale worker failed to process {failed.Length} file(s): {string.Join(", ", failed)}"
+                )
+            );
+            return;
+        }
 
         job.TrySetResult(new UpscaleJobResult(job.Id, status, files, done.ElapsedSeconds));
     }

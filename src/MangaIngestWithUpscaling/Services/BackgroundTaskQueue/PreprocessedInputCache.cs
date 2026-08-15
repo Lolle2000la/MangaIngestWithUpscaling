@@ -54,7 +54,24 @@ public sealed class PreprocessedInputCache : IPreprocessedInputCache
             return null;
         }
 
-        return await tcs.Task.WaitAsync(cancellationToken);
+        try
+        {
+            return await tcs.Task.WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // The consumer is gone; if the prefetcher already produced an input, dispose it so
+            // the temp file doesn't leak (the TCS is no longer in the dictionary for cleanup).
+            if (
+                tcs.Task.IsCompletedSuccessfully
+                && tcs.Task.Result is IPreprocessedInput preprocessed
+            )
+            {
+                preprocessed.Dispose();
+            }
+
+            throw;
+        }
     }
 
     /// <summary>
