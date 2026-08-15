@@ -314,7 +314,22 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         );
         try
         {
-            await readyTcs.Task.WaitAsync(linked.Token);
+            // Keep the idle watchdog from tearing the worker down during a long
+            // spawn/warmup: touch the activity clock periodically until ready completes.
+            while (!readyTcs.Task.IsCompleted)
+            {
+                Interlocked.Exchange(ref _lastActivityTicks, DateTime.UtcNow.Ticks);
+                try
+                {
+                    await readyTcs.Task.WaitAsync(TimeSpan.FromSeconds(5), linked.Token);
+                }
+                catch (TimeoutException)
+                {
+                    // Still spawning; loop and touch again.
+                }
+            }
+
+            await readyTcs.Task;
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
         {
@@ -740,6 +755,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         string stderrSection = BuildStderrSection();
 
         TaskCompletionSource? readyTcs;
+        StreamWriter? stdin;
         lock (_stateLock)
         {
             // A stale process (already replaced by a newer spawn) must not fault the new
@@ -752,8 +768,15 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             _process = null;
             readyTcs = _readyTcs;
             _readyTcs = null;
+            stdin = _stdin;
             _stdin = null;
         }
+
+        try
+        {
+            stdin?.Dispose();
+        }
+        catch { }
 
         foreach (WorkerJob job in _jobs.Values.ToArray())
         {

@@ -60,16 +60,9 @@ public sealed class PreprocessedInputCache : IPreprocessedInputCache
         }
         catch (OperationCanceledException)
         {
-            // The consumer is gone; if the prefetcher already produced an input, dispose it so
-            // the temp file doesn't leak (the TCS is no longer in the dictionary for cleanup).
-            if (
-                tcs.Task.IsCompletedSuccessfully
-                && tcs.Task.Result is IPreprocessedInput preprocessed
-            )
-            {
-                preprocessed.Dispose();
-            }
-
+            // The consumer is gone. If the prefetch is still running, the entry is already
+            // removed from the dictionary, so reclaim the eventual result asynchronously.
+            _ = DisposeWhenCompletedAsync(tcs);
             throw;
         }
     }
@@ -88,14 +81,27 @@ public sealed class PreprocessedInputCache : IPreprocessedInputCache
             await Task.Delay(StaleTimeout);
             if (_prefetches.TryRemove(KeyValuePair.Create(chapterId, tcs)))
             {
-                if (
-                    tcs.Task.IsCompletedSuccessfully
-                    && tcs.Task.Result is IPreprocessedInput preprocessed
-                )
-                {
-                    preprocessed.Dispose();
-                }
+                await DisposeWhenCompletedAsync(tcs);
             }
+        }
+        catch
+        {
+            // Best-effort cleanup.
+        }
+    }
+
+    /// <summary>
+    /// Waits for the prefetch to finish and disposes its result. Used whenever the promise has
+    /// been removed from the dictionary without being handed to a consumer.
+    /// </summary>
+    private static async Task DisposeWhenCompletedAsync(
+        TaskCompletionSource<IPreprocessedInput?> tcs
+    )
+    {
+        try
+        {
+            IPreprocessedInput? preprocessed = await tcs.Task;
+            preprocessed?.Dispose();
         }
         catch
         {
