@@ -79,7 +79,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
             await EnsureWorkerAsync(cancellationToken);
 
-            var job = new WorkerJob(request.Id, progress);
+            WorkerJob job = new(request.Id, progress);
             if (!_jobs.TryAdd(request.Id, job))
             {
                 throw new InvalidOperationException(
@@ -91,7 +91,24 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
             try
             {
-                await SendLineAsync(BuildJobLine(request), cancellationToken);
+                try
+                {
+                    await SendLineAsync(BuildJobLine(request), cancellationToken);
+                }
+                catch (InvalidOperationException)
+                    when (_stdin is null && !cancellationToken.IsCancellationRequested)
+                {
+                    // The worker crashed between the ready check and submission; respawn once
+                    // with a fresh job and retry.
+                    _logger.LogWarning(
+                        "Upscale worker crashed during submission; respawning and retrying once."
+                    );
+                    _jobs.TryRemove(request.Id, out _);
+                    job = new WorkerJob(request.Id, progress);
+                    _jobs.TryAdd(request.Id, job);
+                    await EnsureWorkerAsync(cancellationToken);
+                    await SendLineAsync(BuildJobLine(request), cancellationToken);
+                }
 
                 var cancelSignal = new TaskCompletionSource(
                     TaskCreationOptions.RunContinuationsAsynchronously
@@ -887,14 +904,18 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                     job.Completion.Task,
                     Task.Delay(CancelGracePeriod)
                 );
-                if (finished != job.Completion.Task)
+                if (finished == job.Completion.Task)
                 {
-                    _logger.LogError(
-                        "Upscale worker job {JobId} did not cancel in time; killing the worker.",
-                        job.Id
-                    );
-                    await KillWorkerAsync();
+                    // The job finished during the grace period; let its result (success or
+                    // failure) surface normally instead of failing it with a timeout.
+                    return;
                 }
+
+                _logger.LogError(
+                    "Upscale worker job {JobId} did not cancel in time; killing the worker.",
+                    job.Id
+                );
+                await KillWorkerAsync();
 
                 throw new TimeoutException(
                     $"Upscaling timed out after {effectiveTimeout} of inactivity.{BuildStderrSection()}"
