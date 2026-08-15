@@ -647,7 +647,10 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         job!.Touch();
 
         int? total = GetInt(root, "archive_total");
-        int? completed = GetInt(root, "completed");
+        // Prefer archive_completed for archive jobs: it counts only finished archive
+        // entries, so it never exceeds archive_total (completed also counts the final
+        // 'archive finished' marker, which briefly showed e.g. 33/32).
+        int? completed = GetInt(root, "archive_completed") ?? GetInt(root, "completed");
         string? phase = root.TryGetProperty("phase", out JsonElement phaseEl)
             ? phaseEl.GetString()
             : null;
