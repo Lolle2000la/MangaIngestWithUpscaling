@@ -21,12 +21,19 @@ public class LibraryIngestWatcher : BackgroundService
     {
         RegisterFileWatchers(stoppingToken);
 
-        while (!stoppingToken.IsCancellationRequested)
+        try
         {
-            await Task.Delay(1500, stoppingToken);
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                await Task.Delay(1500, stoppingToken);
+            }
         }
-
-        UnregisterWatchers();
+        finally
+        {
+            // The delay throws OperationCanceledException on shutdown, so a try/finally
+            // guarantees the FileSystemWatchers are disposed instead of leaking.
+            UnregisterWatchers();
+        }
     }
 
     private void RegisterFileWatchers(CancellationToken stoppingToken)
