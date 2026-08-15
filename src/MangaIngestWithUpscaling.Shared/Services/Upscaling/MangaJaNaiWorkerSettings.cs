@@ -20,7 +20,12 @@ public static class MangaJaNaiWorkerSettings
     /// </summary>
     public static string EnsureSettings(UpscalerConfig config)
     {
-        string path = Path.Combine(Path.GetTempPath(), "mangaingest_worker_settings.json");
+        // Per-process path so a main app and a remote worker (or two instances) on the same
+        // machine don't clobber each other's settings file.
+        string path = Path.Combine(
+            Path.GetTempPath(),
+            $"mangaingest_worker_settings_{Environment.ProcessId}.json"
+        );
 
         string json = File.ReadAllText(ConfigPath);
         JsonNode? root =

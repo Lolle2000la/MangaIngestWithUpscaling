@@ -745,6 +745,22 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         string detail = exitCode is null ? "unknown" : exitCode.Value.ToString();
         string stderrSection = BuildStderrSection();
 
+        TaskCompletionSource? readyTcs;
+        lock (_stateLock)
+        {
+            // A stale process (already replaced by a newer spawn) must not fault the new
+            // worker's jobs or ready signal.
+            if (_process != process)
+            {
+                return;
+            }
+
+            _process = null;
+            readyTcs = _readyTcs;
+            _readyTcs = null;
+            _stdin = null;
+        }
+
         foreach (WorkerJob job in _jobs.Values.ToArray())
         {
             job.TrySetException(
@@ -754,19 +770,9 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             );
         }
 
-        _readyTcs?.TrySetException(
+        readyTcs?.TrySetException(
             new InvalidOperationException("Upscale worker exited before becoming ready.")
         );
-
-        lock (_stateLock)
-        {
-            if (_process == process)
-            {
-                _process = null;
-                _readyTcs = null;
-                _stdin = null;
-            }
-        }
 
         try
         {
@@ -807,7 +813,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             return;
         }
 
-        while (!job.Completion.Task.IsCompleted)
+        while (!job.Completion.Task.IsCompleted && _jobs.ContainsKey(job.Id))
         {
             await Task.Delay(200);
             // Once every page is upscaled and saved, allow the archive finalization to run
