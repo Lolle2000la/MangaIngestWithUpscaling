@@ -19,10 +19,10 @@ public class LibraryIngestWatcher : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        RegisterFileWatchers(stoppingToken);
-
         try
         {
+            RegisterFileWatchers(stoppingToken);
+
             while (!stoppingToken.IsCancellationRequested)
             {
                 await Task.Delay(1500, stoppingToken);
@@ -31,7 +31,8 @@ public class LibraryIngestWatcher : BackgroundService
         finally
         {
             // The delay throws OperationCanceledException on shutdown, so a try/finally
-            // guarantees the FileSystemWatchers are disposed instead of leaking.
+            // guarantees the FileSystemWatchers are disposed instead of leaking — including
+            // when RegisterFileWatchers fails partway through.
             UnregisterWatchers();
         }
     }

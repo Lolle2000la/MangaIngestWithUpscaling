@@ -345,6 +345,13 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                 "Timed out waiting for the upscale worker to become ready."
             );
         }
+        catch (OperationCanceledException)
+        {
+            // The caller cancelled while we were waiting for ready; tear down the spawned
+            // worker so it doesn't linger until the next job or shutdown.
+            await KillWorkerAsync();
+            throw;
+        }
 
         Interlocked.Exchange(ref _lastActivityTicks, DateTime.UtcNow.Ticks);
         _logger.LogInformation(
@@ -456,28 +463,43 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
     private async Task EnsureIdleShutdownAsync()
     {
-        Process? process;
-        bool idle;
-        lock (_stateLock)
+        // Take the submit lock (non-blocking) so the idle check + shutdown are atomic with
+        // respect to a fresh job submission: if a job is being submitted or processed we skip
+        // teardown, and once we commit to it a new job waits for us to finish.
+        if (!await _submitLock.WaitAsync(0))
         {
-            process = _process;
-            idle = _currentJobId is null && _jobs.IsEmpty;
-            if (process is null || process.HasExited)
-            {
-                return;
-            }
+            return;
         }
 
-        TimeSpan idleFor =
-            DateTime.UtcNow
-            - new DateTime(Interlocked.Read(ref _lastActivityTicks), DateTimeKind.Utc);
-        if (idle && idleFor >= _config.Value.WorkerIdleTimeout)
+        try
         {
-            _logger.LogInformation(
-                "Upscale worker idle for {IdleFor}, shutting down to release GPU resources.",
-                idleFor
-            );
-            await ShutdownWorkerAsync(CancellationToken.None);
+            Process? process;
+            bool idle;
+            lock (_stateLock)
+            {
+                process = _process;
+                idle = _currentJobId is null && _jobs.IsEmpty;
+                if (process is null || process.HasExited)
+                {
+                    return;
+                }
+            }
+
+            TimeSpan idleFor =
+                DateTime.UtcNow
+                - new DateTime(Interlocked.Read(ref _lastActivityTicks), DateTimeKind.Utc);
+            if (idle && idleFor >= _config.Value.WorkerIdleTimeout)
+            {
+                _logger.LogInformation(
+                    "Upscale worker idle for {IdleFor}, shutting down to release GPU resources.",
+                    idleFor
+                );
+                await ShutdownWorkerAsync(CancellationToken.None);
+            }
+        }
+        finally
+        {
+            _submitLock.Release();
         }
     }
 

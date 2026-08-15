@@ -142,6 +142,9 @@ public class UpscaleTaskProcessor(
         using var scope = scopeFactory.CreateScope();
 
         _coordinator.Reset();
+        // Reset any phase left over from a previous attempt so a stale "finalizing" doesn't
+        // bleed into this run's status.
+        task.Data.Progress.Phase = null;
 
         try
         {
