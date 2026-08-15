@@ -39,6 +39,9 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     private bool _shuttingDown;
     private DateTime _lastActivityUtc = DateTime.UtcNow;
 
+    private readonly Lock _stderrLock = new();
+    private readonly StringBuilder _stderrBuffer = new();
+
     public MangaJaNaiWorkerClient(
         IServiceScopeFactory scopeFactory,
         IOptions<UpscalerConfig> config,
@@ -542,12 +545,42 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             while ((line = await process.StandardError.ReadLineAsync()) is not null)
             {
                 _logger.LogDebug("[upscale worker] {Line}", line);
+                AppendStderr(line);
             }
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Upscale worker stderr reader stopped.");
         }
+    }
+
+    private void AppendStderr(string line)
+    {
+        const int maxLength = 8192;
+        lock (_stderrLock)
+        {
+            if (_stderrBuffer.Length + line.Length + 1 > maxLength)
+            {
+                // Drop the oldest half so the tail (most recent diagnostics) is preserved.
+                _stderrBuffer.Remove(0, _stderrBuffer.Length / 2);
+            }
+
+            _stderrBuffer.AppendLine(line);
+        }
+    }
+
+    private string GetStderrTail()
+    {
+        lock (_stderrLock)
+        {
+            return _stderrBuffer.ToString();
+        }
+    }
+
+    private string BuildStderrSection()
+    {
+        string stderr = GetStderrTail();
+        return stderr.Length > 0 ? $"\n\nWorker stderr (tail):\n{stderr}" : "";
     }
 
     private void HandleEvent(string line)
@@ -687,11 +720,13 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         catch { }
 
         string detail = exitCode is null ? "unknown" : exitCode.Value.ToString();
+        string stderrSection = BuildStderrSection();
+
         foreach (WorkerJob job in _jobs.Values.ToArray())
         {
             job.TrySetException(
                 new InvalidOperationException(
-                    $"Upscale worker process exited unexpectedly (exit code {detail})."
+                    $"Upscale worker process exited unexpectedly (exit code {detail}).{stderrSection}"
                 )
             );
         }
@@ -776,7 +811,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                 }
 
                 throw new TimeoutException(
-                    $"Upscaling timed out after {timeout.Value} of inactivity."
+                    $"Upscaling timed out after {timeout.Value} of inactivity.{BuildStderrSection()}"
                 );
             }
         }
