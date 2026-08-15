@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using System.Text.Json;
 using MangaIngestWithUpscaling.Shared.Configuration;
@@ -47,8 +48,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     // without torn reads on a DateTime struct.
     private long _lastActivityTicks = DateTime.UtcNow.Ticks;
 
-    private readonly Lock _stderrLock = new();
-    private readonly StringBuilder _stderrBuffer = new();
+    private readonly StderrTailBuffer _stderr = new();
 
     public MangaJaNaiWorkerClient(
         IServiceScopeFactory scopeFactory,
@@ -60,6 +60,9 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         _config = config;
         _logger = logger;
     }
+
+    private void TouchActivity() =>
+        Interlocked.Exchange(ref _lastActivityTicks, DateTime.UtcNow.Ticks);
 
     public async Task<UpscaleJobResult> RunJobAsync(
         UpscaleJobRequest request,
@@ -73,7 +76,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         {
             // Touch the activity clock before spawning so the idle watchdog doesn't
             // race a fresh job submission and tear the worker down mid-spawn.
-            Interlocked.Exchange(ref _lastActivityTicks, DateTime.UtcNow.Ticks);
+            TouchActivity();
 
             await EnsureWorkerAsync(cancellationToken);
 
@@ -164,7 +167,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             {
                 _jobs.TryRemove(request.Id, out _);
                 _currentJobId = null;
-                Interlocked.Exchange(ref _lastActivityTicks, DateTime.UtcNow.Ticks);
+                TouchActivity();
             }
         }
         finally
@@ -195,20 +198,11 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             // spawn can't make us shut down the *new* worker by mistake.
             if (stdin is not null)
             {
-                await _stdinLock.WaitAsync();
-                try
-                {
-                    await stdin.WriteLineAsync(
-                        JsonSerializer
-                            .Serialize(new WorkerCommand("shutdown"), WorkerJson.Options)
-                            .AsMemory()
-                    );
-                    await stdin.FlushAsync();
-                }
-                finally
-                {
-                    _stdinLock.Release();
-                }
+                await SendLineAsync(
+                    stdin,
+                    JsonSerializer.Serialize(new WorkerCommand("shutdown"), WorkerJson.Options),
+                    CancellationToken.None
+                );
             }
 
             using var grace = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -263,10 +257,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
         // Start a fresh stderr buffer for the new worker so a timeout/crash report doesn't
         // include diagnostics from the previous process.
-        lock (_stderrLock)
-        {
-            _stderrBuffer.Clear();
-        }
+        _stderr.Clear();
 
         // IPythonService is scoped (it owns per-request GPU detection), so resolve it from a
         // short-lived scope here instead of injecting it into this singleton.
@@ -348,7 +339,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             // spawn/warmup: touch the activity clock periodically until ready completes.
             while (!readyTcs.Task.IsCompleted)
             {
-                Interlocked.Exchange(ref _lastActivityTicks, DateTime.UtcNow.Ticks);
+                TouchActivity();
                 try
                 {
                     await readyTcs.Task.WaitAsync(TimeSpan.FromSeconds(5), linked.Token);
@@ -376,7 +367,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             throw;
         }
 
-        Interlocked.Exchange(ref _lastActivityTicks, DateTime.UtcNow.Ticks);
+        TouchActivity();
         _logger.LogInformation(
             "Upscale worker started (pid {Pid}) using settings {SettingsPath}.",
             process.Id,
@@ -413,6 +404,34 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         await CleanupAsync(process);
     }
 
+    private static void TryDispose(IDisposable? disposable)
+    {
+        try
+        {
+            disposable?.Dispose();
+        }
+        catch { }
+    }
+
+    private static void TryKillAndDispose(Process? process)
+    {
+        if (process is null)
+        {
+            return;
+        }
+
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(true);
+            }
+        }
+        catch { }
+
+        TryDispose(process);
+    }
+
     private async Task CleanupAsync(Process? process)
     {
         if (process is null)
@@ -437,26 +456,8 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             }
         }
 
-        try
-        {
-            stdin?.Dispose();
-        }
-        catch { }
-
-        try
-        {
-            if (!process.HasExited)
-            {
-                process.Kill(true);
-            }
-        }
-        catch { }
-
-        try
-        {
-            process.Dispose();
-        }
-        catch { }
+        TryDispose(stdin);
+        TryKillAndDispose(process);
 
         _logger.LogInformation("Upscale worker process stopped.");
     }
@@ -554,16 +555,26 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
     private async Task SendLineAsync(string line, CancellationToken cancellationToken)
     {
+        StreamWriter? stdin = _stdin;
+        if (stdin is null)
+        {
+            throw new InvalidOperationException("Upscale worker stdin is not available.");
+        }
+
+        await SendLineAsync(stdin, line, cancellationToken);
+    }
+
+    private async Task SendLineAsync(
+        StreamWriter stdin,
+        string line,
+        CancellationToken cancellationToken
+    )
+    {
         await _stdinLock.WaitAsync(cancellationToken);
         try
         {
-            if (_stdin is null)
-            {
-                throw new InvalidOperationException("Upscale worker stdin is not available.");
-            }
-
-            await _stdin.WriteLineAsync(line.AsMemory(), cancellationToken);
-            await _stdin.FlushAsync(cancellationToken);
+            await stdin.WriteLineAsync(line.AsMemory(), cancellationToken);
+            await stdin.FlushAsync(cancellationToken);
         }
         finally
         {
@@ -593,7 +604,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             string? line;
             while ((line = await process.StandardOutput.ReadLineAsync()) is not null)
             {
-                Interlocked.Exchange(ref _lastActivityTicks, DateTime.UtcNow.Ticks);
+                TouchActivity();
                 HandleEvent(line);
             }
         }
@@ -622,7 +633,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                 }
 
                 _logger.LogDebug("[upscale worker] {Line}", line);
-                AppendStderr(line);
+                _stderr.Append(line);
             }
         }
         catch (Exception ex)
@@ -631,32 +642,9 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         }
     }
 
-    private void AppendStderr(string line)
-    {
-        const int maxLength = 8192;
-        lock (_stderrLock)
-        {
-            if (_stderrBuffer.Length + line.Length + 1 > maxLength)
-            {
-                // Drop the oldest half so the tail (most recent diagnostics) is preserved.
-                _stderrBuffer.Remove(0, _stderrBuffer.Length / 2);
-            }
-
-            _stderrBuffer.AppendLine(line);
-        }
-    }
-
-    private string GetStderrTail()
-    {
-        lock (_stderrLock)
-        {
-            return _stderrBuffer.ToString();
-        }
-    }
-
     private string BuildStderrSection()
     {
-        string stderr = GetStderrTail();
+        string stderr = _stderr.GetTail();
         return stderr.Length > 0 ? $"\n\nWorker stderr (tail):\n{stderr}" : "";
     }
 
@@ -704,12 +692,10 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
     private void DispatchProgress(WorkerProgressEvent progress)
     {
-        if (!TryGetJob(progress.Id, out WorkerJob? job))
+        if (!TryGetAndTouch(progress.Id, out WorkerJob? job))
         {
             return;
         }
-
-        job!.Touch();
 
         // Prefer archive_completed for archive jobs: it counts only finished archive
         // entries, so it never exceeds archive_total (completed also counts the final
@@ -725,12 +711,10 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
     private void DispatchDone(WorkerDoneEvent done)
     {
-        if (!TryGetJob(done.Id, out WorkerJob? job))
+        if (!TryGetAndTouch(done.Id, out WorkerJob? job))
         {
             return;
         }
-
-        job!.Touch();
 
         string status = done.Status ?? "ok";
         var files = (done.Files ?? [])
@@ -739,19 +723,15 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
         if (status != "ok")
         {
-            job.TrySetException(
-                new InvalidOperationException($"Upscale worker reported status '{status}'.")
-            );
+            job.Fail($"Upscale worker reported status '{status}'.");
             return;
         }
 
         string[] failed = files.Where(f => f.Status == "error").Select(f => f.Input).ToArray();
         if (failed.Length > 0)
         {
-            job.TrySetException(
-                new InvalidOperationException(
-                    $"Upscale worker failed to process {failed.Length} file(s): {string.Join(", ", failed)}"
-                )
+            job.Fail(
+                $"Upscale worker failed to process {failed.Length} file(s): {string.Join(", ", failed)}"
             );
             return;
         }
@@ -763,10 +743,9 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     {
         string message = error.Message ?? "";
 
-        if (error.Id is not null && _jobs.TryGetValue(error.Id, out WorkerJob? job))
+        if (TryGetAndTouch(error.Id, out WorkerJob? job))
         {
-            job.Touch();
-            job.TrySetException(new InvalidOperationException($"Upscale worker error: {message}"));
+            job.Fail($"Upscale worker error: {message}");
             return;
         }
 
@@ -777,11 +756,9 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     {
         string reason = rejected.Reason ?? "";
 
-        if (rejected.Id is not null && _jobs.TryGetValue(rejected.Id, out WorkerJob? job))
+        if (TryGetJob(rejected.Id, out WorkerJob? job))
         {
-            job.TrySetException(
-                new InvalidOperationException($"Upscale worker rejected the job: {reason}")
-            );
+            job.Fail($"Upscale worker rejected the job: {reason}");
         }
     }
 
@@ -818,18 +795,12 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             _stdin = null;
         }
 
-        try
-        {
-            stdin?.Dispose();
-        }
-        catch { }
+        TryDispose(stdin);
 
         foreach (WorkerJob job in _jobs.Values.ToArray())
         {
-            job.TrySetException(
-                new InvalidOperationException(
-                    $"Upscale worker process exited unexpectedly (exit code {detail}).{stderrSection}"
-                )
+            job.Fail(
+                $"Upscale worker process exited unexpectedly (exit code {detail}).{stderrSection}"
             );
         }
 
@@ -837,37 +808,29 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             new InvalidOperationException("Upscale worker exited before becoming ready.")
         );
 
-        try
-        {
-            // The stdout reader only reaches here on EOF, but if the process is somehow still
-            // alive (e.g. it closed stdout without exiting), kill it so it isn't orphaned.
-            if (!process.HasExited)
-            {
-                process.Kill(true);
-            }
-        }
-        catch { }
-
-        try
-        {
-            process.Dispose();
-        }
-        catch { }
+        // The stdout reader only reaches here on EOF, but if the process is somehow still
+        // alive (e.g. it closed stdout without exiting), kill it so it isn't orphaned.
+        TryKillAndDispose(process);
     }
 
-    private bool TryGetJob(string? id, out WorkerJob? job)
+    private bool TryGetJob(string? id, [NotNullWhen(true)] out WorkerJob? job)
     {
         job = null;
         return id is not null && _jobs.TryGetValue(id, out job);
     }
 
-    private void TouchJob(string? id)
+    private bool TryGetAndTouch(string? id, [NotNullWhen(true)] out WorkerJob? job)
     {
-        if (TryGetJob(id, out WorkerJob? job))
+        if (!TryGetJob(id, out job))
         {
-            job!.Touch();
+            return false;
         }
+
+        job.Touch();
+        return true;
     }
+
+    private void TouchJob(string? id) => TryGetAndTouch(id, out _);
 
     private async Task MonitorTimeoutAsync(WorkerJob job, TimeSpan? timeout)
     {
@@ -962,6 +925,44 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
         public void TrySetResult(UpscaleJobResult result) => Completion.TrySetResult(result);
 
-        public void TrySetException(Exception exception) => Completion.TrySetException(exception);
+        public void Fail(string message) =>
+            Completion.TrySetException(new InvalidOperationException(message));
+    }
+
+    private sealed class StderrTailBuffer
+    {
+        private const int MaxLength = 8192;
+        private readonly Lock _lock = new();
+        private readonly StringBuilder _buffer = new();
+
+        public void Append(string line)
+        {
+            lock (_lock)
+            {
+                if (_buffer.Length + line.Length + 1 > MaxLength)
+                {
+                    // Drop the oldest half so the tail (most recent diagnostics) is preserved.
+                    _buffer.Remove(0, _buffer.Length / 2);
+                }
+
+                _buffer.AppendLine(line);
+            }
+        }
+
+        public void Clear()
+        {
+            lock (_lock)
+            {
+                _buffer.Clear();
+            }
+        }
+
+        public string GetTail()
+        {
+            lock (_lock)
+            {
+                return _buffer.ToString();
+            }
+        }
     }
 }
