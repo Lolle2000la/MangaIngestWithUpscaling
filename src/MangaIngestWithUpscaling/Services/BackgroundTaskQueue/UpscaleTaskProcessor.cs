@@ -1,8 +1,11 @@
+using System.Diagnostics;
 using System.Threading.Channels;
 using AutoRegisterInject;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -13,13 +16,15 @@ public class UpscaleTaskProcessor(
     IServiceScopeFactory scopeFactory,
     IOptions<UpscalerConfig> upscalerConfig,
     ILogger<UpscaleTaskProcessor> logger,
-    ITaskPersistenceService taskPersistenceService
+    ITaskPersistenceService taskPersistenceService,
+    IPreprocessedInputCache preprocessedCache
 ) : BackgroundService
 {
     private readonly Lock _lock = new();
     private readonly TimeSpan _progressDebounce = TimeSpan.FromMilliseconds(250);
     private readonly ChannelReader<object> _reader = taskQueue.UpscaleReader;
     private readonly ChannelReader<PersistedTask> _reroutedReader = taskQueue.ReroutedUpscaleReader;
+    private readonly PrefetchCoordinator _coordinator = new();
     private CancellationTokenSource? currentStoppingToken;
     private PersistedTask? currentTask;
     private CancellationToken serviceStoppingToken;
@@ -136,12 +141,23 @@ public class UpscaleTaskProcessor(
 
         using var scope = scopeFactory.CreateScope();
 
+        _coordinator.Reset();
+        // Reset any phase left over from a previous attempt so a stale "finalizing" doesn't
+        // bleed into this run's status.
+        task.Data.Progress.Phase = null;
+
         try
         {
-            // Forward progress changes to UI by raising StatusChanged (debounced)
+            // Forward progress changes to UI by raising StatusChanged (debounced), and
+            // trigger the next task's prefetch when the predictor says it's time.
             var last = DateTime.UtcNow;
             using var progressSubscription = task.Data.Progress.Changed.Subscribe(e =>
             {
+                if (_coordinator.OnProgress(task.Data.Progress.Total, task.Data.Progress.Current))
+                {
+                    _ = PrefetchNextAsync(task, serviceStoppingToken);
+                }
+
                 var now = DateTime.UtcNow;
                 if (now - last >= _progressDebounce)
                 {
@@ -195,6 +211,82 @@ public class UpscaleTaskProcessor(
             {
                 logger.LogError(dbEx, "Failed to update task {TaskId} status", task.Id);
             }
+        }
+    }
+
+    /// <summary>
+    /// Preprocesses the next pending upscale task in the queue, so its CPU-bound
+    /// preprocessing overlaps with the current task's GPU-bound upscaling.
+    /// </summary>
+    private async Task PrefetchNextAsync(PersistedTask currentTask, CancellationToken stoppingToken)
+    {
+        try
+        {
+            PersistedTask? next = taskQueue
+                .GetUpscaleSnapshot()
+                .FirstOrDefault(t =>
+                    t.Id != currentTask.Id
+                    && t.Status == PersistedTaskStatus.Pending
+                    && t.Data is UpscaleTask
+                );
+
+            if (next is null)
+            {
+                return;
+            }
+
+            var upscaleTask = (UpscaleTask)next.Data;
+
+            // Register the prefetch promise first so the consuming task awaits it instead of
+            // racing with a fallback that would duplicate the work and leak the result.
+            TaskCompletionSource<IPreprocessedInput?> completion = preprocessedCache.StartPrefetch(
+                upscaleTask.ChapterId
+            );
+            try
+            {
+                var sw = Stopwatch.StartNew();
+                using var scope = scopeFactory.CreateScope();
+                IPreprocessedInput? preprocessed = await upscaleTask.PreprocessForPrefetchAsync(
+                    scope.ServiceProvider,
+                    stoppingToken
+                );
+                sw.Stop();
+                _coordinator.RecordPrefetch(sw.Elapsed);
+
+                // If another processor (e.g. the distributed one) claimed this task while we
+                // were preprocessing, don't hand over the result: the consuming task will never
+                // run locally, so dispose it and let the consumer fall back to inline instead.
+                if (next.Status != PersistedTaskStatus.Pending)
+                {
+                    preprocessed?.Dispose();
+                    completion.TrySetResult(null);
+                    return;
+                }
+
+                if (!completion.TrySetResult(preprocessed))
+                {
+                    // Another prefetch already completed this promise (double prefetch of the
+                    // same chapter); reclaim the unused result.
+                    preprocessed?.Dispose();
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                completion.TrySetResult(null);
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "Prefetch of the next upscale task failed.");
+                completion.TrySetResult(null);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Shutting down; the prefetch is best-effort.
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Prefetch of the next upscale task failed.");
         }
     }
 }

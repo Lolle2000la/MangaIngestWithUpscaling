@@ -512,6 +512,14 @@ public class TaskQueue : ITaskQueue, IHostedService
         }
     }
 
+    public PersistedTask? PeekUpscale()
+    {
+        lock (_upscaleTasksLock)
+        {
+            return _upscaleTasks.Count == 0 ? null : _upscaleTasks.Min;
+        }
+    }
+
     // Send tasks that must be handled locally (e.g., Repair/Rename upscaled) directly to the local UpscaleTaskProcessor
     public ValueTask SendToLocalUpscaleAsync(
         PersistedTask task,

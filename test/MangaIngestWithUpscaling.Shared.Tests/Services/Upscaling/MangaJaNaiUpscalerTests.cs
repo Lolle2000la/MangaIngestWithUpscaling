@@ -4,7 +4,6 @@ using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
-using MangaIngestWithUpscaling.Shared.Services.Python;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
@@ -21,14 +20,14 @@ public class MangaJaNaiUpscalerTests : IDisposable
     private readonly IUpscalerJsonHandlingService _mockJsonHandling;
     private readonly ILogger<MangaJaNaiUpscaler> _mockLogger;
     private readonly IMetadataHandlingService _mockMetadataHandling;
-    private readonly IPythonService _mockPythonService;
+    private readonly IMangaJaNaiWorkerClient _mockWorkerClient;
     private readonly IStringLocalizer<MangaJaNaiUpscaler> _mockLocalizer;
     private readonly string _tempDir;
     private readonly MangaJaNaiUpscaler _upscaler;
 
     public MangaJaNaiUpscalerTests()
     {
-        _mockPythonService = Substitute.For<IPythonService>();
+        _mockWorkerClient = Substitute.For<IMangaJaNaiWorkerClient>();
         _mockLogger = Substitute.For<ILogger<MangaJaNaiUpscaler>>();
         _mockFileSystem = Substitute.For<IFileSystem>();
         _mockMetadataHandling = Substitute.For<IMetadataHandlingService>();
@@ -73,7 +72,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
         Directory.CreateDirectory(_tempDir);
 
         _upscaler = new MangaJaNaiUpscaler(
-            _mockPythonService,
+            _mockWorkerClient,
             _mockLogger,
             _mockConfig,
             _mockFileSystem,
@@ -177,27 +176,26 @@ public class MangaJaNaiUpscalerTests : IDisposable
         var progressReports = new List<UpscaleProgress>();
         var progress = new Progress<UpscaleProgress>(p => progressReports.Add(p));
 
-        // Mock Python service to simulate progress output
+        // Mock the worker client to simulate progress events
         _mockImageResize
             .GetMaxPixelCountFromCbzAsync(Arg.Any<string>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(1_000_000L));
 
-        _mockPythonService
-            .RunPythonScriptStreaming(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<Func<string, Task>>(),
+        _mockWorkerClient
+            .RunJobAsync(
+                Arg.Any<UpscaleJobRequest>(),
+                Arg.Any<IProgress<UpscaleProgress>?>(),
                 Arg.Any<CancellationToken>(),
                 Arg.Any<TimeSpan?>()
             )
-            .Returns(async call =>
+            .Returns(call =>
             {
-                var onStdout = call.Arg<Func<string, Task>>();
-                // Simulate progress output
-                await onStdout("TOTALZIP=5");
-                await onStdout("PROGRESS=postprocess_worker_zip_image item1");
-                await onStdout("PROGRESS=postprocess_worker_zip_image item2");
-                await onStdout("PROGRESS=postprocess_worker_zip_image item3");
+                var workerProgress = call.Arg<IProgress<UpscaleProgress>?>();
+                workerProgress?.Report(new UpscaleProgress(5, 0, null, "Reading archive"));
+                workerProgress?.Report(new UpscaleProgress(5, 1, null, null));
+                workerProgress?.Report(new UpscaleProgress(5, 2, null, null));
+                workerProgress?.Report(new UpscaleProgress(5, 3, null, null));
+                return Task.FromResult(new UpscaleJobResult("id", "ok", [], 1.0));
             });
 
         // Mock metadata handling to avoid actual metadata operations
@@ -263,21 +261,12 @@ public class MangaJaNaiUpscalerTests : IDisposable
         await _upscaler.Upscale(inputPath, outputPath, profile, cancellationToken);
 
         // Assert
-        // Verify that Python service was NOT called since file already exists and pages are equal
-        await _mockPythonService
+        // Verify that the worker client was NOT called since the file already exists and pages are equal
+        await _mockWorkerClient
             .DidNotReceive()
-            .RunPythonScript(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<CancellationToken>(),
-                Arg.Any<TimeSpan?>()
-            );
-        await _mockPythonService
-            .DidNotReceive()
-            .RunPythonScriptStreaming(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
-                Arg.Any<Func<string, Task>>(),
+            .RunJobAsync(
+                Arg.Any<UpscaleJobRequest>(),
+                Arg.Any<IProgress<UpscaleProgress>?>(),
                 Arg.Any<CancellationToken>(),
                 Arg.Any<TimeSpan?>()
             );
@@ -315,10 +304,15 @@ public class MangaJaNaiUpscalerTests : IDisposable
             .PagesEqualAsync(Arg.Any<string>(), Arg.Any<string>())
             .Returns(Task.FromResult(false));
 
-        // Mock Python service to throw on cancellation
-        _mockPythonService
-            .RunPythonScript(Arg.Any<string>(), Arg.Any<string>(), cts.Token, Arg.Any<TimeSpan?>())
-            .Returns(Task.FromCanceled<string>(cts.Token));
+        // Mock worker client to throw on cancellation
+        _mockWorkerClient
+            .RunJobAsync(
+                Arg.Any<UpscaleJobRequest>(),
+                Arg.Any<IProgress<UpscaleProgress>?>(),
+                cts.Token,
+                Arg.Any<TimeSpan?>()
+            )
+            .Returns(Task.FromCanceled<UpscaleJobResult>(cts.Token));
 
         // Act & Assert
         await Assert.ThrowsAsync<TaskCanceledException>(() =>
@@ -401,11 +395,11 @@ public class MangaJaNaiUpscalerTests : IDisposable
             );
 
         // Verify Python service was called
-        await _mockPythonService
+        await _mockWorkerClient
             .Received(1)
-            .RunPythonScript(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
+            .RunJobAsync(
+                Arg.Any<UpscaleJobRequest>(),
+                Arg.Any<IProgress<UpscaleProgress>?>(),
                 cancellationToken,
                 Arg.Any<TimeSpan?>()
             );
@@ -498,11 +492,11 @@ public class MangaJaNaiUpscalerTests : IDisposable
             );
 
         // Verify Python service was called
-        await _mockPythonService
+        await _mockWorkerClient
             .Received(1)
-            .RunPythonScript(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
+            .RunJobAsync(
+                Arg.Any<UpscaleJobRequest>(),
+                Arg.Any<IProgress<UpscaleProgress>?>(),
                 cancellationToken,
                 Arg.Any<TimeSpan?>()
             );
@@ -599,11 +593,11 @@ public class MangaJaNaiUpscalerTests : IDisposable
             );
 
         // Verify Python service was called with the preprocessed file
-        await _mockPythonService
+        await _mockWorkerClient
             .Received(1)
-            .RunPythonScript(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
+            .RunJobAsync(
+                Arg.Any<UpscaleJobRequest>(),
+                Arg.Any<IProgress<UpscaleProgress>?>(),
                 cancellationToken,
                 Arg.Any<TimeSpan?>()
             );
@@ -663,11 +657,11 @@ public class MangaJaNaiUpscalerTests : IDisposable
             );
 
         // Verify Python service was called directly with the original input
-        await _mockPythonService
+        await _mockWorkerClient
             .Received(1)
-            .RunPythonScript(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
+            .RunJobAsync(
+                Arg.Any<UpscaleJobRequest>(),
+                Arg.Any<IProgress<UpscaleProgress>?>(),
                 cancellationToken,
                 Arg.Any<TimeSpan?>()
             );
@@ -723,14 +717,14 @@ public class MangaJaNaiUpscalerTests : IDisposable
             .Returns(Task.FromResult(maxPixels));
 
         TimeSpan? capturedTimeout = null;
-        _mockPythonService
-            .RunPythonScript(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
+        _mockWorkerClient
+            .RunJobAsync(
+                Arg.Any<UpscaleJobRequest>(),
+                Arg.Any<IProgress<UpscaleProgress>?>(),
                 Arg.Any<CancellationToken>(),
                 Arg.Do<TimeSpan?>(t => capturedTimeout = t)
             )
-            .Returns(Task.FromResult(string.Empty));
+            .Returns(Task.FromResult(new UpscaleJobResult("id", "ok", [], 1.0)));
 
         var cancellationToken = CancellationToken.None;
 
@@ -775,14 +769,14 @@ public class MangaJaNaiUpscalerTests : IDisposable
             .Returns(Task.FromResult(0L));
 
         TimeSpan? capturedTimeout = null;
-        _mockPythonService
-            .RunPythonScript(
-                Arg.Any<string>(),
-                Arg.Any<string>(),
+        _mockWorkerClient
+            .RunJobAsync(
+                Arg.Any<UpscaleJobRequest>(),
+                Arg.Any<IProgress<UpscaleProgress>?>(),
                 Arg.Any<CancellationToken>(),
                 Arg.Do<TimeSpan?>(t => capturedTimeout = t)
             )
-            .Returns(Task.FromResult(string.Empty));
+            .Returns(Task.FromResult(new UpscaleJobResult("id", "ok", [], 1.0)));
 
         var cancellationToken = CancellationToken.None;
 

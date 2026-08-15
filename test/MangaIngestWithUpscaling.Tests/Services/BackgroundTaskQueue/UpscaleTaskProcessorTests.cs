@@ -78,7 +78,8 @@ public class UpscaleTaskProcessorTests : IDisposable
             serviceProvider.GetRequiredService<IServiceScopeFactory>(),
             _mockOptions,
             _mockLogger,
-            _mockPersistence
+            _mockPersistence,
+            new PreprocessedInputCache()
         );
     }
 

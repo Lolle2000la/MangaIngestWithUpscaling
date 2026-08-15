@@ -7,6 +7,14 @@ public interface IPythonService
     bool IsPythonInstalled();
     string? GetPythonExecutablePath();
 
+    /// <summary>
+    /// Returns the currently prepared Python environment, or <c>null</c> if
+    /// <see cref="PreparePythonEnvironment"/> has not been called yet.
+    /// Used by long-running consumers (e.g. the worker process client) that need the
+    /// venv's Python executable and the backend working directory.
+    /// </summary>
+    PythonEnvironment? GetPreparedEnvironment();
+
     Task<PythonEnvironment> PreparePythonEnvironment(
         string desiredDirectory,
         GpuBackend preferredBackend = GpuBackend.Auto,

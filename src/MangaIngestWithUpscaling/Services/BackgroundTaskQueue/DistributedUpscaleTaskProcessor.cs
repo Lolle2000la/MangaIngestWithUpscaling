@@ -470,6 +470,15 @@ public class DistributedUpscaleTaskProcessor(
         }
     }
 
+    /// <summary>
+    /// Returns the head of the upscale queue without claiming it, so a worker can inspect the
+    /// task (e.g. its transfer size) before deciding whether to claim it.
+    /// </summary>
+    public PersistedTask? PeekTask()
+    {
+        return taskQueue.PeekUpscale();
+    }
+
     public async Task<PersistedTask?> GetTask(CancellationToken stoppingToken)
     {
         var tcs = new TaskCompletionSource<PersistedTask>(

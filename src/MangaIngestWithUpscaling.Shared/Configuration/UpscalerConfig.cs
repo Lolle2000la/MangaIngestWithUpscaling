@@ -119,4 +119,37 @@ public record UpscalerConfig
     ///     Must be in the range (0, 1).
     /// </summary>
     public double SmartDownscaleFactor { get; set; } = 0.75;
+
+    /// <summary>
+    ///     How long the persistent upscale worker process may sit idle (no in-flight or queued
+    ///     job) before it is shut down to release GPU/VRAM resources. The process is respawned
+    ///     lazily on the next job, so this only affects idle resource usage.
+    /// </summary>
+    public TimeSpan WorkerIdleTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    ///     Maximum number of jobs the persistent upscale worker may have in flight plus queued
+    ///     at once. Upscaling is processed sequentially, so this is normally 1.
+    /// </summary>
+    public int WorkerQueueCapacity { get; set; } = 1;
+
+    /// <summary>
+    ///     When enabled, the worker preloads all chain models before accepting its first job
+    ///     (worker.py --warmup). Disabled by default: models are loaded lazily on first use and
+    ///     cached in the engine, so consecutive jobs stay warm without paying the cold-start cost
+    ///     of loading every model up front.
+    /// </summary>
+    public bool WorkerWarmup { get; set; } = false;
+
+    /// <summary>
+    ///     When enabled, every line the worker writes to stderr is mirrored to the host's stderr
+    ///     regardless of the configured log level. Defaults to on in Development and off elsewhere;
+    ///     either can be overridden explicitly via configuration.
+    /// </summary>
+    public bool WorkerLogToStderr { get; set; } =
+        string.Equals(
+            Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
+            "Development",
+            StringComparison.OrdinalIgnoreCase
+        );
 }

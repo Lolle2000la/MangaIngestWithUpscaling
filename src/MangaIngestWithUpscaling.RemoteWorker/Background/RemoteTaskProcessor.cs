@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Threading.Channels;
 using Google.Protobuf;
+using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.RemoteWorker.Configuration;
@@ -19,7 +20,7 @@ namespace MangaIngestWithUpscaling.RemoteWorker.Background;
 public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : BackgroundService
 {
     // Tracks download and processing statistics to optimize prefetch timing.
-    private readonly PrefetchPredictor _predictor = new();
+    private readonly PrefetchCoordinator _coordinator = new();
 
     // State tracking for task lifecycle coordination and exclusion.
     private int? _currentTaskId;
@@ -114,6 +115,39 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 {
                     _fetchInProgress = false;
                     continue;
+                }
+
+                // Peek the head task's transfer size (without claiming) so we can defer claiming
+                // a task whose download is fast enough to fit inside the current job's remaining
+                // work. Deferring keeps the task available to faster workers until our GPU is
+                // closer to idle. Peek is advisory: on failure we fall through and claim.
+                try
+                {
+                    PeekNextTaskResponse peek = await client.PeekNextTaskAsync(
+                        new Empty(),
+                        deadline: DateTime.UtcNow.AddSeconds(10),
+                        cancellationToken: stoppingToken
+                    );
+                    if (
+                        peek.TaskId != -1
+                        && peek.HasInputSizeBytes
+                        && !_coordinator.ShouldClaim(peek.InputSizeBytes)
+                    )
+                    {
+                        logger.LogDebug(
+                            "Deferring claim: next task {TaskId} is {Bytes} bytes and fits within the remaining processing time.",
+                            peek.TaskId,
+                            peek.InputSizeBytes
+                        );
+                        _fetchInProgress = false;
+                        await dispatcherTimer.WaitForNextTickAsync(stoppingToken);
+                        _fetchSignals.Writer.TryWrite(true);
+                        continue;
+                    }
+                }
+                catch (RpcException ex)
+                {
+                    logger.LogDebug(ex, "PeekNextTask failed; claiming without a size hint.");
                 }
 
                 UpscaleTaskDelegationResponse resp;
@@ -211,7 +245,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                         stream.ResponseStream.ReadAllAsync(persistentKeepAliveCts.Token)
                     );
                     sw.Stop();
-                    _predictor.RecordDownload(sw.Elapsed);
+                    _coordinator.RecordDownload(new FileInfo(file).Length, sw.Elapsed);
 
                     var fetched = new FetchedItem(
                         resp.TaskId,
@@ -320,9 +354,9 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 item.PersistentKeepAliveCts.Token
             );
             DateTime lastProgressSend = DateTime.UtcNow.AddSeconds(-10);
-            int? lastProgressCurrent = null;
             int prefetchSignaled = 0; // 0 = not signaled, 1 = signaled (atomic)
-            DateTime lastProgressTime = DateTime.UtcNow;
+
+            _coordinator.Reset();
 
             // The persistent keep-alive continues running; we just add progress reporting
             // No need to start a separate processing keep-alive loop since the persistent one continues
@@ -361,42 +395,14 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                             while (progressChannel.Reader.TryRead(out UpscaleProgress? p))
                             {
                                 pending = p;
-                                DateTime now = DateTime.UtcNow;
 
-                                // Update per-page stats and predictive trigger
-                                if (p.Total.HasValue && p.Current.HasValue)
+                                // Update per-page stats and trigger prefetch when appropriate.
+                                if (
+                                    _coordinator.OnProgress(p.Total, p.Current)
+                                    && Interlocked.CompareExchange(ref prefetchSignaled, 1, 0) == 0
+                                )
                                 {
-                                    int total = p.Total.Value;
-                                    int current = p.Current.Value;
-                                    if (
-                                        lastProgressCurrent.HasValue
-                                        && current > lastProgressCurrent.Value
-                                    )
-                                    {
-                                        int deltaPages = current - lastProgressCurrent.Value;
-                                        double deltaTime = (now - lastProgressTime).TotalSeconds;
-                                        if (deltaPages > 0 && deltaTime > 0)
-                                        {
-                                            _predictor.RecordPerPage(deltaTime / deltaPages);
-                                        }
-                                    }
-
-                                    lastProgressCurrent = current;
-                                    lastProgressTime = now;
-
-                                    int remaining = Math.Max(0, total - current);
-                                    bool shouldPrefetch = _predictor.ShouldPrefetch(
-                                        remaining,
-                                        total
-                                    );
-                                    if (
-                                        shouldPrefetch
-                                        && Interlocked.CompareExchange(ref prefetchSignaled, 1, 0)
-                                            == 0
-                                    )
-                                    {
-                                        _fetchSignals?.Writer.TryWrite(true);
-                                    }
+                                    _fetchSignals?.Writer.TryWrite(true);
                                 }
                             }
 
@@ -1202,79 +1208,4 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
         Task PersistentKeepAliveTask,
         TaskType TaskType
     );
-
-    /// <summary>
-    ///     Implements Welford's method for online computation of statistics.
-    ///     Used to estimate download and per-page processing times for predictive prefetching.
-    /// </summary>
-    private sealed class OnlineStats
-    {
-        public int Count { get; private set; }
-        public double Mean { get; private set; }
-        public double M2 { get; private set; }
-
-        public double StdDev => Count > 1 ? Math.Sqrt(M2 / (Count - 1)) : 0.0;
-        public double P95Upper => Mean + (1.96 * StdDev);
-
-        public void Add(double x)
-        {
-            Count++;
-            double delta = x - Mean;
-            Mean += delta / Count;
-            double delta2 = x - Mean;
-            M2 += delta * delta2;
-        }
-    }
-
-    /// <summary>
-    ///     Implements predictive prefetch logic using statistical analysis of processing times.
-    ///     Maintains rolling statistics to optimize the timing of fetch operations.
-    /// </summary>
-    private sealed class PrefetchPredictor
-    {
-        private readonly OnlineStats _downloadSeconds = new();
-        private readonly OnlineStats _perPageSeconds = new();
-
-        public void RecordDownload(TimeSpan elapsed)
-        {
-            if (elapsed.TotalSeconds > 0 && double.IsFinite(elapsed.TotalSeconds))
-            {
-                _downloadSeconds.Add(elapsed.TotalSeconds);
-            }
-        }
-
-        public void RecordPerPage(double secondsPerPage)
-        {
-            if (secondsPerPage > 0 && double.IsFinite(secondsPerPage))
-            {
-                _perPageSeconds.Add(secondsPerPage);
-            }
-        }
-
-        /// <summary>
-        ///     Determines whether to trigger a prefetch operation based on processing progress
-        ///     and estimated completion times compared to download duration.
-        /// </summary>
-        public bool ShouldPrefetch(int remainingPages, int totalPages)
-        {
-            if (totalPages <= 0)
-            {
-                return false;
-            }
-
-            bool quarterLeft = remainingPages <= (int)Math.Ceiling(totalPages * 0.25);
-            bool fiveLeft = remainingPages <= 5;
-
-            bool etaTrigger = false;
-            if (_downloadSeconds.Count > 0 && _perPageSeconds.Count > 0)
-            {
-                double download95 = _downloadSeconds.P95Upper;
-                double perPage95 = _perPageSeconds.P95Upper;
-                double remainingEta95 = remainingPages * perPage95;
-                etaTrigger = remainingEta95 <= download95;
-            }
-
-            return quarterLeft || fiveLeft || etaTrigger;
-        }
-    }
 }

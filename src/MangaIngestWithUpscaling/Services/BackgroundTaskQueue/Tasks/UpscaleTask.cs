@@ -1,6 +1,7 @@
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.Analysis;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
@@ -107,6 +108,14 @@ public class UpscaleTask : BaseTask, IChapterTask
             chapter.RelativePath
         );
 
+        // Await any preprocessed input the prefetch pipeline produced for this chapter.
+        // Returns null (fall back to inline preprocessing) when no prefetch was started.
+        var preprocessedCache = services.GetRequiredService<IPreprocessedInputCache>();
+        using IPreprocessedInput? preprocessed = await preprocessedCache.TakeAsync(
+            ChapterId,
+            cancellationToken
+        );
+
         if (
             chapter.IsUpscaled
             && (!UpdateIfProfileNew || chapter.UpscalerProfile?.Id == upscalerProfile.Id)
@@ -186,15 +195,34 @@ public class UpscaleTask : BaseTask, IChapterTask
                 {
                     Progress.Current = p.Current.Value;
                 }
+
+                if (p.Phase is not null)
+                {
+                    Progress.Phase = p.Phase;
+                }
             });
 
-            await upscaler.Upscale(
-                currentStoragePath,
-                upscaleTargetPath,
-                upscalerProfile,
-                reporter,
-                cancellationToken
-            );
+            if (preprocessed is not null)
+            {
+                await upscaler.UpscalePreprocessedAsync(
+                    preprocessed,
+                    upscaleTargetPath,
+                    upscalerProfile,
+                    reporter,
+                    cancellationToken
+                );
+            }
+            else
+            {
+                await upscaler.Upscale(
+                    currentStoragePath,
+                    upscaleTargetPath,
+                    upscalerProfile,
+                    reporter,
+                    cancellationToken
+                );
+            }
+
             _ = chapterChangedNotifier.Notify(chapter, true);
         }
         catch (Exception)
@@ -228,5 +256,51 @@ public class UpscaleTask : BaseTask, IChapterTask
                 upscaleTargetPath
             );
         }
+    }
+
+    /// <summary>
+    /// Preprocesses the chapter for upscaling without performing the business checks
+    /// (already-upscaled / split state). Used by the prefetch pipeline to get a head start
+    /// while another chapter is being upscaled. Returns <c>null</c> when the chapter or
+    /// profile can no longer be resolved.
+    /// </summary>
+    public async Task<IPreprocessedInput?> PreprocessForPrefetchAsync(
+        IServiceProvider services,
+        CancellationToken cancellationToken
+    )
+    {
+        var dbContext = services.GetRequiredService<ApplicationDbContext>();
+
+        Chapter? chapter = await dbContext
+            .Chapters.Include(c => c.Manga)
+                .ThenInclude(m => m.Library)
+            .FirstOrDefaultAsync(c => c.Id == ChapterId, cancellationToken);
+        UpscalerProfile? profile = await dbContext.UpscalerProfiles.FirstOrDefaultAsync(
+            c => c.Id == UpscalerProfileId,
+            cancellationToken
+        );
+
+        if (chapter?.Manga?.Library is null || profile is null)
+        {
+            return null;
+        }
+
+        // Skip the speculative preprocess when the chapter already looks upscaled, so a
+        // no-op task doesn't burn CPU and make the consumer wait on a result it will discard.
+        // (The full pages-equal check still runs in ProcessAsync.)
+        if (
+            chapter.IsUpscaled && (!UpdateIfProfileNew || chapter.UpscalerProfile?.Id == profile.Id)
+        )
+        {
+            return null;
+        }
+
+        string currentStoragePath = Path.Combine(
+            chapter.Manga.Library.NotUpscaledLibraryPath,
+            chapter.RelativePath
+        );
+
+        var upscaler = services.GetRequiredService<IUpscaler>();
+        return await upscaler.PreprocessAsync(currentStoragePath, profile, cancellationToken);
     }
 }

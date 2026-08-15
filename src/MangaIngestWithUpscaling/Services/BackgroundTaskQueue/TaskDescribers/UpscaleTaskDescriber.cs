@@ -44,6 +44,13 @@ public class UpscaleTaskDescriber(
 
     public Task<string> GetProgressStatusAsync(BaseTask task, ProgressInfo progress)
     {
+        if (progress.Phase == "finalizing")
+        {
+            return Task.FromResult(
+                localizer["Progress_UpscaleTask_Finalizing", progress.Current, progress.Total].Value
+            );
+        }
+
         if (progress.IsIndeterminate)
         {
             return Task.FromResult(

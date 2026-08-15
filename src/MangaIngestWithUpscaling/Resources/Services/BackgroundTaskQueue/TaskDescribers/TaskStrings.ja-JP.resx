@@ -51,6 +51,9 @@
     <data name="Progress_UpscaleTask_Indeterminate" xml:space="preserve">
         <value>{0} ページをアップスケール完了</value>
     </data>
+    <data name="Progress_UpscaleTask_Finalizing" xml:space="preserve">
+        <value>{0} / {1} ページをアップスケール完了 — アーカイブを最終処理中</value>
+    </data>
     <data name="Progress_RepairUpscaleTask" xml:space="preserve">
         <value>{0} / {1} ページを修復完了</value>
     </data>
