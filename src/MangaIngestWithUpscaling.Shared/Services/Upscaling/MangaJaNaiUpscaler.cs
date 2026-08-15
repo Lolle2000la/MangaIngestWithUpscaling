@@ -234,10 +234,89 @@ public class MangaJaNaiUpscaler(
         CancellationToken cancellationToken
     )
     {
+        using IPreprocessedInput preprocessed = await PreprocessAsync(
+            inputPath,
+            profile,
+            cancellationToken
+        );
+        await UpscalePreprocessedAsync(
+            preprocessed,
+            outputPath,
+            profile,
+            progress,
+            cancellationToken
+        );
+    }
+
+    public async Task<IPreprocessedInput> PreprocessAsync(
+        string inputPath,
+        UpscalerProfile profile,
+        CancellationToken cancellationToken
+    )
+    {
         if (!File.Exists(inputPath))
         {
             throw new FileNotFoundException(localizer["Error_InputFileNotFound"], inputPath);
         }
+
+        bool needsPreprocessing =
+            (
+                sharedConfig.Value.MaxDimensionBeforeUpscaling.HasValue
+                && sharedConfig.Value.MaxDimensionBeforeUpscaling.Value > 0
+            )
+            || (
+                sharedConfig.Value.ImageFormatConversionRules != null
+                && sharedConfig.Value.ImageFormatConversionRules.Count > 0
+            )
+            || sharedConfig.Value.EnableSmartDownscale;
+
+        if (!needsPreprocessing)
+        {
+            return new PassThroughPreprocessedInput(inputPath);
+        }
+
+        var preprocessingOptions = new ImagePreprocessingOptions
+        {
+            MaxDimension = sharedConfig.Value.MaxDimensionBeforeUpscaling,
+            FormatConversionRules =
+                sharedConfig.Value.ImageFormatConversionRules
+                ?? new List<ImageFormatConversionRule>(),
+            EnableSmartDownscale = sharedConfig.Value.EnableSmartDownscale,
+            SmartDownscaleThreshold = sharedConfig.Value.SmartDownscaleThreshold,
+            SmartDownscaleFactor = sharedConfig.Value.SmartDownscaleFactor,
+        };
+
+        logger.LogInformation(
+            "Creating temporary preprocessed CBZ (max dimension: {MaxDimension}, conversion rules: {RuleCount}, smart downscale: {SmartDownscale}) for {InputPath}",
+            preprocessingOptions.MaxDimension?.ToString() ?? "none",
+            preprocessingOptions.FormatConversionRules.Count,
+            preprocessingOptions.EnableSmartDownscale,
+            inputPath
+        );
+
+        TempResizedCbz temp = await imageResizeService.CreatePreprocessedTempCbzAsync(
+            inputPath,
+            preprocessingOptions,
+            cancellationToken
+        );
+
+        logger.LogInformation(
+            "Using preprocessed temporary file for upscaling: {TempPath}",
+            temp.FilePath
+        );
+
+        return new TempPreprocessedInput(temp);
+    }
+
+    public async Task UpscalePreprocessedAsync(
+        IPreprocessedInput preprocessed,
+        string outputPath,
+        UpscalerProfile profile,
+        IProgress<UpscaleProgress>? progress,
+        CancellationToken cancellationToken
+    )
+    {
+        string inputPath = preprocessed.InputPath;
 
         string outputDirectory = Path.GetDirectoryName(outputPath)!;
         if (!Directory.Exists(outputDirectory))
@@ -268,76 +347,29 @@ public class MangaJaNaiUpscaler(
             File.Delete(outputPath);
         }
 
-        string actualInputPath = inputPath;
+        await PerformUpscaling(
+            inputPath,
+            outputPath,
+            outputDirectory,
+            outputFilename,
+            profile,
+            progress,
+            cancellationToken
+        );
+    }
 
-        // Check if we need to preprocess images before upscaling (resize or format conversion)
-        bool needsPreprocessing =
-            (
-                sharedConfig.Value.MaxDimensionBeforeUpscaling.HasValue
-                && sharedConfig.Value.MaxDimensionBeforeUpscaling.Value > 0
-            )
-            || (
-                sharedConfig.Value.ImageFormatConversionRules != null
-                && sharedConfig.Value.ImageFormatConversionRules.Count > 0
-            )
-            || sharedConfig.Value.EnableSmartDownscale;
+    private sealed class PassThroughPreprocessedInput(string inputPath) : IPreprocessedInput
+    {
+        public string InputPath { get; } = inputPath;
 
-        if (needsPreprocessing)
-        {
-            var preprocessingOptions = new ImagePreprocessingOptions
-            {
-                MaxDimension = sharedConfig.Value.MaxDimensionBeforeUpscaling,
-                FormatConversionRules =
-                    sharedConfig.Value.ImageFormatConversionRules
-                    ?? new List<ImageFormatConversionRule>(),
-                EnableSmartDownscale = sharedConfig.Value.EnableSmartDownscale,
-                SmartDownscaleThreshold = sharedConfig.Value.SmartDownscaleThreshold,
-                SmartDownscaleFactor = sharedConfig.Value.SmartDownscaleFactor,
-            };
+        public void Dispose() { }
+    }
 
-            logger.LogInformation(
-                "Creating temporary preprocessed CBZ (max dimension: {MaxDimension}, conversion rules: {RuleCount}, smart downscale: {SmartDownscale}) for {InputPath}",
-                preprocessingOptions.MaxDimension?.ToString() ?? "none",
-                preprocessingOptions.FormatConversionRules.Count,
-                preprocessingOptions.EnableSmartDownscale,
-                inputPath
-            );
+    private sealed class TempPreprocessedInput(TempResizedCbz temp) : IPreprocessedInput
+    {
+        public string InputPath => temp.FilePath;
 
-            using var tempPreprocessedCbz = await imageResizeService.CreatePreprocessedTempCbzAsync(
-                inputPath,
-                preprocessingOptions,
-                cancellationToken
-            );
-
-            actualInputPath = tempPreprocessedCbz.FilePath;
-
-            logger.LogInformation(
-                "Using preprocessed temporary file for upscaling: {TempPath}",
-                actualInputPath
-            );
-
-            await PerformUpscaling(
-                actualInputPath,
-                outputPath,
-                outputDirectory,
-                outputFilename,
-                profile,
-                progress,
-                cancellationToken
-            );
-        }
-        else
-        {
-            await PerformUpscaling(
-                actualInputPath,
-                outputPath,
-                outputDirectory,
-                outputFilename,
-                profile,
-                progress,
-                cancellationToken
-            );
-        }
+        public void Dispose() => temp.Dispose();
     }
 
     private async Task PerformUpscaling(

@@ -211,7 +211,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                         stream.ResponseStream.ReadAllAsync(persistentKeepAliveCts.Token)
                     );
                     sw.Stop();
-                    _predictor.RecordDownload(sw.Elapsed);
+                    _predictor.RecordPrefetch(sw.Elapsed);
 
                     var fetched = new FetchedItem(
                         resp.TaskId,
@@ -1202,79 +1202,4 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
         Task PersistentKeepAliveTask,
         TaskType TaskType
     );
-
-    /// <summary>
-    ///     Implements Welford's method for online computation of statistics.
-    ///     Used to estimate download and per-page processing times for predictive prefetching.
-    /// </summary>
-    private sealed class OnlineStats
-    {
-        public int Count { get; private set; }
-        public double Mean { get; private set; }
-        public double M2 { get; private set; }
-
-        public double StdDev => Count > 1 ? Math.Sqrt(M2 / (Count - 1)) : 0.0;
-        public double P95Upper => Mean + (1.96 * StdDev);
-
-        public void Add(double x)
-        {
-            Count++;
-            double delta = x - Mean;
-            Mean += delta / Count;
-            double delta2 = x - Mean;
-            M2 += delta * delta2;
-        }
-    }
-
-    /// <summary>
-    ///     Implements predictive prefetch logic using statistical analysis of processing times.
-    ///     Maintains rolling statistics to optimize the timing of fetch operations.
-    /// </summary>
-    private sealed class PrefetchPredictor
-    {
-        private readonly OnlineStats _downloadSeconds = new();
-        private readonly OnlineStats _perPageSeconds = new();
-
-        public void RecordDownload(TimeSpan elapsed)
-        {
-            if (elapsed.TotalSeconds > 0 && double.IsFinite(elapsed.TotalSeconds))
-            {
-                _downloadSeconds.Add(elapsed.TotalSeconds);
-            }
-        }
-
-        public void RecordPerPage(double secondsPerPage)
-        {
-            if (secondsPerPage > 0 && double.IsFinite(secondsPerPage))
-            {
-                _perPageSeconds.Add(secondsPerPage);
-            }
-        }
-
-        /// <summary>
-        ///     Determines whether to trigger a prefetch operation based on processing progress
-        ///     and estimated completion times compared to download duration.
-        /// </summary>
-        public bool ShouldPrefetch(int remainingPages, int totalPages)
-        {
-            if (totalPages <= 0)
-            {
-                return false;
-            }
-
-            bool quarterLeft = remainingPages <= (int)Math.Ceiling(totalPages * 0.25);
-            bool fiveLeft = remainingPages <= 5;
-
-            bool etaTrigger = false;
-            if (_downloadSeconds.Count > 0 && _perPageSeconds.Count > 0)
-            {
-                double download95 = _downloadSeconds.P95Upper;
-                double perPage95 = _perPageSeconds.P95Upper;
-                double remainingEta95 = remainingPages * perPage95;
-                etaTrigger = remainingEta95 <= download95;
-            }
-
-            return quarterLeft || fiveLeft || etaTrigger;
-        }
-    }
 }
