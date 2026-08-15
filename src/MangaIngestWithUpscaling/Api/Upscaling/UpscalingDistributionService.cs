@@ -132,7 +132,7 @@ public partial class UpscalingDistributionService(
             return new UpscaleTaskDelegationResponse { TaskId = -1, UpscalerProfile = null };
         }
 
-        return new UpscaleTaskDelegationResponse
+        var response = new UpscaleTaskDelegationResponse
         {
             TaskId = task.Id,
             UpscalerProfile = new UpscalerProfile
@@ -163,6 +163,77 @@ public partial class UpscalingDistributionService(
                 },
             },
         };
+
+        if (await GetTaskFileSizeAsync(task, context.CancellationToken) is { } bytes)
+        {
+            response.InputSizeBytes = bytes;
+        }
+
+        return response;
+    }
+
+    public override async Task<PeekNextTaskResponse> PeekNextTask(
+        Empty request,
+        ServerCallContext context
+    )
+    {
+        PersistedTask? task = taskProcessor.PeekTask();
+        if (task == null)
+        {
+            return new PeekNextTaskResponse { TaskId = -1 };
+        }
+
+        var response = new PeekNextTaskResponse { TaskId = task.Id };
+        if (await GetTaskFileSizeAsync(task, context.CancellationToken) is { } bytes)
+        {
+            response.InputSizeBytes = bytes;
+        }
+
+        return response;
+    }
+
+    /// <summary>
+    /// Resolves the size of the input CBZ for a task, or null when the task has no single input
+    /// file or its referenced data is missing.
+    /// </summary>
+    private async Task<long?> GetTaskFileSizeAsync(PersistedTask task, CancellationToken ct)
+    {
+        string? filePath = await ResolveTaskFilePathAsync(task, ct);
+        if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
+        {
+            return null;
+        }
+
+        return new FileInfo(filePath).Length;
+    }
+
+    private async Task<string?> ResolveTaskFilePathAsync(PersistedTask task, CancellationToken ct)
+    {
+        return task.Data switch
+        {
+            UpscaleTask upscaleTask => await GetChapterFilePathAsync(upscaleTask.ChapterId, ct),
+            DetectSplitCandidatesTask detectTask => await GetChapterFilePathAsync(
+                detectTask.ChapterId,
+                ct
+            ),
+            ApplySplitsTask applySplitsTask => await GetChapterFilePathAsync(
+                applySplitsTask.ChapterId,
+                ct
+            ),
+            RepairUpscaleTask => taskProcessor
+                .GetRemoteRepairState(task.Id)
+                ?.PreparedMissingPagesCbzPath,
+            _ => null,
+        };
+    }
+
+    private async Task<string?> GetChapterFilePathAsync(int chapterId, CancellationToken ct)
+    {
+        Chapter? chapter = await dbContext
+            .Chapters.Include(chapter => chapter.Manga)
+                .ThenInclude(manga => manga.Library)
+            .FirstOrDefaultAsync(c => c.Id == chapterId, ct);
+        return chapter?.NotUpscaledFullPath;
     }
 
     public override Task<KeepAliveResponse> KeepAlive(

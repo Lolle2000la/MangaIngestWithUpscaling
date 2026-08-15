@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO.Compression;
 using System.Threading.Channels;
 using Google.Protobuf;
+using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.RemoteWorker.Configuration;
@@ -116,6 +117,39 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     continue;
                 }
 
+                // Peek the head task's transfer size (without claiming) so we can defer claiming
+                // a task whose download is fast enough to fit inside the current job's remaining
+                // work. Deferring keeps the task available to faster workers until our GPU is
+                // closer to idle. Peek is advisory: on failure we fall through and claim.
+                try
+                {
+                    PeekNextTaskResponse peek = await client.PeekNextTaskAsync(
+                        new Empty(),
+                        deadline: DateTime.UtcNow.AddSeconds(10),
+                        cancellationToken: stoppingToken
+                    );
+                    if (
+                        peek.TaskId != -1
+                        && peek.HasInputSizeBytes
+                        && !_coordinator.ShouldClaim(peek.InputSizeBytes)
+                    )
+                    {
+                        logger.LogDebug(
+                            "Deferring claim: next task {TaskId} is {Bytes} bytes and fits within the remaining processing time.",
+                            peek.TaskId,
+                            peek.InputSizeBytes
+                        );
+                        _fetchInProgress = false;
+                        await dispatcherTimer.WaitForNextTickAsync(stoppingToken);
+                        _fetchSignals.Writer.TryWrite(true);
+                        continue;
+                    }
+                }
+                catch (RpcException ex)
+                {
+                    logger.LogDebug(ex, "PeekNextTask failed; claiming without a size hint.");
+                }
+
                 UpscaleTaskDelegationResponse resp;
                 while (true)
                 {
@@ -211,7 +245,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                         stream.ResponseStream.ReadAllAsync(persistentKeepAliveCts.Token)
                     );
                     sw.Stop();
-                    _coordinator.RecordPrefetch(sw.Elapsed);
+                    _coordinator.RecordDownload(new FileInfo(file).Length, sw.Elapsed);
 
                     var fetched = new FetchedItem(
                         resp.TaskId,

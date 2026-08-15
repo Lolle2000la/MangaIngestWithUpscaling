@@ -11,6 +11,7 @@ public sealed class PrefetchCoordinator
     private readonly Lock _lock = new();
     private int _signaled;
     private int? _lastCurrent;
+    private int? _lastRemainingPages;
     private DateTime _lastProgressTime = DateTime.UtcNow;
 
     /// <summary>Records how long a single prefetch (download or preprocess) took.</summary>
@@ -22,6 +23,15 @@ public sealed class PrefetchCoordinator
         }
     }
 
+    /// <summary>Records a completed download by size and duration for bandwidth-based prediction.</summary>
+    public void RecordDownload(long bytes, TimeSpan elapsed)
+    {
+        lock (_lock)
+        {
+            _predictor.RecordDownload(bytes, elapsed);
+        }
+    }
+
     /// <summary>Resets per-job state before processing a new job.</summary>
     public void Reset()
     {
@@ -29,6 +39,7 @@ public sealed class PrefetchCoordinator
         {
             _signaled = 0;
             _lastCurrent = null;
+            _lastRemainingPages = null;
             _lastProgressTime = DateTime.UtcNow;
         }
     }
@@ -60,6 +71,7 @@ public sealed class PrefetchCoordinator
             _lastProgressTime = DateTime.UtcNow;
 
             int remaining = Math.Max(0, totalPages - currentPages);
+            _lastRemainingPages = remaining;
             if (_predictor.ShouldPrefetch(remaining, totalPages))
             {
                 if (_signaled == 0)
@@ -70,6 +82,18 @@ public sealed class PrefetchCoordinator
             }
 
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Whether a task of the given transfer size should be claimed now, using the most recent
+    /// remaining-page estimate and the bandwidth/per-page statistics.
+    /// </summary>
+    public bool ShouldClaim(long bytes)
+    {
+        lock (_lock)
+        {
+            return _predictor.ShouldClaim(bytes, _lastRemainingPages ?? 0);
         }
     }
 }
