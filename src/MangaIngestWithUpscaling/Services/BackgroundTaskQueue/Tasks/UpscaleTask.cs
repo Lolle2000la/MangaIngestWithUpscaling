@@ -195,6 +195,11 @@ public class UpscaleTask : BaseTask, IChapterTask
                 {
                     Progress.Current = p.Current.Value;
                 }
+
+                if (p.Phase is not null)
+                {
+                    Progress.Phase = p.Phase;
+                }
             });
 
             if (preprocessed is not null)

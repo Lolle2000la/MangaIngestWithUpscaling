@@ -51,6 +51,9 @@
     <data name="Progress_UpscaleTask_Indeterminate" xml:space="preserve">
         <value>Upscaled {0} pages</value>
     </data>
+    <data name="Progress_UpscaleTask_Finalizing" xml:space="preserve">
+        <value>Upscaled {0} of {1} pages — finalizing archive</value>
+    </data>
     <data name="Progress_RepairUpscaleTask" xml:space="preserve">
         <value>Repaired {0} of {1} pages</value>
     </data>

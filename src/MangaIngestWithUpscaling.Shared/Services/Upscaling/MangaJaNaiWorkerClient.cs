@@ -641,12 +641,15 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
         int? total = GetInt(root, "archive_total");
         int? completed = GetInt(root, "completed");
+        string? phase = root.TryGetProperty("phase", out JsonElement phaseEl)
+            ? phaseEl.GetString()
+            : null;
         if (total is > 0 && completed >= total)
         {
             job.MarkAllPagesProcessed();
         }
 
-        job.ReportProgress(total, completed);
+        job.ReportProgress(total, completed, phase);
     }
 
     private void DispatchDone(JsonElement root)
@@ -867,8 +870,8 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
         public void Touch() => Interlocked.Exchange(ref _lastEventTicks, DateTime.UtcNow.Ticks);
 
-        public void ReportProgress(int? total, int? current) =>
-            Progress?.Report(new UpscaleProgress(total, current, null, null));
+        public void ReportProgress(int? total, int? current, string? phase) =>
+            Progress?.Report(new UpscaleProgress(total, current, phase, null));
 
         public void TrySetResult(UpscaleJobResult result) => Completion.TrySetResult(result);
 
