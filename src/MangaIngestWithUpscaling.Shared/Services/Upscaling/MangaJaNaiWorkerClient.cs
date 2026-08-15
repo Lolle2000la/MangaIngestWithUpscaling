@@ -458,21 +458,20 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
     internal static string BuildJobLine(UpscaleJobRequest request)
     {
-        var job = new Dictionary<string, object?>
+        var job = new WorkerJobRequest
         {
-            ["type"] = "job",
-            ["id"] = request.Id,
-            ["input"] = new Dictionary<string, object?> { ["path"] = request.InputPath },
-            ["output"] = new Dictionary<string, object?>
+            Id = request.Id,
+            Input = new WorkerJobInput { Path = request.InputPath },
+            Output = new WorkerJobOutput
             {
-                ["folder"] = request.OutputFolder,
-                ["filename"] = request.OutputFilename,
-                ["format"] = ToFormatString(request.Format),
-                ["overwrite"] = request.Overwrite,
+                Folder = request.OutputFolder,
+                Filename = request.OutputFilename,
+                Format = ToFormatString(request.Format),
+                Overwrite = request.Overwrite,
             },
-            ["options"] = new Dictionary<string, object?> { ["scale"] = (int)request.Scale },
+            Options = new WorkerJobOptions { Scale = (int)request.Scale },
         };
-        return JsonSerializer.Serialize(job);
+        return JsonSerializer.Serialize(job, WorkerJson.Options);
     }
 
     internal static string ToFormatString(CompressionFormat format) =>
@@ -599,35 +598,31 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     {
         try
         {
-            using JsonDocument doc = JsonDocument.Parse(line);
-            JsonElement root = doc.RootElement;
-            if (!root.TryGetProperty("type", out JsonElement typeEl))
+            WorkerEvent? evt = JsonSerializer.Deserialize<WorkerEvent>(line, WorkerJson.Options);
+            switch (evt)
             {
-                return;
-            }
-
-            switch (typeEl.GetString())
-            {
-                case "ready":
+                case WorkerReadyEvent:
                     _readyTcs?.TrySetResult();
                     break;
-                case "progress":
-                    DispatchProgress(root);
+                case WorkerProgressEvent progress:
+                    DispatchProgress(progress);
                     break;
-                case "done":
-                    DispatchDone(root);
+                case WorkerDoneEvent done:
+                    DispatchDone(done);
                     break;
-                case "error":
-                    DispatchError(root);
+                case WorkerErrorEvent error:
+                    DispatchError(error);
                     break;
-                case "rejected":
-                    DispatchRejected(root);
+                case WorkerRejectedEvent rejected:
+                    DispatchRejected(rejected);
                     break;
-                case "accepted":
-                case "started":
-                    // Reset the per-job inactivity clock when the worker acknowledges/starts a job,
-                    // so the model-loading gap before the first progress event is not counted as idle.
-                    TouchJob(root);
+                case WorkerAcceptedEvent accepted:
+                    // Reset the per-job inactivity clock when the worker acknowledges a job,
+                    // so the model-loading gap before the first progress event isn't idle.
+                    TouchJob(accepted.Id);
+                    break;
+                case WorkerStartedEvent started:
+                    TouchJob(started.Id);
                     break;
             }
         }
@@ -637,80 +632,49 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         }
     }
 
-    private void DispatchProgress(JsonElement root)
+    private void DispatchProgress(WorkerProgressEvent progress)
     {
-        if (!TryGetJob(root, out WorkerJob? job))
+        if (!TryGetJob(progress.Id, out WorkerJob? job))
         {
             return;
         }
 
         job!.Touch();
 
-        int? total = GetInt(root, "archive_total");
         // Prefer archive_completed for archive jobs: it counts only finished archive
         // entries, so it never exceeds archive_total (completed also counts the final
         // 'archive finished' marker, which briefly showed e.g. 33/32).
-        int? completed = GetInt(root, "archive_completed") ?? GetInt(root, "completed");
-        string? phase = root.TryGetProperty("phase", out JsonElement phaseEl)
-            ? phaseEl.GetString()
-            : null;
-        if (total is > 0 && completed >= total)
+        int? completed = progress.ArchiveCompleted ?? progress.Completed;
+        if (progress.ArchiveTotal is > 0 && completed >= progress.ArchiveTotal)
         {
             job.MarkAllPagesProcessed();
         }
 
-        job.ReportProgress(total, completed, phase);
+        job.ReportProgress(progress.ArchiveTotal, completed, progress.Phase);
     }
 
-    private void DispatchDone(JsonElement root)
+    private void DispatchDone(WorkerDoneEvent done)
     {
-        if (!TryGetJob(root, out WorkerJob? job))
+        if (!TryGetJob(done.Id, out WorkerJob? job))
         {
             return;
         }
 
         job!.Touch();
 
-        string status = root.TryGetProperty("status", out JsonElement s)
-            ? s.GetString() ?? "ok"
-            : "ok";
-        double elapsed =
-            root.TryGetProperty("elapsed_seconds", out JsonElement e)
-            && e.TryGetDouble(out double ev)
-                ? ev
-                : 0;
+        string status = done.Status ?? "ok";
+        var files = (done.Files ?? [])
+            .Select(f => new UpscaleJobFile(f.Input ?? "", f.Output ?? "", f.Status ?? ""))
+            .ToList();
 
-        var files = new List<UpscaleJobFile>();
-        if (
-            root.TryGetProperty("files", out JsonElement filesEl)
-            && filesEl.ValueKind == JsonValueKind.Array
-        )
-        {
-            foreach (JsonElement file in filesEl.EnumerateArray())
-            {
-                files.Add(
-                    new UpscaleJobFile(
-                        file.TryGetProperty("input", out JsonElement i) ? i.GetString() ?? "" : "",
-                        file.TryGetProperty("output", out JsonElement o) ? o.GetString() ?? "" : "",
-                        file.TryGetProperty("status", out JsonElement fs)
-                            ? fs.GetString() ?? ""
-                            : ""
-                    )
-                );
-            }
-        }
-
-        job.TrySetResult(new UpscaleJobResult(job.Id, status, files, elapsed));
+        job.TrySetResult(new UpscaleJobResult(job.Id, status, files, done.ElapsedSeconds));
     }
 
-    private void DispatchError(JsonElement root)
+    private void DispatchError(WorkerErrorEvent error)
     {
-        string? id = root.TryGetProperty("id", out JsonElement idEl) ? idEl.GetString() : null;
-        string message = root.TryGetProperty("message", out JsonElement m)
-            ? m.GetString() ?? ""
-            : "";
+        string message = error.Message ?? "";
 
-        if (id is not null && _jobs.TryGetValue(id, out WorkerJob? job))
+        if (error.Id is not null && _jobs.TryGetValue(error.Id, out WorkerJob? job))
         {
             job.Touch();
             job.TrySetException(new InvalidOperationException($"Upscale worker error: {message}"));
@@ -720,12 +684,11 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         _logger.LogWarning("Upscale worker reported an error: {Message}", message);
     }
 
-    private void DispatchRejected(JsonElement root)
+    private void DispatchRejected(WorkerRejectedEvent rejected)
     {
-        string? id = root.TryGetProperty("id", out JsonElement idEl) ? idEl.GetString() : null;
-        string reason = root.TryGetProperty("reason", out JsonElement r) ? r.GetString() ?? "" : "";
+        string reason = rejected.Reason ?? "";
 
-        if (id is not null && _jobs.TryGetValue(id, out WorkerJob? job))
+        if (rejected.Id is not null && _jobs.TryGetValue(rejected.Id, out WorkerJob? job))
         {
             job.TrySetException(
                 new InvalidOperationException($"Upscale worker rejected the job: {reason}")
@@ -784,23 +747,15 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         catch { }
     }
 
-    private static int? GetInt(JsonElement root, string property)
-    {
-        return root.TryGetProperty(property, out JsonElement el) && el.TryGetInt32(out int v)
-            ? v
-            : null;
-    }
-
-    private bool TryGetJob(JsonElement root, out WorkerJob? job)
+    private bool TryGetJob(string? id, out WorkerJob? job)
     {
         job = null;
-        string? id = root.TryGetProperty("id", out JsonElement idEl) ? idEl.GetString() : null;
         return id is not null && _jobs.TryGetValue(id, out job);
     }
 
-    private void TouchJob(JsonElement root)
+    private void TouchJob(string? id)
     {
-        if (TryGetJob(root, out WorkerJob? job))
+        if (TryGetJob(id, out WorkerJob? job))
         {
             job!.Touch();
         }
