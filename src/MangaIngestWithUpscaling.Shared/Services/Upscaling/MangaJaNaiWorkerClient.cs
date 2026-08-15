@@ -62,6 +62,10 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         await _submitLock.WaitAsync(cancellationToken);
         try
         {
+            // Touch the activity clock before spawning so the idle watchdog doesn't
+            // race a fresh job submission and tear the worker down mid-spawn.
+            _lastActivityUtc = DateTime.UtcNow;
+
             await EnsureWorkerAsync(cancellationToken);
 
             var job = new WorkerJob(request.Id, progress);
@@ -73,7 +77,6 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             }
 
             _currentJobId = request.Id;
-            _lastActivityUtc = DateTime.UtcNow;
 
             try
             {
@@ -135,9 +138,11 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     public async Task ShutdownWorkerAsync(CancellationToken cancellationToken)
     {
         Process? process;
+        StreamWriter? stdin;
         lock (_stateLock)
         {
             process = _process;
+            stdin = _stdin;
             _shuttingDown = true;
             if (process is null || process.HasExited)
             {
@@ -148,10 +153,25 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
         try
         {
-            await SendLineAsync(
-                JsonSerializer.Serialize(new Dictionary<string, object?> { ["type"] = "shutdown" }),
-                CancellationToken.None
-            );
+            // Write to the captured stdin, not the shared _stdin field, so a concurrent
+            // spawn can't make us shut down the *new* worker by mistake.
+            if (stdin is not null)
+            {
+                await _stdinLock.WaitAsync();
+                try
+                {
+                    await stdin.WriteLineAsync(
+                        JsonSerializer
+                            .Serialize(new Dictionary<string, object?> { ["type"] = "shutdown" })
+                            .AsMemory()
+                    );
+                    await stdin.FlushAsync();
+                }
+                finally
+                {
+                    _stdinLock.Release();
+                }
+            }
 
             using var grace = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             grace.CancelAfter(TimeSpan.FromSeconds(10));
@@ -256,19 +276,23 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         var readyTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        lock (_stateLock)
-        {
-            _shuttingDown = false;
-            _process = process;
-            _readyTcs = readyTcs;
-        }
-
         if (!process.Start())
         {
             throw new InvalidOperationException("Failed to start the upscale worker process.");
         }
 
-        _stdin = process.StandardInput;
+        StreamWriter stdin = process.StandardInput;
+
+        // Publish the process and its stdin together so ShutdownWorkerAsync can't capture
+        // a mismatched (process, stdin) pair while a new worker is being spawned.
+        lock (_stateLock)
+        {
+            _shuttingDown = false;
+            _process = process;
+            _stdin = stdin;
+            _readyTcs = readyTcs;
+        }
+
         _ = ReadStdoutAsync(process);
         _ = ReadStderrAsync(process);
 
@@ -340,10 +364,14 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             {
                 _process = null;
                 _readyTcs = null;
+                stdin = _stdin;
+                _stdin = null;
             }
-
-            stdin = _stdin;
-            _stdin = null;
+            else
+            {
+                // A newer worker has already replaced this one; leave its stdin alone.
+                stdin = null;
+            }
         }
 
         try
