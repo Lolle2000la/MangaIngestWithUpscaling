@@ -851,6 +851,17 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
         try
         {
+            // The stdout reader only reaches here on EOF, but if the process is somehow still
+            // alive (e.g. it closed stdout without exiting), kill it so it isn't orphaned.
+            if (!process.HasExited)
+            {
+                process.Kill(true);
+            }
+        }
+        catch { }
+
+        try
+        {
             process.Dispose();
         }
         catch { }
@@ -904,19 +915,27 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                     job.Completion.Task,
                     Task.Delay(CancelGracePeriod)
                 );
-                if (finished == job.Completion.Task)
+                if (
+                    finished == job.Completion.Task
+                    && job.Completion.Task.Status == TaskStatus.RanToCompletion
+                )
                 {
-                    // The job finished during the grace period; let its result (success or
-                    // failure) surface normally instead of failing it with a timeout.
+                    // The job genuinely finished during the grace period; surface its result
+                    // instead of failing it with a timeout.
                     return;
                 }
 
-                _logger.LogError(
-                    "Upscale worker job {JobId} did not cancel in time; killing the worker.",
-                    job.Id
-                );
-                await KillWorkerAsync();
+                if (finished != job.Completion.Task)
+                {
+                    _logger.LogError(
+                        "Upscale worker job {JobId} did not cancel in time; killing the worker.",
+                        job.Id
+                    );
+                    await KillWorkerAsync();
+                }
 
+                // The worker either ignored the cancel or acknowledged it with a cancelled/error
+                // done; surface a timeout with diagnostics in both cases.
                 throw new TimeoutException(
                     $"Upscaling timed out after {effectiveTimeout} of inactivity.{BuildStderrSection()}"
                 );
