@@ -155,7 +155,7 @@ public class UpscaleTaskProcessor(
             {
                 if (_coordinator.OnProgress(task.Data.Progress.Total, task.Data.Progress.Current))
                 {
-                    _ = PrefetchNextAsync(task, stoppingToken);
+                    _ = PrefetchNextAsync(task, serviceStoppingToken);
                 }
 
                 var now = DateTime.UtcNow;

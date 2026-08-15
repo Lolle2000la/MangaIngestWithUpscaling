@@ -123,6 +123,18 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                     catch (Exception)
                     { /* the worker may already be gone; cancellation wins */
                     }
+
+                    // If the worker didn't acknowledge the cancel in time, kill it so a stuck
+                    // job doesn't occupy the only worker slot for the next submission.
+                    if (!job.Completion.Task.IsCompleted)
+                    {
+                        _logger.LogWarning(
+                            "Upscale worker job {JobId} did not cancel in time; killing the worker.",
+                            request.Id
+                        );
+                        await KillWorkerAsync();
+                    }
+
                     throw new OperationCanceledException(cancellationToken);
                 }
 
