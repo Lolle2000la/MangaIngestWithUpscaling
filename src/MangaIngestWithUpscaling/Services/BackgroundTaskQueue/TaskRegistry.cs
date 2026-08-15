@@ -28,6 +28,7 @@ public class TaskRegistry : IHostedService, IDisposable
     private readonly ConcurrentDictionary<int, PersistedTask> _pendingUpdates = new();
     private readonly CancellationTokenSource _cts = new();
     private Task? _flushTask;
+    private int _disposed;
 
     public TaskRegistry(
         IServiceScopeFactory scopeFactory,
@@ -81,6 +82,12 @@ public class TaskRegistry : IHostedService, IDisposable
 
     public void Dispose()
     {
+        // The instance is registered both as a plain singleton (TaskRegistry) and as an
+        // IHostedService, so the DI container disposes it once per registration. Make the
+        // teardown idempotent to avoid calling Cancel() on an already-disposed CTS.
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
         _cts.Cancel();
         _cts.Dispose();
         _cleanups.Dispose();
