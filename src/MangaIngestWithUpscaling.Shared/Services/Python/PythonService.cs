@@ -37,12 +37,13 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
     ///     v12: Removed unnecessary dependencies for manga-vert-split-nn, relaxed Python version requirement
     ///     v13: Updated to PyTorch 2.10.0, torchvision 0.25.0 with CUDA 12.8 (cu128), ROCm 7.1, and latest XPU support
     ///     v14: Added ROCm GFX120X nightly runtime for AMD 9000-series GPUs and switched it to latest nightly PyTorch wheels; Upgraded CPU, ROCm, ROCm GFX120X base, CUDA 12.8, and XPU paths to PyTorch 2.11 while keeping legacy CUDA 11.8 pinned
+    ///     v15: Fixed pip invocation to run the venv Python directly instead of through a shell, so version specifiers like "numpy>=2.4.0" are no longer interpreted as shell redirects (which created stray files and skipped installing those packages)
     ///     When updating dependencies:
     ///     1. Update the package versions in InstallPythonPackages method
     ///     2. Increment this ENVIRONMENT_VERSION constant
     ///     3. Add a comment above describing the changes
     /// </summary>
-    private const int ENVIRONMENT_VERSION = 14;
+    private const int ENVIRONMENT_VERSION = 15;
 
     public static PythonEnvironment? Environment { get; set; }
 
@@ -577,38 +578,38 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         {
             GpuBackend.CUDA =>
                 "install torch==2.7.1 torchvision==0.22.1 --extra-index-url https://download.pytorch.org/whl/cu118 "
-                    + "chainner_ext==0.3.10 \"numpy>=2.4.0\" \"opencv-python-headless>=4.11.0.86\" "
+                    + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
                     + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 \"pillow>=12.0.0\" --no-warn-script-location",
+                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
             GpuBackend.CUDA_12_8 =>
                 "install torch==2.11.0 torchvision==0.26.0 --extra-index-url https://download.pytorch.org/whl/cu128 "
-                    + "chainner_ext==0.3.10 \"numpy>=2.4.0\" \"opencv-python-headless>=4.11.0.86\" "
+                    + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
                     + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 \"pillow>=12.0.0\" --no-warn-script-location",
+                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
             GpuBackend.ROCm =>
                 "install torch==2.11.0 torchvision==0.26.0 --extra-index-url https://download.pytorch.org/whl/rocm7.2 "
-                    + "chainner_ext==0.3.10 \"numpy>=2.4.0\" \"opencv-python-headless>=4.11.0.86\" "
+                    + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
                     + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 \"pillow>=12.0.0\" --no-warn-script-location",
+                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
             GpuBackend.ROCm_GFX120X =>
                 "install --pre torch torchvision --extra-index-url https://rocm.nightlies.amd.com/v2/gfx120X-all "
-                    + "chainner_ext==0.3.10 \"numpy>=2.4.0\" \"opencv-python-headless>=4.11.0.86\" "
+                    + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
                     + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 \"pillow>=12.0.0\" --no-warn-script-location",
+                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
             GpuBackend.XPU =>
                 "install torch==2.11.0 torchvision==0.26.0 --extra-index-url https://download.pytorch.org/whl/xpu "
-                    + "chainner_ext==0.3.10 \"numpy>=2.4.0\" \"opencv-python-headless>=4.11.0.86\" "
+                    + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
                     + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 \"pillow>=12.0.0\" --no-warn-script-location",
+                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
             GpuBackend.CPU =>
                 "install torch==2.11.0 torchvision==0.26.0 --extra-index-url https://download.pytorch.org/whl/cpu "
-                    + "chainner_ext==0.3.10 \"numpy>=2.4.0\" \"opencv-python-headless>=4.11.0.86\" "
+                    + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
                     + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 \"pillow>=12.0.0\" --no-warn-script-location",
+                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
             _ => "install torch==2.11.0 torchvision==0.26.0 "
-                + "chainner_ext==0.3.10 \"numpy>=2.4.0\" \"opencv-python-headless>=4.11.0.86\" "
+                + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
                 + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 \"pillow>=12.0.0\" --no-warn-script-location",
+                + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
         };
 
         logger.LogInformation(
@@ -620,20 +621,12 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
 
     private async Task RunPipCommand(string pythonPath, string pipArgs, string environmentPath)
     {
-        string moduleInstallCommand = $"{pythonPath} -m pip {pipArgs}";
-
         using var process = new Process();
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            process.StartInfo.FileName = "cmd";
-            process.StartInfo.Arguments = $"/c {moduleInstallCommand}";
-        }
-        else
-        {
-            process.StartInfo.FileName = "sh";
-            process.StartInfo.Arguments = $"-c \"{moduleInstallCommand}\"";
-        }
-
+        // Invoke the venv Python directly instead of wrapping in a shell. Shell wrapping
+        // re-interprets '>', '&', quotes, etc. in package specifiers (e.g. "numpy>=2.4.0"),
+        // which both breaks installation and creates stray redirect files next to the env.
+        process.StartInfo.FileName = pythonPath;
+        process.StartInfo.Arguments = $"-m pip {pipArgs}";
         process.StartInfo.RedirectStandardOutput = true;
         process.StartInfo.RedirectStandardError = true;
         process.StartInfo.UseShellExecute = false;
