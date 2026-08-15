@@ -140,4 +140,16 @@ public record UpscalerConfig
     ///     of loading every model up front.
     /// </summary>
     public bool WorkerWarmup { get; set; } = false;
+
+    /// <summary>
+    ///     When enabled, every line the worker writes to stderr is mirrored to the host's stderr
+    ///     regardless of the configured log level. Defaults to on in Development and off elsewhere;
+    ///     either can be overridden explicitly via configuration.
+    /// </summary>
+    public bool WorkerLogToStderr { get; set; } =
+        string.Equals(
+            Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
+            "Development",
+            StringComparison.OrdinalIgnoreCase
+        );
 }

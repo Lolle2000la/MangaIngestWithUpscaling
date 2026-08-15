@@ -549,9 +549,13 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             string? line;
             while ((line = await process.StandardError.ReadLineAsync()) is not null)
             {
-                // Mirror worker diagnostics to the host stderr unconditionally, so they are
-                // visible regardless of the configured log level.
-                Console.Error.WriteLine($"[upscale worker] {line}");
+                // Mirror worker diagnostics to the host stderr when enabled (default in dev),
+                // so they are visible regardless of the configured log level.
+                if (_config.Value.WorkerLogToStderr)
+                {
+                    Console.Error.WriteLine($"[upscale worker] {line}");
+                }
+
                 _logger.LogDebug("[upscale worker] {Line}", line);
                 AppendStderr(line);
             }
