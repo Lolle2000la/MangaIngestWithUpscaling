@@ -108,6 +108,16 @@ public class UpscaleTask : BaseTask, IChapterTask
             chapter.RelativePath
         );
 
+        // Consume any preprocessed input the prefetch pipeline produced for this chapter.
+        // Held for the rest of the method so it is disposed even when we skip upscaling.
+        var preprocessedCache = services.GetRequiredService<IPreprocessedInputCache>();
+        using IPreprocessedInput? preprocessed = preprocessedCache.TryTake(
+            ChapterId,
+            out IPreprocessedInput? prefetched
+        )
+            ? prefetched
+            : null;
+
         if (
             chapter.IsUpscaled
             && (!UpdateIfProfileNew || chapter.UpscalerProfile?.Id == upscalerProfile.Id)
@@ -174,13 +184,6 @@ public class UpscaleTask : BaseTask, IChapterTask
         }
 
         var upscaler = services.GetRequiredService<IUpscaler>();
-        var preprocessedCache = services.GetRequiredService<IPreprocessedInputCache>();
-        using IPreprocessedInput? preprocessed = preprocessedCache.TryTake(
-            ChapterId,
-            out IPreprocessedInput? prefetched
-        )
-            ? prefetched
-            : null;
         try
         {
             var reporter = new Progress<UpscaleProgress>(p =>
