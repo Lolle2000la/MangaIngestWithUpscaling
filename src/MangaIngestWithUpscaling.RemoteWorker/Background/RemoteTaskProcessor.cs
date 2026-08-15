@@ -120,7 +120,10 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 // Peek the head task's transfer size (without claiming) so we can defer claiming
                 // a task whose download is fast enough to fit inside the current job's remaining
                 // work. Deferring keeps the task available to faster workers until our GPU is
-                // closer to idle. Peek is advisory: on failure we fall through and claim.
+                // closer to idle. This only makes sense while a job is actually being upscaled
+                // (_currentTaskId is set): once the GPU is idle we must claim immediately, and the
+                // coordinator's remaining-page estimate is stale between jobs. Peek is advisory:
+                // on failure we fall through and claim.
                 try
                 {
                     PeekNextTaskResponse peek = await client.PeekNextTaskAsync(
@@ -129,7 +132,8 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                         cancellationToken: stoppingToken
                     );
                     if (
-                        peek.TaskId != -1
+                        _currentTaskId.HasValue
+                        && peek.TaskId != -1
                         && peek.HasInputSizeBytes
                         && !_coordinator.ShouldClaim(peek.InputSizeBytes)
                     )
