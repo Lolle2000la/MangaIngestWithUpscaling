@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Threading.Channels;
 using AutoRegisterInject;
 using MangaIngestWithUpscaling.Data;
@@ -22,6 +23,7 @@ public class UpscaleTaskProcessor(
     private readonly TimeSpan _progressDebounce = TimeSpan.FromMilliseconds(250);
     private readonly ChannelReader<object> _reader = taskQueue.UpscaleReader;
     private readonly ChannelReader<PersistedTask> _reroutedReader = taskQueue.ReroutedUpscaleReader;
+    private readonly PrefetchCoordinator _coordinator = new();
     private CancellationTokenSource? currentStoppingToken;
     private PersistedTask? currentTask;
     private CancellationToken serviceStoppingToken;
@@ -138,16 +140,20 @@ public class UpscaleTaskProcessor(
 
         using var scope = scopeFactory.CreateScope();
 
-        // Preprocess the next pending upscale task while this one is upscaling, so the
-        // GPU doesn't sit idle waiting for CPU preprocessing between chapters.
-        _ = PrefetchNextAsync(task, stoppingToken);
+        _coordinator.Reset();
 
         try
         {
-            // Forward progress changes to UI by raising StatusChanged (debounced)
+            // Forward progress changes to UI by raising StatusChanged (debounced), and
+            // trigger the next task's prefetch when the predictor says it's time.
             var last = DateTime.UtcNow;
             using var progressSubscription = task.Data.Progress.Changed.Subscribe(e =>
             {
+                if (_coordinator.OnProgress(task.Data.Progress.Total, task.Data.Progress.Current))
+                {
+                    _ = PrefetchNextAsync(task, stoppingToken);
+                }
+
                 var now = DateTime.UtcNow;
                 if (now - last >= _progressDebounce)
                 {
@@ -227,11 +233,14 @@ public class UpscaleTaskProcessor(
 
             var upscaleTask = (UpscaleTask)next.Data;
 
+            var sw = Stopwatch.StartNew();
             using var scope = scopeFactory.CreateScope();
             IPreprocessedInput? preprocessed = await upscaleTask.PreprocessForPrefetchAsync(
                 scope.ServiceProvider,
                 stoppingToken
             );
+            sw.Stop();
+            _coordinator.RecordPrefetch(sw.Elapsed);
 
             if (preprocessed is null)
             {

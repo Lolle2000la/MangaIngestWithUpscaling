@@ -19,7 +19,7 @@ namespace MangaIngestWithUpscaling.RemoteWorker.Background;
 public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : BackgroundService
 {
     // Tracks download and processing statistics to optimize prefetch timing.
-    private readonly PrefetchPredictor _predictor = new();
+    private readonly PrefetchCoordinator _coordinator = new();
 
     // State tracking for task lifecycle coordination and exclusion.
     private int? _currentTaskId;
@@ -211,7 +211,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                         stream.ResponseStream.ReadAllAsync(persistentKeepAliveCts.Token)
                     );
                     sw.Stop();
-                    _predictor.RecordPrefetch(sw.Elapsed);
+                    _coordinator.RecordPrefetch(sw.Elapsed);
 
                     var fetched = new FetchedItem(
                         resp.TaskId,
@@ -320,9 +320,9 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 item.PersistentKeepAliveCts.Token
             );
             DateTime lastProgressSend = DateTime.UtcNow.AddSeconds(-10);
-            int? lastProgressCurrent = null;
             int prefetchSignaled = 0; // 0 = not signaled, 1 = signaled (atomic)
-            DateTime lastProgressTime = DateTime.UtcNow;
+
+            _coordinator.Reset();
 
             // The persistent keep-alive continues running; we just add progress reporting
             // No need to start a separate processing keep-alive loop since the persistent one continues
@@ -361,42 +361,14 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                             while (progressChannel.Reader.TryRead(out UpscaleProgress? p))
                             {
                                 pending = p;
-                                DateTime now = DateTime.UtcNow;
 
-                                // Update per-page stats and predictive trigger
-                                if (p.Total.HasValue && p.Current.HasValue)
+                                // Update per-page stats and trigger prefetch when appropriate.
+                                if (
+                                    _coordinator.OnProgress(p.Total, p.Current)
+                                    && Interlocked.CompareExchange(ref prefetchSignaled, 1, 0) == 0
+                                )
                                 {
-                                    int total = p.Total.Value;
-                                    int current = p.Current.Value;
-                                    if (
-                                        lastProgressCurrent.HasValue
-                                        && current > lastProgressCurrent.Value
-                                    )
-                                    {
-                                        int deltaPages = current - lastProgressCurrent.Value;
-                                        double deltaTime = (now - lastProgressTime).TotalSeconds;
-                                        if (deltaPages > 0 && deltaTime > 0)
-                                        {
-                                            _predictor.RecordPerPage(deltaTime / deltaPages);
-                                        }
-                                    }
-
-                                    lastProgressCurrent = current;
-                                    lastProgressTime = now;
-
-                                    int remaining = Math.Max(0, total - current);
-                                    bool shouldPrefetch = _predictor.ShouldPrefetch(
-                                        remaining,
-                                        total
-                                    );
-                                    if (
-                                        shouldPrefetch
-                                        && Interlocked.CompareExchange(ref prefetchSignaled, 1, 0)
-                                            == 0
-                                    )
-                                    {
-                                        _fetchSignals?.Writer.TryWrite(true);
-                                    }
+                                    _fetchSignals?.Writer.TryWrite(true);
                                 }
                             }
 
