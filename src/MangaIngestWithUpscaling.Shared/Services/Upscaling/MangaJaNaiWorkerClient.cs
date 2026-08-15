@@ -23,6 +23,11 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     private static readonly TimeSpan ReadyTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan CancelGracePeriod = TimeSpan.FromSeconds(10);
 
+    // After every page is upscaled and saved, the only remaining work is finalizing the
+    // output archive, which produces no progress events. Give it a fixed grace period
+    // instead of the pixel-scaled inactivity timeout.
+    private static readonly TimeSpan PostprocessGracePeriod = TimeSpan.FromMinutes(10);
+
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IOptions<UpscalerConfig> _config;
     private readonly ILogger<MangaJaNaiWorkerClient> _logger;
@@ -633,7 +638,15 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         }
 
         job!.Touch();
-        job.ReportProgress(GetInt(root, "archive_total"), GetInt(root, "completed"));
+
+        int? total = GetInt(root, "archive_total");
+        int? completed = GetInt(root, "completed");
+        if (total is > 0 && completed >= total)
+        {
+            job.MarkAllPagesProcessed();
+        }
+
+        job.ReportProgress(total, completed);
     }
 
     private void DispatchDone(JsonElement root)
@@ -787,12 +800,19 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         while (!job.Completion.Task.IsCompleted)
         {
             await Task.Delay(200);
-            if (DateTime.UtcNow - job.LastEventUtc > timeout.Value)
+            // Once every page is upscaled and saved, allow the archive finalization to run
+            // without progress events for a generous fixed period instead of the activity
+            // timeout (which is scaled by image size and can be shorter than the archive
+            // close/flush takes on slow storage).
+            TimeSpan effectiveTimeout = job.AllPagesProcessed
+                ? PostprocessGracePeriod
+                : timeout.Value;
+            if (DateTime.UtcNow - job.LastEventUtc > effectiveTimeout)
             {
                 _logger.LogWarning(
                     "Upscale worker job {JobId} exceeded the inactivity timeout ({Timeout}); cancelling.",
                     job.Id,
-                    timeout.Value
+                    effectiveTimeout
                 );
 
                 await RequestCancelAsync(job.Id);
@@ -811,7 +831,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                 }
 
                 throw new TimeoutException(
-                    $"Upscaling timed out after {timeout.Value} of inactivity.{BuildStderrSection()}"
+                    $"Upscaling timed out after {effectiveTimeout} of inactivity.{BuildStderrSection()}"
                 );
             }
         }
@@ -822,6 +842,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     private sealed class WorkerJob
     {
         private long _lastEventTicks;
+        private volatile bool _allPagesProcessed;
 
         public WorkerJob(string id, IProgress<UpscaleProgress>? progress)
         {
@@ -836,6 +857,10 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         public string Id { get; }
         public IProgress<UpscaleProgress>? Progress { get; }
         public TaskCompletionSource<UpscaleJobResult> Completion { get; }
+
+        public bool AllPagesProcessed => _allPagesProcessed;
+
+        public void MarkAllPagesProcessed() => _allPagesProcessed = true;
 
         public DateTime LastEventUtc =>
             new(Interlocked.Read(ref _lastEventTicks), DateTimeKind.Utc);
