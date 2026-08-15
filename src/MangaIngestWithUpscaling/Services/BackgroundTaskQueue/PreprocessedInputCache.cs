@@ -25,18 +25,24 @@ public interface IPreprocessedInputCache
 
 public sealed class PreprocessedInputCache : IPreprocessedInputCache
 {
+    private static readonly TimeSpan StaleTimeout = TimeSpan.FromMinutes(10);
+
     private readonly ConcurrentDictionary<
         int,
         TaskCompletionSource<IPreprocessedInput?>
     > _prefetches = new();
 
-    public TaskCompletionSource<IPreprocessedInput?> StartPrefetch(int chapterId) =>
-        _prefetches.GetOrAdd(
+    public TaskCompletionSource<IPreprocessedInput?> StartPrefetch(int chapterId)
+    {
+        TaskCompletionSource<IPreprocessedInput?> tcs = _prefetches.GetOrAdd(
             chapterId,
             static _ => new TaskCompletionSource<IPreprocessedInput?>(
                 TaskCreationOptions.RunContinuationsAsynchronously
             )
         );
+        _ = CleanupStaleAsync(chapterId, tcs);
+        return tcs;
+    }
 
     public async Task<IPreprocessedInput?> TakeAsync(
         int chapterId,
@@ -49,5 +55,34 @@ public sealed class PreprocessedInputCache : IPreprocessedInputCache
         }
 
         return await tcs.Task.WaitAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Reclaims a prefetch that was never consumed (e.g. its task was cancelled or claimed
+    /// elsewhere after the prefetch completed), so the temp file doesn't leak.
+    /// </summary>
+    private async Task CleanupStaleAsync(
+        int chapterId,
+        TaskCompletionSource<IPreprocessedInput?> tcs
+    )
+    {
+        try
+        {
+            await Task.Delay(StaleTimeout);
+            if (_prefetches.TryRemove(KeyValuePair.Create(chapterId, tcs)))
+            {
+                if (
+                    tcs.Task.IsCompletedSuccessfully
+                    && tcs.Task.Result is IPreprocessedInput preprocessed
+                )
+                {
+                    preprocessed.Dispose();
+                }
+            }
+        }
+        catch
+        {
+            // Best-effort cleanup.
+        }
     }
 }
