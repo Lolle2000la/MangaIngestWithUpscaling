@@ -5,7 +5,6 @@ using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
-using MangaIngestWithUpscaling.Shared.Services.Python;
 using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -14,7 +13,7 @@ namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 
 [RegisterScoped]
 public class MangaJaNaiUpscaler(
-    IPythonService pythonService,
+    IMangaJaNaiWorkerClient workerClient,
     ILogger<MangaJaNaiUpscaler> logger,
     IOptions<UpscalerConfig> sharedConfig,
     IFileSystem fileSystem,
@@ -193,11 +192,6 @@ public class MangaJaNaiUpscaler(
         ),
     ];
 
-    private static string RunScriptPath =>
-        Path.Combine(AppContext.BaseDirectory, "backend", "src", "run_upscale.py");
-
-    private static string ConfigPath => Path.Combine(AppContext.BaseDirectory, "appstate2.json");
-
     private string ModelPath => sharedConfig.Value.ModelsDirectory;
 
     public async Task DownloadModelsIfNecessary(CancellationToken cancellationToken)
@@ -356,15 +350,6 @@ public class MangaJaNaiUpscaler(
         CancellationToken cancellationToken
     )
     {
-        MangaJaNaiUpscalerConfig config = MangaJaNaiUpscalerConfig.FromUpscalerProfile(profile);
-        config.ApplyUpscalerConfig(sharedConfig.Value);
-        config.SelectedTabIndex = 0;
-        config.InputFilePath = inputPath;
-        config.OutputFolderPath = outputDirectory;
-        config.OutputFilename = outputFilename;
-        config.ModelsDirectory = ModelPath;
-        string configPath = JsonWorkflowModifier.ModifyWorkflowConfig(ConfigPath, config);
-
         logger.LogInformation(
             "Upscaling {inputPath} to {outputPath} with {profile.Name}",
             inputPath,
@@ -372,110 +357,24 @@ public class MangaJaNaiUpscaler(
             profile.Name
         );
 
-        string arguments = $"--settings \"{configPath}\"";
+        var request = new UpscaleJobRequest
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            InputPath = inputPath,
+            OutputFolder = outputDirectory,
+            OutputFilename = outputFilename,
+            Format = profile.CompressionFormat,
+            Scale = profile.ScalingFactor,
+            Overwrite = true,
+        };
+
         try
         {
-            // If caller provided a progress reporter, use streaming mode; otherwise run non-streaming
-            if (progress is null)
-            {
-                TimeSpan scaledTimeout = await ComputeScaledTimeoutAsync(
-                    inputPath,
-                    cancellationToken
-                );
-                string output = await pythonService.RunPythonScript(
-                    RunScriptPath,
-                    arguments,
-                    cancellationToken,
-                    scaledTimeout
-                );
-                fileSystem.ApplyPermissions(outputPath);
-                logger.LogDebug("Upscaling Output {inputPath}: {output}", inputPath, output);
-            }
-            else
-            {
-                int? total = null;
-                int current = 0;
-                string? lastPhase = null;
+            TimeSpan scaledTimeout = await ComputeScaledTimeoutAsync(inputPath, cancellationToken);
 
-                TimeSpan scaledTimeout = await ComputeScaledTimeoutAsync(
-                    inputPath,
-                    cancellationToken
-                );
+            await workerClient.RunJobAsync(request, progress, cancellationToken, scaledTimeout);
 
-                await pythonService.RunPythonScriptStreaming(
-                    RunScriptPath,
-                    arguments,
-                    line =>
-                    {
-                        try
-                        {
-                            if (string.IsNullOrWhiteSpace(line))
-                                return Task.CompletedTask;
-
-                            // Normalize line
-                            var l = line.Trim();
-                            if (l.StartsWith("TOTALZIP=", StringComparison.OrdinalIgnoreCase))
-                            {
-                                var value = l.Substring("TOTALZIP=".Length);
-                                if (int.TryParse(value, out var t))
-                                {
-                                    total = t;
-                                    progress.Report(
-                                        new UpscaleProgress(
-                                            total,
-                                            current,
-                                            lastPhase,
-                                            "Reading archive"
-                                        )
-                                    );
-                                }
-
-                                return Task.CompletedTask;
-                            }
-
-                            if (l.StartsWith("PROGRESS=", StringComparison.OrdinalIgnoreCase))
-                            {
-                                var phase = l.Substring("PROGRESS=".Length);
-                                lastPhase = phase;
-
-                                // Heuristics: increment when we see per-image progress events
-                                if (
-                                    phase.Contains(
-                                        "postprocess_worker_zip_image",
-                                        StringComparison.OrdinalIgnoreCase
-                                    )
-                                    || phase.Contains(
-                                        "postprocess_worker_image",
-                                        StringComparison.OrdinalIgnoreCase
-                                    )
-                                    || phase.Contains(
-                                        "postprocess_worker_folder",
-                                        StringComparison.OrdinalIgnoreCase
-                                    )
-                                )
-                                {
-                                    current++;
-                                }
-
-                                progress.Report(
-                                    new UpscaleProgress(total, current, lastPhase, null)
-                                );
-                                return Task.CompletedTask;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            logger.LogDebug(ex, "Ignoring progress parse error: {Line}", line);
-                        }
-
-                        return Task.CompletedTask;
-                    },
-                    cancellationToken,
-                    scaledTimeout
-                );
-
-                fileSystem.ApplyPermissions(outputPath);
-            }
+            fileSystem.ApplyPermissions(outputPath);
 
             await upscalerJsonHandlingService.WriteUpscalerJsonAsync(
                 outputPath,
@@ -500,10 +399,6 @@ public class MangaJaNaiUpscaler(
                 profile.Name
             );
             throw;
-        }
-        finally
-        {
-            File.Delete(configPath);
         }
     }
 

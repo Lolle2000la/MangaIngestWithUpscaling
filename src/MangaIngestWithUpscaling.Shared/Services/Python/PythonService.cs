@@ -46,6 +46,11 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
 
     public static PythonEnvironment? Environment { get; set; }
 
+    public PythonEnvironment? GetPreparedEnvironment()
+    {
+        return Environment;
+    }
+
     public string? GetPythonExecutablePath()
     {
         string executableExtension = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
