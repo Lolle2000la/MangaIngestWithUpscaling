@@ -35,6 +35,7 @@ public static class ServiceRegistration
         services.AddHostedService(sp => sp.GetRequiredService<PeriodicTaskReplayer>());
         services.AddSingleton<TaskRegistry>();
         services.AddHostedService(sp => sp.GetRequiredService<TaskRegistry>());
+        services.AddSingleton<IPreprocessedInputCache, PreprocessedInputCache>();
         services.AddScoped<ILibraryRenamingService, LibraryRenamingService>();
         services.AddScoped<IRepairService, RepairService>();
     }

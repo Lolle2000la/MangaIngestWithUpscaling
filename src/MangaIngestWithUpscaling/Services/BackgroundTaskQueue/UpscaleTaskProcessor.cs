@@ -2,7 +2,9 @@ using System.Threading.Channels;
 using AutoRegisterInject;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -136,6 +138,10 @@ public class UpscaleTaskProcessor(
 
         using var scope = scopeFactory.CreateScope();
 
+        // Preprocess the next pending upscale task while this one is upscaling, so the
+        // GPU doesn't sit idle waiting for CPU preprocessing between chapters.
+        _ = PrefetchNextAsync(task, stoppingToken);
+
         try
         {
             // Forward progress changes to UI by raising StatusChanged (debounced)
@@ -195,6 +201,53 @@ public class UpscaleTaskProcessor(
             {
                 logger.LogError(dbEx, "Failed to update task {TaskId} status", task.Id);
             }
+        }
+    }
+
+    /// <summary>
+    /// Preprocesses the next pending upscale task in the queue, so its CPU-bound
+    /// preprocessing overlaps with the current task's GPU-bound upscaling.
+    /// </summary>
+    private async Task PrefetchNextAsync(PersistedTask currentTask, CancellationToken stoppingToken)
+    {
+        try
+        {
+            PersistedTask? next = taskQueue
+                .GetUpscaleSnapshot()
+                .FirstOrDefault(t =>
+                    t.Id != currentTask.Id
+                    && t.Status == PersistedTaskStatus.Pending
+                    && t.Data is UpscaleTask
+                );
+
+            if (next is null)
+            {
+                return;
+            }
+
+            var upscaleTask = (UpscaleTask)next.Data;
+
+            using var scope = scopeFactory.CreateScope();
+            IPreprocessedInput? preprocessed = await upscaleTask.PreprocessForPrefetchAsync(
+                scope.ServiceProvider,
+                stoppingToken
+            );
+
+            if (preprocessed is null)
+            {
+                return;
+            }
+
+            var cache = scope.ServiceProvider.GetRequiredService<IPreprocessedInputCache>();
+            cache.Store(upscaleTask.ChapterId, preprocessed);
+        }
+        catch (OperationCanceledException)
+        {
+            // Shutting down; the prefetch is best-effort.
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Prefetch of the next upscale task failed.");
         }
     }
 }
