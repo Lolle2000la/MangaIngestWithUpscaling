@@ -37,7 +37,7 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
     ///     v12: Removed unnecessary dependencies for manga-vert-split-nn, relaxed Python version requirement
     ///     v13: Updated to PyTorch 2.10.0, torchvision 0.25.0 with CUDA 12.8 (cu128), ROCm 7.1, and latest XPU support
     ///     v14: Added ROCm GFX120X nightly runtime for AMD 9000-series GPUs and switched it to latest nightly PyTorch wheels; Upgraded CPU, ROCm, ROCm GFX120X base, CUDA 12.8, and XPU paths to PyTorch 2.11 while keeping legacy CUDA 11.8 pinned
-    ///     v15: Fixed pip invocation to run the venv Python directly instead of through a shell, so version specifiers like "numpy>=2.4.0" are no longer interpreted as shell redirects (which created stray files and skipped installing those packages)
+    ///     v15: Fixed pip installation: invoke the venv Python directly (no shell) so "numpy>=2.4.0" specifiers aren't treated as redirects, and install PyTorch from the backend-specific index via --index-url so the correct ROCm/CPU/XPU build is used instead of the PyPI CUDA wheel
     ///     When updating dependencies:
     ///     1. Update the package versions in InstallPythonPackages method
     ///     2. Increment this ENVIRONMENT_VERSION constant
@@ -573,50 +573,58 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
             environmentPath
         );
 
-        // Install PyTorch and all other packages in a single command with appropriate backend
-        string packagesCommand = targetBackend switch
+        // Determine the backend-specific PyTorch index and torch/torchvision specifiers.
+        (string torchIndex, string torchPackages) = targetBackend switch
         {
-            GpuBackend.CUDA =>
-                "install torch==2.7.1 torchvision==0.22.1 --extra-index-url https://download.pytorch.org/whl/cu118 "
-                    + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
-                    + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
-            GpuBackend.CUDA_12_8 =>
-                "install torch==2.11.0 torchvision==0.26.0 --extra-index-url https://download.pytorch.org/whl/cu128 "
-                    + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
-                    + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
-            GpuBackend.ROCm =>
-                "install torch==2.11.0 torchvision==0.26.0 --extra-index-url https://download.pytorch.org/whl/rocm7.2 "
-                    + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
-                    + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
-            GpuBackend.ROCm_GFX120X =>
-                "install --pre torch torchvision --extra-index-url https://rocm.nightlies.amd.com/v2/gfx120X-all "
-                    + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
-                    + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
-            GpuBackend.XPU =>
-                "install torch==2.11.0 torchvision==0.26.0 --extra-index-url https://download.pytorch.org/whl/xpu "
-                    + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
-                    + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
-            GpuBackend.CPU =>
-                "install torch==2.11.0 torchvision==0.26.0 --extra-index-url https://download.pytorch.org/whl/cpu "
-                    + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
-                    + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                    + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
-            _ => "install torch==2.11.0 torchvision==0.26.0 "
-                + "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
-                + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
-                + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0 --no-warn-script-location",
+            GpuBackend.CUDA => (
+                "https://download.pytorch.org/whl/cu118",
+                "torch==2.7.1 torchvision==0.22.1"
+            ),
+            GpuBackend.CUDA_12_8 => (
+                "https://download.pytorch.org/whl/cu128",
+                "torch==2.11.0 torchvision==0.26.0"
+            ),
+            GpuBackend.ROCm => (
+                "https://download.pytorch.org/whl/rocm7.2",
+                "torch==2.11.0 torchvision==0.26.0"
+            ),
+            GpuBackend.ROCm_GFX120X => (
+                "https://rocm.nightlies.amd.com/v2/gfx120X-all",
+                "--pre torch torchvision"
+            ),
+            GpuBackend.XPU => (
+                "https://download.pytorch.org/whl/xpu",
+                "torch==2.11.0 torchvision==0.26.0"
+            ),
+            GpuBackend.CPU => (
+                "https://download.pytorch.org/whl/cpu",
+                "torch==2.11.0 torchvision==0.26.0"
+            ),
+            _ => ("https://download.pytorch.org/whl/cpu", "torch==2.11.0 torchvision==0.26.0"),
         };
 
-        logger.LogInformation(
-            "Installing PyTorch and dependencies with {Backend} backend",
-            targetBackend
+        const string otherPackages =
+            "chainner_ext==0.3.10 numpy>=2.4.0 opencv-python-headless>=4.11.0.86 "
+            + "psutil==6.0.0 pynvml==11.5.3 pyvips==3.0.0 pyvips-binary==8.16.1 rarfile==4.2 "
+            + "sanic==24.6.0 spandrel_extra_arches==0.2.0 spandrel==0.4.1 packaging==25.0 pillow>=12.0.0";
+
+        // Install PyTorch/torchvision from the backend-specific index. Using --index-url
+        // (not --extra-index-url) prevents pip from silently picking the PyPI CUDA wheel
+        // (e.g. torch 2.13.0+cu130) instead of the ROCm/CPU/XPU one.
+        logger.LogInformation("Installing PyTorch with {Backend} backend", targetBackend);
+        await RunPipCommand(
+            pythonPath,
+            $"install {torchPackages} --index-url {torchIndex} --no-warn-script-location",
+            environmentPath
         );
-        await RunPipCommand(pythonPath, packagesCommand, environmentPath);
+
+        // Install the remaining dependencies from the default PyPI index.
+        logger.LogInformation("Installing remaining Python dependencies");
+        await RunPipCommand(
+            pythonPath,
+            $"install {otherPackages} --no-warn-script-location",
+            environmentPath
+        );
     }
 
     private async Task RunPipCommand(string pythonPath, string pipArgs, string environmentPath)
