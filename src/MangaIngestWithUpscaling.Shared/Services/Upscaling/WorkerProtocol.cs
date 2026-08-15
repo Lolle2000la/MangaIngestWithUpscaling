@@ -10,11 +10,12 @@ namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 /// </summary>
 public static class WorkerJson
 {
-    public static readonly JsonSerializerOptions Options = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-        PropertyNameCaseInsensitive = true,
-    };
+    // Source-generated (WorkerProtocolJsonContext) so the NDJSON worker protocol serializes
+    // under NativeAOT — the remote worker is published with PublishAot=true. The naming/case
+    // settings and the reflection-free resolver all come from the context's own options.
+    public static readonly JsonSerializerOptions Options = WorkerProtocolJsonContext
+        .Default
+        .Options;
 }
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
@@ -96,3 +97,12 @@ public sealed record WorkerJobOptions
 {
     public int Scale { get; init; }
 }
+
+/// <summary>
+/// A client-to-worker control message (e.g. shutdown, cancel). Typed so it serializes without
+/// reflection under NativeAOT, unlike a <c>Dictionary&lt;string, object?&gt;</c> payload.
+/// </summary>
+public sealed record WorkerCommand(
+    string Type,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Id = null
+);

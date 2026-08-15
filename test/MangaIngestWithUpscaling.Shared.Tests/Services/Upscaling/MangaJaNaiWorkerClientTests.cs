@@ -53,4 +53,23 @@ public class MangaJaNaiWorkerClientTests
         JsonElement options = root.GetProperty("options");
         Assert.Equal(2, options.GetProperty("scale").GetInt32());
     }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void WorkerCommand_SerializesWithSnakeCaseAndOmitsNullId()
+    {
+        // Pins the source-generated naming policy and null-omission, so the control messages
+        // stay AOT-serializable and wire-compatible with worker.py.
+        string shutdown = JsonSerializer.Serialize(
+            new WorkerCommand("shutdown"),
+            WorkerJson.Options
+        );
+        Assert.Equal("""{"type":"shutdown"}""", shutdown);
+
+        string cancel = JsonSerializer.Serialize(
+            new WorkerCommand("cancel", "job-9"),
+            WorkerJson.Options
+        );
+        Assert.Equal("""{"type":"cancel","id":"job-9"}""", cancel);
+    }
 }

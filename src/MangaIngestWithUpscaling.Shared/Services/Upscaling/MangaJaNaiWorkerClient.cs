@@ -200,7 +200,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                 {
                     await stdin.WriteLineAsync(
                         JsonSerializer
-                            .Serialize(new Dictionary<string, object?> { ["type"] = "shutdown" })
+                            .Serialize(new WorkerCommand("shutdown"), WorkerJson.Options)
                             .AsMemory()
                     );
                     await stdin.FlushAsync();
@@ -576,9 +576,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         try
         {
             await SendLineAsync(
-                JsonSerializer.Serialize(
-                    new Dictionary<string, object?> { ["type"] = "cancel", ["id"] = jobId }
-                ),
+                JsonSerializer.Serialize(new WorkerCommand("cancel", jobId), WorkerJson.Options),
                 CancellationToken.None
             );
         }
