@@ -16,7 +16,8 @@ public class UpscaleTaskProcessor(
     IServiceScopeFactory scopeFactory,
     IOptions<UpscalerConfig> upscalerConfig,
     ILogger<UpscaleTaskProcessor> logger,
-    ITaskPersistenceService taskPersistenceService
+    ITaskPersistenceService taskPersistenceService,
+    IPreprocessedInputCache preprocessedCache
 ) : BackgroundService
 {
     private readonly Lock _lock = new();
@@ -233,22 +234,32 @@ public class UpscaleTaskProcessor(
 
             var upscaleTask = (UpscaleTask)next.Data;
 
-            var sw = Stopwatch.StartNew();
-            using var scope = scopeFactory.CreateScope();
-            IPreprocessedInput? preprocessed = await upscaleTask.PreprocessForPrefetchAsync(
-                scope.ServiceProvider,
-                stoppingToken
+            // Register the prefetch promise first so the consuming task awaits it instead of
+            // racing with a fallback that would duplicate the work and leak the result.
+            TaskCompletionSource<IPreprocessedInput?> completion = preprocessedCache.StartPrefetch(
+                upscaleTask.ChapterId
             );
-            sw.Stop();
-            _coordinator.RecordPrefetch(sw.Elapsed);
-
-            if (preprocessed is null)
+            try
             {
-                return;
+                var sw = Stopwatch.StartNew();
+                using var scope = scopeFactory.CreateScope();
+                IPreprocessedInput? preprocessed = await upscaleTask.PreprocessForPrefetchAsync(
+                    scope.ServiceProvider,
+                    stoppingToken
+                );
+                sw.Stop();
+                _coordinator.RecordPrefetch(sw.Elapsed);
+                completion.TrySetResult(preprocessed);
             }
-
-            var cache = scope.ServiceProvider.GetRequiredService<IPreprocessedInputCache>();
-            cache.Store(upscaleTask.ChapterId, preprocessed);
+            catch (OperationCanceledException)
+            {
+                completion.TrySetResult(null);
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "Prefetch of the next upscale task failed.");
+                completion.TrySetResult(null);
+            }
         }
         catch (OperationCanceledException)
         {

@@ -4,30 +4,50 @@ using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 
 /// <summary>
-/// Holds preprocessed inputs produced by the prefetch pipeline until the matching
-/// upscale task consumes them.
+/// Hands preprocessed inputs from the background prefetch to the matching upscale task.
+/// A prefetch is registered as an in-flight promise, so the consuming task can await it
+/// instead of racing it with a fallback that would duplicate the work and leak the result.
 /// </summary>
 public interface IPreprocessedInputCache
 {
-    bool TryTake(int chapterId, out IPreprocessedInput preprocessed);
-    void Store(int chapterId, IPreprocessedInput preprocessed);
+    /// <summary>
+    /// Registers (or returns the existing) prefetch promise for a chapter. The prefetcher
+    /// completes it with the preprocessed input, or <c>null</c> when preprocessing failed.
+    /// </summary>
+    TaskCompletionSource<IPreprocessedInput?> StartPrefetch(int chapterId);
+
+    /// <summary>
+    /// Consumes the prefetch for a chapter: awaits the result if a prefetch was started, or
+    /// returns <c>null</c> immediately when none is in flight (caller falls back to inline).
+    /// </summary>
+    Task<IPreprocessedInput?> TakeAsync(int chapterId, CancellationToken cancellationToken);
 }
 
 public sealed class PreprocessedInputCache : IPreprocessedInputCache
 {
-    private readonly ConcurrentDictionary<int, IPreprocessedInput> _entries = new();
+    private readonly ConcurrentDictionary<
+        int,
+        TaskCompletionSource<IPreprocessedInput?>
+    > _prefetches = new();
 
-    public bool TryTake(int chapterId, out IPreprocessedInput preprocessed) =>
-        _entries.TryRemove(chapterId, out preprocessed!);
+    public TaskCompletionSource<IPreprocessedInput?> StartPrefetch(int chapterId) =>
+        _prefetches.GetOrAdd(
+            chapterId,
+            static _ => new TaskCompletionSource<IPreprocessedInput?>(
+                TaskCreationOptions.RunContinuationsAsynchronously
+            )
+        );
 
-    public void Store(int chapterId, IPreprocessedInput preprocessed)
+    public async Task<IPreprocessedInput?> TakeAsync(
+        int chapterId,
+        CancellationToken cancellationToken
+    )
     {
-        // Replace any stale entry for the same chapter so a second prefetch doesn't leak.
-        if (_entries.TryRemove(chapterId, out IPreprocessedInput? old))
+        if (!_prefetches.TryRemove(chapterId, out TaskCompletionSource<IPreprocessedInput?>? tcs))
         {
-            old.Dispose();
+            return null;
         }
 
-        _entries[chapterId] = preprocessed;
+        return await tcs.Task.WaitAsync(cancellationToken);
     }
 }

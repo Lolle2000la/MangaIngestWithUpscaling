@@ -2605,7 +2605,8 @@ public class PartialUpscalingMergeTests : IDisposable
             scopeFactory,
             upscalerOptions,
             processorLogger,
-            taskPersistenceService
+            taskPersistenceService,
+            new PreprocessedInputCache()
         );
 
         var splitCoordinator = Substitute.For<ISplitProcessingCoordinator>();
@@ -2711,7 +2712,8 @@ public class PartialUpscalingMergeTests : IDisposable
             scopeFactory,
             upscalerOptions,
             processorLogger,
-            taskPersistenceService
+            taskPersistenceService,
+            new PreprocessedInputCache()
         );
 
         var splitCoordinator = Substitute.For<ISplitProcessingCoordinator>();
@@ -2794,7 +2796,8 @@ public class PartialUpscalingMergeTests : IDisposable
             scopeFactory,
             upscalerOptions,
             processorLogger,
-            taskPersistenceService
+            taskPersistenceService,
+            new PreprocessedInputCache()
         );
 
         var splitCoordinator = Substitute.For<ISplitProcessingCoordinator>();

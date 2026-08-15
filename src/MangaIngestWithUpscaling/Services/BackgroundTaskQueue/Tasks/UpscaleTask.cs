@@ -108,15 +108,13 @@ public class UpscaleTask : BaseTask, IChapterTask
             chapter.RelativePath
         );
 
-        // Consume any preprocessed input the prefetch pipeline produced for this chapter.
-        // Held for the rest of the method so it is disposed even when we skip upscaling.
+        // Await any preprocessed input the prefetch pipeline produced for this chapter.
+        // Returns null (fall back to inline preprocessing) when no prefetch was started.
         var preprocessedCache = services.GetRequiredService<IPreprocessedInputCache>();
-        using IPreprocessedInput? preprocessed = preprocessedCache.TryTake(
+        using IPreprocessedInput? preprocessed = await preprocessedCache.TakeAsync(
             ChapterId,
-            out IPreprocessedInput? prefetched
-        )
-            ? prefetched
-            : null;
+            cancellationToken
+        );
 
         if (
             chapter.IsUpscaled

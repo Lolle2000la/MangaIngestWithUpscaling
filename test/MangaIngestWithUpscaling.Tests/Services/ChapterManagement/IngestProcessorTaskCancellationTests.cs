@@ -83,7 +83,8 @@ public class IngestProcessorTaskCancellationTests : IDisposable
             scopeFactory,
             upscalerOptions,
             processorLogger,
-            taskPersistenceService
+            taskPersistenceService,
+            new PreprocessedInputCache()
         );
 
         // SUT
