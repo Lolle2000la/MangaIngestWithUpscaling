@@ -354,9 +354,10 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
         {
+            string stderrSection = BuildStderrSection();
             await KillWorkerAsync();
             throw new InvalidOperationException(
-                "Timed out waiting for the upscale worker to become ready."
+                $"Timed out waiting for the upscale worker to become ready.{stderrSection}"
             );
         }
         catch (OperationCanceledException)
