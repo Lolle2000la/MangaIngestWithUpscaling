@@ -1,4 +1,4 @@
-﻿using System.Text.RegularExpressions;
+using System.Text.RegularExpressions;
 using MangaIngestWithUpscaling.Configuration;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.Analysis;
@@ -1141,6 +1141,7 @@ public partial class LibraryIntegrityChecker(
             SELECT * FROM PersistedTasks
             WHERE Data->>'$.$type' = {nameof(UpscaleTask)}
               AND Data->>'$.ChapterId' = {chapterId}
+              AND Status IN ({nameof(PersistedTaskStatus.Pending)}, {nameof(PersistedTaskStatus.Processing)})
         "
         );
         return await query.AnyAsync(cancellationToken);
@@ -1157,6 +1158,7 @@ public partial class LibraryIntegrityChecker(
             SELECT * FROM PersistedTasks
             WHERE Data->>'$.$type' = {nameof(RepairUpscaleTask)}
               AND Data->>'$.ChapterId' = {chapterId}
+              AND Status IN ({nameof(PersistedTaskStatus.Pending)}, {nameof(PersistedTaskStatus.Processing)})
         "
         );
         return await query.AnyAsync(cancellationToken);

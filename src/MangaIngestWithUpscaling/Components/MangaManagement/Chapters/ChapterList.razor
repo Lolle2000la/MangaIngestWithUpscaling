@@ -1,4 +1,4 @@
-﻿@using System.Collections.ObjectModel
+@using System.Collections.ObjectModel
 @using System.Text.RegularExpressions
 @using DynamicData
 @using MangaIngestWithUpscaling.Data.LibraryManagement
@@ -694,10 +694,11 @@
     private async Task<bool> LoadChapters()
     {
         bool loadingFailed = false;
-        chapters.Clear();
+        var loadedItems = new List<ChapterItem>();
         if (Manga.Chapters == null)
         {
             Logger.LogWarning("Chapters is null in LoadChapters for Manga ID {MangaId}.", Manga.Id);
+            chapters.Clear();
             return true;
         }
 
@@ -747,7 +748,7 @@
                 Logger.LogDebug("LoadChapters: Chapter {FileName} (ID: {ChapterId}) - IsMerged: {IsMerged}",
                     chapter.FileName, chapter.Id, isMerged);
 
-                chapters.Add(new ChapterItem
+                loadedItems.Add(new ChapterItem
                 {
                     Chapter = chapter,
                     ExtractedMetadata = extractedMetadata,
@@ -766,6 +767,12 @@
                 continue;
             }
         }
+
+        chapters.Edit(innerList =>
+        {
+            innerList.Clear();
+            innerList.AddRange(loadedItems);
+        });
 
         return loadingFailed;
     }
@@ -1265,8 +1272,13 @@
                 Snackbar.Add(string.Format(Loc["Snackbar_SplitDetectionCompleted"], chapter.FileName), Severity.Success);
             }
 
-            // Reload chapters to reflect the new state (either Detected immediately or Pending)
-            await LoadChapters();
+            // Defer reloading so MudMenu has finished closing before the table/row components re-render
+            _ = InvokeAsync(async () =>
+            {
+                await Task.Yield();
+                await LoadChapters();
+                StateHasChanged();
+            });
         }
         catch (Exception ex)
         {
