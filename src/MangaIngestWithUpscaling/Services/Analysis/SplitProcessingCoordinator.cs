@@ -255,6 +255,7 @@ public class SplitProcessingCoordinator(
             SELECT * FROM PersistedTasks
             WHERE Data->>'$.$type' = {nameof(DetectSplitCandidatesTask)}
               AND Data->>'$.ChapterId' = {chapterId}
+              AND Status IN ({nameof(PersistedTaskStatus.Pending)}, {nameof(PersistedTaskStatus.Processing)})
         "
         );
         return await query.AnyAsync(cancellationToken);

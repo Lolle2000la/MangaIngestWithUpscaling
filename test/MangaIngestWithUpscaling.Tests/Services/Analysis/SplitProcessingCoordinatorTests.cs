@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.Analysis;
+using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.Analysis;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
@@ -156,6 +157,64 @@ public class SplitProcessingCoordinatorTests : IDisposable
 
         // Assert
         Assert.False(result);
+    }
+
+    [Fact]
+    public async Task ShouldProcessAsync_ReturnsFalse_WhenPendingTaskExistsInPersistedTasks()
+    {
+        // Arrange
+        var chapter = await CreateChapterAsync();
+        _dbContext.PersistedTasks.Add(
+            new PersistedTask
+            {
+                Data = new DetectSplitCandidatesTask(
+                    chapter.Id,
+                    SplitDetectionService.CURRENT_DETECTOR_VERSION
+                ),
+                Status = PersistedTaskStatus.Pending,
+                Order = 1,
+            }
+        );
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Act
+        var result = await _coordinator.ShouldProcessAsync(
+            chapter.Id,
+            StripDetectionMode.DetectOnly,
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        // Assert
+        Assert.False(result);
+    }
+
+    [Fact]
+    public async Task ShouldProcessAsync_ReturnsTrue_WhenCompletedTaskExistsInPersistedTasks()
+    {
+        // Arrange
+        var chapter = await CreateChapterAsync();
+        _dbContext.PersistedTasks.Add(
+            new PersistedTask
+            {
+                Data = new DetectSplitCandidatesTask(
+                    chapter.Id,
+                    SplitDetectionService.CURRENT_DETECTOR_VERSION
+                ),
+                Status = PersistedTaskStatus.Completed,
+                Order = 1,
+            }
+        );
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Act
+        var result = await _coordinator.ShouldProcessAsync(
+            chapter.Id,
+            StripDetectionMode.DetectOnly,
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        // Assert
+        Assert.True(result);
     }
 
     [Fact]
