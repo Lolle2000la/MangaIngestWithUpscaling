@@ -287,19 +287,15 @@ public class ChapterMergeUpscaleTaskManager(
         // Check if strip detection is needed for the merged chapter
         if (library.StripDetectionMode != StripDetectionMode.None)
         {
-            bool needsSplitDetection = await splitProcessingCoordinator.ShouldProcessAsync(
-                primaryChapter.Id,
-                library.StripDetectionMode,
-                dbContext,
-                cancellationToken
-            );
+            bool needsSplitDetection =
+                await splitProcessingCoordinator.EnqueueDetectionIfPlausibleAsync(
+                    primaryChapter.Id,
+                    dbContext,
+                    cancellationToken
+                );
 
             if (needsSplitDetection)
             {
-                await splitProcessingCoordinator.EnqueueDetectionAsync(
-                    primaryChapter.Id,
-                    cancellationToken
-                );
                 logger.LogInformation(
                     "Queued split detection for merged chapter {FileName} (Chapter ID: {ChapterId}) instead of immediate upscaling",
                     mergeInfo.MergedChapter.FileName,
