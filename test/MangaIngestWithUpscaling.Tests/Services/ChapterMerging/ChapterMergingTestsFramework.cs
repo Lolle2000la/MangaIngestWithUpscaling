@@ -2805,12 +2805,7 @@ public class PartialUpscalingMergeTests : IDisposable
 
         // Configure split coordinator to say split detection IS needed
         splitCoordinator
-            .ShouldProcessAsync(
-                chapter.Id,
-                library.StripDetectionMode,
-                context,
-                Arg.Any<CancellationToken>()
-            )
+            .EnqueueDetectionIfPlausibleAsync(chapter.Id, context, Arg.Any<CancellationToken>())
             .Returns(true);
 
         var taskManager = new ChapterMergeUpscaleTaskManager(
@@ -2834,7 +2829,7 @@ public class PartialUpscalingMergeTests : IDisposable
         // Verify split detection was enqueued
         await splitCoordinator
             .Received(1)
-            .EnqueueDetectionAsync(chapter.Id, Arg.Any<CancellationToken>());
+            .EnqueueDetectionIfPlausibleAsync(chapter.Id, context, Arg.Any<CancellationToken>());
 
         // Verify upscaling-related tasks were NOT enqueued directly
         await taskQueue.DidNotReceive().EnqueueAsync(Arg.Any<UpscaleTask>());

@@ -68,7 +68,7 @@ public class SplitProcessingCoordinator(
                     await stateManager.SetNoSplitsFoundAsync(
                         chapterId,
                         SplitDetectionService.CURRENT_DETECTOR_VERSION,
-                        null,
+                        context,
                         cancellationToken
                     );
                     return false;
@@ -122,10 +122,12 @@ public class SplitProcessingCoordinator(
 
     public async Task<bool> EnqueueDetectionIfPlausibleAsync(
         int chapterId,
+        ApplicationDbContext? context = null,
         CancellationToken cancellationToken = default
     )
     {
-        var chapter = await dbContext
+        var db = context ?? dbContext;
+        var chapter = await db
             .Chapters.Include(c => c.Manga)
                 .ThenInclude(m => m.Library)
             .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
@@ -145,16 +147,14 @@ public class SplitProcessingCoordinator(
             await stateManager.SetNoSplitsFoundAsync(
                 chapterId,
                 SplitDetectionService.CURRENT_DETECTOR_VERSION,
-                null,
+                context,
                 cancellationToken
             );
 
             // Clear any existing findings since we decided there are none
-            var existingFindings = dbContext.StripSplitFindings.Where(f =>
-                f.ChapterId == chapterId
-            );
-            dbContext.StripSplitFindings.RemoveRange(existingFindings);
-            await dbContext.SaveChangesAsync(cancellationToken);
+            var existingFindings = db.StripSplitFindings.Where(f => f.ChapterId == chapterId);
+            db.StripSplitFindings.RemoveRange(existingFindings);
+            await db.SaveChangesAsync(cancellationToken);
             logger.LogInformation(
                 "Skipping split detection for {Chapter} as no plausible pages were found.",
                 chapter.FileName

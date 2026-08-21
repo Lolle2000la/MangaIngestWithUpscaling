@@ -42,6 +42,7 @@ public interface ISplitProcessingCoordinator
     /// <returns>True if a task was enqueued, false if it was skipped (completed immediately).</returns>
     Task<bool> EnqueueDetectionIfPlausibleAsync(
         int chapterId,
+        ApplicationDbContext? context = null,
         CancellationToken cancellationToken = default
     );
 

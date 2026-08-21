@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.Analysis;
@@ -730,38 +730,42 @@ public partial class IngestProcessor(
             await dbContext.SaveChangesAsync(cancellationToken);
         }
 
-        foreach (var chapterTuple in chaptersToUpscale)
-        {
-            bool deferForSplitDetection = await splitProcessingCoordinator.ShouldProcessAsync(
-                chapterTuple.Id,
-                library.StripDetectionMode,
-                cancellationToken: cancellationToken
-            );
-
-            if (!deferForSplitDetection)
-            {
-                var upscaleTask = new UpscaleTask(chapterTuple);
-                await taskQueue.EnqueueAsync(upscaleTask);
-            }
-        }
-
+        var chaptersDeferredForSplit = new HashSet<int>();
         if (library.StripDetectionMode != StripDetectionMode.None)
         {
             foreach (var chapter in allProcessedChapters)
             {
-                if (
-                    await splitProcessingCoordinator.ShouldProcessAsync(
-                        chapter.Id,
-                        library.StripDetectionMode,
-                        cancellationToken: cancellationToken
-                    )
-                )
+                bool queued = await splitProcessingCoordinator.EnqueueDetectionIfPlausibleAsync(
+                    chapter.Id,
+                    dbContext,
+                    cancellationToken
+                );
+                if (queued)
                 {
-                    await splitProcessingCoordinator.EnqueueDetectionAsync(
-                        chapter.Id,
-                        cancellationToken
+                    chaptersDeferredForSplit.Add(chapter.Id);
+                    logger.LogInformation(
+                        "Queued split detection for chapter {FileName} (Chapter ID: {ChapterId}) on ingest",
+                        chapter.FileName,
+                        chapter.Id
                     );
                 }
+            }
+        }
+
+        foreach (var chapterTuple in chaptersToUpscale)
+        {
+            if (!chaptersDeferredForSplit.Contains(chapterTuple.Id))
+            {
+                var upscaleTask = new UpscaleTask(chapterTuple);
+                await taskQueue.EnqueueAsync(upscaleTask);
+            }
+            else
+            {
+                logger.LogInformation(
+                    "Deferred upscaling for chapter {FileName} (Chapter ID: {ChapterId}) pending split detection",
+                    chapterTuple.FileName,
+                    chapterTuple.Id
+                );
             }
         }
 
