@@ -1258,95 +1258,91 @@
         }
     }
 
-    private async Task DetectSplits(Chapter chapter)
+    private void DetectSplits(Chapter chapter)
     {
-        try
-        {
-            bool queued = await SplitProcessingCoordinator.EnqueueDetectionIfPlausibleAsync(chapter.Id);
-            if (queued)
-            {
-                Snackbar.Add(string.Format(Loc["Snackbar_SplitDetectionQueued"], chapter.FileName), Severity.Success);
-            }
-            else
-            {
-                Snackbar.Add(string.Format(Loc["Snackbar_SplitDetectionCompleted"], chapter.FileName), Severity.Success);
-            }
-
-            // Defer reloading so MudMenu has finished closing before the table/row components re-render
-            _ = InvokeAsync(async () =>
-            {
-                await Task.Yield();
-                await LoadChapters();
-                StateHasChanged();
-            });
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "Failed to queue split detection for chapter {ChapterId}", chapter.Id);
-            Snackbar.Add(string.Format(Loc["Snackbar_SplitDetectionFailure"], ex.Message), Severity.Error);
-        }
-    }
-
-    private async Task ViewSplits(Chapter chapter)
-    {
-        var parameters = new DialogParameters
-        {
-            { "ChapterId", chapter.Id }
-        };
-
-        var options = new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseButton = true };
-
-        var dialog = await DialogService.ShowAsync<SplitEditorDialog>(Loc["Dialog_EditSplits_Title"], parameters, options);
-        var result = await dialog.Result;
-    }
-
-    private async Task ApplySplits(Chapter chapter)
-    {
-        var result = await DialogService.ShowMessageBoxAsync(
-            Loc["Dialog_ApplySplits_Title"],
-            Loc["Dialog_ApplySplits_Content"],
-            SharedLoc["Yes"],
-            cancelText: SharedLoc["No"]);
-
-        if (result == true)
+        _ = InvokeAsync(async () =>
         {
             try
             {
-                // Use the detector version from the chapter's split state to handle both auto and manual splits
-                var splitState = await SplitStateManager.GetStateAsync(chapter.Id, null, CancellationToken.None);
-                
-                // Check for the latest detector version from actual findings to handle manual splits
-                var latestFindingDetectorVersion = await DbContext
-                    .Set<StripSplitFinding>()
-                    .Where(f => f.ChapterId == chapter.Id)
-                    .OrderByDescending(f => f.DetectorVersion)
-                    .Select(f => (int?)f.DetectorVersion)
-                    .FirstOrDefaultAsync(CancellationToken.None);
-                
-                // Prefer the detector version that is actually present on persisted findings for the chapter.
-                // This ensures manually saved splits are not skipped when the processing state still points to an older version.
-                int detectorVersion = 
-                    latestFindingDetectorVersion
-                    ?? splitState?.LastProcessedDetectorVersion
-                    ?? SplitDetectionService.CURRENT_DETECTOR_VERSION;
-                
-                await SplitApplicationService.ApplySplitsAsync(chapter.Id, detectorVersion, CancellationToken.None);
-                Snackbar.Add(string.Format(Loc["Snackbar_SplitApplicationQueued"], chapter.FileName), Severity.Success);
-
-                // Reset the state using the state manager
-                await SplitStateManager.ResetToPendingAsync(chapter.Id, null, CancellationToken.None);
-
-                // Refresh the UI
-                var item = chapters.Items.FirstOrDefault(ci => ci.Chapter.Id == chapter.Id);
-                if (item != null && item.SplitState != null)
+                bool queued = await SplitProcessingCoordinator.EnqueueDetectionIfPlausibleAsync(chapter.Id);
+                if (queued)
                 {
-                    item.SplitState.Status = SplitProcessingStatus.Pending;
+                    Snackbar.Add(string.Format(Loc["Snackbar_SplitDetectionQueued"], chapter.FileName), Severity.Success);
+                }
+                else
+                {
+                    Snackbar.Add(string.Format(Loc["Snackbar_SplitDetectionCompleted"], chapter.FileName), Severity.Success);
+                }
 
-                    var index = chapters.Items.IndexOf(item);
-                    if (index != -1)
-                    {
-                        chapters.ReplaceAt(index, item);
-                    }
+                await LoadChapters();
+                StateHasChanged();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Failed to queue split detection for chapter {ChapterId}", chapter.Id);
+                Snackbar.Add(string.Format(Loc["Snackbar_SplitDetectionFailure"], ex.Message), Severity.Error);
+            }
+        });
+    }
+
+    private void ViewSplits(Chapter chapter)
+    {
+        _ = InvokeAsync(async () =>
+        {
+            try
+            {
+                var parameters = new DialogParameters
+                {
+                    { "ChapterId", chapter.Id }
+                };
+
+                var options = new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseButton = true };
+
+                var dialog = await DialogService.ShowAsync<SplitEditorDialog>(Loc["Dialog_EditSplits_Title"], parameters, options);
+                await dialog.Result;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Failed to show split editor dialog for chapter {ChapterId}", chapter.Id);
+            }
+        });
+    }
+
+    private void ApplySplits(Chapter chapter)
+    {
+        _ = InvokeAsync(async () =>
+        {
+            try
+            {
+                var result = await DialogService.ShowMessageBoxAsync(
+                    Loc["Dialog_ApplySplits_Title"],
+                    Loc["Dialog_ApplySplits_Content"],
+                    SharedLoc["Yes"],
+                    cancelText: SharedLoc["No"]);
+
+                if (result == true)
+                {
+                    var splitState = await SplitStateManager.GetStateAsync(chapter.Id, null, CancellationToken.None);
+
+                    var latestFindingDetectorVersion = await DbContext
+                        .Set<StripSplitFinding>()
+                        .Where(f => f.ChapterId == chapter.Id)
+                        .OrderByDescending(f => f.DetectorVersion)
+                        .Select(f => (int?)f.DetectorVersion)
+                        .FirstOrDefaultAsync(CancellationToken.None);
+
+                    int detectorVersion =
+                        latestFindingDetectorVersion
+                        ?? splitState?.LastProcessedDetectorVersion
+                        ?? SplitDetectionService.CURRENT_DETECTOR_VERSION;
+
+                    await SplitApplicationService.ApplySplitsAsync(chapter.Id, detectorVersion, CancellationToken.None);
+                    Snackbar.Add(string.Format(Loc["Snackbar_SplitApplicationQueued"], chapter.FileName), Severity.Success);
+
+                    await SplitStateManager.ResetToPendingAsync(chapter.Id, null, CancellationToken.None);
+
+                    await LoadChapters();
+                    StateHasChanged();
                 }
             }
             catch (Exception ex)
@@ -1354,31 +1350,40 @@
                 Logger.LogError(ex, "Failed to apply splits for chapter {ChapterId}", chapter.Id);
                 Snackbar.Add(string.Format(Loc["Snackbar_SplitApplicationFailure"], ex.Message), Severity.Error);
             }
-        }
+        });
     }
 
-    private async Task ManualSplit(Chapter chapter)
+    private void ManualSplit(Chapter chapter)
     {
-        var parameters = new DialogParameters
+        _ = InvokeAsync(async () =>
         {
-            { "ChapterId", chapter.Id }
-        };
+            try
+            {
+                var parameters = new DialogParameters
+                {
+                    { "ChapterId", chapter.Id }
+                };
 
-        var options = new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseButton = true };
+                var options = new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseButton = true };
 
-        var dialog = await DialogService.ShowAsync<ManualSplitDialog>(Loc["Dialog_ManualSplit_Title"], parameters, options);
+                var dialog = await DialogService.ShowAsync<ManualSplitDialog>(Loc["Dialog_ManualSplit_Title"], parameters, options);
+                var result = await dialog.Result;
 
-        var result = await dialog.Result;
-
-        if (result is { Canceled: false })
-        {
-            // Refresh the chapter to show the new split state
-            await LoadChapters();
-        }
-        else if (result == null)
-        {
-            Logger.LogWarning("Dialog result was null for ManualSplitDialog");
-        }
+                if (result is { Canceled: false })
+                {
+                    await LoadChapters();
+                    StateHasChanged();
+                }
+                else if (result == null)
+                {
+                    Logger.LogWarning("Dialog result was null for ManualSplitDialog");
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Failed in manual split dialog for chapter {ChapterId}", chapter.Id);
+            }
+        });
     }
 
     private record ChapterItem
