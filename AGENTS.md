@@ -111,7 +111,7 @@ dotnet run --project src/MangaIngestWithUpscaling
    - All test projects have "Tests" in their name.
    - To run all tests in the solution:
      ```bash
-     dotnet test test/MangaIngestWithUpscaling.Tests --filter Category!=Download
+     dotnet test --solution MangaIngestWithUpscaling.sln --filter-not-trait Category=Download
      ```
      Don't run download tests unless you have a specific reason. They can take very long.
    - If you add new features or make changes that affect logic, consider writing new or updating existing tests.
@@ -235,7 +235,7 @@ dotnet run --project src/MangaIngestWithUpscaling
 5. **Test Suite (If you made relevant code changes):**
    - Run tests using:
      ```bash
-     dotnet test test/MangaIngestWithUpscaling.Tests
+     dotnet test --solution MangaIngestWithUpscaling.sln --filter-not-trait Category=Download
      ```
    - Add or update tests if your change introduces or modifies features/logic.
 
@@ -282,7 +282,7 @@ The project uses GitHub Actions for continuous integration:
 dotnet restore MangaIngestWithUpscaling.sln
 dotnet build --no-restore MangaIngestWithUpscaling.sln /p:TreatWarningsAsErrors=true
 # Run tests if relevant changes are made
-dotnet test MangaIngestWithUpscaling.Tests
+dotnet test --solution MangaIngestWithUpscaling.sln --filter-not-trait Category=Download
 ```
 
 ## Key Dependencies

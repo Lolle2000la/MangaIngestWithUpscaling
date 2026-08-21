@@ -33,8 +33,8 @@ jobs:
       - name: Build
         run: dotnet build --no-restore MangaIngestWithUpscaling.sln /warnaserror
       - name: Test shared
-        run: dotnet test --no-build --verbosity normal test/MangaIngestWithUpscaling.Shared.Tests/MangaIngestWithUpscaling.Shared.Tests.csproj
+        run: dotnet test --no-build --verbosity normal --project test/MangaIngestWithUpscaling.Shared.Tests/MangaIngestWithUpscaling.Shared.Tests.csproj --filter-not-trait Category=Download
       - name: Test server
-        run: dotnet test --no-build --verbosity normal test/MangaIngestWithUpscaling.Tests/MangaIngestWithUpscaling.Tests.csproj
+        run: dotnet test --no-build --verbosity normal --project test/MangaIngestWithUpscaling.Tests/MangaIngestWithUpscaling.Tests.csproj
       - name: Test server UI
-        run: dotnet test --no-build --verbosity normal test/MangaIngestWithUpscaling.Tests.UI/MangaIngestWithUpscaling.Tests.UI.csproj
+        run: dotnet test --no-build --verbosity normal --project test/MangaIngestWithUpscaling.Tests.UI/MangaIngestWithUpscaling.Tests.UI.csproj

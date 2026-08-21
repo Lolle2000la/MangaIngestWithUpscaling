@@ -26,4 +26,4 @@ jobs:
       - name: Build
         run: dotnet build --no-restore test/MangaIngestWithUpscaling.RemoteWorker.Tests/MangaIngestWithUpscaling.RemoteWorker.Tests.csproj /warnaserror
       - name: Test
-        run: dotnet test --no-build --verbosity normal test/MangaIngestWithUpscaling.RemoteWorker.Tests/MangaIngestWithUpscaling.RemoteWorker.Tests.csproj
+        run: dotnet test --no-build --verbosity normal --project test/MangaIngestWithUpscaling.RemoteWorker.Tests/MangaIngestWithUpscaling.RemoteWorker.Tests.csproj
