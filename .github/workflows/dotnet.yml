@@ -28,4 +28,4 @@ jobs:
       - name: Build
         run: dotnet build --no-restore MangaIngestWithUpscaling.sln /warnaserror
       - name: Test (Unit Tests Only)
-        run: dotnet test --no-build --verbosity normal --settings development.runsettings MangaIngestWithUpscaling.sln
+        run: dotnet test --no-build --verbosity normal --solution MangaIngestWithUpscaling.sln --filter-not-trait Category=Download
