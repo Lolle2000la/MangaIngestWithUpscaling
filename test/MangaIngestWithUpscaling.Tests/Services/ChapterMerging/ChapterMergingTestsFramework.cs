@@ -2469,6 +2469,7 @@ public class PartialUpscalingMergeTests : IDisposable
             upscaleTaskManager,
             taskQueueStub,
             metadataHandling,
+            Substitute.For<ISplitProcessingCoordinator>(),
             Substitute.For<IStringLocalizer<ChapterMergeCoordinator>>(),
             logger
         );
@@ -2854,6 +2855,7 @@ public class PartialUpscalingMergeTests : IDisposable
             upscaleTaskManager,
             taskQueueStub2,
             metadataHandling,
+            Substitute.For<ISplitProcessingCoordinator>(),
             Substitute.For<IStringLocalizer<ChapterMergeCoordinator>>(),
             logger
         );
@@ -2958,6 +2960,7 @@ public class PartialUpscalingMergeTests : IDisposable
             upscaleTaskManager,
             taskQueueStub3,
             metadataHandling,
+            Substitute.For<ISplitProcessingCoordinator>(),
             Substitute.For<IStringLocalizer<ChapterMergeCoordinator>>(),
             logger
         );
@@ -3027,6 +3030,105 @@ public class PartialUpscalingMergeTests : IDisposable
                 Arg.Any<UpscaledMergeResult>(),
                 Arg.Any<CancellationToken>()
             );
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task ProcessAdditionToExistingMergedChapter_WithStripDetection_ShouldQueueSplitDetectionAndDeferUpscale()
+    {
+        // Arrange
+        await using ApplicationDbContext context = CreateDbContext();
+        var logger = Substitute.For<ILogger<ChapterMergeCoordinator>>();
+        var metadataHandling = Substitute.For<IMetadataHandlingService>();
+        var chapterPartMerger = Substitute.For<IChapterPartMerger>();
+        var upscaleTaskManager = Substitute.For<IChapterMergeUpscaleTaskManager>();
+        var taskQueue = Substitute.For<ITaskQueue>();
+        var splitCoordinator = Substitute.For<ISplitProcessingCoordinator>();
+
+        var coordinator = new ChapterMergeCoordinator(
+            context,
+            chapterPartMerger,
+            upscaleTaskManager,
+            taskQueue,
+            metadataHandling,
+            splitCoordinator,
+            Substitute.For<IStringLocalizer<ChapterMergeCoordinator>>(),
+            logger
+        );
+
+        var library = CreateTestLibrary();
+        library.UpscaleOnIngest = true;
+        library.StripDetectionMode = StripDetectionMode.DetectAndApply;
+
+        var upscalerProfile = new UpscalerProfile
+        {
+            Name = "Test Profile",
+            ScalingFactor = ScaleFactor.TwoX,
+            CompressionFormat = CompressionFormat.Avif,
+            Quality = 80,
+        };
+        library.UpscalerProfile = upscalerProfile;
+        context.UpscalerProfiles.Add(upscalerProfile);
+        context.Libraries.Add(library);
+
+        var manga = new Manga
+        {
+            PrimaryTitle = "Test Manga",
+            Library = library,
+            ShouldUpscale = true,
+        };
+        context.MangaSeries.Add(manga);
+
+        var existingMergedChapter = new Chapter
+        {
+            FileName = "Chapter 12.cbz",
+            RelativePath = Path.Combine("Test Manga", "Chapter 12.cbz"),
+            Manga = manga,
+            IsUpscaled = false,
+        };
+        context.Chapters.Add(existingMergedChapter);
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        splitCoordinator
+            .EnqueueDetectionIfPlausibleAsync(
+                existingMergedChapter.Id,
+                context,
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(true);
+
+        // Act
+        // Invoke HandleExistingMergedChapterUpscalingAsync via reflection
+        var method = typeof(ChapterMergeCoordinator).GetMethod(
+            "HandleExistingMergedChapterUpscalingAsync",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance
+        );
+        Assert.NotNull(method);
+
+        var task = (Task)
+            method.Invoke(
+                coordinator,
+                new object[]
+                {
+                    existingMergedChapter,
+                    library,
+                    TestContext.Current.CancellationToken,
+                }
+            )!;
+        await task;
+
+        // Assert
+        // Verify split detection was enqueued
+        await splitCoordinator
+            .Received(1)
+            .EnqueueDetectionIfPlausibleAsync(
+                existingMergedChapter.Id,
+                context,
+                Arg.Any<CancellationToken>()
+            );
+
+        // Verify UpscaleTask was deferred and NOT enqueued
+        await taskQueue.DidNotReceive().EnqueueAsync(Arg.Any<UpscaleTask>());
     }
 
     private Library CreateTestLibrary()

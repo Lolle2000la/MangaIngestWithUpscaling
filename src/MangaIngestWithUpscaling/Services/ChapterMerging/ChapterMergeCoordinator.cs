@@ -3,8 +3,10 @@ using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Helpers;
+using MangaIngestWithUpscaling.Services.Analysis;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.EntityFrameworkCore;
@@ -19,6 +21,7 @@ public class ChapterMergeCoordinator(
     IChapterMergeUpscaleTaskManager upscaleTaskManager,
     ITaskQueue taskQueue,
     IMetadataHandlingService metadataHandlingService,
+    ISplitProcessingCoordinator splitProcessingCoordinator,
     IStringLocalizer<ChapterMergeCoordinator> localizer,
     ILogger<ChapterMergeCoordinator> logger
 ) : IChapterMergeCoordinator
@@ -1551,6 +1554,27 @@ public class ChapterMergeCoordinator(
                     "Failed to remove outdated upscaled version of merged chapter {FileName}",
                     existingMergedChapter.FileName
                 );
+            }
+        }
+
+        // Check if strip detection is needed for the merged chapter
+        if (library.StripDetectionMode != StripDetectionMode.None)
+        {
+            bool needsSplitDetection =
+                await splitProcessingCoordinator.EnqueueDetectionIfPlausibleAsync(
+                    existingMergedChapter.Id,
+                    dbContext,
+                    cancellationToken
+                );
+
+            if (needsSplitDetection)
+            {
+                logger.LogInformation(
+                    "Queued split detection for existing merged chapter {FileName} (Chapter ID: {ChapterId}) instead of immediate upscaling",
+                    existingMergedChapter.FileName,
+                    existingMergedChapter.Id
+                );
+                return;
             }
         }
 
