@@ -45,9 +45,11 @@ public class SplitProcessingService(
         // Check for errors in the results
         var failedResults = resultList.Where(r => !string.IsNullOrWhiteSpace(r.Error)).ToList();
         var successfulResults = resultList.Where(r => string.IsNullOrWhiteSpace(r.Error)).ToList();
+        var resultsToProcess = successfulResults;
+        var resultsWithSplits = resultsToProcess.Where(r => r.Splits.Count > 0).ToList();
 
-        // Only fail completely if ALL results have errors
-        if (failedResults.Count > 0 && successfulResults.Count == 0)
+        // If there are failures and no splits were found, fail the task and do not proceed to upscaling
+        if (failedResults.Count > 0 && resultsWithSplits.Count == 0)
         {
             await stateManager.SetFailedAsync(chapterId, null, cancellationToken);
 
@@ -57,11 +59,13 @@ public class SplitProcessingService(
             var errorMessage = string.Join("; ", uniqueErrors);
 
             logger.LogError(
-                "Split detection failed for all images in chapter {ChapterId}. Errors: {Errors}",
+                "Split detection failed for images in chapter {ChapterId}. Errors: {Errors}",
                 chapterId,
                 errorMessage
             );
-            return;
+            throw new InvalidOperationException(
+                $"Split detection failed for chapter {chapterId}: {errorMessage}"
+            );
         }
 
         // Log warnings for partial failures
@@ -81,15 +85,9 @@ public class SplitProcessingService(
             );
         }
 
-        // Process only successful results
-        var resultsToProcess = successfulResults;
-
         // Remove existing findings for this chapter to ensure clean state for this version
         var existingFindings = dbContext.StripSplitFindings.Where(f => f.ChapterId == chapterId);
         dbContext.StripSplitFindings.RemoveRange(existingFindings);
-
-        // Only save findings that actually have splits detected
-        var resultsWithSplits = resultsToProcess.Where(r => r.Splits.Count > 0).ToList();
 
         foreach (var res in resultsWithSplits)
         {

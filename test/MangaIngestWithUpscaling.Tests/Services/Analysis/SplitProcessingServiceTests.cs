@@ -383,12 +383,14 @@ public class SplitProcessingServiceTests : IDisposable
             new() { ImagePath = "page2.png", Error = "Another error" },
         };
 
-        // Act
-        await _service.ProcessDetectionResultsAsync(
-            chapter.Id,
-            results,
-            1,
-            TestContext.Current.CancellationToken
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _service.ProcessDetectionResultsAsync(
+                chapter.Id,
+                results,
+                1,
+                TestContext.Current.CancellationToken
+            )
         );
 
         // Assert
@@ -403,6 +405,64 @@ public class SplitProcessingServiceTests : IDisposable
             .StripSplitFindings.Where(f => f.ChapterId == chapter.Id)
             .ToListAsync(TestContext.Current.CancellationToken);
         Assert.Empty(findings);
+
+        // Ensure UpscaleTask was NOT enqueued
+        await _taskQueue.DidNotReceive().EnqueueAsync(Arg.Any<UpscaleTask>());
+    }
+
+    [Fact]
+    public async Task ProcessDetectionResultsAsync_SetsStatusToFailed_WhenOneResultErrorsAndOtherHasNoSplits()
+    {
+        // Arrange
+        var library = new Library
+        {
+            Name = "Test Library",
+            NotUpscaledLibraryPath = "/test/path",
+            StripDetectionMode = StripDetectionMode.DetectAndApply,
+            UpscaleOnIngest = true,
+        };
+        _dbContext.Libraries.Add(library);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
+        _dbContext.MangaSeries.Add(manga);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var chapter = new Chapter { FileName = "Test.cbz", Manga = manga };
+        _dbContext.Chapters.Add(chapter);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Page 1 succeeded with 0 splits, but Page 2 failed with an error
+        var results = new List<SplitDetectionResult>
+        {
+            new()
+            {
+                ImagePath = "page1.png",
+                Splits = [],
+                OriginalHeight = 400,
+                OriginalWidth = 800,
+            },
+            new() { ImagePath = "page2.png", Error = "Python process crashed" },
+        };
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _service.ProcessDetectionResultsAsync(
+                chapter.Id,
+                results,
+                1,
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        var state = await _dbContext.ChapterSplitProcessingStates.FirstAsync(
+            s => s.ChapterId == chapter.Id,
+            TestContext.Current.CancellationToken
+        );
+        Assert.Equal(SplitProcessingStatus.Failed, state.Status);
+
+        // Ensure UpscaleTask was NOT enqueued
+        await _taskQueue.DidNotReceive().EnqueueAsync(Arg.Any<UpscaleTask>());
     }
 
     [Fact]
