@@ -33,10 +33,13 @@ public class SplitDetectionWorkerShutdownTests
     {
         // The persistent upscaling worker holds most of the VRAM until its idle timeout,
         // so detection must release it first even when detection itself cannot proceed.
-        Assert.Throws<FileNotFoundException>(() =>
-            _service.DetectSplitsAsync("nonexistent-path").GetAwaiter().GetResult()
+        await Assert.ThrowsAsync<FileNotFoundException>(() =>
+            _service.DetectSplitsAsync(
+                "nonexistent-path",
+                cancellationToken: TestContext.Current.CancellationToken
+            )
         );
 
-        _workerClient.Received(1).ShutdownWorkerAsync(Arg.Any<CancellationToken>());
+        _ = _workerClient.Received(1).ShutdownWorkerAsync(Arg.Any<CancellationToken>());
     }
 }
