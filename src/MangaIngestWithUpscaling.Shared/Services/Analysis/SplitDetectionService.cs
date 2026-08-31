@@ -13,6 +13,7 @@ namespace MangaIngestWithUpscaling.Shared.Services.Analysis;
 [RegisterScoped]
 public class SplitDetectionService(
     IPythonService pythonService,
+    IMangaJaNaiWorkerClient workerClient,
     ILogger<SplitDetectionService> logger,
     IStringLocalizer<SplitDetectionService> localizer
 ) : ISplitDetectionService
@@ -30,6 +31,13 @@ public class SplitDetectionService(
         CancellationToken cancellationToken = default
     )
     {
+        // The persistent upscaling worker keeps its models and the PyTorch caching
+        // allocator resident on the GPU until the idle timeout, which can starve the
+        // per-image detection process of VRAM on smaller GPUs. Shut it down first so
+        // detection has the GPU to itself; the worker is respawned lazily on the next
+        // upscale job.
+        await ReleaseUpscalerGpuResourcesAsync();
+
         var results = new List<SplitDetectionResult>();
 
         if (File.Exists(inputPath))
@@ -81,6 +89,23 @@ public class SplitDetectionService(
         }
 
         return results;
+    }
+
+    private async Task ReleaseUpscalerGpuResourcesAsync()
+    {
+        try
+        {
+            await workerClient.ShutdownWorkerAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // Best-effort: failing to stop the worker must not prevent detection from
+            // being attempted, it may just hit CUDA OOM on small GPUs otherwise.
+            logger.LogWarning(
+                ex,
+                "Failed to shut down the persistent upscaling worker before split detection."
+            );
+        }
     }
 
     private async Task<SplitDetectionResult> DetectSingleImageAsync(
