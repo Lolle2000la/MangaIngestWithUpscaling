@@ -152,4 +152,22 @@ public record UpscalerConfig
             "Development",
             StringComparison.OrdinalIgnoreCase
         );
+
+    /// <summary>
+    ///     How long the persistent upscale worker must sit idle (no in-flight job) before it
+    ///     returns its cached allocator blocks (VRAM) to the driver, so co-tenant GPU processes
+    ///     (e.g. split detection) can run while the worker stays warm. Zero disables the release.
+    ///     The worker can also be asked to release immediately via
+    ///     <see cref="IMangaJaNaiWorkerClient.ReleaseGpuCacheAsync"/>.
+    /// </summary>
+    public TimeSpan WorkerIdleCacheReleaseTimeout { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    ///     When true, split detection shuts the persistent upscaling worker down entirely before
+    ///     running, guaranteeing maximum free VRAM. Intended for very VRAM-limited GPUs where even
+    ///     an idle worker (model weights + CUDA context) would starve detection. When false (the
+    ///     default), detection only asks the worker to release its cached VRAM and both processes
+    ///     coexist.
+    /// </summary>
+    public bool ShutdownWorkerBeforeSplitDetection { get; set; } = false;
 }

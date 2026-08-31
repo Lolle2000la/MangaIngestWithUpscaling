@@ -27,6 +27,7 @@ public static class WorkerJson
 [JsonDerivedType(typeof(WorkerDoneEvent), "done")]
 [JsonDerivedType(typeof(WorkerErrorEvent), "error")]
 [JsonDerivedType(typeof(WorkerCancelledEvent), "cancelled")]
+[JsonDerivedType(typeof(WorkerCacheReleasedEvent), "cache_released")]
 [JsonDerivedType(typeof(WorkerPongEvent), "pong")]
 [JsonDerivedType(typeof(WorkerExitedEvent), "exited")]
 public abstract record WorkerEvent;
@@ -57,6 +58,12 @@ public sealed record WorkerDoneEvent(
 public sealed record WorkerErrorEvent(string? Id, string? Message) : WorkerEvent;
 
 public sealed record WorkerCancelledEvent(string? Id) : WorkerEvent;
+
+/// <summary>
+/// Reply to a <c>release_cache</c> command. <c>Status</c> is <c>ok</c> when cached VRAM was
+/// returned to the driver, or <c>busy</c> when a job was in flight and the release was skipped.
+/// </summary>
+public sealed record WorkerCacheReleasedEvent(string? Status) : WorkerEvent;
 
 public sealed record WorkerPongEvent() : WorkerEvent;
 
