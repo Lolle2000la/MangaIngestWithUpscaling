@@ -27,6 +27,14 @@ public interface IMangaJaNaiWorkerClient
     /// Gracefully shuts the worker process down and releases GPU resources.
     /// </summary>
     Task ShutdownWorkerAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Asks the running worker to return its cached allocator blocks (VRAM) to the driver so
+    /// co-tenant GPU processes can run, while keeping the worker warm. Returns <c>true</c> when
+    /// the worker acknowledged the release, <c>false</c> when no worker is running, a job is in
+    /// flight, or the request failed/timed out.
+    /// </summary>
+    Task<bool> ReleaseGpuCacheAsync(CancellationToken cancellationToken);
 }
 
 /// <summary>

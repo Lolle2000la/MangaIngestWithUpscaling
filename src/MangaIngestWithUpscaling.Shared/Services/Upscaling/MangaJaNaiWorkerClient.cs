@@ -41,6 +41,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     private Process? _process;
     private StreamWriter? _stdin;
     private TaskCompletionSource? _readyTcs;
+    private TaskCompletionSource? _cacheReleaseTcs;
     private string? _currentJobId;
     private bool _shuttingDown;
 
@@ -221,6 +222,76 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         await CleanupAsync(process);
     }
 
+    /// <summary>
+    /// Asks the running worker to return its cached allocator blocks (VRAM) to the driver so
+    /// co-tenant GPU processes (e.g. split detection) can run while the worker stays warm.
+    /// Skipped when no worker is running or a job is in flight (freeing cached blocks mid-job
+    /// would only slow the running inference).
+    /// </summary>
+    public async Task<bool> ReleaseGpuCacheAsync(CancellationToken cancellationToken)
+    {
+        Process? process;
+        TaskCompletionSource? tcs;
+        lock (_stateLock)
+        {
+            process = _process;
+            if (process is null || process.HasExited)
+            {
+                return false;
+            }
+
+            if (_currentJobId is not null || !_jobs.IsEmpty)
+            {
+                _logger.LogDebug("Not releasing worker GPU cache: a job is in flight or queued.");
+                return false;
+            }
+
+            tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _cacheReleaseTcs = tcs;
+        }
+
+        try
+        {
+            await SendLineAsync(
+                JsonSerializer.Serialize(new WorkerCommand("release_cache"), WorkerJson.Options),
+                cancellationToken
+            );
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to send the GPU cache release request to the worker.");
+            return false;
+        }
+
+        try
+        {
+            // A healthy idle worker answers immediately; the timeout only guards against a
+            // wedged process. The worker may legitimately answer "busy" (job started in the
+            // meantime), which still counts as an acknowledged reply.
+            await tcs.Task.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
+            return true;
+        }
+        catch (TimeoutException)
+        {
+            _logger.LogWarning("The upscale worker did not acknowledge the GPU cache release.");
+            return false;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+        finally
+        {
+            lock (_stateLock)
+            {
+                if (_cacheReleaseTcs == tcs)
+                {
+                    _cacheReleaseTcs = null;
+                }
+            }
+        }
+    }
+
     public Task StartAsync(CancellationToken cancellationToken)
     {
         _ = WatchdogLoopAsync(cancellationToken);
@@ -295,6 +366,15 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         startInfo.ArgumentList.Add(settingsPath);
         startInfo.ArgumentList.Add("--queue-capacity");
         startInfo.ArgumentList.Add(_config.Value.WorkerQueueCapacity.ToString());
+        if (_config.Value.WorkerIdleCacheReleaseTimeout > TimeSpan.Zero)
+        {
+            startInfo.ArgumentList.Add("--cache-release-idle");
+            startInfo.ArgumentList.Add(
+                _config.Value.WorkerIdleCacheReleaseTimeout.TotalSeconds.ToString(
+                    System.Globalization.CultureInfo.InvariantCulture
+                )
+            );
+        }
         if (_config.Value.WorkerWarmup)
         {
             startInfo.ArgumentList.Add("--warmup");
@@ -682,6 +762,9 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                 case WorkerCancelledEvent cancelled:
                     // Acknowledge the cancel; the job completes via the subsequent done event.
                     TouchJob(cancelled.Id);
+                    break;
+                case WorkerCacheReleasedEvent:
+                    _cacheReleaseTcs?.TrySetResult();
                     break;
             }
         }

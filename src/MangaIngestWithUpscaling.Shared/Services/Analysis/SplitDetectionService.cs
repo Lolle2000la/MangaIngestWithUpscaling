@@ -7,6 +7,7 @@ using MangaIngestWithUpscaling.Shared.Services.Python;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace MangaIngestWithUpscaling.Shared.Services.Analysis;
 
@@ -14,6 +15,7 @@ namespace MangaIngestWithUpscaling.Shared.Services.Analysis;
 public class SplitDetectionService(
     IPythonService pythonService,
     IMangaJaNaiWorkerClient workerClient,
+    IOptions<UpscalerConfig> upscalerConfig,
     ILogger<SplitDetectionService> logger,
     IStringLocalizer<SplitDetectionService> localizer
 ) : ISplitDetectionService
@@ -32,10 +34,10 @@ public class SplitDetectionService(
     )
     {
         // The persistent upscaling worker keeps its models and the PyTorch caching
-        // allocator resident on the GPU until the idle timeout, which can starve the
-        // per-image detection process of VRAM on smaller GPUs. Shut it down first so
-        // detection has the GPU to itself; the worker is respawned lazily on the next
-        // upscale job.
+        // allocator resident on the GPU, which can starve the per-image detection
+        // process of VRAM on smaller GPUs. By default we ask it to release its cached
+        // VRAM (it stays warm and is reused by the next upscale job); when configured,
+        // it is shut down entirely for maximum free VRAM.
         await ReleaseUpscalerGpuResourcesAsync();
 
         var results = new List<SplitDetectionResult>();
@@ -95,15 +97,25 @@ public class SplitDetectionService(
     {
         try
         {
-            await workerClient.ShutdownWorkerAsync(CancellationToken.None);
+            if (upscalerConfig.Value.ShutdownWorkerBeforeSplitDetection)
+            {
+                // VRAM-limited setup: even an idle worker (model weights + CUDA context)
+                // can starve detection, so tear the worker down completely. It is
+                // respawned lazily on the next upscale job.
+                await workerClient.ShutdownWorkerAsync(CancellationToken.None);
+            }
+            else
+            {
+                await workerClient.ReleaseGpuCacheAsync(CancellationToken.None);
+            }
         }
         catch (Exception ex)
         {
-            // Best-effort: failing to stop the worker must not prevent detection from
+            // Best-effort: failing to free VRAM must not prevent detection from
             // being attempted, it may just hit CUDA OOM on small GPUs otherwise.
             logger.LogWarning(
                 ex,
-                "Failed to shut down the persistent upscaling worker before split detection."
+                "Failed to free the upscaling worker's VRAM before split detection."
             );
         }
     }

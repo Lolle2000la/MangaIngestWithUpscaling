@@ -71,5 +71,24 @@ public class MangaJaNaiWorkerClientTests
             WorkerJson.Options
         );
         Assert.Equal("""{"type":"cancel","id":"job-9"}""", cancel);
+
+        string release = JsonSerializer.Serialize(
+            new WorkerCommand("release_cache"),
+            WorkerJson.Options
+        );
+        Assert.Equal("""{"type":"release_cache"}""", release);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void WorkerEvent_DeserializesCacheReleasedEvent()
+    {
+        WorkerEvent? evt = JsonSerializer.Deserialize<WorkerEvent>(
+            """{"type":"cache_released","status":"busy"}""",
+            WorkerJson.Options
+        );
+
+        WorkerCacheReleasedEvent released = Assert.IsType<WorkerCacheReleasedEvent>(evt);
+        Assert.Equal("busy", released.Status);
     }
 }
