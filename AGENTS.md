@@ -136,6 +136,11 @@ dotnet run --project src/MangaIngestWithUpscaling
 - **File Format**: Ensure all `.resx` files use the standard .NET XML header structure.
 - **Cleanup**: Never leave `.resx` files in the source directories alongside the code files.
 
+## Entity Conventions
+
+- **Automatic timestamps**: Entities whose `CreatedAt`/`ModifiedAt` should be managed by `ApplicationDbContext.UpdateTimestamps` must implement `IHasCreatedAt` / `IHasModifiedAt` (`src/MangaIngestWithUpscaling.Shared/Data/Abstractions`). Entities whose timestamps are set manually must **not** implement them.
+- **Library configuration**: Child entities of a `Library` that represent configuration (ingest paths, filter rules, rename rules) implement `ILibraryConfiguration` so that adding, updating or deleting one bumps the owning `Library.ModifiedAt`.
+
 ## Project Structure
 
 ### Key Directories
@@ -205,6 +210,19 @@ dotnet csharpier format src/ test/
 
 ### Database Operations
 The application uses SQLite with Entity Framework Core. Database migrations are applied automatically on startup.
+
+There are two contexts — `ApplicationDbContext` (application data) and `LoggingDbContext` (logs) — so EF tooling commands must pass `--context`:
+
+```bash
+# Add a migration after changing the model
+dotnet ef migrations add <Name> --project src/MangaIngestWithUpscaling --startup-project src/MangaIngestWithUpscaling --context ApplicationDbContext
+
+# Verify the model and snapshot agree (should be clean before merging)
+dotnet ef migrations has-pending-model-changes --project src/MangaIngestWithUpscaling --startup-project src/MangaIngestWithUpscaling --context ApplicationDbContext
+```
+
+- Review generated migrations before committing. Data backfills must run **before** a column is dropped (see `AddMultipleIngestPaths`), and migrations that transform data should get a regression test that migrates to the previous migration, seeds old-schema data, then migrates forward (see `AddMultipleIngestPathsMigrationTests`).
+- An "EF tools version is older than the runtime" warning is expected and harmless.
 
 ### Testing Scenarios
 
