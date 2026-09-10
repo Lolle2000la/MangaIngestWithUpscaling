@@ -438,14 +438,7 @@
         if (firstRender)
         {
             // Load the JavaScript file
-            try
-            {
-                await JSRuntime.InvokeVoidAsync("import", "/js/manualSplitDrag.js");
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine("Error loading manualSplitDrag.js: " + ex.Message);
-            }
+            await JSRuntime.InvokeVoidAsync("import", "/js/manualSplitDrag.js");
         }
     }
 

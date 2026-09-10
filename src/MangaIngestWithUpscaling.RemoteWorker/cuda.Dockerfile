@@ -1,7 +1,7 @@
 # See https://aka.ms/customizecontainer to learn how to customize your debug container and how Visual Studio uses this Dockerfile to build your images for faster debugging.
 
 # This stage is used when running from VS in fast mode (Default for Debug configuration)
-FROM mcr.microsoft.com/dotnet/aspnet:11.0 AS base
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
 WORKDIR /app
 # Install the required dependencies for the service
 RUN apt-get update && apt-get install -y \
@@ -13,7 +13,7 @@ ENV Ingest_Upscaler__SelectedDeviceIndex=0
 ENV Ingest_Upscaler__PreferredGpuBackend=CUDA
 
 # This stage is used to build the service project
-FROM --platform=$BUILDPLATFORM  mcr.microsoft.com/dotnet/sdk:11.0 AS build
+FROM --platform=$BUILDPLATFORM  mcr.microsoft.com/dotnet/sdk:10.0-noble AS build
 ARG BUILD_CONFIGURATION=Release
 ARG TARGETARCH
 WORKDIR /src
