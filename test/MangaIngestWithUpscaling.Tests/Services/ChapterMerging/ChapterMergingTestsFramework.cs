@@ -1527,7 +1527,7 @@ public class ChapterMergeRevertServiceTests : IDisposable
             Name = "Test Library",
             NotUpscaledLibraryPath = "/test/not_upscaled",
             UpscaledLibraryPath = "/test/upscaled",
-            IngestPath = "/test/ingest",
+            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest" }],
         };
     }
 

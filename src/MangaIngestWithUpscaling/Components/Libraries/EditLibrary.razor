@@ -45,6 +45,7 @@
         if (LibraryId.HasValue)
         {
             Library = await DbContext.Libraries
+            .Include(l => l.IngestPaths)
             .Include(l => l.MangaSeries)
             .Include(l => l.FilterRules)
             .Include(l => l.RenameRules)

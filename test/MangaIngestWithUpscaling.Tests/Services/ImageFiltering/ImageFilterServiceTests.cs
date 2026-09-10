@@ -637,7 +637,7 @@ public class ImageFilterServiceTests : IDisposable
         {
             Id = 1,
             Name = "Test Library",
-            IngestPath = "/test/path",
+            IngestPaths = [new LibraryIngestPath { Path = "/test/path" }],
         };
     }
 }

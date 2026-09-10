@@ -3,6 +3,7 @@ using MangaIngestWithUpscaling.Data.Analysis;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Shared.Data.Abstractions;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
@@ -22,6 +23,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     };
 
     public DbSet<Library> Libraries { get; set; }
+    public DbSet<LibraryIngestPath> LibraryIngestPaths { get; set; }
     public DbSet<LibraryFilterRule> LibraryFilterRules { get; set; }
     public DbSet<LibraryRenameRule> LibraryRenameRules { get; set; }
     public DbSet<Manga> MangaSeries { get; set; }
@@ -58,37 +60,61 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 
         foreach (var entry in entries)
         {
-            // Set ModifiedAt for all entities that have this property
-            if (entry.Entity is Chapter chapter)
+            // Entities opt into automatic timestamps by implementing the interfaces.
+            if (entry.State == EntityState.Added && entry.Entity is IHasCreatedAt created)
             {
-                if (entry.State == EntityState.Added)
-                    chapter.CreatedAt = now;
-                chapter.ModifiedAt = now;
+                created.CreatedAt = now;
             }
-            else if (entry.Entity is Manga manga)
+
+            if (entry.Entity is IHasModifiedAt modified)
             {
-                if (entry.State == EntityState.Added)
-                    manga.CreatedAt = now;
-                manga.ModifiedAt = now;
+                modified.ModifiedAt = now;
             }
-            else if (entry.Entity is Library library)
+        }
+
+        UpdateLibraryTimestampForChangedConfiguration(now);
+    }
+
+    /// <summary>
+    /// Adding, removing or editing a library's configuration (ingest paths, filter rules, rename
+    /// rules) changes the library, so bump its <see cref="Library.ModifiedAt"/>. This stays separate
+    /// from <see cref="UpdateTimestamps"/> because it must also react to deleted entries, whereas
+    /// entity timestamps are only updated for added or modified ones.
+    /// </summary>
+    private void UpdateLibraryTimestampForChangedConfiguration(DateTime now)
+    {
+        // Index the persisted libraries for O(1) owner lookups. Unsaved libraries (Id == 0) are not
+        // indexed because they would collide on that key and are matched via the navigation instead.
+        Dictionary<int, Library> trackedLibrariesById = ChangeTracker
+            .Entries<Library>()
+            .Select(e => e.Entity)
+            .Where(l => l.Id != 0)
+            .ToDictionary(l => l.Id);
+
+        foreach (var entry in ChangeTracker.Entries())
+        {
+            bool configurationChanged =
+                entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted;
+            if (!configurationChanged || entry.Entity is not ILibraryConfiguration configuration)
             {
-                if (entry.State == EntityState.Added)
-                    library.CreatedAt = now;
-                library.ModifiedAt = now;
+                continue;
             }
-            else if (entry.Entity is UpscalerProfile profile)
-            {
-                if (entry.State == EntityState.Added)
-                    profile.CreatedAt = now;
-                profile.ModifiedAt = now;
-            }
-            else if (
-                entry.Entity is MangaAlternativeTitle alternativeTitle
-                && entry.State == EntityState.Added
+
+            Library? owner = configuration.Library;
+            if (
+                owner is null
+                && trackedLibrariesById.TryGetValue(
+                    configuration.LibraryId,
+                    out Library? trackedLibrary
+                )
             )
             {
-                alternativeTitle.CreatedAt = now;
+                owner = trackedLibrary;
+            }
+
+            if (owner != null)
+            {
+                owner.ModifiedAt = now;
             }
         }
     }
@@ -150,6 +176,18 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 t.Order,
                 t.Id,
             });
+        });
+
+        builder.Entity<LibraryIngestPath>(entity =>
+        {
+            entity
+                .HasOne(e => e.Library)
+                .WithMany(e => e.IngestPaths)
+                .HasForeignKey(e => e.LibraryId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // Also covers lookups by LibraryId alone.
+            entity.HasIndex(e => new { e.LibraryId, e.Path }).IsUnique();
         });
 
         builder.Entity<LibraryFilterRule>(entity =>

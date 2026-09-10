@@ -82,6 +82,15 @@
   <data name="Title_IngestFolder" xml:space="preserve">
     <value>Ingest Folder (Source)</value>
   </data>
+  <data name="Body_IngestConfig" xml:space="preserve">
+    <value>Add one or more folders to watch for new chapters. Every folder is scanned when the library is ingested.</value>
+  </data>
+  <data name="Button_AddIngestPath" xml:space="preserve">
+    <value>Add Ingest Folder</value>
+  </data>
+  <data name="Button_RemoveIngestPath" xml:space="preserve">
+    <value>Remove Ingest Folder</value>
+  </data>
   <data name="Tab_StoragePaths" xml:space="preserve">
     <value>Storage Paths</value>
   </data>

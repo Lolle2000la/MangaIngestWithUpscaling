@@ -385,7 +385,7 @@ public class LibraryFilteringServiceTests
             {
                 Id = 1,
                 Name = "Test Library",
-                IngestPath = "/test",
+                IngestPaths = [new LibraryIngestPath { Path = "/test" }],
             },
         };
     }

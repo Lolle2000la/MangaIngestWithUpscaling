@@ -34,7 +34,7 @@ public class EntityTimestampTests : IDisposable
         var library = new Library
         {
             Name = "Test Library",
-            IngestPath = "/test/ingest",
+            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest" }],
             NotUpscaledLibraryPath = "/test/notupscaled",
         };
 
@@ -59,7 +59,7 @@ public class EntityTimestampTests : IDisposable
         var library = new Library
         {
             Name = "Test Library",
-            IngestPath = "/test/ingest",
+            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest" }],
             NotUpscaledLibraryPath = "/test/notupscaled",
         };
         _context.Libraries.Add(library);
@@ -95,7 +95,7 @@ public class EntityTimestampTests : IDisposable
         var library = new Library
         {
             Name = "Test Library",
-            IngestPath = "/test/ingest",
+            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest" }],
             NotUpscaledLibraryPath = "/test/notupscaled",
         };
         _context.Libraries.Add(library);
@@ -132,7 +132,7 @@ public class EntityTimestampTests : IDisposable
         var library = new Library
         {
             Name = "Test Library",
-            IngestPath = "/test/ingest",
+            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest" }],
             NotUpscaledLibraryPath = "/test/notupscaled",
         };
         var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
@@ -169,7 +169,7 @@ public class EntityTimestampTests : IDisposable
         var library = new Library
         {
             Name = "Test Library",
-            IngestPath = "/test/ingest",
+            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest" }],
             NotUpscaledLibraryPath = "/test/notupscaled",
         };
         var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
@@ -227,5 +227,158 @@ public class EntityTimestampTests : IDisposable
         Assert.True(profile.CreatedAt <= afterCreation);
         Assert.True(profile.ModifiedAt >= beforeCreation);
         Assert.True(profile.ModifiedAt <= afterCreation);
+    }
+
+    [Fact]
+    public async Task AddingIngestPath_UpdatesLibraryModifiedAt()
+    {
+        var library = new Library
+        {
+            Name = "Test Library",
+            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest", SortOrder = 0 }],
+            NotUpscaledLibraryPath = "/test/notupscaled",
+        };
+        _context.Libraries.Add(library);
+        await _context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        DateTime originalModifiedAt = library.ModifiedAt;
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        library.IngestPaths.Add(new LibraryIngestPath { Path = "/test/ingest2", SortOrder = 1 });
+        await _context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(library.ModifiedAt > originalModifiedAt);
+    }
+
+    [Fact]
+    public async Task RemovingIngestPath_UpdatesLibraryModifiedAtAndDeletesEntry()
+    {
+        var library = new Library
+        {
+            Name = "Test Library",
+            IngestPaths =
+            [
+                new LibraryIngestPath { Path = "/test/ingest", SortOrder = 0 },
+                new LibraryIngestPath { Path = "/test/ingest2", SortOrder = 1 },
+            ],
+            NotUpscaledLibraryPath = "/test/notupscaled",
+        };
+        _context.Libraries.Add(library);
+        await _context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        DateTime originalModifiedAt = library.ModifiedAt;
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        LibraryIngestPath removed = library.IngestPaths[1];
+        library.IngestPaths.Remove(removed);
+        await _context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(library.ModifiedAt > originalModifiedAt);
+        Assert.Empty(
+            await _context
+                .LibraryIngestPaths.Where(p => p.Id == removed.Id)
+                .ToListAsync(TestContext.Current.CancellationToken)
+        );
+    }
+
+    [Fact]
+    public async Task DeletingLibrary_CascadesToIngestPaths()
+    {
+        var library = new Library
+        {
+            Name = "Test Library",
+            IngestPaths =
+            [
+                new LibraryIngestPath { Path = "/test/ingest", SortOrder = 0 },
+                new LibraryIngestPath { Path = "/test/ingest2", SortOrder = 1 },
+            ],
+            NotUpscaledLibraryPath = "/test/notupscaled",
+        };
+        _context.Libraries.Add(library);
+        await _context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        int libraryId = library.Id;
+        _context.Libraries.Remove(library);
+        await _context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        Assert.Empty(
+            await _context
+                .LibraryIngestPaths.Where(p => p.LibraryId == libraryId)
+                .ToListAsync(TestContext.Current.CancellationToken)
+        );
+    }
+
+    [Fact]
+    public async Task AddingAndRemovingFilterRule_UpdatesLibraryModifiedAt()
+    {
+        var library = new Library
+        {
+            Name = "Test Library",
+            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest", SortOrder = 0 }],
+            NotUpscaledLibraryPath = "/test/notupscaled",
+        };
+        _context.Libraries.Add(library);
+        await _context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        DateTime originalModifiedAt = library.ModifiedAt;
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        var rule = new LibraryFilterRule
+        {
+            Library = library,
+            Pattern = ".*",
+            PatternType = LibraryFilterPatternType.Contains,
+            TargetField = LibraryFilterTargetField.FilePath,
+            Action = FilterAction.Exclude,
+        };
+        library.FilterRules.Add(rule);
+        await _context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(library.ModifiedAt > originalModifiedAt);
+
+        DateTime afterAdd = library.ModifiedAt;
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        library.FilterRules.Remove(rule);
+        await _context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(library.ModifiedAt > afterAdd);
+    }
+
+    [Fact]
+    public async Task AddingAndRemovingRenameRule_UpdatesLibraryModifiedAt()
+    {
+        var library = new Library
+        {
+            Name = "Test Library",
+            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest", SortOrder = 0 }],
+            NotUpscaledLibraryPath = "/test/notupscaled",
+        };
+        _context.Libraries.Add(library);
+        await _context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        DateTime originalModifiedAt = library.ModifiedAt;
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        var rule = new LibraryRenameRule
+        {
+            Library = library,
+            Pattern = ".*",
+            PatternType = LibraryRenamePatternType.Contains,
+            TargetField = LibraryRenameTargetField.FileName,
+            Replacement = "renamed",
+        };
+        library.RenameRules.Add(rule);
+        await _context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(library.ModifiedAt > originalModifiedAt);
+
+        DateTime afterAdd = library.ModifiedAt;
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        library.RenameRules.Remove(rule);
+        await _context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(library.ModifiedAt > afterAdd);
     }
 }

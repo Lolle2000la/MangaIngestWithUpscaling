@@ -82,6 +82,15 @@
   <data name="Title_IngestFolder" xml:space="preserve">
     <value>インジェストフォルダ (ソース)</value>
   </data>
+  <data name="Body_IngestConfig" xml:space="preserve">
+    <value>新しいチャプターを監視するフォルダを1つ以上追加します。ライブラリのインジェスト時に各フォルダがスキャンされます。</value>
+  </data>
+  <data name="Button_AddIngestPath" xml:space="preserve">
+    <value>インジェストフォルダを追加</value>
+  </data>
+  <data name="Button_RemoveIngestPath" xml:space="preserve">
+    <value>インジェストフォルダを削除</value>
+  </data>
   <data name="Tab_StoragePaths" xml:space="preserve">
     <value>保存パス</value>
   </data>

@@ -72,7 +72,7 @@ public class DialogsTests : BunitContext
         {
             Id = 1,
             Name = "Test Library",
-            IngestPath = "/test/ingest",
+            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest" }],
             NotUpscaledLibraryPath = "/test/library",
             UpscaledLibraryPath = "/test/upscaled",
             RenameRules = new ObservableCollection<LibraryRenameRule>(),
@@ -98,7 +98,7 @@ public class DialogsTests : BunitContext
         {
             Id = 1,
             Name = "Test Library",
-            IngestPath = "/test/ingest",
+            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest" }],
             NotUpscaledLibraryPath = "/test/library",
             UpscaledLibraryPath = "/test/upscaled",
             RenameRules = new ObservableCollection<LibraryRenameRule>(),
@@ -136,7 +136,7 @@ public class DialogsTests : BunitContext
         {
             Id = 1,
             Name = "Test Library",
-            IngestPath = "/test/ingest",
+            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest" }],
             NotUpscaledLibraryPath = "/test/library",
             UpscaledLibraryPath = "/test/upscaled",
             RenameRules = new ObservableCollection<LibraryRenameRule>
@@ -165,7 +165,7 @@ public class DialogsTests : BunitContext
         {
             Id = 1,
             Name = "Test Library",
-            IngestPath = "/test/ingest",
+            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest" }],
             NotUpscaledLibraryPath = "/test/library",
             UpscaledLibraryPath = "/test/upscaled",
             RenameRules = new ObservableCollection<LibraryRenameRule>(),

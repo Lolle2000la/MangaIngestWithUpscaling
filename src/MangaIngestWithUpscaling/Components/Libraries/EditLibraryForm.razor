@@ -40,9 +40,33 @@
 
                 <MudItem xs="12">
                     <MudText Typo="Typo.h5" GutterBottom="true">@Loc["Header_IngestConfig"]</MudText>
-                    <FolderPicker RootDirectory="@Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)"
-                        SelectedPath="@Library.IngestPath" SelectedPathChanged="@OnIngestPathChanged"
-                        Title="@Loc["Title_IngestFolder"]" Required="true" />
+                    <MudText Typo="Typo.body2" Class="mb-4">@Loc["Body_IngestConfig"]</MudText>
+                    <MudStack Spacing="4">
+                        @for (int i = 0; i < Library.IngestPaths.Count; i++)
+                        {
+                            int index = i;
+                            LibraryIngestPath ingestPath = Library.IngestPaths[index];
+                            <MudPaper @key="ingestPath" Class="pa-2" Elevation="0" Outlined="true">
+                                <MudStack Row="true" AlignItems="AlignItems.Start" Spacing="2">
+                                    <div class="flex-grow-1">
+                                        <FolderPicker
+                                            RootDirectory="@Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)"
+                                            SelectedPath="@ingestPath.Path"
+                                            SelectedPathChanged="@(p => OnIngestPathChanged(index, p))"
+                                            Title="@Loc["Title_IngestFolder"]" Required="true" />
+                                    </div>
+                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
+                                        Disabled="@(Library.IngestPaths.Count <= 1)"
+                                        OnClick="@(() => RemoveIngestPath(index))"
+                                        title="@Loc["Button_RemoveIngestPath"]" />
+                                </MudStack>
+                            </MudPaper>
+                        }
+                    </MudStack>
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add"
+                        OnClick="AddIngestPath" Class="mt-2">
+                        @Loc["Button_AddIngestPath"]
+                    </MudButton>
                 </MudItem>
             </MudGrid>
         </MudTabPanel>
@@ -248,9 +272,45 @@
         IsValidChanged.InvokeAsync(isValid);
     }
 
-    private void OnIngestPathChanged(string newPath)
+    protected override void OnInitialized()
     {
-        Library.IngestPath = newPath;
+        // A library always needs at least one ingest path, so start editing with an empty one.
+        if (Library.IngestPaths.Count == 0)
+        {
+            Library.IngestPaths.Add(new LibraryIngestPath { SortOrder = 0 });
+        }
+    }
+
+    private void OnIngestPathChanged(int index, string newPath)
+    {
+        if (index < 0 || index >= Library.IngestPaths.Count)
+        {
+            return;
+        }
+
+        Library.IngestPaths[index].Path = newPath;
+        OnInputChanged();
+    }
+
+    private void AddIngestPath()
+    {
+        // Keep appending after the highest existing order so removed entries do not cause collisions.
+        int nextOrder =
+            Library.IngestPaths.Count == 0
+                ? 0
+                : Library.IngestPaths.Max(p => p.SortOrder) + 1;
+        Library.IngestPaths.Add(new LibraryIngestPath { SortOrder = nextOrder });
+        OnInputChanged();
+    }
+
+    private void RemoveIngestPath(int index)
+    {
+        if (index < 0 || index >= Library.IngestPaths.Count || Library.IngestPaths.Count <= 1)
+        {
+            return;
+        }
+
+        Library.IngestPaths.RemoveAt(index);
         OnInputChanged();
     }
 
@@ -273,17 +333,37 @@
         IsValidChanged.InvokeAsync(IsValid);
     }
 
+    private static readonly StringComparer PathComparer = OperatingSystem.IsWindows()
+        ? StringComparer.OrdinalIgnoreCase
+        : StringComparer.Ordinal;
+
+    private static string NormalizePath(string? path) =>
+        string.IsNullOrEmpty(path)
+            ? string.Empty
+            : path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
     private bool Validate()
     {
+        List<string> ingestPaths = Library.IngestPaths.Select(p => p.Path).ToList();
+
         bool requiredElementsValid = !string.IsNullOrWhiteSpace(Library.Name) &&
-        !string.IsNullOrWhiteSpace(Library.IngestPath) &&
+        ingestPaths.Count > 0 &&
+        ingestPaths.All(p => !string.IsNullOrWhiteSpace(p)) &&
         !string.IsNullOrWhiteSpace(Library.NotUpscaledLibraryPath);
 
-        bool pathsAreDifferent = Library.IngestPath != Library.NotUpscaledLibraryPath &&
-        Library.IngestPath != Library.UpscaledLibraryPath &&
-        Library.NotUpscaledLibraryPath != Library.UpscaledLibraryPath;
+        string notUpscaledPath = NormalizePath(Library.NotUpscaledLibraryPath);
+        string upscaledPath = NormalizePath(Library.UpscaledLibraryPath);
+        List<string> normalizedIngestPaths = ingestPaths.Select(NormalizePath).ToList();
 
-        bool pathsExist = Directory.Exists(Library.IngestPath) &&
+        bool ingestPathsAreUnique =
+            normalizedIngestPaths.Distinct(PathComparer).Count() == normalizedIngestPaths.Count;
+
+        bool pathsAreDifferent = ingestPathsAreUnique &&
+        normalizedIngestPaths.All(p =>
+            !PathComparer.Equals(p, notUpscaledPath) && !PathComparer.Equals(p, upscaledPath)) &&
+        !PathComparer.Equals(notUpscaledPath, upscaledPath);
+
+        bool pathsExist = ingestPaths.All(Directory.Exists) &&
         Directory.Exists(Library.NotUpscaledLibraryPath) &&
         (Library.UpscaledLibraryPath == null || Directory.Exists(Library.UpscaledLibraryPath));
 

@@ -992,7 +992,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         {
             Name = "TestLib",
             NotUpscaledLibraryPath = temp,
-            IngestPath = temp,
+            IngestPaths = [new LibraryIngestPath { Path = temp }],
         };
         ctx.Libraries.Add(lib);
 
@@ -1093,7 +1093,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
             Name = "TestLib",
             NotUpscaledLibraryPath = temp,
             UpscaledLibraryPath = upscaledTemp,
-            IngestPath = temp,
+            IngestPaths = [new LibraryIngestPath { Path = temp }],
         };
         ctx.Libraries.Add(lib);
 
@@ -1222,7 +1222,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
             Name = "TestLib",
             NotUpscaledLibraryPath = temp,
             UpscaledLibraryPath = upscaledTemp,
-            IngestPath = temp,
+            IngestPaths = [new LibraryIngestPath { Path = temp }],
         };
         ctx.Libraries.Add(lib);
 
@@ -1346,7 +1346,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
             Name = "TestLib",
             NotUpscaledLibraryPath = temp,
             UpscaledLibraryPath = upscaledTemp,
-            IngestPath = temp,
+            IngestPaths = [new LibraryIngestPath { Path = temp }],
         };
         ctx.Libraries.Add(lib);
 
@@ -1449,7 +1449,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
             Name = "TestLib",
             NotUpscaledLibraryPath = temp,
             UpscaledLibraryPath = upscaledTemp,
-            IngestPath = temp,
+            IngestPaths = [new LibraryIngestPath { Path = temp }],
         };
         ctx.Libraries.Add(lib);
 
@@ -1581,7 +1581,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         {
             Name = "TestLib",
             NotUpscaledLibraryPath = temp,
-            IngestPath = temp,
+            IngestPaths = [new LibraryIngestPath { Path = temp }],
         };
         ctx.Libraries.Add(lib);
         await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
@@ -1663,7 +1663,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         {
             Name = "TestLib",
             NotUpscaledLibraryPath = temp,
-            IngestPath = temp,
+            IngestPaths = [new LibraryIngestPath { Path = temp }],
         };
         ctx.Libraries.Add(lib);
 
@@ -1767,7 +1767,7 @@ public class LibraryIntegrityCheckerTests : IDisposable
         {
             Name = "TestLib",
             NotUpscaledLibraryPath = temp,
-            IngestPath = temp,
+            IngestPaths = [new LibraryIngestPath { Path = temp }],
         };
         ctx.Libraries.Add(lib);
         await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);

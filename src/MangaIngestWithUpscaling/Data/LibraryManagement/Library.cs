@@ -1,5 +1,6 @@
 ﻿using System.Collections.ObjectModel;
 using System.ComponentModel.DataAnnotations.Schema;
+using MangaIngestWithUpscaling.Shared.Data.Abstractions;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 
@@ -9,11 +10,16 @@ namespace MangaIngestWithUpscaling.Data.LibraryManagement;
 /// Represents a library with paths for ingesting, storing not-upscaled,
 /// and storing upscaled manga, plus optional filter rules.
 /// </summary>
-public class Library
+public class Library : IHasCreatedAt, IHasModifiedAt
 {
     public int Id { get; set; }
     public string Name { get; set; } = string.Empty;
-    public string IngestPath { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Directories that are watched and scanned for chapters to ingest. At least one path is required.
+    /// </summary>
+    public List<LibraryIngestPath> IngestPaths { get; set; } = [];
+
     public string NotUpscaledLibraryPath { get; set; } = string.Empty;
     public string? UpscaledLibraryPath { get; set; }
     public KavitaLibraryConfig KavitaConfig { get; set; } = new KavitaLibraryConfig();
@@ -46,7 +52,12 @@ public class Library
 
         return Id == other.Id
             && Name == other.Name
-            && IngestPath == other.IngestPath
+            && IngestPaths
+                .Select(p => p.Path)
+                .OrderBy(p => p, StringComparer.Ordinal)
+                .SequenceEqual(
+                    other.IngestPaths.Select(p => p.Path).OrderBy(p => p, StringComparer.Ordinal)
+                )
             && NotUpscaledLibraryPath == other.NotUpscaledLibraryPath
             && UpscaledLibraryPath == other.UpscaledLibraryPath
             && KavitaConfig == other.KavitaConfig
@@ -57,10 +68,18 @@ public class Library
 
     public override int GetHashCode()
     {
+        var ingestPathsHash = new HashCode();
+        foreach (
+            string path in IngestPaths.Select(p => p.Path).OrderBy(p => p, StringComparer.Ordinal)
+        )
+        {
+            ingestPathsHash.Add(path);
+        }
+
         return HashCode.Combine(
             Id,
             Name,
-            IngestPath,
+            ingestPathsHash.ToHashCode(),
             NotUpscaledLibraryPath,
             UpscaledLibraryPath,
             KavitaConfig,
