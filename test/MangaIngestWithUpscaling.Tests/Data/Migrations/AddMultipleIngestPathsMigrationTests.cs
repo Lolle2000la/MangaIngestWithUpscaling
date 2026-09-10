@@ -24,11 +24,13 @@ public class AddMultipleIngestPathsMigrationTests
 
             IMigrator migrator = context.Database.GetService<IMigrator>();
 
-            // Derive the migration preceding the one under test instead of hardcoding its id, so
-            // this keeps working when intermediate migrations are added.
+            // Locate the migration under test by name and use the one before it, so this keeps
+            // working when later migrations are added.
+            const string targetMigration = "20260910184231_AddMultipleIngestPaths";
             List<string> migrations = context.Database.GetMigrations().ToList();
-            string previousMigration = migrations[^2];
-            Assert.Equal("20260910184231_AddMultipleIngestPaths", migrations[^1]);
+            int targetIndex = migrations.IndexOf(targetMigration);
+            Assert.True(targetIndex > 0, $"Migration {targetMigration} not found.");
+            string previousMigration = migrations[targetIndex - 1];
 
             await migrator.MigrateAsync(previousMigration, TestContext.Current.CancellationToken);
 

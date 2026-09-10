@@ -353,67 +353,85 @@
             // Stream ingest previews
             if (Library.FilterRules != null && Library.RenameRules != null)
             {
-                foreach (var ingestPath in Library.IngestPaths)
+                foreach (var ingestPath in Library.IngestPaths.OrderBy(p => p.SortOrder))
                 {
-                    if (string.IsNullOrWhiteSpace(ingestPath.Path))
+                    if (
+                        string.IsNullOrWhiteSpace(ingestPath.Path)
+                        || !Directory.Exists(ingestPath.Path)
+                    )
                     {
                         continue;
                     }
 
-                    var found = chapterRecognition.FindAllChaptersAt(ingestPath.Path, Library.FilterRules, cancellationToken);
-                    await foreach (var origChap in found)
+                    try
                     {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        var renamed = renamingService.ApplyRenameRules(origChap, Library.RenameRules);
-                        // Include the root so identical relative paths from different ingest paths stay distinguishable.
-                        string sourcePath = Path.Combine(ingestPath.Path, origChap.RelativePath);
-
-                        if (origChap.Metadata.Series != renamed.Metadata.Series)
+                        var found = chapterRecognition.FindAllChaptersAt(ingestPath.Path, Library.FilterRules, cancellationToken);
+                        await foreach (var origChap in found)
                         {
-                            var preview = new IngestSeriesTitlePreview
-                            {
-                                OriginalIngestPath = sourcePath,
-                                OriginalSeriesTitleHtml = ComputeDiffHtml(renamed.Metadata.Series, origChap.Metadata.Series, DiffHighlightType.Removal),
-                                NewSeriesTitleHtml = ComputeDiffHtml(origChap.Metadata.Series, renamed.Metadata.Series, DiffHighlightType.Addition)
-                            };
-                            _ = InvokeAsync(() =>
-                            {
-                                _ingestSeriesTitlePreviewsSource.Add(preview);
-                                StateHasChanged();
-                            });
-                        }
+                            cancellationToken.ThrowIfCancellationRequested();
+                            var renamed = renamingService.ApplyRenameRules(origChap, Library.RenameRules);
+                            // Include the root so identical relative paths from different ingest paths stay distinguishable.
+                            string sourcePath = Path.Combine(ingestPath.Path, origChap.RelativePath);
 
-                        var origCT = origChap.Metadata.ChapterTitle ?? origChap.FileName;
-                        var newCT = renamed.Metadata.ChapterTitle ?? renamed.FileName;
-                        if (origCT != newCT)
-                        {
-                            var preview = new IngestChapterTitlePreview
+                            if (origChap.Metadata.Series != renamed.Metadata.Series)
                             {
-                                OriginalIngestPath = sourcePath,
-                                OriginalChapterTitleHtml = ComputeDiffHtml(newCT, origCT, DiffHighlightType.Removal),
-                                NewChapterTitleHtml = ComputeDiffHtml(origCT, newCT, DiffHighlightType.Addition)
-                            };
-                            _ = InvokeAsync(() =>
-                            {
-                                _ingestChapterTitlePreviewsSource.Add(preview);
-                                StateHasChanged();
-                            });
-                        }
+                                var preview = new IngestSeriesTitlePreview
+                                {
+                                    OriginalIngestPath = sourcePath,
+                                    OriginalSeriesTitleHtml = ComputeDiffHtml(renamed.Metadata.Series, origChap.Metadata.Series, DiffHighlightType.Removal),
+                                    NewSeriesTitleHtml = ComputeDiffHtml(origChap.Metadata.Series, renamed.Metadata.Series, DiffHighlightType.Addition)
+                                };
+                                _ = InvokeAsync(() =>
+                                {
+                                    _ingestSeriesTitlePreviewsSource.Add(preview);
+                                    StateHasChanged();
+                                });
+                            }
 
-                        if (origChap.FileName != renamed.FileName)
-                        {
-                            var preview = new IngestFileNamePreview
+                            var origCT = origChap.Metadata.ChapterTitle ?? origChap.FileName;
+                            var newCT = renamed.Metadata.ChapterTitle ?? renamed.FileName;
+                            if (origCT != newCT)
                             {
-                                OriginalIngestPath = sourcePath,
-                                OriginalFileNameHtml = ComputeDiffHtml(renamed.FileName, origChap.FileName, DiffHighlightType.Removal),
-                                NewFileNameHtml = ComputeDiffHtml(origChap.FileName, renamed.FileName, DiffHighlightType.Addition)
-                            };
-                            _ = InvokeAsync(() =>
+                                var preview = new IngestChapterTitlePreview
+                                {
+                                    OriginalIngestPath = sourcePath,
+                                    OriginalChapterTitleHtml = ComputeDiffHtml(newCT, origCT, DiffHighlightType.Removal),
+                                    NewChapterTitleHtml = ComputeDiffHtml(origCT, newCT, DiffHighlightType.Addition)
+                                };
+                                _ = InvokeAsync(() =>
+                                {
+                                    _ingestChapterTitlePreviewsSource.Add(preview);
+                                    StateHasChanged();
+                                });
+                            }
+
+                            if (origChap.FileName != renamed.FileName)
                             {
-                                _ingestFileNamePreviewsSource.Add(preview);
-                                StateHasChanged();
-                            });
+                                var preview = new IngestFileNamePreview
+                                {
+                                    OriginalIngestPath = sourcePath,
+                                    OriginalFileNameHtml = ComputeDiffHtml(renamed.FileName, origChap.FileName, DiffHighlightType.Removal),
+                                    NewFileNameHtml = ComputeDiffHtml(origChap.FileName, renamed.FileName, DiffHighlightType.Addition)
+                                };
+                                _ = InvokeAsync(() =>
+                                {
+                                    _ingestFileNamePreviewsSource.Add(preview);
+                                    StateHasChanged();
+                                });
+                            }
                         }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogError(
+                            ex,
+                            "Failed to preview rename rules for ingest path {ingestPath}.",
+                            ingestPath.Path
+                        );
                     }
                 }
             }

@@ -91,7 +91,6 @@
   <data name="Button_RemoveIngestPath" xml:space="preserve">
     <value>インジェストフォルダを削除</value>
   </data>
-
   <data name="Tab_StoragePaths" xml:space="preserve">
     <value>保存パス</value>
   </data>

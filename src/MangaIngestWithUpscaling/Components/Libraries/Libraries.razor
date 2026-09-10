@@ -112,7 +112,7 @@
                             </ChildContent>
                             <TooltipContent>
                                 <MudStack Spacing="0">
-                                    @foreach (var ingestPath in context.IngestPaths)
+                                    @foreach (var ingestPath in context.IngestPaths.OrderBy(p => p.SortOrder))
                                     {
                                         <MudText Typo="Typo.caption">@ingestPath.Path</MudText>
                                     }

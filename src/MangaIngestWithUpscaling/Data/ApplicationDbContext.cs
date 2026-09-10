@@ -92,6 +92,32 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 alternativeTitle.CreatedAt = now;
             }
         }
+
+        // Adding, removing or editing an ingest path changes the library, so bump its ModifiedAt.
+        List<Library> trackedLibraries = ChangeTracker
+            .Entries<Library>()
+            .Select(e => e.Entity)
+            .ToList();
+        foreach (var ingestPathEntry in ChangeTracker.Entries<LibraryIngestPath>())
+        {
+            bool pathChanged =
+                ingestPathEntry.State
+                is EntityState.Added
+                    or EntityState.Modified
+                    or EntityState.Deleted;
+            if (!pathChanged)
+            {
+                continue;
+            }
+
+            Library? owner =
+                ingestPathEntry.Entity.Library
+                ?? trackedLibraries.FirstOrDefault(l => l.Id == ingestPathEntry.Entity.LibraryId);
+            if (owner != null)
+            {
+                owner.ModifiedAt = now;
+            }
+        }
     }
 
     protected override void OnModelCreating(ModelBuilder builder)

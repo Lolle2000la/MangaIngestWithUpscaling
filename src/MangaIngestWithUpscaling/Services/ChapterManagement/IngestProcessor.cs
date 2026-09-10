@@ -108,6 +108,14 @@ public partial class IngestProcessor(
         var originalSeriesMap = new Dictionary<string, string>();
         var processedChapters = new List<ProcessedChapterInfo>();
 
+        // Overlapping or duplicated ingest roots can yield two chapters that resolve to the same
+        // target. Keep the first one (matching the normal "target already exists" behaviour) so the
+        // merge step never receives two chapters with the same relative path, which would make it
+        // merge a file with itself. Upscaled and non-upscaled variants are tracked separately so an
+        // already-upscaled file in another root is still paired with its original.
+        var processedChapterKeys =
+            new HashSet<(string Series, string RelativePath, bool IsUpscaled)>();
+
         foreach (string ingestPath in ingestPaths)
         {
             if (!Directory.Exists(ingestPath))
@@ -131,7 +139,6 @@ public partial class IngestProcessor(
                 )
                 {
                     string fullPath = Path.Combine(ingestPath, originalChapter.RelativePath);
-                    originalSeriesMap[fullPath] = originalChapter.Metadata.Series;
 
                     // apply rename rules and keep track of original and renamed versions
                     FoundChapter renamedChapter = renamingService.ApplyRenameRules(
@@ -145,6 +152,27 @@ public partial class IngestProcessor(
                             originalChapter.RelativePath,
                             cancellationToken
                         );
+
+                    (string Series, string RelativePath, bool IsUpscaled) chapterKey = (
+                        renamedChapter.Metadata.Series ?? string.Empty,
+                        renamedChapter.RelativePath,
+                        isUpscaled
+                    );
+                    if (!processedChapterKeys.Add(chapterKey))
+                    {
+                        logger.LogWarning(
+                            "Skipping {chapterPath} from ingest path {ingestPath} for library {libraryName}: another chapter already resolves to {series}/{relativePath} (upscaled: {isUpscaled}). Check for overlapping or duplicated ingest paths.",
+                            fullPath,
+                            ingestPath,
+                            library.Name,
+                            chapterKey.Series,
+                            chapterKey.RelativePath,
+                            chapterKey.IsUpscaled
+                        );
+                        continue;
+                    }
+
+                    originalSeriesMap[fullPath] = originalChapter.Metadata.Series;
 
                     processedChapters.Add(
                         new ProcessedChapterInfo(

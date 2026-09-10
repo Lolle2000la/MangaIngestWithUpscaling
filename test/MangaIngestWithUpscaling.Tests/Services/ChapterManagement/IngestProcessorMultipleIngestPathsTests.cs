@@ -330,6 +330,47 @@ public class IngestProcessorMultipleIngestPathsTests : IDisposable
         Assert.Equal("Chapter 1.cbz", chapters[0].FileName);
     }
 
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task Ingest_WithDuplicateChaptersAcrossPaths_KeepsOnlyTheFirst()
+    {
+        await using ApplicationDbContext db = _testDb.Context;
+        IngestSetup setup = BuildIngestProcessor(db);
+
+        string pathA = Path.Combine(_tempRoot, "duplicateA");
+        string pathB = Path.Combine(_tempRoot, "duplicateB");
+        Directory.CreateDirectory(pathA);
+        Directory.CreateDirectory(pathB);
+
+        (Library lib, Manga manga) = await CreateLibraryAsync(db, "Duplicate Series", pathA, pathB);
+        StubCommonDependencies(setup, lib, manga);
+
+        FoundChapter duplicate = Chapter("Duplicate Series", "Chapter 1.cbz", "Chapter 1", "1");
+        setup
+            .ChapterRecognition.FindAllChaptersAt(
+                pathA,
+                lib.FilterRules,
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(new List<FoundChapter> { duplicate }.ToAsyncEnumerable());
+        setup
+            .ChapterRecognition.FindAllChaptersAt(
+                pathB,
+                lib.FilterRules,
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(new List<FoundChapter> { duplicate }.ToAsyncEnumerable());
+
+        await setup.Processor.ProcessAsync(lib, TestContext.Current.CancellationToken);
+
+        // The second root resolves to the same target and must be skipped, not ingested twice.
+        setup.Cbz.Received(1).ConvertToCbz(Arg.Any<FoundChapter>(), Arg.Any<string>());
+        List<Chapter> chapters = await db.Chapters.ToListAsync(
+            TestContext.Current.CancellationToken
+        );
+        Assert.Single(chapters);
+    }
+
     private sealed class ThrowingAsyncEnumerable : IAsyncEnumerable<FoundChapter>
     {
         public IAsyncEnumerator<FoundChapter> GetAsyncEnumerator(
