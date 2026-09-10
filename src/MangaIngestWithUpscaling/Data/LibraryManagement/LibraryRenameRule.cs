@@ -6,7 +6,7 @@ namespace MangaIngestWithUpscaling.Data.LibraryManagement;
 /// Represents a pattern-based renaming rule for a library,
 /// specifying a target field, a pattern to match, and a replacement.
 /// </summary>
-public class LibraryRenameRule
+public class LibraryRenameRule : ILibraryConfiguration
 {
     public int Id { get; set; }
     public int LibraryId { get; set; }

@@ -6,7 +6,7 @@ namespace MangaIngestWithUpscaling.Data.LibraryManagement;
 /// Represents a pattern-based filter rule for a library,
 /// such as a regex or glob, specifying which field to check.
 /// </summary>
-public class LibraryFilterRule
+public class LibraryFilterRule : ILibraryConfiguration
 {
     public int Id { get; set; }
     public int LibraryId { get; set; }

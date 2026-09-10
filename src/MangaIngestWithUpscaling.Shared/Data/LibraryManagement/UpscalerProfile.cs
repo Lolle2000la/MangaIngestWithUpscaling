@@ -6,7 +6,7 @@ namespace MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 /// <summary>
 /// Represents a preconfigured upscaler setting that can be associated with chapters.
 /// </summary>
-public class UpscalerProfile : ICreatedAt, IModifiedAt
+public class UpscalerProfile : IHasCreatedAt, IHasModifiedAt
 {
     public int Id { get; set; }
     public required string Name { get; set; } // An identifier for this specific config

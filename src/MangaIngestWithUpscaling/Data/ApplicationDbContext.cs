@@ -61,27 +61,27 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         foreach (var entry in entries)
         {
             // Entities opt into automatic timestamps by implementing the interfaces.
-            if (entry.State == EntityState.Added && entry.Entity is ICreatedAt created)
+            if (entry.State == EntityState.Added && entry.Entity is IHasCreatedAt created)
             {
                 created.CreatedAt = now;
             }
 
-            if (entry.Entity is IModifiedAt modified)
+            if (entry.Entity is IHasModifiedAt modified)
             {
                 modified.ModifiedAt = now;
             }
         }
 
-        UpdateLibraryTimestampForChangedIngestPaths(now);
+        UpdateLibraryTimestampForChangedConfiguration(now);
     }
 
     /// <summary>
-    /// Adding, removing or editing an ingest path changes the owning library, so bump its
-    /// <see cref="Library.ModifiedAt"/>. This stays separate from <see cref="UpdateTimestamps"/>
-    /// because it must also react to deleted entries, whereas entity timestamps are only updated for
-    /// added or modified ones.
+    /// Adding, removing or editing a library's configuration (ingest paths, filter rules, rename
+    /// rules) changes the library, so bump its <see cref="Library.ModifiedAt"/>. This stays separate
+    /// from <see cref="UpdateTimestamps"/> because it must also react to deleted entries, whereas
+    /// entity timestamps are only updated for added or modified ones.
     /// </summary>
-    private void UpdateLibraryTimestampForChangedIngestPaths(DateTime now)
+    private void UpdateLibraryTimestampForChangedConfiguration(DateTime now)
     {
         // Index the persisted libraries for O(1) owner lookups. Unsaved libraries (Id == 0) are not
         // indexed because they would collide on that key and are matched via the navigation instead.
@@ -91,23 +91,20 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             .Where(l => l.Id != 0)
             .ToDictionary(l => l.Id);
 
-        foreach (var ingestPathEntry in ChangeTracker.Entries<LibraryIngestPath>())
+        foreach (var entry in ChangeTracker.Entries())
         {
-            bool pathChanged =
-                ingestPathEntry.State
-                is EntityState.Added
-                    or EntityState.Modified
-                    or EntityState.Deleted;
-            if (!pathChanged)
+            bool configurationChanged =
+                entry.State is EntityState.Added or EntityState.Modified or EntityState.Deleted;
+            if (!configurationChanged || entry.Entity is not ILibraryConfiguration configuration)
             {
                 continue;
             }
 
-            Library? owner = ingestPathEntry.Entity.Library;
+            Library? owner = configuration.Library;
             if (
                 owner is null
                 && trackedLibrariesById.TryGetValue(
-                    ingestPathEntry.Entity.LibraryId,
+                    configuration.LibraryId,
                     out Library? trackedLibrary
                 )
             )

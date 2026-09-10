@@ -10,7 +10,7 @@ namespace MangaIngestWithUpscaling.Data.LibraryManagement;
 /// Represents a library with paths for ingesting, storing not-upscaled,
 /// and storing upscaled manga, plus optional filter rules.
 /// </summary>
-public class Library : ICreatedAt, IModifiedAt
+public class Library : IHasCreatedAt, IHasModifiedAt
 {
     public int Id { get; set; }
     public string Name { get; set; } = string.Empty;

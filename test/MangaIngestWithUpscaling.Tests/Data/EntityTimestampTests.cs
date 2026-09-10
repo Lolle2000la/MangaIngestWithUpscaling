@@ -307,4 +307,78 @@ public class EntityTimestampTests : IDisposable
                 .ToListAsync(TestContext.Current.CancellationToken)
         );
     }
+
+    [Fact]
+    public async Task AddingAndRemovingFilterRule_UpdatesLibraryModifiedAt()
+    {
+        var library = new Library
+        {
+            Name = "Test Library",
+            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest", SortOrder = 0 }],
+            NotUpscaledLibraryPath = "/test/notupscaled",
+        };
+        _context.Libraries.Add(library);
+        await _context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        DateTime originalModifiedAt = library.ModifiedAt;
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        var rule = new LibraryFilterRule
+        {
+            Library = library,
+            Pattern = ".*",
+            PatternType = LibraryFilterPatternType.Contains,
+            TargetField = LibraryFilterTargetField.FilePath,
+            Action = FilterAction.Exclude,
+        };
+        library.FilterRules.Add(rule);
+        await _context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(library.ModifiedAt > originalModifiedAt);
+
+        DateTime afterAdd = library.ModifiedAt;
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        library.FilterRules.Remove(rule);
+        await _context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(library.ModifiedAt > afterAdd);
+    }
+
+    [Fact]
+    public async Task AddingAndRemovingRenameRule_UpdatesLibraryModifiedAt()
+    {
+        var library = new Library
+        {
+            Name = "Test Library",
+            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest", SortOrder = 0 }],
+            NotUpscaledLibraryPath = "/test/notupscaled",
+        };
+        _context.Libraries.Add(library);
+        await _context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        DateTime originalModifiedAt = library.ModifiedAt;
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        var rule = new LibraryRenameRule
+        {
+            Library = library,
+            Pattern = ".*",
+            PatternType = LibraryRenamePatternType.Contains,
+            TargetField = LibraryRenameTargetField.FileName,
+            Replacement = "renamed",
+        };
+        library.RenameRules.Add(rule);
+        await _context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(library.ModifiedAt > originalModifiedAt);
+
+        DateTime afterAdd = library.ModifiedAt;
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        library.RenameRules.Remove(rule);
+        await _context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(library.ModifiedAt > afterAdd);
+    }
 }

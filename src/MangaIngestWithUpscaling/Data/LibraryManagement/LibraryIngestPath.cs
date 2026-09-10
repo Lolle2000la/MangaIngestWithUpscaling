@@ -4,7 +4,7 @@ namespace MangaIngestWithUpscaling.Data.LibraryManagement;
 /// One directory that is watched and scanned for new chapters of a <see cref="Library"/>.
 /// A library may have several ingest paths, for example when sources are mounted at different locations.
 /// </summary>
-public class LibraryIngestPath
+public class LibraryIngestPath : ILibraryConfiguration
 {
     public int Id { get; set; }
 

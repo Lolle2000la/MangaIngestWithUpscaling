@@ -8,7 +8,7 @@ namespace MangaIngestWithUpscaling.Data.LibraryManagement;
 /// Represents a chapter in a manga series, including file name,
 /// relative path, and optional reference to an UpscalerConfig.
 /// </summary>
-public class Chapter : ICreatedAt, IModifiedAt
+public class Chapter : IHasCreatedAt, IHasModifiedAt
 {
     public int Id { get; set; }
     public int MangaId { get; set; }
