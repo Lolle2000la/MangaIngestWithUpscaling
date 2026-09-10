@@ -80,44 +80,70 @@ public partial class IngestProcessor(
                 .LoadAsync(cancellationToken);
         }
 
-        var foundChapters = chapterRecognitionService.FindAllChaptersAt(
-            library.IngestPath,
-            library.FilterRules,
-            cancellationToken
-        );
-
-        // preserve original series for alternative title
-        Dictionary<string, string> originalSeriesMap = await foundChapters.ToDictionaryAsync(
-            c => c.RelativePath,
-            c => c.Metadata.Series,
-            cancellationToken: cancellationToken
-        );
-
-        // apply rename rules and keep track of original and renamed versions
-        var processedChapters = new List<ProcessedChapterInfo>();
-        await foreach (FoundChapter originalChapter in foundChapters)
+        if (!dbContext.Entry(library).Collection(l => l.IngestPaths).IsLoaded)
         {
-            FoundChapter renamedChapter = renamingService.ApplyRenameRules(
-                originalChapter,
-                library.RenameRules
-            );
+            await dbContext
+                .Entry(library)
+                .Collection(l => l.IngestPaths)
+                .LoadAsync(cancellationToken);
+        }
 
-            string fullPath = Path.Combine(library.IngestPath, originalChapter.RelativePath);
-            var (isUpscaled, upscalerProfileDto) =
-                await chapterProcessingService.DetectUpscaledFileAsync(
-                    fullPath,
-                    originalChapter.RelativePath,
+        List<string> ingestPaths = library
+            .IngestPaths.OrderBy(p => p.SortOrder)
+            .Select(p => p.Path)
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .ToList();
+
+        if (ingestPaths.Count == 0)
+        {
+            logger.LogWarning(
+                "Library {libraryName} has no ingest paths configured. Skipping ingest.",
+                library.Name
+            );
+            return;
+        }
+
+        // Preserve original series for alternative title. Keyed by the full path so that identical
+        // relative paths in different ingest roots do not collide.
+        var originalSeriesMap = new Dictionary<string, string>();
+        var processedChapters = new List<ProcessedChapterInfo>();
+
+        foreach (string ingestPath in ingestPaths)
+        {
+            await foreach (
+                FoundChapter originalChapter in chapterRecognitionService.FindAllChaptersAt(
+                    ingestPath,
+                    library.FilterRules,
                     cancellationToken
+                )
+            )
+            {
+                string fullPath = Path.Combine(ingestPath, originalChapter.RelativePath);
+                originalSeriesMap[fullPath] = originalChapter.Metadata.Series;
+
+                // apply rename rules and keep track of original and renamed versions
+                FoundChapter renamedChapter = renamingService.ApplyRenameRules(
+                    originalChapter,
+                    library.RenameRules
                 );
 
-            processedChapters.Add(
-                new ProcessedChapterInfo(
-                    originalChapter,
-                    renamedChapter,
-                    isUpscaled,
-                    upscalerProfileDto
-                )
-            );
+                var (isUpscaled, upscalerProfileDto) =
+                    await chapterProcessingService.DetectUpscaledFileAsync(
+                        fullPath,
+                        originalChapter.RelativePath,
+                        cancellationToken
+                    );
+
+                processedChapters.Add(
+                    new ProcessedChapterInfo(
+                        originalChapter,
+                        renamedChapter,
+                        ingestPath,
+                        isUpscaled,
+                        upscalerProfileDto
+                    )
+                );
+            }
         }
 
         // group chapters by new series title
@@ -139,8 +165,10 @@ public partial class IngestProcessor(
 
         foreach (var (series, processedItems) in chaptersBySeries)
         {
-            var firstOriginalRelativePath = processedItems.First().Original.RelativePath;
-            var originalSeriesTitle = originalSeriesMap[firstOriginalRelativePath];
+            ProcessedChapterInfo firstItem = processedItems.First();
+            var originalSeriesTitle = originalSeriesMap[
+                Path.Combine(firstItem.IngestRootPath, firstItem.Original.RelativePath)
+            ];
             Manga seriesEntity = await chapterProcessingService.GetOrCreateMangaSeriesAsync(
                 library,
                 series,
@@ -184,13 +212,20 @@ public partial class IngestProcessor(
                     .Select(m => m.MergedChapterNumber)
                     .ToHashSetAsync(cancellationToken);
 
-                // Create a mapping function to get original file paths for renamed chapters
+                // Create a mapping function to get original file paths for renamed chapters. Each
+                // chapter remembers which ingest root it was found in, so paths resolve correctly
+                // even when several roots are configured.
                 Dictionary<string, string> originalPathLookup = processedItems
                     .Where(p => !p.IsUpscaled)
+                    .GroupBy(p => p.Renamed.RelativePath)
                     .ToDictionary(
-                        p => p.Renamed.RelativePath,
-                        p => Path.Combine(library.IngestPath, p.Original.RelativePath)
+                        g => g.Key,
+                        g => Path.Combine(g.First().IngestRootPath, g.First().Original.RelativePath)
                     );
+
+                Dictionary<string, string> renamedPathToRoot = processedItems
+                    .GroupBy(p => p.Renamed.RelativePath)
+                    .ToDictionary(g => g.Key, g => g.First().IngestRootPath);
 
                 Func<FoundChapter, string> getActualFilePath = renamedChapter =>
                     originalPathLookup.TryGetValue(
@@ -198,7 +233,13 @@ public partial class IngestProcessor(
                         out string? originalPath
                     )
                         ? originalPath
-                        : Path.Combine(library.IngestPath, renamedChapter.RelativePath);
+                        : Path.Combine(
+                            renamedPathToRoot.GetValueOrDefault(
+                                renamedChapter.RelativePath,
+                                ingestPaths[0]
+                            ),
+                            renamedChapter.RelativePath
+                        );
 
                 // Calculate the series directory path for merged chapter output
                 string seriesDirectoryPath = Path.Combine(
@@ -212,7 +253,7 @@ public partial class IngestProcessor(
                 // Process chapter merging using the new simplified approach
                 mergeResult = await chapterPartMerger.ProcessChapterMergingAsync(
                     processedItems.Where(p => !p.IsUpscaled).Select(p => p.Renamed).ToList(),
-                    library.IngestPath,
+                    firstItem.IngestRootPath,
                     seriesDirectoryPath, // Use series directory for merged chapter output
                     seriesEntity.PrimaryTitle!,
                     allChapterNumbers,
@@ -423,6 +464,7 @@ public partial class IngestProcessor(
                         renamedChapter,
                         seriesEntity,
                         library,
+                        pci.IngestRootPath,
                         pci.UpscalerProfile,
                         upscalerProfileCache,
                         cancellationToken
@@ -443,10 +485,10 @@ public partial class IngestProcessor(
                 {
                     convertedChapter = cbzConverter.ConvertToCbz(
                         originalChapter,
-                        library.IngestPath
+                        pci.IngestRootPath
                     );
                     convertedChapterPath = Path.Combine(
-                        library.IngestPath,
+                        pci.IngestRootPath,
                         convertedChapter.RelativePath
                     );
 
@@ -786,7 +828,10 @@ public partial class IngestProcessor(
             library.Name
         );
         // Clean the ingest path of all empty directories recursively
-        FileSystemHelpers.DeleteEmptySubfolders(library.IngestPath, logger);
+        foreach (string ingestPath in ingestPaths)
+        {
+            FileSystemHelpers.DeleteEmptySubfolders(ingestPath, logger);
+        }
     }
 
     /// <summary>
@@ -861,13 +906,14 @@ public partial class IngestProcessor(
         FoundChapter renamedUpscaled,
         Manga seriesEntity,
         Library library,
+        string ingestRootPath,
         UpscalerProfileJsonDto? upscalerProfileDto,
         Dictionary<UpscalerProfileJsonDto, UpscalerProfile> upscalerProfileCache,
         CancellationToken cancellationToken
     )
     {
         // Path to the upscaled CBZ file in the ingest directory (using original path info)
-        var cbzPath = Path.Combine(library.IngestPath, originalUpscaled.RelativePath);
+        var cbzPath = Path.Combine(ingestRootPath, originalUpscaled.RelativePath);
 
         // Check if the source file actually exists before trying to process it
         if (!File.Exists(cbzPath))
@@ -1128,6 +1174,7 @@ public partial class IngestProcessor(
     private record ProcessedChapterInfo(
         FoundChapter Original,
         FoundChapter Renamed,
+        string IngestRootPath,
         bool IsUpscaled,
         UpscalerProfileJsonDto? UpscalerProfile
     );

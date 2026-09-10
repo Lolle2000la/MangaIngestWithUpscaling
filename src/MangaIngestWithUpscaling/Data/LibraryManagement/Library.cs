@@ -13,7 +13,12 @@ public class Library
 {
     public int Id { get; set; }
     public string Name { get; set; } = string.Empty;
-    public string IngestPath { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Directories that are watched and scanned for chapters to ingest. At least one path is required.
+    /// </summary>
+    public List<LibraryIngestPath> IngestPaths { get; set; } = [];
+
     public string NotUpscaledLibraryPath { get; set; } = string.Empty;
     public string? UpscaledLibraryPath { get; set; }
     public KavitaLibraryConfig KavitaConfig { get; set; } = new KavitaLibraryConfig();
@@ -46,7 +51,7 @@ public class Library
 
         return Id == other.Id
             && Name == other.Name
-            && IngestPath == other.IngestPath
+            && IngestPaths.Select(p => p.Path).SequenceEqual(other.IngestPaths.Select(p => p.Path))
             && NotUpscaledLibraryPath == other.NotUpscaledLibraryPath
             && UpscaledLibraryPath == other.UpscaledLibraryPath
             && KavitaConfig == other.KavitaConfig
@@ -57,10 +62,16 @@ public class Library
 
     public override int GetHashCode()
     {
+        var ingestPathsHash = new HashCode();
+        foreach (LibraryIngestPath ingestPath in IngestPaths)
+        {
+            ingestPathsHash.Add(ingestPath.Path);
+        }
+
         return HashCode.Combine(
             Id,
             Name,
-            IngestPath,
+            ingestPathsHash.ToHashCode(),
             NotUpscaledLibraryPath,
             UpscaledLibraryPath,
             KavitaConfig,

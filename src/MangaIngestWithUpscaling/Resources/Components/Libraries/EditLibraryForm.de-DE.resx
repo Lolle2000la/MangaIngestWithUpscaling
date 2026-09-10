@@ -82,6 +82,15 @@
   <data name="Title_IngestFolder" xml:space="preserve">
     <value>Ingest-Ordner (Quelle)</value>
   </data>
+  <data name="Body_IngestConfig" xml:space="preserve">
+    <value>Fügen Sie einen oder mehrere Ordner hinzu, die auf neue Kapitel überwacht werden. Jeder Ordner wird beim Ingest der Bibliothek durchsucht.</value>
+  </data>
+  <data name="Button_AddIngestPath" xml:space="preserve">
+    <value>Ingest-Ordner hinzufügen</value>
+  </data>
+  <data name="Button_RemoveIngestPath" xml:space="preserve">
+    <value>Ingest-Ordner entfernen</value>
+  </data>
   <data name="Tab_StoragePaths" xml:space="preserve">
     <value>Speicherpfade</value>
   </data>

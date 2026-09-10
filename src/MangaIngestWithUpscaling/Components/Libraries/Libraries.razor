@@ -104,10 +104,20 @@
                     </MudTd>
 
                     <MudTd DataLabel="@Loc["Header_IngestPath"]">
-                        <MudTooltip Text="@context.IngestPath">
-                            <MudText Typo="Typo.body2" Class="text-truncate">
-                                @context.IngestPath
-                            </MudText>
+                        <MudTooltip>
+                            <ChildContent>
+                                <MudText Typo="Typo.body2" Class="text-truncate">
+                                    @GetIngestPathsDisplay(context)
+                                </MudText>
+                            </ChildContent>
+                            <TooltipContent>
+                                <MudStack Spacing="0">
+                                    @foreach (var ingestPath in context.IngestPaths)
+                                    {
+                                        <MudText Typo="Typo.caption">@ingestPath.Path</MudText>
+                                    }
+                                </MudStack>
+                            </TooltipContent>
                         </MudTooltip>
                     </MudTd>
 
@@ -192,9 +202,29 @@
 @code {
     private IReadOnlyCollection<Library> LoadedLibraries { get; set; } = new List<Library>();
 
+    private static string GetIngestPathsDisplay(Library library)
+    {
+        List<LibraryIngestPath> ingestPaths = library
+            .IngestPaths.OrderBy(p => p.SortOrder)
+            .ToList();
+
+        return ingestPaths.Count switch
+        {
+            0 => string.Empty,
+            1 => ingestPaths[0].Path,
+            _ => $"{ingestPaths[0].Path} (+{ingestPaths.Count - 1})",
+        };
+    }
+
     protected override async Task OnInitializedAsync()
     {
+        await LoadLibrariesAsync();
+    }
+
+    private async Task LoadLibrariesAsync()
+    {
         LoadedLibraries = await DbContext.Libraries
+        .Include(x => x.IngestPaths)
         .Include(x => x.UpscalerProfile)
         .Include(x => x.MangaSeries)
         .ThenInclude(x => x.UpscalerProfilePreference)
@@ -205,7 +235,7 @@
 
     private async Task OnLibraryChanged()
     {
-        LoadedLibraries = await DbContext.Libraries.ToListAsync();
+        await LoadLibrariesAsync();
     }
 
     protected async Task OnScanLibrary(Library library)

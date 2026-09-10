@@ -145,7 +145,7 @@ public class SimpleComponentTests : BunitContext
         {
             Id = 1,
             Name = "Test Library",
-            IngestPath = "/test/ingest",
+            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest" }],
             NotUpscaledLibraryPath = "/test/library",
             UpscaledLibraryPath = "/test/upscaled",
             UpscaleOnIngest = false,
@@ -358,7 +358,7 @@ public class SimpleComponentTests : BunitContext
         {
             Id = 1,
             Name = "Test Library",
-            IngestPath = "/test/ingest",
+            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest" }],
             NotUpscaledLibraryPath = "/test/library",
             RenameRules = new ObservableCollection<LibraryRenameRule>
             {

@@ -115,7 +115,7 @@ public class IngestProcessorSplitDetectionTests : IDisposable
         var lib = new Library
         {
             Name = "WebtoonLib",
-            IngestPath = Path.Combine(_tempRoot, "ingest"),
+            IngestPaths = [new LibraryIngestPath { Path = Path.Combine(_tempRoot, "ingest") }],
             NotUpscaledLibraryPath = Path.Combine(_tempRoot, "regular"),
             UpscaledLibraryPath = Path.Combine(_tempRoot, "upscaled"),
             UpscaleOnIngest = true,
@@ -128,7 +128,7 @@ public class IngestProcessorSplitDetectionTests : IDisposable
                 Quality = 80,
             },
         };
-        Directory.CreateDirectory(lib.IngestPath);
+        Directory.CreateDirectory(lib.IngestPaths[0].Path);
         Directory.CreateDirectory(lib.NotUpscaledLibraryPath);
         Directory.CreateDirectory(lib.UpscaledLibraryPath);
         db.Libraries.Add(lib);
@@ -163,14 +163,18 @@ public class IngestProcessorSplitDetectionTests : IDisposable
         );
 
         chapterRecognition
-            .FindAllChaptersAt(lib.IngestPath, lib.FilterRules, Arg.Any<CancellationToken>())
+            .FindAllChaptersAt(
+                lib.IngestPaths[0].Path,
+                lib.FilterRules,
+                Arg.Any<CancellationToken>()
+            )
             .Returns(new List<FoundChapter> { foundChapter }.ToAsyncEnumerable());
 
         renaming
             .ApplyRenameRules(Arg.Any<FoundChapter>(), lib.RenameRules)
             .Returns(ci => (FoundChapter)ci[0]!);
 
-        cbz.ConvertToCbz(Arg.Any<FoundChapter>(), lib.IngestPath)
+        cbz.ConvertToCbz(Arg.Any<FoundChapter>(), lib.IngestPaths[0].Path)
             .Returns(ci => (FoundChapter)ci[0]!);
 
         // Mock split coordinator: returns true (split detection enqueued)
@@ -257,7 +261,7 @@ public class IngestProcessorSplitDetectionTests : IDisposable
         var lib = new Library
         {
             Name = "RegularLib",
-            IngestPath = Path.Combine(_tempRoot, "ingest2"),
+            IngestPaths = [new LibraryIngestPath { Path = Path.Combine(_tempRoot, "ingest2") }],
             NotUpscaledLibraryPath = Path.Combine(_tempRoot, "regular2"),
             UpscaledLibraryPath = Path.Combine(_tempRoot, "upscaled2"),
             UpscaleOnIngest = true,
@@ -270,7 +274,7 @@ public class IngestProcessorSplitDetectionTests : IDisposable
                 Quality = 80,
             },
         };
-        Directory.CreateDirectory(lib.IngestPath);
+        Directory.CreateDirectory(lib.IngestPaths[0].Path);
         Directory.CreateDirectory(lib.NotUpscaledLibraryPath);
         Directory.CreateDirectory(lib.UpscaledLibraryPath);
         db.Libraries.Add(lib);
@@ -305,14 +309,18 @@ public class IngestProcessorSplitDetectionTests : IDisposable
         );
 
         chapterRecognition
-            .FindAllChaptersAt(lib.IngestPath, lib.FilterRules, Arg.Any<CancellationToken>())
+            .FindAllChaptersAt(
+                lib.IngestPaths[0].Path,
+                lib.FilterRules,
+                Arg.Any<CancellationToken>()
+            )
             .Returns(new List<FoundChapter> { foundChapter }.ToAsyncEnumerable());
 
         renaming
             .ApplyRenameRules(Arg.Any<FoundChapter>(), lib.RenameRules)
             .Returns(ci => (FoundChapter)ci[0]!);
 
-        cbz.ConvertToCbz(Arg.Any<FoundChapter>(), lib.IngestPath)
+        cbz.ConvertToCbz(Arg.Any<FoundChapter>(), lib.IngestPaths[0].Path)
             .Returns(ci => (FoundChapter)ci[0]!);
 
         // Mock split coordinator: returns false (no splits found / not plausible)

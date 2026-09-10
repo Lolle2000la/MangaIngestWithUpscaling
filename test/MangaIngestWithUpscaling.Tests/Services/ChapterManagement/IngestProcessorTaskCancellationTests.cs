@@ -128,7 +128,7 @@ public class IngestProcessorTaskCancellationTests : IDisposable
         var lib = new Library
         {
             Name = "Lib",
-            IngestPath = tempRoot,
+            IngestPaths = [new LibraryIngestPath { Path = tempRoot }],
             NotUpscaledLibraryPath = Path.Combine(tempRoot, "regular"),
             UpscaledLibraryPath = Path.Combine(tempRoot, "upscaled"),
             UpscaleOnIngest = true,
@@ -178,7 +178,11 @@ public class IngestProcessorTaskCancellationTests : IDisposable
 
         // Recognition returns two chapters
         chapterRecognition
-            .FindAllChaptersAt(lib.IngestPath, lib.FilterRules, Arg.Any<CancellationToken>())
+            .FindAllChaptersAt(
+                lib.IngestPaths[0].Path,
+                lib.FilterRules,
+                Arg.Any<CancellationToken>()
+            )
             .Returns(new List<FoundChapter> { in1, in2 }.ToAsyncEnumerable());
 
         // Renaming keeps names (no changes)
@@ -187,7 +191,7 @@ public class IngestProcessorTaskCancellationTests : IDisposable
             .Returns(ci => (FoundChapter)ci[0]!);
 
         // cbzConverter returns the same relative path (pretend already CBZ)
-        cbz.ConvertToCbz(Arg.Any<FoundChapter>(), lib.IngestPath)
+        cbz.ConvertToCbz(Arg.Any<FoundChapter>(), lib.IngestPaths[0].Path)
             .Returns(ci => (FoundChapter)ci[0]!);
 
         // The merger will produce a merge result that merges the two parts
@@ -211,7 +215,7 @@ public class IngestProcessorTaskCancellationTests : IDisposable
         chapterPartMerger
             .ProcessChapterMergingAsync(
                 Arg.Any<List<FoundChapter>>(),
-                Arg.Is(lib.IngestPath),
+                Arg.Is(lib.IngestPaths[0].Path),
                 Arg.Is(seriesDir),
                 Arg.Is("Series"),
                 Arg.Any<HashSet<string>>(),

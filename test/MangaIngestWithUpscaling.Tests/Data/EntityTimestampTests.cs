@@ -34,7 +34,7 @@ public class EntityTimestampTests : IDisposable
         var library = new Library
         {
             Name = "Test Library",
-            IngestPath = "/test/ingest",
+            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest" }],
             NotUpscaledLibraryPath = "/test/notupscaled",
         };
 
@@ -59,7 +59,7 @@ public class EntityTimestampTests : IDisposable
         var library = new Library
         {
             Name = "Test Library",
-            IngestPath = "/test/ingest",
+            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest" }],
             NotUpscaledLibraryPath = "/test/notupscaled",
         };
         _context.Libraries.Add(library);
@@ -95,7 +95,7 @@ public class EntityTimestampTests : IDisposable
         var library = new Library
         {
             Name = "Test Library",
-            IngestPath = "/test/ingest",
+            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest" }],
             NotUpscaledLibraryPath = "/test/notupscaled",
         };
         _context.Libraries.Add(library);
@@ -132,7 +132,7 @@ public class EntityTimestampTests : IDisposable
         var library = new Library
         {
             Name = "Test Library",
-            IngestPath = "/test/ingest",
+            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest" }],
             NotUpscaledLibraryPath = "/test/notupscaled",
         };
         var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };
@@ -169,7 +169,7 @@ public class EntityTimestampTests : IDisposable
         var library = new Library
         {
             Name = "Test Library",
-            IngestPath = "/test/ingest",
+            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest" }],
             NotUpscaledLibraryPath = "/test/notupscaled",
         };
         var manga = new Manga { PrimaryTitle = "Test Manga", Library = library };

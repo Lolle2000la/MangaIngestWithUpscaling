@@ -22,6 +22,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     };
 
     public DbSet<Library> Libraries { get; set; }
+    public DbSet<LibraryIngestPath> LibraryIngestPaths { get; set; }
     public DbSet<LibraryFilterRule> LibraryFilterRules { get; set; }
     public DbSet<LibraryRenameRule> LibraryRenameRules { get; set; }
     public DbSet<Manga> MangaSeries { get; set; }
@@ -150,6 +151,17 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 t.Order,
                 t.Id,
             });
+        });
+
+        builder.Entity<LibraryIngestPath>(entity =>
+        {
+            entity
+                .HasOne(e => e.Library)
+                .WithMany(e => e.IngestPaths)
+                .HasForeignKey(e => e.LibraryId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(e => e.LibraryId);
         });
 
         builder.Entity<LibraryFilterRule>(entity =>

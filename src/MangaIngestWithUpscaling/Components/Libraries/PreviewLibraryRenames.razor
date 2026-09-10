@@ -351,11 +351,18 @@
             }
 
             // Stream ingest previews
-            if (Library.IngestPath != null && Library.FilterRules != null && Library.RenameRules != null)
+            if (Library.FilterRules != null && Library.RenameRules != null)
             {
-                var found = chapterRecognition.FindAllChaptersAt(Library.IngestPath, Library.FilterRules, cancellationToken);
-                await foreach (var origChap in found)
+                foreach (var ingestPath in Library.IngestPaths)
                 {
+                    if (string.IsNullOrWhiteSpace(ingestPath.Path))
+                    {
+                        continue;
+                    }
+
+                    var found = chapterRecognition.FindAllChaptersAt(ingestPath.Path, Library.FilterRules, cancellationToken);
+                    await foreach (var origChap in found)
+                    {
                     cancellationToken.ThrowIfCancellationRequested();
                     var renamed = renamingService.ApplyRenameRules(origChap, Library.RenameRules);
                     if (origChap.Metadata.Series != renamed.Metadata.Series)
@@ -403,6 +410,7 @@
             _ingestFileNamePreviewsSource.Add(preview);
             StateHasChanged();
         });
+                    }
                     }
                 }
             }
