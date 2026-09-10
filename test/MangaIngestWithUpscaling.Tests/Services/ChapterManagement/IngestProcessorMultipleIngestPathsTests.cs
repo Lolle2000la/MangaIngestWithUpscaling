@@ -55,12 +55,16 @@ public class IngestProcessorMultipleIngestPathsTests : IDisposable
         }
     }
 
-    [Fact]
-    [Trait("Category", "Integration")]
-    public async Task Ingest_WithMultipleIngestPaths_ProcessesChaptersFromEveryPath()
-    {
-        await using ApplicationDbContext db = _testDb.Context;
+    private sealed record IngestSetup(
+        IngestProcessor Processor,
+        IChapterInIngestRecognitionService ChapterRecognition,
+        ILibraryRenamingService Renaming,
+        ICbzConverter Cbz,
+        IChapterProcessingService ChapterProcessing
+    );
 
+    private static IngestSetup BuildIngestProcessor(ApplicationDbContext db)
+    {
         var chapterRecognition = Substitute.For<IChapterInIngestRecognitionService>();
         var renaming = Substitute.For<ILibraryRenamingService>();
         var cbz = Substitute.For<ICbzConverter>();
@@ -109,40 +113,47 @@ public class IngestProcessorMultipleIngestPathsTests : IDisposable
             Substitute.For<IStringLocalizer<IngestProcessor>>()
         );
 
-        string ingestPathA = Path.Combine(_tempRoot, "ingestA");
-        string ingestPathB = Path.Combine(_tempRoot, "ingestB");
-        var lib = new Library
+        return new IngestSetup(ingest, chapterRecognition, renaming, cbz, chapterProcessingService);
+    }
+
+    private async Task<(Library Library, Manga Manga)> CreateLibraryAsync(
+        ApplicationDbContext db,
+        string seriesTitle,
+        params string[] ingestPaths
+    )
+    {
+        var library = new Library
         {
-            Name = "MultiPathLib",
-            IngestPaths =
-            [
-                new LibraryIngestPath { Path = ingestPathA, SortOrder = 0 },
-                new LibraryIngestPath { Path = ingestPathB, SortOrder = 1 },
-            ],
-            NotUpscaledLibraryPath = Path.Combine(_tempRoot, "regular"),
-            UpscaledLibraryPath = Path.Combine(_tempRoot, "upscaled"),
+            Name = seriesTitle,
+            IngestPaths = ingestPaths
+                .Select((p, i) => new LibraryIngestPath { Path = p, SortOrder = i })
+                .ToList(),
+            NotUpscaledLibraryPath = Path.Combine(_tempRoot, seriesTitle + "_regular"),
+            UpscaledLibraryPath = Path.Combine(_tempRoot, seriesTitle + "_upscaled"),
             UpscaleOnIngest = false,
             StripDetectionMode = StripDetectionMode.None,
         };
-        Directory.CreateDirectory(ingestPathA);
-        Directory.CreateDirectory(ingestPathB);
-        Directory.CreateDirectory(lib.NotUpscaledLibraryPath);
-        db.Libraries.Add(lib);
+        Directory.CreateDirectory(library.NotUpscaledLibraryPath);
+        db.Libraries.Add(library);
 
-        var manga = new Manga { PrimaryTitle = "Multi Series", Library = lib };
+        var manga = new Manga { PrimaryTitle = seriesTitle, Library = library };
         db.MangaSeries.Add(manga);
         await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        return (library, manga);
+    }
 
-        chapterProcessingService
-            .DetectUpscaledFileAsync(
+    private static void StubCommonDependencies(IngestSetup setup, Library library, Manga manga)
+    {
+        setup
+            .ChapterProcessing.DetectUpscaledFileAsync(
                 Arg.Any<string>(),
                 Arg.Any<string>(),
                 Arg.Any<CancellationToken>()
             )
             .Returns(Task.FromResult((false, (UpscalerProfileJsonDto?)null)));
 
-        chapterProcessingService
-            .GetOrCreateMangaSeriesAsync(
+        setup
+            .ChapterProcessing.GetOrCreateMangaSeriesAsync(
                 Arg.Any<Library>(),
                 Arg.Any<string>(),
                 Arg.Any<string>(),
@@ -150,42 +161,75 @@ public class IngestProcessorMultipleIngestPathsTests : IDisposable
             )
             .Returns(Task.FromResult(manga));
 
-        var chapterA = new FoundChapter(
-            "Chapter 1.cbz",
-            "Multi Series/Chapter 1.cbz",
+        setup
+            .Renaming.ApplyRenameRules(Arg.Any<FoundChapter>(), library.RenameRules)
+            .Returns(ci => (FoundChapter)ci[0]!);
+
+        setup
+            .Cbz.ConvertToCbz(Arg.Any<FoundChapter>(), Arg.Any<string>())
+            .Returns(ci => (FoundChapter)ci[0]!);
+    }
+
+    private static FoundChapter Chapter(
+        string series,
+        string fileName,
+        string title,
+        string number
+    ) =>
+        new(
+            fileName,
+            Path.Combine(series, fileName),
             ChapterStorageType.Cbz,
-            new ExtractedMetadata("Multi Series", "Chapter 1", "1")
-        );
-        var chapterB = new FoundChapter(
-            "Chapter 2.cbz",
-            "Multi Series/Chapter 2.cbz",
-            ChapterStorageType.Cbz,
-            new ExtractedMetadata("Multi Series", "Chapter 2", "2")
+            new ExtractedMetadata(series, title, number)
         );
 
-        chapterRecognition
-            .FindAllChaptersAt(ingestPathA, lib.FilterRules, Arg.Any<CancellationToken>())
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task Ingest_WithMultipleIngestPaths_ProcessesChaptersFromEveryPath()
+    {
+        await using ApplicationDbContext db = _testDb.Context;
+        IngestSetup setup = BuildIngestProcessor(db);
+
+        string ingestPathA = Path.Combine(_tempRoot, "ingestA");
+        string ingestPathB = Path.Combine(_tempRoot, "ingestB");
+        Directory.CreateDirectory(ingestPathA);
+        Directory.CreateDirectory(ingestPathB);
+
+        (Library lib, Manga manga) = await CreateLibraryAsync(
+            db,
+            "Multi Series",
+            ingestPathA,
+            ingestPathB
+        );
+        StubCommonDependencies(setup, lib, manga);
+
+        FoundChapter chapterA = Chapter("Multi Series", "Chapter 1.cbz", "Chapter 1", "1");
+        FoundChapter chapterB = Chapter("Multi Series", "Chapter 2.cbz", "Chapter 2", "2");
+
+        setup
+            .ChapterRecognition.FindAllChaptersAt(
+                ingestPathA,
+                lib.FilterRules,
+                Arg.Any<CancellationToken>()
+            )
             .Returns(new List<FoundChapter> { chapterA }.ToAsyncEnumerable());
-        chapterRecognition
-            .FindAllChaptersAt(ingestPathB, lib.FilterRules, Arg.Any<CancellationToken>())
+        setup
+            .ChapterRecognition.FindAllChaptersAt(
+                ingestPathB,
+                lib.FilterRules,
+                Arg.Any<CancellationToken>()
+            )
             .Returns(new List<FoundChapter> { chapterB }.ToAsyncEnumerable());
 
-        renaming
-            .ApplyRenameRules(Arg.Any<FoundChapter>(), lib.RenameRules)
-            .Returns(ci => (FoundChapter)ci[0]!);
+        await setup.Processor.ProcessAsync(lib, TestContext.Current.CancellationToken);
 
-        cbz.ConvertToCbz(Arg.Any<FoundChapter>(), Arg.Any<string>())
-            .Returns(ci => (FoundChapter)ci[0]!);
-
-        await ingest.ProcessAsync(lib, TestContext.Current.CancellationToken);
-
-        chapterRecognition
-            .Received(1)
+        setup
+            .ChapterRecognition.Received(1)
             .FindAllChaptersAt(ingestPathA, lib.FilterRules, Arg.Any<CancellationToken>());
-        chapterRecognition
-            .Received(1)
+        setup
+            .ChapterRecognition.Received(1)
             .FindAllChaptersAt(ingestPathB, lib.FilterRules, Arg.Any<CancellationToken>());
-        cbz.Received(2).ConvertToCbz(Arg.Any<FoundChapter>(), Arg.Any<string>());
+        setup.Cbz.Received(2).ConvertToCbz(Arg.Any<FoundChapter>(), Arg.Any<string>());
 
         List<Chapter> chapters = await db.Chapters.ToListAsync(
             TestContext.Current.CancellationToken
@@ -193,5 +237,103 @@ public class IngestProcessorMultipleIngestPathsTests : IDisposable
         Assert.Equal(2, chapters.Count);
         Assert.Contains(chapters, c => c.FileName == "Chapter 1.cbz");
         Assert.Contains(chapters, c => c.FileName == "Chapter 2.cbz");
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task Ingest_WithMissingIngestPath_SkipsItAndStillProcessesExistingPaths()
+    {
+        await using ApplicationDbContext db = _testDb.Context;
+        IngestSetup setup = BuildIngestProcessor(db);
+
+        string existingPath = Path.Combine(_tempRoot, "existing");
+        string missingPath = Path.Combine(_tempRoot, "missing");
+        Directory.CreateDirectory(existingPath);
+
+        (Library lib, Manga manga) = await CreateLibraryAsync(
+            db,
+            "Missing Path Series",
+            existingPath,
+            missingPath
+        );
+        StubCommonDependencies(setup, lib, manga);
+
+        FoundChapter chapter = Chapter("Missing Path Series", "Chapter 1.cbz", "Chapter 1", "1");
+        setup
+            .ChapterRecognition.FindAllChaptersAt(
+                existingPath,
+                lib.FilterRules,
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(new List<FoundChapter> { chapter }.ToAsyncEnumerable());
+
+        await setup.Processor.ProcessAsync(lib, TestContext.Current.CancellationToken);
+
+        // The missing path must be skipped before scanning is attempted.
+        setup
+            .ChapterRecognition.DidNotReceive()
+            .FindAllChaptersAt(
+                missingPath,
+                Arg.Any<IReadOnlyList<LibraryFilterRule>?>(),
+                Arg.Any<CancellationToken>()
+            );
+
+        List<Chapter> chapters = await db.Chapters.ToListAsync(
+            TestContext.Current.CancellationToken
+        );
+        Assert.Single(chapters);
+        Assert.Equal("Chapter 1.cbz", chapters[0].FileName);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task Ingest_WhenOneIngestPathFails_ContinuesProcessingTheRemainingPaths()
+    {
+        await using ApplicationDbContext db = _testDb.Context;
+        IngestSetup setup = BuildIngestProcessor(db);
+
+        string failingPath = Path.Combine(_tempRoot, "failing");
+        string workingPath = Path.Combine(_tempRoot, "working");
+        Directory.CreateDirectory(failingPath);
+        Directory.CreateDirectory(workingPath);
+
+        (Library lib, Manga manga) = await CreateLibraryAsync(
+            db,
+            "Resilient Series",
+            failingPath,
+            workingPath
+        );
+        StubCommonDependencies(setup, lib, manga);
+
+        FoundChapter chapter = Chapter("Resilient Series", "Chapter 1.cbz", "Chapter 1", "1");
+        setup
+            .ChapterRecognition.FindAllChaptersAt(
+                failingPath,
+                lib.FilterRules,
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(new ThrowingAsyncEnumerable());
+        setup
+            .ChapterRecognition.FindAllChaptersAt(
+                workingPath,
+                lib.FilterRules,
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(new List<FoundChapter> { chapter }.ToAsyncEnumerable());
+
+        await setup.Processor.ProcessAsync(lib, TestContext.Current.CancellationToken);
+
+        List<Chapter> chapters = await db.Chapters.ToListAsync(
+            TestContext.Current.CancellationToken
+        );
+        Assert.Single(chapters);
+        Assert.Equal("Chapter 1.cbz", chapters[0].FileName);
+    }
+
+    private sealed class ThrowingAsyncEnumerable : IAsyncEnumerable<FoundChapter>
+    {
+        public IAsyncEnumerator<FoundChapter> GetAsyncEnumerator(
+            CancellationToken cancellationToken = default
+        ) => throw new InvalidOperationException("Simulated ingest path failure");
     }
 }

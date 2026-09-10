@@ -110,38 +110,64 @@ public partial class IngestProcessor(
 
         foreach (string ingestPath in ingestPaths)
         {
-            await foreach (
-                FoundChapter originalChapter in chapterRecognitionService.FindAllChaptersAt(
-                    ingestPath,
-                    library.FilterRules,
-                    cancellationToken
-                )
-            )
+            if (!Directory.Exists(ingestPath))
             {
-                string fullPath = Path.Combine(ingestPath, originalChapter.RelativePath);
-                originalSeriesMap[fullPath] = originalChapter.Metadata.Series;
-
-                // apply rename rules and keep track of original and renamed versions
-                FoundChapter renamedChapter = renamingService.ApplyRenameRules(
-                    originalChapter,
-                    library.RenameRules
+                logger.LogWarning(
+                    "Ingest path {ingestPath} for library {libraryName} does not exist. Skipping it.",
+                    ingestPath,
+                    library.Name
                 );
+                continue;
+            }
 
-                var (isUpscaled, upscalerProfileDto) =
-                    await chapterProcessingService.DetectUpscaledFileAsync(
-                        fullPath,
-                        originalChapter.RelativePath,
+            try
+            {
+                await foreach (
+                    FoundChapter originalChapter in chapterRecognitionService.FindAllChaptersAt(
+                        ingestPath,
+                        library.FilterRules,
                         cancellationToken
+                    )
+                )
+                {
+                    string fullPath = Path.Combine(ingestPath, originalChapter.RelativePath);
+                    originalSeriesMap[fullPath] = originalChapter.Metadata.Series;
+
+                    // apply rename rules and keep track of original and renamed versions
+                    FoundChapter renamedChapter = renamingService.ApplyRenameRules(
+                        originalChapter,
+                        library.RenameRules
                     );
 
-                processedChapters.Add(
-                    new ProcessedChapterInfo(
-                        originalChapter,
-                        renamedChapter,
-                        ingestPath,
-                        isUpscaled,
-                        upscalerProfileDto
-                    )
+                    var (isUpscaled, upscalerProfileDto) =
+                        await chapterProcessingService.DetectUpscaledFileAsync(
+                            fullPath,
+                            originalChapter.RelativePath,
+                            cancellationToken
+                        );
+
+                    processedChapters.Add(
+                        new ProcessedChapterInfo(
+                            originalChapter,
+                            renamedChapter,
+                            ingestPath,
+                            isUpscaled,
+                            upscalerProfileDto
+                        )
+                    );
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(
+                    ex,
+                    "Failed to scan ingest path {ingestPath} for library {libraryName}. Continuing with the remaining paths.",
+                    ingestPath,
+                    library.Name
                 );
             }
         }

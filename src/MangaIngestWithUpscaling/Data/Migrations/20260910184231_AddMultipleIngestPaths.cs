@@ -42,9 +42,10 @@ namespace MangaIngestWithUpscaling.Migrations
             );
 
             migrationBuilder.CreateIndex(
-                name: "IX_LibraryIngestPaths_LibraryId",
+                name: "IX_LibraryIngestPaths_LibraryId_Path",
                 table: "LibraryIngestPaths",
-                column: "LibraryId"
+                columns: new[] { "LibraryId", "Path" },
+                unique: true
             );
 
             migrationBuilder.DropColumn(name: "IngestPath", table: "Libraries");

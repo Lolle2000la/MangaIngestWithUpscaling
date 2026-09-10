@@ -277,7 +277,7 @@
         // A library always needs at least one ingest path, so start editing with an empty one.
         if (Library.IngestPaths.Count == 0)
         {
-            Library.IngestPaths.Add(new LibraryIngestPath());
+            Library.IngestPaths.Add(new LibraryIngestPath { SortOrder = 0 });
         }
     }
 
@@ -294,7 +294,12 @@
 
     private void AddIngestPath()
     {
-        Library.IngestPaths.Add(new LibraryIngestPath());
+        // Keep appending after the highest existing order so removed entries do not cause collisions.
+        int nextOrder =
+            Library.IngestPaths.Count == 0
+                ? 0
+                : Library.IngestPaths.Max(p => p.SortOrder) + 1;
+        Library.IngestPaths.Add(new LibraryIngestPath { SortOrder = nextOrder });
         OnInputChanged();
     }
 
@@ -328,6 +333,15 @@
         IsValidChanged.InvokeAsync(IsValid);
     }
 
+    private static readonly StringComparer PathComparer = OperatingSystem.IsWindows()
+        ? StringComparer.OrdinalIgnoreCase
+        : StringComparer.Ordinal;
+
+    private static string NormalizePath(string? path) =>
+        string.IsNullOrEmpty(path)
+            ? string.Empty
+            : path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
     private bool Validate()
     {
         List<string> ingestPaths = Library.IngestPaths.Select(p => p.Path).ToList();
@@ -337,11 +351,17 @@
         ingestPaths.All(p => !string.IsNullOrWhiteSpace(p)) &&
         !string.IsNullOrWhiteSpace(Library.NotUpscaledLibraryPath);
 
-        bool ingestPathsAreUnique = ingestPaths.Distinct().Count() == ingestPaths.Count;
+        string notUpscaledPath = NormalizePath(Library.NotUpscaledLibraryPath);
+        string upscaledPath = NormalizePath(Library.UpscaledLibraryPath);
+        List<string> normalizedIngestPaths = ingestPaths.Select(NormalizePath).ToList();
+
+        bool ingestPathsAreUnique =
+            normalizedIngestPaths.Distinct(PathComparer).Count() == normalizedIngestPaths.Count;
 
         bool pathsAreDifferent = ingestPathsAreUnique &&
-        ingestPaths.All(p => p != Library.NotUpscaledLibraryPath && p != Library.UpscaledLibraryPath) &&
-        Library.NotUpscaledLibraryPath != Library.UpscaledLibraryPath;
+        normalizedIngestPaths.All(p =>
+            !PathComparer.Equals(p, notUpscaledPath) && !PathComparer.Equals(p, upscaledPath)) &&
+        !PathComparer.Equals(notUpscaledPath, upscaledPath);
 
         bool pathsExist = ingestPaths.All(Directory.Exists) &&
         Directory.Exists(Library.NotUpscaledLibraryPath) &&

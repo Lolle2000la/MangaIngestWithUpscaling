@@ -9,8 +9,6 @@ namespace MangaIngestWithUpscaling.Tests.Data.Migrations;
 
 public class AddMultipleIngestPathsMigrationTests
 {
-    private const string PreviousMigration = "20260119091931_AddPersistedTaskIndexes";
-
     [Fact]
     [Trait("Category", "Integration")]
     public async Task Migrate_PreservesExistingIngestPathAsFirstEntry()
@@ -25,7 +23,14 @@ public class AddMultipleIngestPathsMigrationTests
             await using var context = new ApplicationDbContext(options);
 
             IMigrator migrator = context.Database.GetService<IMigrator>();
-            await migrator.MigrateAsync(PreviousMigration, TestContext.Current.CancellationToken);
+
+            // Derive the migration preceding the one under test instead of hardcoding its id, so
+            // this keeps working when intermediate migrations are added.
+            List<string> migrations = context.Database.GetMigrations().ToList();
+            string previousMigration = migrations[^2];
+            Assert.Equal("20260910184231_AddMultipleIngestPaths", migrations[^1]);
+
+            await migrator.MigrateAsync(previousMigration, TestContext.Current.CancellationToken);
 
             // Insert a library using the pre-migration schema, where IngestPath was a single column.
             await context.Database.ExecuteSqlRawAsync(

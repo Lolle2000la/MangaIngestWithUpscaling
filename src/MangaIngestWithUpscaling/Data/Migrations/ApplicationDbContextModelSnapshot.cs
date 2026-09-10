@@ -421,7 +421,8 @@ namespace MangaIngestWithUpscaling.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("LibraryId");
+                    b.HasIndex("LibraryId", "Path")
+                        .IsUnique();
 
                     b.ToTable("LibraryIngestPaths");
                 });

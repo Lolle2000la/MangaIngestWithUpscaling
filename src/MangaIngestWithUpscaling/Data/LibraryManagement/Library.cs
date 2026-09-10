@@ -51,7 +51,12 @@ public class Library
 
         return Id == other.Id
             && Name == other.Name
-            && IngestPaths.Select(p => p.Path).SequenceEqual(other.IngestPaths.Select(p => p.Path))
+            && IngestPaths
+                .Select(p => p.Path)
+                .OrderBy(p => p, StringComparer.Ordinal)
+                .SequenceEqual(
+                    other.IngestPaths.Select(p => p.Path).OrderBy(p => p, StringComparer.Ordinal)
+                )
             && NotUpscaledLibraryPath == other.NotUpscaledLibraryPath
             && UpscaledLibraryPath == other.UpscaledLibraryPath
             && KavitaConfig == other.KavitaConfig
@@ -63,9 +68,11 @@ public class Library
     public override int GetHashCode()
     {
         var ingestPathsHash = new HashCode();
-        foreach (LibraryIngestPath ingestPath in IngestPaths)
+        foreach (
+            string path in IngestPaths.Select(p => p.Path).OrderBy(p => p, StringComparer.Ordinal)
+        )
         {
-            ingestPathsHash.Add(ingestPath.Path);
+            ingestPathsHash.Add(path);
         }
 
         return HashCode.Combine(

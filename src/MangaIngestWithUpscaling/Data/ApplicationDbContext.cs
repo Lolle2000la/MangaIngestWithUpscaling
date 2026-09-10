@@ -161,7 +161,8 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 .HasForeignKey(e => e.LibraryId)
                 .OnDelete(DeleteBehavior.Cascade);
 
-            entity.HasIndex(e => e.LibraryId);
+            // Also covers lookups by LibraryId alone.
+            entity.HasIndex(e => new { e.LibraryId, e.Path }).IsUnique();
         });
 
         builder.Entity<LibraryFilterRule>(entity =>

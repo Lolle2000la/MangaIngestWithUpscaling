@@ -4,6 +4,11 @@ public class FileSystemHelpers
 {
     public static void DeleteEmptySubfolders(string startLocation, ILogger logger)
     {
+        if (!Directory.Exists(startLocation))
+        {
+            return;
+        }
+
         foreach (var directory in Directory.GetDirectories(startLocation))
         {
             DeleteEmptySubfolders(directory, logger);
