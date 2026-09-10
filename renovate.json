@@ -44,6 +44,18 @@
       "description": "Automerge all updates if they build",
       "matchPackageNames": ["*"],
       "automerge": true
+    },
+    {
+      "description": "Do not auto-upgrade .NET to a new major version; stay on the current LTS line (10.x) until .NET 11 is released and adopted deliberately",
+      "matchDatasources": ["docker", "nuget"],
+      "matchPackageNames": [
+        "mcr.microsoft.com/dotnet/*",
+        "Microsoft.AspNetCore*",
+        "Microsoft.EntityFrameworkCore*",
+        "Microsoft.Extensions.*"
+      ],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
     }
   ]
 }
