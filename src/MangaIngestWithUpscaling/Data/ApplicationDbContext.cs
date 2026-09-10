@@ -60,40 +60,46 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         foreach (var entry in entries)
         {
             // Set ModifiedAt for all entities that have this property
-            if (entry.Entity is Chapter chapter)
+            bool isAdded = entry.State == EntityState.Added;
+            switch (entry.Entity)
             {
-                if (entry.State == EntityState.Added)
-                    chapter.CreatedAt = now;
-                chapter.ModifiedAt = now;
-            }
-            else if (entry.Entity is Manga manga)
-            {
-                if (entry.State == EntityState.Added)
-                    manga.CreatedAt = now;
-                manga.ModifiedAt = now;
-            }
-            else if (entry.Entity is Library library)
-            {
-                if (entry.State == EntityState.Added)
-                    library.CreatedAt = now;
-                library.ModifiedAt = now;
-            }
-            else if (entry.Entity is UpscalerProfile profile)
-            {
-                if (entry.State == EntityState.Added)
-                    profile.CreatedAt = now;
-                profile.ModifiedAt = now;
-            }
-            else if (
-                entry.Entity is MangaAlternativeTitle alternativeTitle
-                && entry.State == EntityState.Added
-            )
-            {
-                alternativeTitle.CreatedAt = now;
+                case Chapter chapter:
+                    if (isAdded)
+                        chapter.CreatedAt = now;
+                    chapter.ModifiedAt = now;
+                    break;
+                case Manga manga:
+                    if (isAdded)
+                        manga.CreatedAt = now;
+                    manga.ModifiedAt = now;
+                    break;
+                case Library library:
+                    if (isAdded)
+                        library.CreatedAt = now;
+                    library.ModifiedAt = now;
+                    break;
+                case UpscalerProfile profile:
+                    if (isAdded)
+                        profile.CreatedAt = now;
+                    profile.ModifiedAt = now;
+                    break;
+                case MangaAlternativeTitle alternativeTitle when isAdded:
+                    alternativeTitle.CreatedAt = now;
+                    break;
             }
         }
 
-        // Adding, removing or editing an ingest path changes the library, so bump its ModifiedAt.
+        UpdateLibraryTimestampForChangedIngestPaths(now);
+    }
+
+    /// <summary>
+    /// Adding, removing or editing an ingest path changes the owning library, so bump its
+    /// <see cref="Library.ModifiedAt"/>. This stays separate from <see cref="UpdateTimestamps"/>
+    /// because it must also react to deleted entries, whereas entity timestamps are only updated for
+    /// added or modified ones.
+    /// </summary>
+    private void UpdateLibraryTimestampForChangedIngestPaths(DateTime now)
+    {
         // Index the persisted libraries for O(1) owner lookups. Unsaved libraries (Id == 0) are not
         // indexed because they would collide on that key and are matched via the navigation instead.
         Dictionary<int, Library> trackedLibrariesById = ChangeTracker
