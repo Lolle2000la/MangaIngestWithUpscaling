@@ -12,7 +12,7 @@ MangaIngestWithUpscaling is a **Blazor-based web application** designed to **ing
 ## Working Effectively
 
 ### Prerequisites
-- .NET 11.0 SDK (REQUIRED - .NET 10/9 will not work)
+- .NET 10.0 SDK (REQUIRED - .NET 9/8 will not work)
 - Python 3.12 or newer
 - Git with submodule support
 
@@ -24,10 +24,10 @@ MangaIngestWithUpscaling is a **Blazor-based web application** designed to **ing
 - **First run may take 2-5 minutes** for Python environment setup
 
 ```bash
-# 1. Install .NET 11.0 SDK (if not installed)
+# 1. Install .NET 10.0 SDK (if not installed)
 wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh
 chmod +x dotnet-install.sh
-./dotnet-install.sh --channel 11.0 --install-dir ~/.dotnet
+./dotnet-install.sh --channel 10.0 --install-dir ~/.dotnet
 export PATH="$HOME/.dotnet:$PATH"
 
 # 2. Initialize git submodules (REQUIRED for build)
@@ -287,7 +287,7 @@ dotnet test --solution MangaIngestWithUpscaling.sln --filter-not-trait Category=
 
 ## Key Dependencies
 
-- **.NET 11.0** - Required runtime and SDK
+- **.NET 10.0** - Required runtime and SDK
 - **Blazor Server** - Web framework
 - **MudBlazor** - UI component library  
 - **Entity Framework Core** - Database ORM

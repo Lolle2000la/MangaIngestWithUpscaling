@@ -446,12 +446,12 @@ using (var scope = app.Services.CreateScope())
     var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
 
-    // Create database backup before .NET 11 upgrade if this is the first time
+    // Create database backup before .NET 10 upgrade if this is the first time
     var dbPath = Path.GetFullPath(sqliteConnectionStringBuilder.DataSource);
     string dbDirectory =
         Path.GetDirectoryName(dbPath)
         ?? throw new InvalidOperationException("Unable to determine database directory");
-    var upgradeMarkerFile = Path.Combine(dbDirectory, ".net11-upgrade-complete");
+    var upgradeMarkerFile = Path.Combine(dbDirectory, ".net10-upgrade-complete");
 
     if (!File.Exists(upgradeMarkerFile) && File.Exists(dbPath))
     {
@@ -460,7 +460,7 @@ using (var scope = app.Services.CreateScope())
             var backupPath = dbPath + ".bak";
             File.Copy(dbPath, backupPath, overwrite: false);
             logger.LogInformation(
-                "Created database backup at {BackupPath} before .NET 11 upgrade",
+                "Created database backup at {BackupPath} before .NET 10 upgrade",
                 backupPath
             );
 
@@ -480,7 +480,7 @@ using (var scope = app.Services.CreateScope())
         {
             logger.LogWarning(
                 ex,
-                "Failed to create database backup before .NET 11 upgrade. Continuing with migration..."
+                "Failed to create database backup before .NET 10 upgrade. Continuing with migration..."
             );
         }
     }
@@ -490,14 +490,14 @@ using (var scope = app.Services.CreateScope())
         dbContext.Database.Migrate();
         logger.LogDebug("Database migrations applied successfully.");
 
-        // Mark the .NET 11 upgrade as complete
+        // Mark the .NET 10 upgrade as complete
         try
         {
             await File.WriteAllTextAsync(
                 upgradeMarkerFile,
                 $"Upgrade completed on {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC"
             );
-            logger.LogDebug("Marked .NET 11 upgrade as complete");
+            logger.LogDebug("Marked .NET 10 upgrade as complete");
         }
         catch (Exception ex)
         {

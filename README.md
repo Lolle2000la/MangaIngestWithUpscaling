@@ -283,7 +283,7 @@ Without this, after being redirected back to the application, you might be faced
 
 ## Building Prerequisites
 
-- .NET 11.0 SDK or later
+- .NET 10.0 SDK or later
 
 ## Running from Source
 

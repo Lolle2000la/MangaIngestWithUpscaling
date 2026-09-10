@@ -1,4 +1,4 @@
-@using System.Collections.Specialized
+﻿@using System.Collections.Specialized
 @using System.Globalization
 @using MangaIngestWithUpscaling.Data.BackgroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue
@@ -52,6 +52,7 @@
         {
             Logger.LogError(ex, "Failed to clear completed tasks");
             Snackbar.Add(string.Format(Loc["Error_ClearCompleted"], ex.Message), Severity.Error);
+            StateHasChanged();
         }
     }
 
@@ -69,6 +70,7 @@
         {
             Logger.LogError(ex, "Failed to clear failed tasks");
             Snackbar.Add(string.Format(Loc["Error_ClearFailed"], ex.Message), Severity.Error);
+            StateHasChanged();
         }
     }
 
@@ -86,6 +88,7 @@
         {
             Logger.LogError(ex, "Failed to clear completed tasks");
             Snackbar.Add(string.Format(Loc["Error_ClearCompleted"], ex.Message), Severity.Error);
+            StateHasChanged();
         }
     }
 
@@ -103,6 +106,7 @@
         {
             Logger.LogError(ex, "Failed to clear failed tasks");
             Snackbar.Add("Failed to clear failed tasks: " + ex.Message, Severity.Error);
+            StateHasChanged();
         }
     }
 
@@ -116,6 +120,7 @@
         {
             Logger.LogError(ex, "Failed to retry task {TaskId}", task.Id);
             Snackbar.Add("Failed to retry task: " + ex.Message, Severity.Error);
+            StateHasChanged();
         }
     }
 
@@ -129,6 +134,7 @@
         {
             Logger.LogError(ex, "Failed to delete task {TaskId}", task.Id);
             Snackbar.Add("Failed to delete task: " + ex.Message, Severity.Error);
+            StateHasChanged();
         }
     }
 
@@ -142,6 +148,7 @@
         {
             Logger.LogError(ex, "Failed to cancel task {TaskId}", task.Id);
             Snackbar.Add("Failed to cancel task: " + ex.Message, Severity.Error);
+            StateHasChanged();
         }
 
         return Task.CompletedTask;
@@ -158,6 +165,7 @@
         {
             Logger.LogError(ex, "Failed to cancel task {TaskId}", task.Id);
             Snackbar.Add("Failed to cancel task: " + ex.Message, Severity.Error);
+            StateHasChanged();
         }
     }
 

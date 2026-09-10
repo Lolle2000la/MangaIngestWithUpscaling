@@ -16,7 +16,7 @@ EXPOSE 8081
 
 
 # This stage is used to build the service project
-FROM --platform=$BUILDPLATFORM  mcr.microsoft.com/dotnet/sdk:11.0 AS build
+FROM --platform=$BUILDPLATFORM  mcr.microsoft.com/dotnet/sdk:10.0-noble AS build
 ARG BUILD_CONFIGURATION=Release
 ARG TARGETARCH
 WORKDIR /src
