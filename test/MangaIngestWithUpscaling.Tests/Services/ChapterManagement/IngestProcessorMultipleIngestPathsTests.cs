@@ -60,7 +60,9 @@ public class IngestProcessorMultipleIngestPathsTests : IDisposable
         IChapterInIngestRecognitionService ChapterRecognition,
         ILibraryRenamingService Renaming,
         ICbzConverter Cbz,
-        IChapterProcessingService ChapterProcessing
+        IChapterProcessingService ChapterProcessing,
+        IChapterPartMerger ChapterPartMerger,
+        IFileSystem FileSystem
     );
 
     private static IngestSetup BuildIngestProcessor(ApplicationDbContext db)
@@ -113,7 +115,15 @@ public class IngestProcessorMultipleIngestPathsTests : IDisposable
             Substitute.For<IStringLocalizer<IngestProcessor>>()
         );
 
-        return new IngestSetup(ingest, chapterRecognition, renaming, cbz, chapterProcessingService);
+        return new IngestSetup(
+            ingest,
+            chapterRecognition,
+            renaming,
+            cbz,
+            chapterProcessingService,
+            chapterPartMerger,
+            fs
+        );
     }
 
     private async Task<(Library Library, Manga Manga)> CreateLibraryAsync(
@@ -369,6 +379,130 @@ public class IngestProcessorMultipleIngestPathsTests : IDisposable
             TestContext.Current.CancellationToken
         );
         Assert.Single(chapters);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task Ingest_WhenMergingAcrossPaths_ResolvesEachPartAgainstItsOwnRoot()
+    {
+        await using ApplicationDbContext db = _testDb.Context;
+        IngestSetup setup = BuildIngestProcessor(db);
+
+        string pathA = Path.Combine(_tempRoot, "mergeA");
+        string pathB = Path.Combine(_tempRoot, "mergeB");
+        Directory.CreateDirectory(pathA);
+        Directory.CreateDirectory(pathB);
+
+        (Library lib, Manga manga) = await CreateLibraryAsync(db, "Merge Series", pathA, pathB);
+        lib.MergeChapterParts = true;
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        StubCommonDependencies(setup, lib, manga);
+
+        FoundChapter partA = Chapter("Merge Series", "Chapter 1.1.cbz", "Chapter 1.1", "1.1");
+        FoundChapter partB = Chapter("Merge Series", "Chapter 1.2.cbz", "Chapter 1.2", "1.2");
+
+        setup
+            .ChapterRecognition.FindAllChaptersAt(
+                pathA,
+                lib.FilterRules,
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(new List<FoundChapter> { partA }.ToAsyncEnumerable());
+        setup
+            .ChapterRecognition.FindAllChaptersAt(
+                pathB,
+                lib.FilterRules,
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(new List<FoundChapter> { partB }.ToAsyncEnumerable());
+
+        Func<FoundChapter, string>? getActualFilePath = null;
+        setup
+            .ChapterPartMerger.ProcessChapterMergingAsync(
+                Arg.Any<List<FoundChapter>>(),
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<HashSet<string>>(),
+                Arg.Do<Func<FoundChapter, string>>(f => getActualFilePath = f),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(new ChapterMergeResult(new List<FoundChapter>(), new List<MergeInfo>()));
+
+        await setup.Processor.ProcessAsync(lib, TestContext.Current.CancellationToken);
+
+        // Each part must resolve to its own ingest root, not the first root for both.
+        Assert.NotNull(getActualFilePath);
+        Assert.Equal(Path.Combine(pathA, partA.RelativePath), getActualFilePath!(partA));
+        Assert.Equal(Path.Combine(pathB, partB.RelativePath), getActualFilePath!(partB));
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task Ingest_WhenUpscaledChapterIsInAnotherPath_MovesItFromItsOwnRoot()
+    {
+        await using ApplicationDbContext db = _testDb.Context;
+        IngestSetup setup = BuildIngestProcessor(db);
+
+        string originalRoot = Path.Combine(_tempRoot, "originalRoot");
+        string upscaledRoot = Path.Combine(_tempRoot, "upscaledRoot");
+        Directory.CreateDirectory(originalRoot);
+        Directory.CreateDirectory(upscaledRoot);
+
+        (Library lib, Manga manga) = await CreateLibraryAsync(
+            db,
+            "Upscaled Series",
+            originalRoot,
+            upscaledRoot
+        );
+        StubCommonDependencies(setup, lib, manga);
+
+        string relative = Path.Combine("Upscaled Series", "Chapter 1.cbz");
+        FoundChapter chapter = Chapter("Upscaled Series", "Chapter 1.cbz", "Chapter 1", "1");
+
+        // The already-upscaled file lives in the second root but shares the relative path.
+        string upscaledFullPath = Path.Combine(upscaledRoot, relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(upscaledFullPath)!);
+        await File.WriteAllTextAsync(
+            upscaledFullPath,
+            "fake",
+            TestContext.Current.CancellationToken
+        );
+
+        setup
+            .ChapterProcessing.DetectUpscaledFileAsync(
+                upscaledFullPath,
+                Arg.Any<string>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(Task.FromResult((true, (UpscalerProfileJsonDto?)null)));
+
+        setup
+            .ChapterRecognition.FindAllChaptersAt(
+                originalRoot,
+                lib.FilterRules,
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(new List<FoundChapter> { chapter }.ToAsyncEnumerable());
+        setup
+            .ChapterRecognition.FindAllChaptersAt(
+                upscaledRoot,
+                lib.FilterRules,
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(new List<FoundChapter> { chapter }.ToAsyncEnumerable());
+
+        await setup.Processor.ProcessAsync(lib, TestContext.Current.CancellationToken);
+
+        // The upscaled file must be read/moved from the root it was actually found in.
+        setup
+            .FileSystem.Received(1)
+            .Move(
+                upscaledFullPath,
+                Arg.Is<string>(target =>
+                    target.StartsWith(lib.UpscaledLibraryPath!, StringComparison.Ordinal)
+                )
+            );
     }
 
     private sealed class ThrowingAsyncEnumerable : IAsyncEnumerable<FoundChapter>
