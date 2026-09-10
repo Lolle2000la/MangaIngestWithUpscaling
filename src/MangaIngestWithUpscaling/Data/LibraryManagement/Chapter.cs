@@ -1,4 +1,5 @@
 ﻿using System.ComponentModel.DataAnnotations.Schema;
+using MangaIngestWithUpscaling.Shared.Data.Abstractions;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 
 namespace MangaIngestWithUpscaling.Data.LibraryManagement;
@@ -7,7 +8,7 @@ namespace MangaIngestWithUpscaling.Data.LibraryManagement;
 /// Represents a chapter in a manga series, including file name,
 /// relative path, and optional reference to an UpscalerConfig.
 /// </summary>
-public class Chapter
+public class Chapter : ICreatedAt, IModifiedAt
 {
     public int Id { get; set; }
     public int MangaId { get; set; }

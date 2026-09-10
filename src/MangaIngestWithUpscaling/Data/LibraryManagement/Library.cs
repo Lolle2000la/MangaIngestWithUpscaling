@@ -1,5 +1,6 @@
 ﻿using System.Collections.ObjectModel;
 using System.ComponentModel.DataAnnotations.Schema;
+using MangaIngestWithUpscaling.Shared.Data.Abstractions;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 
@@ -9,7 +10,7 @@ namespace MangaIngestWithUpscaling.Data.LibraryManagement;
 /// Represents a library with paths for ingesting, storing not-upscaled,
 /// and storing upscaled manga, plus optional filter rules.
 /// </summary>
-public class Library
+public class Library : ICreatedAt, IModifiedAt
 {
     public int Id { get; set; }
     public string Name { get; set; } = string.Empty;

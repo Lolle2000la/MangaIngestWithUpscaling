@@ -1,9 +1,11 @@
-﻿namespace MangaIngestWithUpscaling.Data.LibraryManagement;
+﻿using MangaIngestWithUpscaling.Shared.Data.Abstractions;
+
+namespace MangaIngestWithUpscaling.Data.LibraryManagement;
 
 /// <summary>
 /// Stores alternative titles for a manga.
 /// </summary>
-public class MangaAlternativeTitle
+public class MangaAlternativeTitle : ICreatedAt
 {
     public string Title { get; set; } = string.Empty;
 

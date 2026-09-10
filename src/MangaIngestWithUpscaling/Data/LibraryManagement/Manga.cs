@@ -1,4 +1,5 @@
 ﻿using System.ComponentModel.DataAnnotations.Schema;
+using MangaIngestWithUpscaling.Shared.Data.Abstractions;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 
 namespace MangaIngestWithUpscaling.Data.LibraryManagement;
@@ -7,7 +8,7 @@ namespace MangaIngestWithUpscaling.Data.LibraryManagement;
 /// Represents a manga series, including its primary title,
 /// alternative titles, author, and a reference to the Library it belongs to.
 /// </summary>
-public class Manga
+public class Manga : ICreatedAt, IModifiedAt
 {
     public int Id { get; set; }
     public string PrimaryTitle { get; set; } = string.Empty;

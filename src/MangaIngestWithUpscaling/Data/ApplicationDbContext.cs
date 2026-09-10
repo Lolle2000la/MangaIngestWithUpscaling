@@ -3,6 +3,7 @@ using MangaIngestWithUpscaling.Data.Analysis;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Shared.Data.Abstractions;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
@@ -59,33 +60,15 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 
         foreach (var entry in entries)
         {
-            // Set ModifiedAt for all entities that have this property
-            bool isAdded = entry.State == EntityState.Added;
-            switch (entry.Entity)
+            // Entities opt into automatic timestamps by implementing the interfaces.
+            if (entry.State == EntityState.Added && entry.Entity is ICreatedAt created)
             {
-                case Chapter chapter:
-                    if (isAdded)
-                        chapter.CreatedAt = now;
-                    chapter.ModifiedAt = now;
-                    break;
-                case Manga manga:
-                    if (isAdded)
-                        manga.CreatedAt = now;
-                    manga.ModifiedAt = now;
-                    break;
-                case Library library:
-                    if (isAdded)
-                        library.CreatedAt = now;
-                    library.ModifiedAt = now;
-                    break;
-                case UpscalerProfile profile:
-                    if (isAdded)
-                        profile.CreatedAt = now;
-                    profile.ModifiedAt = now;
-                    break;
-                case MangaAlternativeTitle alternativeTitle when isAdded:
-                    alternativeTitle.CreatedAt = now;
-                    break;
+                created.CreatedAt = now;
+            }
+
+            if (entry.Entity is IModifiedAt modified)
+            {
+                modified.ModifiedAt = now;
             }
         }
 
