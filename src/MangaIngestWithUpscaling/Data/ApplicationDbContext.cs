@@ -94,10 +94,14 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
         }
 
         // Adding, removing or editing an ingest path changes the library, so bump its ModifiedAt.
-        List<Library> trackedLibraries = ChangeTracker
+        // Index the persisted libraries for O(1) owner lookups. Unsaved libraries (Id == 0) are not
+        // indexed because they would collide on that key and are matched via the navigation instead.
+        Dictionary<int, Library> trackedLibrariesById = ChangeTracker
             .Entries<Library>()
             .Select(e => e.Entity)
-            .ToList();
+            .Where(l => l.Id != 0)
+            .ToDictionary(l => l.Id);
+
         foreach (var ingestPathEntry in ChangeTracker.Entries<LibraryIngestPath>())
         {
             bool pathChanged =
@@ -110,9 +114,18 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                 continue;
             }
 
-            Library? owner =
-                ingestPathEntry.Entity.Library
-                ?? trackedLibraries.FirstOrDefault(l => l.Id == ingestPathEntry.Entity.LibraryId);
+            Library? owner = ingestPathEntry.Entity.Library;
+            if (
+                owner is null
+                && trackedLibrariesById.TryGetValue(
+                    ingestPathEntry.Entity.LibraryId,
+                    out Library? trackedLibrary
+                )
+            )
+            {
+                owner = trackedLibrary;
+            }
+
             if (owner != null)
             {
                 owner.ModifiedAt = now;
