@@ -25,6 +25,7 @@ public class TaskRegistry : IHostedService, IDisposable
     private readonly UpscaleTaskProcessor _upscaleProcessor;
     private readonly ILogger<TaskRegistry>? _logger;
     private readonly PendingTaskChanges _pending = new();
+    private readonly RemovedTaskIds _removedTaskIds = new();
     private readonly CancellationTokenSource _cts = new();
     private volatile PersistedTask[] _standardSnapshot = [];
     private volatile PersistedTask[] _upscaleSnapshot = [];
@@ -162,14 +163,22 @@ public class TaskRegistry : IHostedService, IDisposable
         FlushPendingUpdates();
     }
 
-    private Task OnTaskChanged(PersistedTask task)
+    internal Task OnTaskChanged(PersistedTask task)
     {
+        // A task that was removed must not be resurrected by a status update that was already in
+        // flight when the removal was applied.
+        if (_removedTaskIds.Contains(task.Id))
+        {
+            return Task.CompletedTask;
+        }
+
         _pending.QueueUpdate(CloneShallow(task));
         return Task.CompletedTask;
     }
 
-    private Task OnTaskRemoved(PersistedTask task)
+    internal Task OnTaskRemoved(PersistedTask task)
     {
+        _removedTaskIds.Add(task.Id);
         _pending.QueueRemoval(CloneShallow(task));
         return Task.CompletedTask;
     }
@@ -198,7 +207,7 @@ public class TaskRegistry : IHostedService, IDisposable
         }
     }
 
-    private void FlushPendingUpdates()
+    internal void FlushPendingUpdates()
     {
         if (_pending.IsEmpty)
             return;

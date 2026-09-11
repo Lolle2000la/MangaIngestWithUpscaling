@@ -159,13 +159,20 @@
         if (Interlocked.Exchange(ref _reloadPending, 1) == 1)
             return;
 
+        _ = SafeReloadAsync();
+    }
+
+    private async Task SafeReloadAsync()
+    {
         try
         {
-            _ = InvokeAsync(ProcessPendingReloadAsync);
+            await InvokeAsync(ProcessPendingReloadAsync);
         }
         catch (Exception ex)
         {
-            // The component may have been disposed between the check above and this call.
+            // The component may have been disposed between the check above and this call, or the
+            // dispatcher may already be shutting down. Observe the fault and clear the flag so the
+            // table is not permanently stuck if it is still alive.
             Interlocked.Exchange(ref _reloadPending, 0);
             Logger.LogDebug(ex, "Skipped a task table reload because the component is unavailable.");
         }
@@ -202,8 +209,8 @@
         CancellationToken cancellationToken
     )
     {
-        // Only the requested page is materialized, so render cost stays independent of the total
-        // number of tasks.
+        // Materialize only the requested page. The default order reuses the registry's pre-sorted
+        // snapshot; an explicit column sort orders the snapshot once per reload (not per render).
         IReadOnlyList<PersistedTask> source = Upscale
             ? TaskRegistry.GetUpscaleSnapshot()
             : TaskRegistry.GetStandardSnapshot();

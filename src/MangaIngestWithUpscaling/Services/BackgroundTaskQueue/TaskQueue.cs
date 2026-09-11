@@ -120,6 +120,9 @@ public class TaskQueue : ITaskQueue, IHostedService
     public async Task EnqueueAsync<T>(T taskData)
         where T : BaseTask
     {
+        // The semaphore serializes order computation and is held across the event invocation below.
+        // Subscribers (currently only TaskRegistry, which is synchronous) must NOT call back into
+        // this method or block on it, otherwise the queue deadlocks.
         await _enqueueSemaphore.WaitAsync();
         try
         {
@@ -362,19 +365,18 @@ public class TaskQueue : ITaskQueue, IHostedService
         using var scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        dbContext.PersistedTasks.Remove(task);
-        await dbContext.SaveChangesAsync();
-
-        (SortedSet<PersistedTask> tasks, object lockObj) = IsUpscaleTask(task.Data)
-            ? (_upscaleTasks, _upscaleTasksLock)
-            : (_standardTasks, _standardTasksLock);
-
-        lock (lockObj)
+        // Only delete if the row still exists; a concurrent removal or cleanup would otherwise
+        // make SaveChanges throw DbUpdateConcurrencyException.
+        PersistedTask? existing = await dbContext.PersistedTasks.FirstOrDefaultAsync(t =>
+            t.Id == task.Id
+        );
+        if (existing is not null)
         {
-            var toRemove = tasks.FirstOrDefault(t => t.Id == task.Id);
-            if (toRemove != null)
-                tasks.Remove(toRemove);
+            dbContext.PersistedTasks.Remove(existing);
+            await dbContext.SaveChangesAsync();
         }
+
+        RemoveFromInMemoryQueues(task.Id);
 
         // Notify listeners about the removal
         TaskRemoved?.Invoke(task);
@@ -410,19 +412,35 @@ public class TaskQueue : ITaskQueue, IHostedService
 
         foreach (var task in list)
         {
-            (SortedSet<PersistedTask> set, object lockObj) =
-                task.Data is not null && IsUpscaleTask(task.Data)
-                    ? (_upscaleTasks, _upscaleTasksLock)
-                    : (_standardTasks, _standardTasksLock);
-
-            lock (lockObj)
-            {
-                var toRemove = set.FirstOrDefault(t => t.Id == task.Id);
-                if (toRemove != null)
-                    set.Remove(toRemove);
-            }
-
+            RemoveFromInMemoryQueues(task.Id);
             TaskRemoved?.Invoke(task);
+        }
+    }
+
+    /// <summary>
+    ///     Removes a task from whichever in-memory queue currently holds it. Looking the task up by
+    ///     id avoids depending on <see cref="PersistedTask.Data" />, which may be unavailable for
+    ///     id-only removal notifications.
+    /// </summary>
+    private void RemoveFromInMemoryQueues(int taskId)
+    {
+        lock (_upscaleTasksLock)
+        {
+            var upscale = _upscaleTasks.FirstOrDefault(t => t.Id == taskId);
+            if (upscale != null)
+            {
+                _upscaleTasks.Remove(upscale);
+                return;
+            }
+        }
+
+        lock (_standardTasksLock)
+        {
+            var standard = _standardTasks.FirstOrDefault(t => t.Id == taskId);
+            if (standard != null)
+            {
+                _standardTasks.Remove(standard);
+            }
         }
     }
 

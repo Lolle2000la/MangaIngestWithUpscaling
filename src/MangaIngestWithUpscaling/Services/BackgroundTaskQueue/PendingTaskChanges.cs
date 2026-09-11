@@ -8,9 +8,9 @@ namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 /// </summary>
 /// <remarks>
 ///     Updates and removals arrive from different threads (processor status events versus
-///     queue/UI removal calls), so without care a task could be queued for both and be
-///     re-inserted after it was removed. Removals therefore always take precedence over updates,
-///     regardless of the order in which the producers queued them.
+///     queue/UI removal calls). Within a single batch, a removal always wins over an update for
+///     the same task. Across batches, <see cref="TaskRegistry" /> remembers removed task ids so a
+///     late status update cannot resurrect a task whose row has already been deleted.
 /// </remarks>
 internal sealed class PendingTaskChanges
 {
@@ -20,24 +20,10 @@ internal sealed class PendingTaskChanges
     public bool IsEmpty => _updates.IsEmpty && _removals.IsEmpty;
 
     /// <summary>
-    ///     Queues an update, unless the task is (or becomes) queued for removal.
+    ///     Queues an update. A removal queued before or after it in the same batch takes precedence
+    ///     (see <see cref="Drain" />).
     /// </summary>
-    public void QueueUpdate(PersistedTask task)
-    {
-        if (_removals.ContainsKey(task.Id))
-        {
-            return;
-        }
-
-        _updates[task.Id] = task;
-
-        // Close the race with a concurrent QueueRemoval: if the removal appeared between the
-        // check above and this assignment, discard the update so removal wins.
-        if (_removals.ContainsKey(task.Id))
-        {
-            _updates.TryRemove(task.Id, out _);
-        }
-    }
+    public void QueueUpdate(PersistedTask task) => _updates[task.Id] = task;
 
     /// <summary>
     ///     Queues a removal and drops any pending update for the same task.
@@ -50,7 +36,7 @@ internal sealed class PendingTaskChanges
 
     /// <summary>
     ///     Drains the buffered changes. No task id is ever returned in both <paramref name="updates" />
-    ///     and <paramref name="removals" />.
+    ///     and <paramref name="removals" />, regardless of how the producers interleaved.
     /// </summary>
     public void Drain(out List<PersistedTask> updates, out List<PersistedTask> removals)
     {
@@ -73,8 +59,8 @@ internal sealed class PendingTaskChanges
             }
         }
 
-        // Filter explicitly as a final guarantee: an update that slipped in during the drain must
-        // not resurrect a task that is being removed in this same batch.
+        // An update that slipped in while the removals were being drained must not resurrect a
+        // task that is being removed in this same batch.
         if (removals.Count > 0 && updates.Count > 0)
         {
             HashSet<int> removalIds = removals.Select(r => r.Id).ToHashSet();

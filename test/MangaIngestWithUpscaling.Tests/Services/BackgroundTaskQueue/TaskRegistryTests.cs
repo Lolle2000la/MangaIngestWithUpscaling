@@ -273,6 +273,38 @@ public class TaskRegistryTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task TaskRegistry_LateUpdateAfterRemovalFlushed_DoesNotResurrectTask()
+    {
+        using ServiceProvider provider = BuildProvider($"TaskRegistryTombstone_{Guid.NewGuid()}");
+        var registry = BuildRegistry(provider, out _);
+
+        var task = new PersistedTask
+        {
+            Id = 4242,
+            Data = new LoggingTask { Message = "ghost" },
+            Status = PersistedTaskStatus.Pending,
+        };
+
+        // Seed the task and apply the update.
+        await registry.OnTaskChanged(task);
+        registry.FlushPendingUpdates();
+        Assert.Single(registry.GetStandardSnapshot());
+
+        // Remove it and apply the removal.
+        await registry.OnTaskRemoved(task);
+        registry.FlushPendingUpdates();
+        Assert.Empty(registry.GetStandardSnapshot());
+
+        // A status update that was already in flight when the removal was applied must not bring
+        // the task back (removed ids are tombstoned).
+        await registry.OnTaskChanged(task);
+        registry.FlushPendingUpdates();
+
+        Assert.Empty(registry.GetStandardSnapshot());
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task TaskRegistry_ConcurrentEnqueuesAndSnapshotReads_DoNotThrowOrHang()
     {
         // Regression guard: the flush loop, the enqueue path and UI snapshot reads all touch the

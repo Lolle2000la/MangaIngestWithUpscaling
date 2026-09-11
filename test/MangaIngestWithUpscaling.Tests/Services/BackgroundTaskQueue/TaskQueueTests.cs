@@ -1121,6 +1121,26 @@ public class TaskQueueTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task RemoveTaskAsync_WithAlreadyDeletedTask_DoesNotThrow()
+    {
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "a" });
+        PersistedTask task = _taskQueue.GetStandardSnapshot().Single();
+
+        var toDelete = await _dbContext.PersistedTasks.FirstAsync(
+            t => t.Id == task.Id,
+            TestContext.Current.CancellationToken
+        );
+        _dbContext.PersistedTasks.Remove(toDelete);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        Exception? exception = await Record.ExceptionAsync(() => _taskQueue.RemoveTaskAsync(task));
+
+        Assert.Null(exception);
+        Assert.Empty(_taskQueue.GetStandardSnapshot());
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task ConcurrentEnqueueDequeueAndSnapshots_CompleteWithoutDeadlock()
     {
         // Regression guard for the nested sorted-set locks in EnqueueAsync combined with the
