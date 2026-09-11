@@ -377,7 +377,20 @@ public class TaskQueue : ITaskQueue, IHostedService
         if (existing is not null)
         {
             dbContext.PersistedTasks.Remove(existing);
-            await dbContext.SaveChangesAsync();
+            try
+            {
+                await dbContext.SaveChangesAsync();
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                // A concurrent remover (another call or QueueCleanup) deleted the row between our
+                // check and our SaveChanges. The desired end state — the row is gone — already
+                // holds, so treat the removal as successful instead of propagating.
+                _logger.LogDebug(
+                    "Task {TaskId} was already removed by a concurrent operation.",
+                    task.Id
+                );
+            }
         }
 
         RemoveFromInMemoryQueues(task.Id);
@@ -411,7 +424,19 @@ public class TaskQueue : ITaskQueue, IHostedService
         if (existing.Count > 0)
         {
             dbContext.PersistedTasks.RemoveRange(existing);
-            await dbContext.SaveChangesAsync();
+            try
+            {
+                await dbContext.SaveChangesAsync();
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                // One or more rows were deleted by a concurrent remover after we loaded them. The
+                // raced rows are already gone; do not fail the whole batch with an exception.
+                _logger.LogDebug(
+                    "One or more of the {Count} tasks were already removed by a concurrent operation.",
+                    existing.Count
+                );
+            }
         }
 
         foreach (var task in list)

@@ -391,6 +391,26 @@ public class TaskRegistryTests
         await registry.StopAsync(TestContext.Current.CancellationToken);
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task TaskRegistry_DisposeWithoutStopAsync_DoesNotThrow()
+    {
+        // Regression guard: Dispose may run without StopAsync (e.g. container teardown), where the
+        // flush loop could still be touching the collections being disposed.
+        using ServiceProvider provider = BuildProvider($"TaskRegistryDispose_{Guid.NewGuid()}");
+        var registry = BuildRegistry(provider, out var taskQueue);
+        await registry.StartAsync(TestContext.Current.CancellationToken);
+
+        for (int i = 0; i < 20; i++)
+        {
+            await taskQueue.EnqueueAsync(new LoggingTask { Message = $"m{i}" });
+        }
+
+        Exception? exception = Record.Exception(registry.Dispose);
+
+        Assert.Null(exception);
+    }
+
     private static ServiceProvider BuildProvider(string dbName)
     {
         var services = new ServiceCollection();

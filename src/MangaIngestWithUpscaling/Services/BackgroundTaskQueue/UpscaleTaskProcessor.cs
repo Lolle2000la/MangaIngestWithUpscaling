@@ -56,17 +56,44 @@ public class UpscaleTaskProcessor(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (upscalerConfig.Value.RemoteOnly)
-        {
-            // If the upscaler is configured to run only on the remote worker, we do not start the processor.
-            return;
-        }
-
         serviceStoppingToken = stoppingToken;
 
         // Removal is an authoritative stop signal: if the queue removes the task this processor is
         // currently running, stop it rather than finish work against a deleted row.
         taskQueue.TaskRemoved += OnTaskRemoved;
+
+        if (upscalerConfig.Value.RemoteOnly)
+        {
+            // The local ML backend is disabled, so genuine upscaling must not run here. However,
+            // the distributed processor reroutes tasks it cannot delegate (notably
+            // RenameUpscaledChaptersSeriesTask) to this processor. Those do not need the ML backend,
+            // so drain only the rerouted channel; never read the main upscale channel, whose
+            // consumers in RemoteOnly are the remote workers.
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                PersistedTask rerouted;
+                try
+                {
+                    rerouted = await _reroutedReader.ReadAsync(stoppingToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+
+                using (_lock.EnterScope())
+                {
+                    currentStoppingToken = CancellationTokenSource.CreateLinkedTokenSource(
+                        stoppingToken
+                    );
+                    currentTask = rerouted;
+                }
+
+                await ProcessTaskAsync(rerouted, currentStoppingToken.Token);
+            }
+
+            return;
+        }
 
         while (!stoppingToken.IsCancellationRequested)
         {

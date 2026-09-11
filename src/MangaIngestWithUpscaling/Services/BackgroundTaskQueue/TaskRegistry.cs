@@ -128,6 +128,17 @@ public class TaskRegistry : IHostedService, IDisposable
         _distributedUpscaleProcessor.StatusChanged -= OnTaskChanged;
 
         _cts.Cancel();
+
+        // Best-effort: let an in-flight flush observe cancellation before the collections it mutates
+        // are disposed. Normally StopAsync already awaited the loop; this only matters when Dispose
+        // runs on its own. A short timeout prevents disposal from hanging if a flush is stuck.
+        try
+        {
+            _flushTask?.Wait(TimeSpan.FromSeconds(2));
+        }
+        catch (AggregateException) { }
+        catch (ObjectDisposedException) { }
+
         _cts.Dispose();
         _cleanups.Dispose();
         _tasks.Dispose();
@@ -217,7 +228,9 @@ public class TaskRegistry : IHostedService, IDisposable
 
     internal void FlushPendingUpdates()
     {
-        if (_pending.IsEmpty)
+        // Disposal may run without StopAsync; once disposed the collections must not be touched,
+        // even if the flush loop is mid-tick when cancellation is observed.
+        if (Volatile.Read(ref _disposed) != 0 || _pending.IsEmpty)
             return;
 
         _pending.Drain(

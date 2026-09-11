@@ -189,8 +189,11 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
         // Act
         await _taskQueue.RemoveTaskAsync(task);
 
-        // Assert
+        // Assert: removal stops tracking without writing a status for the already-deleted row.
         Assert.False(_processor.IsRunningRemotely(task.Id));
+        await _mockPersistence
+            .DidNotReceive()
+            .CancelTaskAsync(Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>());
 
         await cts.CancelAsync();
         try

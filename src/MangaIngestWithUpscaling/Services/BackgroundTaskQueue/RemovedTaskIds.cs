@@ -13,7 +13,10 @@ namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 /// </remarks>
 internal sealed class RemovedTaskIds
 {
-    private const int MaxTracked = 50_000;
+    // A removed id is only relevant until any in-flight status update for it has been drained. The
+    // cap is far larger than that window; keeping it bounded avoids unbounded growth in long-running
+    // processes. Raised from 50_000 to 200_000: still small in memory, but widens the safety margin.
+    private const int MaxTracked = 200_000;
 
     private readonly ConcurrentDictionary<int, byte> _ids = new();
     private readonly ConcurrentQueue<int> _insertionOrder = new();
