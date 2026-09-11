@@ -26,8 +26,13 @@ public class TaskRegistry : IHostedService, IDisposable
     private readonly ILogger<TaskRegistry>? _logger;
     private readonly PendingTaskChanges _pending = new();
     private readonly CancellationTokenSource _cts = new();
-    private volatile PersistedTask[] _standardSnapshot = [];
-    private volatile PersistedTask[] _upscaleSnapshot = [];
+
+    // A single immutable holder so readers always observe the standard and upscale snapshots from
+    // the same generation. Swapped atomically once per rebuild; never null.
+    private volatile Snapshots _snapshots = new(
+        Array.Empty<PersistedTask>(),
+        Array.Empty<PersistedTask>()
+    );
     private Task? _flushTask;
     private int _disposed;
 
@@ -97,13 +102,13 @@ public class TaskRegistry : IHostedService, IDisposable
     ///     Returns a consistent, sorted snapshot of the standard tasks. The returned array is
     ///     replaced atomically on each flush, so callers can safely enumerate it from any thread.
     /// </summary>
-    public IReadOnlyList<PersistedTask> GetStandardSnapshot() => _standardSnapshot;
+    public IReadOnlyList<PersistedTask> GetStandardSnapshot() => _snapshots.Standard;
 
     /// <summary>
     ///     Returns a consistent, sorted snapshot of the upscale tasks. The returned array is
     ///     replaced atomically on each flush, so callers can safely enumerate it from any thread.
     /// </summary>
-    public IReadOnlyList<PersistedTask> GetUpscaleSnapshot() => _upscaleSnapshot;
+    public IReadOnlyList<PersistedTask> GetUpscaleSnapshot() => _snapshots.Upscale;
 
     public void Dispose()
     {
@@ -112,6 +117,15 @@ public class TaskRegistry : IHostedService, IDisposable
         // teardown idempotent to avoid calling Cancel() on an already-disposed CTS.
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
+
+        // Unsubscribe here as well so disposal without a prior StopAsync cannot leave the queue
+        // and processors holding references to this registry. Re-unsubscribing after StopAsync is
+        // safe.
+        _taskQueue.TaskEnqueuedOrChanged -= OnTaskChanged;
+        _taskQueue.TaskRemoved -= OnTaskRemoved;
+        _standardProcessor.StatusChanged -= OnTaskChanged;
+        _upscaleProcessor.StatusChanged -= OnTaskChanged;
+        _distributedUpscaleProcessor.StatusChanged -= OnTaskChanged;
 
         _cts.Cancel();
         _cts.Dispose();
@@ -258,13 +272,18 @@ public class TaskRegistry : IHostedService, IDisposable
 
     /// <summary>
     ///     Rebuilds the immutable snapshots consumed by the UI. Runs on the flush thread and
-    ///     swaps the arrays atomically, so readers never observe a partially-updated view.
+    ///     swaps the holder atomically, so readers never observe a partially-updated view and can
+    ///     never see the standard and upscale views from different generations.
     /// </summary>
     private void RebuildSnapshots()
     {
-        _standardSnapshot = StandardTasks.ToArray();
-        _upscaleSnapshot = UpscaleTasks.ToArray();
+        _snapshots = new Snapshots(StandardTasks.ToArray(), UpscaleTasks.ToArray());
     }
+
+    private sealed record Snapshots(
+        IReadOnlyList<PersistedTask> Standard,
+        IReadOnlyList<PersistedTask> Upscale
+    );
 
     private static PersistedTask CloneShallow(PersistedTask src)
     {

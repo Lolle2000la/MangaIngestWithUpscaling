@@ -196,12 +196,16 @@ public class TaskRegistryTests
             var persistedId = snapshot[0].Id;
 
             // Allow event propagation into registry
-            for (int i = 0; i < 5 && !registry.StandardTasks.Any(t => t.Id == persistedId); i++)
+            for (
+                int i = 0;
+                i < 5 && !registry.GetStandardSnapshot().Any(t => t.Id == persistedId);
+                i++
+            )
             {
                 await Task.Delay(50, TestContext.Current.CancellationToken);
             }
 
-            Assert.Contains(registry.StandardTasks, t => t.Id == persistedId);
+            Assert.Contains(registry.GetStandardSnapshot(), t => t.Id == persistedId);
 
             // Act: remove the task via queue and wait for registry to update
             await taskQueue.RemoveTaskAsync(
@@ -212,12 +216,16 @@ public class TaskRegistryTests
                 }
             );
 
-            for (int i = 0; i < 5 && registry.StandardTasks.Any(t => t.Id == persistedId); i++)
+            for (
+                int i = 0;
+                i < 5 && registry.GetStandardSnapshot().Any(t => t.Id == persistedId);
+                i++
+            )
             {
                 await Task.Delay(50, TestContext.Current.CancellationToken);
             }
 
-            Assert.DoesNotContain(registry.StandardTasks, t => t.Id == persistedId);
+            Assert.DoesNotContain(registry.GetStandardSnapshot(), t => t.Id == persistedId);
         }
         finally
         {

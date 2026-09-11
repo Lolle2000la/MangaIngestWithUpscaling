@@ -213,6 +213,9 @@
             catch (Exception ex)
             {
                 // Never let a reload failure escape into an unobserved task or spin the loop.
+                // Clearing the pending flag stops SafeReloadAsync's re-check from immediately
+                // re-dispatching while the failure persists.
+                Interlocked.Exchange(ref _reloadPending, 0);
                 Logger.LogError(ex, "Failed to reload the task table.");
                 return;
             }

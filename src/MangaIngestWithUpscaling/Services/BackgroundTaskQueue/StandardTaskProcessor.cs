@@ -38,9 +38,20 @@ public class StandardTaskProcessor(
         }
     }
 
+    private Task OnTaskRemoved(PersistedTask task)
+    {
+        CancelCurrent(task);
+        return Task.CompletedTask;
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         serviceStoppingToken = stoppingToken;
+
+        // Removal is an authoritative stop signal: if the queue removes the task this processor is
+        // running, stop it rather than finish work against a deleted row.
+        taskQueue.TaskRemoved += OnTaskRemoved;
+
         while (!stoppingToken.IsCancellationRequested)
         {
             await _reader.ReadAsync(stoppingToken);

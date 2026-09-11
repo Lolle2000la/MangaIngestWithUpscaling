@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
@@ -85,29 +86,85 @@ public class PendingTaskChangesTests
     [Trait("Category", "Unit")]
     public async Task Drain_NeverReturnsSameIdInUpdatesAndRemovals_UnderConcurrency()
     {
-        // Regression guard: an update and a removal for the same task can be queued from different
-        // threads. A removed task must never be resurrected by an update in the same batch.
-        for (int iteration = 0; iteration < 300; iteration++)
+        // Regression guard: updates, removals and drains for the same tasks run concurrently. A
+        // removed task must never be returned as an update in the same batch as its removal.
+        const int iterations = 50;
+        const int taskCount = 40;
+
+        for (int iteration = 0; iteration < iterations; iteration++)
         {
             var buffer = new PendingTaskChanges();
-            var task = CreateTask(iteration + 1);
+            using var start = new ManualResetEventSlim(false);
+            var errors = new ConcurrentBag<Exception>();
 
-            Task update = Task.Run(
-                () => buffer.QueueUpdate(task),
+            var producers = Enumerable
+                .Range(0, 3)
+                .Select(_ =>
+                    Task.Run(
+                        async () =>
+                        {
+                            try
+                            {
+                                start.Wait(TestContext.Current.CancellationToken);
+                                for (int i = 1; i <= taskCount; i++)
+                                {
+                                    PersistedTask task = CreateTask(i);
+                                    buffer.QueueUpdate(task);
+                                    await Task.Yield();
+                                    buffer.QueueRemoval(task);
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                errors.Add(ex);
+                            }
+                        },
+                        TestContext.Current.CancellationToken
+                    )
+                )
+                .ToList();
+
+            var drainer = Task.Run(
+                async () =>
+                {
+                    try
+                    {
+                        start.Wait(TestContext.Current.CancellationToken);
+                        for (int i = 0; i < taskCount; i++)
+                        {
+                            buffer.Drain(out var updates, out var removals);
+
+                            HashSet<int> updateIds = updates.Select(u => u.Id).ToHashSet();
+                            HashSet<int> removalIds = removals.Select(r => r.Id).ToHashSet();
+                            if (updateIds.Overlaps(removalIds))
+                            {
+                                throw new InvalidOperationException(
+                                    "An id was returned as both an update and a removal in the same drain batch."
+                                );
+                            }
+
+                            await Task.Yield();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Add(ex);
+                    }
+                },
                 TestContext.Current.CancellationToken
             );
-            Task removal = Task.Run(
-                () => buffer.QueueRemoval(task),
-                TestContext.Current.CancellationToken
-            );
 
-            await Task.WhenAll(update, removal);
+            start.Set();
 
-            buffer.Drain(out var updates, out var removals);
+            await Task.WhenAll(producers.Append(drainer))
+                .WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
 
-            HashSet<int> updateIds = updates.Select(u => u.Id).ToHashSet();
-            HashSet<int> removalIds = removals.Select(r => r.Id).ToHashSet();
-            Assert.Empty(updateIds.Intersect(removalIds));
+            Assert.Empty(errors);
+
+            buffer.Drain(out var remainingUpdates, out var remainingRemovals);
+            HashSet<int> remainingUpdateIds = remainingUpdates.Select(u => u.Id).ToHashSet();
+            HashSet<int> remainingRemovalIds = remainingRemovals.Select(r => r.Id).ToHashSet();
+            Assert.Empty(remainingUpdateIds.Intersect(remainingRemovalIds));
         }
     }
 }

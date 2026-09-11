@@ -278,22 +278,26 @@ public class TaskQueue : ITaskQueue, IHostedService
                 }
             }
 
-            if (TaskEnqueuedOrChanged != null)
+            // Snapshot the event delegates once: a concurrent unsubscribe (e.g. TaskRegistry.StopAsync)
+            // can null the field between reads, which would cause a NullReferenceException.
+            var enqueuedHandler = TaskEnqueuedOrChanged;
+            if (enqueuedHandler != null)
             {
                 foreach (var t in shiftedTasks)
                 {
-                    await TaskEnqueuedOrChanged.Invoke(t);
+                    await enqueuedHandler.Invoke(t);
                 }
-                await TaskEnqueuedOrChanged.Invoke(taskItem);
+                await enqueuedHandler.Invoke(taskItem);
             }
 
             var queueCleanup = scope.ServiceProvider.GetRequiredService<IQueueCleanup>();
             var removedTaskIds = await queueCleanup.CleanupAsync();
 
-            if (TaskRemoved != null && removedTaskIds.Count > 0)
+            var removedHandler = TaskRemoved;
+            if (removedHandler != null && removedTaskIds.Count > 0)
             {
                 await Task.WhenAll(
-                    removedTaskIds.Select(id => TaskRemoved(new PersistedTask { Id = id }))
+                    removedTaskIds.Select(id => removedHandler(new PersistedTask { Id = id }))
                 );
             }
         }

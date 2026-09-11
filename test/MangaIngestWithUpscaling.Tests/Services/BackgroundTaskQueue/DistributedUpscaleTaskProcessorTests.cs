@@ -170,4 +170,33 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
         }
         catch (OperationCanceledException) { }
     }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RemoveTaskAsync_ShouldCancelRunningRemoteTask()
+    {
+        // Removal is the stop signal for in-flight remote work: a removed task must not keep
+        // running just because the removal happened through its row's queue.
+        var cts = new CancellationTokenSource();
+        await _taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(1, 1));
+
+        var runTask = _processor.StartAsync(cts.Token);
+        var task = await _processor.GetTask(cts.Token);
+
+        Assert.NotNull(task);
+        Assert.True(_processor.IsRunningRemotely(task.Id));
+
+        // Act
+        await _taskQueue.RemoveTaskAsync(task);
+
+        // Assert
+        Assert.False(_processor.IsRunningRemotely(task.Id));
+
+        await cts.CancelAsync();
+        try
+        {
+            await runTask;
+        }
+        catch (OperationCanceledException) { }
+    }
 }

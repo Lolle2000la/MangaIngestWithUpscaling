@@ -81,78 +81,123 @@ public class DistributedUpscaleTaskProcessor(
         await taskPersistenceService.CancelTaskAsync(checkAgainst.Id);
     }
 
+    private async Task OnTaskRemoved(PersistedTask task)
+    {
+        try
+        {
+            await CancelCurrent(task);
+        }
+        catch (Exception ex)
+        {
+            // The removal event discards this task, so an escaping exception would be unobserved.
+            logger.LogError(ex, "Failed to cancel removed task {TaskId}.", task.Id);
+        }
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         serviceStoppingToken = stoppingToken;
 
+        // Removal is an authoritative stop signal: if the queue removes a task that is currently
+        // being processed remotely, stop tracking it and cancel it in the database.
+        taskQueue.TaskRemoved += OnTaskRemoved;
+
         _ = Task.Run(
             async () =>
             {
-                var cleanDeadTasksTimer = new PeriodicTimer(TimeSpan.FromSeconds(10));
-                while (
-                    !stoppingToken.IsCancellationRequested
-                    && await cleanDeadTasksTimer.WaitForNextTickAsync(stoppingToken)
-                )
+                using var cleanDeadTasksTimer = new PeriodicTimer(TimeSpan.FromSeconds(10));
+                try
                 {
-                    List<PersistedTask> deadTasksToRequeue;
-                    using (_lock.EnterScope())
+                    while (
+                        !stoppingToken.IsCancellationRequested
+                        && await cleanDeadTasksTimer.WaitForNextTickAsync(stoppingToken)
+                    )
                     {
-                        var deadTasks = runningTasks
-                            .Where(x =>
-                                x.Value.Status == PersistedTaskStatus.Processing
-                                && x.Value.LastKeepAlive.AddMinutes(1) < DateTime.UtcNow
-                            )
-                            .ToList();
-
-                        if (deadTasks.Count == 0)
+                        try
                         {
-                            continue;
+                            List<PersistedTask> deadTasksToRequeue;
+                            using (_lock.EnterScope())
+                            {
+                                var deadTasks = runningTasks
+                                    .Where(x =>
+                                        x.Value.Status == PersistedTaskStatus.Processing
+                                        && x.Value.LastKeepAlive.AddMinutes(1) < DateTime.UtcNow
+                                    )
+                                    .ToList();
+
+                                if (deadTasks.Count == 0)
+                                {
+                                    continue;
+                                }
+
+                                deadTasksToRequeue = new List<PersistedTask>(deadTasks.Count);
+                                foreach (var (taskId, task) in deadTasks)
+                                {
+                                    deadTasksToRequeue.Add(task);
+                                    runningTasks.Remove(taskId);
+                                }
+                            }
+
+                            using (IServiceScope scope = scopeFactory.CreateScope())
+                            {
+                                var logger = scope.ServiceProvider.GetRequiredService<
+                                    ILogger<DistributedUpscaleTaskProcessor>
+                                >();
+                                logger.LogInformation(
+                                    "Re-enqueuing {count} dead tasks.",
+                                    deadTasksToRequeue.Count
+                                );
+                            }
+
+                            foreach (PersistedTask task in deadTasksToRequeue)
+                            {
+                                using IServiceScope scope2 = scopeFactory.CreateScope();
+                                var db2 =
+                                    scope2.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                                // Re-check the current status in DB to avoid re-enqueueing tasks that already completed or were cancelled
+                                PersistedTask? current = await db2
+                                    .PersistedTasks.AsNoTracking()
+                                    .FirstOrDefaultAsync(t => t.Id == task.Id, stoppingToken);
+                                if (current is null)
+                                {
+                                    continue;
+                                }
+
+                                if (
+                                    current.Status == PersistedTaskStatus.Completed
+                                    || current.Status == PersistedTaskStatus.Canceled
+                                )
+                                {
+                                    // Already finalized; do not re-enqueue
+                                    continue;
+                                }
+
+                                await taskQueue.RetryAsync(task);
+                                _ = StatusChanged?.Invoke(task);
+                            }
                         }
-
-                        deadTasksToRequeue = new List<PersistedTask>(deadTasks.Count);
-                        foreach (var (taskId, task) in deadTasks)
+                        catch (OperationCanceledException)
                         {
-                            deadTasksToRequeue.Add(task);
-                            runningTasks.Remove(taskId);
+                            break;
+                        }
+                        catch (Exception ex)
+                        {
+                            // A single transient failure (e.g. DbUpdateConcurrencyException from a
+                            // concurrently deleted row) must not kill the reaper; retry next tick.
+                            logger.LogError(
+                                ex,
+                                "Failed to reap dead tasks; the reaper will retry on the next tick."
+                            );
                         }
                     }
-
-                    using (IServiceScope scope = scopeFactory.CreateScope())
-                    {
-                        var logger = scope.ServiceProvider.GetRequiredService<
-                            ILogger<DistributedUpscaleTaskProcessor>
-                        >();
-                        logger.LogInformation(
-                            "Re-enqueuing {count} dead tasks.",
-                            deadTasksToRequeue.Count
-                        );
-                    }
-
-                    foreach (PersistedTask task in deadTasksToRequeue)
-                    {
-                        using IServiceScope scope2 = scopeFactory.CreateScope();
-                        var db2 = scope2.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-                        // Re-check the current status in DB to avoid re-enqueueing tasks that already completed or were cancelled
-                        PersistedTask? current = await db2
-                            .PersistedTasks.AsNoTracking()
-                            .FirstOrDefaultAsync(t => t.Id == task.Id, stoppingToken);
-                        if (current is null)
-                        {
-                            continue;
-                        }
-
-                        if (
-                            current.Status == PersistedTaskStatus.Completed
-                            || current.Status == PersistedTaskStatus.Canceled
-                        )
-                        {
-                            // Already finalized; do not re-enqueue
-                            continue;
-                        }
-
-                        await taskQueue.RetryAsync(task);
-                        _ = StatusChanged?.Invoke(task);
-                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    // Shutdown: WaitForNextTickAsync throws when stoppingToken is canceled.
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Dead task reaper terminated unexpectedly.");
                 }
             },
             stoppingToken
@@ -853,14 +898,22 @@ public class DistributedUpscaleTaskProcessor(
             }
         }
 
+        PersistedTask? failedTask = null;
         using (_lock.EnterScope())
         {
             if (runningTasks.TryGetValue(taskId, out PersistedTask? task))
             {
                 task.Status = PersistedTaskStatus.Failed;
                 runningTasks.Remove(taskId);
-                _ = StatusChanged?.Invoke(task);
+                failedTask = task;
             }
+        }
+
+        // Raise the event after releasing _lock: a subscriber that re-enters the processor must not
+        // be able to deadlock it by calling back in.
+        if (failedTask != null)
+        {
+            _ = StatusChanged?.Invoke(failedTask);
         }
 
         await taskPersistenceService.FailTaskAsync(taskId);

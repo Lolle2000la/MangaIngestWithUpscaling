@@ -48,6 +48,12 @@ public class UpscaleTaskProcessor(
         }
     }
 
+    private Task OnTaskRemoved(PersistedTask task)
+    {
+        CancelCurrent(task);
+        return Task.CompletedTask;
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (upscalerConfig.Value.RemoteOnly)
@@ -57,6 +63,10 @@ public class UpscaleTaskProcessor(
         }
 
         serviceStoppingToken = stoppingToken;
+
+        // Removal is an authoritative stop signal: if the queue removes the task this processor is
+        // currently running, stop it rather than finish work against a deleted row.
+        taskQueue.TaskRemoved += OnTaskRemoved;
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -122,13 +132,44 @@ public class UpscaleTaskProcessor(
 
     protected async Task ProcessTaskAsync(PersistedTask task, CancellationToken stoppingToken)
     {
-        // Atomically claim the task if not already claimed (e.g. by DistributedUpscaleTaskProcessor before rerouting)
-        if (task.Status != PersistedTaskStatus.Processing)
+        // A task that arrives already Processing was claimed and rerouted by the distributed
+        // processor. A task from the main queue is Pending and must be claimed here.
+        bool alreadyClaimed = task.Status == PersistedTaskStatus.Processing;
+
+        if (!alreadyClaimed)
         {
             if (!await taskPersistenceService.ClaimTaskAsync(task.Id, stoppingToken))
             {
                 logger.LogInformation(
                     "Task {TaskId} could not be claimed (already processed or concurrency conflict)",
+                    task.Id
+                );
+                return;
+            }
+        }
+        else
+        {
+            // Removal does not reach the local reroute channel, so the row may have been deleted
+            // while the task sat there. Verify it still exists before running the work.
+            using var checkScope = scopeFactory.CreateScope();
+            var dbContext = checkScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            bool rowExists;
+            try
+            {
+                rowExists = await dbContext.PersistedTasks.AnyAsync(
+                    t => t.Id == task.Id,
+                    stoppingToken
+                );
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            if (!rowExists)
+            {
+                logger.LogInformation(
+                    "Skipping rerouted task {TaskId} because its database row no longer exists.",
                     task.Id
                 );
                 return;
