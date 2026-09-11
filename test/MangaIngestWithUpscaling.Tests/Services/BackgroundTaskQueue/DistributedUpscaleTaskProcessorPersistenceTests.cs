@@ -377,6 +377,11 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
             .Returns(ci =>
                 realPersistence.CancelTaskAsync((int)ci[0], (bool)ci[1], (CancellationToken)ci[2])
             );
+        persistence
+            .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+                realPersistence.RequeueStrandedTaskAsync((int)ci[0], (CancellationToken)ci[1])
+            );
 
         var processor = new DistributedUpscaleTaskProcessor(
             _taskQueue,
@@ -409,6 +414,85 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
 
         // The processor must keep serving later requests.
         await _taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(1, 1));
+        PersistedTask? second = await processor.GetTask(serviceCts.Token);
+        Assert.NotNull(second);
+        Assert.IsType<DetectSplitCandidatesTask>(second!.Data);
+
+        await serviceCts.CancelAsync();
+        await processor.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task GetTask_WhenClaimThrowsAfterCommit_RestoresRowAndKeepsServing()
+    {
+        // Regression guard: ClaimTaskAsync can throw after the row was already committed to
+        // Processing. claimedTask used to be assigned only after a successful claim, so that error
+        // was recovered by nothing: the task was no longer in the in-memory set, never entered
+        // runningTasks, and its row stayed Processing until restart.
+        var serviceCts = new CancellationTokenSource();
+        var realPersistence = new TaskPersistenceService(
+            _provider.GetRequiredService<IServiceScopeFactory>()
+        );
+        var persistence = Substitute.For<ITaskPersistenceService>();
+        bool firstClaim = true;
+        persistence
+            .ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(async ci =>
+            {
+                if (firstClaim)
+                {
+                    firstClaim = false;
+                    // Commit the claim, then fail before the processor can track it.
+                    await realPersistence.ClaimTaskAsync((int)ci[0], (CancellationToken)ci[1]);
+                    throw new InvalidOperationException("claim failed after commit");
+                }
+
+                return await realPersistence.ClaimTaskAsync((int)ci[0], (CancellationToken)ci[1]);
+            });
+        persistence
+            .CompleteTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(ci => realPersistence.CompleteTaskAsync((int)ci[0], (CancellationToken)ci[1]));
+        persistence
+            .FailTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(ci => realPersistence.FailTaskAsync((int)ci[0], (CancellationToken)ci[1]));
+        persistence
+            .CancelTaskAsync(Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+                realPersistence.CancelTaskAsync((int)ci[0], (bool)ci[1], (CancellationToken)ci[2])
+            );
+        persistence
+            .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+                realPersistence.RequeueStrandedTaskAsync((int)ci[0], (CancellationToken)ci[1])
+            );
+
+        var processor = new DistributedUpscaleTaskProcessor(
+            _taskQueue,
+            _provider.GetRequiredService<IServiceScopeFactory>(),
+            _provider.GetRequiredService<IOptions<UpscalerConfig>>(),
+            _provider.GetRequiredService<ILogger<DistributedUpscaleTaskProcessor>>(),
+            persistence
+        );
+
+        // ApplySplits performs a chapter query after the claim; when the recovered task is
+        // re-claimed it fails on its missing chapter before the next task is handed to the worker.
+        await _taskQueue.EnqueueAsync(new ApplySplitsTask(999_999, 1));
+        int taskId = _taskQueue.GetUpscaleSnapshot().Single().Id;
+
+        await processor.StartAsync(serviceCts.Token);
+
+        // The claim exception is surfaced to the requesting worker.
+        await Assert.ThrowsAnyAsync<Exception>(() => processor.GetTask(serviceCts.Token));
+
+        // The row must be recoverable (Pending), never stranded Processing.
+        Assert.Equal(
+            PersistedTaskStatus.Pending,
+            await WaitForStatusAsync(taskId, PersistedTaskStatus.Pending)
+        );
+
+        // The processor keeps serving later requests.
+        await _taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(2, 1));
         PersistedTask? second = await processor.GetTask(serviceCts.Token);
         Assert.NotNull(second);
         Assert.IsType<DetectSplitCandidatesTask>(second!.Data);

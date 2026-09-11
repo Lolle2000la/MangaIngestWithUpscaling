@@ -219,14 +219,16 @@ public class UpscaleTaskProcessor(
             }
             catch (Exception ex)
             {
-                // The row is untouched (still Pending) but the task is no longer in the in-memory
-                // queue. Re-add it so it is retried promptly instead of waiting for the periodic replay.
+                // Do not re-enqueue: re-adding the same task put it straight back at the head of
+                // the sorted set, so a persistent claim failure spun forever and starved every
+                // later task. Reconcile the row to Pending (guarded, no retry bump) and leave it
+                // for the periodic replayer/startup recovery.
                 logger.LogError(
                     ex,
-                    "Failed to claim task {TaskId}; re-enqueueing it for retry",
+                    "Failed to claim task {TaskId}; returning it to Pending for later replay",
                     task.Id
                 );
-                taskQueue.ReEnqueue(task);
+                await ReturnToPendingForReplayAsync(task);
                 return;
             }
 
@@ -262,11 +264,16 @@ public class UpscaleTaskProcessor(
             }
             catch (Exception ex)
             {
+                // A persistent verification failure must not silently drop the rerouted task and
+                // strand its Processing row. Reconcile it to Pending and let the replayer recover
+                // it instead of re-enqueueing, which would hot-loop this local processor on the
+                // same failure.
                 logger.LogError(
                     ex,
-                    "Failed to verify rerouted task {TaskId}; leaving it for recovery",
+                    "Failed to verify rerouted task {TaskId}; returning it to Pending for later replay",
                     task.Id
                 );
+                await ReturnToPendingForReplayAsync(task);
                 return;
             }
 
@@ -320,7 +327,15 @@ public class UpscaleTaskProcessor(
             await task.Data.ProcessAsync(scope.ServiceProvider, stoppingToken);
             _ = StatusChanged?.Invoke(task);
 
-            await taskPersistenceService.CompleteTaskAsync(task.Id);
+            int completedRows = await taskPersistenceService.CompleteTaskAsync(task.Id);
+
+            // A guarded terminal write affects no row when the task was concurrently canceled or
+            // removed. The database is the source of truth then, so do not overwrite the in-memory
+            // (and UI) state with a contradictory Completed status.
+            if (completedRows == 0)
+            {
+                return;
+            }
 
             // Update in-memory task to match
             task.Status = PersistedTaskStatus.Completed;
@@ -351,7 +366,13 @@ public class UpscaleTaskProcessor(
 
             try
             {
-                await taskPersistenceService.FailTaskAsync(task.Id);
+                int failedRows = await taskPersistenceService.FailTaskAsync(task.Id);
+                if (failedRows == 0)
+                {
+                    // Already terminal (e.g. concurrently canceled); do not emit a contradictory
+                    // Failed status or inflate the in-memory retry count.
+                    return;
+                }
 
                 // Update in-memory task
                 task.Status = PersistedTaskStatus.Failed;
@@ -362,6 +383,35 @@ public class UpscaleTaskProcessor(
             {
                 logger.LogError(dbEx, "Failed to update task {TaskId} status", task.Id);
             }
+        }
+    }
+
+    /// <summary>
+    ///     Best-effort reconcile of a task whose claim or reroute verification failed: the guarded
+    ///     write returns a Processing (or Pending) row to Pending without bumping the retry count and
+    ///     never touches a terminal row. Recovery is then the periodic replayer's job. Errors are
+    ///     logged and swallowed so a database hiccup here cannot fault the processor.
+    /// </summary>
+    private async Task ReturnToPendingForReplayAsync(PersistedTask task)
+    {
+        int affected;
+        try
+        {
+            affected = await taskPersistenceService.RequeueStrandedTaskAsync(
+                task.Id,
+                CancellationToken.None
+            );
+        }
+        catch (Exception dbEx)
+        {
+            logger.LogError(dbEx, "Failed to reconcile task {TaskId} to Pending", task.Id);
+            return;
+        }
+
+        if (affected > 0 && task.Status != PersistedTaskStatus.Pending)
+        {
+            task.Status = PersistedTaskStatus.Pending;
+            StatusChanged?.Invoke(task);
         }
     }
 

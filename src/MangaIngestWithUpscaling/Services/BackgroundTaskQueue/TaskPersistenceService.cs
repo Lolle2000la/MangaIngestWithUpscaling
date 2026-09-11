@@ -14,6 +14,14 @@ public interface ITaskPersistenceService
         bool requeue = false,
         CancellationToken cancellationToken = default
     );
+
+    /// <summary>
+    ///     Puts a still-recoverable task row (Pending or Processing) back to
+    ///     <see cref="PersistedTaskStatus.Pending"/> without bumping its retry count. Terminal rows
+    ///     are left untouched so a late recovery cannot resurrect a completed/canceled task. The
+    ///     affected row count is returned so callers can tell whether the row was recoverable.
+    /// </summary>
+    Task<int> RequeueStrandedTaskAsync(int taskId, CancellationToken cancellationToken = default);
 }
 
 [RegisterSingleton]
@@ -126,6 +134,30 @@ public class TaskPersistenceService(IServiceScopeFactory scopeFactory) : ITaskPe
             )
             .ExecuteUpdateAsync(
                 setters => setters.SetProperty(t => t.Status, newStatus),
+                cancellationToken
+            );
+    }
+
+    public async Task<int> RequeueStrandedTaskAsync(
+        int taskId,
+        CancellationToken cancellationToken = default
+    )
+    {
+        using var scope = scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+        // Only a still-active task may be returned to Pending. A terminal row is the source of
+        // truth and must not be overwritten by a failed claim/recovery.
+        return await dbContext
+            .PersistedTasks.Where(t =>
+                t.Id == taskId
+                && (
+                    t.Status == PersistedTaskStatus.Pending
+                    || t.Status == PersistedTaskStatus.Processing
+                )
+            )
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(t => t.Status, PersistedTaskStatus.Pending),
                 cancellationToken
             );
     }

@@ -343,7 +343,11 @@ public class DistributedUpscaleTaskProcessor(
                         continue;
                     }
 
-                    bool taskClaimed = false;
+                    // Track the task before the claim. ClaimTaskAsync can throw after the row was
+                    // already committed to Processing, so the outer catch must recover the claim
+                    // itself; assigning only after a successful claim left such a row stranded.
+                    claimedTask = task;
+
                     using (IServiceScope scope = scopeFactory.CreateScope())
                     {
                         var logger = scope.ServiceProvider.GetRequiredService<
@@ -352,7 +356,6 @@ public class DistributedUpscaleTaskProcessor(
 
                         if (await taskPersistenceService.ClaimTaskAsync(task.Id, linkedCts.Token))
                         {
-                            taskClaimed = true;
                             task.Status = PersistedTaskStatus.Processing;
                         }
                         else
@@ -361,17 +364,11 @@ public class DistributedUpscaleTaskProcessor(
                                 "Task {taskId} could not be claimed (already processed or concurrency conflict).",
                                 task.Id
                             );
+                            // Not ours to recover: it is already claimed elsewhere or terminal.
+                            claimedTask = null;
                             continue;
                         }
                     }
-
-                    // Only proceed with the task if we successfully claimed it
-                    if (!taskClaimed)
-                    {
-                        continue;
-                    }
-
-                    claimedTask = task;
 
                     // Handle RepairUpscaleTask specially based on remote-only mode
                     if (task.Data is RepairUpscaleTask repairTask)
@@ -1250,17 +1247,23 @@ public class DistributedUpscaleTaskProcessor(
     }
 
     /// <summary>
-    ///     Puts a task that was claimed by this processor but never successfully handed off back
-    ///     into the queue as Pending. This covers a worker disconnect during remote-repair
-    ///     preparation as well as a cancellation or unexpected error after a plain claim. Failures
-    ///     are logged and swallowed: the row would then be left Processing and startup recovery
-    ///     resets it, so a database hiccup here must not fault the processor.
+    ///     Puts a task that was claimed (or was being claimed) by this processor but never
+    ///     successfully handed off back into the queue as Pending. This covers a worker disconnect
+    ///     during remote-repair preparation as well as a cancellation or unexpected error during or
+    ///     after a plain claim. The database write is guarded so a terminal row is never
+    ///     resurrected; when the row is no longer recoverable the task is simply dropped. Failures
+    ///     are logged and swallowed: the row would then be left for startup recovery, so a database
+    ///     hiccup here must not fault the processor.
     /// </summary>
     private async Task RequeueClaimedTaskAsync(PersistedTask persistedTask)
     {
+        int affected;
         try
         {
-            await taskQueue.RetryAsync(persistedTask);
+            affected = await taskPersistenceService.RequeueStrandedTaskAsync(
+                persistedTask.Id,
+                serviceStoppingToken
+            );
         }
         catch (Exception ex)
         {
@@ -1269,7 +1272,32 @@ public class DistributedUpscaleTaskProcessor(
                 "Failed to requeue claimed task {TaskId}; leaving it for startup recovery.",
                 persistedTask.Id
             );
+            return;
         }
+
+        if (affected == 0)
+        {
+            // The row is already terminal or was removed; do not resurrect it.
+            return;
+        }
+
+        persistedTask.Status = PersistedTaskStatus.Pending;
+        try
+        {
+            // The guarded update above already persisted Pending, so re-add to the in-memory
+            // queue without another database write. The sorted set deduplicates by (Order, Id).
+            taskQueue.ReEnqueue(persistedTask);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to re-enqueue claimed task {TaskId}; the periodic replay will recover it.",
+                persistedTask.Id
+            );
+        }
+
+        _ = StatusChanged?.Invoke(persistedTask);
     }
 
     /// <summary>

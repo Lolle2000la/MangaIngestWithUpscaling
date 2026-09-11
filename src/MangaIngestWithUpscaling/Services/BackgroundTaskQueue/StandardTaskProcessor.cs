@@ -114,14 +114,17 @@ public class StandardTaskProcessor(
         }
         catch (Exception ex)
         {
-            // The row is untouched (still Pending) but the task is no longer in the in-memory
-            // queue. Re-add it so it is retried promptly instead of waiting for the periodic replay.
+            // Do not re-enqueue: re-adding the same task put it straight back at the head of the
+            // sorted set, so a persistent claim failure spun forever and starved every later task.
+            // Reconcile the row to Pending (guarded, no retry bump) and leave it for the periodic
+            // replayer/startup recovery. The task is not lost: its row stays Pending and
+            // TaskRegistry still shows it.
             logger.LogError(
                 ex,
-                "Failed to claim task {TaskId}; re-enqueueing it for retry",
+                "Failed to claim task {TaskId}; returning it to Pending for later replay",
                 task.Id
             );
-            taskQueue.ReEnqueue(task);
+            await ReturnToPendingForReplayAsync(task);
             return;
         }
 
@@ -158,7 +161,15 @@ public class StandardTaskProcessor(
             await task.Data.ProcessAsync(scope.ServiceProvider, stoppingToken);
             StatusChanged?.Invoke(task);
 
-            await taskPersistenceService.CompleteTaskAsync(task.Id);
+            int completedRows = await taskPersistenceService.CompleteTaskAsync(task.Id);
+
+            // A guarded terminal write affects no row when the task was concurrently canceled or
+            // removed. The database is the source of truth then, so do not overwrite the in-memory
+            // (and UI) state with a contradictory Completed status.
+            if (completedRows == 0)
+            {
+                return;
+            }
 
             task.Status = PersistedTaskStatus.Completed;
             task.ProcessedAt = DateTime.UtcNow;
@@ -185,7 +196,13 @@ public class StandardTaskProcessor(
             logger.LogError(ex, "Error processing task {TaskId}", task.Id);
             try
             {
-                await taskPersistenceService.FailTaskAsync(task.Id);
+                int failedRows = await taskPersistenceService.FailTaskAsync(task.Id);
+                if (failedRows == 0)
+                {
+                    // Already terminal (e.g. concurrently canceled); do not emit a contradictory
+                    // Failed status or inflate the in-memory retry count.
+                    return;
+                }
 
                 task.Status = PersistedTaskStatus.Failed;
                 task.RetryCount++;
@@ -195,6 +212,35 @@ public class StandardTaskProcessor(
             {
                 logger.LogError(dbEx, "Failed to update task {TaskId} status", task.Id);
             }
+        }
+    }
+
+    /// <summary>
+    ///     Best-effort reconcile of a task whose claim failed: the guarded write returns a
+    ///     Processing (or Pending) row to Pending without bumping the retry count and never touches
+    ///     a terminal row. Recovery is then the periodic replayer's job. Errors are logged and
+    ///     swallowed so a database hiccup here cannot fault the processor.
+    /// </summary>
+    private async Task ReturnToPendingForReplayAsync(PersistedTask task)
+    {
+        int affected;
+        try
+        {
+            affected = await taskPersistenceService.RequeueStrandedTaskAsync(
+                task.Id,
+                CancellationToken.None
+            );
+        }
+        catch (Exception dbEx)
+        {
+            logger.LogError(dbEx, "Failed to reconcile task {TaskId} to Pending", task.Id);
+            return;
+        }
+
+        if (affected > 0 && task.Status != PersistedTaskStatus.Pending)
+        {
+            task.Status = PersistedTaskStatus.Pending;
+            StatusChanged?.Invoke(task);
         }
     }
 

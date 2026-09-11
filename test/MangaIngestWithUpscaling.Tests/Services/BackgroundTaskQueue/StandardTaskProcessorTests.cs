@@ -122,32 +122,43 @@ public class StandardTaskProcessorTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
-    public Task ExecuteAsync_WhenClaimThrows_ReenqueuesAndProcessesTheSameTask() =>
+    public Task ExecuteAsync_WhenClaimThrows_RecoversFailedTaskAndKeepsProcessingSubsequentTasks() =>
         RunClaimFailureScenarioAsync(
             new InvalidOperationException("claim failed"),
-            expectedFirstProcessed: "first"
+            expectedFirstProcessed: "second"
         );
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task ExecuteAsync_WhenClaimThrows_ReenqueuesTheTaskForRetry()
+    public async Task ExecuteAsync_WhenClaimFailsPersistently_DoesNotHotLoopAndKeepsServingOtherTasks()
     {
-        // Regression guard: a transient claim failure used to drop the dequeued task, leaving its
-        // still-Pending row invisible until the 10-minute replay.
-        int claimCalls = 0;
+        // Regression guard: a persistent claim failure used to re-enqueue the same task at the
+        // head of the sorted set, spinning unboundedly and starving every later task. The failed
+        // task must be attempted a bounded number of times, left recoverable, and the innocent
+        // task behind it must still run.
         var persistence = Substitute.For<ITaskPersistenceService>();
+        int failedClaimCalls = 0;
+        int failedTaskId;
+
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "poison" });
+        failedTaskId = _taskQueue.GetStandardSnapshot().Single().Id;
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "innocent" });
+
         persistence
             .ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(ci =>
             {
-                claimCalls++;
-                if (claimCalls == 1)
+                if ((int)ci[0] == failedTaskId)
                 {
-                    throw new InvalidOperationException("transient claim failure");
+                    Interlocked.Increment(ref failedClaimCalls);
+                    throw new InvalidOperationException("persistent claim failure");
                 }
 
                 return Task.FromResult(true);
             });
+        persistence
+            .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(1));
 
         var processor = new StandardTaskProcessor(
             _taskQueue,
@@ -155,8 +166,6 @@ public class StandardTaskProcessorTests : IDisposable
             _mockLogger,
             persistence
         );
-
-        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "retry-me" });
 
         var processed = new TaskCompletionSource<PersistedTask>();
         processor.StatusChanged += task =>
@@ -176,12 +185,79 @@ public class StandardTaskProcessorTests : IDisposable
             TestContext.Current.CancellationToken
         );
 
-        Assert.Equal("retry-me", ((LoggingTask)processedTask.Data).Message);
-        Assert.True(claimCalls >= 2, "The task should have been retried after re-enqueueing.");
+        Assert.Equal("innocent", ((LoggingTask)processedTask.Data).Message);
+
+        // Give a hot loop time to reveal itself, then assert the attempts are bounded.
+        await Task.Delay(300, TestContext.Current.CancellationToken);
+        Assert.Equal(1, Volatile.Read(ref failedClaimCalls));
+
+        // The poisoned task was handed back to Pending for the periodic replayer, not lost.
+        await persistence
+            .Received(1)
+            .RequeueStrandedTaskAsync(failedTaskId, Arg.Any<CancellationToken>());
+
+        using (var scope = _serviceProvider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var row = await db
+                .PersistedTasks.AsNoTracking()
+                .FirstAsync(t => t.Id == failedTaskId, TestContext.Current.CancellationToken);
+            Assert.Equal(PersistedTaskStatus.Pending, row.Status);
+        }
 
         await cts.CancelAsync();
         await processor.StopAsync(CancellationToken.None);
         Assert.False(IsExecuteTaskFaulted(processor));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ProcessTaskAsync_WhenCompleteAffectsNoRows_DoesNotMarkCompletedInMemory()
+    {
+        // Regression guard: the local processor used to ignore the guarded CompleteTaskAsync row
+        // count and always mark the task Completed in memory/UI even when the row was concurrently
+        // canceled or removed.
+        var persistence = Substitute.For<ITaskPersistenceService>();
+        persistence.ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(true);
+        persistence.CompleteTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(0);
+
+        var processor = CreateExposedProcessor(persistence);
+        var task = new PersistedTask
+        {
+            Id = 501,
+            Data = new NoOpTask(),
+            Status = PersistedTaskStatus.Pending,
+        };
+
+        await processor.InvokeProcessTaskAsync(task, TestContext.Current.CancellationToken);
+
+        Assert.NotEqual(PersistedTaskStatus.Completed, task.Status);
+        Assert.Null(task.ProcessedAt);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ProcessTaskAsync_WhenFailAffectsNoRows_DoesNotMarkFailedOrBumpRetryInMemory()
+    {
+        // Regression guard: a late failure on an already-terminal row must not emit a contradictory
+        // Failed status or inflate the in-memory retry count.
+        var persistence = Substitute.For<ITaskPersistenceService>();
+        persistence.ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(true);
+        persistence.FailTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(0);
+
+        var processor = CreateExposedProcessor(persistence);
+        var task = new PersistedTask
+        {
+            Id = 502,
+            Data = new ThrowingTask(),
+            Status = PersistedTaskStatus.Pending,
+            RetryCount = 2,
+        };
+
+        await processor.InvokeProcessTaskAsync(task, TestContext.Current.CancellationToken);
+
+        Assert.NotEqual(PersistedTaskStatus.Failed, task.Status);
+        Assert.Equal(2, task.RetryCount);
     }
 
     [Fact]
@@ -292,14 +368,25 @@ public class StandardTaskProcessorTests : IDisposable
             TestContext.Current.CancellationToken
         );
 
-        // The first claim failed: a thrown exception re-enqueues the task (so it is processed
-        // first), while a cancellation persists the cancel and drops it (so the second is first).
+        // The first claim failed: a thrown exception reconciles the row to Pending and drops the
+        // in-memory copy (so the second is processed first), while a cancellation persists the
+        // cancel and drops it (so the second is first as well).
         Assert.Equal(expectedFirstProcessed, ((LoggingTask)processedTask.Data).Message);
 
         await cts.CancelAsync();
         await processor.StopAsync(CancellationToken.None);
         Assert.False(IsExecuteTaskFaulted(processor));
     }
+
+    private ExposedStandardTaskProcessor CreateExposedProcessor(
+        ITaskPersistenceService persistence
+    ) =>
+        new(
+            _taskQueue,
+            _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+            _mockLogger,
+            persistence
+        );
 
     private static bool IsExecuteTaskFaulted(BackgroundService service)
     {
@@ -308,5 +395,34 @@ public class StandardTaskProcessorTests : IDisposable
                 .GetField("_executeTask", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(service);
         return executeTask?.IsFaulted ?? false;
+    }
+
+    private sealed class ExposedStandardTaskProcessor(
+        TaskQueue taskQueue,
+        IServiceScopeFactory scopeFactory,
+        ILogger<StandardTaskProcessor> logger,
+        ITaskPersistenceService taskPersistenceService
+    ) : StandardTaskProcessor(taskQueue, scopeFactory, logger, taskPersistenceService)
+    {
+        public Task InvokeProcessTaskAsync(
+            PersistedTask task,
+            CancellationToken cancellationToken
+        ) => ProcessTaskAsync(task, cancellationToken);
+    }
+
+    private sealed class NoOpTask : BaseTask
+    {
+        public override Task ProcessAsync(
+            IServiceProvider services,
+            CancellationToken cancellationToken
+        ) => Task.CompletedTask;
+    }
+
+    private sealed class ThrowingTask : BaseTask
+    {
+        public override Task ProcessAsync(
+            IServiceProvider services,
+            CancellationToken cancellationToken
+        ) => Task.FromException(new InvalidOperationException("boom"));
     }
 }

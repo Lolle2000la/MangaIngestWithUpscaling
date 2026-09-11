@@ -198,11 +198,11 @@ public class UpscaleTaskProcessorTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task ExecuteAsync_WhenClaimThrows_ReenqueuesAndProcessesTheSameTask()
+    public async Task ExecuteAsync_WhenClaimThrows_RecoversFailedTaskAndProcessesTheNext()
     {
-        // Regression guard: a transient claim failure used to drop the dequeued task, leaving its
-        // still-Pending row invisible until the 10-minute replay. It must be re-enqueued and
-        // retried instead.
+        // Regression guard: a claim failure must not fault ExecuteAsync, be silently dropped, or be
+        // re-enqueued into a hot loop. The failed task is reconciled to Pending and the next task
+        // is processed.
         bool firstClaim = true;
         var persistence = Substitute.For<ITaskPersistenceService>();
         persistence
@@ -217,6 +217,9 @@ public class UpscaleTaskProcessorTests : IDisposable
 
                 return Task.FromResult(true);
             });
+        persistence
+            .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(1));
 
         var processor = new UpscaleTaskProcessor(
             _taskQueue,
@@ -248,11 +251,125 @@ public class UpscaleTaskProcessorTests : IDisposable
             TestContext.Current.CancellationToken
         );
 
-        Assert.Equal(1, ((UpscaleTask)processedTask.Data).ChapterId);
+        Assert.Equal(2, ((UpscaleTask)processedTask.Data).ChapterId);
+        await persistence
+            .Received(1)
+            .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>());
 
         await cts.CancelAsync();
         await processor.StopAsync(CancellationToken.None);
         Assert.False(IsExecuteTaskFaulted(processor));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ExecuteAsync_WhenClaimFailsPersistently_DoesNotHotLoopAndKeepsServingOtherTasks()
+    {
+        // Regression guard: a persistent claim failure must not spin on the same task and starve
+        // later tasks.
+        var persistence = Substitute.For<ITaskPersistenceService>();
+        int failedClaimCalls = 0;
+        int failedTaskId;
+
+        await _taskQueue.EnqueueAsync(new UpscaleTask { ChapterId = 1, UpscalerProfileId = 1 });
+        failedTaskId = _taskQueue.GetUpscaleSnapshot().Single().Id;
+        await _taskQueue.EnqueueAsync(new UpscaleTask { ChapterId = 2, UpscalerProfileId = 1 });
+
+        persistence
+            .ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+            {
+                if ((int)ci[0] == failedTaskId)
+                {
+                    Interlocked.Increment(ref failedClaimCalls);
+                    throw new InvalidOperationException("persistent claim failure");
+                }
+
+                return Task.FromResult(true);
+            });
+        persistence
+            .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(1));
+
+        var processor = new UpscaleTaskProcessor(
+            _taskQueue,
+            _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+            _mockOptions,
+            _mockLogger,
+            persistence,
+            new PreprocessedInputCache()
+        );
+
+        var processed = new TaskCompletionSource<PersistedTask>();
+        processor.StatusChanged += task =>
+        {
+            if (task.Status == PersistedTaskStatus.Processing)
+            {
+                processed.TrySetResult(task);
+            }
+            return Task.CompletedTask;
+        };
+
+        using var cts = new CancellationTokenSource();
+        await processor.StartAsync(cts.Token);
+
+        PersistedTask processedTask = await processed.Task.WaitAsync(
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken
+        );
+
+        Assert.Equal(2, ((UpscaleTask)processedTask.Data).ChapterId);
+        await Task.Delay(300, TestContext.Current.CancellationToken);
+        Assert.Equal(1, Volatile.Read(ref failedClaimCalls));
+
+        await cts.CancelAsync();
+        await processor.StopAsync(CancellationToken.None);
+        Assert.False(IsExecuteTaskFaulted(processor));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ProcessTaskAsync_WhenCompleteAffectsNoRows_DoesNotMarkCompletedInMemory()
+    {
+        var persistence = Substitute.For<ITaskPersistenceService>();
+        persistence.ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(true);
+        persistence.CompleteTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(0);
+
+        var processor = CreateExposedProcessor(persistence);
+        var task = new PersistedTask
+        {
+            Id = 601,
+            Data = new NoOpTask(),
+            Status = PersistedTaskStatus.Pending,
+        };
+
+        await processor.InvokeProcessTaskAsync(task, TestContext.Current.CancellationToken);
+
+        Assert.NotEqual(PersistedTaskStatus.Completed, task.Status);
+        Assert.Null(task.ProcessedAt);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ProcessTaskAsync_WhenFailAffectsNoRows_DoesNotMarkFailedOrBumpRetryInMemory()
+    {
+        var persistence = Substitute.For<ITaskPersistenceService>();
+        persistence.ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(true);
+        persistence.FailTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(0);
+
+        var processor = CreateExposedProcessor(persistence);
+        var task = new PersistedTask
+        {
+            Id = 602,
+            Data = new ThrowingTask(),
+            Status = PersistedTaskStatus.Pending,
+            RetryCount = 3,
+        };
+
+        await processor.InvokeProcessTaskAsync(task, TestContext.Current.CancellationToken);
+
+        Assert.NotEqual(PersistedTaskStatus.Failed, task.Status);
+        Assert.Equal(3, task.RetryCount);
     }
 
     [Fact]
@@ -315,6 +432,18 @@ public class UpscaleTaskProcessorTests : IDisposable
         Assert.False(IsExecuteTaskFaulted(processor));
     }
 
+    private ExposedUpscaleTaskProcessor CreateExposedProcessor(
+        ITaskPersistenceService persistence
+    ) =>
+        new(
+            _taskQueue,
+            _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+            _mockOptions,
+            _mockLogger,
+            persistence,
+            new PreprocessedInputCache()
+        );
+
     private static bool IsExecuteTaskFaulted(BackgroundService service)
     {
         Task? executeTask = (Task?)
@@ -322,5 +451,44 @@ public class UpscaleTaskProcessorTests : IDisposable
                 .GetField("_executeTask", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(service);
         return executeTask?.IsFaulted ?? false;
+    }
+
+    private sealed class ExposedUpscaleTaskProcessor(
+        TaskQueue taskQueue,
+        IServiceScopeFactory scopeFactory,
+        IOptions<UpscalerConfig> upscalerConfig,
+        ILogger<UpscaleTaskProcessor> logger,
+        ITaskPersistenceService taskPersistenceService,
+        IPreprocessedInputCache preprocessedCache
+    )
+        : UpscaleTaskProcessor(
+            taskQueue,
+            scopeFactory,
+            upscalerConfig,
+            logger,
+            taskPersistenceService,
+            preprocessedCache
+        )
+    {
+        public Task InvokeProcessTaskAsync(
+            PersistedTask task,
+            CancellationToken cancellationToken
+        ) => ProcessTaskAsync(task, cancellationToken);
+    }
+
+    private sealed class NoOpTask : BaseTask
+    {
+        public override Task ProcessAsync(
+            IServiceProvider services,
+            CancellationToken cancellationToken
+        ) => Task.CompletedTask;
+    }
+
+    private sealed class ThrowingTask : BaseTask
+    {
+        public override Task ProcessAsync(
+            IServiceProvider services,
+            CancellationToken cancellationToken
+        ) => Task.FromException(new InvalidOperationException("boom"));
     }
 }

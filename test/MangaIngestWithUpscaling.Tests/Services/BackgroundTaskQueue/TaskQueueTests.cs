@@ -1050,6 +1050,26 @@ public class TaskQueueTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task ReEnqueue_CalledRepeatedly_DoesNotDuplicateInMemoryEntry()
+    {
+        // Regression guard for the recovery path: re-adding a dequeued task must be idempotent so a
+        // racy recovery cannot put the same task into the sorted set twice.
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "re-enqueue-me" });
+        PersistedTask task = _taskQueue.GetStandardSnapshot().Single();
+
+        // Simulate the processor having dequeued the task.
+        Assert.NotNull(_taskQueue.DequeueStandard());
+
+        _taskQueue.ReEnqueue(task);
+        _taskQueue.ReEnqueue(task);
+
+        IReadOnlyList<PersistedTask> snapshot = _taskQueue.GetStandardSnapshot();
+        Assert.Single(snapshot);
+        Assert.Equal(task.Id, snapshot[0].Id);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task RemoveTasksAsync_RemovesStandardAndUpscaleTasksInOneCall()
     {
         // Arrange
