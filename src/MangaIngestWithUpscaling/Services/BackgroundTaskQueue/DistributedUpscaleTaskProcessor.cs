@@ -55,7 +55,7 @@ public class DistributedUpscaleTaskProcessor(
     /// <param name="checkAgainst">The task to check against if it is still the current task. Does so by using the Id.</param>
     public async Task CancelCurrent(PersistedTask checkAgainst)
     {
-        bool found;
+        PersistedTask? canceled;
         using (_lock.EnterScope())
         {
             if (
@@ -64,10 +64,8 @@ public class DistributedUpscaleTaskProcessor(
             )
             {
                 currentTask.Status = PersistedTaskStatus.Canceled;
-                _ = StatusChanged?.Invoke(currentTask);
-
                 runningTasks.Remove(checkAgainst.Id);
-                found = true;
+                canceled = currentTask;
             }
             else
             {
@@ -75,11 +73,11 @@ public class DistributedUpscaleTaskProcessor(
             }
         }
 
-        if (found)
-        {
-            CleanupRepairFiles(checkAgainst.Id, logger);
-        }
+        // Raise the event after releasing _lock: a subscriber that re-enters the processor (e.g. to
+        // query running state) must never be able to deadlock the processor by calling back in.
+        _ = StatusChanged?.Invoke(canceled);
 
+        CleanupRepairFiles(checkAgainst.Id, logger);
         await taskPersistenceService.CancelTaskAsync(checkAgainst.Id);
     }
 
@@ -519,18 +517,21 @@ public class DistributedUpscaleTaskProcessor(
 
     public bool KeepAlive(int taskId)
     {
+        PersistedTask? currentTask;
         using (_lock.EnterScope())
         {
-            if (runningTasks.TryGetValue(taskId, out var currentTask))
+            if (!runningTasks.TryGetValue(taskId, out currentTask))
             {
-                currentTask.LastKeepAlive = DateTime.UtcNow;
-                // Notify listeners (e.g., TaskRegistry/UI) that the task heartbeat was updated
-                _ = StatusChanged?.Invoke(currentTask);
-                return true;
+                return false;
             }
+
+            currentTask.LastKeepAlive = DateTime.UtcNow;
         }
 
-        return false;
+        // Notify listeners (e.g., TaskRegistry/UI) that the task heartbeat was updated, after the
+        // lock is released so subscribers can safely re-enter the processor.
+        _ = StatusChanged?.Invoke(currentTask);
+        return true;
     }
 
     /// <summary>
@@ -556,27 +557,30 @@ public class DistributedUpscaleTaskProcessor(
         string? phase
     )
     {
+        PersistedTask? task;
         using (_lock.EnterScope())
         {
-            if (runningTasks.TryGetValue(taskId, out PersistedTask? task))
+            if (!runningTasks.TryGetValue(taskId, out task))
             {
-                ProgressInfo p = task.Data.Progress;
-                if (total.HasValue)
-                {
-                    p.Total = total.Value;
-                }
-
-                if (current.HasValue)
-                {
-                    p.Current = current.Value;
-                }
-
-                // Treat progress updates as heartbeats as well, to keep liveness fresh
-                task.LastKeepAlive = DateTime.UtcNow;
-
-                _ = StatusChanged?.Invoke(task);
+                return;
             }
+
+            ProgressInfo p = task.Data.Progress;
+            if (total.HasValue)
+            {
+                p.Total = total.Value;
+            }
+
+            if (current.HasValue)
+            {
+                p.Current = current.Value;
+            }
+
+            // Treat progress updates as heartbeats as well, to keep liveness fresh
+            task.LastKeepAlive = DateTime.UtcNow;
         }
+
+        _ = StatusChanged?.Invoke(task);
     }
 
     /// <summary>

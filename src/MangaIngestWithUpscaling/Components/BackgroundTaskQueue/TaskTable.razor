@@ -127,6 +127,7 @@
     // restore it whenever we render in response to one of those events.
     private CultureInfo _runTimeCulture = CultureInfo.CurrentUICulture;
     private int _reloadPending;
+    private int _reloadRunning;
     private volatile bool _disposed;
 
     protected override void OnInitialized()
@@ -156,7 +157,12 @@
 
         // Registry flushes can raise many changes at once; coalesce reloads so we only page the
         // current data a handful of times instead of once per changed task.
-        if (Interlocked.Exchange(ref _reloadPending, 1) == 1)
+        Interlocked.Exchange(ref _reloadPending, 1);
+
+        // Only one reload loop may run at a time; concurrent bodies could interleave at the await
+        // and issue redundant concurrent MudTable.ReloadServerData calls. Notifications are not
+        // dropped: the running loop keeps draining the pending flag until it observes it clear.
+        if (Interlocked.CompareExchange(ref _reloadRunning, 1, 0) == 1)
             return;
 
         _ = SafeReloadAsync();
@@ -176,6 +182,15 @@
             Interlocked.Exchange(ref _reloadPending, 0);
             Logger.LogDebug(ex, "Skipped a task table reload because the component is unavailable.");
         }
+        finally
+        {
+            Interlocked.Exchange(ref _reloadRunning, 0);
+        }
+
+        // A change that arrived after the loop's last check but before the running flag was cleared
+        // would have seen the flag set and not scheduled a reload. Re-check so it is not dropped.
+        if (Volatile.Read(ref _reloadPending) == 1)
+            OnTasksChanged();
     }
 
     private async Task ProcessPendingReloadAsync()

@@ -25,7 +25,6 @@ public class TaskRegistry : IHostedService, IDisposable
     private readonly UpscaleTaskProcessor _upscaleProcessor;
     private readonly ILogger<TaskRegistry>? _logger;
     private readonly PendingTaskChanges _pending = new();
-    private readonly RemovedTaskIds _removedTaskIds = new();
     private readonly CancellationTokenSource _cts = new();
     private volatile PersistedTask[] _standardSnapshot = [];
     private volatile PersistedTask[] _upscaleSnapshot = [];
@@ -122,6 +121,17 @@ public class TaskRegistry : IHostedService, IDisposable
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        // Subscribe before loading the DB snapshot: an event handler only buffers into _pending
+        // (no DynamicData mutation), so subscribing first prevents a status transition that fires
+        // between the snapshot query and the subscription from being lost. The flush loop, which is
+        // the only thing that mutates _tasks, starts after the load.
+        _taskQueue.TaskEnqueuedOrChanged += OnTaskChanged;
+        _taskQueue.TaskRemoved += OnTaskRemoved;
+
+        _standardProcessor.StatusChanged += OnTaskChanged;
+        _upscaleProcessor.StatusChanged += OnTaskChanged;
+        _distributedUpscaleProcessor.StatusChanged += OnTaskChanged;
+
         // Initial load of all tasks (pending, processing, completed, failed, canceled)
         using IServiceScope scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -130,14 +140,6 @@ public class TaskRegistry : IHostedService, IDisposable
             .ToListAsync(cancellationToken);
         _tasks.AddOrUpdate(all);
         RebuildSnapshots();
-
-        // Subscribe to queue and processor events to keep registry up to date
-        _taskQueue.TaskEnqueuedOrChanged += OnTaskChanged;
-        _taskQueue.TaskRemoved += OnTaskRemoved;
-
-        _standardProcessor.StatusChanged += OnTaskChanged;
-        _upscaleProcessor.StatusChanged += OnTaskChanged;
-        _distributedUpscaleProcessor.StatusChanged += OnTaskChanged;
 
         _flushTask = RunFlushLoopAsync(_cts.Token);
     }
@@ -165,20 +167,12 @@ public class TaskRegistry : IHostedService, IDisposable
 
     internal Task OnTaskChanged(PersistedTask task)
     {
-        // A task that was removed must not be resurrected by a status update that was already in
-        // flight when the removal was applied.
-        if (_removedTaskIds.Contains(task.Id))
-        {
-            return Task.CompletedTask;
-        }
-
         _pending.QueueUpdate(CloneShallow(task));
         return Task.CompletedTask;
     }
 
     internal Task OnTaskRemoved(PersistedTask task)
     {
-        _removedTaskIds.Add(task.Id);
         _pending.QueueRemoval(CloneShallow(task));
         return Task.CompletedTask;
     }

@@ -184,38 +184,45 @@ public class TaskRegistryTests
         );
 
         var registry = new TaskRegistry(scopeFactory, taskQueue, standard, upscaler, distributed);
-        await registry.StartAsync(TestContext.Current.CancellationToken);
-
-        // Enqueue a task so the registry gets an entry via TaskEnqueuedOrChanged
-        await taskQueue.EnqueueAsync(new LoggingTask { Message = "keep" });
-
-        var snapshot = taskQueue.GetStandardSnapshot();
-        Assert.Single(snapshot);
-        var persistedId = snapshot[0].Id;
-
-        // Allow event propagation into registry
-        for (int i = 0; i < 5 && !registry.StandardTasks.Any(t => t.Id == persistedId); i++)
+        try
         {
-            await Task.Delay(50, TestContext.Current.CancellationToken);
-        }
+            await registry.StartAsync(TestContext.Current.CancellationToken);
 
-        Assert.Contains(registry.StandardTasks, t => t.Id == persistedId);
+            // Enqueue a task so the registry gets an entry via TaskEnqueuedOrChanged
+            await taskQueue.EnqueueAsync(new LoggingTask { Message = "keep" });
 
-        // Act: remove the task via queue and wait for registry to update
-        await taskQueue.RemoveTaskAsync(
-            new PersistedTask
+            var snapshot = taskQueue.GetStandardSnapshot();
+            Assert.Single(snapshot);
+            var persistedId = snapshot[0].Id;
+
+            // Allow event propagation into registry
+            for (int i = 0; i < 5 && !registry.StandardTasks.Any(t => t.Id == persistedId); i++)
             {
-                Id = persistedId,
-                Data = new LoggingTask { Message = "keep" },
+                await Task.Delay(50, TestContext.Current.CancellationToken);
             }
-        );
 
-        for (int i = 0; i < 5 && registry.StandardTasks.Any(t => t.Id == persistedId); i++)
-        {
-            await Task.Delay(50, TestContext.Current.CancellationToken);
+            Assert.Contains(registry.StandardTasks, t => t.Id == persistedId);
+
+            // Act: remove the task via queue and wait for registry to update
+            await taskQueue.RemoveTaskAsync(
+                new PersistedTask
+                {
+                    Id = persistedId,
+                    Data = new LoggingTask { Message = "keep" },
+                }
+            );
+
+            for (int i = 0; i < 5 && registry.StandardTasks.Any(t => t.Id == persistedId); i++)
+            {
+                await Task.Delay(50, TestContext.Current.CancellationToken);
+            }
+
+            Assert.DoesNotContain(registry.StandardTasks, t => t.Id == persistedId);
         }
-
-        Assert.DoesNotContain(registry.StandardTasks, t => t.Id == persistedId);
+        finally
+        {
+            await registry.StopAsync(CancellationToken.None);
+        }
     }
 
     [Fact]

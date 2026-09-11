@@ -47,6 +47,25 @@ public class PendingTaskChangesTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void QueueUpdate_AfterRemovalWasDrained_IsIgnored()
+    {
+        var buffer = new PendingTaskChanges();
+        var task = CreateTask(3);
+
+        buffer.QueueRemoval(task);
+        buffer.Drain(out _, out var removals);
+        Assert.Single(removals);
+
+        // The removal was applied in an earlier batch, so there is no colliding removal to drop
+        // this update. Only the persistent tombstone filter can stop it from resurrecting the task.
+        buffer.QueueUpdate(task);
+        buffer.Drain(out var updates, out _);
+
+        Assert.Empty(updates);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void QueueUpdate_ForManyTasks_KeepsAllUpdates()
     {
         var buffer = new PendingTaskChanges();
