@@ -157,6 +157,15 @@
 
     private async Task OnRunNow(PersistedTask task)
     {
-        await TaskQueue.MoveToFrontAsync(task);
+        try
+        {
+            await TaskQueue.MoveToFrontAsync(task);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to move task {TaskId} to the front", task.Id);
+            Snackbar.Add("Failed to move task to the front: " + ex.Message, Severity.Error);
+            StateHasChanged();
+        }
     }
 }

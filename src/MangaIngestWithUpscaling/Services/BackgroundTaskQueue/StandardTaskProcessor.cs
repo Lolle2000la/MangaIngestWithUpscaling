@@ -62,15 +62,34 @@ public class StandardTaskProcessor(
                 continue;
             }
 
+            CancellationTokenSource taskStoppingToken;
             using (_lock.EnterScope())
             {
                 currentStoppingToken = CancellationTokenSource.CreateLinkedTokenSource(
                     stoppingToken
                 );
+                taskStoppingToken = currentStoppingToken;
                 currentTask = task;
             }
 
-            await ProcessTaskAsync(task, currentStoppingToken.Token);
+            try
+            {
+                await ProcessTaskAsync(task, taskStoppingToken.Token);
+            }
+            finally
+            {
+                // Dispose the per-task CTS once the task is done so it is not leaked across tasks.
+                // Disposal is serialized with CancelCurrent by _lock.
+                using (_lock.EnterScope())
+                {
+                    if (ReferenceEquals(currentStoppingToken, taskStoppingToken))
+                    {
+                        currentStoppingToken.Dispose();
+                        currentStoppingToken = null;
+                        currentTask = null;
+                    }
+                }
+            }
         }
     }
 

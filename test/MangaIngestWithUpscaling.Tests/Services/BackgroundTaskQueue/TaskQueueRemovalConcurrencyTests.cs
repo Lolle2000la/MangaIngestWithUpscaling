@@ -116,6 +116,50 @@ public class TaskQueueRemovalConcurrencyTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task RemoveTasksAsync_WhenOnlySubsetDeletedBeforeSave_RemovesRemainingRowsAndClearsMemory()
+    {
+        // A concurrent remover that only takes one row of a batch must not let a rolled-back
+        // SaveChanges leave the other rows in the database while memory drops them all.
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "a" });
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "b" });
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "c" });
+        List<PersistedTask> tasks = _taskQueue.GetStandardSnapshot().ToList();
+        Assert.Equal(3, tasks.Count);
+
+        int racedId = tasks[1].Id;
+        var removedIds = new System.Collections.Concurrent.ConcurrentBag<int>();
+        _taskQueue.TaskRemoved += task =>
+        {
+            removedIds.Add(task.Id);
+            return Task.CompletedTask;
+        };
+
+        _interceptor.Enabled = true;
+        _interceptor.IdsToDelete.Add(racedId);
+        Exception? exception;
+        try
+        {
+            exception = await Record.ExceptionAsync(() => _taskQueue.RemoveTasksAsync(tasks));
+        }
+        finally
+        {
+            _interceptor.Enabled = false;
+            _interceptor.IdsToDelete.Clear();
+        }
+
+        // The raced row was already gone; the other two must still be deleted.
+        Assert.Null(exception);
+        foreach (PersistedTask task in tasks)
+        {
+            Assert.Null(await FindTaskAsync(task.Id));
+        }
+
+        Assert.Empty(_taskQueue.GetStandardSnapshot());
+        Assert.Equal(3, removedIds.Distinct().Count());
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task RemoveTaskAsync_ConcurrentCalls_DoNotThrowAndRowIsGone()
     {
         int id = await SeedTaskAsync();
@@ -180,6 +224,13 @@ public class TaskQueueRemovalConcurrencyTests : IDisposable
     {
         public bool Enabled { get; set; }
 
+        /// <summary>
+        ///     When non-empty, only these ids are deleted before the save; otherwise every row the
+        ///     save is about to delete is removed. Targeting a subset reproduces a race where only
+        ///     part of a batch is taken concurrently.
+        /// </summary>
+        public HashSet<int> IdsToDelete { get; } = new();
+
         public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
             DbContextEventData eventData,
             InterceptionResult<int> result,
@@ -192,6 +243,7 @@ public class TaskQueueRemovalConcurrencyTests : IDisposable
                     .ChangeTracker.Entries<PersistedTask>()
                     .Where(e => e.State == EntityState.Deleted)
                     .Select(e => e.Entity.Id)
+                    .Where(id => IdsToDelete.Count == 0 || IdsToDelete.Contains(id))
                     .ToList();
 
                 foreach (int id in ids)

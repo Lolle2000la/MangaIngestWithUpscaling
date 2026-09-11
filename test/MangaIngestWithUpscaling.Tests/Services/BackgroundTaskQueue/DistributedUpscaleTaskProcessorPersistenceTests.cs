@@ -2,7 +2,9 @@ using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Services.RepairServices;
 using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -42,6 +44,9 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
         services.AddSingleton<IOptions<UpscalerConfig>>(
             Options.Create(new UpscalerConfig { RemoteOnly = true })
         );
+        // HandleRepairTaskCompletion resolves these before it can fail on a missing chapter.
+        services.AddScoped(_ => Substitute.For<IRepairService>());
+        services.AddScoped(_ => Substitute.For<IMetadataHandlingService>());
 
         _provider = services.BuildServiceProvider();
         using (var scope = _provider.CreateScope())
@@ -138,6 +143,33 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
             await runTask;
         }
         catch (OperationCanceledException) { }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task TaskCompleted_WhenRepairCompletionFails_PersistsTerminalFailedStatus()
+    {
+        // Regression guard: a failed repair completion only left the in-memory status alone and
+        // the row stayed Processing until the next startup reset.
+        int taskId;
+        using (IServiceScope scope = _provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var task = new PersistedTask
+            {
+                Data = new RepairUpscaleTask { ChapterId = 999_999, UpscalerProfileId = 999_999 },
+                Status = PersistedTaskStatus.Processing,
+                Order = 1,
+            };
+            db.PersistedTasks.Add(task);
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+            taskId = task.Id;
+        }
+
+        await _processor.TaskCompleted(taskId);
+
+        Assert.Equal(PersistedTaskStatus.Failed, await GetStatusAsync(taskId));
+        Assert.False(_processor.IsRunningRemotely(taskId));
     }
 
     private async Task<PersistedTaskStatus?> GetStatusAsync(int id)

@@ -396,7 +396,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         RemoveFromInMemoryQueues(task.Id);
 
         // Notify listeners about the removal
-        TaskRemoved?.Invoke(task);
+        await RaiseTaskRemovedAsync(task);
     }
 
     public async Task RemoveTasksAsync(IEnumerable<PersistedTask> tasks)
@@ -410,39 +410,96 @@ public class TaskQueue : ITaskQueue, IHostedService
         using IServiceScope scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        // Delete only rows that still exist. Removing a detached entity whose row was already
-        // deleted (e.g. by a concurrent cleanup) throws DbUpdateConcurrencyException and would
-        // otherwise fail the whole batch.
-        var existing = new List<PersistedTask>(ids.Count);
-        foreach (int[] chunk in ids.Chunk(500))
-        {
-            existing.AddRange(
-                await dbContext.PersistedTasks.Where(t => chunk.Contains(t.Id)).ToListAsync()
-            );
-        }
-
-        if (existing.Count > 0)
-        {
-            dbContext.PersistedTasks.RemoveRange(existing);
-            try
-            {
-                await dbContext.SaveChangesAsync();
-            }
-            catch (DbUpdateConcurrencyException)
-            {
-                // One or more rows were deleted by a concurrent remover after we loaded them. The
-                // raced rows are already gone; do not fail the whole batch with an exception.
-                _logger.LogDebug(
-                    "One or more of the {Count} tasks were already removed by a concurrent operation.",
-                    existing.Count
-                );
-            }
-        }
+        await DeleteExistingRowsAsync(dbContext, ids);
 
         foreach (var task in list)
         {
             RemoveFromInMemoryQueues(task.Id);
-            TaskRemoved?.Invoke(task);
+            await RaiseTaskRemovedAsync(task);
+        }
+    }
+
+    /// <summary>
+    ///     Deletes the rows for <paramref name="ids" /> that still exist. A concurrent remover
+    ///     (another call or <see cref="IQueueCleanup" />) can delete a subset of the batch between
+    ///     the existence check and <c>SaveChanges</c>, which makes EF throw
+    ///     <see cref="DbUpdateConcurrencyException" /> and roll back the whole delete. On a conflict
+    ///     the change tracker is discarded and the still-existing rows are reloaded and retried, so
+    ///     no surviving row is silently skipped.
+    /// </summary>
+    private async Task DeleteExistingRowsAsync(ApplicationDbContext dbContext, List<int> ids)
+    {
+        // Each conflict means at least one requested row was concurrently deleted, so progress is
+        // guaranteed for at most one failed attempt per id (the +1 covers the successful attempt).
+        for (int attempt = 0; attempt <= ids.Count; attempt++)
+        {
+            var existing = new List<PersistedTask>(ids.Count);
+            foreach (int[] chunk in ids.Chunk(500))
+            {
+                existing.AddRange(
+                    await dbContext.PersistedTasks.Where(t => chunk.Contains(t.Id)).ToListAsync()
+                );
+            }
+
+            if (existing.Count == 0)
+            {
+                return;
+            }
+
+            dbContext.PersistedTasks.RemoveRange(existing);
+            try
+            {
+                await dbContext.SaveChangesAsync();
+                return;
+            }
+            catch (DbUpdateConcurrencyException ex)
+            {
+                _logger.LogDebug(
+                    ex,
+                    "One or more of the {Count} requested tasks were already removed by a concurrent operation; retrying the remaining rows.",
+                    existing.Count
+                );
+
+                // The transaction rolled back, so the change tracker cannot be trusted. Detach the
+                // tracked tasks and let the next attempt reload the current database state; rows
+                // deleted concurrently are simply not found again.
+                foreach (
+                    var entry in dbContext
+                        .ChangeTracker.Entries<PersistedTask>()
+                        .Where(e =>
+                            e.State != EntityState.Unchanged && e.State != EntityState.Detached
+                        )
+                        .ToList()
+                )
+                {
+                    entry.State = EntityState.Detached;
+                }
+            }
+        }
+
+        _logger.LogError(
+            "Failed to delete {Count} background tasks after repeated concurrency conflicts.",
+            ids.Count
+        );
+    }
+
+    /// <summary>
+    ///     Awaits every <see cref="TaskRemoved" /> subscriber, observing each handler's exception so
+    ///     one faulty handler cannot prevent the others from running.
+    /// </summary>
+    private async Task RaiseTaskRemovedAsync(PersistedTask task)
+    {
+        Delegate[] handlers = TaskRemoved?.GetInvocationList() ?? Array.Empty<Delegate>();
+        foreach (Delegate handler in handlers)
+        {
+            try
+            {
+                await ((Func<PersistedTask, Task>)handler).Invoke(task);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "TaskRemoved handler failed for task {TaskId}.", task.Id);
+            }
         }
     }
 

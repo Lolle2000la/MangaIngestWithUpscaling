@@ -1,7 +1,9 @@
+using System.Reflection;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Services.RepairServices;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -201,5 +203,95 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
             await runTask;
         }
         catch (OperationCanceledException) { }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ForgetTask_DoesNotHoldLockWhileDisposingRepairContext()
+    {
+        // Regression guard: CleanupRepairFiles used to dispose the RepairContext (a recursive
+        // directory delete) while holding _lock, blocking every other lock user for the duration.
+        var disposeStarted = new ManualResetEventSlim(false);
+        var releaseDispose = new ManualResetEventSlim(false);
+        string workDirectory = Path.Combine(
+            Path.GetTempPath(),
+            $"repair-context-{Guid.NewGuid():N}"
+        );
+        Directory.CreateDirectory(workDirectory);
+        var repairContext = new BlockingRepairContext(disposeStarted, releaseDispose)
+        {
+            WorkDirectory = workDirectory,
+        };
+
+        Dictionary<int, PersistedTask> runningTasks = GetPrivateField<
+            Dictionary<int, PersistedTask>
+        >(_processor, "runningTasks");
+        runningTasks[1] = new PersistedTask { Id = 1, Data = new RepairUpscaleTask() };
+        runningTasks[2] = new PersistedTask { Id = 2, Data = new DetectSplitCandidatesTask(1, 1) };
+        Dictionary<int, DistributedUpscaleTaskProcessor.RemoteRepairState> repairStates =
+            GetPrivateField<Dictionary<int, DistributedUpscaleTaskProcessor.RemoteRepairState>>(
+                _processor,
+                "remoteRepairStates"
+            );
+        repairStates[1] = new DistributedUpscaleTaskProcessor.RemoteRepairState
+        {
+            RepairContext = repairContext,
+        };
+
+        Task forget = Task.Run(
+            () => _processor.ForgetTask(1),
+            TestContext.Current.CancellationToken
+        );
+        Assert.True(
+            disposeStarted.Wait(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken),
+            "RepairContext.Dispose should have started."
+        );
+
+        // While dispose is blocked, an unrelated lock user must still make progress.
+        Task<bool> check = Task.Run(
+            () => _processor.IsRunningRemotely(2),
+            TestContext.Current.CancellationToken
+        );
+        Task winner = await Task.WhenAny(
+            check,
+            Task.Delay(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken)
+        );
+        bool completed = winner == check;
+
+        releaseDispose.Set();
+        await forget.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        bool stillRunning = completed && await check;
+
+        Assert.True(
+            completed,
+            "IsRunningRemotely was blocked, so _lock was held across RepairContext.Dispose."
+        );
+        Assert.True(stillRunning);
+
+        if (Directory.Exists(workDirectory))
+        {
+            Directory.Delete(workDirectory, true);
+        }
+    }
+
+    private static T GetPrivateField<T>(object target, string name)
+    {
+        return (T)
+            target
+                .GetType()
+                .GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(target)!;
+    }
+
+    private sealed class BlockingRepairContext(
+        ManualResetEventSlim started,
+        ManualResetEventSlim release
+    ) : RepairContext
+    {
+        protected override void DeleteWorkDirectory()
+        {
+            started.Set();
+            release.Wait(TimeSpan.FromSeconds(30));
+        }
     }
 }

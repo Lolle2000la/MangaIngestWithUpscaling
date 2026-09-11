@@ -81,15 +81,24 @@ public class UpscaleTaskProcessor(
                     break;
                 }
 
+                CancellationTokenSource taskStoppingToken;
                 using (_lock.EnterScope())
                 {
                     currentStoppingToken = CancellationTokenSource.CreateLinkedTokenSource(
                         stoppingToken
                     );
+                    taskStoppingToken = currentStoppingToken;
                     currentTask = rerouted;
                 }
 
-                await ProcessTaskAsync(rerouted, currentStoppingToken.Token);
+                try
+                {
+                    await ProcessTaskAsync(rerouted, taskStoppingToken.Token);
+                }
+                finally
+                {
+                    DisposeCurrentStoppingToken(taskStoppingToken);
+                }
             }
 
             return;
@@ -145,15 +154,41 @@ public class UpscaleTaskProcessor(
                 continue;
             }
 
+            CancellationTokenSource taskStoppingToken;
             using (_lock.EnterScope())
             {
                 currentStoppingToken = CancellationTokenSource.CreateLinkedTokenSource(
                     stoppingToken
                 );
+                taskStoppingToken = currentStoppingToken;
                 currentTask = task;
             }
 
-            await ProcessTaskAsync(task, currentStoppingToken.Token);
+            try
+            {
+                await ProcessTaskAsync(task, taskStoppingToken.Token);
+            }
+            finally
+            {
+                DisposeCurrentStoppingToken(taskStoppingToken);
+            }
+        }
+    }
+
+    /// <summary>
+    ///     Disposes the per-task cancellation source once its task is done so it is not leaked
+    ///     across tasks. Disposal is serialized with <see cref="CancelCurrent" /> by <c>_lock</c>.
+    /// </summary>
+    private void DisposeCurrentStoppingToken(CancellationTokenSource taskStoppingToken)
+    {
+        using (_lock.EnterScope())
+        {
+            if (ReferenceEquals(currentStoppingToken, taskStoppingToken))
+            {
+                currentStoppingToken.Dispose();
+                currentStoppingToken = null;
+                currentTask = null;
+            }
         }
     }
 
