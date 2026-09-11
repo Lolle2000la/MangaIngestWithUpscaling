@@ -17,6 +17,12 @@ public interface ITaskQueue
     Task ReorderTaskAsync(PersistedTask task, int newOrder);
     Task RemoveTaskAsync(PersistedTask task);
 
+    /// <summary>
+    ///     Removes several tasks in a single database round trip and raises a single removal
+    ///     notification per task.
+    /// </summary>
+    Task RemoveTasksAsync(IEnumerable<PersistedTask> tasks);
+
     Task ReplayPendingOrFailed(CancellationToken cancellationToken = default);
 
     // Provide live in-memory snapshots for UI without DB reads
@@ -372,6 +378,36 @@ public class TaskQueue : ITaskQueue, IHostedService
 
         // Notify listeners about the removal
         TaskRemoved?.Invoke(task);
+    }
+
+    public async Task RemoveTasksAsync(IEnumerable<PersistedTask> tasks)
+    {
+        List<PersistedTask> list = tasks as List<PersistedTask> ?? tasks.ToList();
+        if (list.Count == 0)
+            return;
+
+        using IServiceScope scope = _scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+        dbContext.PersistedTasks.RemoveRange(list);
+        await dbContext.SaveChangesAsync();
+
+        foreach (var task in list)
+        {
+            (SortedSet<PersistedTask> set, object lockObj) =
+                task.Data is not null && IsUpscaleTask(task.Data)
+                    ? (_upscaleTasks, _upscaleTasksLock)
+                    : (_standardTasks, _standardTasksLock);
+
+            lock (lockObj)
+            {
+                var toRemove = set.FirstOrDefault(t => t.Id == task.Id);
+                if (toRemove != null)
+                    set.Remove(toRemove);
+            }
+
+            TaskRemoved?.Invoke(task);
+        }
     }
 
     public async Task RetryAsync(PersistedTask task)

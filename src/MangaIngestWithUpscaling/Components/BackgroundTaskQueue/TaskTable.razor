@@ -1,11 +1,14 @@
+@using System.Globalization
 @using MangaIngestWithUpscaling.Data.BackgroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.TaskDescribers
+@implements IDisposable
 @inject IStringLocalizer<TaskTable> Loc
 @inject ITaskDescriberFactory DescriberFactory
 @inject DistributedUpscaleTaskProcessor DistributedUpscaleTaskProcessor
+@inject TaskRegistry TaskRegistry
 
-<MudTable T="PersistedTask" Items="@Tasks" RowsPerPage="10" Elevation="3" Dense="true" @ref="Table">
+<MudTable T="PersistedTask" ServerData="LoadServerData" RowsPerPage="10" Elevation="3" Dense="true" @ref="Table">
     <ToolBarContent>
         <MudText Typo="Typo.h6">@Title</MudText>
         <MudSpacer />
@@ -19,16 +22,16 @@
     <HeaderContent>
         <MudTh>@Loc["Header_Name"]</MudTh>
         <MudTh>
-            <MudTableSortLabel SortBy="new Func<PersistedTask, object>(x => x.CreatedAt)">
+            <MudTableSortLabel T="PersistedTask" SortLabel="CreatedAt">
                 @Loc["Header_QueuedAt"]</MudTableSortLabel>
         </MudTh>
         <MudTh>
-            <MudTableSortLabel SortBy="new Func<PersistedTask, object?>(x => x.ProcessedAt)">
+            <MudTableSortLabel T="PersistedTask" SortLabel="ProcessedAt">
                 @Loc["Header_FinishedAt"]
             </MudTableSortLabel>
         </MudTh>
         <MudTh>
-            <MudTableSortLabel SortBy="new Func<PersistedTask, object>(x => x.Status)">@Loc["Header_Status"]
+            <MudTableSortLabel T="PersistedTask" SortLabel="Status">@Loc["Header_Status"]
             </MudTableSortLabel>
         </MudTh>
         <MudTh>@Loc["Header_Actions"]</MudTh>
@@ -105,7 +108,9 @@
 </MudTable>
 
 @code {
-    [Parameter] public IReadOnlyCollection<PersistedTask> Tasks { get; set; } = [];
+    /// <summary>Selects which registry view this table renders.</summary>
+    [Parameter] public bool Upscale { get; set; }
+
     [Parameter] public string Title { get; set; } = "Tasks";
 
     [Parameter] public EventCallback OnClearCompleted { get; set; } = EventCallback.Empty;
@@ -117,9 +122,96 @@
 
     private MudTable<PersistedTask> Table { get; set; } = null!;
 
-    protected override void OnParametersSet()
+    // The registry flushes from background threads, so capture the circuit culture up front and
+    // restore it whenever we render in response to one of those events.
+    private CultureInfo _runTimeCulture = CultureInfo.CurrentUICulture;
+    private int _reloadPending;
+
+    protected override void OnInitialized()
     {
-        Tasks = new List<PersistedTask>(Tasks);
+        _runTimeCulture = CultureInfo.CurrentUICulture;
+
+        if (Upscale)
+            TaskRegistry.UpscaleTasksChanged += OnTasksChanged;
+        else
+            TaskRegistry.StandardTasksChanged += OnTasksChanged;
     }
 
+    public void Dispose()
+    {
+        if (Upscale)
+            TaskRegistry.UpscaleTasksChanged -= OnTasksChanged;
+        else
+            TaskRegistry.StandardTasksChanged -= OnTasksChanged;
+    }
+
+    private void OnTasksChanged()
+    {
+        // Registry flushes can raise many changes at once; coalesce reloads so we only page the
+        // current data a handful of times instead of once per changed task.
+        if (Interlocked.Exchange(ref _reloadPending, 1) == 1)
+            return;
+
+        _ = InvokeAsync(ProcessPendingReloadAsync);
+    }
+
+    private async Task ProcessPendingReloadAsync()
+    {
+        while (Interlocked.Exchange(ref _reloadPending, 0) == 1)
+        {
+            CultureInfo.CurrentUICulture = _runTimeCulture;
+            CultureInfo.CurrentCulture = _runTimeCulture;
+
+            if (Table is not null)
+            {
+                await Table.ReloadServerData();
+            }
+        }
+    }
+
+    private Task<TableData<PersistedTask>> LoadServerData(
+        TableState state,
+        CancellationToken cancellationToken
+    )
+    {
+        // Only the requested page is materialized, so render cost stays independent of the total
+        // number of tasks.
+        IReadOnlyList<PersistedTask> source = Upscale
+            ? TaskRegistry.GetUpscaleSnapshot()
+            : TaskRegistry.GetStandardSnapshot();
+
+        IEnumerable<PersistedTask> ordered = ApplySort(source, state);
+        int skip = state.Page * state.PageSize;
+        List<PersistedTask> page = (skip > 0 ? ordered.Skip(skip) : ordered)
+            .Take(state.PageSize)
+            .ToList();
+
+        return Task.FromResult(
+            new TableData<PersistedTask> { Items = page, TotalItems = source.Count }
+        );
+    }
+
+    private static IEnumerable<PersistedTask> ApplySort(
+        IEnumerable<PersistedTask> source,
+        TableState state
+    )
+    {
+        if (state.SortDirection == SortDirection.None)
+            return source;
+
+        Func<PersistedTask, object?>? selector = state.SortLabel switch
+        {
+            "CreatedAt" => x => x.CreatedAt,
+            "ProcessedAt" => x => x.ProcessedAt,
+            "Status" => x => x.Status,
+            _ => null,
+        };
+
+        if (selector is null)
+            return source;
+
+        return state.SortDirection == SortDirection.Ascending
+            ? source.OrderBy(selector)
+            : source.OrderByDescending(selector);
+    }
 }

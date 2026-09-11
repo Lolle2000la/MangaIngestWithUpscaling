@@ -7,13 +7,20 @@
 @code {
     [Parameter] public BaseTask Task { get; set; } = null!;
 
+    private BaseTask? _resolvedTask;
     private string _title = string.Empty;
 
     protected override async Task OnParametersSetAsync()
     {
         if (Task == null) return;
-        
+
+        // Progress/heartbeat updates reuse the same BaseTask instance, so Blazor re-invokes this
+        // method on every render. Only resolve the title when the instance actually changes, since
+        // describers such as UpscaleTaskDescriber hit the database.
+        if (ReferenceEquals(_resolvedTask, Task)) return;
+
         var describer = DescriberFactory.GetDescriber(Task);
         _title = await describer.GetTitleAsync(Task);
+        _resolvedTask = Task;
     }
 }

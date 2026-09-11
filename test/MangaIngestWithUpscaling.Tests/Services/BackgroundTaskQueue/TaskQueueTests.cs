@@ -1046,4 +1046,45 @@ public class TaskQueueTests : IDisposable
         Assert.Equal(chapter1.Id, ((UpscaleTask)newTask.Data).ChapterId);
         Assert.Equal(1, newTask.Order);
     }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RemoveTasksAsync_RemovesStandardAndUpscaleTasksInOneCall()
+    {
+        // Arrange
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "standard-1" });
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "standard-2" });
+        await _taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(1, 1));
+        await _taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(2, 2));
+
+        var removedIds = new List<int>();
+        _taskQueue.TaskRemoved += task =>
+        {
+            lock (removedIds)
+            {
+                removedIds.Add(task.Id);
+            }
+
+            return Task.CompletedTask;
+        };
+
+        List<PersistedTask> all = _taskQueue
+            .GetStandardSnapshot()
+            .Concat(_taskQueue.GetUpscaleSnapshot())
+            .ToList();
+        Assert.Equal(4, all.Count);
+
+        // Act
+        await _taskQueue.RemoveTasksAsync(all);
+
+        // Assert: both in-memory views and the database are cleared, and each task is announced.
+        Assert.Empty(_taskQueue.GetStandardSnapshot());
+        Assert.Empty(_taskQueue.GetUpscaleSnapshot());
+        Assert.Equal(4, removedIds.Distinct().Count());
+
+        int remaining = await _dbContext.PersistedTasks.CountAsync(
+            TestContext.Current.CancellationToken
+        );
+        Assert.Equal(0, remaining);
+    }
 }

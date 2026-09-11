@@ -216,4 +216,109 @@ public class TaskRegistryTests
 
         Assert.DoesNotContain(registry.StandardTasks, t => t.Id == persistedId);
     }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task TaskRegistry_SnapshotsAndChangeEvents_ReflectAdditionsAndRemovals()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var dbName = $"TaskRegistrySnapshots_{Guid.NewGuid()}";
+        services.AddLogging();
+        services.AddDbContext<ApplicationDbContext>(options => options.UseInMemoryDatabase(dbName));
+        services.AddSingleton<IOptions<UpscalerConfig>>(
+            Options.Create(new UpscalerConfig { RemoteOnly = true })
+        );
+        var cleanup = Substitute.For<IQueueCleanup>();
+        cleanup.CleanupAsync().Returns(Task.FromResult<IReadOnlyList<int>>(Array.Empty<int>()));
+        services.AddScoped<IQueueCleanup>(_ => cleanup);
+        services.AddSingleton(Substitute.For<ITaskPersistenceService>());
+
+        using ServiceProvider provider = services.BuildServiceProvider();
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+
+        var taskQueue = new TaskQueue(
+            scopeFactory,
+            provider.GetRequiredService<ILogger<TaskQueue>>()
+        );
+        var persistence = provider.GetRequiredService<ITaskPersistenceService>();
+        var standard = new StandardTaskProcessor(
+            taskQueue,
+            scopeFactory,
+            Substitute.For<ILogger<StandardTaskProcessor>>(),
+            persistence
+        );
+        var upscaler = new UpscaleTaskProcessor(
+            taskQueue,
+            scopeFactory,
+            provider.GetRequiredService<IOptions<UpscalerConfig>>(),
+            Substitute.For<ILogger<UpscaleTaskProcessor>>(),
+            persistence,
+            new PreprocessedInputCache()
+        );
+        var distributed = new DistributedUpscaleTaskProcessor(
+            taskQueue,
+            scopeFactory,
+            provider.GetRequiredService<IOptions<UpscalerConfig>>(),
+            Substitute.For<ILogger<DistributedUpscaleTaskProcessor>>(),
+            persistence
+        );
+
+        var registry = new TaskRegistry(scopeFactory, taskQueue, standard, upscaler, distributed);
+
+        int standardChanges = 0;
+        int upscaleChanges = 0;
+        registry.StandardTasksChanged += () => Interlocked.Increment(ref standardChanges);
+        registry.UpscaleTasksChanged += () => Interlocked.Increment(ref upscaleChanges);
+
+        await registry.StartAsync(TestContext.Current.CancellationToken);
+
+        // Act: enqueue one standard and one upscale task.
+        await taskQueue.EnqueueAsync(new LoggingTask { Message = "standard" });
+        await taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(1, 1));
+
+        await WaitUntilAsync(
+            () =>
+                registry.GetStandardSnapshot().Count == 1
+                && registry.GetUpscaleSnapshot().Count == 1,
+            TestContext.Current.CancellationToken
+        );
+
+        // Assert: snapshots are populated and the matching change events fired.
+        Assert.Single(registry.GetStandardSnapshot());
+        Assert.Single(registry.GetUpscaleSnapshot());
+        Assert.True(standardChanges >= 1);
+        Assert.True(upscaleChanges >= 1);
+
+        // Act: batch remove both tasks.
+        List<PersistedTask> all = registry
+            .GetStandardSnapshot()
+            .Concat(registry.GetUpscaleSnapshot())
+            .ToList();
+        await taskQueue.RemoveTasksAsync(all);
+
+        await WaitUntilAsync(
+            () =>
+                registry.GetStandardSnapshot().Count == 0
+                && registry.GetUpscaleSnapshot().Count == 0,
+            TestContext.Current.CancellationToken
+        );
+
+        // Assert
+        Assert.Empty(registry.GetStandardSnapshot());
+        Assert.Empty(registry.GetUpscaleSnapshot());
+
+        await registry.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    private static async Task WaitUntilAsync(
+        Func<bool> condition,
+        CancellationToken cancellationToken
+    )
+    {
+        for (int i = 0; i < 40 && !condition(); i++)
+        {
+            await Task.Delay(50, cancellationToken);
+        }
+    }
 }

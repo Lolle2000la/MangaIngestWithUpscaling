@@ -26,7 +26,10 @@ public class TaskRegistry : IHostedService, IDisposable
     private readonly UpscaleTaskProcessor _upscaleProcessor;
     private readonly ILogger<TaskRegistry>? _logger;
     private readonly ConcurrentDictionary<int, PersistedTask> _pendingUpdates = new();
+    private readonly ConcurrentDictionary<int, PersistedTask> _pendingRemovals = new();
     private readonly CancellationTokenSource _cts = new();
+    private volatile PersistedTask[] _standardSnapshot = [];
+    private volatile PersistedTask[] _upscaleSnapshot = [];
     private Task? _flushTask;
     private int _disposed;
 
@@ -80,6 +83,30 @@ public class TaskRegistry : IHostedService, IDisposable
     public ReadOnlyObservableCollection<PersistedTask> StandardTasks { get; }
     public ReadOnlyObservableCollection<PersistedTask> UpscaleTasks { get; }
 
+    /// <summary>
+    ///     Raised once per flush batch after the standard-task view changed. Handlers run on the
+    ///     flushing thread, so UI consumers must marshal to their own synchronization context.
+    /// </summary>
+    public event Action? StandardTasksChanged;
+
+    /// <summary>
+    ///     Raised once per flush batch after the upscale-task view changed. Handlers run on the
+    ///     flushing thread, so UI consumers must marshal to their own synchronization context.
+    /// </summary>
+    public event Action? UpscaleTasksChanged;
+
+    /// <summary>
+    ///     Returns a consistent, sorted snapshot of the standard tasks. The returned array is
+    ///     replaced atomically on each flush, so callers can safely enumerate it from any thread.
+    /// </summary>
+    public IReadOnlyList<PersistedTask> GetStandardSnapshot() => _standardSnapshot;
+
+    /// <summary>
+    ///     Returns a consistent, sorted snapshot of the upscale tasks. The returned array is
+    ///     replaced atomically on each flush, so callers can safely enumerate it from any thread.
+    /// </summary>
+    public IReadOnlyList<PersistedTask> GetUpscaleSnapshot() => _upscaleSnapshot;
+
     public void Dispose()
     {
         // The instance is registered both as a plain singleton (TaskRegistry) and as an
@@ -103,6 +130,7 @@ public class TaskRegistry : IHostedService, IDisposable
             .PersistedTasks.AsNoTracking()
             .ToListAsync(cancellationToken);
         _tasks.AddOrUpdate(all);
+        RebuildSnapshots();
 
         // Subscribe to queue and processor events to keep registry up to date
         _taskQueue.TaskEnqueuedOrChanged += OnTaskChanged;
@@ -138,6 +166,10 @@ public class TaskRegistry : IHostedService, IDisposable
 
     private Task OnTaskChanged(PersistedTask task)
     {
+        // A task already queued for removal must not be re-added by a stale update.
+        if (_pendingRemovals.ContainsKey(task.Id))
+            return Task.CompletedTask;
+
         _pendingUpdates[task.Id] = CloneShallow(task);
         return Task.CompletedTask;
     }
@@ -145,7 +177,7 @@ public class TaskRegistry : IHostedService, IDisposable
     private Task OnTaskRemoved(PersistedTask task)
     {
         _pendingUpdates.TryRemove(task.Id, out _);
-        _tasks.Remove(task.Id);
+        _pendingRemovals[task.Id] = CloneShallow(task);
         return Task.CompletedTask;
     }
 
@@ -175,12 +207,11 @@ public class TaskRegistry : IHostedService, IDisposable
 
     private void FlushPendingUpdates()
     {
-        if (_pendingUpdates.IsEmpty)
+        if (_pendingUpdates.IsEmpty && _pendingRemovals.IsEmpty)
             return;
 
-        var keys = _pendingUpdates.Keys.ToList();
         var itemsToUpdate = new List<PersistedTask>();
-        foreach (var key in keys)
+        foreach (var key in _pendingUpdates.Keys.ToList())
         {
             if (_pendingUpdates.TryRemove(key, out var item))
             {
@@ -188,10 +219,68 @@ public class TaskRegistry : IHostedService, IDisposable
             }
         }
 
-        if (itemsToUpdate.Count > 0)
+        var itemsToRemove = new List<PersistedTask>();
+        foreach (var key in _pendingRemovals.Keys.ToList())
         {
-            _tasks.Edit(updater => updater.AddOrUpdate(itemsToUpdate));
+            if (_pendingRemovals.TryRemove(key, out var item))
+            {
+                itemsToRemove.Add(item);
+            }
         }
+
+        if (itemsToUpdate.Count == 0 && itemsToRemove.Count == 0)
+            return;
+
+        bool standardChanged = false;
+        bool upscaleChanged = false;
+        foreach (var item in itemsToRemove.Concat(itemsToUpdate))
+        {
+            if (item.Data is null)
+            {
+                // The caller only provided an id (e.g. queue cleanup), so we cannot tell which
+                // view it belonged to. Refresh both to stay safe.
+                standardChanged = true;
+                upscaleChanged = true;
+            }
+            else if (TaskQueue.IsUpscaleTask(item.Data))
+            {
+                upscaleChanged = true;
+            }
+            else
+            {
+                standardChanged = true;
+            }
+        }
+
+        _tasks.Edit(updater =>
+        {
+            foreach (var item in itemsToRemove)
+            {
+                updater.Remove(item.Id);
+            }
+
+            if (itemsToUpdate.Count > 0)
+            {
+                updater.AddOrUpdate(itemsToUpdate);
+            }
+        });
+
+        RebuildSnapshots();
+
+        if (standardChanged)
+            StandardTasksChanged?.Invoke();
+        if (upscaleChanged)
+            UpscaleTasksChanged?.Invoke();
+    }
+
+    /// <summary>
+    ///     Rebuilds the immutable snapshots consumed by the UI. Runs on the flush thread and
+    ///     swaps the arrays atomically, so readers never observe a partially-updated view.
+    /// </summary>
+    private void RebuildSnapshots()
+    {
+        _standardSnapshot = StandardTasks.ToArray();
+        _upscaleSnapshot = UpscaleTasks.ToArray();
     }
 
     private static PersistedTask CloneShallow(PersistedTask src)
