@@ -180,6 +180,95 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task CancelCurrent_WhenTaskRemovedWhileCancelInFlight_StillEmitsCanceledStatus()
+    {
+        // Regression guard: TaskCompleted can drop the task from runningTasks while the guarded
+        // cancel is in flight. The cancel is still the write that took effect, so the UI must be
+        // told about Canceled instead of being left stuck on Processing forever.
+        var task = new PersistedTask
+        {
+            Id = 9101,
+            Data = new DetectSplitCandidatesTask(1, 1),
+            Status = PersistedTaskStatus.Processing,
+        };
+
+        Dictionary<int, PersistedTask> runningTasks = GetPrivateField<
+            Dictionary<int, PersistedTask>
+        >(_processor, "runningTasks");
+        runningTasks[task.Id] = task;
+
+        _mockPersistence
+            .CancelTaskAsync(task.Id, Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                // Simulate the concurrent TaskCompleted removing the task after the guarded cancel
+                // committed but before CancelCurrent re-acquires _lock.
+                runningTasks.Remove(task.Id);
+                return 1;
+            });
+
+        var emitted = new List<PersistedTaskStatus>();
+        _processor.StatusChanged += emittedTask =>
+        {
+            lock (emitted)
+            {
+                emitted.Add(emittedTask.Status);
+            }
+
+            return Task.CompletedTask;
+        };
+
+        await _processor.CancelCurrent(task);
+
+        Assert.Equal(new[] { PersistedTaskStatus.Canceled }, emitted);
+        Assert.False(_processor.IsRunningRemotely(task.Id));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task CancelCurrent_WhenCancelAffectsNoRowAndTaskRemovedConcurrently_EmitsNothing()
+    {
+        // The guarded cancel lost the race to a terminal state, so even though the task is no
+        // longer tracked, CancelCurrent must not raise a contradictory Canceled status.
+        var task = new PersistedTask
+        {
+            Id = 9102,
+            Data = new DetectSplitCandidatesTask(1, 1),
+            Status = PersistedTaskStatus.Processing,
+        };
+
+        Dictionary<int, PersistedTask> runningTasks = GetPrivateField<
+            Dictionary<int, PersistedTask>
+        >(_processor, "runningTasks");
+        runningTasks[task.Id] = task;
+
+        _mockPersistence
+            .CancelTaskAsync(task.Id, Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                runningTasks.Remove(task.Id);
+                return 0;
+            });
+
+        var emitted = new List<PersistedTaskStatus>();
+        _processor.StatusChanged += emittedTask =>
+        {
+            lock (emitted)
+            {
+                emitted.Add(emittedTask.Status);
+            }
+
+            return Task.CompletedTask;
+        };
+
+        await _processor.CancelCurrent(task);
+
+        Assert.Empty(emitted);
+        Assert.False(_processor.IsRunningRemotely(task.Id));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task RemoveTaskAsync_ShouldCancelRunningRemoteTask()
     {
         // Removal is the stop signal for in-flight remote work: a removed task must not keep
@@ -414,9 +503,19 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
         runningTasks[failing.Id] = failing;
         runningTasks[healthy.Id] = healthy;
 
+        int failingAttempts = 0;
         _mockPersistence
             .RequeueStrandedTaskAsync(failing.Id, Arg.Any<CancellationToken>())
-            .Returns(Task.FromException<int>(new InvalidOperationException("requeue failed")));
+            .Returns(_ =>
+            {
+                // Fail the first tick only; the next tick must retry and succeed.
+                if (Interlocked.Increment(ref failingAttempts) == 1)
+                {
+                    throw new InvalidOperationException("requeue failed");
+                }
+
+                return 1;
+            });
         _mockPersistence
             .RequeueStrandedTaskAsync(healthy.Id, Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(1));
@@ -431,6 +530,14 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
         Assert.False(runningTasks.ContainsKey(healthy.Id));
         Assert.Contains(_taskQueue.GetUpscaleSnapshot(), t => t.Id == healthy.Id);
         Assert.Equal(PersistedTaskStatus.Pending, healthy.Status);
+
+        // A later reaper tick retries the task that failed and requeues it.
+        await _processor.ReapDeadTasksAsync(TestContext.Current.CancellationToken);
+
+        Assert.False(runningTasks.ContainsKey(failing.Id));
+        Assert.Contains(_taskQueue.GetUpscaleSnapshot(), t => t.Id == failing.Id);
+        Assert.Equal(PersistedTaskStatus.Pending, failing.Status);
+        Assert.Equal(2, failingAttempts);
     }
 
     private static T GetPrivateField<T>(object target, string name)

@@ -200,6 +200,47 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task ClaimTaskAsync_ConcurrentClaimsOfSamePendingRow_OnlyOneSucceeds()
+    {
+        // The claim is a single guarded UPDATE, so two claimers racing on the same Pending row must
+        // not both succeed and run the task twice.
+        int taskId = await SeedTaskAsync(PersistedTaskStatus.Pending);
+        var persistence = new TaskPersistenceService(
+            _provider.GetRequiredService<IServiceScopeFactory>()
+        );
+
+        using var barrier = new Barrier(2);
+        Task<bool> first = Task.Run(
+            async () =>
+            {
+                barrier.SignalAndWait();
+                return await persistence.ClaimTaskAsync(
+                    taskId,
+                    TestContext.Current.CancellationToken
+                );
+            },
+            TestContext.Current.CancellationToken
+        );
+        Task<bool> second = Task.Run(
+            async () =>
+            {
+                barrier.SignalAndWait();
+                return await persistence.ClaimTaskAsync(
+                    taskId,
+                    TestContext.Current.CancellationToken
+                );
+            },
+            TestContext.Current.CancellationToken
+        );
+
+        bool[] results = await Task.WhenAll(first, second);
+
+        Assert.Equal(1, results.Count(r => r));
+        Assert.Equal(PersistedTaskStatus.Processing, await GetStatusAsync(taskId));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task ReapDeadTasks_WhenRowBecameTerminal_DoesNotResurrectIt()
     {
         // Regression guard: the reaper used the unguarded RetryAsync, so a row that completed or was

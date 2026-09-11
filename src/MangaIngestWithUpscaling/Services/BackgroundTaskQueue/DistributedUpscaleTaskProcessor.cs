@@ -99,6 +99,27 @@ public class DistributedUpscaleTaskProcessor(
             }
         }
 
+        // The guarded cancel is the write that took effect, so the UI must be told about Canceled
+        // even when TaskCompleted raced us and already dropped the task from runningTasks (its own
+        // guarded completion then affects no row and emits nothing). The removed reference is gone
+        // from tracking, so emit a shallow snapshot built from the task captured up front. When
+        // affected == 0 a terminal state already won, so nothing is emitted and a contradictory
+        // status can never be raised.
+        if (affected > 0 && canceled == null)
+        {
+            canceled = new PersistedTask
+            {
+                Id = currentTask.Id,
+                Data = currentTask.Data,
+                Status = PersistedTaskStatus.Canceled,
+                CreatedAt = currentTask.CreatedAt,
+                RetryCount = currentTask.RetryCount,
+                ProcessedAt = currentTask.ProcessedAt,
+                Order = currentTask.Order,
+                LastKeepAlive = currentTask.LastKeepAlive,
+            };
+        }
+
         CleanupRepairFiles(checkAgainst.Id, logger);
 
         // Raise the event after releasing _lock: a subscriber that re-enters the processor (e.g. to
