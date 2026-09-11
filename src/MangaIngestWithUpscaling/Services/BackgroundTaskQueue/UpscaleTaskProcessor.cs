@@ -247,19 +247,35 @@ public class UpscaleTaskProcessor(
         else
         {
             // Removal does not reach the local reroute channel, so the row may have been deleted
-            // while the task sat there. Verify it still exists before running the work.
+            // (or finalized/canceled) while the task sat there. Verify it is still in a state that
+            // should be executed before running the work: a terminal row must not produce side
+            // effects only for the subsequent guarded CompleteTaskAsync to affect no rows.
             using var checkScope = scopeFactory.CreateScope();
             var dbContext = checkScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-            bool rowExists;
+            bool rowActive;
             try
             {
-                rowExists = await dbContext.PersistedTasks.AnyAsync(
-                    t => t.Id == task.Id,
+                rowActive = await dbContext.PersistedTasks.AnyAsync(
+                    t =>
+                        t.Id == task.Id
+                        && (
+                            t.Status == PersistedTaskStatus.Pending
+                            || t.Status == PersistedTaskStatus.Processing
+                        ),
                     stoppingToken
                 );
             }
             catch (OperationCanceledException)
             {
+                // The distributed processor claimed and rerouted this task, so it is not in
+                // runningTasks and CancelCurrent could not reach it. The cancellation must not be
+                // dropped here, or the row would stay Processing and out of every queue; apply the
+                // intended cancel just as the claim-cancellation path does.
+                logger.LogInformation(
+                    "Verification of rerouted task {TaskId} was canceled",
+                    task.Id
+                );
+                await ApplyClaimCancellationAsync(task);
                 return;
             }
             catch (Exception ex)
@@ -277,10 +293,10 @@ public class UpscaleTaskProcessor(
                 return;
             }
 
-            if (!rowExists)
+            if (!rowActive)
             {
                 logger.LogInformation(
-                    "Skipping rerouted task {TaskId} because its database row no longer exists.",
+                    "Skipping rerouted task {TaskId} because its database row is missing or no longer active.",
                     task.Id
                 );
                 return;
@@ -349,7 +365,13 @@ public class UpscaleTaskProcessor(
             try
             {
                 bool requeue = serviceStoppingToken.IsCancellationRequested;
-                await taskPersistenceService.CancelTaskAsync(task.Id, requeue);
+                int canceledRows = await taskPersistenceService.CancelTaskAsync(task.Id, requeue);
+
+                // The row may already be terminal; do not mirror a contradictory Canceled status.
+                if (canceledRows == 0)
+                {
+                    return;
+                }
 
                 // Update in-memory task
                 task.Status = requeue ? PersistedTaskStatus.Pending : PersistedTaskStatus.Canceled;
@@ -424,7 +446,15 @@ public class UpscaleTaskProcessor(
         bool requeue = serviceStoppingToken.IsCancellationRequested;
         try
         {
-            await taskPersistenceService.CancelTaskAsync(task.Id, requeue);
+            int canceledRows = await taskPersistenceService.CancelTaskAsync(task.Id, requeue);
+
+            // A guarded cancel affects no row when the task already reached a terminal state; the
+            // database is the source of truth, so do not advertise a contradictory Canceled status.
+            if (canceledRows == 0)
+            {
+                return;
+            }
+
             task.Status = requeue ? PersistedTaskStatus.Pending : PersistedTaskStatus.Canceled;
             StatusChanged?.Invoke(task);
         }

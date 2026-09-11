@@ -181,7 +181,14 @@ public class StandardTaskProcessor(
             bool requeue = serviceStoppingToken.IsCancellationRequested;
             try
             {
-                await taskPersistenceService.CancelTaskAsync(task.Id, requeue);
+                int canceledRows = await taskPersistenceService.CancelTaskAsync(task.Id, requeue);
+
+                // A guarded cancel affects no row when the task already reached a terminal state;
+                // do not emit a contradictory Canceled status in that case.
+                if (canceledRows == 0)
+                {
+                    return;
+                }
 
                 task.Status = requeue ? PersistedTaskStatus.Pending : PersistedTaskStatus.Canceled;
                 StatusChanged?.Invoke(task);
@@ -253,7 +260,15 @@ public class StandardTaskProcessor(
         bool requeue = serviceStoppingToken.IsCancellationRequested;
         try
         {
-            await taskPersistenceService.CancelTaskAsync(task.Id, requeue);
+            int canceledRows = await taskPersistenceService.CancelTaskAsync(task.Id, requeue);
+
+            // A guarded cancel affects no row when the task already reached a terminal state; the
+            // database is the source of truth, so do not advertise a contradictory Canceled status.
+            if (canceledRows == 0)
+            {
+                return;
+            }
+
             task.Status = requeue ? PersistedTaskStatus.Pending : PersistedTaskStatus.Canceled;
             StatusChanged?.Invoke(task);
         }

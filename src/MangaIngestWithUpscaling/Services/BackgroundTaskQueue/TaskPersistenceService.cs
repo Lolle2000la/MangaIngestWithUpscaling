@@ -9,7 +9,12 @@ public interface ITaskPersistenceService
     Task<bool> ClaimTaskAsync(int taskId, CancellationToken cancellationToken = default);
     Task<int> CompleteTaskAsync(int taskId, CancellationToken cancellationToken = default);
     Task<int> FailTaskAsync(int taskId, CancellationToken cancellationToken = default);
-    Task CancelTaskAsync(
+
+    /// <summary>
+    ///     Cancels a still-active task (Pending or Processing). The affected row count is returned so
+    ///     callers can avoid mirroring a terminal state that the guarded write did not apply.
+    /// </summary>
+    Task<int> CancelTaskAsync(
         int taskId,
         bool requeue = false,
         CancellationToken cancellationToken = default
@@ -35,25 +40,18 @@ public class TaskPersistenceService(IServiceScopeFactory scopeFactory) : ITaskPe
         using var scope = scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        var task = await dbContext.PersistedTasks.FirstOrDefaultAsync(
-            t => t.Id == taskId,
-            cancellationToken
-        );
-        if (task == null || task.Status != PersistedTaskStatus.Pending)
-        {
-            return false;
-        }
+        // Atomic compare-and-set: only a row that is still Pending may be claimed. Doing the check
+        // and the update in a single guarded statement (instead of read-then-SaveChanges) means two
+        // concurrent claimers cannot both observe Pending and both succeed, which would run the task
+        // twice. A missing or already-claimed row affects no rows and yields false.
+        int affected = await dbContext
+            .PersistedTasks.Where(t => t.Id == taskId && t.Status == PersistedTaskStatus.Pending)
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(t => t.Status, PersistedTaskStatus.Processing),
+                cancellationToken
+            );
 
-        task.Status = PersistedTaskStatus.Processing;
-        try
-        {
-            await dbContext.SaveChangesAsync(cancellationToken);
-            return true;
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            return false;
-        }
+        return affected > 0;
     }
 
     public async Task<int> CompleteTaskAsync(
@@ -110,7 +108,7 @@ public class TaskPersistenceService(IServiceScopeFactory scopeFactory) : ITaskPe
             );
     }
 
-    public async Task CancelTaskAsync(
+    public async Task<int> CancelTaskAsync(
         int taskId,
         bool requeue = false,
         CancellationToken cancellationToken = default
@@ -123,8 +121,9 @@ public class TaskPersistenceService(IServiceScopeFactory scopeFactory) : ITaskPe
             ? PersistedTaskStatus.Pending
             : PersistedTaskStatus.Canceled;
 
-        // Do not overwrite a terminal state: a late cancel after completion/failure is a no-op.
-        await dbContext
+        // Do not overwrite a terminal state: a late cancel after completion/failure is a no-op. The
+        // returned row count tells the caller whether the transition actually happened.
+        return await dbContext
             .PersistedTasks.Where(t =>
                 t.Id == taskId
                 && (

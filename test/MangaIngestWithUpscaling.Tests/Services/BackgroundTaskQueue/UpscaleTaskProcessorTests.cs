@@ -69,6 +69,10 @@ public class UpscaleTaskProcessorTests : IDisposable
                 return true;
             });
 
+        _mockPersistence
+            .CancelTaskAsync(Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(1);
+
         _mockLogger = Substitute.For<ILogger<UpscaleTaskProcessor>>();
         var queueLogger = Substitute.For<ILogger<TaskQueue>>();
 
@@ -374,6 +378,39 @@ public class UpscaleTaskProcessorTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task ProcessTaskAsync_WhenCancelAffectsNoRows_DoesNotMarkCanceledInMemory()
+    {
+        // Regression guard: the cancel path mirrored Canceled in memory even when the guarded write
+        // affected no row (the row was already terminal), telling the UI a contradictory status.
+        var persistence = Substitute.For<ITaskPersistenceService>();
+        persistence.ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(true);
+        persistence
+            .CancelTaskAsync(Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(0);
+
+        var processor = CreateExposedProcessor(persistence);
+        var task = new PersistedTask
+        {
+            Id = 603,
+            Data = new CancelledTask(),
+            Status = PersistedTaskStatus.Pending,
+        };
+
+        var emitted = new List<PersistedTaskStatus>();
+        processor.StatusChanged += t =>
+        {
+            emitted.Add(t.Status);
+            return Task.CompletedTask;
+        };
+
+        await processor.InvokeProcessTaskAsync(task, TestContext.Current.CancellationToken);
+
+        Assert.NotEqual(PersistedTaskStatus.Canceled, task.Status);
+        Assert.DoesNotContain(PersistedTaskStatus.Canceled, emitted);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task ExecuteAsync_WhenClaimIsCancelled_PersistsCancelInsteadOfDroppingIt()
     {
         // Regression guard: CancelCurrent cancelling the claim used to be swallowed, so the
@@ -392,6 +429,9 @@ public class UpscaleTaskProcessorTests : IDisposable
 
                 return Task.FromResult(true);
             });
+        persistence
+            .CancelTaskAsync(Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(1);
 
         var processor = new UpscaleTaskProcessor(
             _taskQueue,
@@ -490,5 +530,13 @@ public class UpscaleTaskProcessorTests : IDisposable
             IServiceProvider services,
             CancellationToken cancellationToken
         ) => Task.FromException(new InvalidOperationException("boom"));
+    }
+
+    private sealed class CancelledTask : BaseTask
+    {
+        public override Task ProcessAsync(
+            IServiceProvider services,
+            CancellationToken cancellationToken
+        ) => Task.FromException(new OperationCanceledException("canceled"));
     }
 }

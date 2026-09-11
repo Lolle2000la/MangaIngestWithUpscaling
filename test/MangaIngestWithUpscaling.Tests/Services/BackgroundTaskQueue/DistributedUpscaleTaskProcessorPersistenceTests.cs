@@ -173,6 +173,98 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
         Assert.False(_processor.IsRunningRemotely(taskId));
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ClaimTaskAsync_SecondClaimOfPendingRow_ReturnsFalseAndLeavesProcessing()
+    {
+        // Regression guard: the claim was a non-atomic read-check-write. A second claim of an
+        // already-claimed row must fail and must not change the row.
+        int taskId = await SeedTaskAsync(PersistedTaskStatus.Pending);
+        var persistence = new TaskPersistenceService(
+            _provider.GetRequiredService<IServiceScopeFactory>()
+        );
+
+        bool first = await persistence.ClaimTaskAsync(
+            taskId,
+            TestContext.Current.CancellationToken
+        );
+        bool second = await persistence.ClaimTaskAsync(
+            taskId,
+            TestContext.Current.CancellationToken
+        );
+
+        Assert.True(first);
+        Assert.False(second);
+        Assert.Equal(PersistedTaskStatus.Processing, await GetStatusAsync(taskId));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ReapDeadTasks_WhenRowBecameTerminal_DoesNotResurrectIt()
+    {
+        // Regression guard: the reaper used the unguarded RetryAsync, so a row that completed or was
+        // canceled while the task was dead could be flipped back to Pending and re-run.
+        int taskId = await SeedTaskAsync(PersistedTaskStatus.Completed);
+        var deadTask = new PersistedTask
+        {
+            Id = taskId,
+            Data = new DetectSplitCandidatesTask(1, 1),
+            Status = PersistedTaskStatus.Processing,
+            LastKeepAlive = DateTime.UtcNow.AddMinutes(-5),
+        };
+        Dictionary<int, PersistedTask> runningTasks = GetPrivateField<
+            Dictionary<int, PersistedTask>
+        >(_processor, "runningTasks");
+        runningTasks[taskId] = deadTask;
+
+        await _processor.ReapDeadTasksAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(PersistedTaskStatus.Completed, await GetStatusAsync(taskId));
+        Assert.DoesNotContain(_taskQueue.GetUpscaleSnapshot(), t => t.Id == taskId);
+        Assert.False(runningTasks.ContainsKey(taskId));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task CancelCurrent_WhenRowAlreadyTerminal_DoesNotEmitContradictoryCanceledStatus()
+    {
+        // Regression guard: CancelCurrent marked the in-memory task Canceled and raised
+        // StatusChanged even when the guarded cancel affected no row because the row was already
+        // terminal, telling the UI a status the database never had.
+        int taskId = await SeedTaskAsync(PersistedTaskStatus.Completed);
+        var workTask = new PersistedTask
+        {
+            Id = taskId,
+            Data = new DetectSplitCandidatesTask(1, 1),
+            Status = PersistedTaskStatus.Processing,
+        };
+        Dictionary<int, PersistedTask> runningTasks = GetPrivateField<
+            Dictionary<int, PersistedTask>
+        >(_processor, "runningTasks");
+        runningTasks[taskId] = workTask;
+
+        var emitted = new List<PersistedTaskStatus>();
+        _processor.StatusChanged += task =>
+        {
+            lock (emitted)
+            {
+                emitted.Add(task.Status);
+            }
+
+            return Task.CompletedTask;
+        };
+
+        await _processor.CancelCurrent(workTask);
+
+        Assert.Equal(PersistedTaskStatus.Processing, workTask.Status);
+        lock (emitted)
+        {
+            Assert.DoesNotContain(PersistedTaskStatus.Canceled, emitted);
+        }
+        Assert.Equal(PersistedTaskStatus.Completed, await GetStatusAsync(taskId));
+        Assert.False(_processor.IsRunningRemotely(taskId));
+    }
+
     private async Task<PersistedTaskStatus?> GetStatusAsync(int id)
     {
         using var scope = _provider.CreateScope();

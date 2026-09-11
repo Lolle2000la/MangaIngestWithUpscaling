@@ -31,6 +31,9 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
 
         _mockPersistence = Substitute.For<ITaskPersistenceService>();
         _mockPersistence.ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(true);
+        _mockPersistence
+            .CancelTaskAsync(Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(1);
 
         _mockOptions = Substitute.For<IOptions<UpscalerConfig>>();
         _mockOptions.Value.Returns(new UpscalerConfig { RemoteOnly = true });
@@ -382,6 +385,52 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
         {
             Directory.Delete(workDirectory, true);
         }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ReapDeadTasks_WhenOneRequeueFails_LeavesItRecoverableAndRequeuesTheRest()
+    {
+        // Regression guard: the reaper removed every dead task from runningTasks before requeueing,
+        // so a single per-task failure dropped the rest and stranded them until restart.
+        var failing = new PersistedTask
+        {
+            Id = 9001,
+            Data = new DetectSplitCandidatesTask(1, 1),
+            Status = PersistedTaskStatus.Processing,
+            LastKeepAlive = DateTime.UtcNow.AddMinutes(-5),
+        };
+        var healthy = new PersistedTask
+        {
+            Id = 9002,
+            Data = new DetectSplitCandidatesTask(2, 1),
+            Status = PersistedTaskStatus.Processing,
+            LastKeepAlive = DateTime.UtcNow.AddMinutes(-5),
+        };
+
+        Dictionary<int, PersistedTask> runningTasks = GetPrivateField<
+            Dictionary<int, PersistedTask>
+        >(_processor, "runningTasks");
+        runningTasks[failing.Id] = failing;
+        runningTasks[healthy.Id] = healthy;
+
+        _mockPersistence
+            .RequeueStrandedTaskAsync(failing.Id, Arg.Any<CancellationToken>())
+            .Returns(Task.FromException<int>(new InvalidOperationException("requeue failed")));
+        _mockPersistence
+            .RequeueStrandedTaskAsync(healthy.Id, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(1));
+
+        await _processor.ReapDeadTasksAsync(TestContext.Current.CancellationToken);
+
+        // The failed task stays tracked for the next tick and was not requeued.
+        Assert.True(runningTasks.ContainsKey(failing.Id));
+        Assert.DoesNotContain(_taskQueue.GetUpscaleSnapshot(), t => t.Id == failing.Id);
+
+        // The healthy task was requeued and is no longer tracked.
+        Assert.False(runningTasks.ContainsKey(healthy.Id));
+        Assert.Contains(_taskQueue.GetUpscaleSnapshot(), t => t.Id == healthy.Id);
+        Assert.Equal(PersistedTaskStatus.Pending, healthy.Status);
     }
 
     private static T GetPrivateField<T>(object target, string name)

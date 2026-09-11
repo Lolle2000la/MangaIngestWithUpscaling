@@ -55,30 +55,58 @@ public class DistributedUpscaleTaskProcessor(
     /// <param name="checkAgainst">The task to check against if it is still the current task. Does so by using the Id.</param>
     public async Task CancelCurrent(PersistedTask checkAgainst)
     {
-        PersistedTask? canceled;
+        PersistedTask? currentTask;
         using (_lock.EnterScope())
         {
             if (
-                runningTasks.TryGetValue(checkAgainst.Id, out var currentTask)
-                && currentTask.Id == checkAgainst.Id
+                !runningTasks.TryGetValue(checkAgainst.Id, out currentTask)
+                || currentTask.Id != checkAgainst.Id
             )
-            {
-                currentTask.Status = PersistedTaskStatus.Canceled;
-                runningTasks.Remove(checkAgainst.Id);
-                canceled = currentTask;
-            }
-            else
             {
                 return;
             }
         }
 
-        // Raise the event after releasing _lock: a subscriber that re-enters the processor (e.g. to
-        // query running state) must never be able to deadlock the processor by calling back in.
-        _ = StatusChanged?.Invoke(canceled);
+        int affected;
+        try
+        {
+            affected = await taskPersistenceService.CancelTaskAsync(checkAgainst.Id);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to cancel task {TaskId}.", checkAgainst.Id);
+            return;
+        }
+
+        PersistedTask? canceled = null;
+        using (_lock.EnterScope())
+        {
+            // Re-check under the lock: the task may have completed/failed while the guarded cancel
+            // was in flight, in which case it is already removed and nothing was canceled. Only
+            // mirror a Canceled state when the guarded write actually applied.
+            if (
+                runningTasks.TryGetValue(checkAgainst.Id, out var tracked)
+                && ReferenceEquals(tracked, currentTask)
+            )
+            {
+                if (affected > 0)
+                {
+                    tracked.Status = PersistedTaskStatus.Canceled;
+                    canceled = tracked;
+                }
+
+                runningTasks.Remove(checkAgainst.Id);
+            }
+        }
 
         CleanupRepairFiles(checkAgainst.Id, logger);
-        await taskPersistenceService.CancelTaskAsync(checkAgainst.Id);
+
+        // Raise the event after releasing _lock: a subscriber that re-enters the processor (e.g. to
+        // query running state) must never be able to deadlock the processor by calling back in.
+        if (canceled != null)
+        {
+            _ = StatusChanged?.Invoke(canceled);
+        }
     }
 
     private Task OnTaskRemoved(PersistedTask task)
@@ -202,72 +230,7 @@ public class DistributedUpscaleTaskProcessor(
                     {
                         try
                         {
-                            List<PersistedTask> deadTasksToRequeue;
-                            using (_lock.EnterScope())
-                            {
-                                var deadTasks = runningTasks
-                                    .Where(x =>
-                                        x.Value.Status == PersistedTaskStatus.Processing
-                                        && x.Value.LastKeepAlive.AddMinutes(1) < DateTime.UtcNow
-                                    )
-                                    .ToList();
-
-                                if (deadTasks.Count == 0)
-                                {
-                                    continue;
-                                }
-
-                                deadTasksToRequeue = new List<PersistedTask>(deadTasks.Count);
-                                foreach (var (taskId, task) in deadTasks)
-                                {
-                                    deadTasksToRequeue.Add(task);
-                                    runningTasks.Remove(taskId);
-                                }
-                            }
-
-                            using (IServiceScope scope = scopeFactory.CreateScope())
-                            {
-                                var logger = scope.ServiceProvider.GetRequiredService<
-                                    ILogger<DistributedUpscaleTaskProcessor>
-                                >();
-                                logger.LogInformation(
-                                    "Re-enqueuing {count} dead tasks.",
-                                    deadTasksToRequeue.Count
-                                );
-                            }
-
-                            foreach (PersistedTask task in deadTasksToRequeue)
-                            {
-                                using IServiceScope scope2 = scopeFactory.CreateScope();
-                                var db2 =
-                                    scope2.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-                                // Re-check the current status in DB to avoid re-enqueueing tasks that already completed or were cancelled
-                                PersistedTask? current = await db2
-                                    .PersistedTasks.AsNoTracking()
-                                    .FirstOrDefaultAsync(t => t.Id == task.Id, stoppingToken);
-                                if (current is null)
-                                {
-                                    continue;
-                                }
-
-                                if (
-                                    current.Status == PersistedTaskStatus.Completed
-                                    || current.Status == PersistedTaskStatus.Canceled
-                                )
-                                {
-                                    // Already finalized; do not re-enqueue
-                                    continue;
-                                }
-
-                                // A dead remote task may have left a prepared repair context and its
-                                // temp files behind. Clean them before requeueing so the next
-                                // preparation cannot leak them (CleanupRepairFiles respects any
-                                // in-flight completion's usage lease).
-                                CleanupRepairFiles(task.Id, logger);
-
-                                await taskQueue.RetryAsync(task);
-                                _ = StatusChanged?.Invoke(task);
-                            }
+                            await ReapDeadTasksAsync(stoppingToken);
                         }
                         catch (OperationCanceledException)
                         {
@@ -637,6 +600,88 @@ public class DistributedUpscaleTaskProcessor(
                 {
                     await RequeueClaimedTaskAsync(claimedTask);
                 }
+            }
+        }
+    }
+
+    /// <summary>
+    ///     Requeues remote tasks that have stopped sending keep-alives. Each dead task is handled
+    ///     independently: its row is reconciled with the guarded
+    ///     <see cref="ITaskPersistenceService.RequeueStrandedTaskAsync" /> (which cannot resurrect a
+    ///     terminal row) and it is only then re-added to the in-memory queue. A failure affecting one
+    ///     task re-adds it to <c>runningTasks</c> for the next tick instead of dropping it or
+    ///     preventing the remaining tasks from being requeued.
+    /// </summary>
+    internal async Task ReapDeadTasksAsync(CancellationToken cancellationToken)
+    {
+        List<PersistedTask> deadTasks;
+        using (_lock.EnterScope())
+        {
+            deadTasks = runningTasks
+                .Values.Where(t =>
+                    t.Status == PersistedTaskStatus.Processing
+                    && t.LastKeepAlive.AddMinutes(1) < DateTime.UtcNow
+                )
+                .ToList();
+
+            // Stop tracking each dead task up front. A task whose requeue below fails is re-added, so
+            // one per-task failure cannot drop the rest or strand a row until restart.
+            foreach (PersistedTask task in deadTasks)
+            {
+                runningTasks.Remove(task.Id);
+            }
+        }
+
+        if (deadTasks.Count == 0)
+        {
+            return;
+        }
+
+        logger.LogInformation("Re-enqueuing {count} dead tasks.", deadTasks.Count);
+
+        foreach (PersistedTask task in deadTasks)
+        {
+            try
+            {
+                // Guarded reconcile: only a still-active (Pending/Processing) row returns to
+                // Pending. A row that completed/failed/canceled while the task was dead affects no
+                // row and is never resurrected (the old separate re-check + unconditional RetryAsync
+                // update was a TOCTOU that could flip a terminal row back to Pending).
+                int affected = await taskPersistenceService.RequeueStrandedTaskAsync(
+                    task.Id,
+                    cancellationToken
+                );
+
+                // A dead remote task may have left a prepared repair context and its temp files
+                // behind. Clean them before requeueing so the next preparation cannot leak them
+                // (CleanupRepairFiles respects any in-flight completion's usage lease).
+                CleanupRepairFiles(task.Id, logger);
+
+                if (affected == 0)
+                {
+                    // Already terminal: no longer ours to track, and it must not be re-run.
+                    continue;
+                }
+
+                // The guarded update already put the row back to Pending, so requeue in memory only.
+                taskQueue.ReEnqueue(task);
+                task.Status = PersistedTaskStatus.Pending;
+                _ = StatusChanged?.Invoke(task);
+            }
+            catch (Exception ex)
+            {
+                // Keep the task tracked so the next tick retries it. This must not prevent the
+                // remaining dead tasks from being requeued.
+                using (_lock.EnterScope())
+                {
+                    runningTasks.TryAdd(task.Id, task);
+                }
+
+                logger.LogError(
+                    ex,
+                    "Failed to requeue dead task {taskId}; the reaper will retry it on the next tick.",
+                    task.Id
+                );
             }
         }
     }
