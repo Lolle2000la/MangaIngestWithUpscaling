@@ -53,16 +53,24 @@ public class TaskPersistenceService(IServiceScopeFactory scopeFactory) : ITaskPe
         using var scope = scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        var task = await dbContext.PersistedTasks.FirstOrDefaultAsync(
-            t => t.Id == taskId,
-            cancellationToken
-        );
-        if (task != null)
-        {
-            task.Status = PersistedTaskStatus.Completed;
-            task.ProcessedAt = DateTime.UtcNow;
-            await dbContext.SaveChangesAsync(cancellationToken);
-        }
+        DateTime? processedAt = DateTime.UtcNow;
+        // Terminal transitions are guarded: a late or duplicate callback must not overwrite a
+        // terminal state. Only tasks that are still Pending/Processing may complete.
+        await dbContext
+            .PersistedTasks.Where(t =>
+                t.Id == taskId
+                && (
+                    t.Status == PersistedTaskStatus.Pending
+                    || t.Status == PersistedTaskStatus.Processing
+                )
+            )
+            .ExecuteUpdateAsync(
+                setters =>
+                    setters
+                        .SetProperty(t => t.Status, PersistedTaskStatus.Completed)
+                        .SetProperty(t => t.ProcessedAt, processedAt),
+                cancellationToken
+            );
     }
 
     public async Task FailTaskAsync(int taskId, CancellationToken cancellationToken = default)
@@ -70,16 +78,23 @@ public class TaskPersistenceService(IServiceScopeFactory scopeFactory) : ITaskPe
         using var scope = scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        var task = await dbContext.PersistedTasks.FirstOrDefaultAsync(
-            t => t.Id == taskId,
-            cancellationToken
-        );
-        if (task != null)
-        {
-            task.Status = PersistedTaskStatus.Failed;
-            task.RetryCount++;
-            await dbContext.SaveChangesAsync(cancellationToken);
-        }
+        // Only a still-active task may fail, and the retry count is incremented in the same
+        // conditional update so duplicate failure callbacks cannot inflate it.
+        await dbContext
+            .PersistedTasks.Where(t =>
+                t.Id == taskId
+                && (
+                    t.Status == PersistedTaskStatus.Pending
+                    || t.Status == PersistedTaskStatus.Processing
+                )
+            )
+            .ExecuteUpdateAsync(
+                setters =>
+                    setters
+                        .SetProperty(t => t.Status, PersistedTaskStatus.Failed)
+                        .SetProperty(t => t.RetryCount, t => t.RetryCount + 1),
+                cancellationToken
+            );
     }
 
     public async Task CancelTaskAsync(
@@ -91,14 +106,22 @@ public class TaskPersistenceService(IServiceScopeFactory scopeFactory) : ITaskPe
         using var scope = scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        var task = await dbContext.PersistedTasks.FirstOrDefaultAsync(
-            t => t.Id == taskId,
-            cancellationToken
-        );
-        if (task != null)
-        {
-            task.Status = requeue ? PersistedTaskStatus.Pending : PersistedTaskStatus.Canceled;
-            await dbContext.SaveChangesAsync(cancellationToken);
-        }
+        PersistedTaskStatus newStatus = requeue
+            ? PersistedTaskStatus.Pending
+            : PersistedTaskStatus.Canceled;
+
+        // Do not overwrite a terminal state: a late cancel after completion/failure is a no-op.
+        await dbContext
+            .PersistedTasks.Where(t =>
+                t.Id == taskId
+                && (
+                    t.Status == PersistedTaskStatus.Pending
+                    || t.Status == PersistedTaskStatus.Processing
+                )
+            )
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(t => t.Status, newStatus),
+                cancellationToken
+            );
     }
 }

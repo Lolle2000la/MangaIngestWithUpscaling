@@ -569,7 +569,17 @@ public class DistributedUpscaleTaskProcessor(
             catch (OperationCanceledException)
             {
                 tcs.TrySetCanceled(linkedCts.Token);
-                break;
+
+                // A request/worker token cancellation (worker disconnect or request timeout) must
+                // not terminate ExecuteAsync. Only stop when the service itself is stopping.
+                if (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                logger.LogDebug(
+                    "Task request was cancelled by the requesting worker; continuing to serve remote workers."
+                );
             }
             catch (Exception ex)
             {
@@ -772,6 +782,29 @@ public class DistributedUpscaleTaskProcessor(
         var repairService = services.GetRequiredService<IRepairService>();
         var metadataHandling = services.GetRequiredService<IMetadataHandlingService>();
 
+        // Get the stored repair state and take a usage lease before any await. Cleanup
+        // (cancel/forget) removes the state and requests disposal, but disposal is deferred until
+        // this completion releases the lease, so the RepairContext and its work directory cannot be
+        // torn down underneath the in-progress completion.
+        RemoteRepairState? repairState;
+        using (_lock.EnterScope())
+        {
+            if (!remoteRepairStates.TryGetValue(persistedTask.Id, out repairState))
+            {
+                logger.LogError("No repair state found for repair task {taskId}", persistedTask.Id);
+                return false;
+            }
+        }
+
+        if (!repairState.TryBeginUse())
+        {
+            logger.LogDebug(
+                "Repair state for task {taskId} is already being cleaned up; skipping completion.",
+                persistedTask.Id
+            );
+            return false;
+        }
+
         try
         {
             Chapter? chapter = await dbContext
@@ -796,20 +829,6 @@ public class DistributedUpscaleTaskProcessor(
                     repairTask.ChapterId
                 );
                 return false;
-            }
-
-            // Get the stored repair state
-            RemoteRepairState? repairState;
-            using (_lock.EnterScope())
-            {
-                if (!remoteRepairStates.TryGetValue(persistedTask.Id, out repairState))
-                {
-                    logger.LogError(
-                        "No repair state found for repair task {taskId}",
-                        persistedTask.Id
-                    );
-                    return false;
-                }
             }
 
             // Check if the repair is still needed (files might have changed)
@@ -894,6 +913,10 @@ public class DistributedUpscaleTaskProcessor(
             CleanupRepairFiles(persistedTask.Id, logger);
             return false;
         }
+        finally
+        {
+            repairState.EndUse(logger);
+        }
     }
 
     /// <summary>
@@ -904,7 +927,6 @@ public class DistributedUpscaleTaskProcessor(
         try
         {
             RemoteRepairState? repairState;
-            RepairContext? repairContext;
             using (_lock.EnterScope())
             {
                 if (!remoteRepairStates.TryGetValue(taskId, out repairState))
@@ -912,49 +934,14 @@ public class DistributedUpscaleTaskProcessor(
                     return; // No repair state found, nothing to clean up
                 }
 
-                repairContext = repairState.RepairContext;
                 remoteRepairStates.Remove(taskId);
             }
 
-            // Dispose the repair context after releasing _lock: RepairContext.Dispose recursively
-            // deletes a directory, and holding _lock across that IO would block keep-alives,
-            // progress updates, cancellation and IsRunningRemotely for the duration.
-            try
-            {
-                repairContext?.Dispose();
-            }
-            catch (Exception ex)
-            {
-                logger.LogDebug(
-                    ex,
-                    "RepairContext dispose threw, continuing cleanup for task {taskId}",
-                    taskId
-                );
-            }
-
-            if (
-                !string.IsNullOrEmpty(repairState.PreparedMissingPagesCbzPath)
-                && File.Exists(repairState.PreparedMissingPagesCbzPath)
-            )
-            {
-                File.Delete(repairState.PreparedMissingPagesCbzPath);
-                logger.LogDebug(
-                    "Cleaned up prepared missing pages CBZ: {path}",
-                    repairState.PreparedMissingPagesCbzPath
-                );
-            }
-
-            if (
-                !string.IsNullOrEmpty(repairState.UpscaledMissingPagesCbzPath)
-                && File.Exists(repairState.UpscaledMissingPagesCbzPath)
-            )
-            {
-                File.Delete(repairState.UpscaledMissingPagesCbzPath);
-                logger.LogDebug(
-                    "Cleaned up upscaled missing pages CBZ: {path}",
-                    repairState.UpscaledMissingPagesCbzPath
-                );
-            }
+            // Dispose the repair context and delete its files after releasing _lock: RepairContext.Dispose
+            // recursively deletes a directory, and holding _lock across that IO would block keep-alives,
+            // progress updates, cancellation and IsRunningRemotely for the duration. If a completion
+            // still holds a usage lease, the state defers cleanup until that lease is released.
+            repairState.RequestCleanup(logger);
         }
         catch (Exception ex)
         {
@@ -1188,6 +1175,19 @@ public class DistributedUpscaleTaskProcessor(
                 return false;
             }
         }
+        catch (OperationCanceledException) when (!serviceStoppingToken.IsCancellationRequested)
+        {
+            // The requesting worker disconnected (or its request was cancelled) while the task was
+            // being prepared. This is not a task failure: do not persist a terminal state and do not
+            // bump the retry count. Requeue it so it stays replayable instead of being abandoned.
+            logger.LogDebug(
+                "Preparation of repair task {TaskId} was cancelled by the requesting worker; requeuing.",
+                persistedTask.Id
+            );
+            CleanupRepairFiles(persistedTask.Id, logger);
+            await RequeueAfterCancelledPreparationAsync(persistedTask);
+            return false;
+        }
         catch (Exception ex)
         {
             logger.LogError(
@@ -1202,11 +1202,37 @@ public class DistributedUpscaleTaskProcessor(
     }
 
     /// <summary>
+    ///     Puts a task that was cancelled during remote-repair preparation back into the queue as
+    ///     Pending. Failures are logged and swallowed: the row is then still Processing and startup
+    ///     recovery resets it, so a database hiccup here must not fault the processor.
+    /// </summary>
+    private async Task RequeueAfterCancelledPreparationAsync(PersistedTask persistedTask)
+    {
+        try
+        {
+            await taskQueue.RetryAsync(persistedTask);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to requeue repair task {TaskId} after its preparation was cancelled; leaving it for startup recovery.",
+                persistedTask.Id
+            );
+        }
+    }
+
+    /// <summary>
     ///     State information for managing remote repair operations.
     ///     Contains file paths and context data needed for the remote repair workflow.
     /// </summary>
     public class RemoteRepairState
     {
+        private readonly object _usageGate = new();
+        private int _activeUsers;
+        private bool _cleanupRequested;
+        private bool _cleanupCompleted;
+
         /// <summary>
         ///     Path to the prepared CBZ file containing missing pages for remote upscaling.
         /// </summary>
@@ -1222,5 +1248,102 @@ public class DistributedUpscaleTaskProcessor(
         ///     This context is created during preparation and disposed during cleanup.
         /// </summary>
         public RepairContext? RepairContext { get; set; }
+
+        /// <summary>
+        ///     Marks the state as in use by a completion. Returns <c>false</c> when cleanup has
+        ///     already been requested or performed, so the caller must not touch the repair context.
+        /// </summary>
+        public bool TryBeginUse()
+        {
+            lock (_usageGate)
+            {
+                if (_cleanupRequested || _cleanupCompleted)
+                {
+                    return false;
+                }
+
+                _activeUsers++;
+                return true;
+            }
+        }
+
+        /// <summary>
+        ///     Releases a usage lease. If cleanup is pending and this was the last user, the repair
+        ///     context is disposed and the temporary files are deleted.
+        /// </summary>
+        public void EndUse(ILogger logger)
+        {
+            bool runCleanup;
+            lock (_usageGate)
+            {
+                _activeUsers--;
+                runCleanup = _cleanupRequested && _activeUsers <= 0 && !_cleanupCompleted;
+                if (runCleanup)
+                {
+                    _cleanupCompleted = true;
+                }
+            }
+
+            if (runCleanup)
+            {
+                Cleanup(logger);
+            }
+        }
+
+        /// <summary>
+        ///     Requests cleanup. Cleanup runs immediately unless a completion currently holds a usage
+        ///     lease, in which case it is deferred until the lease is released.
+        /// </summary>
+        public void RequestCleanup(ILogger logger)
+        {
+            bool runCleanup;
+            lock (_usageGate)
+            {
+                _cleanupRequested = true;
+                runCleanup = _activeUsers <= 0 && !_cleanupCompleted;
+                if (runCleanup)
+                {
+                    _cleanupCompleted = true;
+                }
+            }
+
+            if (runCleanup)
+            {
+                Cleanup(logger);
+            }
+        }
+
+        private void Cleanup(ILogger logger)
+        {
+            try
+            {
+                RepairContext?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "RepairContext dispose threw during remote repair cleanup.");
+            }
+
+            DeleteFileIfPresent(PreparedMissingPagesCbzPath, logger);
+            DeleteFileIfPresent(UpscaledMissingPagesCbzPath, logger);
+        }
+
+        private static void DeleteFileIfPresent(string path, ILogger logger)
+        {
+            if (string.IsNullOrEmpty(path) || !File.Exists(path))
+            {
+                return;
+            }
+
+            try
+            {
+                File.Delete(path);
+                logger.LogDebug("Cleaned up repair file: {path}", path);
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "Failed to delete repair file {path}", path);
+            }
+        }
     }
 }

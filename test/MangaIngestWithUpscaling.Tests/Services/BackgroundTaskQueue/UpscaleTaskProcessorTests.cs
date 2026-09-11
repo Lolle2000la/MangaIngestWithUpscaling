@@ -1,3 +1,4 @@
+using System.Reflection;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
@@ -5,6 +6,7 @@ using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -17,6 +19,7 @@ public class UpscaleTaskProcessorTests : IDisposable
     private readonly ILogger<UpscaleTaskProcessor> _mockLogger;
     private readonly ITaskPersistenceService _mockPersistence;
     private readonly IOptions<UpscalerConfig> _mockOptions;
+    private readonly ServiceProvider _serviceProvider;
     private readonly IServiceScope _scope;
     private readonly TaskQueue _taskQueue;
     private readonly UpscaleTaskProcessor _processor;
@@ -40,6 +43,7 @@ public class UpscaleTaskProcessorTests : IDisposable
         services.AddSingleton(_mockPersistence);
 
         var serviceProvider = services.BuildServiceProvider();
+        _serviceProvider = serviceProvider;
         _scope = serviceProvider.CreateScope();
         _dbContext = _scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
@@ -190,5 +194,72 @@ public class UpscaleTaskProcessorTests : IDisposable
         Assert.Equal(2, processedTasks.Count);
         Assert.Equal(2, ((UpscaleTask)processedTasks[0].Data).ChapterId);
         Assert.Equal(1, ((UpscaleTask)processedTasks[1].Data).ChapterId);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ExecuteAsync_WhenClaimThrows_KeepsProcessingSubsequentTasks()
+    {
+        // Regression guard: a claim failure used to escape ProcessTaskAsync and fault ExecuteAsync,
+        // which under BackgroundServiceExceptionBehavior.StopHost stops the whole application.
+        bool firstClaim = true;
+        var persistence = Substitute.For<ITaskPersistenceService>();
+        persistence
+            .ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+            {
+                if (firstClaim)
+                {
+                    firstClaim = false;
+                    throw new InvalidOperationException("claim failed");
+                }
+
+                return Task.FromResult(true);
+            });
+
+        var processor = new UpscaleTaskProcessor(
+            _taskQueue,
+            _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+            _mockOptions,
+            _mockLogger,
+            persistence,
+            new PreprocessedInputCache()
+        );
+
+        await _taskQueue.EnqueueAsync(new UpscaleTask { ChapterId = 1, UpscalerProfileId = 1 });
+        await _taskQueue.EnqueueAsync(new UpscaleTask { ChapterId = 2, UpscalerProfileId = 1 });
+
+        var processed = new TaskCompletionSource<PersistedTask>();
+        processor.StatusChanged += task =>
+        {
+            if (task.Status == PersistedTaskStatus.Processing)
+            {
+                processed.TrySetResult(task);
+            }
+            return Task.CompletedTask;
+        };
+
+        using var cts = new CancellationTokenSource();
+        await processor.StartAsync(cts.Token);
+
+        PersistedTask processedTask = await processed.Task.WaitAsync(
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken
+        );
+
+        Assert.Equal(2, ((UpscaleTask)processedTask.Data).ChapterId);
+
+        await cts.CancelAsync();
+        await processor.StopAsync(CancellationToken.None);
+        Assert.False(IsExecuteTaskFaulted(processor));
+    }
+
+    private static bool IsExecuteTaskFaulted(BackgroundService service)
+    {
+        Task? executeTask = (Task?)
+            typeof(BackgroundService)
+                .GetField("_executeTask", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(service);
+        return executeTask?.IsFaulted ?? false;
     }
 }

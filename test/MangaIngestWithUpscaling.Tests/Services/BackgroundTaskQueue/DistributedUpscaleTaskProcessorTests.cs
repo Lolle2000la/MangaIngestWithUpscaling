@@ -18,6 +18,7 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
     private readonly ApplicationDbContext _dbContext;
     private readonly ITaskPersistenceService _mockPersistence;
     private readonly IOptions<UpscalerConfig> _mockOptions;
+    private readonly ServiceProvider _serviceProvider;
     private readonly IServiceScope _scope;
     private readonly TaskQueue _taskQueue;
     private readonly DistributedUpscaleTaskProcessor _processor;
@@ -45,6 +46,7 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
         services.AddSingleton(_mockPersistence);
 
         var serviceProvider = services.BuildServiceProvider();
+        _serviceProvider = serviceProvider;
         _scope = serviceProvider.CreateScope();
         _dbContext = _scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
@@ -274,6 +276,114 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
         }
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task GetTask_WhenWorkerCancelsRequestMidServe_KeepsServingSubsequentTasks()
+    {
+        // Regression guard: a request-token cancellation used to break ExecuteAsync's outer loop,
+        // silently killing the distributed processor until the application restarted.
+        var serviceCts = new CancellationTokenSource();
+        await _taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(1, 1));
+
+        var requestCts = new CancellationTokenSource();
+        bool firstClaim = true;
+        var persistence = Substitute.For<ITaskPersistenceService>();
+        persistence
+            .ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(async ci =>
+            {
+                if (firstClaim)
+                {
+                    firstClaim = false;
+                    // Simulate a worker disconnecting while the claim is in flight: the request
+                    // token is cancelled and the in-flight await observes it.
+                    await requestCts.CancelAsync();
+                    throw new OperationCanceledException((CancellationToken)ci[1]);
+                }
+
+                return true;
+            });
+
+        var processor = new DistributedUpscaleTaskProcessor(
+            _taskQueue,
+            _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+            _mockOptions,
+            Substitute.For<ILogger<DistributedUpscaleTaskProcessor>>(),
+            persistence
+        );
+        await processor.StartAsync(serviceCts.Token);
+
+        PersistedTask? first = await processor.GetTask(requestCts.Token);
+        Assert.Null(first);
+
+        // The processor must still be alive to serve a subsequent request.
+        await _taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(2, 1));
+        PersistedTask? second = await processor.GetTask(serviceCts.Token);
+
+        Assert.NotNull(second);
+        Assert.Equal(2, ((DetectSplitCandidatesTask)second!.Data).ChapterId);
+
+        await serviceCts.CancelAsync();
+        await processor.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ForgetTask_WhileRepairCompletionHoldsLease_DefersContextDispose()
+    {
+        // Regression guard: cancel/forget used to dispose the RepairContext and delete its work
+        // directory while an in-flight completion was still using it.
+        var disposeStarted = new ManualResetEventSlim(false);
+        var repairContext = new SignalingRepairContext(disposeStarted);
+        string workDirectory = Path.Combine(
+            Path.GetTempPath(),
+            $"repair-context-{Guid.NewGuid():N}"
+        );
+        Directory.CreateDirectory(workDirectory);
+        repairContext.WorkDirectory = workDirectory;
+
+        Dictionary<int, PersistedTask> runningTasks = GetPrivateField<
+            Dictionary<int, PersistedTask>
+        >(_processor, "runningTasks");
+        runningTasks[1] = new PersistedTask { Id = 1, Data = new RepairUpscaleTask() };
+        Dictionary<int, DistributedUpscaleTaskProcessor.RemoteRepairState> repairStates =
+            GetPrivateField<Dictionary<int, DistributedUpscaleTaskProcessor.RemoteRepairState>>(
+                _processor,
+                "remoteRepairStates"
+            );
+        var state = new DistributedUpscaleTaskProcessor.RemoteRepairState
+        {
+            RepairContext = repairContext,
+        };
+        repairStates[1] = state;
+
+        // Simulate an in-flight completion that already acquired the state.
+        Assert.True(state.TryBeginUse());
+
+        // Act: forget the task while the completion still holds the lease.
+        _processor.ForgetTask(1);
+
+        // Assert: the context must not be disposed yet.
+        Assert.False(
+            disposeStarted.Wait(
+                TimeSpan.FromMilliseconds(250),
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        // Releasing the lease performs the deferred cleanup.
+        state.EndUse(Substitute.For<ILogger>());
+
+        Assert.True(
+            disposeStarted.Wait(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken)
+        );
+
+        if (Directory.Exists(workDirectory))
+        {
+            Directory.Delete(workDirectory, true);
+        }
+    }
+
     private static T GetPrivateField<T>(object target, string name)
     {
         return (T)
@@ -293,5 +403,10 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
             started.Set();
             release.Wait(TimeSpan.FromSeconds(30));
         }
+    }
+
+    private sealed class SignalingRepairContext(ManualResetEventSlim disposed) : RepairContext
+    {
+        protected override void DeleteWorkDirectory() => disposed.Set();
     }
 }

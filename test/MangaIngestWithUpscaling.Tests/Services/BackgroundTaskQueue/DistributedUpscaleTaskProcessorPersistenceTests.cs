@@ -1,3 +1,4 @@
+using System.Reflection;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
@@ -180,5 +181,133 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
             .PersistedTasks.AsNoTracking()
             .FirstOrDefaultAsync(t => t.Id == id, TestContext.Current.CancellationToken);
         return task?.Status;
+    }
+
+    private async Task<int> GetRetryCountAsync(int id)
+    {
+        using var scope = _provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        PersistedTask? task = await db
+            .PersistedTasks.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.Id == id, TestContext.Current.CancellationToken);
+        return task?.RetryCount ?? -1;
+    }
+
+    private async Task<int> SeedTaskAsync(PersistedTaskStatus status, int retryCount = 0)
+    {
+        using IServiceScope scope = _provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var task = new PersistedTask
+        {
+            Data = new DetectSplitCandidatesTask(1, 1),
+            Status = status,
+            RetryCount = retryCount,
+            Order = 1,
+        };
+        db.PersistedTasks.Add(task);
+        await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        return task.Id;
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task PrepareRepairTaskForRemote_WhenWorkerCancelsPreparation_RequeuesInsteadOfFailing()
+    {
+        // Regression guard: a worker disconnect during repair preparation was persisted as a
+        // permanent Failure (retry count 1 == RetryFor), so the repair was never replayed.
+        int taskId;
+        using (IServiceScope seedScope = _provider.CreateScope())
+        {
+            var db = seedScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var task = new PersistedTask
+            {
+                Data = new RepairUpscaleTask { ChapterId = 999_999, UpscalerProfileId = 999_999 },
+                Status = PersistedTaskStatus.Processing,
+                Order = 1,
+            };
+            db.PersistedTasks.Add(task);
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+            taskId = task.Id;
+        }
+
+        PersistedTask persistedTask;
+        using (IServiceScope scope = _provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            persistedTask = await db
+                .PersistedTasks.AsNoTracking()
+                .FirstAsync(t => t.Id == taskId, TestContext.Current.CancellationToken);
+        }
+
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+
+        using IServiceScope methodScope = _provider.CreateScope();
+        MethodInfo method = typeof(DistributedUpscaleTaskProcessor).GetMethod(
+            "PrepareRepairTaskForRemote",
+            BindingFlags.Instance | BindingFlags.NonPublic
+        )!;
+        var invocation = method.Invoke(
+            _processor,
+            new object[]
+            {
+                (RepairUpscaleTask)persistedTask.Data,
+                persistedTask,
+                methodScope.ServiceProvider,
+                cancelled.Token,
+            }
+        );
+
+        bool prepared = await (Task<bool>)invocation!;
+
+        // Assert: left replayable, not permanently failed.
+        Assert.False(prepared);
+        Assert.Equal(PersistedTaskStatus.Pending, await GetStatusAsync(taskId));
+        Assert.Equal(0, await GetRetryCountAsync(taskId));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task FailTaskAsync_AfterCancel_DoesNotOverwriteTerminalStateOrInflateRetries()
+    {
+        int taskId = await SeedTaskAsync(PersistedTaskStatus.Canceled);
+        var persistence = new TaskPersistenceService(
+            _provider.GetRequiredService<IServiceScopeFactory>()
+        );
+
+        await persistence.FailTaskAsync(taskId, TestContext.Current.CancellationToken);
+
+        Assert.Equal(PersistedTaskStatus.Canceled, await GetStatusAsync(taskId));
+        Assert.Equal(0, await GetRetryCountAsync(taskId));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task FailTaskAsync_CalledTwice_IncrementsRetryCountOnce()
+    {
+        int taskId = await SeedTaskAsync(PersistedTaskStatus.Processing);
+        var persistence = new TaskPersistenceService(
+            _provider.GetRequiredService<IServiceScopeFactory>()
+        );
+
+        await persistence.FailTaskAsync(taskId, TestContext.Current.CancellationToken);
+        await persistence.FailTaskAsync(taskId, TestContext.Current.CancellationToken);
+
+        Assert.Equal(PersistedTaskStatus.Failed, await GetStatusAsync(taskId));
+        Assert.Equal(1, await GetRetryCountAsync(taskId));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task CompleteTaskAsync_AfterFailure_DoesNotOverwriteTerminalState()
+    {
+        int taskId = await SeedTaskAsync(PersistedTaskStatus.Failed, retryCount: 1);
+        var persistence = new TaskPersistenceService(
+            _provider.GetRequiredService<IServiceScopeFactory>()
+        );
+
+        await persistence.CompleteTaskAsync(taskId, TestContext.Current.CancellationToken);
+
+        Assert.Equal(PersistedTaskStatus.Failed, await GetStatusAsync(taskId));
     }
 }

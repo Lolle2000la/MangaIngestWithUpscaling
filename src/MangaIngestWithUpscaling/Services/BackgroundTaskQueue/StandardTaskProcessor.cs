@@ -95,8 +95,27 @@ public class StandardTaskProcessor(
 
     protected async Task ProcessTaskAsync(PersistedTask task, CancellationToken stoppingToken)
     {
-        // Claim the task
-        if (!await taskPersistenceService.ClaimTaskAsync(task.Id, stoppingToken))
+        // Claim the task. A claim failure (per-task cancellation from CancelCurrent/removal, or a
+        // transient database error) must not fault ExecuteAsync: under
+        // BackgroundServiceExceptionBehavior.StopHost that would stop the whole application. The row
+        // is left untouched so startup recovery can pick it up again.
+        bool claimed;
+        try
+        {
+            claimed = await taskPersistenceService.ClaimTaskAsync(task.Id, stoppingToken);
+        }
+        catch (OperationCanceledException)
+        {
+            logger.LogInformation("Claim of task {TaskId} was canceled", task.Id);
+            return;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to claim task {TaskId}; leaving it for recovery", task.Id);
+            return;
+        }
+
+        if (!claimed)
         {
             logger.LogInformation(
                 "Task {TaskId} could not be claimed (already processed or concurrency conflict)",
