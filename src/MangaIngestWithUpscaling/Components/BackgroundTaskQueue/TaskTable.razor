@@ -7,6 +7,7 @@
 @inject ITaskDescriberFactory DescriberFactory
 @inject DistributedUpscaleTaskProcessor DistributedUpscaleTaskProcessor
 @inject TaskRegistry TaskRegistry
+@inject ILogger<TaskTable> Logger
 
 <MudTable T="PersistedTask" ServerData="LoadServerData" RowsPerPage="10" Elevation="3" Dense="true" @ref="Table">
     <ToolBarContent>
@@ -126,6 +127,7 @@
     // restore it whenever we render in response to one of those events.
     private CultureInfo _runTimeCulture = CultureInfo.CurrentUICulture;
     private int _reloadPending;
+    private volatile bool _disposed;
 
     protected override void OnInitialized()
     {
@@ -139,6 +141,8 @@
 
     public void Dispose()
     {
+        _disposed = true;
+
         if (Upscale)
             TaskRegistry.UpscaleTasksChanged -= OnTasksChanged;
         else
@@ -147,24 +151,48 @@
 
     private void OnTasksChanged()
     {
+        if (_disposed)
+            return;
+
         // Registry flushes can raise many changes at once; coalesce reloads so we only page the
         // current data a handful of times instead of once per changed task.
         if (Interlocked.Exchange(ref _reloadPending, 1) == 1)
             return;
 
-        _ = InvokeAsync(ProcessPendingReloadAsync);
+        try
+        {
+            _ = InvokeAsync(ProcessPendingReloadAsync);
+        }
+        catch (Exception ex)
+        {
+            // The component may have been disposed between the check above and this call.
+            Interlocked.Exchange(ref _reloadPending, 0);
+            Logger.LogDebug(ex, "Skipped a task table reload because the component is unavailable.");
+        }
     }
 
     private async Task ProcessPendingReloadAsync()
     {
         while (Interlocked.Exchange(ref _reloadPending, 0) == 1)
         {
-            CultureInfo.CurrentUICulture = _runTimeCulture;
-            CultureInfo.CurrentCulture = _runTimeCulture;
+            if (_disposed)
+                return;
 
-            if (Table is not null)
+            try
             {
-                await Table.ReloadServerData();
+                CultureInfo.CurrentUICulture = _runTimeCulture;
+                CultureInfo.CurrentCulture = _runTimeCulture;
+
+                if (Table is not null)
+                {
+                    await Table.ReloadServerData();
+                }
+            }
+            catch (Exception ex)
+            {
+                // Never let a reload failure escape into an unobserved task or spin the loop.
+                Logger.LogError(ex, "Failed to reload the task table.");
+                return;
             }
         }
     }

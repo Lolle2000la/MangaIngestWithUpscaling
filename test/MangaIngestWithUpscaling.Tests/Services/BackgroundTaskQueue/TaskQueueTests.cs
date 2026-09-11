@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
@@ -1086,5 +1087,85 @@ public class TaskQueueTests : IDisposable
             TestContext.Current.CancellationToken
         );
         Assert.Equal(0, remaining);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RemoveTasksAsync_WithAlreadyDeletedTask_DoesNotThrowAndRemovesTheRest()
+    {
+        // Arrange: one of the tasks is deleted behind the queue's back (e.g. by a concurrent cleanup).
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "a" });
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "b" });
+
+        List<PersistedTask> all = _taskQueue.GetStandardSnapshot().ToList();
+        Assert.Equal(2, all.Count);
+
+        var toDelete = await _dbContext.PersistedTasks.FirstAsync(
+            t => t.Id == all[0].Id,
+            TestContext.Current.CancellationToken
+        );
+        _dbContext.PersistedTasks.Remove(toDelete);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Act
+        Exception? exception = await Record.ExceptionAsync(() => _taskQueue.RemoveTasksAsync(all));
+
+        // Assert: the missing row is skipped rather than failing the batch.
+        Assert.Null(exception);
+        Assert.Empty(_taskQueue.GetStandardSnapshot());
+        Assert.Equal(
+            0,
+            await _dbContext.PersistedTasks.CountAsync(TestContext.Current.CancellationToken)
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ConcurrentEnqueueDequeueAndSnapshots_CompleteWithoutDeadlock()
+    {
+        // Regression guard for the nested sorted-set locks in EnqueueAsync combined with the
+        // single-lock readers/dequeuers. A deadlock would surface as a timeout here.
+        var errors = new ConcurrentBag<Exception>();
+
+        var workers = Enumerable
+            .Range(0, 6)
+            .Select(worker =>
+                Task.Run(async () =>
+                {
+                    try
+                    {
+                        for (int i = 0; i < 15; i++)
+                        {
+                            switch (worker % 3)
+                            {
+                                case 0:
+                                    await _taskQueue.EnqueueAsync(
+                                        new LoggingTask { Message = $"{worker}-{i}" }
+                                    );
+                                    break;
+                                case 1:
+                                    _taskQueue.DequeueStandard();
+                                    _taskQueue.DequeueUpscale();
+                                    _taskQueue.PeekUpscale();
+                                    break;
+                                default:
+                                    _ = _taskQueue.GetStandardSnapshot().Count;
+                                    _ = _taskQueue.GetUpscaleSnapshot().Count;
+                                    break;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Add(ex);
+                    }
+                })
+            )
+            .ToList();
+
+        await Task.WhenAll(workers)
+            .WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+        Assert.Empty(errors);
     }
 }

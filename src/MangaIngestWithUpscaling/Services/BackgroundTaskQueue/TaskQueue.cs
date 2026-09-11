@@ -386,11 +386,27 @@ public class TaskQueue : ITaskQueue, IHostedService
         if (list.Count == 0)
             return;
 
+        List<int> ids = list.Select(t => t.Id).Distinct().ToList();
+
         using IServiceScope scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        dbContext.PersistedTasks.RemoveRange(list);
-        await dbContext.SaveChangesAsync();
+        // Delete only rows that still exist. Removing a detached entity whose row was already
+        // deleted (e.g. by a concurrent cleanup) throws DbUpdateConcurrencyException and would
+        // otherwise fail the whole batch.
+        var existing = new List<PersistedTask>(ids.Count);
+        foreach (int[] chunk in ids.Chunk(500))
+        {
+            existing.AddRange(
+                await dbContext.PersistedTasks.Where(t => chunk.Contains(t.Id)).ToListAsync()
+            );
+        }
+
+        if (existing.Count > 0)
+        {
+            dbContext.PersistedTasks.RemoveRange(existing);
+            await dbContext.SaveChangesAsync();
+        }
 
         foreach (var task in list)
         {

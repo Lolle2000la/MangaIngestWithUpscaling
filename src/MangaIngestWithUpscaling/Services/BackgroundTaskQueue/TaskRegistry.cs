@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Reactive.Disposables;
 using AutoRegisterInject;
@@ -25,8 +24,7 @@ public class TaskRegistry : IHostedService, IDisposable
     private readonly SourceCache<PersistedTask, int> _tasks = new(x => x.Id);
     private readonly UpscaleTaskProcessor _upscaleProcessor;
     private readonly ILogger<TaskRegistry>? _logger;
-    private readonly ConcurrentDictionary<int, PersistedTask> _pendingUpdates = new();
-    private readonly ConcurrentDictionary<int, PersistedTask> _pendingRemovals = new();
+    private readonly PendingTaskChanges _pending = new();
     private readonly CancellationTokenSource _cts = new();
     private volatile PersistedTask[] _standardSnapshot = [];
     private volatile PersistedTask[] _upscaleSnapshot = [];
@@ -166,18 +164,13 @@ public class TaskRegistry : IHostedService, IDisposable
 
     private Task OnTaskChanged(PersistedTask task)
     {
-        // A task already queued for removal must not be re-added by a stale update.
-        if (_pendingRemovals.ContainsKey(task.Id))
-            return Task.CompletedTask;
-
-        _pendingUpdates[task.Id] = CloneShallow(task);
+        _pending.QueueUpdate(CloneShallow(task));
         return Task.CompletedTask;
     }
 
     private Task OnTaskRemoved(PersistedTask task)
     {
-        _pendingUpdates.TryRemove(task.Id, out _);
-        _pendingRemovals[task.Id] = CloneShallow(task);
+        _pending.QueueRemoval(CloneShallow(task));
         return Task.CompletedTask;
     }
 
@@ -207,26 +200,13 @@ public class TaskRegistry : IHostedService, IDisposable
 
     private void FlushPendingUpdates()
     {
-        if (_pendingUpdates.IsEmpty && _pendingRemovals.IsEmpty)
+        if (_pending.IsEmpty)
             return;
 
-        var itemsToUpdate = new List<PersistedTask>();
-        foreach (var key in _pendingUpdates.Keys.ToList())
-        {
-            if (_pendingUpdates.TryRemove(key, out var item))
-            {
-                itemsToUpdate.Add(item);
-            }
-        }
-
-        var itemsToRemove = new List<PersistedTask>();
-        foreach (var key in _pendingRemovals.Keys.ToList())
-        {
-            if (_pendingRemovals.TryRemove(key, out var item))
-            {
-                itemsToRemove.Add(item);
-            }
-        }
+        _pending.Drain(
+            out List<PersistedTask> itemsToUpdate,
+            out List<PersistedTask> itemsToRemove
+        );
 
         if (itemsToUpdate.Count == 0 && itemsToRemove.Count == 0)
             return;

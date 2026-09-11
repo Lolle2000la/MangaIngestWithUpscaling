@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
@@ -222,49 +223,8 @@ public class TaskRegistryTests
     public async Task TaskRegistry_SnapshotsAndChangeEvents_ReflectAdditionsAndRemovals()
     {
         // Arrange
-        var services = new ServiceCollection();
-        var dbName = $"TaskRegistrySnapshots_{Guid.NewGuid()}";
-        services.AddLogging();
-        services.AddDbContext<ApplicationDbContext>(options => options.UseInMemoryDatabase(dbName));
-        services.AddSingleton<IOptions<UpscalerConfig>>(
-            Options.Create(new UpscalerConfig { RemoteOnly = true })
-        );
-        var cleanup = Substitute.For<IQueueCleanup>();
-        cleanup.CleanupAsync().Returns(Task.FromResult<IReadOnlyList<int>>(Array.Empty<int>()));
-        services.AddScoped<IQueueCleanup>(_ => cleanup);
-        services.AddSingleton(Substitute.For<ITaskPersistenceService>());
-
-        using ServiceProvider provider = services.BuildServiceProvider();
-        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
-
-        var taskQueue = new TaskQueue(
-            scopeFactory,
-            provider.GetRequiredService<ILogger<TaskQueue>>()
-        );
-        var persistence = provider.GetRequiredService<ITaskPersistenceService>();
-        var standard = new StandardTaskProcessor(
-            taskQueue,
-            scopeFactory,
-            Substitute.For<ILogger<StandardTaskProcessor>>(),
-            persistence
-        );
-        var upscaler = new UpscaleTaskProcessor(
-            taskQueue,
-            scopeFactory,
-            provider.GetRequiredService<IOptions<UpscalerConfig>>(),
-            Substitute.For<ILogger<UpscaleTaskProcessor>>(),
-            persistence,
-            new PreprocessedInputCache()
-        );
-        var distributed = new DistributedUpscaleTaskProcessor(
-            taskQueue,
-            scopeFactory,
-            provider.GetRequiredService<IOptions<UpscalerConfig>>(),
-            Substitute.For<ILogger<DistributedUpscaleTaskProcessor>>(),
-            persistence
-        );
-
-        var registry = new TaskRegistry(scopeFactory, taskQueue, standard, upscaler, distributed);
+        using ServiceProvider provider = BuildProvider($"TaskRegistrySnapshots_{Guid.NewGuid()}");
+        var registry = BuildRegistry(provider, out var taskQueue);
 
         int standardChanges = 0;
         int upscaleChanges = 0;
@@ -309,6 +269,127 @@ public class TaskRegistryTests
         Assert.Empty(registry.GetUpscaleSnapshot());
 
         await registry.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task TaskRegistry_ConcurrentEnqueuesAndSnapshotReads_DoNotThrowOrHang()
+    {
+        // Regression guard: the flush loop, the enqueue path and UI snapshot reads all touch the
+        // registry concurrently. A deadlock or thrown exception would fail this test.
+        using ServiceProvider provider = BuildProvider($"TaskRegistryStress_{Guid.NewGuid()}");
+        var registry = BuildRegistry(provider, out var taskQueue);
+        await registry.StartAsync(TestContext.Current.CancellationToken);
+
+        var errors = new ConcurrentBag<Exception>();
+
+        var writers = Enumerable
+            .Range(0, 3)
+            .Select(worker =>
+                Task.Run(async () =>
+                {
+                    try
+                    {
+                        for (int i = 0; i < 20; i++)
+                        {
+                            await taskQueue.EnqueueAsync(
+                                new LoggingTask { Message = $"{worker}-{i}" }
+                            );
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Add(ex);
+                    }
+                })
+            )
+            .ToList();
+
+        var readers = Enumerable
+            .Range(0, 3)
+            .Select(_ =>
+                Task.Run(async () =>
+                {
+                    try
+                    {
+                        for (int i = 0; i < 200; i++)
+                        {
+                            _ = registry.GetStandardSnapshot().Count;
+                            _ = registry.GetUpscaleSnapshot().Count;
+                            if (i % 10 == 0)
+                            {
+                                await Task.Yield();
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Add(ex);
+                    }
+                })
+            )
+            .ToList();
+
+        await Task.WhenAll(writers.Concat(readers))
+            .WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+        await WaitUntilAsync(
+            () => registry.GetStandardSnapshot().Count == 60,
+            TestContext.Current.CancellationToken
+        );
+
+        Assert.Empty(errors);
+        Assert.Equal(60, registry.GetStandardSnapshot().Count);
+
+        await registry.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    private static ServiceProvider BuildProvider(string dbName)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<ApplicationDbContext>(options => options.UseInMemoryDatabase(dbName));
+        services.AddSingleton<IOptions<UpscalerConfig>>(
+            Options.Create(new UpscalerConfig { RemoteOnly = true })
+        );
+
+        var cleanup = Substitute.For<IQueueCleanup>();
+        cleanup.CleanupAsync().Returns(Task.FromResult<IReadOnlyList<int>>(Array.Empty<int>()));
+        services.AddScoped<IQueueCleanup>(_ => cleanup);
+        services.AddSingleton(Substitute.For<ITaskPersistenceService>());
+
+        return services.BuildServiceProvider();
+    }
+
+    private static TaskRegistry BuildRegistry(ServiceProvider provider, out TaskQueue taskQueue)
+    {
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+        taskQueue = new TaskQueue(scopeFactory, provider.GetRequiredService<ILogger<TaskQueue>>());
+
+        var persistence = provider.GetRequiredService<ITaskPersistenceService>();
+        var standard = new StandardTaskProcessor(
+            taskQueue,
+            scopeFactory,
+            Substitute.For<ILogger<StandardTaskProcessor>>(),
+            persistence
+        );
+        var upscaler = new UpscaleTaskProcessor(
+            taskQueue,
+            scopeFactory,
+            provider.GetRequiredService<IOptions<UpscalerConfig>>(),
+            Substitute.For<ILogger<UpscaleTaskProcessor>>(),
+            persistence,
+            new PreprocessedInputCache()
+        );
+        var distributed = new DistributedUpscaleTaskProcessor(
+            taskQueue,
+            scopeFactory,
+            provider.GetRequiredService<IOptions<UpscalerConfig>>(),
+            Substitute.For<ILogger<DistributedUpscaleTaskProcessor>>(),
+            persistence
+        );
+
+        return new TaskRegistry(scopeFactory, taskQueue, standard, upscaler, distributed);
     }
 
     private static async Task WaitUntilAsync(
