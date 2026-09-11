@@ -202,8 +202,7 @@ public class UpscaleTaskProcessor(
         {
             // A claim failure (per-task cancellation from CancelCurrent/removal, or a transient
             // database error) must not fault ExecuteAsync: under
-            // BackgroundServiceExceptionBehavior.StopHost that would stop the whole application. The
-            // row is left untouched so startup recovery can pick it up again.
+            // BackgroundServiceExceptionBehavior.StopHost that would stop the whole application.
             bool claimed;
             try
             {
@@ -211,21 +210,31 @@ public class UpscaleTaskProcessor(
             }
             catch (OperationCanceledException)
             {
+                // CancelCurrent (removal or an explicit cancel) cancelled this token. The task was
+                // already removed from the in-memory queue, so persist the intended cancel rather
+                // than silently dropping it. On service shutdown the task is put back to Pending.
                 logger.LogInformation("Claim of task {TaskId} was canceled", task.Id);
+                await ApplyClaimCancellationAsync(task);
                 return;
             }
             catch (Exception ex)
             {
+                // The row is untouched (still Pending) but the task is no longer in the in-memory
+                // queue. Re-add it so it is retried promptly instead of waiting for the periodic replay.
                 logger.LogError(
                     ex,
-                    "Failed to claim task {TaskId}; leaving it for recovery",
+                    "Failed to claim task {TaskId}; re-enqueueing it for retry",
                     task.Id
                 );
+                taskQueue.ReEnqueue(task);
                 return;
             }
 
             if (!claimed)
             {
+                // The row is no longer Pending (already claimed elsewhere or terminal), so dropping
+                // the in-memory copy is correct: re-adding it would spin on a task this processor
+                // cannot own.
                 logger.LogInformation(
                     "Task {TaskId} could not be claimed (already processed or concurrency conflict)",
                     task.Id
@@ -353,6 +362,25 @@ public class UpscaleTaskProcessor(
             {
                 logger.LogError(dbEx, "Failed to update task {TaskId} status", task.Id);
             }
+        }
+    }
+
+    /// <summary>
+    ///     Persists the cancel that <see cref="CancelCurrent" /> requested while the claim was still
+    ///     in flight, so the cancellation is not lost now that the task has been dequeued.
+    /// </summary>
+    private async Task ApplyClaimCancellationAsync(PersistedTask task)
+    {
+        bool requeue = serviceStoppingToken.IsCancellationRequested;
+        try
+        {
+            await taskPersistenceService.CancelTaskAsync(task.Id, requeue);
+            task.Status = requeue ? PersistedTaskStatus.Pending : PersistedTaskStatus.Canceled;
+            StatusChanged?.Invoke(task);
+        }
+        catch (Exception dbEx)
+        {
+            logger.LogError(dbEx, "Failed to update task {TaskId} status", task.Id);
         }
     }
 

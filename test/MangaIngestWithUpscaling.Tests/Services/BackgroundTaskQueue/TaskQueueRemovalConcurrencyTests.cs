@@ -190,6 +190,48 @@ public class TaskQueueRemovalConcurrencyTests : IDisposable
         Assert.Null(await FindTaskAsync(id));
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RemoveTasksAsync_WhenDeletesKeepConflicting_LeavesSurvivingTasksInMemory()
+    {
+        // Regression guard: when the delete retry budget was exhausted, the batch removal still
+        // cleared memory and announced removals, so the surviving rows could reappear on restart.
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "a" });
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "b" });
+        List<PersistedTask> tasks = _taskQueue.GetStandardSnapshot().ToList();
+        Assert.Equal(2, tasks.Count);
+
+        var removedIds = new ConcurrentBag<int>();
+        _taskQueue.TaskRemoved += task =>
+        {
+            removedIds.Add(task.Id);
+            return Task.CompletedTask;
+        };
+
+        _interceptor.Enabled = true;
+        _interceptor.ThrowConcurrency = true;
+        Exception? exception;
+        try
+        {
+            exception = await Record.ExceptionAsync(() => _taskQueue.RemoveTasksAsync(tasks));
+        }
+        finally
+        {
+            _interceptor.Enabled = false;
+            _interceptor.ThrowConcurrency = false;
+        }
+
+        Assert.Null(exception);
+        // Every delete failed, so no row is confirmed gone: the tasks must stay in memory and must
+        // not be announced as removed.
+        Assert.Equal(2, _taskQueue.GetStandardSnapshot().Count);
+        Assert.Empty(removedIds);
+        foreach (PersistedTask task in tasks)
+        {
+            Assert.NotNull(await FindTaskAsync(task.Id));
+        }
+    }
+
     private async Task<int> SeedTaskAsync()
     {
         using var scope = _provider.CreateScope();
@@ -231,12 +273,23 @@ public class TaskQueueRemovalConcurrencyTests : IDisposable
         /// </summary>
         public HashSet<int> IdsToDelete { get; } = new();
 
+        /// <summary>
+        ///     When set, every save throws <see cref="DbUpdateConcurrencyException" /> without
+        ///     deleting anything, simulating a delete that can never make progress.
+        /// </summary>
+        public bool ThrowConcurrency { get; set; }
+
         public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
             DbContextEventData eventData,
             InterceptionResult<int> result,
             CancellationToken cancellationToken = default
         )
         {
+            if (Enabled && ThrowConcurrency)
+            {
+                throw new DbUpdateConcurrencyException("Simulated concurrency conflict.");
+            }
+
             if (Enabled && eventData.Context is { } context)
             {
                 List<int> ids = context

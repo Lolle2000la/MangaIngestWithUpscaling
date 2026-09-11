@@ -410,10 +410,21 @@ public class TaskQueue : ITaskQueue, IHostedService
         using IServiceScope scope = _scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        await DeleteExistingRowsAsync(dbContext, ids);
+        HashSet<int> confirmedGone = await DeleteExistingRowsAsync(dbContext, ids);
 
         foreach (var task in list)
         {
+            if (!confirmedGone.Contains(task.Id))
+            {
+                // The row survived the deletion attempts. Keep it in the in-memory queue as well,
+                // otherwise it would reappear (still Pending/Processing) after a restart.
+                _logger.LogError(
+                    "Task {TaskId} could not be deleted; leaving it in the in-memory queue.",
+                    task.Id
+                );
+                continue;
+            }
+
             RemoveFromInMemoryQueues(task.Id);
             await RaiseTaskRemovedAsync(task);
         }
@@ -427,7 +438,14 @@ public class TaskQueue : ITaskQueue, IHostedService
     ///     the change tracker is discarded and the still-existing rows are reloaded and retried, so
     ///     no surviving row is silently skipped.
     /// </summary>
-    private async Task DeleteExistingRowsAsync(ApplicationDbContext dbContext, List<int> ids)
+    /// <returns>
+    ///     The ids that are confirmed gone. Normally all of <paramref name="ids" />; if the retry
+    ///     budget is exhausted, only the subset that was actually deleted.
+    /// </returns>
+    private async Task<HashSet<int>> DeleteExistingRowsAsync(
+        ApplicationDbContext dbContext,
+        List<int> ids
+    )
     {
         // Each conflict means at least one requested row was concurrently deleted, so progress is
         // guaranteed for at most one failed attempt per id (the +1 covers the successful attempt).
@@ -443,14 +461,14 @@ public class TaskQueue : ITaskQueue, IHostedService
 
             if (existing.Count == 0)
             {
-                return;
+                return new HashSet<int>(ids);
             }
 
             dbContext.PersistedTasks.RemoveRange(existing);
             try
             {
                 await dbContext.SaveChangesAsync();
-                return;
+                return new HashSet<int>(ids);
             }
             catch (DbUpdateConcurrencyException ex)
             {
@@ -481,6 +499,22 @@ public class TaskQueue : ITaskQueue, IHostedService
             "Failed to delete {Count} background tasks after repeated concurrency conflicts.",
             ids.Count
         );
+
+        // Report only the ids that are actually gone so the caller does not tombstone a row that
+        // survived (which would then reappear on restart).
+        var remaining = new HashSet<int>();
+        foreach (int[] chunk in ids.Chunk(500))
+        {
+            remaining.UnionWith(
+                await dbContext
+                    .PersistedTasks.AsNoTracking()
+                    .Where(t => chunk.Contains(t.Id))
+                    .Select(t => t.Id)
+                    .ToListAsync()
+            );
+        }
+
+        return ids.Where(id => !remaining.Contains(id)).ToHashSet();
     }
 
     /// <summary>
@@ -565,6 +599,43 @@ public class TaskQueue : ITaskQueue, IHostedService
         }
 
         TaskEnqueuedOrChanged?.Invoke(task);
+    }
+
+    /// <summary>
+    ///     Re-adds a task that was dequeued but could not be claimed back into its in-memory queue
+    ///     and re-signals the matching channel so a processor retries it promptly. Unlike
+    ///     <see cref="RetryAsync" /> this never writes to the database: the row keeps whatever
+    ///     status it had. The sorted set drops duplicates by (Order, Id), so re-adding is
+    ///     idempotent.
+    /// </summary>
+    public void ReEnqueue(PersistedTask task)
+    {
+        if (IsUpscaleTask(task.Data))
+        {
+            bool added;
+            lock (_upscaleTasksLock)
+            {
+                added = _upscaleTasks.Add(task);
+            }
+
+            if (added)
+            {
+                _upscaleChannel.Writer.TryWrite(Signal);
+            }
+        }
+        else
+        {
+            bool added;
+            lock (_standardTasksLock)
+            {
+                added = _standardTasks.Add(task);
+            }
+
+            if (added)
+            {
+                _standardChannel.Writer.TryWrite(Signal);
+            }
+        }
     }
 
     public async Task ReplayPendingOrFailed(CancellationToken cancellationToken = default)

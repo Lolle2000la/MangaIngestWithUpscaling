@@ -198,10 +198,11 @@ public class UpscaleTaskProcessorTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task ExecuteAsync_WhenClaimThrows_KeepsProcessingSubsequentTasks()
+    public async Task ExecuteAsync_WhenClaimThrows_ReenqueuesAndProcessesTheSameTask()
     {
-        // Regression guard: a claim failure used to escape ProcessTaskAsync and fault ExecuteAsync,
-        // which under BackgroundServiceExceptionBehavior.StopHost stops the whole application.
+        // Regression guard: a transient claim failure used to drop the dequeued task, leaving its
+        // still-Pending row invisible until the 10-minute replay. It must be re-enqueued and
+        // retried instead.
         bool firstClaim = true;
         var persistence = Substitute.For<ITaskPersistenceService>();
         persistence
@@ -247,7 +248,67 @@ public class UpscaleTaskProcessorTests : IDisposable
             TestContext.Current.CancellationToken
         );
 
-        Assert.Equal(2, ((UpscaleTask)processedTask.Data).ChapterId);
+        Assert.Equal(1, ((UpscaleTask)processedTask.Data).ChapterId);
+
+        await cts.CancelAsync();
+        await processor.StopAsync(CancellationToken.None);
+        Assert.False(IsExecuteTaskFaulted(processor));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ExecuteAsync_WhenClaimIsCancelled_PersistsCancelInsteadOfDroppingIt()
+    {
+        // Regression guard: CancelCurrent cancelling the claim used to be swallowed, so the
+        // intended cancel was never persisted.
+        var persistence = Substitute.For<ITaskPersistenceService>();
+        int claimCalls = 0;
+        persistence
+            .ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+            {
+                claimCalls++;
+                if (claimCalls == 1)
+                {
+                    throw new OperationCanceledException("canceled");
+                }
+
+                return Task.FromResult(true);
+            });
+
+        var processor = new UpscaleTaskProcessor(
+            _taskQueue,
+            _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+            _mockOptions,
+            _mockLogger,
+            persistence,
+            new PreprocessedInputCache()
+        );
+
+        await _taskQueue.EnqueueAsync(new UpscaleTask { ChapterId = 1, UpscalerProfileId = 1 });
+
+        var canceled = new TaskCompletionSource<PersistedTask>();
+        processor.StatusChanged += task =>
+        {
+            if (task.Status == PersistedTaskStatus.Canceled)
+            {
+                canceled.TrySetResult(task);
+            }
+            return Task.CompletedTask;
+        };
+
+        using var cts = new CancellationTokenSource();
+        await processor.StartAsync(cts.Token);
+
+        PersistedTask canceledTask = await canceled.Task.WaitAsync(
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken
+        );
+
+        Assert.Equal(1, ((UpscaleTask)canceledTask.Data).ChapterId);
+        await persistence
+            .Received(1)
+            .CancelTaskAsync(Arg.Any<int>(), false, Arg.Any<CancellationToken>());
 
         await cts.CancelAsync();
         await processor.StopAsync(CancellationToken.None);

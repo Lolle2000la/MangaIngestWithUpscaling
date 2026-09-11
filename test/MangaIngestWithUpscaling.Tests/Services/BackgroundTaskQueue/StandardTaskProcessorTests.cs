@@ -114,15 +114,138 @@ public class StandardTaskProcessorTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
-    public Task ExecuteAsync_WhenClaimIsCancelled_KeepsProcessingSubsequentTasks() =>
-        RunClaimFailureScenarioAsync(new OperationCanceledException("canceled"));
+    public Task ExecuteAsync_WhenClaimIsCancelled_PersistsCancelAndKeepsProcessingSubsequentTasks() =>
+        RunClaimFailureScenarioAsync(
+            new OperationCanceledException("canceled"),
+            expectedFirstProcessed: "second"
+        );
 
     [Fact]
     [Trait("Category", "Unit")]
-    public Task ExecuteAsync_WhenClaimThrows_KeepsProcessingSubsequentTasks() =>
-        RunClaimFailureScenarioAsync(new InvalidOperationException("claim failed"));
+    public Task ExecuteAsync_WhenClaimThrows_ReenqueuesAndProcessesTheSameTask() =>
+        RunClaimFailureScenarioAsync(
+            new InvalidOperationException("claim failed"),
+            expectedFirstProcessed: "first"
+        );
 
-    private async Task RunClaimFailureScenarioAsync(Exception claimFailure)
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ExecuteAsync_WhenClaimThrows_ReenqueuesTheTaskForRetry()
+    {
+        // Regression guard: a transient claim failure used to drop the dequeued task, leaving its
+        // still-Pending row invisible until the 10-minute replay.
+        int claimCalls = 0;
+        var persistence = Substitute.For<ITaskPersistenceService>();
+        persistence
+            .ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+            {
+                claimCalls++;
+                if (claimCalls == 1)
+                {
+                    throw new InvalidOperationException("transient claim failure");
+                }
+
+                return Task.FromResult(true);
+            });
+
+        var processor = new StandardTaskProcessor(
+            _taskQueue,
+            _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+            _mockLogger,
+            persistence
+        );
+
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "retry-me" });
+
+        var processed = new TaskCompletionSource<PersistedTask>();
+        processor.StatusChanged += task =>
+        {
+            if (task.Status == PersistedTaskStatus.Processing)
+            {
+                processed.TrySetResult(task);
+            }
+            return Task.CompletedTask;
+        };
+
+        using var cts = new CancellationTokenSource();
+        await processor.StartAsync(cts.Token);
+
+        PersistedTask processedTask = await processed.Task.WaitAsync(
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken
+        );
+
+        Assert.Equal("retry-me", ((LoggingTask)processedTask.Data).Message);
+        Assert.True(claimCalls >= 2, "The task should have been retried after re-enqueueing.");
+
+        await cts.CancelAsync();
+        await processor.StopAsync(CancellationToken.None);
+        Assert.False(IsExecuteTaskFaulted(processor));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ExecuteAsync_WhenClaimIsCancelled_PersistsCancelInsteadOfDroppingIt()
+    {
+        // Regression guard: CancelCurrent cancelling the claim used to be swallowed, so the
+        // intended cancel was never persisted.
+        var persistence = Substitute.For<ITaskPersistenceService>();
+        int claimCalls = 0;
+        persistence
+            .ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+            {
+                claimCalls++;
+                if (claimCalls == 1)
+                {
+                    throw new OperationCanceledException("canceled");
+                }
+
+                return Task.FromResult(true);
+            });
+
+        var processor = new StandardTaskProcessor(
+            _taskQueue,
+            _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+            _mockLogger,
+            persistence
+        );
+
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "cancel-me" });
+
+        var canceled = new TaskCompletionSource<PersistedTask>();
+        processor.StatusChanged += task =>
+        {
+            if (task.Status == PersistedTaskStatus.Canceled)
+            {
+                canceled.TrySetResult(task);
+            }
+            return Task.CompletedTask;
+        };
+
+        using var cts = new CancellationTokenSource();
+        await processor.StartAsync(cts.Token);
+
+        PersistedTask canceledTask = await canceled.Task.WaitAsync(
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken
+        );
+
+        Assert.Equal("cancel-me", ((LoggingTask)canceledTask.Data).Message);
+        await persistence
+            .Received(1)
+            .CancelTaskAsync(Arg.Any<int>(), false, Arg.Any<CancellationToken>());
+
+        await cts.CancelAsync();
+        await processor.StopAsync(CancellationToken.None);
+        Assert.False(IsExecuteTaskFaulted(processor));
+    }
+
+    private async Task RunClaimFailureScenarioAsync(
+        Exception claimFailure,
+        string expectedFirstProcessed
+    )
     {
         // Regression guard: a claim failure used to escape ProcessTaskAsync and fault ExecuteAsync,
         // which under BackgroundServiceExceptionBehavior.StopHost stops the whole application.
@@ -169,8 +292,9 @@ public class StandardTaskProcessorTests : IDisposable
             TestContext.Current.CancellationToken
         );
 
-        // The first task's claim failed, so the surviving, processed task must be the second one.
-        Assert.Equal("second", ((LoggingTask)processedTask.Data).Message);
+        // The first claim failed: a thrown exception re-enqueues the task (so it is processed
+        // first), while a cancellation persists the cancel and drops it (so the second is first).
+        Assert.Equal(expectedFirstProcessed, ((LoggingTask)processedTask.Data).Message);
 
         await cts.CancelAsync();
         await processor.StopAsync(CancellationToken.None);

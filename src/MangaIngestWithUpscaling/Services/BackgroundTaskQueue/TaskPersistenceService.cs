@@ -7,8 +7,8 @@ namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 public interface ITaskPersistenceService
 {
     Task<bool> ClaimTaskAsync(int taskId, CancellationToken cancellationToken = default);
-    Task CompleteTaskAsync(int taskId, CancellationToken cancellationToken = default);
-    Task FailTaskAsync(int taskId, CancellationToken cancellationToken = default);
+    Task<int> CompleteTaskAsync(int taskId, CancellationToken cancellationToken = default);
+    Task<int> FailTaskAsync(int taskId, CancellationToken cancellationToken = default);
     Task CancelTaskAsync(
         int taskId,
         bool requeue = false,
@@ -48,15 +48,19 @@ public class TaskPersistenceService(IServiceScopeFactory scopeFactory) : ITaskPe
         }
     }
 
-    public async Task CompleteTaskAsync(int taskId, CancellationToken cancellationToken = default)
+    public async Task<int> CompleteTaskAsync(
+        int taskId,
+        CancellationToken cancellationToken = default
+    )
     {
         using var scope = scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         DateTime? processedAt = DateTime.UtcNow;
         // Terminal transitions are guarded: a late or duplicate callback must not overwrite a
-        // terminal state. Only tasks that are still Pending/Processing may complete.
-        await dbContext
+        // terminal state. Only tasks that are still Pending/Processing may complete. The returned
+        // row count tells the caller whether the transition actually happened.
+        return await dbContext
             .PersistedTasks.Where(t =>
                 t.Id == taskId
                 && (
@@ -73,14 +77,15 @@ public class TaskPersistenceService(IServiceScopeFactory scopeFactory) : ITaskPe
             );
     }
 
-    public async Task FailTaskAsync(int taskId, CancellationToken cancellationToken = default)
+    public async Task<int> FailTaskAsync(int taskId, CancellationToken cancellationToken = default)
     {
         using var scope = scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         // Only a still-active task may fail, and the retry count is incremented in the same
-        // conditional update so duplicate failure callbacks cannot inflate it.
-        await dbContext
+        // conditional update so duplicate failure callbacks cannot inflate it. The returned row
+        // count tells the caller whether the transition actually happened.
+        return await dbContext
             .PersistedTasks.Where(t =>
                 t.Id == taskId
                 && (

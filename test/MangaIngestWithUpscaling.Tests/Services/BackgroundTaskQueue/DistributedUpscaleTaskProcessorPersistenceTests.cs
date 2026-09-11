@@ -193,6 +193,27 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
         return task?.RetryCount ?? -1;
     }
 
+    private async Task<PersistedTaskStatus?> WaitForStatusAsync(
+        int id,
+        PersistedTaskStatus expected
+    )
+    {
+        DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        PersistedTaskStatus? status = null;
+        while (DateTime.UtcNow < deadline)
+        {
+            status = await GetStatusAsync(id);
+            if (status == expected)
+            {
+                return status;
+            }
+
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+
+        return status;
+    }
+
     private async Task<int> SeedTaskAsync(PersistedTaskStatus status, int retryCount = 0)
     {
         using IServiceScope scope = _provider.CreateScope();
@@ -309,5 +330,269 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
         await persistence.CompleteTaskAsync(taskId, TestContext.Current.CancellationToken);
 
         Assert.Equal(PersistedTaskStatus.Failed, await GetStatusAsync(taskId));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task GetTask_WhenWorkerCancelsAfterClaim_RequeuesTaskInsteadOfStrandingIt()
+    {
+        // Regression guard: a task claimed by the distributed processor was removed from the
+        // in-memory set and never added to runningTasks, so a worker disconnect before handoff left
+        // its row stranded in Processing (the reaper only scans runningTasks and the replay ignores
+        // Processing).
+        var serviceCts = new CancellationTokenSource();
+        using var requestCts = new CancellationTokenSource();
+
+        var realPersistence = new TaskPersistenceService(
+            _provider.GetRequiredService<IServiceScopeFactory>()
+        );
+        var persistence = Substitute.For<ITaskPersistenceService>();
+        bool cancelOnFirstClaim = true;
+        persistence
+            .ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(async ci =>
+            {
+                bool claimed = await realPersistence.ClaimTaskAsync(
+                    (int)ci[0],
+                    (CancellationToken)ci[1]
+                );
+                if (cancelOnFirstClaim)
+                {
+                    cancelOnFirstClaim = false;
+                    // Simulate the worker disconnecting after the claim succeeded but before the
+                    // task could be handed off.
+                    await requestCts.CancelAsync();
+                }
+
+                return claimed;
+            });
+        persistence
+            .CompleteTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(ci => realPersistence.CompleteTaskAsync((int)ci[0], (CancellationToken)ci[1]));
+        persistence
+            .FailTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(ci => realPersistence.FailTaskAsync((int)ci[0], (CancellationToken)ci[1]));
+        persistence
+            .CancelTaskAsync(Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+                realPersistence.CancelTaskAsync((int)ci[0], (bool)ci[1], (CancellationToken)ci[2])
+            );
+
+        var processor = new DistributedUpscaleTaskProcessor(
+            _taskQueue,
+            _provider.GetRequiredService<IServiceScopeFactory>(),
+            _provider.GetRequiredService<IOptions<UpscalerConfig>>(),
+            _provider.GetRequiredService<ILogger<DistributedUpscaleTaskProcessor>>(),
+            persistence
+        );
+
+        // ApplySplits performs a chapter query after the claim, which observes the cancelled token.
+        await _taskQueue.EnqueueAsync(new ApplySplitsTask(999_999, 1));
+        int taskId = _taskQueue.GetUpscaleSnapshot().Single().Id;
+
+        await processor.StartAsync(serviceCts.Token);
+
+        PersistedTask? first = await processor.GetTask(requestCts.Token);
+        Assert.Null(first);
+
+        // GetTask returns as soon as the request token is cancelled, which can happen while the
+        // claim is still completing; wait for the processor's recovery to settle.
+        PersistedTaskStatus? status = await WaitForStatusAsync(taskId, PersistedTaskStatus.Pending);
+
+        // The claim was persisted as Processing, then the cancellation must put it back to Pending
+        // so it is recoverable rather than stranded.
+        Assert.Equal(PersistedTaskStatus.Pending, status);
+        // The missing-chapter skip branch would have failed it; the requeue path must not have run.
+        await persistence
+            .DidNotReceive()
+            .FailTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>());
+
+        // The processor must keep serving later requests.
+        await _taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(1, 1));
+        PersistedTask? second = await processor.GetTask(serviceCts.Token);
+        Assert.NotNull(second);
+        Assert.IsType<DetectSplitCandidatesTask>(second!.Data);
+
+        await serviceCts.CancelAsync();
+        await processor.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task TaskCompleted_WhenRowAlreadyCanceled_DoesNotEmitContradictoryTerminalStatus()
+    {
+        // Regression guard: TaskCompleted mutated the in-memory task and raised a terminal
+        // StatusChanged even when the guarded CompleteTaskAsync changed no row.
+        int taskId;
+        using (IServiceScope scope = _provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var task = new PersistedTask
+            {
+                Data = new DetectSplitCandidatesTask(1, 1),
+                Status = PersistedTaskStatus.Canceled,
+                Order = 1,
+            };
+            db.PersistedTasks.Add(task);
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+            taskId = task.Id;
+        }
+
+        var emitted = new List<PersistedTaskStatus>();
+        _processor.StatusChanged += task =>
+        {
+            lock (emitted)
+            {
+                emitted.Add(task.Status);
+            }
+
+            return Task.CompletedTask;
+        };
+
+        await _processor.TaskCompleted(taskId);
+
+        lock (emitted)
+        {
+            Assert.DoesNotContain(
+                emitted,
+                status =>
+                    status == PersistedTaskStatus.Completed || status == PersistedTaskStatus.Failed
+            );
+        }
+
+        Assert.Equal(PersistedTaskStatus.Canceled, await GetStatusAsync(taskId));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task TaskCompleted_WhenRepairCompletionFailsButRowAlreadyCanceled_DoesNotEmitContradictoryStatus()
+    {
+        // Covers the PersistFailedAsync guard: a failed repair completion on an already-terminal
+        // row must not overwrite the in-memory/UI state.
+        int taskId;
+        using (IServiceScope scope = _provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var task = new PersistedTask
+            {
+                Data = new RepairUpscaleTask { ChapterId = 999_999, UpscalerProfileId = 999_999 },
+                Status = PersistedTaskStatus.Canceled,
+                Order = 1,
+            };
+            db.PersistedTasks.Add(task);
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+            taskId = task.Id;
+        }
+
+        var emitted = new List<PersistedTaskStatus>();
+        _processor.StatusChanged += task =>
+        {
+            lock (emitted)
+            {
+                emitted.Add(task.Status);
+            }
+
+            return Task.CompletedTask;
+        };
+
+        await _processor.TaskCompleted(taskId);
+
+        lock (emitted)
+        {
+            Assert.DoesNotContain(
+                emitted,
+                status =>
+                    status == PersistedTaskStatus.Completed || status == PersistedTaskStatus.Failed
+            );
+        }
+
+        Assert.Equal(PersistedTaskStatus.Canceled, await GetStatusAsync(taskId));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task PrepareRepairTaskForRemote_WithStaleState_DisposesItBeforePreparing()
+    {
+        // Regression guard: a requeued dead repair task could still hold a RemoteRepairState from
+        // its previous attempt, and preparation overwrote it without disposing the old context.
+        int taskId;
+        using (IServiceScope seedScope = _provider.CreateScope())
+        {
+            var db = seedScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var task = new PersistedTask
+            {
+                Data = new RepairUpscaleTask { ChapterId = 999_999, UpscalerProfileId = 999_999 },
+                Status = PersistedTaskStatus.Processing,
+                Order = 1,
+            };
+            db.PersistedTasks.Add(task);
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+            taskId = task.Id;
+        }
+
+        string workDirectory = Path.Combine(Path.GetTempPath(), $"repair-f4-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workDirectory);
+        var disposed = new ManualResetEventSlim(false);
+        var staleContext = new SignalingRepairContext(disposed) { WorkDirectory = workDirectory };
+
+        Dictionary<int, DistributedUpscaleTaskProcessor.RemoteRepairState> states = GetPrivateField<
+            Dictionary<int, DistributedUpscaleTaskProcessor.RemoteRepairState>
+        >(_processor, "remoteRepairStates");
+        states[taskId] = new DistributedUpscaleTaskProcessor.RemoteRepairState
+        {
+            RepairContext = staleContext,
+        };
+
+        PersistedTask persistedTask;
+        using (IServiceScope scope = _provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            persistedTask = await db
+                .PersistedTasks.AsNoTracking()
+                .FirstAsync(t => t.Id == taskId, TestContext.Current.CancellationToken);
+        }
+
+        using IServiceScope methodScope = _provider.CreateScope();
+        MethodInfo method = typeof(DistributedUpscaleTaskProcessor).GetMethod(
+            "PrepareRepairTaskForRemote",
+            BindingFlags.Instance | BindingFlags.NonPublic
+        )!;
+        var invocation = method.Invoke(
+            _processor,
+            new object[]
+            {
+                (RepairUpscaleTask)persistedTask.Data,
+                persistedTask,
+                methodScope.ServiceProvider,
+                TestContext.Current.CancellationToken,
+            }
+        );
+        bool prepared = await (Task<bool>)invocation!;
+
+        Assert.False(prepared);
+        Assert.True(
+            disposed.Wait(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken),
+            "The stale repair context should have been disposed."
+        );
+        Assert.False(states.ContainsKey(taskId));
+
+        if (Directory.Exists(workDirectory))
+        {
+            Directory.Delete(workDirectory, true);
+        }
+    }
+
+    private static T GetPrivateField<T>(object target, string name)
+    {
+        return (T)
+            target
+                .GetType()
+                .GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(target)!;
+    }
+
+    private sealed class SignalingRepairContext(ManualResetEventSlim disposed) : RepairContext
+    {
+        protected override void DeleteWorkDirectory() => disposed.Set();
     }
 }
