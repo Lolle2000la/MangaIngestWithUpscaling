@@ -365,57 +365,48 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task PrepareRepairTaskForRemote_WhenWorkerCancelsPreparation_UnderBudgetIncrementsRetryAndRequeues()
+    public async Task PrepareRepairTaskForRemote_WhenWorkerCancelsPreparation_RequeuesWithoutIncrementingRetry()
     {
-        // A worker disconnect is still retried promptly while the task has retry budget left, but
-        // each disconnect must consume one retry so a repeated disconnect cannot retry forever.
+        // A worker disconnect is an infrastructure event, not a task failure: the task must be
+        // requeued promptly without consuming its RetryFor budget.
         int taskId = await SeedRepairTaskAsync(retryFor: 3, retryCount: 0);
 
         bool prepared = await InvokePrepareRepairTaskForRemoteAsync(taskId);
 
         Assert.False(prepared);
         Assert.Equal(PersistedTaskStatus.Pending, await GetStatusAsync(taskId));
-        Assert.Equal(1, await GetRetryCountAsync(taskId));
+        Assert.Equal(0, await GetRetryCountAsync(taskId));
         Assert.Contains(_taskQueue.GetUpscaleSnapshot(), t => t.Id == taskId);
     }
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task PrepareRepairTaskForRemote_WhenWorkerCancelsRepeatedly_ReachesBudgetAndFails()
+    public async Task PrepareRepairTaskForRemote_WhenWorkerCancelsRepeatedly_NeverFails()
     {
-        // Regression guard: repeated worker disconnects used to requeue forever without bumping the
-        // retry count, defeating the task's RetryFor budget. RepairUpscaleTask now defaults to a
-        // budget of three attempts (initial + two retries), so the third disconnect is terminal.
+        // Repeated worker disconnects must never terminal-fail the task nor consume its retry budget.
         int taskId = await SeedRepairTaskAsync(retryCount: 0);
 
-        Assert.False(await InvokePrepareRepairTaskForRemoteAsync(taskId));
-        Assert.Equal(PersistedTaskStatus.Pending, await GetStatusAsync(taskId));
-        Assert.Equal(1, await GetRetryCountAsync(taskId));
-
-        Assert.False(await InvokePrepareRepairTaskForRemoteAsync(taskId));
-        Assert.Equal(PersistedTaskStatus.Pending, await GetStatusAsync(taskId));
-        Assert.Equal(2, await GetRetryCountAsync(taskId));
-
-        // The third disconnect reaches the budget and must become terminal instead of requeueing.
-        Assert.False(await InvokePrepareRepairTaskForRemoteAsync(taskId));
-        Assert.Equal(PersistedTaskStatus.Failed, await GetStatusAsync(taskId));
-        Assert.Equal(3, await GetRetryCountAsync(taskId));
+        for (int i = 0; i < 5; i++)
+        {
+            Assert.False(await InvokePrepareRepairTaskForRemoteAsync(taskId));
+            Assert.Equal(PersistedTaskStatus.Pending, await GetStatusAsync(taskId));
+            Assert.Equal(0, await GetRetryCountAsync(taskId));
+        }
     }
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task PrepareRepairTaskForRemote_WhenWorkerCancelsWithNoRetryBudget_FailsImmediately()
+    public async Task PrepareRepairTaskForRemote_WhenWorkerCancelsWithNoRetryBudget_StaysPending()
     {
-        // A RetryFor of 1 means the first recovery attempt is already at budget, matching the
-        // ordinary failure path's replay rule instead of retrying unboundedly.
+        // A RetryFor of 1 must not turn an infrastructure event into a terminal failure.
         int taskId = await SeedRepairTaskAsync(retryFor: 1, retryCount: 0);
 
         bool prepared = await InvokePrepareRepairTaskForRemoteAsync(taskId);
 
         Assert.False(prepared);
-        Assert.Equal(PersistedTaskStatus.Failed, await GetStatusAsync(taskId));
-        Assert.Equal(1, await GetRetryCountAsync(taskId));
-        Assert.DoesNotContain(_taskQueue.GetUpscaleSnapshot(), t => t.Id == taskId);
+        Assert.Equal(PersistedTaskStatus.Pending, await GetStatusAsync(taskId));
+        Assert.Equal(0, await GetRetryCountAsync(taskId));
+        Assert.Contains(_taskQueue.GetUpscaleSnapshot(), t => t.Id == taskId);
     }
 
     [Fact]
@@ -425,9 +416,10 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
         // Service shutdown is not a task failure: it must not consume the retry budget and must not
         // turn the task into a terminal failure.
         int taskId = await SeedRepairTaskAsync(retryFor: 1, retryCount: 0);
+        var stoppingToken = new CancellationToken(canceled: true);
         typeof(DistributedUpscaleTaskProcessor)
             .GetField("serviceStoppingToken", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .SetValue(_processor, new CancellationToken(canceled: true));
+            .SetValue(_processor, stoppingToken);
 
         PersistedTask persistedTask;
         using (IServiceScope scope = _provider.CreateScope())
@@ -442,7 +434,7 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
             "RequeueClaimedTaskAsync",
             BindingFlags.Instance | BindingFlags.NonPublic
         )!;
-        await (Task)method.Invoke(_processor, new object[] { persistedTask })!;
+        await (Task)method.Invoke(_processor, new object[] { persistedTask, stoppingToken })!;
 
         Assert.NotEqual(PersistedTaskStatus.Failed, await GetStatusAsync(taskId));
         Assert.Equal(0, await GetRetryCountAsync(taskId));
@@ -594,13 +586,9 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
                 realPersistence.CancelTaskAsync((int)ci[0], (bool)ci[1], (CancellationToken)ci[2])
             );
         persistence
-            .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
+            .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(ci =>
-                realPersistence.RequeueStrandedTaskAsync(
-                    (int)ci[0],
-                    (CancellationToken)ci[1],
-                    (bool)ci[2]
-                )
+                realPersistence.RequeueStrandedTaskAsync((int)ci[0], (CancellationToken)ci[1])
             );
 
         var processor = new DistributedUpscaleTaskProcessor(
@@ -612,8 +600,8 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
         );
 
         // ApplySplits performs a chapter query after the claim, which observes the cancelled token.
-        // Give it retry budget so the disconnect is requeued (under budget) rather than failed.
-        await _taskQueue.EnqueueAsync(new ApplySplitsTask(999_999, 1) { RetryFor = 3 });
+        // A disconnect is an infrastructure event, so it is requeued regardless of RetryFor.
+        await _taskQueue.EnqueueAsync(new ApplySplitsTask(999_999, 1) { RetryFor = 1 });
         int taskId = _taskQueue.GetUpscaleSnapshot().Single().Id;
 
         await processor.StartAsync(serviceCts.Token);
@@ -626,9 +614,9 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
         PersistedTaskStatus? status = await WaitForStatusAsync(taskId, PersistedTaskStatus.Pending);
 
         // The claim was persisted as Processing, then the cancellation must put it back to Pending
-        // so it is recoverable rather than stranded.
+        // so it is recoverable rather than stranded, without consuming the retry budget.
         Assert.Equal(PersistedTaskStatus.Pending, status);
-        Assert.Equal(1, await GetRetryCountAsync(taskId));
+        Assert.Equal(0, await GetRetryCountAsync(taskId));
         // The missing-chapter skip branch would have failed it; the requeue path must not have run.
         await persistence
             .DidNotReceive()
@@ -646,27 +634,28 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task GetTask_WhenHandoffFailsUnderBudget_IncrementsRetryAndRequeues()
+    public async Task GetTask_WhenHandoffFails_RequeuesWithoutIncrementingRetry()
     {
-        // A requester that cancels while the processor is handing off the task must consume one
-        // retry attempt and be requeued promptly while under budget (previously it used the
-        // unbudgeted RetryAsync).
+        // A requester that cancels while the processor hands off the task is an infrastructure event:
+        // it must be requeued promptly without consuming the retry budget.
         int taskId = await RunHandoffFailureAsync(retryFor: 3);
 
         Assert.Equal(PersistedTaskStatus.Pending, await GetStatusAsync(taskId));
-        Assert.Equal(1, await GetRetryCountAsync(taskId));
+        Assert.Equal(0, await GetRetryCountAsync(taskId));
         Assert.Contains(_taskQueue.GetUpscaleSnapshot(), t => t.Id == taskId);
     }
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task GetTask_WhenHandoffFailsWithExhaustedBudget_MarksFailed()
+    public async Task GetTask_WhenHandoffFailsWithLowRetryBudget_DoesNotFail()
     {
-        // With no retry budget a handoff failure is terminal, never an unbounded requeue.
+        // A low RetryFor must not turn a failed handoff into a terminal failure; the infrastructure
+        // recovery keeps returning the task to Pending.
         int taskId = await RunHandoffFailureAsync(retryFor: 1);
 
-        Assert.Equal(PersistedTaskStatus.Failed, await GetStatusAsync(taskId));
-        Assert.Equal(1, await GetRetryCountAsync(taskId));
+        Assert.Equal(PersistedTaskStatus.Pending, await GetStatusAsync(taskId));
+        Assert.Equal(0, await GetRetryCountAsync(taskId));
+        Assert.Contains(_taskQueue.GetUpscaleSnapshot(), t => t.Id == taskId);
     }
 
     /// <summary>
@@ -708,13 +697,9 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
                 realPersistence.CancelTaskAsync((int)ci[0], (bool)ci[1], (CancellationToken)ci[2])
             );
         persistence
-            .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
+            .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(ci =>
-                realPersistence.RequeueStrandedTaskAsync(
-                    (int)ci[0],
-                    (CancellationToken)ci[1],
-                    (bool)ci[2]
-                )
+                realPersistence.RequeueStrandedTaskAsync((int)ci[0], (CancellationToken)ci[1])
             );
 
         var processor = new DistributedUpscaleTaskProcessor(
@@ -735,11 +720,9 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
         PersistedTask? first = await processor.GetTask(requestCts.Token);
         Assert.Null(first);
 
-        // Wait for the recovery write to settle.
-        await WaitForStatusAsync(
-            taskId,
-            retryFor > 1 ? PersistedTaskStatus.Pending : PersistedTaskStatus.Failed
-        );
+        // Wait for the recovery write to settle. The failed handoff must always return the task to
+        // Pending, regardless of its RetryFor budget.
+        await WaitForStatusAsync(taskId, PersistedTaskStatus.Pending);
 
         await serviceCts.CancelAsync();
         await processor.StopAsync(CancellationToken.None);
@@ -787,13 +770,9 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
                 realPersistence.CancelTaskAsync((int)ci[0], (bool)ci[1], (CancellationToken)ci[2])
             );
         persistence
-            .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
+            .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(ci =>
-                realPersistence.RequeueStrandedTaskAsync(
-                    (int)ci[0],
-                    (CancellationToken)ci[1],
-                    (bool)ci[2]
-                )
+                realPersistence.RequeueStrandedTaskAsync((int)ci[0], (CancellationToken)ci[1])
             );
 
         var processor = new DistributedUpscaleTaskProcessor(
@@ -806,8 +785,9 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
 
         // ApplySplits performs a chapter query after the claim; when the recovered task is
         // re-claimed it fails on its missing chapter before the next task is handed to the worker.
-        // Give it retry budget so the post-commit claim failure is requeued rather than failed.
-        await _taskQueue.EnqueueAsync(new ApplySplitsTask(999_999, 1) { RetryFor = 3 });
+        // A post-commit claim failure is an infrastructure event and is requeued regardless of the
+        // task's RetryFor budget.
+        await _taskQueue.EnqueueAsync(new ApplySplitsTask(999_999, 1) { RetryFor = 1 });
         int taskId = _taskQueue.GetUpscaleSnapshot().Single().Id;
 
         await processor.StartAsync(serviceCts.Token);
@@ -815,12 +795,13 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
         // The claim exception is surfaced to the requesting worker.
         await Assert.ThrowsAnyAsync<Exception>(() => processor.GetTask(serviceCts.Token));
 
-        // The row must be recoverable (Pending), never stranded Processing.
+        // The row must be recoverable (Pending), never stranded Processing, and without consuming
+        // the retry budget.
         Assert.Equal(
             PersistedTaskStatus.Pending,
             await WaitForStatusAsync(taskId, PersistedTaskStatus.Pending)
         );
-        Assert.Equal(1, await GetRetryCountAsync(taskId));
+        Assert.Equal(0, await GetRetryCountAsync(taskId));
 
         // The processor keeps serving later requests.
         await _taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(2, 1));
@@ -995,6 +976,80 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
         {
             Directory.Delete(workDirectory, true);
         }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RequeueClaimedTask_WhenRepairWasPrepared_CleansUpStateAndTempFiles()
+    {
+        // Change 2 regression guard: a prepared repair task whose handoff fails and is requeued must
+        // not leave remoteRepairStates populated or its temp CBZs behind for the next preparation.
+        int taskId;
+        using (IServiceScope scope = _provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var task = new PersistedTask
+            {
+                Data = new RepairUpscaleTask { ChapterId = 999_999, UpscalerProfileId = 999_999 },
+                Status = PersistedTaskStatus.Processing,
+                Order = 1,
+            };
+            db.PersistedTasks.Add(task);
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+            taskId = task.Id;
+        }
+
+        string preparedCbz = Path.Combine(
+            Path.GetTempPath(),
+            $"repair-prepared-{Guid.NewGuid():N}.cbz"
+        );
+        string upscaledCbz = Path.Combine(
+            Path.GetTempPath(),
+            $"repair-upscaled-{Guid.NewGuid():N}.cbz"
+        );
+        await File.WriteAllTextAsync(
+            preparedCbz,
+            "prepared",
+            TestContext.Current.CancellationToken
+        );
+        await File.WriteAllTextAsync(
+            upscaledCbz,
+            "upscaled",
+            TestContext.Current.CancellationToken
+        );
+
+        Dictionary<int, DistributedUpscaleTaskProcessor.RemoteRepairState> states = GetPrivateField<
+            Dictionary<int, DistributedUpscaleTaskProcessor.RemoteRepairState>
+        >(_processor, "remoteRepairStates");
+        states[taskId] = new DistributedUpscaleTaskProcessor.RemoteRepairState
+        {
+            PreparedMissingPagesCbzPath = preparedCbz,
+            UpscaledMissingPagesCbzPath = upscaledCbz,
+        };
+
+        PersistedTask persistedTask;
+        using (IServiceScope scope = _provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            persistedTask = await db
+                .PersistedTasks.AsNoTracking()
+                .FirstAsync(t => t.Id == taskId, TestContext.Current.CancellationToken);
+        }
+
+        MethodInfo method = typeof(DistributedUpscaleTaskProcessor).GetMethod(
+            "RequeueClaimedTaskAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic
+        )!;
+        await (Task)
+            method.Invoke(
+                _processor,
+                new object[] { persistedTask, TestContext.Current.CancellationToken }
+            )!;
+
+        Assert.Equal(PersistedTaskStatus.Pending, await GetStatusAsync(taskId));
+        Assert.False(states.ContainsKey(taskId));
+        Assert.False(File.Exists(preparedCbz));
+        Assert.False(File.Exists(upscaledCbz));
     }
 
     private static T GetPrivateField<T>(object target, string name)

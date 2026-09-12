@@ -26,16 +26,7 @@ public interface ITaskPersistenceService
     ///     recovery cannot resurrect a completed/canceled task. The affected row count is returned
     ///     so callers can tell whether the row was recoverable.
     /// </summary>
-    /// <param name="incrementRetry">
-    ///     When <c>true</c>, the retry count is incremented in the same guarded update. This is used
-    ///     for bounded retries of transient worker disconnects so a repeated disconnect eventually
-    ///     exhausts the task data's <c>RetryFor</c> budget instead of retrying forever.
-    /// </param>
-    Task<int> RequeueStrandedTaskAsync(
-        int taskId,
-        CancellationToken cancellationToken = default,
-        bool incrementRetry = false
-    );
+    Task<int> RequeueStrandedTaskAsync(int taskId, CancellationToken cancellationToken = default);
 }
 
 [RegisterSingleton]
@@ -148,39 +139,26 @@ public class TaskPersistenceService(IServiceScopeFactory scopeFactory) : ITaskPe
 
     public async Task<int> RequeueStrandedTaskAsync(
         int taskId,
-        CancellationToken cancellationToken = default,
-        bool incrementRetry = false
+        CancellationToken cancellationToken = default
     )
     {
         using var scope = scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
         // Only a still-active task may be returned to Pending. A terminal row is the source of
-        // truth and must not be overwritten by a failed claim/recovery. The optional retry bump is
-        // applied in the same guarded statement so a disconnect cannot be counted twice by two
-        // racing recoveries.
-        var query = dbContext.PersistedTasks.Where(t =>
-            t.Id == taskId
-            && (
-                t.Status == PersistedTaskStatus.Pending
-                || t.Status == PersistedTaskStatus.Processing
+        // truth and must not be overwritten by a failed claim/recovery. The retry count is left
+        // untouched: infrastructure recoveries do not consume the task's RetryFor budget.
+        return await dbContext
+            .PersistedTasks.Where(t =>
+                t.Id == taskId
+                && (
+                    t.Status == PersistedTaskStatus.Pending
+                    || t.Status == PersistedTaskStatus.Processing
+                )
             )
-        );
-
-        if (incrementRetry)
-        {
-            return await query.ExecuteUpdateAsync(
-                setters =>
-                    setters
-                        .SetProperty(t => t.Status, PersistedTaskStatus.Pending)
-                        .SetProperty(t => t.RetryCount, t => t.RetryCount + 1),
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(t => t.Status, PersistedTaskStatus.Pending),
                 cancellationToken
             );
-        }
-
-        return await query.ExecuteUpdateAsync(
-            setters => setters.SetProperty(t => t.Status, PersistedTaskStatus.Pending),
-            cancellationToken
-        );
     }
 }

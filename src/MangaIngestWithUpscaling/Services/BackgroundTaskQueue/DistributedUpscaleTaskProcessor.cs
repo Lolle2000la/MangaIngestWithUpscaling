@@ -580,11 +580,10 @@ public class DistributedUpscaleTaskProcessor(
 
                     if (!tcs.TrySetResult(task))
                     {
-                        // Requester couldn't accept the task (likely cancelled). Use the same
-                        // bounded recovery as other worker disconnects so a repeated handoff
-                        // failure respects the task's RetryFor budget instead of requeueing
-                        // unboundedly.
-                        await RequeueClaimedTaskAsync(task);
+                        // Requester couldn't accept the task (likely cancelled). A failed handoff is
+                        // an infrastructure event, not a task failure, so it is requeued without
+                        // consuming the retry budget and cannot become terminal because of it.
+                        await RequeueClaimedTaskAsync(task, serviceStoppingToken);
                     }
 
                     claimedTask = null;
@@ -600,7 +599,7 @@ public class DistributedUpscaleTaskProcessor(
                 // runningTasks.
                 if (claimedTask != null)
                 {
-                    await RequeueClaimedTaskAsync(claimedTask);
+                    await RequeueClaimedTaskAsync(claimedTask, serviceStoppingToken);
                 }
 
                 // A request/worker token cancellation (worker disconnect or request timeout) must
@@ -621,20 +620,20 @@ public class DistributedUpscaleTaskProcessor(
                 // An unexpected error after the claim but before handoff must not strand the task.
                 if (claimedTask != null)
                 {
-                    await RequeueClaimedTaskAsync(claimedTask);
+                    await RequeueClaimedTaskAsync(claimedTask, serviceStoppingToken);
                 }
             }
         }
     }
 
     /// <summary>
-    ///     Requeues remote tasks that have stopped sending keep-alives. Each dead task is handled
-    ///     independently and goes through the same bounded recovery as a worker disconnect: while
-    ///     under its <c>RetryFor</c> budget the row is returned to Pending with an incremented retry
-    ///     count and re-added to the in-memory queue; at/over budget (or when <c>RetryFor</c> is zero)
-    ///     it becomes a terminal failure instead of being reaped forever. A failure affecting one task
-    ///     re-adds it to <c>runningTasks</c> for the next tick instead of dropping it or preventing
-    ///     the remaining tasks from being requeued.
+    ///     Requeues remote tasks that have stopped sending keep-alives. A dead worker is an
+    ///     infrastructure event, not a task failure, so each dead task is returned to Pending without
+    ///     consuming or consulting its <c>RetryFor</c> budget (the retry count is not incremented) and
+    ///     re-added to the in-memory queue. A terminal row (already completed/canceled/failed while
+    ///     the task was dead) is left alone. A failure affecting one task re-adds it to
+    ///     <c>runningTasks</c> for the next tick instead of dropping it or preventing the remaining
+    ///     tasks from being requeued.
     /// </summary>
     internal async Task ReapDeadTasksAsync(CancellationToken cancellationToken)
     {
@@ -665,32 +664,15 @@ public class DistributedUpscaleTaskProcessor(
 
         foreach (PersistedTask task in deadTasks)
         {
-            try
+            // RequeueClaimedTaskAsync cleans up any prepared repair context/temp files and isolates
+            // its own persistence failures. When it returns false the row could not be returned to
+            // Pending, so keep the task tracked for the next tick.
+            if (!await RequeueClaimedTaskAsync(task, cancellationToken))
             {
-                // A dead remote task may have left a prepared repair context and its temp files
-                // behind. Clean them before requeueing so the next preparation cannot leak them
-                // (CleanupRepairFiles respects any in-flight completion's usage lease).
-                CleanupRepairFiles(task.Id, logger);
-
-                // Budgeted recovery consumes exactly one attempt: under budget the row returns to
-                // Pending and is re-enqueued; at/over budget it is persisted as Failed. A terminal
-                // row (already completed/canceled while the task was dead) is left alone.
-                await ApplyBudgetedRecoveryAsync(task, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                // Keep the task tracked so the next tick retries it. This must not prevent the
-                // remaining dead tasks from being requeued.
                 using (_lock.EnterScope())
                 {
                     runningTasks.TryAdd(task.Id, task);
                 }
-
-                logger.LogError(
-                    ex,
-                    "Failed to requeue dead task {taskId}; the reaper will retry it on the next tick.",
-                    task.Id
-                );
             }
         }
     }
@@ -1283,8 +1265,7 @@ public class DistributedUpscaleTaskProcessor(
                 "Preparation of repair task {TaskId} was cancelled by the requesting worker; requeuing.",
                 persistedTask.Id
             );
-            CleanupRepairFiles(persistedTask.Id, logger);
-            await RequeueClaimedTaskAsync(persistedTask);
+            await RequeueClaimedTaskAsync(persistedTask, serviceStoppingToken);
             return false;
         }
         catch (Exception ex)
@@ -1304,112 +1285,36 @@ public class DistributedUpscaleTaskProcessor(
     ///     Puts a task that was claimed (or was being claimed) by this processor but never
     ///     successfully handed off back into the queue as Pending. This covers a worker disconnect
     ///     during remote-repair preparation as well as a cancellation or unexpected error during or
-    ///     after a plain claim.
+    ///     after a plain claim, and is also used by the dead-task reaper.
     ///     <para>
-    ///         A request/worker-cancellation disconnect consumes the task's bounded retry budget:
-    ///         while <c>RetryCount + 1 &lt; RetryFor</c> the row is returned to Pending with an
-    ///         incremented retry count and re-enqueued immediately; once the budget is reached (or
-    ///         when <c>RetryFor</c> is zero) the disconnect is persisted as a terminal failure so it
-    ///         cannot retry forever. Service shutdown does not consume the budget: it falls back to a
-    ///         plain guarded reconcile so startup recovery owns the task.
+    ///         These are infrastructure recoveries, not task failures: the row is returned to Pending
+    ///         without consuming or consulting its <c>RetryFor</c> budget (the retry count is never
+    ///         incremented here) and can never be terminal-failed by the recovery itself. Any repair
+    ///         state/temp files prepared for a remote repair are cleaned up first so a retried
+    ///         handoff does not leak them.
     ///     </para>
-    ///     The database writes are guarded so a terminal row is never resurrected; when the row is no
-    ///     longer recoverable the task is simply dropped. Failures are logged and swallowed: the row
-    ///     would then be left for startup recovery, so a database hiccup here must not fault the
-    ///     processor.
+    ///     The database write is guarded so a terminal row is never resurrected; when the row is no
+    ///     longer recoverable it is simply dropped. Returns <c>false</c> when the requeue could not be
+    ///     persisted so the caller can keep the task recoverable (the reaper re-tracks such a task for
+    ///     its next tick); a terminal or already-removed row returns <c>true</c> because there is
+    ///     nothing left to recover.
     /// </summary>
-    private async Task RequeueClaimedTaskAsync(PersistedTask persistedTask)
-    {
-        if (serviceStoppingToken.IsCancellationRequested)
-        {
-            // Service shutdown is not a task failure and must not consume the retry budget.
-            await RequeueWithoutRetryBudgetAsync(persistedTask);
-            return;
-        }
-
-        try
-        {
-            await ApplyBudgetedRecoveryAsync(persistedTask, serviceStoppingToken);
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(
-                ex,
-                "Failed to requeue claimed task {TaskId}; leaving it for startup recovery.",
-                persistedTask.Id
-            );
-        }
-    }
-
-    /// <summary>
-    ///     Applies the task's bounded retry budget to a single recovery event (a worker disconnect,
-    ///     a failed handoff, or a reaped dead task). While <c>RetryCount + 1 &lt; RetryFor</c> the row
-    ///     is returned to Pending with an incremented retry count and re-enqueued; at/over budget (or
-    ///     when <c>RetryFor</c> is zero) it is persisted as a terminal failure. A row that is already
-    ///     terminal is left untouched. Persistence exceptions propagate so each caller can apply its
-    ///     own per-task fault isolation.
-    /// </summary>
-    private async Task<RecoveryOutcome> ApplyBudgetedRecoveryAsync(
+    private async Task<bool> RequeueClaimedTaskAsync(
         PersistedTask persistedTask,
         CancellationToken cancellationToken
     )
     {
-        int retryFor = persistedTask.Data?.RetryFor ?? 0;
-        int next = persistedTask.RetryCount + 1;
-        if (retryFor <= 0 || next >= retryFor)
-        {
-            logger.LogWarning(
-                "Recovery of task {TaskId} reached its retry budget ({Next}/{RetryFor}); marking it Failed instead of retrying.",
-                persistedTask.Id,
-                next,
-                retryFor
-            );
-            await PersistFailedAsync(persistedTask, cancellationToken);
-            return RecoveryOutcome.Failed;
-        }
+        // A prepared remote repair is abandoned when its handoff fails or is cancelled, so drop its
+        // state and temp CBZs before requeueing (idempotent; respects an in-flight completion's
+        // usage lease).
+        CleanupRepairFiles(persistedTask.Id, logger);
 
-        int affected = await taskPersistenceService.RequeueStrandedTaskAsync(
-            persistedTask.Id,
-            cancellationToken,
-            incrementRetry: true
-        );
-
-        if (affected == 0)
-        {
-            // The row is already terminal or was removed; do not resurrect it.
-            return RecoveryOutcome.Terminal;
-        }
-
-        persistedTask.RetryCount = next;
-        persistedTask.Status = PersistedTaskStatus.Pending;
-
-        // The guarded update above already persisted Pending, so re-add to the in-memory queue
-        // without another database write. The sorted set deduplicates by (Order, Id).
-        taskQueue.ReEnqueue(persistedTask);
-        _ = StatusChanged?.Invoke(persistedTask);
-        return RecoveryOutcome.Requeued;
-    }
-
-    private enum RecoveryOutcome
-    {
-        Requeued,
-        Failed,
-        Terminal,
-    }
-
-    /// <summary>
-    ///     The pre-retry-budget reconcile used on service shutdown: returns a still-recoverable row to
-    ///     Pending without touching <c>RetryCount</c> and re-adds it in memory. See
-    ///     <see cref="RequeueClaimedTaskAsync" /> for the budgeted disconnect path.
-    /// </summary>
-    private async Task RequeueWithoutRetryBudgetAsync(PersistedTask persistedTask)
-    {
         int affected;
         try
         {
             affected = await taskPersistenceService.RequeueStrandedTaskAsync(
                 persistedTask.Id,
-                serviceStoppingToken
+                cancellationToken
             );
         }
         catch (Exception ex)
@@ -1419,15 +1324,19 @@ public class DistributedUpscaleTaskProcessor(
                 "Failed to requeue claimed task {TaskId}; leaving it for startup recovery.",
                 persistedTask.Id
             );
-            return;
+            return false;
         }
 
         if (affected == 0)
         {
-            return;
+            // The row is already terminal or was removed; do not resurrect it.
+            return true;
         }
 
         persistedTask.Status = PersistedTaskStatus.Pending;
+
+        // The guarded update above already persisted Pending, so re-add to the in-memory queue
+        // without another database write. The sorted set deduplicates by (Order, Id).
         try
         {
             taskQueue.ReEnqueue(persistedTask);
@@ -1442,6 +1351,7 @@ public class DistributedUpscaleTaskProcessor(
         }
 
         _ = StatusChanged?.Invoke(persistedTask);
+        return true;
     }
 
     /// <summary>
