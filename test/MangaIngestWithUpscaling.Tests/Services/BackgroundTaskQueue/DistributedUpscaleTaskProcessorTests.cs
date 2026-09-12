@@ -485,14 +485,14 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
         var failing = new PersistedTask
         {
             Id = 9001,
-            Data = new DetectSplitCandidatesTask(1, 1),
+            Data = new DetectSplitCandidatesTask(1, 1) { RetryFor = 3 },
             Status = PersistedTaskStatus.Processing,
             LastKeepAlive = DateTime.UtcNow.AddMinutes(-5),
         };
         var healthy = new PersistedTask
         {
             Id = 9002,
-            Data = new DetectSplitCandidatesTask(2, 1),
+            Data = new DetectSplitCandidatesTask(2, 1) { RetryFor = 3 },
             Status = PersistedTaskStatus.Processing,
             LastKeepAlive = DateTime.UtcNow.AddMinutes(-5),
         };
@@ -505,7 +505,7 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
 
         int failingAttempts = 0;
         _mockPersistence
-            .RequeueStrandedTaskAsync(failing.Id, Arg.Any<CancellationToken>())
+            .RequeueStrandedTaskAsync(failing.Id, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(_ =>
             {
                 // Fail the first tick only; the next tick must retry and succeed.
@@ -517,7 +517,7 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
                 return 1;
             });
         _mockPersistence
-            .RequeueStrandedTaskAsync(healthy.Id, Arg.Any<CancellationToken>())
+            .RequeueStrandedTaskAsync(healthy.Id, Arg.Any<CancellationToken>(), Arg.Any<bool>())
             .Returns(Task.FromResult(1));
 
         await _processor.ReapDeadTasksAsync(TestContext.Current.CancellationToken);
@@ -525,11 +525,13 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
         // The failed task stays tracked for the next tick and was not requeued.
         Assert.True(runningTasks.ContainsKey(failing.Id));
         Assert.DoesNotContain(_taskQueue.GetUpscaleSnapshot(), t => t.Id == failing.Id);
+        Assert.Equal(0, failing.RetryCount);
 
-        // The healthy task was requeued and is no longer tracked.
+        // The healthy task was requeued and is no longer tracked, consuming one retry attempt.
         Assert.False(runningTasks.ContainsKey(healthy.Id));
         Assert.Contains(_taskQueue.GetUpscaleSnapshot(), t => t.Id == healthy.Id);
         Assert.Equal(PersistedTaskStatus.Pending, healthy.Status);
+        Assert.Equal(1, healthy.RetryCount);
 
         // A later reaper tick retries the task that failed and requeues it.
         await _processor.ReapDeadTasksAsync(TestContext.Current.CancellationToken);
@@ -537,7 +539,99 @@ public class DistributedUpscaleTaskProcessorTests : IDisposable
         Assert.False(runningTasks.ContainsKey(failing.Id));
         Assert.Contains(_taskQueue.GetUpscaleSnapshot(), t => t.Id == failing.Id);
         Assert.Equal(PersistedTaskStatus.Pending, failing.Status);
+        Assert.Equal(1, failing.RetryCount);
         Assert.Equal(2, failingAttempts);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ReapDeadTasks_UnderBudget_IncrementsRetryKeepsPendingAndRequeues()
+    {
+        // A dead worker is a recovery event, so it consumes one retry attempt while under budget and
+        // is put back in the queue promptly.
+        var dead = new PersistedTask
+        {
+            Id = 9103,
+            Data = new DetectSplitCandidatesTask(1, 1) { RetryFor = 3 },
+            Status = PersistedTaskStatus.Processing,
+            LastKeepAlive = DateTime.UtcNow.AddMinutes(-5),
+        };
+
+        Dictionary<int, PersistedTask> runningTasks = GetPrivateField<
+            Dictionary<int, PersistedTask>
+        >(_processor, "runningTasks");
+        runningTasks[dead.Id] = dead;
+
+        _mockPersistence
+            .RequeueStrandedTaskAsync(dead.Id, Arg.Any<CancellationToken>(), Arg.Any<bool>())
+            .Returns(Task.FromResult(1));
+
+        await _processor.ReapDeadTasksAsync(TestContext.Current.CancellationToken);
+
+        Assert.False(runningTasks.ContainsKey(dead.Id));
+        Assert.Equal(PersistedTaskStatus.Pending, dead.Status);
+        Assert.Equal(1, dead.RetryCount);
+        Assert.Contains(_taskQueue.GetUpscaleSnapshot(), t => t.Id == dead.Id);
+        await _mockPersistence
+            .Received(1)
+            .RequeueStrandedTaskAsync(dead.Id, Arg.Any<CancellationToken>(), true);
+        await _mockPersistence
+            .DidNotReceive()
+            .FailTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ReapDeadTasks_WhenBudgetExhausted_MarksFailedInsteadOfReapingForever()
+    {
+        // Repeated reaps of the same task must respect RetryFor and become terminal, otherwise a
+        // permanently dead worker would be reaped forever.
+        var dead = new PersistedTask
+        {
+            Id = 9104,
+            Data = new DetectSplitCandidatesTask(1, 1) { RetryFor = 3 },
+            Status = PersistedTaskStatus.Processing,
+            LastKeepAlive = DateTime.UtcNow.AddMinutes(-5),
+        };
+
+        Dictionary<int, PersistedTask> runningTasks = GetPrivateField<
+            Dictionary<int, PersistedTask>
+        >(_processor, "runningTasks");
+
+        void SimulateAnotherWorkerDeath()
+        {
+            dead.Status = PersistedTaskStatus.Processing;
+            dead.LastKeepAlive = DateTime.UtcNow.AddMinutes(-5);
+            runningTasks[dead.Id] = dead;
+        }
+
+        _mockPersistence
+            .RequeueStrandedTaskAsync(dead.Id, Arg.Any<CancellationToken>(), Arg.Any<bool>())
+            .Returns(Task.FromResult(1));
+        _mockPersistence
+            .FailTaskAsync(dead.Id, Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(1));
+
+        SimulateAnotherWorkerDeath();
+        await _processor.ReapDeadTasksAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(PersistedTaskStatus.Pending, dead.Status);
+        Assert.Equal(1, dead.RetryCount);
+
+        SimulateAnotherWorkerDeath();
+        await _processor.ReapDeadTasksAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(PersistedTaskStatus.Pending, dead.Status);
+        Assert.Equal(2, dead.RetryCount);
+
+        SimulateAnotherWorkerDeath();
+        await _processor.ReapDeadTasksAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(PersistedTaskStatus.Failed, dead.Status);
+        Assert.Equal(3, dead.RetryCount);
+        Assert.False(runningTasks.ContainsKey(dead.Id));
+
+        await _mockPersistence
+            .Received(2)
+            .RequeueStrandedTaskAsync(dead.Id, Arg.Any<CancellationToken>(), true);
+        await _mockPersistence.Received(1).FailTaskAsync(dead.Id, Arg.Any<CancellationToken>());
     }
 
     private static T GetPrivateField<T>(object target, string name)

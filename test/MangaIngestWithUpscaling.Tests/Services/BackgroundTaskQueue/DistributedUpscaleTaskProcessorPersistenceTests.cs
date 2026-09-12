@@ -644,6 +644,109 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task GetTask_WhenHandoffFailsUnderBudget_IncrementsRetryAndRequeues()
+    {
+        // A requester that cancels while the processor is handing off the task must consume one
+        // retry attempt and be requeued promptly while under budget (previously it used the
+        // unbudgeted RetryAsync).
+        int taskId = await RunHandoffFailureAsync(retryFor: 3);
+
+        Assert.Equal(PersistedTaskStatus.Pending, await GetStatusAsync(taskId));
+        Assert.Equal(1, await GetRetryCountAsync(taskId));
+        Assert.Contains(_taskQueue.GetUpscaleSnapshot(), t => t.Id == taskId);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task GetTask_WhenHandoffFailsWithExhaustedBudget_MarksFailed()
+    {
+        // With no retry budget a handoff failure is terminal, never an unbounded requeue.
+        int taskId = await RunHandoffFailureAsync(retryFor: 1);
+
+        Assert.Equal(PersistedTaskStatus.Failed, await GetStatusAsync(taskId));
+        Assert.Equal(1, await GetRetryCountAsync(taskId));
+    }
+
+    /// <summary>
+    ///     Drives the distributed processor through the handoff-failure branch: the requester's
+    ///     token is cancelled after the claim succeeds but before it can accept the task, so
+    ///     <c>tcs.TrySetResult</c> fails. Returns the task id.
+    /// </summary>
+    private async Task<int> RunHandoffFailureAsync(int retryFor)
+    {
+        var serviceCts = new CancellationTokenSource();
+        using var requestCts = new CancellationTokenSource();
+
+        var realPersistence = new TaskPersistenceService(
+            _provider.GetRequiredService<IServiceScopeFactory>()
+        );
+        var persistence = Substitute.For<ITaskPersistenceService>();
+        persistence
+            .ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(async ci =>
+            {
+                bool claimed = await realPersistence.ClaimTaskAsync(
+                    (int)ci[0],
+                    (CancellationToken)ci[1]
+                );
+                // The requester disconnects after the claim succeeded but before it can accept
+                // the task at handoff.
+                await requestCts.CancelAsync();
+                return claimed;
+            });
+        persistence
+            .CompleteTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(ci => realPersistence.CompleteTaskAsync((int)ci[0], (CancellationToken)ci[1]));
+        persistence
+            .FailTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(ci => realPersistence.FailTaskAsync((int)ci[0], (CancellationToken)ci[1]));
+        persistence
+            .CancelTaskAsync(Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+                realPersistence.CancelTaskAsync((int)ci[0], (bool)ci[1], (CancellationToken)ci[2])
+            );
+        persistence
+            .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>(), Arg.Any<bool>())
+            .Returns(ci =>
+                realPersistence.RequeueStrandedTaskAsync(
+                    (int)ci[0],
+                    (CancellationToken)ci[1],
+                    (bool)ci[2]
+                )
+            );
+
+        var processor = new DistributedUpscaleTaskProcessor(
+            _taskQueue,
+            _provider.GetRequiredService<IServiceScopeFactory>(),
+            _provider.GetRequiredService<IOptions<UpscalerConfig>>(),
+            _provider.GetRequiredService<ILogger<DistributedUpscaleTaskProcessor>>(),
+            persistence
+        );
+
+        // DetectSplitCandidatesTask has no post-claim database query, so the cancelled request
+        // reaches the handoff branch instead of throwing earlier.
+        await _taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(1, 1) { RetryFor = retryFor });
+        int taskId = _taskQueue.GetUpscaleSnapshot().Single().Id;
+
+        await processor.StartAsync(serviceCts.Token);
+
+        PersistedTask? first = await processor.GetTask(requestCts.Token);
+        Assert.Null(first);
+
+        // Wait for the recovery write to settle.
+        await WaitForStatusAsync(
+            taskId,
+            retryFor > 1 ? PersistedTaskStatus.Pending : PersistedTaskStatus.Failed
+        );
+
+        await serviceCts.CancelAsync();
+        await processor.StopAsync(CancellationToken.None);
+
+        return taskId;
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task GetTask_WhenClaimThrowsAfterCommit_RestoresRowAndKeepsServing()
     {
         // Regression guard: ClaimTaskAsync can throw after the row was already committed to
