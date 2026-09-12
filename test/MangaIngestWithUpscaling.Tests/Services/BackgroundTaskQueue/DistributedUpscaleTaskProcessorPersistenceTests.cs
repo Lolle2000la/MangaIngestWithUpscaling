@@ -384,8 +384,9 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
     public async Task PrepareRepairTaskForRemote_WhenWorkerCancelsRepeatedly_ReachesBudgetAndFails()
     {
         // Regression guard: repeated worker disconnects used to requeue forever without bumping the
-        // retry count, defeating the task's RetryFor budget.
-        int taskId = await SeedRepairTaskAsync(retryFor: 3, retryCount: 0);
+        // retry count, defeating the task's RetryFor budget. RepairUpscaleTask now defaults to a
+        // budget of three attempts (initial + two retries), so the third disconnect is terminal.
+        int taskId = await SeedRepairTaskAsync(retryCount: 0);
 
         Assert.False(await InvokePrepareRepairTaskForRemoteAsync(taskId));
         Assert.Equal(PersistedTaskStatus.Pending, await GetStatusAsync(taskId));
@@ -405,8 +406,8 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
     [Trait("Category", "Unit")]
     public async Task PrepareRepairTaskForRemote_WhenWorkerCancelsWithNoRetryBudget_FailsImmediately()
     {
-        // RetryFor <= 1 means a disconnect is terminal, matching the ordinary failure path's replay
-        // rule instead of retrying unboundedly.
+        // A RetryFor of 1 means the first recovery attempt is already at budget, matching the
+        // ordinary failure path's replay rule instead of retrying unboundedly.
         int taskId = await SeedRepairTaskAsync(retryFor: 1, retryCount: 0);
 
         bool prepared = await InvokePrepareRepairTaskForRemoteAsync(taskId);
@@ -447,18 +448,19 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
         Assert.Equal(0, await GetRetryCountAsync(taskId));
     }
 
-    private async Task<int> SeedRepairTaskAsync(int retryFor, int retryCount = 0)
+    private async Task<int> SeedRepairTaskAsync(int? retryFor = null, int retryCount = 0)
     {
         using IServiceScope scope = _provider.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        var data = new RepairUpscaleTask { ChapterId = 999_999, UpscalerProfileId = 999_999 };
+        if (retryFor.HasValue)
+        {
+            data.RetryFor = retryFor.Value;
+        }
+
         var task = new PersistedTask
         {
-            Data = new RepairUpscaleTask
-            {
-                ChapterId = 999_999,
-                UpscalerProfileId = 999_999,
-                RetryFor = retryFor,
-            },
+            Data = data,
             Status = PersistedTaskStatus.Processing,
             RetryCount = retryCount,
             Order = 1,
