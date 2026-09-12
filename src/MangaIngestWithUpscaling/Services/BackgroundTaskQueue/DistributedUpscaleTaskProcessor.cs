@@ -1316,12 +1316,94 @@ public class DistributedUpscaleTaskProcessor(
     ///     Puts a task that was claimed (or was being claimed) by this processor but never
     ///     successfully handed off back into the queue as Pending. This covers a worker disconnect
     ///     during remote-repair preparation as well as a cancellation or unexpected error during or
-    ///     after a plain claim. The database write is guarded so a terminal row is never
-    ///     resurrected; when the row is no longer recoverable the task is simply dropped. Failures
-    ///     are logged and swallowed: the row would then be left for startup recovery, so a database
-    ///     hiccup here must not fault the processor.
+    ///     after a plain claim.
+    ///     <para>
+    ///         A request/worker-cancellation disconnect consumes the task's bounded retry budget:
+    ///         while <c>RetryCount + 1 &lt; RetryFor</c> the row is returned to Pending with an
+    ///         incremented retry count and re-enqueued immediately; once the budget is reached (or
+    ///         when <c>RetryFor</c> is zero) the disconnect is persisted as a terminal failure so it
+    ///         cannot retry forever. Service shutdown does not consume the budget: it falls back to a
+    ///         plain guarded reconcile so startup recovery owns the task.
+    ///     </para>
+    ///     The database writes are guarded so a terminal row is never resurrected; when the row is no
+    ///     longer recoverable the task is simply dropped. Failures are logged and swallowed: the row
+    ///     would then be left for startup recovery, so a database hiccup here must not fault the
+    ///     processor.
     /// </summary>
     private async Task RequeueClaimedTaskAsync(PersistedTask persistedTask)
+    {
+        if (serviceStoppingToken.IsCancellationRequested)
+        {
+            // Service shutdown is not a task failure and must not consume the retry budget.
+            await RequeueWithoutRetryBudgetAsync(persistedTask);
+            return;
+        }
+
+        int retryFor = persistedTask.Data?.RetryFor ?? 0;
+        int next = persistedTask.RetryCount + 1;
+        if (retryFor <= 0 || next >= retryFor)
+        {
+            logger.LogWarning(
+                "Worker disconnect for task {TaskId} reached its retry budget ({Next}/{RetryFor}); marking it Failed instead of retrying.",
+                persistedTask.Id,
+                next,
+                retryFor
+            );
+            await PersistFailedAsync(persistedTask, serviceStoppingToken);
+            return;
+        }
+
+        int affected;
+        try
+        {
+            affected = await taskPersistenceService.RequeueStrandedTaskAsync(
+                persistedTask.Id,
+                serviceStoppingToken,
+                incrementRetry: true
+            );
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to requeue claimed task {TaskId}; leaving it for startup recovery.",
+                persistedTask.Id
+            );
+            return;
+        }
+
+        if (affected == 0)
+        {
+            // The row is already terminal or was removed; do not resurrect it.
+            return;
+        }
+
+        persistedTask.RetryCount = next;
+        persistedTask.Status = PersistedTaskStatus.Pending;
+        try
+        {
+            // The guarded update above already persisted Pending, so re-add to the in-memory
+            // queue without another database write. The sorted set deduplicates by (Order, Id).
+            taskQueue.ReEnqueue(persistedTask);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to re-enqueue claimed task {TaskId}; the periodic replay will recover it.",
+                persistedTask.Id
+            );
+        }
+
+        _ = StatusChanged?.Invoke(persistedTask);
+    }
+
+    /// <summary>
+    ///     The pre-retry-budget reconcile used on service shutdown: returns a still-recoverable row to
+    ///     Pending without touching <c>RetryCount</c> and re-adds it in memory. See
+    ///     <see cref="RequeueClaimedTaskAsync" /> for the budgeted disconnect path.
+    /// </summary>
+    private async Task RequeueWithoutRetryBudgetAsync(PersistedTask persistedTask)
     {
         int affected;
         try
@@ -1343,15 +1425,12 @@ public class DistributedUpscaleTaskProcessor(
 
         if (affected == 0)
         {
-            // The row is already terminal or was removed; do not resurrect it.
             return;
         }
 
         persistedTask.Status = PersistedTaskStatus.Pending;
         try
         {
-            // The guarded update above already persisted Pending, so re-add to the in-memory
-            // queue without another database write. The sorted set deduplicates by (Order, Id).
             taskQueue.ReEnqueue(persistedTask);
         }
         catch (Exception ex)

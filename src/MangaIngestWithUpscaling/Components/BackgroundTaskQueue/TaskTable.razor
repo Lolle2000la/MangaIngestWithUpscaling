@@ -112,6 +112,14 @@
     /// <summary>Selects which registry view this table renders.</summary>
     [Parameter] public bool Upscale { get; set; }
 
+    /// <summary>
+    ///     Optional caller-supplied source. When non-null the table pages from this collection instead
+    ///     of the registry snapshot, preserving the historical API. It is nullable so "not provided"
+    ///     can be distinguished from an empty collection. The default registry-driven behavior is
+    ///     used when it is not supplied.
+    /// </summary>
+    [Parameter] public IReadOnlyCollection<PersistedTask>? Tasks { get; set; }
+
     [Parameter] public string Title { get; set; } = "Tasks";
 
     [Parameter] public EventCallback OnClearCompleted { get; set; } = EventCallback.Empty;
@@ -227,11 +235,13 @@
         CancellationToken cancellationToken
     )
     {
-        // Materialize only the requested page. The default order reuses the registry's pre-sorted
-        // snapshot; an explicit column sort orders the snapshot once per reload (not per render).
-        IReadOnlyList<PersistedTask> source = Upscale
-            ? TaskRegistry.GetUpscaleSnapshot()
-            : TaskRegistry.GetStandardSnapshot();
+        // Materialize only the requested page. Both sources are used in their existing order for
+        // the default view; an explicit column sort orders the source once per reload. The
+        // registry's snapshots are already sorted, so the default ordering is identical for a
+        // caller-supplied collection that comes from the same registry view.
+        IReadOnlyCollection<PersistedTask> source =
+            Tasks
+            ?? (Upscale ? TaskRegistry.GetUpscaleSnapshot() : TaskRegistry.GetStandardSnapshot());
 
         IEnumerable<PersistedTask> ordered = ApplySort(source, state);
         int skip = state.Page * state.PageSize;

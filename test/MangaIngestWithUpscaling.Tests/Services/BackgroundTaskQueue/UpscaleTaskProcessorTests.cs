@@ -204,9 +204,9 @@ public class UpscaleTaskProcessorTests : IDisposable
     [Trait("Category", "Unit")]
     public async Task ExecuteAsync_WhenClaimThrows_RecoversFailedTaskAndProcessesTheNext()
     {
-        // Regression guard: a claim failure must not fault ExecuteAsync, be silently dropped, or be
-        // re-enqueued into a hot loop. The failed task is reconciled to Pending and the next task
-        // is processed.
+        // Regression guard: a claim failure must not fault ExecuteAsync or be silently dropped.
+        // The failed task is reconciled to Pending and retried promptly, so it is processed before
+        // the next task rather than waiting for the periodic replayer.
         bool firstClaim = true;
         var persistence = Substitute.For<ITaskPersistenceService>();
         persistence
@@ -225,7 +225,7 @@ public class UpscaleTaskProcessorTests : IDisposable
             .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(1));
 
-        var processor = new UpscaleTaskProcessor(
+        var processor = new FastRetryUpscaleTaskProcessor(
             _taskQueue,
             _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
             _mockOptions,
@@ -255,7 +255,7 @@ public class UpscaleTaskProcessorTests : IDisposable
             TestContext.Current.CancellationToken
         );
 
-        Assert.Equal(2, ((UpscaleTask)processedTask.Data).ChapterId);
+        Assert.Equal(1, ((UpscaleTask)processedTask.Data).ChapterId);
         await persistence
             .Received(1)
             .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>());
@@ -270,7 +270,7 @@ public class UpscaleTaskProcessorTests : IDisposable
     public async Task ExecuteAsync_WhenClaimFailsPersistently_DoesNotHotLoopAndKeepsServingOtherTasks()
     {
         // Regression guard: a persistent claim failure must not spin on the same task and starve
-        // later tasks.
+        // later tasks. It is retried a bounded number of times and the later task still runs.
         var persistence = Substitute.For<ITaskPersistenceService>();
         int failedClaimCalls = 0;
         int failedTaskId;
@@ -295,7 +295,7 @@ public class UpscaleTaskProcessorTests : IDisposable
             .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(1));
 
-        var processor = new UpscaleTaskProcessor(
+        var processor = new FastRetryUpscaleTaskProcessor(
             _taskQueue,
             _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
             _mockOptions,
@@ -324,7 +324,7 @@ public class UpscaleTaskProcessorTests : IDisposable
 
         Assert.Equal(2, ((UpscaleTask)processedTask.Data).ChapterId);
         await Task.Delay(300, TestContext.Current.CancellationToken);
-        Assert.Equal(1, Volatile.Read(ref failedClaimCalls));
+        Assert.Equal(4, Volatile.Read(ref failedClaimCalls));
 
         await cts.CancelAsync();
         await processor.StopAsync(CancellationToken.None);
@@ -514,6 +514,36 @@ public class UpscaleTaskProcessorTests : IDisposable
             PersistedTask task,
             CancellationToken cancellationToken
         ) => ProcessTaskAsync(task, cancellationToken);
+    }
+
+    /// <summary>
+    ///     Processor with a tiny, deterministic claim-retry backoff so bounded-retry tests run fast.
+    /// </summary>
+    private sealed class FastRetryUpscaleTaskProcessor(
+        TaskQueue taskQueue,
+        IServiceScopeFactory scopeFactory,
+        IOptions<UpscalerConfig> upscalerConfig,
+        ILogger<UpscaleTaskProcessor> logger,
+        ITaskPersistenceService taskPersistenceService,
+        IPreprocessedInputCache preprocessedCache
+    )
+        : UpscaleTaskProcessor(
+            taskQueue,
+            scopeFactory,
+            upscalerConfig,
+            logger,
+            taskPersistenceService,
+            preprocessedCache
+        )
+    {
+        private static readonly IReadOnlyList<TimeSpan> TinyBackoff = new[]
+        {
+            TimeSpan.FromMilliseconds(1),
+            TimeSpan.FromMilliseconds(1),
+            TimeSpan.FromMilliseconds(1),
+        };
+
+        protected override IReadOnlyList<TimeSpan> ClaimRetryBackoff => TinyBackoff;
     }
 
     private sealed class NoOpTask : BaseTask

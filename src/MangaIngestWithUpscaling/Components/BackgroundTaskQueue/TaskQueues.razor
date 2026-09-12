@@ -164,7 +164,7 @@
         catch (Exception ex)
         {
             Logger.LogError(ex, "Failed to move task {TaskId} to the front", task.Id);
-            Snackbar.Add("Failed to move task to the front: " + ex.Message, Severity.Error);
+            Snackbar.Add(string.Format(Loc["Error_RunNow"], ex.Message), Severity.Error);
             StateHasChanged();
         }
     }

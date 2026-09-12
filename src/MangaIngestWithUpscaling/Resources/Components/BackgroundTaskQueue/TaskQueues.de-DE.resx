@@ -76,4 +76,7 @@
   <data name="Error_ClearFailed" xml:space="preserve">
     <value>Fehler beim Löschen fehlgeschlagener Aufgaben: {0}</value>
   </data>
+  <data name="Error_RunNow" xml:space="preserve">
+    <value>Fehler beim Verschieben der Aufgabe nach vorne: {0}</value>
+  </data>
 </root>

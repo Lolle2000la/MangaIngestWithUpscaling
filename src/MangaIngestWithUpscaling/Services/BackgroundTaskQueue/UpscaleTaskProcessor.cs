@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Threading.Channels;
 using AutoRegisterInject;
@@ -25,11 +26,23 @@ public class UpscaleTaskProcessor(
     private readonly ChannelReader<object> _reader = taskQueue.UpscaleReader;
     private readonly ChannelReader<PersistedTask> _reroutedReader = taskQueue.ReroutedUpscaleReader;
     private readonly PrefetchCoordinator _coordinator = new();
+
+    // Consecutive transient claim/reroute-verification failures per task. See
+    // StandardTaskProcessor.ClaimRetryBackoff for the retry policy.
+    private readonly ConcurrentDictionary<int, int> _claimAttempts = new();
     private CancellationTokenSource? currentStoppingToken;
     private PersistedTask? currentTask;
     private CancellationToken serviceStoppingToken;
 
     public event Func<PersistedTask, Task>? StatusChanged;
+
+    /// <summary>
+    ///     Backoff applied before promptly retrying a transient claim or reroute-verification
+    ///     failure. Once a task has failed more times than there are entries it is left Pending for
+    ///     the periodic replayer. Virtual so tests can substitute tiny delays.
+    /// </summary>
+    protected virtual IReadOnlyList<TimeSpan> ClaimRetryBackoff { get; } =
+        new[] { TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3) };
 
     /// <summary>
     /// Cancels the current task if it matches the given task.
@@ -214,21 +227,23 @@ public class UpscaleTaskProcessor(
                 // already removed from the in-memory queue, so persist the intended cancel rather
                 // than silently dropping it. On service shutdown the task is put back to Pending.
                 logger.LogInformation("Claim of task {TaskId} was canceled", task.Id);
+                _claimAttempts.TryRemove(task.Id, out _);
                 await ApplyClaimCancellationAsync(task);
                 return;
             }
             catch (Exception ex)
             {
-                // Do not re-enqueue: re-adding the same task put it straight back at the head of
-                // the sorted set, so a persistent claim failure spun forever and starved every
-                // later task. Reconcile the row to Pending (guarded, no retry bump) and leave it
-                // for the periodic replayer/startup recovery.
+                // A transient claim failure is retried promptly (with a bounded backoff) so it does
+                // not have to wait for the 10-minute periodic replayer, but a persistent failure is
+                // left Pending after a bounded number of attempts so it cannot hot-loop or starve
+                // later tasks. The row is reconciled to Pending first, so the task is never lost.
                 logger.LogError(
                     ex,
-                    "Failed to claim task {TaskId}; returning it to Pending for later replay",
+                    "Failed to claim task {TaskId}; returning it to Pending for retry",
                     task.Id
                 );
                 await ReturnToPendingForReplayAsync(task);
+                await RequeueTransientClaimFailureAsync(task, stoppingToken);
                 return;
             }
 
@@ -241,6 +256,7 @@ public class UpscaleTaskProcessor(
                     "Task {TaskId} could not be claimed (already processed or concurrency conflict)",
                     task.Id
                 );
+                _claimAttempts.TryRemove(task.Id, out _);
                 return;
             }
         }
@@ -280,16 +296,17 @@ public class UpscaleTaskProcessor(
             }
             catch (Exception ex)
             {
-                // A persistent verification failure must not silently drop the rerouted task and
-                // strand its Processing row. Reconcile it to Pending and let the replayer recover
-                // it instead of re-enqueueing, which would hot-loop this local processor on the
-                // same failure.
+                // A transient verification failure is retried promptly (with a bounded backoff) so
+                // it does not have to wait for the 10-minute periodic replayer, but a persistent
+                // failure is left Pending after a bounded number of attempts so it cannot hot-loop
+                // this local processor or strand its Processing row.
                 logger.LogError(
                     ex,
-                    "Failed to verify rerouted task {TaskId}; returning it to Pending for later replay",
+                    "Failed to verify rerouted task {TaskId}; returning it to Pending for retry",
                     task.Id
                 );
                 await ReturnToPendingForReplayAsync(task);
+                await RequeueTransientClaimFailureAsync(task, stoppingToken);
                 return;
             }
 
@@ -302,6 +319,10 @@ public class UpscaleTaskProcessor(
                 return;
             }
         }
+
+        // The claim (or reroute verification) succeeded, so any earlier transient failures are
+        // resolved.
+        _claimAttempts.TryRemove(task.Id, out _);
 
         // Update the in-memory task status
         task.Status = PersistedTaskStatus.Processing;
@@ -435,6 +456,44 @@ public class UpscaleTaskProcessor(
             task.Status = PersistedTaskStatus.Pending;
             StatusChanged?.Invoke(task);
         }
+    }
+
+    /// <summary>
+    ///     Re-adds a task whose transient claim or reroute-verification failure was already
+    ///     reconciled to Pending so the processor loop retries it promptly, up to
+    ///     <see cref="ClaimRetryBackoff"/>'.Length times. Once the budget is exhausted (or the
+    ///     processor is stopping) the task is left Pending for the periodic replayer.
+    /// </summary>
+    private async Task RequeueTransientClaimFailureAsync(
+        PersistedTask task,
+        CancellationToken stoppingToken
+    )
+    {
+        int attempt = _claimAttempts.AddOrUpdate(task.Id, 1, (_, current) => current + 1);
+        if (attempt > ClaimRetryBackoff.Count)
+        {
+            _claimAttempts.TryRemove(task.Id, out _);
+            logger.LogWarning(
+                "Task {TaskId} could not be claimed after {Attempts} attempts; leaving it Pending for the periodic replayer.",
+                task.Id,
+                attempt
+            );
+            return;
+        }
+
+        try
+        {
+            await Task.Delay(ClaimRetryBackoff[attempt - 1], stoppingToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // The processor is stopping or the task was cancelled while we waited. The row is
+            // already Pending, so replay/startup recovery owns it; this is not a claim failure.
+            _claimAttempts.TryRemove(task.Id, out _);
+            return;
+        }
+
+        taskQueue.ReEnqueue(task);
     }
 
     /// <summary>

@@ -128,16 +128,18 @@ public class StandardTaskProcessorTests : IDisposable
     public Task ExecuteAsync_WhenClaimThrows_RecoversFailedTaskAndKeepsProcessingSubsequentTasks() =>
         RunClaimFailureScenarioAsync(
             new InvalidOperationException("claim failed"),
-            expectedFirstProcessed: "second"
+            // The failure is retried promptly, so the same task is processed first after the
+            // retry succeeds rather than being dropped for the periodic replayer.
+            expectedFirstProcessed: "first"
         );
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task ExecuteAsync_WhenClaimFailsPersistently_DoesNotHotLoopAndKeepsServingOtherTasks()
+    public async Task ExecuteAsync_WhenClaimFailsPersistently_RetriesBoundedTimesAndKeepsServingOtherTasks()
     {
         // Regression guard: a persistent claim failure used to re-enqueue the same task at the
         // head of the sorted set, spinning unboundedly and starving every later task. The failed
-        // task must be attempted a bounded number of times, left recoverable, and the innocent
+        // task must be retried a bounded number of times, left recoverable, and the innocent
         // task behind it must still run.
         var persistence = Substitute.For<ITaskPersistenceService>();
         int failedClaimCalls = 0;
@@ -163,7 +165,7 @@ public class StandardTaskProcessorTests : IDisposable
             .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(1));
 
-        var processor = new StandardTaskProcessor(
+        var processor = new FastRetryStandardTaskProcessor(
             _taskQueue,
             _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
             _mockLogger,
@@ -190,13 +192,15 @@ public class StandardTaskProcessorTests : IDisposable
 
         Assert.Equal("innocent", ((LoggingTask)processedTask.Data).Message);
 
-        // Give a hot loop time to reveal itself, then assert the attempts are bounded.
+        // Give a hot loop time to reveal itself, then assert the attempts are bounded: one initial
+        // attempt plus the three retries of the tiny test backoff.
         await Task.Delay(300, TestContext.Current.CancellationToken);
-        Assert.Equal(1, Volatile.Read(ref failedClaimCalls));
+        Assert.Equal(4, Volatile.Read(ref failedClaimCalls));
 
-        // The poisoned task was handed back to Pending for the periodic replayer, not lost.
+        // The poisoned task was handed back to Pending for the periodic replayer, not lost. It was
+        // reconciled on every failed attempt.
         await persistence
-            .Received(1)
+            .Received(4)
             .RequeueStrandedTaskAsync(failedTaskId, Arg.Any<CancellationToken>());
 
         using (var scope = _serviceProvider.CreateScope())
@@ -207,6 +211,141 @@ public class StandardTaskProcessorTests : IDisposable
                 .FirstAsync(t => t.Id == failedTaskId, TestContext.Current.CancellationToken);
             Assert.Equal(PersistedTaskStatus.Pending, row.Status);
         }
+
+        await cts.CancelAsync();
+        await processor.StopAsync(CancellationToken.None);
+        Assert.False(IsExecuteTaskFaulted(processor));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ExecuteAsync_WhenClaimFailsTransiently_RetriesPromptlyAndCompletesWithoutReplayer()
+    {
+        // A transient claim failure must be retried promptly and complete instead of waiting up to
+        // ten minutes for the periodic replayer. A dedicated provider with logging is used so the
+        // task can actually run to completion; the shared test provider intentionally has no logger.
+        var services = new ServiceCollection();
+        services.AddDbContext<ApplicationDbContext>(options =>
+            options.UseInMemoryDatabase($"TestDb_TransientRetry_{Guid.NewGuid()}")
+        );
+        services.AddLogging();
+        var cleanup = Substitute.For<IQueueCleanup>();
+        cleanup.CleanupAsync().Returns(Task.FromResult<IReadOnlyList<int>>(Array.Empty<int>()));
+        services.AddScoped<IQueueCleanup>(_ => cleanup);
+        using ServiceProvider provider = services.BuildServiceProvider();
+
+        var queue = new TaskQueue(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            Substitute.For<ILogger<TaskQueue>>()
+        );
+
+        var persistence = Substitute.For<ITaskPersistenceService>();
+        int claimCalls = 0;
+        persistence
+            .ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(_ =>
+            {
+                if (Interlocked.Increment(ref claimCalls) == 1)
+                {
+                    throw new InvalidOperationException("transient claim failure");
+                }
+
+                return Task.FromResult(true);
+            });
+        persistence
+            .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(1));
+        persistence.CompleteTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(1);
+
+        var processor = new FastRetryStandardTaskProcessor(
+            queue,
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            _mockLogger,
+            persistence
+        );
+
+        int completed = 0;
+        processor.StatusChanged += task =>
+        {
+            if (task.Status == PersistedTaskStatus.Completed)
+            {
+                Interlocked.Increment(ref completed);
+            }
+            return Task.CompletedTask;
+        };
+
+        await queue.EnqueueAsync(new LoggingTask { Message = "retry-me" });
+        int taskId = queue.GetStandardSnapshot().Single().Id;
+
+        using var cts = new CancellationTokenSource();
+        await processor.StartAsync(cts.Token);
+
+        DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (Volatile.Read(ref completed) == 0 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(1, Volatile.Read(ref completed));
+        Assert.Equal(2, Volatile.Read(ref claimCalls));
+        await persistence
+            .Received(1)
+            .RequeueStrandedTaskAsync(taskId, Arg.Any<CancellationToken>());
+
+        await cts.CancelAsync();
+        await processor.StopAsync(CancellationToken.None);
+        Assert.False(IsExecuteTaskFaulted(processor));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ExecuteAsync_WhenClaimFailsRepeatedly_DoesNotCreateDuplicateQueueEntries()
+    {
+        // Re-enqueueing a failed task must reuse the same in-memory instance; the sorted set must
+        // never hold more than one entry for the task.
+        var persistence = Substitute.For<ITaskPersistenceService>();
+        int claimCalls = 0;
+        persistence
+            .ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(_ => FailClaimAsync());
+
+        Task<bool> FailClaimAsync()
+        {
+            Interlocked.Increment(ref claimCalls);
+            throw new InvalidOperationException("persistent claim failure");
+        }
+
+        persistence
+            .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(1));
+
+        var processor = new FastRetryStandardTaskProcessor(
+            _taskQueue,
+            _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+            _mockLogger,
+            persistence
+        );
+
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "dup" });
+        int taskId = _taskQueue.GetStandardSnapshot().Single().Id;
+
+        using var cts = new CancellationTokenSource();
+        await processor.StartAsync(cts.Token);
+
+        DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (Volatile.Read(ref claimCalls) < 4 && DateTime.UtcNow < deadline)
+        {
+            Assert.True(
+                _taskQueue.GetStandardSnapshot().Count(t => t.Id == taskId) <= 1,
+                "the task must never be duplicated in the queue"
+            );
+            await Task.Delay(5, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(4, Volatile.Read(ref claimCalls));
+        // The budget is exhausted, so the task is left for the periodic replayer rather than
+        // re-enqueued again.
+        Assert.DoesNotContain(_taskQueue.GetStandardSnapshot(), t => t.Id == taskId);
 
         await cts.CancelAsync();
         await processor.StopAsync(CancellationToken.None);
@@ -450,6 +589,26 @@ public class StandardTaskProcessorTests : IDisposable
             PersistedTask task,
             CancellationToken cancellationToken
         ) => ProcessTaskAsync(task, cancellationToken);
+    }
+
+    /// <summary>
+    ///     Processor with a tiny, deterministic claim-retry backoff so bounded-retry tests run fast.
+    /// </summary>
+    private sealed class FastRetryStandardTaskProcessor(
+        TaskQueue taskQueue,
+        IServiceScopeFactory scopeFactory,
+        ILogger<StandardTaskProcessor> logger,
+        ITaskPersistenceService taskPersistenceService
+    ) : StandardTaskProcessor(taskQueue, scopeFactory, logger, taskPersistenceService)
+    {
+        private static readonly IReadOnlyList<TimeSpan> TinyBackoff = new[]
+        {
+            TimeSpan.FromMilliseconds(1),
+            TimeSpan.FromMilliseconds(1),
+            TimeSpan.FromMilliseconds(1),
+        };
+
+        protected override IReadOnlyList<TimeSpan> ClaimRetryBackoff => TinyBackoff;
     }
 
     private sealed class NoOpTask : BaseTask
