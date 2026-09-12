@@ -1,7 +1,5 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Threading.Channels;
-using AutoRegisterInject;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
@@ -19,62 +17,39 @@ public class UpscaleTaskProcessor(
     ILogger<UpscaleTaskProcessor> logger,
     ITaskPersistenceService taskPersistenceService,
     IPreprocessedInputCache preprocessedCache
-) : BackgroundService
+) : BackgroundTaskProcessorBase(taskQueue, scopeFactory, logger, taskPersistenceService)
 {
-    private readonly Lock _lock = new();
-    private readonly TimeSpan _progressDebounce = TimeSpan.FromMilliseconds(250);
-    private readonly ChannelReader<object> _reader = taskQueue.UpscaleReader;
-    private readonly ChannelReader<PersistedTask> _reroutedReader = taskQueue.ReroutedUpscaleReader;
+    private ChannelReader<object> Reader => TaskQueue.UpscaleReader;
+    private ChannelReader<PersistedTask> ReroutedReader => TaskQueue.ReroutedUpscaleReader;
     private readonly PrefetchCoordinator _coordinator = new();
 
-    // Consecutive transient claim/reroute-verification failures per task. See
-    // StandardTaskProcessor.ClaimRetryBackoff for the retry policy.
-    private readonly ConcurrentDictionary<int, int> _claimAttempts = new();
-    private CancellationTokenSource? currentStoppingToken;
-    private PersistedTask? currentTask;
-    private CancellationToken serviceStoppingToken;
+    protected override string ProcessingFailedLogMessage => "Upscale task {TaskId} failed";
 
-    public event Func<PersistedTask, Task>? StatusChanged;
-
-    /// <summary>
-    ///     Backoff applied before promptly retrying a transient claim or reroute-verification
-    ///     failure. Once a task has failed more times than there are entries it is left Pending for
-    ///     the periodic replayer. Virtual so tests can substitute tiny delays.
-    /// </summary>
-    protected virtual IReadOnlyList<TimeSpan> ClaimRetryBackoff { get; } =
-        new[] { TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3) };
-
-    /// <summary>
-    /// Cancels the current task if it matches the given task.
-    /// The task is necessary to prevent canceling another if the task has already been processed.
-    /// Otherwise, consistency issues may arise.
-    /// </summary>
-    /// <param name="checkAgainst">The task to check against if it is still the current task. Does so by using the Id.</param>
-    public void CancelCurrent(PersistedTask checkAgainst)
+    protected override void OnTaskAcquired(PersistedTask task)
     {
-        using (_lock.EnterScope())
+        _coordinator.Reset();
+        // Reset any phase left over from a previous attempt so a stale "finalizing" doesn't
+        // bleed into this run's status.
+        task.Data.Progress.Phase = null;
+    }
+
+    protected override void OnProgressChanged(PersistedTask task)
+    {
+        // Trigger the next task's prefetch when the predictor says it's time.
+        if (
+            _coordinator.OnProgress(
+                task.Data.Progress.Total,
+                task.Data.Progress.Current,
+                task.Data.Progress.Phase
+            )
+        )
         {
-            if (currentTask?.Id == checkAgainst.Id)
-            {
-                currentStoppingToken?.Cancel();
-            }
+            _ = PrefetchNextAsync(task, ServiceStoppingToken);
         }
     }
 
-    private Task OnTaskRemoved(PersistedTask task)
+    protected override async Task RunAsync(CancellationToken stoppingToken)
     {
-        CancelCurrent(task);
-        return Task.CompletedTask;
-    }
-
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        serviceStoppingToken = stoppingToken;
-
-        // Removal is an authoritative stop signal: if the queue removes the task this processor is
-        // currently running, stop it rather than finish work against a deleted row.
-        taskQueue.TaskRemoved += OnTaskRemoved;
-
         if (upscalerConfig.Value.RemoteOnly)
         {
             // The local ML backend is disabled, so genuine upscaling must not run here. However,
@@ -87,22 +62,17 @@ public class UpscaleTaskProcessor(
                 PersistedTask rerouted;
                 try
                 {
-                    rerouted = await _reroutedReader.ReadAsync(stoppingToken);
+                    rerouted = await ReroutedReader.ReadAsync(stoppingToken);
                 }
                 catch (OperationCanceledException)
                 {
                     break;
                 }
 
-                CancellationTokenSource taskStoppingToken;
-                using (_lock.EnterScope())
-                {
-                    currentStoppingToken = CancellationTokenSource.CreateLinkedTokenSource(
-                        stoppingToken
-                    );
-                    taskStoppingToken = currentStoppingToken;
-                    currentTask = rerouted;
-                }
+                CancellationTokenSource taskStoppingToken = BeginCurrentTask(
+                    rerouted,
+                    stoppingToken
+                );
 
                 try
                 {
@@ -122,7 +92,7 @@ public class UpscaleTaskProcessor(
             PersistedTask? task = null;
 
             // Priority 1: Rerouted tasks (already claimed or specialized)
-            if (_reroutedReader.TryRead(out var rerouted))
+            if (ReroutedReader.TryRead(out var rerouted))
             {
                 task = rerouted;
             }
@@ -133,14 +103,14 @@ public class UpscaleTaskProcessor(
                 using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
                     stoppingToken
                 );
-                var reroutedWait = _reroutedReader.WaitToReadAsync(linkedCts.Token).AsTask();
-                var signalWait = _reader.WaitToReadAsync(linkedCts.Token).AsTask();
+                var reroutedWait = ReroutedReader.WaitToReadAsync(linkedCts.Token).AsTask();
+                var signalWait = Reader.WaitToReadAsync(linkedCts.Token).AsTask();
 
                 var completed = await Task.WhenAny(reroutedWait, signalWait);
 
                 if (completed == reroutedWait && await reroutedWait)
                 {
-                    if (_reroutedReader.TryRead(out var r))
+                    if (ReroutedReader.TryRead(out var r))
                     {
                         task = r;
                     }
@@ -148,13 +118,13 @@ public class UpscaleTaskProcessor(
                 else if (completed == signalWait && await signalWait)
                 {
                     // Check rerouted one last time before consuming a signal
-                    if (_reroutedReader.TryRead(out var r))
+                    if (ReroutedReader.TryRead(out var r))
                     {
                         task = r;
                     }
-                    else if (_reader.TryRead(out _))
+                    else if (Reader.TryRead(out _))
                     {
-                        task = taskQueue.DequeueUpscale();
+                        task = TaskQueue.DequeueUpscale();
                     }
                 }
 
@@ -167,15 +137,7 @@ public class UpscaleTaskProcessor(
                 continue;
             }
 
-            CancellationTokenSource taskStoppingToken;
-            using (_lock.EnterScope())
-            {
-                currentStoppingToken = CancellationTokenSource.CreateLinkedTokenSource(
-                    stoppingToken
-                );
-                taskStoppingToken = currentStoppingToken;
-                currentTask = task;
-            }
+            CancellationTokenSource taskStoppingToken = BeginCurrentTask(task, stoppingToken);
 
             try
             {
@@ -188,339 +150,73 @@ public class UpscaleTaskProcessor(
         }
     }
 
-    /// <summary>
-    ///     Disposes the per-task cancellation source once its task is done so it is not leaked
-    ///     across tasks. Disposal is serialized with <see cref="CancelCurrent" /> by <c>_lock</c>.
-    /// </summary>
-    private void DisposeCurrentStoppingToken(CancellationTokenSource taskStoppingToken)
-    {
-        using (_lock.EnterScope())
-        {
-            if (ReferenceEquals(currentStoppingToken, taskStoppingToken))
-            {
-                currentStoppingToken.Dispose();
-                currentStoppingToken = null;
-                currentTask = null;
-            }
-        }
-    }
-
-    protected async Task ProcessTaskAsync(PersistedTask task, CancellationToken stoppingToken)
-    {
-        // A task that arrives already Processing was claimed and rerouted by the distributed
-        // processor. A task from the main queue is Pending and must be claimed here.
-        bool alreadyClaimed = task.Status == PersistedTaskStatus.Processing;
-
-        if (!alreadyClaimed)
-        {
-            // A claim failure (per-task cancellation from CancelCurrent/removal, or a transient
-            // database error) must not fault ExecuteAsync: under
-            // BackgroundServiceExceptionBehavior.StopHost that would stop the whole application.
-            bool claimed;
-            try
-            {
-                claimed = await taskPersistenceService.ClaimTaskAsync(task.Id, stoppingToken);
-            }
-            catch (OperationCanceledException)
-            {
-                // CancelCurrent (removal or an explicit cancel) cancelled this token. The task was
-                // already removed from the in-memory queue, so persist the intended cancel rather
-                // than silently dropping it. On service shutdown the task is put back to Pending.
-                logger.LogInformation("Claim of task {TaskId} was canceled", task.Id);
-                _claimAttempts.TryRemove(task.Id, out _);
-                await ApplyClaimCancellationAsync(task);
-                return;
-            }
-            catch (Exception ex)
-            {
-                // A transient claim failure is retried promptly (with a bounded backoff) so it does
-                // not have to wait for the 10-minute periodic replayer, but a persistent failure is
-                // left Pending after a bounded number of attempts so it cannot hot-loop or starve
-                // later tasks. The row is reconciled to Pending first, so the task is never lost.
-                logger.LogError(
-                    ex,
-                    "Failed to claim task {TaskId}; returning it to Pending for retry",
-                    task.Id
-                );
-                await ReturnToPendingForReplayAsync(task);
-                await RequeueTransientClaimFailureAsync(task, stoppingToken);
-                return;
-            }
-
-            if (!claimed)
-            {
-                // The row is no longer Pending (already claimed elsewhere or terminal), so dropping
-                // the in-memory copy is correct: re-adding it would spin on a task this processor
-                // cannot own.
-                logger.LogInformation(
-                    "Task {TaskId} could not be claimed (already processed or concurrency conflict)",
-                    task.Id
-                );
-                _claimAttempts.TryRemove(task.Id, out _);
-                return;
-            }
-        }
-        else
-        {
-            // Removal does not reach the local reroute channel, so the row may have been deleted
-            // (or finalized/canceled) while the task sat there. Verify it is still in a state that
-            // should be executed before running the work: a terminal row must not produce side
-            // effects only for the subsequent guarded CompleteTaskAsync to affect no rows.
-            using var checkScope = scopeFactory.CreateScope();
-            var dbContext = checkScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-            bool rowActive;
-            try
-            {
-                rowActive = await dbContext.PersistedTasks.AnyAsync(
-                    t =>
-                        t.Id == task.Id
-                        && (
-                            t.Status == PersistedTaskStatus.Pending
-                            || t.Status == PersistedTaskStatus.Processing
-                        ),
-                    stoppingToken
-                );
-            }
-            catch (OperationCanceledException)
-            {
-                // The distributed processor claimed and rerouted this task, so it is not in
-                // runningTasks and CancelCurrent could not reach it. The cancellation must not be
-                // dropped here, or the row would stay Processing and out of every queue; apply the
-                // intended cancel just as the claim-cancellation path does.
-                logger.LogInformation(
-                    "Verification of rerouted task {TaskId} was canceled",
-                    task.Id
-                );
-                await ApplyClaimCancellationAsync(task);
-                return;
-            }
-            catch (Exception ex)
-            {
-                // A transient verification failure is retried promptly (with a bounded backoff) so
-                // it does not have to wait for the 10-minute periodic replayer, but a persistent
-                // failure is left Pending after a bounded number of attempts so it cannot hot-loop
-                // this local processor or strand its Processing row.
-                logger.LogError(
-                    ex,
-                    "Failed to verify rerouted task {TaskId}; returning it to Pending for retry",
-                    task.Id
-                );
-                await ReturnToPendingForReplayAsync(task);
-                await RequeueTransientClaimFailureAsync(task, stoppingToken);
-                return;
-            }
-
-            if (!rowActive)
-            {
-                logger.LogInformation(
-                    "Skipping rerouted task {TaskId} because its database row is missing or no longer active.",
-                    task.Id
-                );
-                return;
-            }
-        }
-
-        // The claim (or reroute verification) succeeded, so any earlier transient failures are
-        // resolved.
-        _claimAttempts.TryRemove(task.Id, out _);
-
-        // Update the in-memory task status
-        task.Status = PersistedTaskStatus.Processing;
-        _ = StatusChanged?.Invoke(task);
-
-        using var scope = scopeFactory.CreateScope();
-
-        _coordinator.Reset();
-        // Reset any phase left over from a previous attempt so a stale "finalizing" doesn't
-        // bleed into this run's status.
-        task.Data.Progress.Phase = null;
-
-        try
-        {
-            // Forward progress changes to UI by raising StatusChanged (debounced), and
-            // trigger the next task's prefetch when the predictor says it's time.
-            var last = DateTime.UtcNow;
-            using var progressSubscription = task.Data.Progress.Changed.Subscribe(e =>
-            {
-                if (
-                    _coordinator.OnProgress(
-                        task.Data.Progress.Total,
-                        task.Data.Progress.Current,
-                        task.Data.Progress.Phase
-                    )
-                )
-                {
-                    _ = PrefetchNextAsync(task, serviceStoppingToken);
-                }
-
-                var now = DateTime.UtcNow;
-                if (now - last >= _progressDebounce)
-                {
-                    last = now;
-                    _ = StatusChanged?.Invoke(task);
-                }
-            });
-
-            await task.Data.ProcessAsync(scope.ServiceProvider, stoppingToken);
-            _ = StatusChanged?.Invoke(task);
-
-            int completedRows = await taskPersistenceService.CompleteTaskAsync(task.Id);
-
-            // A guarded terminal write affects no row when the task was concurrently canceled or
-            // removed. The database is the source of truth then, so do not overwrite the in-memory
-            // (and UI) state with a contradictory Completed status.
-            if (completedRows == 0)
-            {
-                return;
-            }
-
-            // Update in-memory task to match
-            task.Status = PersistedTaskStatus.Completed;
-            task.ProcessedAt = DateTime.UtcNow;
-            _ = StatusChanged?.Invoke(task);
-        }
-        catch (OperationCanceledException)
-        {
-            logger.LogInformation("Task {TaskId} was canceled", task.Id);
-
-            try
-            {
-                bool requeue = serviceStoppingToken.IsCancellationRequested;
-                int canceledRows = await taskPersistenceService.CancelTaskAsync(task.Id, requeue);
-
-                // The row may already be terminal; do not mirror a contradictory Canceled status.
-                if (canceledRows == 0)
-                {
-                    return;
-                }
-
-                // Update in-memory task
-                task.Status = requeue ? PersistedTaskStatus.Pending : PersistedTaskStatus.Canceled;
-                StatusChanged?.Invoke(task);
-            }
-            catch (Exception dbEx)
-            {
-                logger.LogError(dbEx, "Failed to update task {TaskId} status", task.Id);
-            }
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Upscale task {TaskId} failed", task.Id);
-
-            try
-            {
-                int failedRows = await taskPersistenceService.FailTaskAsync(task.Id);
-                if (failedRows == 0)
-                {
-                    // Already terminal (e.g. concurrently canceled); do not emit a contradictory
-                    // Failed status or inflate the in-memory retry count.
-                    return;
-                }
-
-                // Update in-memory task
-                task.Status = PersistedTaskStatus.Failed;
-                task.RetryCount++;
-                StatusChanged?.Invoke(task);
-            }
-            catch (Exception dbEx)
-            {
-                logger.LogError(dbEx, "Failed to update task {TaskId} status", task.Id);
-            }
-        }
-    }
-
-    /// <summary>
-    ///     Best-effort reconcile of a task whose claim or reroute verification failed: the guarded
-    ///     write returns a Processing (or Pending) row to Pending without bumping the retry count and
-    ///     never touches a terminal row. Recovery is then the periodic replayer's job. Errors are
-    ///     logged and swallowed so a database hiccup here cannot fault the processor.
-    /// </summary>
-    private async Task ReturnToPendingForReplayAsync(PersistedTask task)
-    {
-        int affected;
-        try
-        {
-            affected = await taskPersistenceService.RequeueStrandedTaskAsync(
-                task.Id,
-                CancellationToken.None
-            );
-        }
-        catch (Exception dbEx)
-        {
-            logger.LogError(dbEx, "Failed to reconcile task {TaskId} to Pending", task.Id);
-            return;
-        }
-
-        if (affected > 0 && task.Status != PersistedTaskStatus.Pending)
-        {
-            task.Status = PersistedTaskStatus.Pending;
-            StatusChanged?.Invoke(task);
-        }
-    }
-
-    /// <summary>
-    ///     Re-adds a task whose transient claim or reroute-verification failure was already
-    ///     reconciled to Pending so the processor loop retries it promptly, up to
-    ///     <see cref="ClaimRetryBackoff"/>'.Length times. Once the budget is exhausted (or the
-    ///     processor is stopping) the task is left Pending for the periodic replayer.
-    /// </summary>
-    private async Task RequeueTransientClaimFailureAsync(
+    protected override async Task<bool> TryAcquireTaskAsync(
         PersistedTask task,
         CancellationToken stoppingToken
     )
     {
-        int attempt = _claimAttempts.AddOrUpdate(task.Id, 1, (_, current) => current + 1);
-        if (attempt > ClaimRetryBackoff.Count)
+        // A task that arrives already Processing was claimed and rerouted by the distributed
+        // processor. A task from the main queue is Pending and must be claimed here.
+        if (task.Status != PersistedTaskStatus.Processing)
         {
-            _claimAttempts.TryRemove(task.Id, out _);
-            logger.LogWarning(
-                "Task {TaskId} could not be claimed after {Attempts} attempts; leaving it Pending for the periodic replayer.",
-                task.Id,
-                attempt
-            );
-            return;
+            return await ClaimAsync(task, stoppingToken);
         }
 
+        // Removal does not reach the local reroute channel, so the row may have been deleted
+        // (or finalized/canceled) while the task sat there. Verify it is still in a state that
+        // should be executed before running the work: a terminal row must not produce side
+        // effects only for the subsequent guarded CompleteTaskAsync to affect no rows.
+        using var checkScope = ScopeFactory.CreateScope();
+        var dbContext = checkScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        bool rowActive;
         try
         {
-            await Task.Delay(ClaimRetryBackoff[attempt - 1], stoppingToken);
+            rowActive = await dbContext.PersistedTasks.AnyAsync(
+                t =>
+                    t.Id == task.Id
+                    && (
+                        t.Status == PersistedTaskStatus.Pending
+                        || t.Status == PersistedTaskStatus.Processing
+                    ),
+                stoppingToken
+            );
         }
         catch (OperationCanceledException)
         {
-            // The processor is stopping or the task was cancelled while we waited. The row is
-            // already Pending, so replay/startup recovery owns it; this is not a claim failure.
-            _claimAttempts.TryRemove(task.Id, out _);
-            return;
+            // The distributed processor claimed and rerouted this task, so it is not in
+            // runningTasks and CancelCurrent could not reach it. The cancellation must not be
+            // dropped here, or the row would stay Processing and out of every queue; apply the
+            // intended cancel just as the claim-cancellation path does.
+            Logger.LogInformation("Verification of rerouted task {TaskId} was canceled", task.Id);
+            await ApplyClaimCancellationAsync(task);
+            return false;
         }
-
-        taskQueue.ReEnqueue(task);
-    }
-
-    /// <summary>
-    ///     Persists the cancel that <see cref="CancelCurrent" /> requested while the claim was still
-    ///     in flight, so the cancellation is not lost now that the task has been dequeued.
-    /// </summary>
-    private async Task ApplyClaimCancellationAsync(PersistedTask task)
-    {
-        bool requeue = serviceStoppingToken.IsCancellationRequested;
-        try
+        catch (Exception ex)
         {
-            int canceledRows = await taskPersistenceService.CancelTaskAsync(task.Id, requeue);
-
-            // A guarded cancel affects no row when the task already reached a terminal state; the
-            // database is the source of truth, so do not advertise a contradictory Canceled status.
-            if (canceledRows == 0)
-            {
-                return;
-            }
-
-            task.Status = requeue ? PersistedTaskStatus.Pending : PersistedTaskStatus.Canceled;
-            StatusChanged?.Invoke(task);
+            // A transient verification failure is retried promptly (with a bounded backoff) so
+            // it does not have to wait for the 10-minute periodic replayer, but a persistent
+            // failure is left Pending after a bounded number of attempts so it cannot hot-loop
+            // this local processor or strand its Processing row.
+            Logger.LogError(
+                ex,
+                "Failed to verify rerouted task {TaskId}; returning it to Pending for retry",
+                task.Id
+            );
+            await ReturnToPendingForReplayAsync(task);
+            await RequeueTransientClaimFailureAsync(task, stoppingToken);
+            return false;
         }
-        catch (Exception dbEx)
+
+        if (!rowActive)
         {
-            logger.LogError(dbEx, "Failed to update task {TaskId} status", task.Id);
+            Logger.LogInformation(
+                "Skipping rerouted task {TaskId} because its database row is missing or no longer active.",
+                task.Id
+            );
+            return false;
         }
+
+        return true;
     }
 
     /// <summary>
@@ -531,7 +227,7 @@ public class UpscaleTaskProcessor(
     {
         try
         {
-            PersistedTask? next = taskQueue
+            PersistedTask? next = TaskQueue
                 .GetUpscaleSnapshot()
                 .FirstOrDefault(t =>
                     t.Id != currentTask.Id
@@ -554,7 +250,7 @@ public class UpscaleTaskProcessor(
             try
             {
                 var sw = Stopwatch.StartNew();
-                using var scope = scopeFactory.CreateScope();
+                using var scope = ScopeFactory.CreateScope();
                 IPreprocessedInput? preprocessed = await upscaleTask.PreprocessForPrefetchAsync(
                     scope.ServiceProvider,
                     stoppingToken
@@ -585,7 +281,7 @@ public class UpscaleTaskProcessor(
             }
             catch (Exception ex)
             {
-                logger.LogDebug(ex, "Prefetch of the next upscale task failed.");
+                Logger.LogDebug(ex, "Prefetch of the next upscale task failed.");
                 completion.TrySetResult(null);
             }
         }
@@ -595,7 +291,7 @@ public class UpscaleTaskProcessor(
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "Prefetch of the next upscale task failed.");
+            Logger.LogDebug(ex, "Prefetch of the next upscale task failed.");
         }
     }
 }
