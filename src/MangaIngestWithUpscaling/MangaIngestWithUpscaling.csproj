@@ -19,6 +19,9 @@
     <Protobuf Include="protos\upscaling-dist.proto" GrpcServices="Server" />
   </ItemGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="MangaIngestWithUpscaling.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="AutoRegisterInject" Version="2.0.3" />
     <PackageReference Include="DynamicData" Version="9.4.33" />
     <PackageReference Include="Grpc.AspNetCore" Version="2.83.0" />

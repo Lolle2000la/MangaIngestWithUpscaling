@@ -17,7 +17,7 @@ public class RepairContext : IDisposable
         {
             try
             {
-                Directory.Delete(WorkDirectory, true);
+                DeleteWorkDirectory();
             }
             catch
             {
@@ -25,4 +25,10 @@ public class RepairContext : IDisposable
             }
         }
     }
+
+    /// <summary>
+    ///     Deletes the temporary work directory. Exposed as a virtual method so tests can substitute
+    ///     a slow delete and verify that callers do not hold a lock across it.
+    /// </summary>
+    protected virtual void DeleteWorkDirectory() => Directory.Delete(WorkDirectory, true);
 }

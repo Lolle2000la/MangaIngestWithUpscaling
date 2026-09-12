@@ -1,5 +1,4 @@
 using System.Threading.Channels;
-using AutoRegisterInject;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 
@@ -10,130 +9,39 @@ public class StandardTaskProcessor(
     IServiceScopeFactory scopeFactory,
     ILogger<StandardTaskProcessor> logger,
     ITaskPersistenceService taskPersistenceService
-) : BackgroundService
+) : BackgroundTaskProcessorBase(taskQueue, scopeFactory, logger, taskPersistenceService)
 {
-    private readonly Lock _lock = new();
-    private readonly TimeSpan _progressDebounce = TimeSpan.FromMilliseconds(250);
-    private readonly ChannelReader<object> _reader = taskQueue.StandardReader;
-    private CancellationTokenSource? currentStoppingToken;
-    private PersistedTask? currentTask;
-    private CancellationToken serviceStoppingToken;
+    private ChannelReader<object> Reader => TaskQueue.StandardReader;
 
-    public event Func<PersistedTask, Task>? StatusChanged;
+    protected override string ProcessingFailedLogMessage => "Error processing task {TaskId}";
 
-    /// <summary>
-    /// Cancels the current task if it matches the given task.
-    /// The task is necessary to prevent canceling another if the task has already been processed.
-    /// Otherwise, consistency issues may arise.
-    /// </summary>
-    /// <param name="checkAgainst">The task to check against if it is still the current task. Does so by using the Id.</param>
-    public void CancelCurrent(PersistedTask checkAgainst)
+    protected override async Task RunAsync(CancellationToken stoppingToken)
     {
-        using (_lock.EnterScope())
-        {
-            if (currentTask?.Id == checkAgainst.Id)
-            {
-                currentStoppingToken?.Cancel();
-            }
-        }
-    }
-
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        serviceStoppingToken = stoppingToken;
         while (!stoppingToken.IsCancellationRequested)
         {
-            await _reader.ReadAsync(stoppingToken);
-            var task = taskQueue.DequeueStandard();
+            await Reader.ReadAsync(stoppingToken);
+            var task = TaskQueue.DequeueStandard();
 
             if (task == null)
             {
                 continue;
             }
 
-            using (_lock.EnterScope())
-            {
-                currentStoppingToken = CancellationTokenSource.CreateLinkedTokenSource(
-                    stoppingToken
-                );
-                currentTask = task;
-            }
+            CancellationTokenSource taskStoppingToken = BeginCurrentTask(task, stoppingToken);
 
-            await ProcessTaskAsync(task, currentStoppingToken.Token);
+            try
+            {
+                await ProcessTaskAsync(task, taskStoppingToken.Token);
+            }
+            finally
+            {
+                DisposeCurrentStoppingToken(taskStoppingToken);
+            }
         }
     }
 
-    protected async Task ProcessTaskAsync(PersistedTask task, CancellationToken stoppingToken)
-    {
-        // Claim the task
-        if (!await taskPersistenceService.ClaimTaskAsync(task.Id, stoppingToken))
-        {
-            logger.LogInformation(
-                "Task {TaskId} could not be claimed (already processed or concurrency conflict)",
-                task.Id
-            );
-            return;
-        }
-
-        task.Status = PersistedTaskStatus.Processing;
-        StatusChanged?.Invoke(task);
-
-        using var scope = scopeFactory.CreateScope();
-
-        try
-        {
-            // Polymorphic processing based on concrete type, forward debounced progress to UI
-            var last = DateTime.UtcNow;
-            using var progressSubscription = task.Data.Progress.Changed.Subscribe(_ =>
-            {
-                var now = DateTime.UtcNow;
-                if (now - last >= _progressDebounce)
-                {
-                    last = now;
-                    var _discardTick = StatusChanged?.Invoke(task);
-                }
-            });
-
-            await task.Data.ProcessAsync(scope.ServiceProvider, stoppingToken);
-            StatusChanged?.Invoke(task);
-
-            await taskPersistenceService.CompleteTaskAsync(task.Id);
-
-            task.Status = PersistedTaskStatus.Completed;
-            task.ProcessedAt = DateTime.UtcNow;
-            StatusChanged?.Invoke(task);
-        }
-        catch (OperationCanceledException)
-        {
-            logger.LogInformation("Task {TaskId} was canceled", task.Id);
-            bool requeue = serviceStoppingToken.IsCancellationRequested;
-            try
-            {
-                await taskPersistenceService.CancelTaskAsync(task.Id, requeue);
-
-                task.Status = requeue ? PersistedTaskStatus.Pending : PersistedTaskStatus.Canceled;
-                StatusChanged?.Invoke(task);
-            }
-            catch (Exception dbEx)
-            {
-                logger.LogError(dbEx, "Failed to update task {TaskId} status", task.Id);
-            }
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error processing task {TaskId}", task.Id);
-            try
-            {
-                await taskPersistenceService.FailTaskAsync(task.Id);
-
-                task.Status = PersistedTaskStatus.Failed;
-                task.RetryCount++;
-                StatusChanged?.Invoke(task);
-            }
-            catch (Exception dbEx)
-            {
-                logger.LogError(dbEx, "Failed to update task {TaskId} status", task.Id);
-            }
-        }
-    }
+    protected override Task<bool> TryAcquireTaskAsync(
+        PersistedTask task,
+        CancellationToken stoppingToken
+    ) => ClaimAsync(task, stoppingToken);
 }

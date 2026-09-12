@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Threading.Channels;
-using AutoRegisterInject;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
@@ -18,52 +17,82 @@ public class UpscaleTaskProcessor(
     ILogger<UpscaleTaskProcessor> logger,
     ITaskPersistenceService taskPersistenceService,
     IPreprocessedInputCache preprocessedCache
-) : BackgroundService
+) : BackgroundTaskProcessorBase(taskQueue, scopeFactory, logger, taskPersistenceService)
 {
-    private readonly Lock _lock = new();
-    private readonly TimeSpan _progressDebounce = TimeSpan.FromMilliseconds(250);
-    private readonly ChannelReader<object> _reader = taskQueue.UpscaleReader;
-    private readonly ChannelReader<PersistedTask> _reroutedReader = taskQueue.ReroutedUpscaleReader;
+    private ChannelReader<object> Reader => TaskQueue.UpscaleReader;
+    private ChannelReader<PersistedTask> ReroutedReader => TaskQueue.ReroutedUpscaleReader;
     private readonly PrefetchCoordinator _coordinator = new();
-    private CancellationTokenSource? currentStoppingToken;
-    private PersistedTask? currentTask;
-    private CancellationToken serviceStoppingToken;
 
-    public event Func<PersistedTask, Task>? StatusChanged;
+    protected override string ProcessingFailedLogMessage => "Upscale task {TaskId} failed";
 
-    /// <summary>
-    /// Cancels the current task if it matches the given task.
-    /// The task is necessary to prevent canceling another if the task has already been processed.
-    /// Otherwise, consistency issues may arise.
-    /// </summary>
-    /// <param name="checkAgainst">The task to check against if it is still the current task. Does so by using the Id.</param>
-    public void CancelCurrent(PersistedTask checkAgainst)
+    protected override void OnTaskAcquired(PersistedTask task)
     {
-        using (_lock.EnterScope())
+        _coordinator.Reset();
+        // Reset any phase left over from a previous attempt so a stale "finalizing" doesn't
+        // bleed into this run's status.
+        task.Data.Progress.Phase = null;
+    }
+
+    protected override void OnProgressChanged(PersistedTask task)
+    {
+        // Trigger the next task's prefetch when the predictor says it's time.
+        if (
+            _coordinator.OnProgress(
+                task.Data.Progress.Total,
+                task.Data.Progress.Current,
+                task.Data.Progress.Phase
+            )
+        )
         {
-            if (currentTask?.Id == checkAgainst.Id)
-            {
-                currentStoppingToken?.Cancel();
-            }
+            _ = PrefetchNextAsync(task, ServiceStoppingToken);
         }
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override async Task RunAsync(CancellationToken stoppingToken)
     {
         if (upscalerConfig.Value.RemoteOnly)
         {
-            // If the upscaler is configured to run only on the remote worker, we do not start the processor.
+            // The local ML backend is disabled, so genuine upscaling must not run here. However,
+            // the distributed processor reroutes tasks it cannot delegate (notably
+            // RenameUpscaledChaptersSeriesTask) to this processor. Those do not need the ML backend,
+            // so drain only the rerouted channel; never read the main upscale channel, whose
+            // consumers in RemoteOnly are the remote workers.
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                PersistedTask rerouted;
+                try
+                {
+                    rerouted = await ReroutedReader.ReadAsync(stoppingToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+
+                CancellationTokenSource taskStoppingToken = BeginCurrentTask(
+                    rerouted,
+                    stoppingToken
+                );
+
+                try
+                {
+                    await ProcessTaskAsync(rerouted, taskStoppingToken.Token);
+                }
+                finally
+                {
+                    DisposeCurrentStoppingToken(taskStoppingToken);
+                }
+            }
+
             return;
         }
-
-        serviceStoppingToken = stoppingToken;
 
         while (!stoppingToken.IsCancellationRequested)
         {
             PersistedTask? task = null;
 
             // Priority 1: Rerouted tasks (already claimed or specialized)
-            if (_reroutedReader.TryRead(out var rerouted))
+            if (ReroutedReader.TryRead(out var rerouted))
             {
                 task = rerouted;
             }
@@ -74,14 +103,14 @@ public class UpscaleTaskProcessor(
                 using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
                     stoppingToken
                 );
-                var reroutedWait = _reroutedReader.WaitToReadAsync(linkedCts.Token).AsTask();
-                var signalWait = _reader.WaitToReadAsync(linkedCts.Token).AsTask();
+                var reroutedWait = ReroutedReader.WaitToReadAsync(linkedCts.Token).AsTask();
+                var signalWait = Reader.WaitToReadAsync(linkedCts.Token).AsTask();
 
                 var completed = await Task.WhenAny(reroutedWait, signalWait);
 
                 if (completed == reroutedWait && await reroutedWait)
                 {
-                    if (_reroutedReader.TryRead(out var r))
+                    if (ReroutedReader.TryRead(out var r))
                     {
                         task = r;
                     }
@@ -89,13 +118,13 @@ public class UpscaleTaskProcessor(
                 else if (completed == signalWait && await signalWait)
                 {
                     // Check rerouted one last time before consuming a signal
-                    if (_reroutedReader.TryRead(out var r))
+                    if (ReroutedReader.TryRead(out var r))
                     {
                         task = r;
                     }
-                    else if (_reader.TryRead(out _))
+                    else if (Reader.TryRead(out _))
                     {
-                        task = taskQueue.DequeueUpscale();
+                        task = TaskQueue.DequeueUpscale();
                     }
                 }
 
@@ -108,116 +137,90 @@ public class UpscaleTaskProcessor(
                 continue;
             }
 
-            using (_lock.EnterScope())
-            {
-                currentStoppingToken = CancellationTokenSource.CreateLinkedTokenSource(
-                    stoppingToken
-                );
-                currentTask = task;
-            }
+            CancellationTokenSource taskStoppingToken = BeginCurrentTask(task, stoppingToken);
 
-            await ProcessTaskAsync(task, currentStoppingToken.Token);
+            try
+            {
+                await ProcessTaskAsync(task, taskStoppingToken.Token);
+            }
+            finally
+            {
+                DisposeCurrentStoppingToken(taskStoppingToken);
+            }
         }
     }
 
-    protected async Task ProcessTaskAsync(PersistedTask task, CancellationToken stoppingToken)
+    protected override async Task<bool> TryAcquireTaskAsync(
+        PersistedTask task,
+        CancellationToken stoppingToken
+    )
     {
-        // Atomically claim the task if not already claimed (e.g. by DistributedUpscaleTaskProcessor before rerouting)
+        // A task that arrives already Processing was claimed and rerouted by the distributed
+        // processor. A task from the main queue is Pending and must be claimed here.
         if (task.Status != PersistedTaskStatus.Processing)
         {
-            if (!await taskPersistenceService.ClaimTaskAsync(task.Id, stoppingToken))
-            {
-                logger.LogInformation(
-                    "Task {TaskId} could not be claimed (already processed or concurrency conflict)",
-                    task.Id
-                );
-                return;
-            }
+            return await ClaimAsync(task, stoppingToken);
         }
 
-        // Update the in-memory task status
-        task.Status = PersistedTaskStatus.Processing;
-        _ = StatusChanged?.Invoke(task);
-
-        using var scope = scopeFactory.CreateScope();
-
-        _coordinator.Reset();
-        // Reset any phase left over from a previous attempt so a stale "finalizing" doesn't
-        // bleed into this run's status.
-        task.Data.Progress.Phase = null;
-
+        // Removal does not reach the local reroute channel, so the row may have been deleted
+        // (or finalized/canceled) while the task sat there. Verify it is still in a state that
+        // should be executed before running the work: a terminal row must not produce side
+        // effects only for the subsequent guarded CompleteTaskAsync to affect no rows.
+        using var checkScope = ScopeFactory.CreateScope();
+        var dbContext = checkScope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        bool rowActive;
         try
         {
-            // Forward progress changes to UI by raising StatusChanged (debounced), and
-            // trigger the next task's prefetch when the predictor says it's time.
-            var last = DateTime.UtcNow;
-            using var progressSubscription = task.Data.Progress.Changed.Subscribe(e =>
-            {
-                if (
-                    _coordinator.OnProgress(
-                        task.Data.Progress.Total,
-                        task.Data.Progress.Current,
-                        task.Data.Progress.Phase
-                    )
-                )
-                {
-                    _ = PrefetchNextAsync(task, serviceStoppingToken);
-                }
-
-                var now = DateTime.UtcNow;
-                if (now - last >= _progressDebounce)
-                {
-                    last = now;
-                    _ = StatusChanged?.Invoke(task);
-                }
-            });
-
-            await task.Data.ProcessAsync(scope.ServiceProvider, stoppingToken);
-            _ = StatusChanged?.Invoke(task);
-
-            await taskPersistenceService.CompleteTaskAsync(task.Id);
-
-            // Update in-memory task to match
-            task.Status = PersistedTaskStatus.Completed;
-            task.ProcessedAt = DateTime.UtcNow;
-            _ = StatusChanged?.Invoke(task);
+            rowActive = await dbContext.PersistedTasks.AnyAsync(
+                t =>
+                    t.Id == task.Id
+                    && (
+                        t.Status == PersistedTaskStatus.Pending
+                        || t.Status == PersistedTaskStatus.Processing
+                    ),
+                stoppingToken
+            );
         }
         catch (OperationCanceledException)
         {
-            logger.LogInformation("Task {TaskId} was canceled", task.Id);
-
-            try
-            {
-                bool requeue = serviceStoppingToken.IsCancellationRequested;
-                await taskPersistenceService.CancelTaskAsync(task.Id, requeue);
-
-                // Update in-memory task
-                task.Status = requeue ? PersistedTaskStatus.Pending : PersistedTaskStatus.Canceled;
-                StatusChanged?.Invoke(task);
-            }
-            catch (Exception dbEx)
-            {
-                logger.LogError(dbEx, "Failed to update task {TaskId} status", task.Id);
-            }
+            // The distributed processor claimed and rerouted this task, so it is not in
+            // runningTasks and CancelCurrent could not reach it. The cancellation must not be
+            // dropped here, or the row would stay Processing and out of every queue; apply the
+            // intended cancel just as the claim-cancellation path does.
+            Logger.LogInformation("Verification of rerouted task {TaskId} was canceled", task.Id);
+            // The task is abandoned here (no retry is scheduled), so a pending counter must not linger.
+            ForgetClaimAttempts(task.Id);
+            await ApplyClaimCancellationAsync(task);
+            return false;
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Upscale task {TaskId} failed", task.Id);
-
-            try
-            {
-                await taskPersistenceService.FailTaskAsync(task.Id);
-
-                // Update in-memory task
-                task.Status = PersistedTaskStatus.Failed;
-                task.RetryCount++;
-                StatusChanged?.Invoke(task);
-            }
-            catch (Exception dbEx)
-            {
-                logger.LogError(dbEx, "Failed to update task {TaskId} status", task.Id);
-            }
+            // A transient verification failure is retried promptly (with a bounded backoff) so
+            // it does not have to wait for the 10-minute periodic replayer, but a persistent
+            // failure is left Pending after a bounded number of attempts so it cannot hot-loop
+            // this local processor or strand its Processing row.
+            Logger.LogError(
+                ex,
+                "Failed to verify rerouted task {TaskId}; returning it to Pending for retry",
+                task.Id
+            );
+            await ReturnToPendingForReplayAsync(task);
+            await RequeueTransientClaimFailureAsync(task);
+            return false;
         }
+
+        if (!rowActive)
+        {
+            Logger.LogInformation(
+                "Skipping rerouted task {TaskId} because its database row is missing or no longer active.",
+                task.Id
+            );
+            // The task is abandoned here (no retry is scheduled), so a pending counter must not linger.
+            ForgetClaimAttempts(task.Id);
+            return false;
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -228,7 +231,7 @@ public class UpscaleTaskProcessor(
     {
         try
         {
-            PersistedTask? next = taskQueue
+            PersistedTask? next = TaskQueue
                 .GetUpscaleSnapshot()
                 .FirstOrDefault(t =>
                     t.Id != currentTask.Id
@@ -251,7 +254,7 @@ public class UpscaleTaskProcessor(
             try
             {
                 var sw = Stopwatch.StartNew();
-                using var scope = scopeFactory.CreateScope();
+                using var scope = ScopeFactory.CreateScope();
                 IPreprocessedInput? preprocessed = await upscaleTask.PreprocessForPrefetchAsync(
                     scope.ServiceProvider,
                     stoppingToken
@@ -282,7 +285,7 @@ public class UpscaleTaskProcessor(
             }
             catch (Exception ex)
             {
-                logger.LogDebug(ex, "Prefetch of the next upscale task failed.");
+                Logger.LogDebug(ex, "Prefetch of the next upscale task failed.");
                 completion.TrySetResult(null);
             }
         }
@@ -292,7 +295,7 @@ public class UpscaleTaskProcessor(
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "Prefetch of the next upscale task failed.");
+            Logger.LogDebug(ex, "Prefetch of the next upscale task failed.");
         }
     }
 }

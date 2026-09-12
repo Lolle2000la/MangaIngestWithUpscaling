@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.Reactive.Disposables;
 using AutoRegisterInject;
@@ -25,8 +24,15 @@ public class TaskRegistry : IHostedService, IDisposable
     private readonly SourceCache<PersistedTask, int> _tasks = new(x => x.Id);
     private readonly UpscaleTaskProcessor _upscaleProcessor;
     private readonly ILogger<TaskRegistry>? _logger;
-    private readonly ConcurrentDictionary<int, PersistedTask> _pendingUpdates = new();
+    private readonly PendingTaskChanges _pending = new();
     private readonly CancellationTokenSource _cts = new();
+
+    // A single immutable holder so readers always observe the standard and upscale snapshots from
+    // the same generation. Swapped atomically once per rebuild; never null.
+    private volatile Snapshots _snapshots = new(
+        Array.Empty<PersistedTask>(),
+        Array.Empty<PersistedTask>()
+    );
     private Task? _flushTask;
     private int _disposed;
 
@@ -80,6 +86,30 @@ public class TaskRegistry : IHostedService, IDisposable
     public ReadOnlyObservableCollection<PersistedTask> StandardTasks { get; }
     public ReadOnlyObservableCollection<PersistedTask> UpscaleTasks { get; }
 
+    /// <summary>
+    ///     Raised once per flush batch after the standard-task view changed. Handlers run on the
+    ///     flushing thread, so UI consumers must marshal to their own synchronization context.
+    /// </summary>
+    public event Action? StandardTasksChanged;
+
+    /// <summary>
+    ///     Raised once per flush batch after the upscale-task view changed. Handlers run on the
+    ///     flushing thread, so UI consumers must marshal to their own synchronization context.
+    /// </summary>
+    public event Action? UpscaleTasksChanged;
+
+    /// <summary>
+    ///     Returns a consistent, sorted snapshot of the standard tasks. The returned array is
+    ///     replaced atomically on each flush, so callers can safely enumerate it from any thread.
+    /// </summary>
+    public IReadOnlyList<PersistedTask> GetStandardSnapshot() => _snapshots.Standard;
+
+    /// <summary>
+    ///     Returns a consistent, sorted snapshot of the upscale tasks. The returned array is
+    ///     replaced atomically on each flush, so callers can safely enumerate it from any thread.
+    /// </summary>
+    public IReadOnlyList<PersistedTask> GetUpscaleSnapshot() => _snapshots.Upscale;
+
     public void Dispose()
     {
         // The instance is registered both as a plain singleton (TaskRegistry) and as an
@@ -88,7 +118,27 @@ public class TaskRegistry : IHostedService, IDisposable
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
 
+        // Unsubscribe here as well so disposal without a prior StopAsync cannot leave the queue
+        // and processors holding references to this registry. Re-unsubscribing after StopAsync is
+        // safe.
+        _taskQueue.TaskEnqueuedOrChanged -= OnTaskChanged;
+        _taskQueue.TaskRemoved -= OnTaskRemoved;
+        _standardProcessor.StatusChanged -= OnTaskChanged;
+        _upscaleProcessor.StatusChanged -= OnTaskChanged;
+        _distributedUpscaleProcessor.StatusChanged -= OnTaskChanged;
+
         _cts.Cancel();
+
+        // Best-effort: let an in-flight flush observe cancellation before the collections it mutates
+        // are disposed. Normally StopAsync already awaited the loop; this only matters when Dispose
+        // runs on its own. A short timeout prevents disposal from hanging if a flush is stuck.
+        try
+        {
+            _flushTask?.Wait(TimeSpan.FromSeconds(2));
+        }
+        catch (AggregateException) { }
+        catch (ObjectDisposedException) { }
+
         _cts.Dispose();
         _cleanups.Dispose();
         _tasks.Dispose();
@@ -96,6 +146,17 @@ public class TaskRegistry : IHostedService, IDisposable
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        // Subscribe before loading the DB snapshot: an event handler only buffers into _pending
+        // (no DynamicData mutation), so subscribing first prevents a status transition that fires
+        // between the snapshot query and the subscription from being lost. The flush loop, which is
+        // the only thing that mutates _tasks, starts after the load.
+        _taskQueue.TaskEnqueuedOrChanged += OnTaskChanged;
+        _taskQueue.TaskRemoved += OnTaskRemoved;
+
+        _standardProcessor.StatusChanged += OnTaskChanged;
+        _upscaleProcessor.StatusChanged += OnTaskChanged;
+        _distributedUpscaleProcessor.StatusChanged += OnTaskChanged;
+
         // Initial load of all tasks (pending, processing, completed, failed, canceled)
         using IServiceScope scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -103,14 +164,7 @@ public class TaskRegistry : IHostedService, IDisposable
             .PersistedTasks.AsNoTracking()
             .ToListAsync(cancellationToken);
         _tasks.AddOrUpdate(all);
-
-        // Subscribe to queue and processor events to keep registry up to date
-        _taskQueue.TaskEnqueuedOrChanged += OnTaskChanged;
-        _taskQueue.TaskRemoved += OnTaskRemoved;
-
-        _standardProcessor.StatusChanged += OnTaskChanged;
-        _upscaleProcessor.StatusChanged += OnTaskChanged;
-        _distributedUpscaleProcessor.StatusChanged += OnTaskChanged;
+        RebuildSnapshots();
 
         _flushTask = RunFlushLoopAsync(_cts.Token);
     }
@@ -136,16 +190,15 @@ public class TaskRegistry : IHostedService, IDisposable
         FlushPendingUpdates();
     }
 
-    private Task OnTaskChanged(PersistedTask task)
+    internal Task OnTaskChanged(PersistedTask task)
     {
-        _pendingUpdates[task.Id] = CloneShallow(task);
+        _pending.QueueUpdate(CloneShallow(task));
         return Task.CompletedTask;
     }
 
-    private Task OnTaskRemoved(PersistedTask task)
+    internal Task OnTaskRemoved(PersistedTask task)
     {
-        _pendingUpdates.TryRemove(task.Id, out _);
-        _tasks.Remove(task.Id);
+        _pending.QueueRemoval(CloneShallow(task));
         return Task.CompletedTask;
     }
 
@@ -173,26 +226,77 @@ public class TaskRegistry : IHostedService, IDisposable
         }
     }
 
-    private void FlushPendingUpdates()
+    internal void FlushPendingUpdates()
     {
-        if (_pendingUpdates.IsEmpty)
+        // Disposal may run without StopAsync; once disposed the collections must not be touched,
+        // even if the flush loop is mid-tick when cancellation is observed.
+        if (Volatile.Read(ref _disposed) != 0 || _pending.IsEmpty)
             return;
 
-        var keys = _pendingUpdates.Keys.ToList();
-        var itemsToUpdate = new List<PersistedTask>();
-        foreach (var key in keys)
+        _pending.Drain(
+            out List<PersistedTask> itemsToUpdate,
+            out List<PersistedTask> itemsToRemove
+        );
+
+        if (itemsToUpdate.Count == 0 && itemsToRemove.Count == 0)
+            return;
+
+        bool standardChanged = false;
+        bool upscaleChanged = false;
+        foreach (var item in itemsToRemove.Concat(itemsToUpdate))
         {
-            if (_pendingUpdates.TryRemove(key, out var item))
+            if (item.Data is null)
             {
-                itemsToUpdate.Add(item);
+                // The caller only provided an id (e.g. queue cleanup), so we cannot tell which
+                // view it belonged to. Refresh both to stay safe.
+                standardChanged = true;
+                upscaleChanged = true;
+            }
+            else if (TaskQueue.IsUpscaleTask(item.Data))
+            {
+                upscaleChanged = true;
+            }
+            else
+            {
+                standardChanged = true;
             }
         }
 
-        if (itemsToUpdate.Count > 0)
+        _tasks.Edit(updater =>
         {
-            _tasks.Edit(updater => updater.AddOrUpdate(itemsToUpdate));
-        }
+            foreach (var item in itemsToRemove)
+            {
+                updater.Remove(item.Id);
+            }
+
+            if (itemsToUpdate.Count > 0)
+            {
+                updater.AddOrUpdate(itemsToUpdate);
+            }
+        });
+
+        RebuildSnapshots();
+
+        if (standardChanged)
+            StandardTasksChanged?.Invoke();
+        if (upscaleChanged)
+            UpscaleTasksChanged?.Invoke();
     }
+
+    /// <summary>
+    ///     Rebuilds the immutable snapshots consumed by the UI. Runs on the flush thread and
+    ///     swaps the holder atomically, so readers never observe a partially-updated view and can
+    ///     never see the standard and upscale views from different generations.
+    /// </summary>
+    private void RebuildSnapshots()
+    {
+        _snapshots = new Snapshots(StandardTasks.ToArray(), UpscaleTasks.ToArray());
+    }
+
+    private sealed record Snapshots(
+        IReadOnlyList<PersistedTask> Standard,
+        IReadOnlyList<PersistedTask> Upscale
+    );
 
     private static PersistedTask CloneShallow(PersistedTask src)
     {

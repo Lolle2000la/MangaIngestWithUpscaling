@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
@@ -183,37 +184,289 @@ public class TaskRegistryTests
         );
 
         var registry = new TaskRegistry(scopeFactory, taskQueue, standard, upscaler, distributed);
+        try
+        {
+            await registry.StartAsync(TestContext.Current.CancellationToken);
+
+            // Enqueue a task so the registry gets an entry via TaskEnqueuedOrChanged
+            await taskQueue.EnqueueAsync(new LoggingTask { Message = "keep" });
+
+            var snapshot = taskQueue.GetStandardSnapshot();
+            Assert.Single(snapshot);
+            var persistedId = snapshot[0].Id;
+
+            // Allow event propagation into registry
+            for (
+                int i = 0;
+                i < 5 && !registry.GetStandardSnapshot().Any(t => t.Id == persistedId);
+                i++
+            )
+            {
+                await Task.Delay(50, TestContext.Current.CancellationToken);
+            }
+
+            Assert.Contains(registry.GetStandardSnapshot(), t => t.Id == persistedId);
+
+            // Act: remove the task via queue and wait for registry to update
+            await taskQueue.RemoveTaskAsync(
+                new PersistedTask
+                {
+                    Id = persistedId,
+                    Data = new LoggingTask { Message = "keep" },
+                }
+            );
+
+            for (
+                int i = 0;
+                i < 5 && registry.GetStandardSnapshot().Any(t => t.Id == persistedId);
+                i++
+            )
+            {
+                await Task.Delay(50, TestContext.Current.CancellationToken);
+            }
+
+            Assert.DoesNotContain(registry.GetStandardSnapshot(), t => t.Id == persistedId);
+        }
+        finally
+        {
+            await registry.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task TaskRegistry_SnapshotsAndChangeEvents_ReflectAdditionsAndRemovals()
+    {
+        // Arrange
+        using ServiceProvider provider = BuildProvider($"TaskRegistrySnapshots_{Guid.NewGuid()}");
+        var registry = BuildRegistry(provider, out var taskQueue);
+
+        int standardChanges = 0;
+        int upscaleChanges = 0;
+        registry.StandardTasksChanged += () => Interlocked.Increment(ref standardChanges);
+        registry.UpscaleTasksChanged += () => Interlocked.Increment(ref upscaleChanges);
+
         await registry.StartAsync(TestContext.Current.CancellationToken);
 
-        // Enqueue a task so the registry gets an entry via TaskEnqueuedOrChanged
-        await taskQueue.EnqueueAsync(new LoggingTask { Message = "keep" });
+        // Act: enqueue one standard and one upscale task.
+        await taskQueue.EnqueueAsync(new LoggingTask { Message = "standard" });
+        await taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(1, 1));
 
-        var snapshot = taskQueue.GetStandardSnapshot();
-        Assert.Single(snapshot);
-        var persistedId = snapshot[0].Id;
-
-        // Allow event propagation into registry
-        for (int i = 0; i < 5 && !registry.StandardTasks.Any(t => t.Id == persistedId); i++)
-        {
-            await Task.Delay(50, TestContext.Current.CancellationToken);
-        }
-
-        Assert.Contains(registry.StandardTasks, t => t.Id == persistedId);
-
-        // Act: remove the task via queue and wait for registry to update
-        await taskQueue.RemoveTaskAsync(
-            new PersistedTask
-            {
-                Id = persistedId,
-                Data = new LoggingTask { Message = "keep" },
-            }
+        await WaitUntilAsync(
+            () =>
+                registry.GetStandardSnapshot().Count == 1
+                && registry.GetUpscaleSnapshot().Count == 1,
+            TestContext.Current.CancellationToken
         );
 
-        for (int i = 0; i < 5 && registry.StandardTasks.Any(t => t.Id == persistedId); i++)
+        // Assert: snapshots are populated and the matching change events fired.
+        Assert.Single(registry.GetStandardSnapshot());
+        Assert.Single(registry.GetUpscaleSnapshot());
+        Assert.True(standardChanges >= 1);
+        Assert.True(upscaleChanges >= 1);
+
+        // Act: batch remove both tasks.
+        List<PersistedTask> all = registry
+            .GetStandardSnapshot()
+            .Concat(registry.GetUpscaleSnapshot())
+            .ToList();
+        await taskQueue.RemoveTasksAsync(all);
+
+        await WaitUntilAsync(
+            () =>
+                registry.GetStandardSnapshot().Count == 0
+                && registry.GetUpscaleSnapshot().Count == 0,
+            TestContext.Current.CancellationToken
+        );
+
+        // Assert
+        Assert.Empty(registry.GetStandardSnapshot());
+        Assert.Empty(registry.GetUpscaleSnapshot());
+
+        await registry.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task TaskRegistry_LateUpdateAfterRemovalFlushed_DoesNotResurrectTask()
+    {
+        using ServiceProvider provider = BuildProvider($"TaskRegistryTombstone_{Guid.NewGuid()}");
+        var registry = BuildRegistry(provider, out _);
+
+        var task = new PersistedTask
         {
-            await Task.Delay(50, TestContext.Current.CancellationToken);
+            Id = 4242,
+            Data = new LoggingTask { Message = "ghost" },
+            Status = PersistedTaskStatus.Pending,
+        };
+
+        // Seed the task and apply the update.
+        await registry.OnTaskChanged(task);
+        registry.FlushPendingUpdates();
+        Assert.Single(registry.GetStandardSnapshot());
+
+        // Remove it and apply the removal.
+        await registry.OnTaskRemoved(task);
+        registry.FlushPendingUpdates();
+        Assert.Empty(registry.GetStandardSnapshot());
+
+        // A status update that was already in flight when the removal was applied must not bring
+        // the task back (removed ids are tombstoned).
+        await registry.OnTaskChanged(task);
+        registry.FlushPendingUpdates();
+
+        Assert.Empty(registry.GetStandardSnapshot());
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task TaskRegistry_ConcurrentEnqueuesAndSnapshotReads_DoNotThrowOrHang()
+    {
+        // Regression guard: the flush loop, the enqueue path and UI snapshot reads all touch the
+        // registry concurrently. A deadlock or thrown exception would fail this test.
+        using ServiceProvider provider = BuildProvider($"TaskRegistryStress_{Guid.NewGuid()}");
+        var registry = BuildRegistry(provider, out var taskQueue);
+        await registry.StartAsync(TestContext.Current.CancellationToken);
+
+        var errors = new ConcurrentBag<Exception>();
+
+        var writers = Enumerable
+            .Range(0, 3)
+            .Select(worker =>
+                Task.Run(async () =>
+                {
+                    try
+                    {
+                        for (int i = 0; i < 20; i++)
+                        {
+                            await taskQueue.EnqueueAsync(
+                                new LoggingTask { Message = $"{worker}-{i}" }
+                            );
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Add(ex);
+                    }
+                })
+            )
+            .ToList();
+
+        var readers = Enumerable
+            .Range(0, 3)
+            .Select(_ =>
+                Task.Run(async () =>
+                {
+                    try
+                    {
+                        for (int i = 0; i < 200; i++)
+                        {
+                            _ = registry.GetStandardSnapshot().Count;
+                            _ = registry.GetUpscaleSnapshot().Count;
+                            if (i % 10 == 0)
+                            {
+                                await Task.Yield();
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Add(ex);
+                    }
+                })
+            )
+            .ToList();
+
+        await Task.WhenAll(writers.Concat(readers))
+            .WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+        await WaitUntilAsync(
+            () => registry.GetStandardSnapshot().Count == 60,
+            TestContext.Current.CancellationToken
+        );
+
+        Assert.Empty(errors);
+        Assert.Equal(60, registry.GetStandardSnapshot().Count);
+
+        await registry.StopAsync(TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task TaskRegistry_DisposeWithoutStopAsync_DoesNotThrow()
+    {
+        // Regression guard: Dispose may run without StopAsync (e.g. container teardown), where the
+        // flush loop could still be touching the collections being disposed.
+        using ServiceProvider provider = BuildProvider($"TaskRegistryDispose_{Guid.NewGuid()}");
+        var registry = BuildRegistry(provider, out var taskQueue);
+        await registry.StartAsync(TestContext.Current.CancellationToken);
+
+        for (int i = 0; i < 20; i++)
+        {
+            await taskQueue.EnqueueAsync(new LoggingTask { Message = $"m{i}" });
         }
 
-        Assert.DoesNotContain(registry.StandardTasks, t => t.Id == persistedId);
+        Exception? exception = Record.Exception(registry.Dispose);
+
+        Assert.Null(exception);
+    }
+
+    private static ServiceProvider BuildProvider(string dbName)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<ApplicationDbContext>(options => options.UseInMemoryDatabase(dbName));
+        services.AddSingleton<IOptions<UpscalerConfig>>(
+            Options.Create(new UpscalerConfig { RemoteOnly = true })
+        );
+
+        var cleanup = Substitute.For<IQueueCleanup>();
+        cleanup.CleanupAsync().Returns(Task.FromResult<IReadOnlyList<int>>(Array.Empty<int>()));
+        services.AddScoped<IQueueCleanup>(_ => cleanup);
+        services.AddSingleton(Substitute.For<ITaskPersistenceService>());
+
+        return services.BuildServiceProvider();
+    }
+
+    private static TaskRegistry BuildRegistry(ServiceProvider provider, out TaskQueue taskQueue)
+    {
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+        taskQueue = new TaskQueue(scopeFactory, provider.GetRequiredService<ILogger<TaskQueue>>());
+
+        var persistence = provider.GetRequiredService<ITaskPersistenceService>();
+        var standard = new StandardTaskProcessor(
+            taskQueue,
+            scopeFactory,
+            Substitute.For<ILogger<StandardTaskProcessor>>(),
+            persistence
+        );
+        var upscaler = new UpscaleTaskProcessor(
+            taskQueue,
+            scopeFactory,
+            provider.GetRequiredService<IOptions<UpscalerConfig>>(),
+            Substitute.For<ILogger<UpscaleTaskProcessor>>(),
+            persistence,
+            new PreprocessedInputCache()
+        );
+        var distributed = new DistributedUpscaleTaskProcessor(
+            taskQueue,
+            scopeFactory,
+            provider.GetRequiredService<IOptions<UpscalerConfig>>(),
+            Substitute.For<ILogger<DistributedUpscaleTaskProcessor>>(),
+            persistence
+        );
+
+        return new TaskRegistry(scopeFactory, taskQueue, standard, upscaler, distributed);
+    }
+
+    private static async Task WaitUntilAsync(
+        Func<bool> condition,
+        CancellationToken cancellationToken
+    )
+    {
+        for (int i = 0; i < 40 && !condition(); i++)
+        {
+            await Task.Delay(50, cancellationToken);
+        }
     }
 }

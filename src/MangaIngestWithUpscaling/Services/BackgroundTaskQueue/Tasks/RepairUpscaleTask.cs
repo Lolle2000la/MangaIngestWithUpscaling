@@ -50,7 +50,7 @@ public class RepairUpscaleTask : BaseTask, IChapterTask
 
     public string FriendlyEntryName { get; set; } = string.Empty;
 
-    public override int RetryFor { get; set; } = 1;
+    public override int RetryFor { get; set; } = 3;
 
     public override async Task ProcessAsync(
         IServiceProvider services,

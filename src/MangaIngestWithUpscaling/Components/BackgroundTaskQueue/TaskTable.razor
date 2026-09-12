@@ -1,11 +1,15 @@
+@using System.Globalization
 @using MangaIngestWithUpscaling.Data.BackgroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.TaskDescribers
+@implements IDisposable
 @inject IStringLocalizer<TaskTable> Loc
 @inject ITaskDescriberFactory DescriberFactory
 @inject DistributedUpscaleTaskProcessor DistributedUpscaleTaskProcessor
+@inject TaskRegistry TaskRegistry
+@inject ILogger<TaskTable> Logger
 
-<MudTable T="PersistedTask" Items="@Tasks" RowsPerPage="10" Elevation="3" Dense="true" @ref="Table">
+<MudTable T="PersistedTask" ServerData="LoadServerData" RowsPerPage="10" Elevation="3" Dense="true" @ref="Table">
     <ToolBarContent>
         <MudText Typo="Typo.h6">@Title</MudText>
         <MudSpacer />
@@ -19,16 +23,16 @@
     <HeaderContent>
         <MudTh>@Loc["Header_Name"]</MudTh>
         <MudTh>
-            <MudTableSortLabel SortBy="new Func<PersistedTask, object>(x => x.CreatedAt)">
+            <MudTableSortLabel T="PersistedTask" SortLabel="CreatedAt">
                 @Loc["Header_QueuedAt"]</MudTableSortLabel>
         </MudTh>
         <MudTh>
-            <MudTableSortLabel SortBy="new Func<PersistedTask, object?>(x => x.ProcessedAt)">
+            <MudTableSortLabel T="PersistedTask" SortLabel="ProcessedAt">
                 @Loc["Header_FinishedAt"]
             </MudTableSortLabel>
         </MudTh>
         <MudTh>
-            <MudTableSortLabel SortBy="new Func<PersistedTask, object>(x => x.Status)">@Loc["Header_Status"]
+            <MudTableSortLabel T="PersistedTask" SortLabel="Status">@Loc["Header_Status"]
             </MudTableSortLabel>
         </MudTh>
         <MudTh>@Loc["Header_Actions"]</MudTh>
@@ -105,7 +109,17 @@
 </MudTable>
 
 @code {
-    [Parameter] public IReadOnlyCollection<PersistedTask> Tasks { get; set; } = [];
+    /// <summary>Selects which registry view this table renders.</summary>
+    [Parameter] public bool Upscale { get; set; }
+
+    /// <summary>
+    ///     Optional caller-supplied source. When non-null the table pages from this collection instead
+    ///     of the registry snapshot, preserving the historical API. It is nullable so "not provided"
+    ///     can be distinguished from an empty collection. The default registry-driven behavior is
+    ///     used when it is not supplied.
+    /// </summary>
+    [Parameter] public IReadOnlyCollection<PersistedTask>? Tasks { get; set; }
+
     [Parameter] public string Title { get; set; } = "Tasks";
 
     [Parameter] public EventCallback OnClearCompleted { get; set; } = EventCallback.Empty;
@@ -117,9 +131,150 @@
 
     private MudTable<PersistedTask> Table { get; set; } = null!;
 
-    protected override void OnParametersSet()
+    // The registry flushes from background threads, so capture the circuit culture up front and
+    // restore it whenever we render in response to one of those events.
+    private CultureInfo _runTimeCulture = CultureInfo.CurrentUICulture;
+    private int _reloadPending;
+    private int _reloadRunning;
+    private volatile bool _disposed;
+
+    protected override void OnInitialized()
     {
-        Tasks = new List<PersistedTask>(Tasks);
+        _runTimeCulture = CultureInfo.CurrentUICulture;
+
+        if (Upscale)
+            TaskRegistry.UpscaleTasksChanged += OnTasksChanged;
+        else
+            TaskRegistry.StandardTasksChanged += OnTasksChanged;
     }
 
+    public void Dispose()
+    {
+        _disposed = true;
+
+        if (Upscale)
+            TaskRegistry.UpscaleTasksChanged -= OnTasksChanged;
+        else
+            TaskRegistry.StandardTasksChanged -= OnTasksChanged;
+    }
+
+    private void OnTasksChanged()
+    {
+        if (_disposed)
+            return;
+
+        // Registry flushes can raise many changes at once; coalesce reloads so we only page the
+        // current data a handful of times instead of once per changed task.
+        Interlocked.Exchange(ref _reloadPending, 1);
+
+        // Only one reload loop may run at a time; concurrent bodies could interleave at the await
+        // and issue redundant concurrent MudTable.ReloadServerData calls. Notifications are not
+        // dropped: the running loop keeps draining the pending flag until it observes it clear.
+        if (Interlocked.CompareExchange(ref _reloadRunning, 1, 0) == 1)
+            return;
+
+        _ = SafeReloadAsync();
+    }
+
+    private async Task SafeReloadAsync()
+    {
+        try
+        {
+            await InvokeAsync(ProcessPendingReloadAsync);
+        }
+        catch (Exception ex)
+        {
+            // The component may have been disposed between the check above and this call, or the
+            // dispatcher may already be shutting down. Observe the fault and clear the flag so the
+            // table is not permanently stuck if it is still alive.
+            Interlocked.Exchange(ref _reloadPending, 0);
+            Logger.LogDebug(ex, "Skipped a task table reload because the component is unavailable.");
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _reloadRunning, 0);
+        }
+
+        // A change that arrived after the loop's last check but before the running flag was cleared
+        // would have seen the flag set and not scheduled a reload. Re-check so it is not dropped.
+        if (Volatile.Read(ref _reloadPending) == 1)
+            OnTasksChanged();
+    }
+
+    private async Task ProcessPendingReloadAsync()
+    {
+        while (Interlocked.Exchange(ref _reloadPending, 0) == 1)
+        {
+            if (_disposed)
+                return;
+
+            try
+            {
+                CultureInfo.CurrentUICulture = _runTimeCulture;
+                CultureInfo.CurrentCulture = _runTimeCulture;
+
+                if (Table is not null)
+                {
+                    await Table.ReloadServerData();
+                }
+            }
+            catch (Exception ex)
+            {
+                // Never let a reload failure escape into an unobserved task or spin the loop.
+                // Clearing the pending flag stops SafeReloadAsync's re-check from immediately
+                // re-dispatching while the failure persists.
+                Interlocked.Exchange(ref _reloadPending, 0);
+                Logger.LogError(ex, "Failed to reload the task table.");
+                return;
+            }
+        }
+    }
+
+    private Task<TableData<PersistedTask>> LoadServerData(
+        TableState state,
+        CancellationToken cancellationToken
+    )
+    {
+        // Materialize only the requested page. Both sources are used in their existing order for
+        // the default view; an explicit column sort orders the source once per reload. The
+        // registry's snapshots are already sorted, so the default ordering is identical for a
+        // caller-supplied collection that comes from the same registry view.
+        IReadOnlyCollection<PersistedTask> source =
+            Tasks
+            ?? (Upscale ? TaskRegistry.GetUpscaleSnapshot() : TaskRegistry.GetStandardSnapshot());
+
+        IEnumerable<PersistedTask> ordered = ApplySort(source, state);
+        int skip = state.Page * state.PageSize;
+        List<PersistedTask> page = (skip > 0 ? ordered.Skip(skip) : ordered)
+            .Take(state.PageSize)
+            .ToList();
+
+        return Task.FromResult(
+            new TableData<PersistedTask> { Items = page, TotalItems = source.Count }
+        );
+    }
+
+    private static IEnumerable<PersistedTask> ApplySort(
+        IEnumerable<PersistedTask> source,
+        TableState state
+    )
+    {
+        if (state.SortDirection == SortDirection.None)
+            return source;
+
+        Func<PersistedTask, object?>? selector = state.SortLabel switch
+        {
+            "CreatedAt" => x => x.CreatedAt,
+            "ProcessedAt" => x => x.ProcessedAt,
+            "Status" => x => x.Status,
+            _ => null,
+        };
+
+        if (selector is null)
+            return source;
+
+        return state.SortDirection == SortDirection.Ascending
+            ? source.OrderBy(selector)
+            : source.OrderByDescending(selector);
+    }
 }

@@ -76,4 +76,7 @@
   <data name="Error_ClearFailed" xml:space="preserve">
     <value>失敗したタスクのクリアに失敗しました: {0}</value>
   </data>
+  <data name="Error_RunNow" xml:space="preserve">
+    <value>タスクを先頭に移動できませんでした: {0}</value>
+  </data>
 </root>

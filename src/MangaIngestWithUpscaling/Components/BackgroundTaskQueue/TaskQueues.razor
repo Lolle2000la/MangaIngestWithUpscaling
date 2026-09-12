@@ -1,8 +1,5 @@
-﻿@using System.Collections.Specialized
-@using System.Globalization
-@using MangaIngestWithUpscaling.Data.BackgroundTaskQueue
+﻿@using MangaIngestWithUpscaling.Data.BackgroundTaskQueue
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue
-@implements IDisposable
 
 @inject ILogger<TaskQueues> Logger
 @inject ISnackbar Snackbar
@@ -22,31 +19,29 @@
 
 <MudGrid>
     <MudItem lg="6" xs="12">
-        <TaskTable @key="@("standard-tasks")" Tasks="@standardTasks" Title="@Loc["StandardTasks"]" OnClearCompleted="OnClearCompletedStandardTasks"
+        <TaskTable @key="@("standard-tasks")" Upscale="false" Title="@Loc["StandardTasks"]" OnClearCompleted="OnClearCompletedStandardTasks"
             OnClearFailed="OnClearFailedStandardTasks" OnRetryFailed="OnRetryFailed" OnDelete="OnDelete"
             OnCancel="OnCancelStandardTask" OnRunNow="OnRunNow" />
     </MudItem>
     <MudItem lg="6" xs="12">
-        <TaskTable @key="@("upscale-tasks")" Tasks="@upscaleTasks" Title="@Loc["UpscalingTasks"]" OnClearCompleted="OnClearCompletedUpscaleTasks"
+        <TaskTable @key="@("upscale-tasks")" Upscale="true" Title="@Loc["UpscalingTasks"]" OnClearCompleted="OnClearCompletedUpscaleTasks"
             OnClearFailed="OnClearFailedUpscaleTasks" OnRetryFailed="OnRetryFailed" OnDelete="OnDelete"
             OnCancel="OnCancelUpscaleTask" OnRunNow="OnRunNow" />
     </MudItem>
 </MudGrid>
 
 @code {
-    private CultureInfo _runTimeCulture = null!;
-    private IReadOnlyCollection<PersistedTask> standardTasks => TaskRegistry.StandardTasks;
-    private IReadOnlyCollection<PersistedTask> upscaleTasks => TaskRegistry.UpscaleTasks;
+    // Snapshots are immutable arrays swapped atomically by the registry, so they are safe to
+    // enumerate here while the registry flushes on a background thread.
+    private IReadOnlyList<PersistedTask> standardTasks => TaskRegistry.GetStandardSnapshot();
+    private IReadOnlyList<PersistedTask> upscaleTasks => TaskRegistry.GetUpscaleSnapshot();
 
     private async Task OnClearCompletedStandardTasks()
     {
         try
         {
             var completedTasks = standardTasks.Where(x => x.Status == PersistedTaskStatus.Completed).ToList();
-            foreach (var task in completedTasks)
-            {
-                await TaskQueue.RemoveTaskAsync(task);
-            }
+            await TaskQueue.RemoveTasksAsync(completedTasks);
         }
         catch (Exception ex)
         {
@@ -61,10 +56,7 @@
         try
         {
             var failedTasks = standardTasks.Where(x => x.Status == PersistedTaskStatus.Failed).ToList();
-            foreach (var task in failedTasks)
-            {
-                await TaskQueue.RemoveTaskAsync(task);
-            }
+            await TaskQueue.RemoveTasksAsync(failedTasks);
         }
         catch (Exception ex)
         {
@@ -79,10 +71,7 @@
         try
         {
             var completedTasks = upscaleTasks.Where(x => x.Status == PersistedTaskStatus.Completed).ToList();
-            foreach (var task in completedTasks)
-            {
-                await TaskQueue.RemoveTaskAsync(task);
-            }
+            await TaskQueue.RemoveTasksAsync(completedTasks);
         }
         catch (Exception ex)
         {
@@ -97,10 +86,7 @@
         try
         {
             var failedTasks = upscaleTasks.Where(x => x.Status == PersistedTaskStatus.Failed).ToList();
-            foreach (var task in failedTasks)
-            {
-                await TaskQueue.RemoveTaskAsync(task);
-            }
+            await TaskQueue.RemoveTasksAsync(failedTasks);
         }
         catch (Exception ex)
         {
@@ -171,102 +157,15 @@
 
     private async Task OnRunNow(PersistedTask task)
     {
-        await TaskQueue.MoveToFrontAsync(task);
-    }
-
-    protected override Task OnInitializedAsync()
-    {
-        // this component interacts with background threads, so we need to capture the current culture
-        _runTimeCulture = CultureInfo.CurrentUICulture;
-
-        TaskQueue.TaskEnqueuedOrChanged += OnTaskUpdate;
-        TaskQueue.TaskRemoved += OnTaskRemoved;
-        StandardTaskProcessor.StatusChanged += OnStandardTaskChanged;
-        UpscaleTaskProcessor.StatusChanged += OnUpscaleTaskChanged;
-        DistributedUpscaleTaskProcessor.StatusChanged += OnUpscaleTaskChanged;
-
-        // Also listen to registry collection changes to repaint when order or membership changes
-        if (TaskRegistry.StandardTasks is INotifyCollectionChanged std)
-            std.CollectionChanged += OnRegistryCollectionChanged;
-        if (TaskRegistry.UpscaleTasks is INotifyCollectionChanged up)
-            up.CollectionChanged += OnRegistryCollectionChanged;
-        return Task.CompletedTask;
-    }
-
-    public void Dispose()
-    {
-        TaskQueue.TaskEnqueuedOrChanged -= OnTaskUpdate;
-        TaskQueue.TaskRemoved -= OnTaskRemoved;
-        StandardTaskProcessor.StatusChanged -= OnStandardTaskChanged;
-        UpscaleTaskProcessor.StatusChanged -= OnUpscaleTaskChanged;
-        DistributedUpscaleTaskProcessor.StatusChanged -= OnUpscaleTaskChanged;
-
-        if (TaskRegistry.StandardTasks is INotifyCollectionChanged std)
-            std.CollectionChanged -= OnRegistryCollectionChanged;
-        if (TaskRegistry.UpscaleTasks is INotifyCollectionChanged up)
-            up.CollectionChanged -= OnRegistryCollectionChanged;
-    }
-
-    private async Task OnTaskUpdate(PersistedTask task)
-    {
-        await InvokeAsync(() =>
+        try
         {
-            CultureInfo.CurrentUICulture = _runTimeCulture;
-            CultureInfo.CurrentCulture = _runTimeCulture;
-
-            // Registry drives the state; we only trigger UI refresh
-            StateHasChanged();
-            return Task.CompletedTask;
-        });
-    }
-
-    private async Task OnStandardTaskChanged(PersistedTask task)
-    {
-        await InvokeAsync(() =>
+            await TaskQueue.MoveToFrontAsync(task);
+        }
+        catch (Exception ex)
         {
-            CultureInfo.CurrentUICulture = _runTimeCulture;
-            CultureInfo.CurrentCulture = _runTimeCulture;
-
-            // Registry drives the state; we only trigger UI refresh
+            Logger.LogError(ex, "Failed to move task {TaskId} to the front", task.Id);
+            Snackbar.Add(string.Format(Loc["Error_RunNow"], ex.Message), Severity.Error);
             StateHasChanged();
-            return Task.CompletedTask;
-        });
+        }
     }
-
-    private async Task OnUpscaleTaskChanged(PersistedTask task)
-    {
-        await InvokeAsync(() =>
-        {
-            CultureInfo.CurrentUICulture = _runTimeCulture;
-            CultureInfo.CurrentCulture = _runTimeCulture;
-
-            // Registry drives the state; we only trigger UI refresh
-            StateHasChanged();
-            return Task.CompletedTask;
-        });
-    }
-
-    private async Task OnTaskRemoved(PersistedTask task)
-    {
-        await InvokeAsync(() =>
-        {
-            CultureInfo.CurrentUICulture = _runTimeCulture;
-            CultureInfo.CurrentCulture = _runTimeCulture;
-            
-            StateHasChanged();
-            return Task.CompletedTask;
-        });
-    }
-
-    private void OnRegistryCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
-    {
-        _ = InvokeAsync(() =>
-        {
-            CultureInfo.CurrentUICulture = _runTimeCulture;
-            CultureInfo.CurrentCulture = _runTimeCulture;
-            StateHasChanged();
-        });
-    }
-
-    // No local collections; TaskRegistry is the single source of truth.
 }

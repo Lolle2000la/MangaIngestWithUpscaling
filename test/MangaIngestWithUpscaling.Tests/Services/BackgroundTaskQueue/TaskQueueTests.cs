@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
@@ -1045,5 +1046,166 @@ public class TaskQueueTests : IDisposable
         var newTask = raisedTasks[1];
         Assert.Equal(chapter1.Id, ((UpscaleTask)newTask.Data).ChapterId);
         Assert.Equal(1, newTask.Order);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ReEnqueue_CalledRepeatedly_DoesNotDuplicateInMemoryEntry()
+    {
+        // Regression guard for the recovery path: re-adding a dequeued task must be idempotent so a
+        // racy recovery cannot put the same task into the sorted set twice.
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "re-enqueue-me" });
+        PersistedTask task = _taskQueue.GetStandardSnapshot().Single();
+
+        // Simulate the processor having dequeued the task.
+        Assert.NotNull(_taskQueue.DequeueStandard());
+
+        _taskQueue.ReEnqueue(task);
+        _taskQueue.ReEnqueue(task);
+
+        IReadOnlyList<PersistedTask> snapshot = _taskQueue.GetStandardSnapshot();
+        Assert.Single(snapshot);
+        Assert.Equal(task.Id, snapshot[0].Id);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RemoveTasksAsync_RemovesStandardAndUpscaleTasksInOneCall()
+    {
+        // Arrange
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "standard-1" });
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "standard-2" });
+        await _taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(1, 1));
+        await _taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(2, 2));
+
+        var removedIds = new List<int>();
+        _taskQueue.TaskRemoved += task =>
+        {
+            lock (removedIds)
+            {
+                removedIds.Add(task.Id);
+            }
+
+            return Task.CompletedTask;
+        };
+
+        List<PersistedTask> all = _taskQueue
+            .GetStandardSnapshot()
+            .Concat(_taskQueue.GetUpscaleSnapshot())
+            .ToList();
+        Assert.Equal(4, all.Count);
+
+        // Act
+        await _taskQueue.RemoveTasksAsync(all);
+
+        // Assert: both in-memory views and the database are cleared, and each task is announced.
+        Assert.Empty(_taskQueue.GetStandardSnapshot());
+        Assert.Empty(_taskQueue.GetUpscaleSnapshot());
+        Assert.Equal(4, removedIds.Distinct().Count());
+
+        int remaining = await _dbContext.PersistedTasks.CountAsync(
+            TestContext.Current.CancellationToken
+        );
+        Assert.Equal(0, remaining);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RemoveTasksAsync_WithAlreadyDeletedTask_DoesNotThrowAndRemovesTheRest()
+    {
+        // Arrange: one of the tasks is deleted behind the queue's back (e.g. by a concurrent cleanup).
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "a" });
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "b" });
+
+        List<PersistedTask> all = _taskQueue.GetStandardSnapshot().ToList();
+        Assert.Equal(2, all.Count);
+
+        var toDelete = await _dbContext.PersistedTasks.FirstAsync(
+            t => t.Id == all[0].Id,
+            TestContext.Current.CancellationToken
+        );
+        _dbContext.PersistedTasks.Remove(toDelete);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // Act
+        Exception? exception = await Record.ExceptionAsync(() => _taskQueue.RemoveTasksAsync(all));
+
+        // Assert: the missing row is skipped rather than failing the batch.
+        Assert.Null(exception);
+        Assert.Empty(_taskQueue.GetStandardSnapshot());
+        Assert.Equal(
+            0,
+            await _dbContext.PersistedTasks.CountAsync(TestContext.Current.CancellationToken)
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RemoveTaskAsync_WithAlreadyDeletedTask_DoesNotThrow()
+    {
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "a" });
+        PersistedTask task = _taskQueue.GetStandardSnapshot().Single();
+
+        var toDelete = await _dbContext.PersistedTasks.FirstAsync(
+            t => t.Id == task.Id,
+            TestContext.Current.CancellationToken
+        );
+        _dbContext.PersistedTasks.Remove(toDelete);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        Exception? exception = await Record.ExceptionAsync(() => _taskQueue.RemoveTaskAsync(task));
+
+        Assert.Null(exception);
+        Assert.Empty(_taskQueue.GetStandardSnapshot());
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ConcurrentEnqueueDequeueAndSnapshots_CompleteWithoutDeadlock()
+    {
+        // Regression guard for the nested sorted-set locks in EnqueueAsync combined with the
+        // single-lock readers/dequeuers. A deadlock would surface as a timeout here.
+        var errors = new ConcurrentBag<Exception>();
+
+        var workers = Enumerable
+            .Range(0, 6)
+            .Select(worker =>
+                Task.Run(async () =>
+                {
+                    try
+                    {
+                        for (int i = 0; i < 15; i++)
+                        {
+                            switch (worker % 3)
+                            {
+                                case 0:
+                                    await _taskQueue.EnqueueAsync(
+                                        new LoggingTask { Message = $"{worker}-{i}" }
+                                    );
+                                    break;
+                                case 1:
+                                    _taskQueue.DequeueStandard();
+                                    _taskQueue.DequeueUpscale();
+                                    _taskQueue.PeekUpscale();
+                                    break;
+                                default:
+                                    _ = _taskQueue.GetStandardSnapshot().Count;
+                                    _ = _taskQueue.GetUpscaleSnapshot().Count;
+                                    break;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        errors.Add(ex);
+                    }
+                })
+            )
+            .ToList();
+
+        await Task.WhenAll(workers)
+            .WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+        Assert.Empty(errors);
     }
 }

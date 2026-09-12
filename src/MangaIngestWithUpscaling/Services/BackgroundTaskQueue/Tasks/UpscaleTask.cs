@@ -51,7 +51,7 @@ public class UpscaleTask : BaseTask, IChapterTask
 
     public bool UpdateIfProfileNew { get; set; } = false;
 
-    public override int RetryFor { get; set; } = 1;
+    public override int RetryFor { get; set; } = 3;
 
     public override async Task ProcessAsync(
         IServiceProvider services,

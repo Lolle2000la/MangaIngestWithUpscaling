@@ -7,13 +7,33 @@ namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 public interface ITaskPersistenceService
 {
     Task<bool> ClaimTaskAsync(int taskId, CancellationToken cancellationToken = default);
-    Task CompleteTaskAsync(int taskId, CancellationToken cancellationToken = default);
-    Task FailTaskAsync(int taskId, CancellationToken cancellationToken = default);
-    Task CancelTaskAsync(
+    Task<int> CompleteTaskAsync(int taskId, CancellationToken cancellationToken = default);
+    Task<int> FailTaskAsync(int taskId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    ///     Cancels a still-active task (Pending or Processing). The affected row count is returned so
+    ///     callers can avoid mirroring a terminal state that the guarded write did not apply.
+    /// </summary>
+    Task<int> CancelTaskAsync(
         int taskId,
         bool requeue = false,
         CancellationToken cancellationToken = default
     );
+
+    /// <summary>
+    ///     Puts a still-recoverable task row (Pending or Processing) back to
+    ///     <see cref="PersistedTaskStatus.Pending"/>. Terminal rows are left untouched so a late
+    ///     recovery cannot resurrect a completed/canceled task. The affected row count is returned
+    ///     so callers can tell whether the row was recoverable.
+    /// </summary>
+    Task<int> RequeueStrandedTaskAsync(int taskId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    ///     Whether the row for <paramref name="taskId" /> is still <see cref="PersistedTaskStatus.Pending" />.
+    ///     A read-only guard for the detached claim retry so it cannot resurrect a task that
+    ///     completed, was claimed elsewhere, or was removed while the backoff elapsed.
+    /// </summary>
+    Task<bool> IsTaskPendingAsync(int taskId, CancellationToken cancellationToken = default);
 }
 
 [RegisterSingleton]
@@ -27,62 +47,75 @@ public class TaskPersistenceService(IServiceScopeFactory scopeFactory) : ITaskPe
         using var scope = scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        var task = await dbContext.PersistedTasks.FirstOrDefaultAsync(
-            t => t.Id == taskId,
-            cancellationToken
-        );
-        if (task == null || task.Status != PersistedTaskStatus.Pending)
-        {
-            return false;
-        }
+        // Atomic compare-and-set: only a row that is still Pending may be claimed. Doing the check
+        // and the update in a single guarded statement (instead of read-then-SaveChanges) means two
+        // concurrent claimers cannot both observe Pending and both succeed, which would run the task
+        // twice. A missing or already-claimed row affects no rows and yields false.
+        int affected = await dbContext
+            .PersistedTasks.Where(t => t.Id == taskId && t.Status == PersistedTaskStatus.Pending)
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(t => t.Status, PersistedTaskStatus.Processing),
+                cancellationToken
+            );
 
-        task.Status = PersistedTaskStatus.Processing;
-        try
-        {
-            await dbContext.SaveChangesAsync(cancellationToken);
-            return true;
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            return false;
-        }
+        return affected > 0;
     }
 
-    public async Task CompleteTaskAsync(int taskId, CancellationToken cancellationToken = default)
+    public async Task<int> CompleteTaskAsync(
+        int taskId,
+        CancellationToken cancellationToken = default
+    )
     {
         using var scope = scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        var task = await dbContext.PersistedTasks.FirstOrDefaultAsync(
-            t => t.Id == taskId,
-            cancellationToken
-        );
-        if (task != null)
-        {
-            task.Status = PersistedTaskStatus.Completed;
-            task.ProcessedAt = DateTime.UtcNow;
-            await dbContext.SaveChangesAsync(cancellationToken);
-        }
+        DateTime? processedAt = DateTime.UtcNow;
+        // Terminal transitions are guarded: a late or duplicate callback must not overwrite a
+        // terminal state. Only tasks that are still Pending/Processing may complete. The returned
+        // row count tells the caller whether the transition actually happened.
+        return await dbContext
+            .PersistedTasks.Where(t =>
+                t.Id == taskId
+                && (
+                    t.Status == PersistedTaskStatus.Pending
+                    || t.Status == PersistedTaskStatus.Processing
+                )
+            )
+            .ExecuteUpdateAsync(
+                setters =>
+                    setters
+                        .SetProperty(t => t.Status, PersistedTaskStatus.Completed)
+                        .SetProperty(t => t.ProcessedAt, processedAt),
+                cancellationToken
+            );
     }
 
-    public async Task FailTaskAsync(int taskId, CancellationToken cancellationToken = default)
+    public async Task<int> FailTaskAsync(int taskId, CancellationToken cancellationToken = default)
     {
         using var scope = scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        var task = await dbContext.PersistedTasks.FirstOrDefaultAsync(
-            t => t.Id == taskId,
-            cancellationToken
-        );
-        if (task != null)
-        {
-            task.Status = PersistedTaskStatus.Failed;
-            task.RetryCount++;
-            await dbContext.SaveChangesAsync(cancellationToken);
-        }
+        // Only a still-active task may fail, and the retry count is incremented in the same
+        // conditional update so duplicate failure callbacks cannot inflate it. The returned row
+        // count tells the caller whether the transition actually happened.
+        return await dbContext
+            .PersistedTasks.Where(t =>
+                t.Id == taskId
+                && (
+                    t.Status == PersistedTaskStatus.Pending
+                    || t.Status == PersistedTaskStatus.Processing
+                )
+            )
+            .ExecuteUpdateAsync(
+                setters =>
+                    setters
+                        .SetProperty(t => t.Status, PersistedTaskStatus.Failed)
+                        .SetProperty(t => t.RetryCount, t => t.RetryCount + 1),
+                cancellationToken
+            );
     }
 
-    public async Task CancelTaskAsync(
+    public async Task<int> CancelTaskAsync(
         int taskId,
         bool requeue = false,
         CancellationToken cancellationToken = default
@@ -91,14 +124,62 @@ public class TaskPersistenceService(IServiceScopeFactory scopeFactory) : ITaskPe
         using var scope = scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
 
-        var task = await dbContext.PersistedTasks.FirstOrDefaultAsync(
-            t => t.Id == taskId,
+        PersistedTaskStatus newStatus = requeue
+            ? PersistedTaskStatus.Pending
+            : PersistedTaskStatus.Canceled;
+
+        // Do not overwrite a terminal state: a late cancel after completion/failure is a no-op. The
+        // returned row count tells the caller whether the transition actually happened.
+        return await dbContext
+            .PersistedTasks.Where(t =>
+                t.Id == taskId
+                && (
+                    t.Status == PersistedTaskStatus.Pending
+                    || t.Status == PersistedTaskStatus.Processing
+                )
+            )
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(t => t.Status, newStatus),
+                cancellationToken
+            );
+    }
+
+    public async Task<int> RequeueStrandedTaskAsync(
+        int taskId,
+        CancellationToken cancellationToken = default
+    )
+    {
+        using var scope = scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+        // Only a still-active task may be returned to Pending. A terminal row is the source of
+        // truth and must not be overwritten by a failed claim/recovery. The retry count is left
+        // untouched: infrastructure recoveries do not consume the task's RetryFor budget.
+        return await dbContext
+            .PersistedTasks.Where(t =>
+                t.Id == taskId
+                && (
+                    t.Status == PersistedTaskStatus.Pending
+                    || t.Status == PersistedTaskStatus.Processing
+                )
+            )
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(t => t.Status, PersistedTaskStatus.Pending),
+                cancellationToken
+            );
+    }
+
+    public async Task<bool> IsTaskPendingAsync(
+        int taskId,
+        CancellationToken cancellationToken = default
+    )
+    {
+        using var scope = scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+        return await dbContext.PersistedTasks.AnyAsync(
+            t => t.Id == taskId && t.Status == PersistedTaskStatus.Pending,
             cancellationToken
         );
-        if (task != null)
-        {
-            task.Status = requeue ? PersistedTaskStatus.Pending : PersistedTaskStatus.Canceled;
-            await dbContext.SaveChangesAsync(cancellationToken);
-        }
     }
 }
