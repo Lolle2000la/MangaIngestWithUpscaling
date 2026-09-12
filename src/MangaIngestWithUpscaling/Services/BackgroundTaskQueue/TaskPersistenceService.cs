@@ -27,6 +27,13 @@ public interface ITaskPersistenceService
     ///     so callers can tell whether the row was recoverable.
     /// </summary>
     Task<int> RequeueStrandedTaskAsync(int taskId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    ///     Whether the row for <paramref name="taskId" /> is still <see cref="PersistedTaskStatus.Pending" />.
+    ///     A read-only guard for the detached claim retry so it cannot resurrect a task that
+    ///     completed, was claimed elsewhere, or was removed while the backoff elapsed.
+    /// </summary>
+    Task<bool> IsTaskPendingAsync(int taskId, CancellationToken cancellationToken = default);
 }
 
 [RegisterSingleton]
@@ -160,5 +167,19 @@ public class TaskPersistenceService(IServiceScopeFactory scopeFactory) : ITaskPe
                 setters => setters.SetProperty(t => t.Status, PersistedTaskStatus.Pending),
                 cancellationToken
             );
+    }
+
+    public async Task<bool> IsTaskPendingAsync(
+        int taskId,
+        CancellationToken cancellationToken = default
+    )
+    {
+        using var scope = scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+        return await dbContext.PersistedTasks.AnyAsync(
+            t => t.Id == taskId && t.Status == PersistedTaskStatus.Pending,
+            cancellationToken
+        );
     }
 }

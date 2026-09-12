@@ -188,6 +188,8 @@ public class UpscaleTaskProcessor(
             // dropped here, or the row would stay Processing and out of every queue; apply the
             // intended cancel just as the claim-cancellation path does.
             Logger.LogInformation("Verification of rerouted task {TaskId} was canceled", task.Id);
+            // The task is abandoned here (no retry is scheduled), so a pending counter must not linger.
+            ForgetClaimAttempts(task.Id);
             await ApplyClaimCancellationAsync(task);
             return false;
         }
@@ -203,7 +205,7 @@ public class UpscaleTaskProcessor(
                 task.Id
             );
             await ReturnToPendingForReplayAsync(task);
-            await RequeueTransientClaimFailureAsync(task, stoppingToken);
+            await RequeueTransientClaimFailureAsync(task);
             return false;
         }
 
@@ -213,6 +215,8 @@ public class UpscaleTaskProcessor(
                 "Skipping rerouted task {TaskId} because its database row is missing or no longer active.",
                 task.Id
             );
+            // The task is abandoned here (no retry is scheduled), so a pending counter must not linger.
+            ForgetClaimAttempts(task.Id);
             return false;
         }
 

@@ -224,6 +224,7 @@ public class UpscaleTaskProcessorTests : IDisposable
         persistence
             .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(1));
+        persistence.IsTaskPendingAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(true);
 
         var processor = new FastRetryUpscaleTaskProcessor(
             _taskQueue,
@@ -237,12 +238,23 @@ public class UpscaleTaskProcessorTests : IDisposable
         await _taskQueue.EnqueueAsync(new UpscaleTask { ChapterId = 1, UpscalerProfileId = 1 });
         await _taskQueue.EnqueueAsync(new UpscaleTask { ChapterId = 2, UpscalerProfileId = 1 });
 
-        var processed = new TaskCompletionSource<PersistedTask>();
+        // Both the next task and the retried failed task must be processed. The retry now runs off
+        // the loop, so the next task is served while the failed one is in backoff; the test must
+        // not depend on which of the two reaches Processing first.
+        var processed = new List<PersistedTask>();
+        var bothProcessed = new TaskCompletionSource();
         processor.StatusChanged += task =>
         {
             if (task.Status == PersistedTaskStatus.Processing)
             {
-                processed.TrySetResult(task);
+                lock (processed)
+                {
+                    processed.Add(task);
+                    if (processed.Count == 2)
+                    {
+                        bothProcessed.TrySetResult();
+                    }
+                }
             }
             return Task.CompletedTask;
         };
@@ -250,12 +262,19 @@ public class UpscaleTaskProcessorTests : IDisposable
         using var cts = new CancellationTokenSource();
         await processor.StartAsync(cts.Token);
 
-        PersistedTask processedTask = await processed.Task.WaitAsync(
+        await bothProcessed.Task.WaitAsync(
             TimeSpan.FromSeconds(5),
             TestContext.Current.CancellationToken
         );
 
-        Assert.Equal(1, ((UpscaleTask)processedTask.Data).ChapterId);
+        List<int> processedChapterIds;
+        lock (processed)
+        {
+            processedChapterIds = processed.Select(t => ((UpscaleTask)t.Data).ChapterId).ToList();
+        }
+
+        Assert.Contains(1, processedChapterIds);
+        Assert.Contains(2, processedChapterIds);
         await persistence
             .Received(1)
             .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>());
@@ -294,6 +313,7 @@ public class UpscaleTaskProcessorTests : IDisposable
         persistence
             .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(1));
+        persistence.IsTaskPendingAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(true);
 
         var processor = new FastRetryUpscaleTaskProcessor(
             _taskQueue,

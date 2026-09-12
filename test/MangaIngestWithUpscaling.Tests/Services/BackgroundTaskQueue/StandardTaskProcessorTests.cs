@@ -128,9 +128,9 @@ public class StandardTaskProcessorTests : IDisposable
     public Task ExecuteAsync_WhenClaimThrows_RecoversFailedTaskAndKeepsProcessingSubsequentTasks() =>
         RunClaimFailureScenarioAsync(
             new InvalidOperationException("claim failed"),
-            // The failure is retried promptly, so the same task is processed first after the
-            // retry succeeds rather than being dropped for the periodic replayer.
-            expectedFirstProcessed: "first"
+            // The failure is reconciled to Pending and retried after the backoff, which now runs
+            // off the loop: the subsequent task is processed while the failed one waits to retry.
+            expectedFirstProcessed: "second"
         );
 
     [Fact]
@@ -164,6 +164,7 @@ public class StandardTaskProcessorTests : IDisposable
         persistence
             .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(1));
+        persistence.IsTaskPendingAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(true);
 
         var processor = new FastRetryStandardTaskProcessor(
             _taskQueue,
@@ -255,6 +256,7 @@ public class StandardTaskProcessorTests : IDisposable
         persistence
             .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(1));
+        persistence.IsTaskPendingAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(true);
         persistence.CompleteTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(1);
 
         var processor = new FastRetryStandardTaskProcessor(
@@ -318,6 +320,7 @@ public class StandardTaskProcessorTests : IDisposable
         persistence
             .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
             .Returns(Task.FromResult(1));
+        persistence.IsTaskPendingAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(true);
 
         var processor = new FastRetryStandardTaskProcessor(
             _taskQueue,
@@ -346,6 +349,207 @@ public class StandardTaskProcessorTests : IDisposable
         // The budget is exhausted, so the task is left for the periodic replayer rather than
         // re-enqueued again.
         Assert.DoesNotContain(_taskQueue.GetStandardSnapshot(), t => t.Id == taskId);
+
+        await cts.CancelAsync();
+        await processor.StopAsync(CancellationToken.None);
+        Assert.False(IsExecuteTaskFaulted(processor));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ExecuteAsync_WhenClaimFails_DoesNotBlockASubsequentlyQueuedTaskDuringBackoff()
+    {
+        // Regression guard: the claim-retry backoff used to be awaited inside the processor loop, so
+        // a poisoned task head-of-line blocked every task behind it for the whole backoff. The
+        // backoff must run off the loop so the next task is served while the first waits to retry.
+        var persistence = Substitute.For<ITaskPersistenceService>();
+        int poisonId;
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "poison" });
+        poisonId = _taskQueue.GetStandardSnapshot().Single().Id;
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "innocent" });
+
+        persistence
+            .ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+            {
+                if ((int)ci[0] == poisonId)
+                {
+                    throw new InvalidOperationException("transient claim failure");
+                }
+
+                return Task.FromResult(true);
+            });
+        persistence
+            .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(1));
+
+        var processor = new CustomRetryStandardTaskProcessor(
+            _taskQueue,
+            _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+            _mockLogger,
+            persistence,
+            new[] { TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30) }
+        );
+
+        var innocent = new TaskCompletionSource<PersistedTask>();
+        processor.StatusChanged += task =>
+        {
+            if (task.Status == PersistedTaskStatus.Processing)
+            {
+                innocent.TrySetResult(task);
+            }
+            return Task.CompletedTask;
+        };
+
+        using var cts = new CancellationTokenSource();
+        await processor.StartAsync(cts.Token);
+
+        // The innocent task must be processed long before the 30s poison backoff elapses. With the
+        // old inline wait this could only complete after the full delay.
+        PersistedTask processedTask = await innocent.Task.WaitAsync(
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken
+        );
+        Assert.Equal("innocent", ((LoggingTask)processedTask.Data).Message);
+
+        await cts.CancelAsync();
+        await processor.StopAsync(CancellationToken.None);
+        Assert.False(IsExecuteTaskFaulted(processor));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ExecuteAsync_WhenClaimFails_RetriesAfterTheBackoffAndStaysBounded()
+    {
+        // The detached retry must still fire once the backoff elapses (not run inline) and must
+        // stop after the bounded budget, leaving the task Pending for the periodic replayer.
+        var persistence = Substitute.For<ITaskPersistenceService>();
+        int claimCalls = 0;
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "slow-retry" });
+        int taskId = _taskQueue.GetStandardSnapshot().Single().Id;
+
+        persistence
+            .ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(_ => FailClaimAsync());
+
+        Task<bool> FailClaimAsync()
+        {
+            Interlocked.Increment(ref claimCalls);
+            throw new InvalidOperationException("persistent claim failure");
+        }
+
+        persistence
+            .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(1));
+        persistence.IsTaskPendingAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(true);
+
+        var processor = new CustomRetryStandardTaskProcessor(
+            _taskQueue,
+            _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+            _mockLogger,
+            persistence,
+            new[]
+            {
+                TimeSpan.FromMilliseconds(500),
+                TimeSpan.FromMilliseconds(1),
+                TimeSpan.FromMilliseconds(1),
+            }
+        );
+
+        using var cts = new CancellationTokenSource();
+        await processor.StartAsync(cts.Token);
+
+        DateTime firstAttemptDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (Volatile.Read(ref claimCalls) < 1 && DateTime.UtcNow < firstAttemptDeadline)
+        {
+            await Task.Delay(5, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Equal(1, Volatile.Read(ref claimCalls));
+
+        // Still inside the 500ms backoff: the retry must not have fired inline.
+        await Task.Delay(150, TestContext.Current.CancellationToken);
+        Assert.Equal(1, Volatile.Read(ref claimCalls));
+
+        DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (Volatile.Read(ref claimCalls) < 4 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10, TestContext.Current.CancellationToken);
+        }
+
+        // One initial attempt plus the three bounded retries.
+        Assert.Equal(4, Volatile.Read(ref claimCalls));
+        Assert.DoesNotContain(_taskQueue.GetStandardSnapshot(), t => t.Id == taskId);
+
+        await cts.CancelAsync();
+        await processor.StopAsync(CancellationToken.None);
+        Assert.False(IsExecuteTaskFaulted(processor));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ExecuteAsync_WhenClaimRetryIsPendingAndTaskIsRemoved_DoesNotResurrectIt()
+    {
+        // Regression guard: a stale retry timer must not re-add a task that was removed (or
+        // otherwise finalized) while it was in backoff.
+        var persistence = Substitute.For<ITaskPersistenceService>();
+        int claimCalls = 0;
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "removed-poison" });
+        PersistedTask poison = _taskQueue.GetStandardSnapshot().Single();
+
+        persistence
+            .ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(_ => FailClaimAsync());
+
+        Task<bool> FailClaimAsync()
+        {
+            Interlocked.Increment(ref claimCalls);
+            throw new InvalidOperationException("transient claim failure");
+        }
+
+        persistence
+            .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(Task.FromResult(1));
+
+        // Use the real persistence for the guard so the removal below is actually observed.
+        var realPersistence = new TaskPersistenceService(
+            _serviceProvider.GetRequiredService<IServiceScopeFactory>()
+        );
+        persistence
+            .IsTaskPendingAsync(Arg.Any<int>(), Arg.Any<CancellationToken>())
+            .Returns(ci =>
+                realPersistence.IsTaskPendingAsync((int)ci[0], (CancellationToken)ci[1])
+            );
+
+        var processor = new CustomRetryStandardTaskProcessor(
+            _taskQueue,
+            _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+            _mockLogger,
+            persistence,
+            new[]
+            {
+                TimeSpan.FromMilliseconds(500),
+                TimeSpan.FromMilliseconds(1),
+                TimeSpan.FromMilliseconds(1),
+            }
+        );
+
+        using var cts = new CancellationTokenSource();
+        await processor.StartAsync(cts.Token);
+
+        DateTime deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (Volatile.Read(ref claimCalls) < 1 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(5, TestContext.Current.CancellationToken);
+        }
+
+        // Remove the task while its retry timer is still pending.
+        await _taskQueue.RemoveTaskAsync(poison);
+
+        // Wait well past the first backoff: the guard must drop the removed row.
+        await Task.Delay(900, TestContext.Current.CancellationToken);
+        Assert.DoesNotContain(_taskQueue.GetStandardSnapshot(), t => t.Id == poison.Id);
+        Assert.Equal(1, Volatile.Read(ref claimCalls));
 
         await cts.CancelAsync();
         await processor.StopAsync(CancellationToken.None);
@@ -520,6 +724,7 @@ public class StandardTaskProcessorTests : IDisposable
         persistence
             .CancelTaskAsync(Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
             .Returns(1);
+        persistence.IsTaskPendingAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(true);
 
         var processor = new StandardTaskProcessor(
             _taskQueue,
@@ -549,9 +754,10 @@ public class StandardTaskProcessorTests : IDisposable
             TestContext.Current.CancellationToken
         );
 
-        // The first claim failed: a thrown exception reconciles the row to Pending and drops the
-        // in-memory copy (so the second is processed first), while a cancellation persists the
-        // cancel and drops it (so the second is first as well).
+        // The first claim failed: a thrown exception reconciles the row to Pending and schedules a
+        // retry off the loop (so the second is processed while the first is in backoff), while a
+        // cancellation persists the cancel and drops the in-memory copy (so the second is first as
+        // well).
         Assert.Equal(expectedFirstProcessed, ((LoggingTask)processedTask.Data).Message);
 
         await cts.CancelAsync();
@@ -609,6 +815,21 @@ public class StandardTaskProcessorTests : IDisposable
         };
 
         protected override IReadOnlyList<TimeSpan> ClaimRetryBackoff => TinyBackoff;
+    }
+
+    /// <summary>
+    ///     Processor whose claim-retry backoff can be chosen per test to prove the delay runs off
+    ///     the loop and is honoured rather than awaited inline.
+    /// </summary>
+    private sealed class CustomRetryStandardTaskProcessor(
+        TaskQueue taskQueue,
+        IServiceScopeFactory scopeFactory,
+        ILogger<StandardTaskProcessor> logger,
+        ITaskPersistenceService taskPersistenceService,
+        IReadOnlyList<TimeSpan> claimRetryBackoff
+    ) : StandardTaskProcessor(taskQueue, scopeFactory, logger, taskPersistenceService)
+    {
+        protected override IReadOnlyList<TimeSpan> ClaimRetryBackoff => claimRetryBackoff;
     }
 
     private sealed class NoOpTask : BaseTask

@@ -105,6 +105,9 @@ public abstract class BackgroundTaskProcessorBase(
     private Task OnTaskRemoved(PersistedTask task)
     {
         CancelCurrent(task);
+        // A removed task will never be retried, so its pending transient-claim counter must not
+        // linger for the lifetime of the process.
+        ForgetClaimAttempts(task.Id);
         return Task.CompletedTask;
     }
 
@@ -185,7 +188,7 @@ public abstract class BackgroundTaskProcessorBase(
                 task.Id
             );
             await ReturnToPendingForReplayAsync(task);
-            await RequeueTransientClaimFailureAsync(task, stoppingToken);
+            await RequeueTransientClaimFailureAsync(task);
             return false;
         }
 
@@ -336,41 +339,78 @@ public abstract class BackgroundTaskProcessorBase(
     }
 
     /// <summary>
-    ///     Re-adds a task whose transient claim failure was already reconciled to Pending so the
-    ///     processor loop retries it promptly, up to <see cref="ClaimRetryBackoff" />'s length times.
-    ///     Once the budget is exhausted (or the processor is stopping) the task is left Pending for
+    ///     Schedules a prompt retry of a task whose transient claim failure was already reconciled
+    ///     to Pending, up to <see cref="ClaimRetryBackoff" />'s length times. The backoff is awaited
+    ///     off the processor loop so a poisoned task cannot head-of-line block the tasks behind it;
+    ///     once the budget is exhausted (or the processor is stopping) the task is left Pending for
     ///     the periodic replayer, so a persistent failure can neither hot-loop nor starve others.
     /// </summary>
-    protected async Task RequeueTransientClaimFailureAsync(
-        PersistedTask task,
-        CancellationToken stoppingToken
-    )
+    protected Task RequeueTransientClaimFailureAsync(PersistedTask task)
     {
         int attempt = _claimAttempts.AddOrUpdate(task.Id, 1, (_, current) => current + 1);
         if (attempt > ClaimRetryBackoff.Count)
         {
-            _claimAttempts.TryRemove(task.Id, out _);
+            ForgetClaimAttempts(task.Id);
             logger.LogWarning(
                 "Task {TaskId} could not be claimed after {Attempts} attempts; leaving it Pending for the periodic replayer.",
                 task.Id,
                 attempt
             );
-            return;
+            return Task.CompletedTask;
         }
 
+        TimeSpan backoff = ClaimRetryBackoff[attempt - 1];
+        // Use the processor's stopping token, not the per-task one: the per-task cancellation
+        // source is disposed as soon as the loop moves on, which would make the detached delay
+        // observe a disposed source instead of merely being cancelled on shutdown.
+        _ = RetryClaimAfterBackoffAsync(task, backoff, serviceStoppingToken);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    ///     Waits <paramref name="backoff" /> and then re-adds the task to its queue, unless the
+    ///     processor is stopping or the row is no longer Pending (terminal, claimed elsewhere, or
+    ///     removed). Runs detached from the processor loop; every exception is observed so a stale
+    ///     timer can neither fault the host nor resurrect a task that already finished.
+    /// </summary>
+    private async Task RetryClaimAfterBackoffAsync(
+        PersistedTask task,
+        TimeSpan backoff,
+        CancellationToken stoppingToken
+    )
+    {
         try
         {
-            await Task.Delay(ClaimRetryBackoff[attempt - 1], stoppingToken);
+            await Task.Delay(backoff, stoppingToken);
+
+            if (stoppingToken.IsCancellationRequested)
+            {
+                ForgetClaimAttempts(task.Id);
+                return;
+            }
+
+            // Guarded check: only re-enqueue a row that is still Pending. A terminal, removed or
+            // concurrently re-claimed row must not be resurrected or run twice by this timer.
+            if (!await taskPersistenceService.IsTaskPendingAsync(task.Id, stoppingToken))
+            {
+                ForgetClaimAttempts(task.Id);
+                return;
+            }
+
+            taskQueue.ReEnqueue(task);
         }
         catch (OperationCanceledException)
         {
-            // The processor is stopping or the task was cancelled while we waited. The row is
-            // already Pending, so replay/startup recovery owns it; this is not a claim failure.
-            _claimAttempts.TryRemove(task.Id, out _);
-            return;
+            // The processor is stopping while we waited. The row is already Pending, so
+            // replay/startup recovery owns it; this is not a claim failure.
+            ForgetClaimAttempts(task.Id);
         }
-
-        taskQueue.ReEnqueue(task);
+        catch (Exception ex)
+        {
+            // A stale timer must never fault the host; leave the task to the periodic replayer.
+            ForgetClaimAttempts(task.Id);
+            logger.LogError(ex, "Failed to retry the claim of task {TaskId}", task.Id);
+        }
     }
 
     /// <summary>

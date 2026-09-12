@@ -440,6 +440,104 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
         Assert.Equal(0, await GetRetryCountAsync(taskId));
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RequeueClaimedTask_WhenRowIsTerminal_ReturnsSuccessWithoutResurrectingIt()
+    {
+        // A row that reached a terminal state while its claim was being handed off must be dropped,
+        // not flipped back to Pending: the recovery reports success because there is nothing left
+        // to recover.
+        int taskId = await SeedRepairTaskAsync(retryFor: 1, retryCount: 0);
+        using (IServiceScope scope = _provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            PersistedTask row = await db.PersistedTasks.FirstAsync(
+                t => t.Id == taskId,
+                TestContext.Current.CancellationToken
+            );
+            row.Status = PersistedTaskStatus.Canceled;
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        PersistedTask persistedTask = await GetDetachedTaskAsync(taskId);
+
+        bool recovered = await InvokeRequeueClaimedTaskAsync(persistedTask);
+
+        Assert.True(recovered);
+        Assert.Equal(PersistedTaskStatus.Canceled, await GetStatusAsync(taskId));
+        Assert.Equal(0, await GetRetryCountAsync(taskId));
+        Assert.DoesNotContain(_taskQueue.GetUpscaleSnapshot(), t => t.Id == taskId);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RequeueClaimedTask_WhenRowWasRemoved_ReturnsSuccessWithoutResurrectingIt()
+    {
+        // A concurrently removed row must be dropped, not recreated by the requeue path.
+        int taskId = await SeedRepairTaskAsync(retryFor: 1, retryCount: 0);
+        PersistedTask persistedTask = await GetDetachedTaskAsync(taskId);
+        using (IServiceScope scope = _provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            PersistedTask row = await db.PersistedTasks.FirstAsync(
+                t => t.Id == taskId,
+                TestContext.Current.CancellationToken
+            );
+            db.PersistedTasks.Remove(row);
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        bool recovered = await InvokeRequeueClaimedTaskAsync(persistedTask);
+
+        Assert.True(recovered);
+        Assert.Null(await GetStatusAsync(taskId));
+        Assert.Equal(-1, await GetRetryCountAsync(taskId));
+        Assert.DoesNotContain(_taskQueue.GetUpscaleSnapshot(), t => t.Id == taskId);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RequeueStrandedTaskAsync_OnTerminalRow_ReturnsZeroAndLeavesRetryCountUntouched()
+    {
+        // Terminal rows are the source of truth: the recovery must refuse them and must never touch
+        // the RetryFor budget.
+        int taskId = await SeedTaskAsync(PersistedTaskStatus.Canceled, retryCount: 2);
+        var persistence = new TaskPersistenceService(
+            _provider.GetRequiredService<IServiceScopeFactory>()
+        );
+
+        int affected = await persistence.RequeueStrandedTaskAsync(
+            taskId,
+            TestContext.Current.CancellationToken
+        );
+
+        Assert.Equal(0, affected);
+        Assert.Equal(PersistedTaskStatus.Canceled, await GetStatusAsync(taskId));
+        Assert.Equal(2, await GetRetryCountAsync(taskId));
+    }
+
+    private async Task<bool> InvokeRequeueClaimedTaskAsync(PersistedTask persistedTask)
+    {
+        MethodInfo method = typeof(DistributedUpscaleTaskProcessor).GetMethod(
+            "RequeueClaimedTaskAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic
+        )!;
+        var invocation = method.Invoke(
+            _processor,
+            new object[] { persistedTask, TestContext.Current.CancellationToken }
+        )!;
+        return await (Task<bool>)invocation;
+    }
+
+    private async Task<PersistedTask> GetDetachedTaskAsync(int taskId)
+    {
+        using IServiceScope scope = _provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        return await db
+            .PersistedTasks.AsNoTracking()
+            .FirstAsync(t => t.Id == taskId, TestContext.Current.CancellationToken);
+    }
+
     private async Task<int> SeedRepairTaskAsync(int? retryFor = null, int retryCount = 0)
     {
         using IServiceScope scope = _provider.CreateScope();
