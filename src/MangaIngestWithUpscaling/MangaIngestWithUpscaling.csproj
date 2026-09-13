@@ -8,7 +8,8 @@
     <AssemblyName>$(AssemblyName.Replace(' ', '_'))</AssemblyName>
     <!-- Disable nullable attribute warnings on generated code due to tooling bugs -->
     <!-- see https://github.com/dotnet/razor/issues/7286 for more details -->
-    <NoWarn>$(NoWarn);NETSDK1206;CS8669</NoWarn>
+    <!-- NETSDK1187 is a known SDK bug (https://github.com/dotnet/sdk/issues/53815); MudBlazor.Translations ships a 'ckb-iq' resource folder that the SDK normalizes to 'ckb-IQ' -->
+    <NoWarn>$(NoWarn);NETSDK1206;CS8669;NETSDK1187</NoWarn>
   </PropertyGroup>
   <PropertyGroup>
     <BlazorWebAssemblyLoadAllGlobalizationData>true</BlazorWebAssemblyLoadAllGlobalizationData>
@@ -56,7 +57,7 @@
     />
     <PackageReference Include="Mono.Posix.NETStandard" Version="1.0.0" />
     <PackageReference Include="MudBlazor" Version="9.9.0" />
-    <PackageReference Include="MudBlazor.Translations" Version="3.4.0" />
+    <PackageReference Include="MudBlazor.Translations" Version="3.5.1" />
     <PackageReference Include="Open.ChannelExtensions" Version="10.0.0" />
     <PackageReference Include="PinguApps.Blazor.QRCode" Version="1.1.4" />
     <PackageReference Include="ReactiveUI" Version="24.2.0" />
