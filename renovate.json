@@ -4,6 +4,7 @@
     "config:recommended"
   ],
   "minimumReleaseAge": "14 days",
+  "internalChecksFilter": "strict",
   "packageRules": [
     {
       "description": "Bundle all NetVips updates",
@@ -67,6 +68,20 @@
         "Microsoft.Build.Utilities.Core"
       ],
       "allowedVersions": "<18.10"
+    },
+    {
+      "description": "Official .NET releases are signed, immutable first-party packages, so a shorter soak time is enough; security updates bypass minimumReleaseAge regardless",
+      "matchDatasources": ["docker", "nuget"],
+      "matchPackageNames": [
+        "mcr.microsoft.com/dotnet/*",
+        "Microsoft.AspNetCore*",
+        "Microsoft.Data.*",
+        "Microsoft.EntityFrameworkCore*",
+        "Microsoft.Extensions.*",
+        "Microsoft.NET.*",
+        "System.*"
+      ],
+      "minimumReleaseAge": "3 days"
     }
   ]
 }
