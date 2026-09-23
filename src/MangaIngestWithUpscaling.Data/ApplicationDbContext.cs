@@ -156,14 +156,17 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
             entity
                 .Property(e => e.Data)
                 .HasConversion(
-                    v => JsonSerializer.Serialize(v, JsonOptions),
-                    v => JsonSerializer.Deserialize<BaseTask>(v, JsonOptions)!
+                    v => JsonSerializer.Serialize(v, TaskJsonOptionsProvider.Options),
+                    v => JsonSerializer.Deserialize<BaseTask>(v, TaskJsonOptionsProvider.Options)!
                 )
-                .HasColumnType("jsonb"); // Use 'json' for SQL Server
+                .HasColumnType("jsonb");
 
             entity.Property(e => e.Status).HasConversion<string>();
 
-            entity.Property(e => e.Order).UseSequence();
+            // Order is always assigned by the application (see TaskQueue); it is not
+            // store-generated. Keeping it provider-agnostic avoids the SQL Server-only
+            // sequence API that used to be required here.
+            entity.Property(e => e.Order).ValueGeneratedNever();
 
             entity.HasIndex(e => e.Status);
             entity.HasIndex(e => e.CreatedAt);
@@ -230,7 +233,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
                     v => JsonSerializer.Serialize(v, JsonOptions),
                     v => JsonSerializer.Deserialize<List<OriginalChapterPart>>(v, JsonOptions)!
                 )
-                .HasColumnType("jsonb") // Use 'json' for SQL Server
+                .HasColumnType("jsonb")
                 .Metadata.SetValueComparer(comparer);
 
             entity

@@ -30,7 +30,10 @@ public class AddMultipleIngestPathsMigrationTests
         try
         {
             var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-                .UseSqlite(connection)
+                .UseSqlite(
+                    connection,
+                    sqlite => sqlite.MigrationsAssembly("MangaIngestWithUpscaling")
+                )
                 .Options;
             await using var context = new ApplicationDbContext(options);
 
@@ -71,7 +74,10 @@ public class AddMultipleIngestPathsMigrationTests
         try
         {
             var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-                .UseSqlite(connection)
+                .UseSqlite(
+                    connection,
+                    sqlite => sqlite.MigrationsAssembly("MangaIngestWithUpscaling")
+                )
                 .Options;
             await using var context = new ApplicationDbContext(options);
 

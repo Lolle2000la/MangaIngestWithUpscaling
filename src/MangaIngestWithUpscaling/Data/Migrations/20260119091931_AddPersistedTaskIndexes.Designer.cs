@@ -192,7 +192,7 @@ namespace MangaIngestWithUpscaling.Migrations
 
                     b.Property<int>("Order")
                         .HasColumnType("INTEGER")
-                        .HasAnnotation("SqlServer:ValueGenerationStrategy", SqlServerValueGenerationStrategy.Sequence);
+                        ;
 
                     b.Property<DateTime?>("ProcessedAt")
                         .HasColumnType("TEXT");
