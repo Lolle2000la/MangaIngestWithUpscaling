@@ -27,13 +27,15 @@ public static class DatabaseSetup
                 );
                 break;
             case DatabaseProvider.Postgres:
+                // Note: retry-on-failure is intentionally not enabled. Several services open
+                // user-initiated transactions, which a retrying execution strategy rejects unless
+                // every transaction is wrapped in CreateExecutionStrategy().
                 options.UseNpgsql(
                     connectionString,
                     npgsql =>
                     {
                         npgsql.MigrationsAssembly(migrationsAssembly);
                         npgsql.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
-                        npgsql.EnableRetryOnFailure();
                     }
                 );
                 break;
