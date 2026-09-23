@@ -1,7 +1,9 @@
 using MangaIngestWithUpscaling.Configuration;
 using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.DbMigrator;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
@@ -115,6 +117,66 @@ public class DbMigratorDataFidelityTests
         Assert.Equal(1, await target.Libraries.CountAsync(ct));
         Assert.Equal(1, await target.FilteredImages.CountAsync(ct));
         Assert.Equal(2, await target.UpscalerProfiles.IgnoreQueryFilters().CountAsync(ct));
+    }
+
+    [Fact]
+    public async Task Migrate_MultiBatch_CopiesEveryRowExactlyOnce()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Assert.SkipWhen(TestDatabaseFactory.Backend != TestDatabaseBackend.Postgres, SkipReason);
+
+        const int rowCount = 250;
+        const int batchSize = 50;
+
+        await using TestDatabase sqliteSource = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Sqlite
+        );
+        await using TestDatabase postgresTarget = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Postgres
+        );
+
+        await using (ApplicationDbContext seed = sqliteSource.CreateContext())
+        {
+            for (int i = 1; i <= rowCount; i++)
+            {
+                seed.PersistedTasks.Add(
+                    new PersistedTask
+                    {
+                        Data = new DetectSplitCandidatesTask(chapterId: 1, detectorVersion: 1),
+                        Status = PersistedTaskStatus.Pending,
+                        Order = i,
+                    }
+                );
+            }
+
+            await seed.SaveChangesAsync(ct);
+        }
+
+        await DataMigrator.MigrateAsync(
+            new MigratorOptions(
+                DatabaseProvider.Sqlite,
+                sqliteSource.ConnectionString,
+                DatabaseProvider.Postgres,
+                postgresTarget.ConnectionString,
+                BatchSize: batchSize,
+                Force: false,
+                IncludeLogs: false,
+                FromLogsConnection: null,
+                ToLogsConnection: null
+            ),
+            _ => { },
+            ct
+        );
+
+        await using ApplicationDbContext target = await postgresTarget.CreateContextAsync(
+            ensureSchema: false,
+            ct
+        );
+        Assert.Equal(rowCount, await target.PersistedTasks.CountAsync(ct));
+        Assert.Equal(
+            rowCount,
+            await target.PersistedTasks.Select(t => t.Id).Distinct().CountAsync(ct)
+        );
     }
 
     private static async Task SeedAsync(TestDatabase database, CancellationToken ct)

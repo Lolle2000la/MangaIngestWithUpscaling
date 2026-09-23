@@ -67,6 +67,13 @@ Options:
 After a successful migration, point `DatabaseProvider` at the new backend and restart the
 application. The old database is left untouched as a fallback.
 
+### Known limitations
+
+- **Timestamp precision:** PostgreSQL `timestamp with time zone` has microsecond precision, while
+  .NET `DateTime` uses 100-nanosecond ticks. Migrating to PostgreSQL therefore truncates the
+  sub-microsecond digit of every timestamp (e.g. `…4581723` becomes `…458172`). This does not affect
+  ordering or the application's behavior.
+
 ## Docker
 
 `docker-compose.yml` includes a `postgres` service behind the `postgres` profile. To run the

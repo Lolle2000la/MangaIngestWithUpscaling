@@ -71,7 +71,9 @@ internal static class MigratorCli
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine(ex.Message);
+            // Print the full chain (inner exceptions and stack trace): data migrations fail inside
+            // provider exceptions where the top-level message alone is not actionable.
+            Console.Error.WriteLine(ex);
             return 1;
         }
     }

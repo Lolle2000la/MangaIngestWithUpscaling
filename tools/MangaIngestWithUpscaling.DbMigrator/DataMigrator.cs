@@ -61,7 +61,13 @@ public static class DataMigrator
         log("Applying migrations to the target...");
         await target.Database.MigrateAsync(cancellationToken);
 
-        List<TableOperation> tables = BuildTableOperations(source, target, options.BatchSize, log);
+        List<TableOperation> tables = BuildTableOperations(
+            source,
+            target,
+            options.BatchSize,
+            log,
+            cancellationToken
+        );
 
         if (options.Force)
         {
@@ -142,7 +148,8 @@ public static class DataMigrator
         ApplicationDbContext source,
         ApplicationDbContext target,
         int batchSize,
-        Action<string> log
+        Action<string> log,
+        CancellationToken cancellationToken
     )
     {
         var operations = new List<TableOperation>();
@@ -161,8 +168,8 @@ public static class DataMigrator
             operations.Add(
                 new TableOperation(
                     name,
-                    async () => await SourceQuery(target).AnyAsync(),
-                    async () => await SourceQuery(target).ExecuteDeleteAsync(),
+                    async () => await SourceQuery(target).AnyAsync(cancellationToken),
+                    async () => await SourceQuery(target).ExecuteDeleteAsync(cancellationToken),
                     async () =>
                         await CopyAsync(
                             source,
@@ -171,7 +178,8 @@ public static class DataMigrator
                             targetSet,
                             name,
                             batchSize,
-                            log
+                            log,
+                            cancellationToken
                         )
                 )
             );
@@ -213,6 +221,11 @@ public static class DataMigrator
         return operations;
     }
 
+    /// <summary>
+    /// Streams the source rows and inserts them in batches. Streaming (instead of <c>Skip/Take</c>)
+    /// matters because paging without an <c>ORDER BY</c> is not stable on PostgreSQL, which silently
+    /// skips or repeats rows.
+    /// </summary>
     private static async Task CopyAsync<T>(
         ApplicationDbContext source,
         ApplicationDbContext target,
@@ -220,11 +233,12 @@ public static class DataMigrator
         DbSet<T> targetSet,
         string name,
         int batchSize,
-        Action<string> log
+        Action<string> log,
+        CancellationToken cancellationToken
     )
         where T : class
     {
-        int total = await query(source).CountAsync();
+        int total = await query(source).CountAsync(cancellationToken);
         if (total == 0)
         {
             log($"{name}: nothing to migrate.");
@@ -233,31 +247,46 @@ public static class DataMigrator
 
         log($"{name}: migrating {total} rows...");
         int copied = 0;
-        while (copied < total)
-        {
-            List<T> batch = await query(source)
+        var batch = new List<T>(batchSize);
+
+        await foreach (
+            T entity in query(source)
                 .AsNoTracking()
-                .Skip(copied)
-                .Take(batchSize)
-                .ToListAsync();
+                .AsAsyncEnumerable()
+                .WithCancellation(cancellationToken)
+        )
+        {
+            NormalizeUtcDateTimes(entity);
+            batch.Add(entity);
 
-            if (batch.Count == 0)
+            if (batch.Count >= batchSize)
             {
-                break;
+                copied += await FlushBatchAsync(target, targetSet, batch, cancellationToken);
+                log($"  {name}: {copied}/{total}");
             }
+        }
 
-            foreach (T entity in batch)
-            {
-                NormalizeUtcDateTimes(entity);
-            }
-
-            await targetSet.AddRangeAsync(batch);
-            await target.SaveChangesAsync();
-            target.ChangeTracker.Clear();
-
-            copied += batch.Count;
+        if (batch.Count > 0)
+        {
+            copied += await FlushBatchAsync(target, targetSet, batch, cancellationToken);
             log($"  {name}: {copied}/{total}");
         }
+    }
+
+    private static async Task<int> FlushBatchAsync<T>(
+        DbContext target,
+        DbSet<T> targetSet,
+        List<T> batch,
+        CancellationToken cancellationToken
+    )
+        where T : class
+    {
+        int count = batch.Count;
+        await targetSet.AddRangeAsync(batch, cancellationToken);
+        await target.SaveChangesAsync(cancellationToken);
+        target.ChangeTracker.Clear();
+        batch.Clear();
+        return count;
     }
 
     /// <summary>
@@ -342,29 +371,38 @@ public static class DataMigrator
 
         log($"Logs: migrating {total} rows...");
         int copied = 0;
-        while (copied < total)
-        {
-            List<Log> batch = await sourceLogs
+        var batch = new List<Log>(options.BatchSize);
+
+        await foreach (
+            Log logEntry in sourceLogs
                 .LogEntries.AsNoTracking()
-                .Skip(copied)
-                .Take(options.BatchSize)
-                .ToListAsync(cancellationToken);
+                .AsAsyncEnumerable()
+                .WithCancellation(cancellationToken)
+        )
+        {
+            NormalizeUtcDateTimes(logEntry);
+            batch.Add(logEntry);
 
-            if (batch.Count == 0)
+            if (batch.Count >= options.BatchSize)
             {
-                break;
+                copied += await FlushBatchAsync(
+                    targetLogs,
+                    targetLogs.LogEntries,
+                    batch,
+                    cancellationToken
+                );
+                log($"  Logs: {copied}/{total}");
             }
+        }
 
-            foreach (Log logEntry in batch)
-            {
-                NormalizeUtcDateTimes(logEntry);
-            }
-
-            await targetLogs.LogEntries.AddRangeAsync(batch);
-            await targetLogs.SaveChangesAsync(cancellationToken);
-            targetLogs.ChangeTracker.Clear();
-
-            copied += batch.Count;
+        if (batch.Count > 0)
+        {
+            copied += await FlushBatchAsync(
+                targetLogs,
+                targetLogs.LogEntries,
+                batch,
+                cancellationToken
+            );
             log($"  Logs: {copied}/{total}");
         }
     }
