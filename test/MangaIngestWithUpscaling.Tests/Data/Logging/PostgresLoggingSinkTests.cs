@@ -1,0 +1,73 @@
+using MangaIngestWithUpscaling.Configuration;
+using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.Postgres;
+using MangaIngestWithUpscaling.Tests.Infrastructure;
+using Microsoft.EntityFrameworkCore;
+using Npgsql;
+using Serilog;
+
+namespace MangaIngestWithUpscaling.Tests.Data.Logging;
+
+/// <summary>
+/// Verifies that the PostgreSQL log sink writes rows that the application's <see cref="LoggingDbContext"/>
+/// (used by the logs page) can read. The sink's column-writer configuration lives in
+/// <see cref="PostgresLogging"/>; this catches a mismatch between it and the <c>Log</c> entity.
+/// </summary>
+[Trait("Category", "Integration")]
+public class PostgresLoggingSinkTests
+{
+    private const string SkipReason =
+        "Set TEST_DB_PROVIDER=postgres to run the PostgreSQL logging sink test (Docker required).";
+
+    [Fact]
+    public async Task Sink_WritesRowsReadableThroughLoggingDbContext()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Assert.SkipWhen(TestDatabaseFactory.Backend != TestDatabaseBackend.Postgres, SkipReason);
+
+        await using TestDatabase database = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Postgres
+        );
+
+        // The application creates the table itself; mirror that here.
+        await using (var connection = new NpgsqlConnection(database.ConnectionString))
+        {
+            await connection.OpenAsync(ct);
+            await using NpgsqlCommand create = connection.CreateCommand();
+            create.CommandText = PostgresLogging.CreateTableSql;
+            await create.ExecuteNonQueryAsync(ct);
+        }
+
+        var logger = new LoggerConfiguration()
+            .MinimumLevel.Information()
+            .WriteTo.PostgreSQL(
+                database.ConnectionString,
+                tableName: PostgresLogging.TableName,
+                columnOptions: PostgresLogging.ColumnWriters,
+                schemaName: PostgresLogging.SchemaName,
+                needAutoCreateTable: false,
+                batchSizeLimit: 1,
+                period: TimeSpan.FromMilliseconds(50)
+            )
+            .CreateLogger();
+
+        logger.Information("value is {Value}", 42);
+        (logger as IDisposable)?.Dispose();
+
+        var optionsBuilder = new DbContextOptionsBuilder<LoggingDbContext>();
+        DatabaseSetup.UseDatabaseProvider(
+            optionsBuilder,
+            DatabaseProvider.Postgres,
+            database.ConnectionString,
+            typeof(PostgresMigrationsAssemblyMarker).Assembly.FullName!
+        );
+        await using var logContext = new LoggingDbContext(optionsBuilder.Options);
+
+        var log = await logContext.LogEntries.SingleAsync(ct);
+        Assert.Equal("Information", log.Level);
+        Assert.Equal("value is 42", log.RenderedMessage);
+        Assert.NotNull(log.Properties);
+        Assert.Contains("Value", log.Properties);
+        Assert.True(log.Timestamp > DateTime.UtcNow.AddMinutes(-5));
+    }
+}

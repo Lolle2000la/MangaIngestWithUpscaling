@@ -3,10 +3,12 @@ using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Data.LogModel;
+using MangaIngestWithUpscaling.Data.Postgres;
 using MangaIngestWithUpscaling.Data.Sqlite;
 using MangaIngestWithUpscaling.DbMigrator;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 
@@ -214,4 +216,79 @@ public class DbMigratorRoundTripTests
         Log log = await logContext.LogEntries.SingleAsync(ct);
         Assert.Equal("hello from postgres", log.RenderedMessage);
     }
+
+    [Fact]
+    public async Task Migrate_FromSqliteToPostgres_CopiesLogs()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Assert.SkipWhen(TestDatabaseFactory.Backend != TestDatabaseBackend.Postgres, SkipReason);
+
+        await using TestDatabase sqliteSource = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Sqlite
+        );
+        await using TestDatabase sqliteLogsSource = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Sqlite
+        );
+        await using TestDatabase postgresTarget = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Postgres
+        );
+
+        // Create the application schema so the migrator's table queries work.
+        await using (ApplicationDbContext schema = sqliteSource.CreateContext()) { }
+
+        // Seed a log row in the separate SQLite logs database.
+        await using (var connection = new SqliteConnection(sqliteLogsSource.ConnectionString))
+        {
+            await connection.OpenAsync(ct);
+            await using (SqliteCommand create = connection.CreateCommand())
+            {
+                create.CommandText = SqliteLogsDdl;
+                await create.ExecuteNonQueryAsync(ct);
+            }
+
+            await using SqliteCommand insert = connection.CreateCommand();
+            insert.CommandText =
+                "INSERT INTO \"Logs\" (\"Timestamp\", \"Level\", \"RenderedMessage\", \"Properties\") "
+                + "VALUES (datetime('now'), 'Warning', 'hello from sqlite', '{}')";
+            await insert.ExecuteNonQueryAsync(ct);
+        }
+
+        await DataMigrator.MigrateAsync(
+            new MigratorOptions(
+                DatabaseProvider.Sqlite,
+                sqliteSource.ConnectionString,
+                DatabaseProvider.Postgres,
+                postgresTarget.ConnectionString,
+                BatchSize: 500,
+                Force: false,
+                IncludeLogs: true,
+                FromLogsConnection: sqliteLogsSource.ConnectionString,
+                ToLogsConnection: null
+            ),
+            _ => { },
+            ct
+        );
+
+        var optionsBuilder = new DbContextOptionsBuilder<LoggingDbContext>();
+        DatabaseSetup.UseDatabaseProvider(
+            optionsBuilder,
+            DatabaseProvider.Postgres,
+            postgresTarget.ConnectionString,
+            typeof(PostgresMigrationsAssemblyMarker).Assembly.FullName!
+        );
+        await using var logContext = new LoggingDbContext(optionsBuilder.Options);
+        Log log = await logContext.LogEntries.SingleAsync(ct);
+        Assert.Equal("hello from sqlite", log.RenderedMessage);
+    }
+
+    private const string SqliteLogsDdl = """
+        CREATE TABLE IF NOT EXISTS "Logs" (
+            "Id" INTEGER PRIMARY KEY AUTOINCREMENT,
+            "Timestamp" TEXT NOT NULL,
+            "Level" TEXT,
+            "Exception" TEXT,
+            "RenderedMessage" TEXT,
+            "Properties" TEXT
+        );
+        """;
 }

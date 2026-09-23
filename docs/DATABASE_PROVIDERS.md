@@ -92,6 +92,10 @@ Migrations that transform data must use provider-specific SQL (for example SQLit
 versus PostgreSQL's `jsonb_array_elements_text`). The task-payload queries already encapsulate this
 in `PersistedTaskQueries`.
 
+Model/snapshot drift is also checked by a unit test
+(`MigrationModelSnapshotTests.RuntimeModel_MatchesTheActiveProviderSnapshot`) on every run, so the
+following commands are a convenient manual check:
+
 To verify that the model and snapshots agree:
 
 ```bash
