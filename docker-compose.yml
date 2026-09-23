@@ -10,6 +10,10 @@ services:
       - Ingest_Kavita__BaseUrl=http://kavita:5000
       - Ingest_Kavita__ApiKey=8d5f292a-a1ef-4557-8986-6319ccc80eb9 # Generate your own for your local testing
       - Ingest_Kavita__Enabled=True # Generate your own for your local testing
+      # To use PostgreSQL instead of the embedded SQLite database, uncomment the next two lines
+      # and start the bundled server with: docker compose --profile postgres up
+      # - Ingest_DatabaseProvider=Postgres
+      # - Ingest_ConnectionStrings__PostgresConnection=Host=postgres;Database=manga_ingest;Username=postgres;Password=postgres
     ports:
       - 8080:8080
       - 8081:8081
@@ -43,6 +47,23 @@ services:
       - ./test_data:/data
     profiles:
       - remote-only # Use docker-compose --profile remote-only to run this variant
+
+  # Optional PostgreSQL server. Start it together with the app using:
+  #   docker compose --profile postgres up
+  # and uncomment the Ingest_DatabaseProvider / PostgresConnection variables on the app service.
+  postgres:
+    image: postgres:17
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=manga_ingest
+    volumes:
+      - ./test_data/postgres:/var/lib/postgresql/data
+    ports:
+      - 5432:5432
+    profiles:
+      - postgres
+    restart: unless-stopped
 
   kavita:
     image: jvmilazz0/kavita:latest

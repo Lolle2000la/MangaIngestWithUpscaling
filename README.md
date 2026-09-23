@@ -312,10 +312,16 @@ For a full reference of all upscaler settings and their corresponding environmen
 The application relies on `appsettings.json` for configuration. Modify the connection strings and other parameters as needed.
 Alternatively, you can use environment variables to override the configuration values.
 
+The database backend is selectable: SQLite is the default, and PostgreSQL is supported as an
+alternative. See [Database Providers](./docs/DATABASE_PROVIDERS.md) for configuration, the
+SQLite ⇄ PostgreSQL migration tool, and provider-specific migration guidance.
+
 ```json
 {
+  "DatabaseProvider": "Sqlite", // or "Postgres"
   "ConnectionStrings": {
     "DefaultConnection": "Data Source=data.db;Pooling=false",
+    "PostgresConnection": "Host=localhost;Database=manga_ingest;Username=postgres;Password=postgres",
     "LoggingConnection": "Data Source=logs.db;Pooling=false"
   },
   "Serilog": {
@@ -349,7 +355,7 @@ Alternatively, you can use environment variables to override the configuration v
 
 - **Frontend:** Blazor (MudBlazor components)
 - **Backend:** ASP.NET Core
-- **Database:** SQLite
+- **Database:** SQLite (default) or PostgreSQL
 - **Logging:** Serilog
 - **Reactive Programming:** ReactiveUI (a tiny bit)
 
