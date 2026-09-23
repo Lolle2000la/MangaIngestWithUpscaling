@@ -7,6 +7,8 @@ using MangaIngestWithUpscaling.Components.Account;
 using MangaIngestWithUpscaling.Configuration;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
+using MangaIngestWithUpscaling.Data.Postgres;
+using MangaIngestWithUpscaling.Data.Sqlite;
 using MangaIngestWithUpscaling.Services;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.TaskDescribers;
 using MangaIngestWithUpscaling.Services.ChapterMerging;
@@ -62,11 +64,35 @@ builder.Configuration.AddEnvironmentVariables("Ingest_");
 
 builder.RegisterConfig(); // Register the configuration classes
 
-string connectionString =
+DatabaseProvider databaseProvider = builder
+    .Configuration.GetValue<string>("DatabaseProvider")
+    ?.Trim()
+    .ToLowerInvariant() switch
+{
+    "postgres" or "postgresql" or "npgsql" => DatabaseProvider.Postgres,
+    _ => DatabaseProvider.Sqlite,
+};
+
+bool isSqlite = databaseProvider == DatabaseProvider.Sqlite;
+
+string sqliteConnectionString =
     builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
 
-SqliteConnectionStringBuilder sqliteConnectionStringBuilder = new(connectionString);
+string postgresConnectionString =
+    builder.Configuration.GetConnectionString("PostgresConnection")
+    ?? throw new InvalidOperationException(
+        "Connection string 'PostgresConnection' not found while DatabaseProvider is 'Postgres'."
+    );
+
+string applicationConnectionString = isSqlite ? sqliteConnectionString : postgresConnectionString;
+string applicationMigrationsAssembly = isSqlite
+    ? typeof(SqliteMigrationsAssemblyMarker).Assembly.FullName!
+    : typeof(PostgresMigrationsAssemblyMarker).Assembly.FullName!;
+
+SqliteConnectionStringBuilder? sqliteConnectionStringBuilder = isSqlite
+    ? new SqliteConnectionStringBuilder(sqliteConnectionString)
+    : null;
 
 var loggingConnectionString =
     builder.Configuration.GetConnectionString("LoggingConnection") ?? "Data Source=logs.db";
@@ -80,14 +106,16 @@ var loggingConnectionReadOnlyString = loggingConnectionReadOnlyStringBuilder.Con
 // Do it before builder.Build() so logs.db is configured before Serilog opens it.
 // For the logs database, also detect corruption and move the file aside so a fresh
 // one can be created instead of crashing the application on startup.
+// The logs database is always a local SQLite file; the application database is only
+// inspected here when the application itself runs on SQLite.
 var logsDbPath = Path.GetFullPath(loggingConnectionReadOnlyStringBuilder.DataSource);
-foreach (
-    var earlyDbPath in new[]
-    {
-        Path.GetFullPath(sqliteConnectionStringBuilder.DataSource),
-        logsDbPath,
-    }
-)
+var earlyDbPaths = new List<string> { logsDbPath };
+if (isSqlite)
+{
+    earlyDbPaths.Insert(0, Path.GetFullPath(sqliteConnectionStringBuilder!.DataSource));
+}
+
+foreach (var earlyDbPath in earlyDbPaths)
 {
     var isLogsDb = earlyDbPath == logsDbPath;
     try
@@ -348,31 +376,29 @@ if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
 
 // Register a factory to create short-lived DbContext instances for parallel/background operations
 builder.Services.AddDbContextFactory<ApplicationDbContext>(options =>
-    options.UseSqlite(
-        connectionString,
-        sqlite =>
-        {
-            sqlite.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
-        }
+    DatabaseSetup.UseDatabaseProvider(
+        options,
+        databaseProvider,
+        applicationConnectionString,
+        applicationMigrationsAssembly
     )
 );
 builder.Services.AddDbContext<ApplicationDbContext>(
     options =>
-        options.UseSqlite(
-            connectionString,
-            sqlite =>
-            {
-                sqlite.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
-            }
+        DatabaseSetup.UseDatabaseProvider(
+            options,
+            databaseProvider,
+            applicationConnectionString,
+            applicationMigrationsAssembly
         ),
     optionsLifetime: ServiceLifetime.Singleton
 );
 builder.Services.AddDbContext<LoggingDbContext>(options =>
     options.UseSqlite(
         loggingConnectionReadOnlyString,
-        builder =>
+        logging =>
         {
-            builder.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+            logging.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
         }
     )
 );
@@ -446,42 +472,48 @@ using (var scope = app.Services.CreateScope())
     var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
 
-    // Create database backup before .NET 10 upgrade if this is the first time
-    var dbPath = Path.GetFullPath(sqliteConnectionStringBuilder.DataSource);
-    string dbDirectory =
-        Path.GetDirectoryName(dbPath)
-        ?? throw new InvalidOperationException("Unable to determine database directory");
-    var upgradeMarkerFile = Path.Combine(dbDirectory, ".net10-upgrade-complete");
-
-    if (!File.Exists(upgradeMarkerFile) && File.Exists(dbPath))
+    // The .NET 10 upgrade backup and marker only apply to the SQLite database file.
+    string? upgradeMarkerFile = null;
+    if (isSqlite)
     {
-        try
-        {
-            var backupPath = dbPath + ".bak";
-            File.Copy(dbPath, backupPath, overwrite: false);
-            logger.LogInformation(
-                "Created database backup at {BackupPath} before .NET 10 upgrade",
-                backupPath
-            );
+        var dbPath = Path.GetFullPath(sqliteConnectionStringBuilder!.DataSource);
+        string dbDirectory =
+            Path.GetDirectoryName(dbPath)
+            ?? throw new InvalidOperationException("Unable to determine database directory");
+        upgradeMarkerFile = Path.Combine(dbDirectory, ".net10-upgrade-complete");
 
-            // Also backup the logging database if it exists
-            var loggingDbPath = Path.GetFullPath(loggingConnectionReadOnlyStringBuilder.DataSource);
-            if (File.Exists(loggingDbPath))
+        if (!File.Exists(upgradeMarkerFile) && File.Exists(dbPath))
+        {
+            try
             {
-                var loggingBackupPath = loggingDbPath + ".bak";
-                File.Copy(loggingDbPath, loggingBackupPath, overwrite: false);
+                var backupPath = dbPath + ".bak";
+                File.Copy(dbPath, backupPath, overwrite: false);
                 logger.LogInformation(
-                    "Created logging database backup at {BackupPath}",
-                    loggingBackupPath
+                    "Created database backup at {BackupPath} before .NET 10 upgrade",
+                    backupPath
+                );
+
+                // Also backup the logging database if it exists
+                var loggingDbPath = Path.GetFullPath(
+                    loggingConnectionReadOnlyStringBuilder.DataSource
+                );
+                if (File.Exists(loggingDbPath))
+                {
+                    var loggingBackupPath = loggingDbPath + ".bak";
+                    File.Copy(loggingDbPath, loggingBackupPath, overwrite: false);
+                    logger.LogInformation(
+                        "Created logging database backup at {BackupPath}",
+                        loggingBackupPath
+                    );
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(
+                    ex,
+                    "Failed to create database backup before .NET 10 upgrade. Continuing with migration..."
                 );
             }
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(
-                ex,
-                "Failed to create database backup before .NET 10 upgrade. Continuing with migration..."
-            );
         }
     }
 
@@ -490,55 +522,62 @@ using (var scope = app.Services.CreateScope())
         dbContext.Database.Migrate();
         logger.LogDebug("Database migrations applied successfully.");
 
-        // Mark the .NET 10 upgrade as complete
-        try
+        if (isSqlite && upgradeMarkerFile is not null)
         {
-            await File.WriteAllTextAsync(
-                upgradeMarkerFile,
-                $"Upgrade completed on {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC"
-            );
-            logger.LogDebug("Marked .NET 10 upgrade as complete");
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(
-                ex,
-                "Failed to create upgrade marker file, but migration completed successfully"
-            );
-        }
-
-        // Re-assert and verify WAL mode for the main database.
-        // SQLite returns the active journal mode, so check the returned value.
-        try
-        {
-            dbContext.Database.OpenConnection();
-            var mainConn = dbContext.Database.GetDbConnection();
-            using var walCmd = mainConn.CreateCommand();
-            walCmd.CommandText = "PRAGMA journal_mode=WAL";
-            var mode = (string?)await walCmd.ExecuteScalarAsync() ?? "unknown";
-            if (mode == "wal")
-                logger.LogDebug("WAL journal mode enabled for main database.");
-            else
-                logger.LogWarning(
-                    "WAL journal mode could not be enabled for the main database (current mode: {Mode}). "
-                        + "The database may be more susceptible to corruption on unexpected shutdowns.",
-                    mode
+            // Mark the .NET 10 upgrade as complete
+            try
+            {
+                await File.WriteAllTextAsync(
+                    upgradeMarkerFile,
+                    $"Upgrade completed on {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC"
                 );
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(
-                ex,
-                "Failed to enable WAL journal mode for the main database. "
-                    + "The database may be more susceptible to corruption on unexpected shutdowns."
-            );
-        }
-        finally
-        {
-            dbContext.Database.CloseConnection();
+                logger.LogDebug("Marked .NET 10 upgrade as complete");
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(
+                    ex,
+                    "Failed to create upgrade marker file, but migration completed successfully"
+                );
+            }
         }
 
-        // Best-effort: re-apply WAL mode for the logging database.
+        // Re-assert and verify WAL mode for the main database (SQLite only).
+        // SQLite returns the active journal mode, so check the returned value.
+        if (isSqlite)
+        {
+            try
+            {
+                dbContext.Database.OpenConnection();
+                var mainConn = dbContext.Database.GetDbConnection();
+                using var walCmd = mainConn.CreateCommand();
+                walCmd.CommandText = "PRAGMA journal_mode=WAL";
+                var mode = (string?)await walCmd.ExecuteScalarAsync() ?? "unknown";
+                if (mode == "wal")
+                    logger.LogDebug("WAL journal mode enabled for main database.");
+                else
+                    logger.LogWarning(
+                        "WAL journal mode could not be enabled for the main database (current mode: {Mode}). "
+                            + "The database may be more susceptible to corruption on unexpected shutdowns.",
+                        mode
+                    );
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(
+                    ex,
+                    "Failed to enable WAL journal mode for the main database. "
+                        + "The database may be more susceptible to corruption on unexpected shutdowns."
+                );
+            }
+            finally
+            {
+                dbContext.Database.CloseConnection();
+            }
+        }
+
+        // Best-effort: re-apply WAL mode for the logging database. The logs database is always a
+        // local SQLite file, independent of the application database provider.
         try
         {
             var loggingDbContext = scope.ServiceProvider.GetRequiredService<LoggingDbContext>();
@@ -569,9 +608,12 @@ using (var scope = app.Services.CreateScope())
 
         if (app.Environment.IsProduction())
         {
-            // A quick check to see if vacuum is needed could go here (e.g. checking file size)
-            await dbContext.Database.ExecuteSqlRawAsync("VACUUM;");
-            logger.LogInformation("Database vacuumed successfully.");
+            if (isSqlite)
+            {
+                // A quick check to see if vacuum is needed could go here (e.g. checking file size)
+                await dbContext.Database.ExecuteSqlRawAsync("VACUUM;");
+                logger.LogInformation("Database vacuumed successfully.");
+            }
 
             // Also vacuum the logging database to reclaim space from truncated logs
             try
