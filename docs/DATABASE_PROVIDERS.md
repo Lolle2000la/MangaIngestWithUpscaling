@@ -117,4 +117,6 @@ TEST_DB_PROVIDER=postgres dotnet test test/MangaIngestWithUpscaling.Tests/MangaI
 
 The PostgreSQL pass additionally runs the migration smoke tests (running `Database.Migrate()` against an
 empty database on each provider) and the `DbMigrator` round-trip tests (SQLite ⇄ PostgreSQL, sequence
-reset and log copying). Those tests require Docker and are skipped otherwise.
+reset, log copying and ASP.NET Core Identity data). The identity test seeds a user/role/claim/login
+through the framework's `UserManager`, migrates, and confirms the password still authenticates on the
+new provider. Those tests require Docker and are skipped otherwise.
