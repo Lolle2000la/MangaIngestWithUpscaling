@@ -5,7 +5,7 @@ using System.Linq;
 using MangaIngestWithUpscaling.Components.Libraries.Dialogs;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
-using Microsoft.Data.Sqlite;
+using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
 using MudBlazor;
@@ -16,6 +16,7 @@ namespace MangaIngestWithUpscaling.Tests.UI.Libraries;
 
 public class DialogsTests : BunitContext
 {
+    private TestDatabaseHelper.TestDbContext _testDb = null!;
     private ApplicationDbContext _dbContext = null!;
 
     public DialogsTests()
@@ -26,15 +27,8 @@ public class DialogsTests : BunitContext
 
     private void SetupDatabase()
     {
-        var connection = new SqliteConnection("Data Source=:memory:");
-        connection.Open();
-
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseSqlite(connection)
-            .Options;
-
-        _dbContext = new ApplicationDbContext(options);
-        _dbContext.Database.EnsureCreated();
+        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _dbContext = _testDb.Context;
     }
 
     private void RegisterServices()
@@ -187,8 +181,7 @@ public class DialogsTests : BunitContext
     {
         if (disposing)
         {
-            _dbContext?.Database.CloseConnection();
-            _dbContext?.Dispose();
+            _testDb?.Dispose();
         }
         base.Dispose(disposing);
     }

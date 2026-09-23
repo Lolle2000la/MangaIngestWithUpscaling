@@ -8,8 +8,8 @@ using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.ImageFiltering;
+using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.AspNetCore.Components;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
 using MudBlazor;
@@ -26,6 +26,7 @@ public class SimpleComponentTests : BunitContext
         RxAppBuilder.CreateReactiveUIBuilder().WithBlazor().BuildApp();
     }
 
+    private TestDatabaseHelper.TestDbContext _testDb = null!;
     private ApplicationDbContext _dbContext = null!;
     private ITaskQueue _mockTaskQueue = null!;
     private IImageFilterService _mockImageFilterService = null!;
@@ -51,15 +52,8 @@ public class SimpleComponentTests : BunitContext
 
     private void SetupDatabase()
     {
-        var connection = new SqliteConnection("Data Source=:memory:");
-        connection.Open();
-
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseSqlite(connection)
-            .Options;
-
-        _dbContext = new ApplicationDbContext(options);
-        _dbContext.Database.EnsureCreated();
+        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _dbContext = _testDb.Context;
     }
 
     private void RegisterServices()
@@ -392,8 +386,7 @@ public class SimpleComponentTests : BunitContext
     {
         if (disposing)
         {
-            _dbContext?.Database.CloseConnection();
-            _dbContext?.Dispose();
+            _testDb?.Dispose();
         }
         base.Dispose(disposing);
     }

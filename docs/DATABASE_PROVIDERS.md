@@ -35,44 +35,17 @@ The database schema is migrated automatically on startup.
 ## Migrating an existing installation
 
 The `MangaIngestWithUpscaling.DbMigrator` tool copies an entire installation between providers in
-either direction. It applies the target schema, then copies all application tables (Identity,
-libraries, manga, chapters, tasks, data protection keys). Existing logs can optionally be copied.
+either direction — Identity, libraries, manga, chapters, tasks, data-protection keys and (optionally)
+logs. See the dedicated **[Database Migration Guide](./DATABASE_MIGRATION.md)** for the full runbook,
+including stopping the application, backups, verification, switching configuration and rollback.
 
-> Run the migration while the application is **stopped** to avoid concurrent writes.
+> The short version: stop the application, point the tool at the source and an empty target, run it,
+> then set `DatabaseProvider` to the new backend and restart. The old database is left untouched as a
+> fallback.
 
-```bash
-# SQLite -> PostgreSQL
-dotnet run --project tools/MangaIngestWithUpscaling.DbMigrator -- \
-  --from sqlite --to postgres \
-  --from-connection "Data Source=/data/data.db" \
-  --to-connection "Host=postgres;Database=manga_ingest;Username=postgres;Password=postgres"
-
-# PostgreSQL -> SQLite
-dotnet run --project tools/MangaIngestWithUpscaling.DbMigrator -- \
-  --from postgres --to sqlite \
-  --from-connection "Host=postgres;Database=manga_ingest;Username=postgres;Password=postgres" \
-  --to-connection "Data Source=/data/data.db"
-```
-
-Options:
-
-| Option | Description |
-|---|---|
-| `--batch-size <n>` | Rows copied per batch (default `500`). |
-| `--force` | Clears a non-empty target before copying. Without it the tool refuses to overwrite. |
-| `--include-logs` | Also copies the `Logs` table. |
-| `--from-logs-connection` | The SQLite logs file to read when the source is SQLite and `--include-logs` is set. |
-| `--to-logs-connection` | The SQLite logs file to write when the target is SQLite and `--include-logs` is set. |
-
-After a successful migration, point `DatabaseProvider` at the new backend and restart the
-application. The old database is left untouched as a fallback.
-
-### Known limitations
-
-- **Timestamp precision:** PostgreSQL `timestamp with time zone` has microsecond precision, while
-  .NET `DateTime` uses 100-nanosecond ticks. Migrating to PostgreSQL therefore truncates the
-  sub-microsecond digit of every timestamp (e.g. `…4581723` becomes `…458172`). This does not affect
-  ordering or the application's behavior.
+**Known limitation:** PostgreSQL `timestamp with time zone` has microsecond precision while .NET
+`DateTime` uses 100-nanosecond ticks, so migrating to PostgreSQL truncates the sub-microsecond digit
+of every timestamp (e.g. `…4581723` becomes `…458172`). This does not affect ordering or behavior.
 
 ## Docker
 
@@ -125,6 +98,9 @@ throwaway PostgreSQL database started with Testcontainers (Docker required):
 ```bash
 TEST_DB_PROVIDER=postgres dotnet test test/MangaIngestWithUpscaling.Tests/MangaIngestWithUpscaling.Tests.csproj
 ```
+
+The same applies to the UI test project, which swaps its in-memory database for the selected provider
+so database-backed component tests run on both backends.
 
 The PostgreSQL pass additionally runs the migration smoke tests (running `Database.Migrate()` against an
 empty database on each provider) and the `DbMigrator` round-trip tests (SQLite ⇄ PostgreSQL, sequence

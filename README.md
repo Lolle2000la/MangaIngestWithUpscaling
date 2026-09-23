@@ -313,8 +313,10 @@ The application relies on `appsettings.json` for configuration. Modify the conne
 Alternatively, you can use environment variables to override the configuration values.
 
 The database backend is selectable: SQLite is the default, and PostgreSQL is supported as an
-alternative. See [Database Providers](./docs/DATABASE_PROVIDERS.md) for configuration, the
-SQLite ⇄ PostgreSQL migration tool, and provider-specific migration guidance.
+alternative. See [Database Providers](./docs/DATABASE_PROVIDERS.md) for configuration and
+provider-specific migration guidance, and the
+[Database Migration Guide](./docs/DATABASE_MIGRATION.md) for moving an existing installation between
+SQLite and PostgreSQL.
 
 ```json
 {

@@ -33,3 +33,7 @@ jobs:
         env:
           TEST_DB_PROVIDER: postgres
         run: dotnet test --no-build --verbosity normal --project test/MangaIngestWithUpscaling.Tests/MangaIngestWithUpscaling.Tests.csproj --filter-not-trait Category=Download
+      - name: Test UI against PostgreSQL (Testcontainers)
+        env:
+          TEST_DB_PROVIDER: postgres
+        run: dotnet test --no-build --verbosity normal --project test/MangaIngestWithUpscaling.Tests.UI/MangaIngestWithUpscaling.Tests.UI.csproj --filter-not-trait Category=Download
