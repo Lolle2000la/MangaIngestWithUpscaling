@@ -13,6 +13,7 @@ namespace MangaIngestWithUpscaling.Tests.Infrastructure;
 /// the application reads at startup.
 /// </summary>
 [Trait("Category", "Integration")]
+[Collection(ApplicationStartupCollection.Name)]
 public class PostgresApplicationStartupTests
 {
     private const string SkipReason =

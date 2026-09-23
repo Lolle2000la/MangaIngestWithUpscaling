@@ -71,11 +71,12 @@ public static class TestDatabaseFactory
 
 /// <summary>
 /// A single isolated test database. Multiple contexts can be created against it; the schema is
-/// created once with <see cref="DbContext.Database"/>'s <c>EnsureCreated</c>.
+/// created once, with <c>EnsureCreated</c>. <see cref="Configure"/> lets a test register the same
+/// context with a DI container.
 /// </summary>
 public sealed class TestDatabase : IAsyncDisposable
 {
-    private readonly Func<CancellationToken, Task<ApplicationDbContext>> _createContext;
+    private readonly Action<DbContextOptionsBuilder> _configure;
     private readonly Func<CancellationToken, Task> _dispose;
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private bool _initialized;
@@ -83,19 +84,29 @@ public sealed class TestDatabase : IAsyncDisposable
     private TestDatabase(
         TestDatabaseBackend backend,
         string connectionString,
-        Func<CancellationToken, Task<ApplicationDbContext>> createContext,
+        Action<DbContextOptionsBuilder> configure,
         Func<CancellationToken, Task> dispose
     )
     {
         Backend = backend;
         ConnectionString = connectionString;
-        _createContext = createContext;
+        _configure = configure;
         _dispose = dispose;
     }
 
     public TestDatabaseBackend Backend { get; }
 
     public string ConnectionString { get; }
+
+    /// <summary>Applies this database's provider and migration settings to a context builder.</summary>
+    public void Configure(DbContextOptionsBuilder builder) => _configure(builder);
+
+    public DbContextOptions<ApplicationDbContext> CreateOptions()
+    {
+        var builder = new DbContextOptionsBuilder<ApplicationDbContext>();
+        _configure(builder);
+        return builder.Options;
+    }
 
     public Task<ApplicationDbContext> CreateContextAsync(
         CancellationToken cancellationToken = default
@@ -110,7 +121,7 @@ public sealed class TestDatabase : IAsyncDisposable
         CancellationToken cancellationToken = default
     )
     {
-        ApplicationDbContext context = await _createContext(cancellationToken);
+        var context = new ApplicationDbContext(CreateOptions());
         if (ensureSchema)
         {
             await EnsureCreatedAsync(context, cancellationToken);
@@ -165,26 +176,17 @@ public sealed class TestDatabase : IAsyncDisposable
         var keeper = new SqliteConnection(connectionString);
         keeper.Open();
 
-        async Task<ApplicationDbContext> CreateContext(CancellationToken token)
-        {
-            var connection = new SqliteConnection(connectionString);
-            await connection.OpenAsync(token);
-
-            var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-                .UseSqlite(
-                    connection,
-                    sqlite =>
-                    {
-                        sqlite.MigrationsAssembly(
-                            typeof(SqliteMigrationsAssemblyMarker).Assembly.FullName
-                        );
-                        sqlite.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
-                    }
-                )
-                .Options;
-
-            return new ApplicationDbContext(options);
-        }
+        static void Configure(DbContextOptionsBuilder builder, string cs) =>
+            builder.UseSqlite(
+                cs,
+                sqlite =>
+                {
+                    sqlite.MigrationsAssembly(
+                        typeof(SqliteMigrationsAssemblyMarker).Assembly.FullName
+                    );
+                    sqlite.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+                }
+            );
 
         async Task Dispose(CancellationToken token)
         {
@@ -194,7 +196,7 @@ public sealed class TestDatabase : IAsyncDisposable
         return new TestDatabase(
             TestDatabaseBackend.Sqlite,
             connectionString,
-            CreateContext,
+            builder => Configure(builder, connectionString),
             Dispose
         );
     }
@@ -219,23 +221,17 @@ public sealed class TestDatabase : IAsyncDisposable
             Database = databaseName,
         }.ConnectionString;
 
-        Task<ApplicationDbContext> CreateContext(CancellationToken token)
-        {
-            var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-                .UseNpgsql(
-                    connectionString,
-                    npgsql =>
-                    {
-                        npgsql.MigrationsAssembly(
-                            typeof(PostgresMigrationsAssemblyMarker).Assembly.FullName
-                        );
-                        npgsql.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
-                    }
-                )
-                .Options;
-
-            return Task.FromResult(new ApplicationDbContext(options));
-        }
+        static void Configure(DbContextOptionsBuilder builder, string cs) =>
+            builder.UseNpgsql(
+                cs,
+                npgsql =>
+                {
+                    npgsql.MigrationsAssembly(
+                        typeof(PostgresMigrationsAssemblyMarker).Assembly.FullName
+                    );
+                    npgsql.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+                }
+            );
 
         async Task Dispose(CancellationToken token)
         {
@@ -249,7 +245,7 @@ public sealed class TestDatabase : IAsyncDisposable
         return new TestDatabase(
             TestDatabaseBackend.Postgres,
             connectionString,
-            CreateContext,
+            builder => Configure(builder, connectionString),
             Dispose
         );
     }
