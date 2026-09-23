@@ -39,15 +39,30 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 
     public DbSet<DataProtectionKey> DataProtectionKeys { get; set; } = null!;
 
+    /// <summary>
+    /// When set, <see cref="SaveChanges"/> and <see cref="SaveChangesAsync"/> do not overwrite
+    /// <c>CreatedAt</c>/<c>ModifiedAt</c>. Used by the data migration tool so imported rows keep
+    /// their original timestamps.
+    /// </summary>
+    public bool SkipTimestampUpdates { get; set; }
+
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
-        UpdateTimestamps();
+        if (!SkipTimestampUpdates)
+        {
+            UpdateTimestamps();
+        }
+
         return await base.SaveChangesAsync(cancellationToken);
     }
 
     public override int SaveChanges()
     {
-        UpdateTimestamps();
+        if (!SkipTimestampUpdates)
+        {
+            UpdateTimestamps();
+        }
+
         return base.SaveChanges();
     }
 
