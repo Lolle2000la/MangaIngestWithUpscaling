@@ -1,29 +1,25 @@
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Tests.Data;
 
 public class EntityTimestampTests : IDisposable
 {
+    private readonly TestDatabaseHelper.TestDbContext _testDb;
     private readonly ApplicationDbContext _context;
 
     public EntityTimestampTests()
     {
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseSqlite("Data Source=:memory:")
-            .Options;
-
-        _context = new ApplicationDbContext(options);
-        _context.Database.OpenConnection();
-        _context.Database.EnsureCreated();
+        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _context = _testDb.Context;
     }
 
     public void Dispose()
     {
-        _context.Database.CloseConnection();
-        _context.Dispose();
+        _testDb.Dispose();
     }
 
     [Fact]

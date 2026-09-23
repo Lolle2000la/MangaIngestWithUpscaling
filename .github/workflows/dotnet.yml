@@ -29,3 +29,7 @@ jobs:
         run: dotnet build --no-restore MangaIngestWithUpscaling.sln /warnaserror
       - name: Test (Unit Tests Only)
         run: dotnet test --no-build --verbosity normal --solution MangaIngestWithUpscaling.sln --filter-not-trait Category=Download
+      - name: Test against PostgreSQL (Testcontainers)
+        env:
+          TEST_DB_PROVIDER: postgres
+        run: dotnet test --no-build --verbosity normal --project test/MangaIngestWithUpscaling.Tests/MangaIngestWithUpscaling.Tests.csproj --filter-not-trait Category=Download

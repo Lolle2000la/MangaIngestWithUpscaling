@@ -9,6 +9,11 @@ on:
     paths:
       - "src/MangaIngestWithUpscaling/**"
       - "src/MangaIngestWithUpscaling.Shared/**"
+      - "src/MangaIngestWithUpscaling.Data/**"
+      - "src/MangaIngestWithUpscaling.Data.Sqlite/**"
+      - "src/MangaIngestWithUpscaling.Data.Postgres/**"
+      - "test/MangaIngestWithUpscaling.Tests/**"
+      - "tools/MangaIngestWithUpscaling.DbMigrator/**"
       - "MangaIngestWithUpscaling.sln"
       - "Dockerfile"
       - "rocm.Dockerfile"
@@ -36,5 +41,9 @@ jobs:
         run: dotnet test --no-build --verbosity normal --project test/MangaIngestWithUpscaling.Shared.Tests/MangaIngestWithUpscaling.Shared.Tests.csproj --filter-not-trait Category=Download
       - name: Test server
         run: dotnet test --no-build --verbosity normal --project test/MangaIngestWithUpscaling.Tests/MangaIngestWithUpscaling.Tests.csproj
+      - name: Test server against PostgreSQL (Testcontainers)
+        env:
+          TEST_DB_PROVIDER: postgres
+        run: dotnet test --no-build --verbosity normal --project test/MangaIngestWithUpscaling.Tests/MangaIngestWithUpscaling.Tests.csproj --filter-not-trait Category=Download
       - name: Test server UI
         run: dotnet test --no-build --verbosity normal --project test/MangaIngestWithUpscaling.Tests.UI/MangaIngestWithUpscaling.Tests.UI.csproj

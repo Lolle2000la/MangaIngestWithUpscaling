@@ -15,9 +15,8 @@ using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
-using Microsoft.Data.Sqlite;
+using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -2058,48 +2057,22 @@ public class LibraryIntegrityCheckerTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// A database shared across several contexts, backed by whichever provider
+    /// <c>TEST_DB_PROVIDER</c> selects.
+    /// </summary>
     private sealed class SharedSqliteDb : IDisposable
     {
-        private readonly string _connectionString;
-        private readonly bool _initialized;
-        private readonly SqliteConnection _keeper; // keeps the shared in-memory DB alive
-
-        public SharedSqliteDb()
-        {
-            // Use a uniquely named shared in-memory database so multiple test instances don't collide
-            _connectionString = new SqliteConnectionStringBuilder
-            {
-                DataSource = $"file:integrity-tests-{Guid.NewGuid():N}?mode=memory&cache=shared",
-            }.ToString();
-
-            _keeper = new SqliteConnection(_connectionString);
-            _keeper.Open();
-
-            using ApplicationDbContext ctx = CreateContext();
-            if (!_initialized)
-            {
-                ctx.Database.EnsureCreated();
-                _initialized = true;
-            }
-        }
+        private readonly TestDatabase _database = TestDatabaseFactory.Create();
 
         public void Dispose()
         {
-            _keeper.Close();
-            _keeper.Dispose();
+            _database.DisposeAsync().AsTask().GetAwaiter().GetResult();
         }
 
         public ApplicationDbContext CreateContext()
         {
-            // Create a fresh connection per context to avoid function registration conflicts
-            var conn = new SqliteConnection(_connectionString);
-            conn.Open();
-
-            var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-                .UseSqlite(conn)
-                .ConfigureWarnings(w => w.Ignore(RelationalEventId.AmbientTransactionWarning))
-                .Options;
-            return new ApplicationDbContext(options);
+            return _database.CreateContext();
         }
     }
 
