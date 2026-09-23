@@ -4,6 +4,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- NETSDK1187: MudBlazor.Translations ships a 'ckb-iq' resource folder that the SDK normalizes to 'ckb-IQ' (pulled in transitively via the web app). -->
+    <NoWarn>$(NoWarn);NETSDK1206;CS8669;NETSDK1187</NoWarn>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\MangaIngestWithUpscaling\MangaIngestWithUpscaling.csproj" />

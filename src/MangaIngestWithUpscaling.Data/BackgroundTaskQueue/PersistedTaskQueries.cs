@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -46,7 +47,11 @@ public static class PersistedTaskQueries
                   AND "Data"->>'$.ChapterId' = {1}
                 """;
 
-        return context.PersistedTasks.FromSqlRaw(sql + statusClause, parameters.ToArray());
+        // FormattableStringFactory keeps every caller-supplied value parameterized while still
+        // allowing the SQL text (provider dialect + placeholder count) to be composed at runtime.
+        return context.PersistedTasks.FromSql(
+            FormattableStringFactory.Create(sql + statusClause, parameters.ToArray())
+        );
     }
 
     /// <summary>
@@ -81,7 +86,9 @@ public static class PersistedTaskQueries
                   AND "Data"->>'$.$type' IN (SELECT value FROM json_each({1}))
                 """;
 
-        return context.PersistedTasks.FromSqlRaw(sql + statusClause, parameters.ToArray());
+        return context.PersistedTasks.FromSql(
+            FormattableStringFactory.Create(sql + statusClause, parameters.ToArray())
+        );
     }
 
     private static bool IsPostgres(ApplicationDbContext context) =>
