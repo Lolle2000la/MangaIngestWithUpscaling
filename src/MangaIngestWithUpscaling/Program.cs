@@ -30,6 +30,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using MudBlazor.Services;
 using MudBlazor.Translations;
+using Npgsql;
 using ReactiveUI.Builder;
 using Serilog;
 
@@ -109,10 +110,11 @@ var loggingConnectionReadOnlyString = loggingConnectionReadOnlyStringBuilder.Con
 // The logs database is always a local SQLite file; the application database is only
 // inspected here when the application itself runs on SQLite.
 var logsDbPath = Path.GetFullPath(loggingConnectionReadOnlyStringBuilder.DataSource);
-var earlyDbPaths = new List<string> { logsDbPath };
+var earlyDbPaths = new List<string>();
 if (isSqlite)
 {
-    earlyDbPaths.Insert(0, Path.GetFullPath(sqliteConnectionStringBuilder!.DataSource));
+    earlyDbPaths.Add(Path.GetFullPath(sqliteConnectionStringBuilder!.DataSource));
+    earlyDbPaths.Add(logsDbPath);
 }
 
 foreach (var earlyDbPath in earlyDbPaths)
@@ -147,6 +149,25 @@ foreach (var earlyDbPath in earlyDbPaths)
     catch
     {
         // Non-critical: WAL mode will be re-verified with logging after migrations
+    }
+}
+
+// On PostgreSQL the logs live in the application database. The Serilog sink does not create the
+// table for us (needAutoCreateTable is disabled so the schema stays under our control), so ensure
+// it exists before the sink starts writing.
+if (!isSqlite)
+{
+    try
+    {
+        using var logsConnection = new NpgsqlConnection(postgresConnectionString);
+        logsConnection.Open();
+        using var createLogsCommand = logsConnection.CreateCommand();
+        createLogsCommand.CommandText = PostgresLogging.CreateTableSql;
+        createLogsCommand.ExecuteNonQuery();
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"Failed to ensure the PostgreSQL Logs table exists: {ex.Message}");
     }
 }
 
@@ -193,20 +214,36 @@ static void MoveCorruptDatabaseAside(string dbPath)
 
 builder.Services.AddSerilog(
     (services, lc) =>
-        lc
-            .ReadFrom.Configuration(builder.Configuration)
+    {
+        lc.ReadFrom.Configuration(builder.Configuration)
             .ReadFrom.Services(services)
             .Enrich.FromLogContext()
             .WriteTo.Console(
                 outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}"
-            )
-            .WriteTo.SQLite(
+            );
+
+        if (isSqlite)
+        {
+            lc.WriteTo.SQLite(
                 Path.GetFullPath(loggingConnectionReadOnlyStringBuilder.DataSource),
                 tableName: "Logs",
                 retentionPeriod: TimeSpan.FromDays(7),
                 maxDatabaseSize: 100,
                 rollOver: false
-            )
+            );
+        }
+        else
+        {
+            lc.WriteTo.PostgreSQL(
+                postgresConnectionString,
+                tableName: PostgresLogging.TableName,
+                columnOptions: PostgresLogging.ColumnWriters,
+                schemaName: PostgresLogging.SchemaName,
+                needAutoCreateTable: false,
+                retentionTime: TimeSpan.FromDays(7)
+            );
+        }
+    }
 );
 
 // Configure Forwarded Headers
@@ -394,12 +431,13 @@ builder.Services.AddDbContext<ApplicationDbContext>(
     optionsLifetime: ServiceLifetime.Singleton
 );
 builder.Services.AddDbContext<LoggingDbContext>(options =>
-    options.UseSqlite(
-        loggingConnectionReadOnlyString,
-        logging =>
-        {
-            logging.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
-        }
+    DatabaseSetup.UseDatabaseProvider(
+        options,
+        databaseProvider,
+        isSqlite ? loggingConnectionReadOnlyString : postgresConnectionString,
+        isSqlite
+            ? typeof(SqliteMigrationsAssemblyMarker).Assembly.FullName!
+            : typeof(PostgresMigrationsAssemblyMarker).Assembly.FullName!
     )
 );
 builder.Services.AddDatabaseDeveloperPageExceptionFilter();
@@ -576,34 +614,37 @@ using (var scope = app.Services.CreateScope())
             }
         }
 
-        // Best-effort: re-apply WAL mode for the logging database. The logs database is always a
-        // local SQLite file, independent of the application database provider.
-        try
+        // Best-effort: re-apply WAL mode for the logging database. Only relevant when logs are
+        // stored in a local SQLite file.
+        if (isSqlite)
         {
-            var loggingDbContext = scope.ServiceProvider.GetRequiredService<LoggingDbContext>();
-            loggingDbContext.Database.OpenConnection();
             try
             {
-                var loggingConn = loggingDbContext.Database.GetDbConnection();
-                using var walCmd = loggingConn.CreateCommand();
-                walCmd.CommandText = "PRAGMA journal_mode=WAL";
-                var mode = (string?)await walCmd.ExecuteScalarAsync() ?? "unknown";
-                if (mode == "wal")
-                    logger.LogDebug("WAL journal mode enabled for logging database.");
-                else
-                    logger.LogWarning(
-                        "WAL journal mode could not be enabled for the logging database (current mode: {Mode}).",
-                        mode
-                    );
+                var loggingDbContext = scope.ServiceProvider.GetRequiredService<LoggingDbContext>();
+                loggingDbContext.Database.OpenConnection();
+                try
+                {
+                    var loggingConn = loggingDbContext.Database.GetDbConnection();
+                    using var walCmd = loggingConn.CreateCommand();
+                    walCmd.CommandText = "PRAGMA journal_mode=WAL";
+                    var mode = (string?)await walCmd.ExecuteScalarAsync() ?? "unknown";
+                    if (mode == "wal")
+                        logger.LogDebug("WAL journal mode enabled for logging database.");
+                    else
+                        logger.LogWarning(
+                            "WAL journal mode could not be enabled for the logging database (current mode: {Mode}).",
+                            mode
+                        );
+                }
+                finally
+                {
+                    loggingDbContext.Database.CloseConnection();
+                }
             }
-            finally
+            catch (Exception ex)
             {
-                loggingDbContext.Database.CloseConnection();
+                logger.LogWarning(ex, "Failed to enable WAL journal mode for logging database.");
             }
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Failed to enable WAL journal mode for logging database.");
         }
 
         if (app.Environment.IsProduction())
@@ -615,16 +656,20 @@ using (var scope = app.Services.CreateScope())
                 logger.LogInformation("Database vacuumed successfully.");
             }
 
-            // Also vacuum the logging database to reclaim space from truncated logs
-            try
+            // Also vacuum the logging database to reclaim space from truncated logs (SQLite only).
+            if (isSqlite)
             {
-                var loggingDbContext = scope.ServiceProvider.GetRequiredService<LoggingDbContext>();
-                await loggingDbContext.Database.ExecuteSqlRawAsync("VACUUM;");
-                logger.LogInformation("Logging database vacuumed successfully.");
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Failed to vacuum logging database.");
+                try
+                {
+                    var loggingDbContext =
+                        scope.ServiceProvider.GetRequiredService<LoggingDbContext>();
+                    await loggingDbContext.Database.ExecuteSqlRawAsync("VACUUM;");
+                    logger.LogInformation("Logging database vacuumed successfully.");
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Failed to vacuum logging database.");
+                }
             }
         }
 
