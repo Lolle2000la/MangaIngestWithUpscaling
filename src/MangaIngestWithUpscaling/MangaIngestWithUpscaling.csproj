@@ -147,5 +147,7 @@
   <ItemGroup>
     <ProjectReference Include="..\MangaIngestWithUpscaling.Shared\MangaIngestWithUpscaling.Shared.csproj" />
     <ProjectReference Include="..\MangaIngestWithUpscaling.Data\MangaIngestWithUpscaling.Data.csproj" />
+    <ProjectReference Include="..\MangaIngestWithUpscaling.Data.Sqlite\MangaIngestWithUpscaling.Data.Sqlite.csproj" />
+    <ProjectReference Include="..\MangaIngestWithUpscaling.Data.Postgres\MangaIngestWithUpscaling.Data.Postgres.csproj" />
   </ItemGroup>
 </Project>

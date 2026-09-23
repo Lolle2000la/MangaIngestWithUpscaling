@@ -1,5 +1,6 @@
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Data.Sqlite;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
@@ -32,7 +33,10 @@ public class AddMultipleIngestPathsMigrationTests
             var options = new DbContextOptionsBuilder<ApplicationDbContext>()
                 .UseSqlite(
                     connection,
-                    sqlite => sqlite.MigrationsAssembly("MangaIngestWithUpscaling")
+                    sqlite =>
+                        sqlite.MigrationsAssembly(
+                            typeof(SqliteMigrationsAssemblyMarker).Assembly.FullName
+                        )
                 )
                 .Options;
             await using var context = new ApplicationDbContext(options);
@@ -76,7 +80,10 @@ public class AddMultipleIngestPathsMigrationTests
             var options = new DbContextOptionsBuilder<ApplicationDbContext>()
                 .UseSqlite(
                     connection,
-                    sqlite => sqlite.MigrationsAssembly("MangaIngestWithUpscaling")
+                    sqlite =>
+                        sqlite.MigrationsAssembly(
+                            typeof(SqliteMigrationsAssemblyMarker).Assembly.FullName
+                        )
                 )
                 .Options;
             await using var context = new ApplicationDbContext(options);
