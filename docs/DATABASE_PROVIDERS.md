@@ -114,3 +114,7 @@ throwaway PostgreSQL database started with Testcontainers (Docker required):
 ```bash
 TEST_DB_PROVIDER=postgres dotnet test test/MangaIngestWithUpscaling.Tests/MangaIngestWithUpscaling.Tests.csproj
 ```
+
+The PostgreSQL pass additionally runs the migration smoke tests (running `Database.Migrate()` against an
+empty database on each provider) and the `DbMigrator` round-trip tests (SQLite ⇄ PostgreSQL, sequence
+reset and log copying). Those tests require Docker and are skipped otherwise.

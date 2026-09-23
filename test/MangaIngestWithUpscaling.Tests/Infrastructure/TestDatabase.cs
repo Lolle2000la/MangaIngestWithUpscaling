@@ -28,15 +28,20 @@ public static class TestDatabaseFactory
 
     public static TestDatabaseBackend Backend => CurrentBackend.Value;
 
-    public static TestDatabase Create() =>
-        Backend switch
+    public static TestDatabase Create() => Create(Backend);
+
+    /// <summary>
+    /// Creates an isolated database on an explicit backend, independent of <c>TEST_DB_PROVIDER</c>.
+    /// </summary>
+    public static TestDatabase Create(TestDatabaseBackend backend) =>
+        backend switch
         {
             TestDatabaseBackend.Sqlite => TestDatabase.CreateSqlite(),
             TestDatabaseBackend.Postgres => TestDatabase
                 .CreatePostgresAsync(PostgresContainer.Value.GetAwaiter().GetResult())
                 .GetAwaiter()
                 .GetResult(),
-            _ => throw new ArgumentOutOfRangeException(),
+            _ => throw new ArgumentOutOfRangeException(nameof(backend), backend, null),
         };
 
     private static TestDatabaseBackend ResolveBackend()
@@ -92,12 +97,25 @@ public sealed class TestDatabase : IAsyncDisposable
 
     public string ConnectionString { get; }
 
+    public Task<ApplicationDbContext> CreateContextAsync(
+        CancellationToken cancellationToken = default
+    ) => CreateContextAsync(ensureSchema: true, cancellationToken);
+
+    /// <summary>
+    /// Creates a context against this database. When <paramref name="ensureSchema"/> is false the
+    /// caller is responsible for creating the schema (for example by running migrations).
+    /// </summary>
     public async Task<ApplicationDbContext> CreateContextAsync(
+        bool ensureSchema,
         CancellationToken cancellationToken = default
     )
     {
         ApplicationDbContext context = await _createContext(cancellationToken);
-        await EnsureCreatedAsync(context, cancellationToken);
+        if (ensureSchema)
+        {
+            await EnsureCreatedAsync(context, cancellationToken);
+        }
+
         return context;
     }
 
