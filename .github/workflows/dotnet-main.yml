@@ -40,6 +40,8 @@ jobs:
         run: dotnet build --no-restore MangaIngestWithUpscaling.sln /warnaserror
       - name: Test shared
         run: dotnet test --no-build --verbosity normal --project test/MangaIngestWithUpscaling.Shared.Tests/MangaIngestWithUpscaling.Shared.Tests.csproj --filter-not-trait Category=Download
+      # The SQLite steps run the full suite, including the slow Category=Download tests; the
+      # PostgreSQL passes skip them because a download test does not depend on the database provider.
       - name: Test server
         run: dotnet test --no-build --verbosity normal --project test/MangaIngestWithUpscaling.Tests/MangaIngestWithUpscaling.Tests.csproj
       - name: Test server against PostgreSQL (Testcontainers)

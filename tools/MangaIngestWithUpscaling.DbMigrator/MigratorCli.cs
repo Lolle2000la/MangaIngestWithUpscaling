@@ -54,8 +54,8 @@ internal static class MigratorCli
             toProvider,
             toConnection,
             batchSize,
-            options.ContainsKey("force"),
-            options.ContainsKey("include-logs"),
+            IsFlagSet(options, "force"),
+            IsFlagSet(options, "include-logs"),
             fromLogsConnection,
             toLogsConnection
         );
@@ -96,7 +96,24 @@ internal static class MigratorCli
         }
     }
 
-    private static Dictionary<string, string> ParseArgs(string[] input)
+    /// <summary>
+    /// Whether a boolean flag is set. <c>--force</c> and <c>--force=true</c> are set;
+    /// <c>--force=false</c> and <c>--force=0</c> are unset, so a flag can be turned off explicitly.
+    /// </summary>
+    internal static bool IsFlagSet(Dictionary<string, string> options, string name)
+    {
+        if (!options.TryGetValue(name, out string? value))
+        {
+            return false;
+        }
+
+        return !(
+            value.Equals("false", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("0", StringComparison.Ordinal)
+        );
+    }
+
+    internal static Dictionary<string, string> ParseArgs(string[] input)
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         for (int i = 0; i < input.Length; i++)

@@ -97,21 +97,26 @@ SqliteConnectionStringBuilder? sqliteConnectionStringBuilder = isSqlite
     ? new SqliteConnectionStringBuilder(sqliteConnectionString)
     : null;
 
-var loggingConnectionString =
-    builder.Configuration.GetConnectionString("LoggingConnection") ?? "Data Source=logs.db";
-
-var loggingConnectionReadOnlyStringBuilder = new SqliteConnectionStringBuilder(
-    loggingConnectionString
-);
-var loggingConnectionReadOnlyString = loggingConnectionReadOnlyStringBuilder.ConnectionString;
+// The logs database is only a local SQLite file; on PostgreSQL the logs live in the application
+// database, so this connection string is neither read nor parsed for PostgreSQL (a deployment may
+// repurpose LoggingConnection, and parsing it as SQLite would be meaningless).
+string? loggingConnectionReadOnlyString = null;
+var logsDbPath = string.Empty;
+if (isSqlite)
+{
+    var loggingConnectionString =
+        builder.Configuration.GetConnectionString("LoggingConnection") ?? "Data Source=logs.db";
+    var loggingConnectionReadOnlyStringBuilder = new SqliteConnectionStringBuilder(
+        loggingConnectionString
+    );
+    loggingConnectionReadOnlyString = loggingConnectionReadOnlyStringBuilder.ConnectionString;
+    logsDbPath = Path.GetFullPath(loggingConnectionReadOnlyStringBuilder.DataSource);
+}
 
 // Set WAL before app startup. This is idempotent and safe for existing databases.
 // Do it before builder.Build() so logs.db is configured before Serilog opens it.
 // For the logs database, also detect corruption and move the file aside so a fresh
 // one can be created instead of crashing the application on startup.
-// The logs database is always a local SQLite file; the application database is only
-// inspected here when the application itself runs on SQLite.
-var logsDbPath = Path.GetFullPath(loggingConnectionReadOnlyStringBuilder.DataSource);
 var earlyDbPaths = new List<string>();
 if (isSqlite)
 {
@@ -230,7 +235,7 @@ builder.Services.AddSerilog(
         if (isSqlite)
         {
             lc.WriteTo.SQLite(
-                Path.GetFullPath(loggingConnectionReadOnlyStringBuilder.DataSource),
+                logsDbPath,
                 tableName: "Logs",
                 retentionPeriod: TimeSpan.FromDays(7),
                 maxDatabaseSize: 100,
@@ -439,7 +444,7 @@ builder.Services.AddDbContext<LoggingDbContext>(options =>
     DatabaseSetup.UseDatabaseProvider(
         options,
         databaseProvider,
-        isSqlite ? loggingConnectionReadOnlyString : postgresConnectionString,
+        isSqlite ? loggingConnectionReadOnlyString! : postgresConnectionString,
         isSqlite
             ? typeof(SqliteMigrationsAssemblyMarker).Assembly.FullName!
             : typeof(PostgresMigrationsAssemblyMarker).Assembly.FullName!
@@ -537,9 +542,7 @@ using (var scope = app.Services.CreateScope())
                 );
 
                 // Also backup the logging database if it exists
-                var loggingDbPath = Path.GetFullPath(
-                    loggingConnectionReadOnlyStringBuilder.DataSource
-                );
+                var loggingDbPath = logsDbPath;
                 if (File.Exists(loggingDbPath))
                 {
                     var loggingBackupPath = loggingDbPath + ".bak";
@@ -704,7 +707,14 @@ using (var scope = app.Services.CreateScope())
     catch (Exception ex)
     {
         logger.LogError(ex, $"An error occurred while applying migrations: {ex.Message}");
-        // Log or handle the exception as appropriate for your app
+
+        if (!isSqlite)
+        {
+            // An external database that failed to migrate means every later query runs against an
+            // unknown schema. Fail fast so the orchestrator restarts the app once the database is
+            // reachable; the previous tolerant behavior is kept for the local SQLite file.
+            throw;
+        }
     }
 
     // Also initialize python environment
