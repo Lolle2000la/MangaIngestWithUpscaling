@@ -33,7 +33,10 @@ public static class TestDatabaseHelper
         public void Dispose()
         {
             Context?.Dispose();
-            _database.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            // Run the async teardown away from any captured synchronization context: bUnit disposes
+            // components from the renderer's context, where blocking on async continuations that want
+            // the same context can deadlock.
+            Task.Run(() => _database.DisposeAsync().AsTask()).GetAwaiter().GetResult();
         }
     }
 }
