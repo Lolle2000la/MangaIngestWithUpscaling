@@ -958,7 +958,7 @@ namespace MangaIngestWithUpscaling.Data.Postgres.Migrations
 
             // Functional indexes over the polymorphic task payload. These mirror the SQLite
             // functional indexes from 20250923222112_AddIndexForTaskTypesAndChapterId and back the
-            // provider-specific lookups implemented by IPersistedTaskQuery.
+            // provider-specific lookups implemented by PersistedTaskQueries.
             migrationBuilder.Sql(
                 "CREATE INDEX \"IX_PersistedTasks_Type\" ON \"PersistedTasks\" ((\"Data\"->>'$type'));"
             );

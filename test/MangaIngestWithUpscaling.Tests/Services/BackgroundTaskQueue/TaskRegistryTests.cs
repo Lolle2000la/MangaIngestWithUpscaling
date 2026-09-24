@@ -252,18 +252,22 @@ public class TaskRegistryTests
         await taskQueue.EnqueueAsync(new LoggingTask { Message = "standard" });
         await taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(1, 1));
 
+        // RebuildSnapshots() swaps the snapshot before the change events are raised, so waiting on
+        // the snapshot alone can return before the handler has run. Wait for both.
         await WaitUntilAsync(
             () =>
                 registry.GetStandardSnapshot().Count == 1
-                && registry.GetUpscaleSnapshot().Count == 1,
+                && registry.GetUpscaleSnapshot().Count == 1
+                && Volatile.Read(ref standardChanges) >= 1
+                && Volatile.Read(ref upscaleChanges) >= 1,
             TestContext.Current.CancellationToken
         );
 
         // Assert: snapshots are populated and the matching change events fired.
         Assert.Single(registry.GetStandardSnapshot());
         Assert.Single(registry.GetUpscaleSnapshot());
-        Assert.True(standardChanges >= 1);
-        Assert.True(upscaleChanges >= 1);
+        Assert.True(Volatile.Read(ref standardChanges) >= 1);
+        Assert.True(Volatile.Read(ref upscaleChanges) >= 1);
 
         // Act: batch remove both tasks.
         List<PersistedTask> all = registry

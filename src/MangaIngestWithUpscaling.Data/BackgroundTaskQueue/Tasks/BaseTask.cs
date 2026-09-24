@@ -19,6 +19,12 @@ public class BaseTask
 
     public virtual Task ProcessAsync(IServiceProvider services, CancellationToken cancellationToken)
     {
-        throw new NotImplementedException();
+        // Reached only when an unrecognized $type discriminator was ignored during deserialization
+        // (see TaskJsonOptionsProvider.IgnoreUnrecognizedTypeDiscriminators), leaving a bare payload.
+        // A concrete message is more useful to an operator than a NotImplementedException.
+        throw new InvalidOperationException(
+            "The task payload could not be resolved to a concrete task type. It was likely written "
+                + "by a different version or its type was removed."
+        );
     }
 }

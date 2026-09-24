@@ -80,11 +80,14 @@ string sqliteConnectionString =
     builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
 
-string postgresConnectionString =
-    builder.Configuration.GetConnectionString("PostgresConnection")
-    ?? throw new InvalidOperationException(
-        "Connection string 'PostgresConnection' not found while DatabaseProvider is 'Postgres'."
-    );
+// Only required when PostgreSQL is actually selected, so a SQLite-only deployment that supplies its
+// own appsettings.json without the key still starts (the shipped appsettings.json provides one).
+string postgresConnectionString = isSqlite
+    ? string.Empty
+    : builder.Configuration.GetConnectionString("PostgresConnection")
+        ?? throw new InvalidOperationException(
+            "Connection string 'PostgresConnection' not found while DatabaseProvider is 'Postgres'."
+        );
 
 string applicationConnectionString = isSqlite ? sqliteConnectionString : postgresConnectionString;
 string applicationMigrationsAssembly = isSqlite

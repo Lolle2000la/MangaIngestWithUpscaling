@@ -20,6 +20,10 @@ public static class TaskJsonOptionsProvider
     private static readonly JsonPolymorphismOptions PolymorphismOptions = new()
     {
         TypeDiscriminatorPropertyName = "$type",
+        // Deliberately soft-fail. An unknown or removed discriminator (for example a task row left
+        // behind by a previous version) deserializes to BaseTask instead of throwing while the task
+        // list is loaded at startup, so a single stale row cannot stop the application from booting.
+        // The row then fails visibly when the queue tries to process it (see BaseTask.ProcessAsync).
         IgnoreUnrecognizedTypeDiscriminators = true,
     };
 
