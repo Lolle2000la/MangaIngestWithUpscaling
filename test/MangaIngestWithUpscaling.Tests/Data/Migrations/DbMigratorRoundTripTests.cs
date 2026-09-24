@@ -281,6 +281,217 @@ public class DbMigratorRoundTripTests
         Assert.Equal("hello from sqlite", log.RenderedMessage);
     }
 
+    [Fact]
+    public async Task Migrate_FromSqliteToPostgres_CopiedLogsDoNotBlockNewLogWrites()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Assert.SkipWhen(TestDatabaseFactory.Backend != TestDatabaseBackend.Postgres, SkipReason);
+
+        await using TestDatabase sqliteSource = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Sqlite
+        );
+        await using TestDatabase sqliteLogsSource = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Sqlite
+        );
+        await using TestDatabase postgresTarget = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Postgres
+        );
+
+        await using (ApplicationDbContext schema = sqliteSource.CreateContext()) { }
+        await SeedSqliteLogAsync(sqliteLogsSource.ConnectionString, "hello from sqlite", ct);
+
+        await DataMigrator.MigrateAsync(
+            new MigratorOptions(
+                DatabaseProvider.Sqlite,
+                sqliteSource.ConnectionString,
+                DatabaseProvider.Postgres,
+                postgresTarget.ConnectionString,
+                BatchSize: 500,
+                Force: false,
+                IncludeLogs: true,
+                FromLogsConnection: sqliteLogsSource.ConnectionString,
+                ToLogsConnection: null
+            ),
+            _ => { },
+            ct
+        );
+
+        await using LoggingDbContext logContext = CreateLoggingContext(
+            DatabaseProvider.Postgres,
+            postgresTarget.ConnectionString
+        );
+        Log copied = await logContext.LogEntries.AsNoTracking().SingleAsync(ct);
+        Assert.Equal("hello from sqlite", copied.RenderedMessage);
+
+        // Regression guard: the application writes logs through a sink that omits "Id". If the
+        // identity sequence is not advanced past the copied id, this insert collides and throws.
+        logContext.LogEntries.Add(
+            new Log
+            {
+                Timestamp = DateTime.UtcNow,
+                Level = "Information",
+                RenderedMessage = "written after migration",
+                Properties = "{}",
+            }
+        );
+        await logContext.SaveChangesAsync(ct);
+
+        Assert.Equal(2, await logContext.LogEntries.AsNoTracking().CountAsync(ct));
+    }
+
+    [Fact]
+    public async Task Migrate_FromSqliteToPostgres_WithForce_ClearsExistingLogs()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Assert.SkipWhen(TestDatabaseFactory.Backend != TestDatabaseBackend.Postgres, SkipReason);
+
+        await using TestDatabase sqliteSource = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Sqlite
+        );
+        await using TestDatabase sqliteLogsSource = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Sqlite
+        );
+        await using TestDatabase postgresTarget = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Postgres
+        );
+
+        await using (ApplicationDbContext schema = sqliteSource.CreateContext()) { }
+        await SeedSqliteLogAsync(sqliteLogsSource.ConnectionString, "hello from sqlite", ct);
+        await SeedPostgresLogAsync(postgresTarget.ConnectionString, "stale target log", ct);
+
+        await DataMigrator.MigrateAsync(
+            new MigratorOptions(
+                DatabaseProvider.Sqlite,
+                sqliteSource.ConnectionString,
+                DatabaseProvider.Postgres,
+                postgresTarget.ConnectionString,
+                BatchSize: 500,
+                Force: true,
+                IncludeLogs: true,
+                FromLogsConnection: sqliteLogsSource.ConnectionString,
+                ToLogsConnection: null
+            ),
+            _ => { },
+            ct
+        );
+
+        await using LoggingDbContext logContext = CreateLoggingContext(
+            DatabaseProvider.Postgres,
+            postgresTarget.ConnectionString
+        );
+        Log single = await logContext.LogEntries.AsNoTracking().SingleAsync(ct);
+        Assert.Equal("hello from sqlite", single.RenderedMessage);
+    }
+
+    [Fact]
+    public async Task Migrate_FromSqliteToPostgres_WithoutForce_RefusesANonEmptyLogTable()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Assert.SkipWhen(TestDatabaseFactory.Backend != TestDatabaseBackend.Postgres, SkipReason);
+
+        await using TestDatabase sqliteSource = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Sqlite
+        );
+        await using TestDatabase sqliteLogsSource = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Sqlite
+        );
+        await using TestDatabase postgresTarget = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Postgres
+        );
+
+        await using (ApplicationDbContext schema = sqliteSource.CreateContext()) { }
+        await SeedSqliteLogAsync(sqliteLogsSource.ConnectionString, "hello from sqlite", ct);
+        await SeedPostgresLogAsync(postgresTarget.ConnectionString, "stale target log", ct);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            DataMigrator.MigrateAsync(
+                new MigratorOptions(
+                    DatabaseProvider.Sqlite,
+                    sqliteSource.ConnectionString,
+                    DatabaseProvider.Postgres,
+                    postgresTarget.ConnectionString,
+                    BatchSize: 500,
+                    Force: false,
+                    IncludeLogs: true,
+                    FromLogsConnection: sqliteLogsSource.ConnectionString,
+                    ToLogsConnection: null
+                ),
+                _ => { },
+                ct
+            )
+        );
+
+        // The refusal must be non-destructive: the stale row is still the only row there.
+        await using LoggingDbContext logContext = CreateLoggingContext(
+            DatabaseProvider.Postgres,
+            postgresTarget.ConnectionString
+        );
+        Log single = await logContext.LogEntries.AsNoTracking().SingleAsync(ct);
+        Assert.Equal("stale target log", single.RenderedMessage);
+    }
+
+    private static LoggingDbContext CreateLoggingContext(
+        DatabaseProvider provider,
+        string connectionString
+    )
+    {
+        var optionsBuilder = new DbContextOptionsBuilder<LoggingDbContext>();
+        DatabaseSetup.UseDatabaseProvider(
+            optionsBuilder,
+            provider,
+            connectionString,
+            provider == DatabaseProvider.Sqlite
+                ? typeof(SqliteMigrationsAssemblyMarker).Assembly.FullName!
+                : typeof(PostgresMigrationsAssemblyMarker).Assembly.FullName!
+        );
+        return new LoggingDbContext(optionsBuilder.Options);
+    }
+
+    private static async Task SeedSqliteLogAsync(
+        string connectionString,
+        string message,
+        CancellationToken ct
+    )
+    {
+        await using var connection = new SqliteConnection(connectionString);
+        await connection.OpenAsync(ct);
+        await using (SqliteCommand create = connection.CreateCommand())
+        {
+            create.CommandText = SqliteLogsDdl;
+            await create.ExecuteNonQueryAsync(ct);
+        }
+
+        await using SqliteCommand insert = connection.CreateCommand();
+        insert.CommandText =
+            "INSERT INTO \"Logs\" (\"Timestamp\", \"Level\", \"RenderedMessage\", \"Properties\") "
+            + "VALUES (datetime('now'), 'Warning', @message, '{}')";
+        insert.Parameters.AddWithValue("@message", message);
+        await insert.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task SeedPostgresLogAsync(
+        string connectionString,
+        string message,
+        CancellationToken ct
+    )
+    {
+        await using LoggingDbContext logContext = CreateLoggingContext(
+            DatabaseProvider.Postgres,
+            connectionString
+        );
+        await logContext.Database.ExecuteSqlRawAsync(PostgresLogging.CreateTableSql, ct);
+        logContext.LogEntries.Add(
+            new Log
+            {
+                Timestamp = DateTime.UtcNow,
+                Level = "Information",
+                RenderedMessage = message,
+                Properties = "{}",
+            }
+        );
+        await logContext.SaveChangesAsync(ct);
+    }
+
     private const string SqliteLogsDdl = """
         CREATE TABLE IF NOT EXISTS "Logs" (
             "Id" INTEGER PRIMARY KEY AUTOINCREMENT,

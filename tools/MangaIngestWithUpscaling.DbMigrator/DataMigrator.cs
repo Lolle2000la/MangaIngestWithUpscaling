@@ -362,6 +362,22 @@ public static class DataMigrator
 
         await EnsureLogsTableAsync(options.ToProvider, targetLogs, toLogs, cancellationToken);
 
+        int targetCount = await targetLogs.LogEntries.CountAsync(cancellationToken);
+        if (targetCount > 0)
+        {
+            // The application tables are guarded the same way; logs must not be an exception, or
+            // the explicit ids below collide with the rows already there.
+            if (!options.Force)
+            {
+                throw new InvalidOperationException(
+                    "Target table 'Logs' is not empty. Use a fresh database or pass --force."
+                );
+            }
+
+            log($"Logs: clearing {targetCount} existing rows in the target...");
+            await targetLogs.LogEntries.ExecuteDeleteAsync(cancellationToken);
+        }
+
         int total = await sourceLogs.LogEntries.AsNoTracking().CountAsync(cancellationToken);
         if (total == 0)
         {
@@ -404,6 +420,15 @@ public static class DataMigrator
                 cancellationToken
             );
             log($"  Logs: {copied}/{total}");
+        }
+
+        if (options.ToProvider == DatabaseProvider.Postgres)
+        {
+            // Unlike the application tables, the target log table is not covered by the earlier
+            // reset. PostgreSQL identity columns do not advance when rows are inserted with explicit
+            // ids, so without this the first log the application writes reuses an id and collides.
+            log("Logs: resetting the PostgreSQL identity sequence...");
+            await ResetPostgresSequenceAsync(toLogs, "Logs", cancellationToken);
         }
     }
 
@@ -494,12 +519,37 @@ public static class DataMigrator
         await connection.OpenAsync(cancellationToken);
         foreach (string table in tablesWithIdentityId)
         {
-            await using NpgsqlCommand command = connection.CreateCommand();
-            command.CommandText =
-                $"SELECT setval(pg_get_serial_sequence('\"{table}\"', 'Id'), "
-                + $"COALESCE(MAX(\"Id\"), 1), MAX(\"Id\") IS NOT NULL) FROM \"{table}\";";
-            await command.ExecuteNonQueryAsync(cancellationToken);
+            await ResetPostgresSequenceAsync(connection, table, cancellationToken);
         }
+    }
+
+    /// <summary>
+    /// Advances a PostgreSQL identity sequence to the current maximum id, so rows inserted with
+    /// explicit ids (the migrator copies existing ids) do not collide with generated ones.
+    /// <paramref name="table" /> is always a hard-coded table name, never user input.
+    /// </summary>
+    private static async Task ResetPostgresSequenceAsync(
+        NpgsqlConnection connection,
+        string table,
+        CancellationToken cancellationToken
+    )
+    {
+        await using NpgsqlCommand command = connection.CreateCommand();
+        command.CommandText =
+            $"SELECT setval(pg_get_serial_sequence('\"{table}\"', 'Id'), "
+            + $"COALESCE(MAX(\"Id\"), 1), MAX(\"Id\") IS NOT NULL) FROM \"{table}\";";
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task ResetPostgresSequenceAsync(
+        string connectionString,
+        string table,
+        CancellationToken cancellationToken
+    )
+    {
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await ResetPostgresSequenceAsync(connection, table, cancellationToken);
     }
 }
 

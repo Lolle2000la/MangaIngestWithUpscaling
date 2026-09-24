@@ -22,8 +22,10 @@ For provider configuration and development details, see [Database Providers](./D
 3. Streams every application table across — Identity (users, roles, claims, logins), libraries,
    ingest paths/filter/rename rules, manga, chapters, merged-chapter info, filtered images, split
    state, strip findings, tasks, API keys and data-protection keys.
-4. Resets the PostgreSQL identity sequences so the next inserted row cannot collide.
-5. Optionally copies the `Logs` table (`--include-logs`).
+4. Optionally copies the `Logs` table (`--include-logs`). If the target log table already has rows
+   the tool refuses to overwrite it, unless `--force` is given to clear it first.
+5. Resets the PostgreSQL identity sequences (application tables and `Logs`) so the next inserted row
+   cannot collide with a copied id.
 
 ## Prerequisites
 
@@ -196,7 +198,7 @@ on it since, migrate back with the [reverse](#reverse-postgresql--sqlite) proced
 | `--from-connection <cs>` | Source connection string. |
 | `--to-connection <cs>` | Target connection string. |
 | `--batch-size <n>` | Rows inserted per batch (default `500`). |
-| `--force` | Clear a non-empty target before copying. Without it the tool refuses to overwrite. |
+| `--force` | Clear a non-empty target before copying, including the `Logs` table when `--include-logs` is used. Without it the tool refuses to overwrite. |
 | `--include-logs` | Also copy the `Logs` table. |
 | `--from-logs-connection <cs>` | SQLite logs file to read (required for a SQLite source with `--include-logs`). |
 | `--to-logs-connection <cs>` | SQLite logs file to write (required for a SQLite target with `--include-logs`). |
@@ -205,6 +207,8 @@ on it since, migrate back with the [reverse](#reverse-postgresql--sqlite) proced
 
 - **`Target table '…' is not empty`** — the target already contains data. Use a fresh database, or
   pass `--force` to clear it.
+- **`Target table 'Logs' is not empty`** — the same guard, for `--include-logs`. Pass `--force` to
+  clear the target log table before the copy.
 - **`The 'from-logs-connection'/'to-logs-connection' option is required …`** — with `--include-logs`
   and a SQLite endpoint you must point at its separate `logs.db` file.
 - **`Cannot write DateTime with Kind=Unspecified …`** — should not occur; the tool normalizes
