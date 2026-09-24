@@ -23,8 +23,15 @@ public enum TestDatabaseBackend
 /// </summary>
 public static class TestDatabaseFactory
 {
+    private const int ContainerStartAttempts = 3;
+
     private static readonly Lazy<TestDatabaseBackend> CurrentBackend = new(ResolveBackend);
-    private static readonly Lazy<Task<PostgreSqlContainer>> PostgresContainer = new(StartContainer);
+
+    // Serialises access to the shared container task. A failed start is deliberately not cached
+    // (see GetPostgresContainerAsync): a plain Lazy<Task<T>> caches the faulted task, so a single
+    // transient Docker/Testcontainers failure would fail every later test in the run.
+    private static readonly object PostgresSync = new();
+    private static Task<PostgreSqlContainer>? _postgresContainer;
 
     public static TestDatabaseBackend Backend => CurrentBackend.Value;
 
@@ -37,8 +44,11 @@ public static class TestDatabaseFactory
         backend switch
         {
             TestDatabaseBackend.Sqlite => TestDatabase.CreateSqlite(),
-            TestDatabaseBackend.Postgres => TestDatabase
-                .CreatePostgresAsync(PostgresContainer.Value.GetAwaiter().GetResult())
+            // Run the async startup on the thread pool: callers block on this call, and starting the
+            // container from a thread with a synchronization context could deadlock.
+            TestDatabaseBackend.Postgres => Task.Run(async () =>
+                    await TestDatabase.CreatePostgresAsync(await GetPostgresContainerAsync())
+                )
                 .GetAwaiter()
                 .GetResult(),
             _ => throw new ArgumentOutOfRangeException(nameof(backend), backend, null),
@@ -55,6 +65,38 @@ public static class TestDatabaseFactory
             : TestDatabaseBackend.Sqlite;
     }
 
+    private static Task<PostgreSqlContainer> GetPostgresContainerAsync()
+    {
+        lock (PostgresSync)
+        {
+            if (
+                _postgresContainer is null
+                || _postgresContainer.IsFaulted
+                || _postgresContainer.IsCanceled
+            )
+            {
+                _postgresContainer = StartContainerWithRetryAsync();
+            }
+
+            return _postgresContainer;
+        }
+    }
+
+    private static async Task<PostgreSqlContainer> StartContainerWithRetryAsync()
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return await StartContainer().ConfigureAwait(false);
+            }
+            catch when (attempt < ContainerStartAttempts)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(attempt * 2)).ConfigureAwait(false);
+            }
+        }
+    }
+
     private static async Task<PostgreSqlContainer> StartContainer()
     {
         var container = new PostgreSqlBuilder("postgres:17")
@@ -64,7 +106,7 @@ public static class TestDatabaseFactory
             .WithCleanUp(true)
             .Build();
 
-        await container.StartAsync();
+        await container.StartAsync().ConfigureAwait(false);
         return container;
     }
 }
@@ -206,15 +248,8 @@ public sealed class TestDatabase : IAsyncDisposable
         string baseConnectionString = container.GetConnectionString();
         string databaseName = $"tests_{Guid.NewGuid():N}";
 
-        await using (var adminDataSource = NpgsqlDataSource.Create(baseConnectionString))
-        await using (
-            var adminConnection = await adminDataSource.OpenConnectionAsync(CancellationToken.None)
-        )
-        await using (var createDatabase = adminConnection.CreateCommand())
-        {
-            createDatabase.CommandText = $"CREATE DATABASE \"{databaseName}\"";
-            await createDatabase.ExecuteNonQueryAsync(CancellationToken.None);
-        }
+        await CreateDatabaseWithRetryAsync(baseConnectionString, databaseName)
+            .ConfigureAwait(false);
 
         string connectionString = new NpgsqlConnectionStringBuilder(baseConnectionString)
         {
@@ -235,11 +270,20 @@ public sealed class TestDatabase : IAsyncDisposable
 
         async Task Dispose(CancellationToken token)
         {
-            await using var adminDataSource = NpgsqlDataSource.Create(baseConnectionString);
-            await using var adminConnection = await adminDataSource.OpenConnectionAsync(token);
-            await using var dropDatabase = adminConnection.CreateCommand();
-            dropDatabase.CommandText = $"DROP DATABASE IF EXISTS \"{databaseName}\" WITH (FORCE)";
-            await dropDatabase.ExecuteNonQueryAsync(token);
+            // Best effort: a failed drop must not fail an otherwise passing test. The container is
+            // ephemeral (WithCleanUp(true)), so any leftovers are reclaimed with it.
+            try
+            {
+                await using var adminDataSource = NpgsqlDataSource.Create(baseConnectionString);
+                await using var adminConnection = await adminDataSource
+                    .OpenConnectionAsync(token)
+                    .ConfigureAwait(false);
+                await using var dropDatabase = adminConnection.CreateCommand();
+                dropDatabase.CommandText =
+                    $"DROP DATABASE IF EXISTS \"{databaseName}\" WITH (FORCE)";
+                await dropDatabase.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+            }
+            catch (Exception) when (!token.IsCancellationRequested) { }
         }
 
         return new TestDatabase(
@@ -248,5 +292,37 @@ public sealed class TestDatabase : IAsyncDisposable
             builder => Configure(builder, connectionString),
             Dispose
         );
+    }
+
+    private static async Task CreateDatabaseWithRetryAsync(
+        string baseConnectionString,
+        string databaseName
+    )
+    {
+        const int maxAttempts = 3;
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await using var adminDataSource = NpgsqlDataSource.Create(baseConnectionString);
+                await using var adminConnection = await adminDataSource
+                    .OpenConnectionAsync(CancellationToken.None)
+                    .ConfigureAwait(false);
+                await using var createDatabase = adminConnection.CreateCommand();
+                createDatabase.CommandText = $"CREATE DATABASE \"{databaseName}\"";
+                await createDatabase
+                    .ExecuteNonQueryAsync(CancellationToken.None)
+                    .ConfigureAwait(false);
+                return;
+            }
+            catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.DuplicateDatabase)
+            {
+                return;
+            }
+            catch when (attempt < maxAttempts)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt)).ConfigureAwait(false);
+            }
+        }
     }
 }

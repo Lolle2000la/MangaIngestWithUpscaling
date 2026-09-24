@@ -68,6 +68,9 @@ docker exec -it <postgres-container> psql -U postgres \
 Or against your own server, create a dedicated database (and ideally a dedicated, non-superuser
 account that owns it).
 
+> The bundled `postgres` service has a health check, and the application waits for it before starting
+> (an optional `depends_on`), so a slow first boot no longer races the database.
+
 ### 4. Run the migrator
 
 Run the tool somewhere that can read the SQLite files **and** reach PostgreSQL.

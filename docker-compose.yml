@@ -4,6 +4,13 @@ services:
     build:
       context: .
       dockerfile: src/MangaIngestWithUpscaling/Dockerfile
+    # Optional so the default (profile-less, SQLite) `docker compose up` still works; when the
+    # postgres profile is enabled, the app waits for the server to be healthy. The app now fails
+    # fast on a PostgreSQL migration error, so without this it could exit on a slow first boot.
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
     environment:
       - TZ=Etc/UTC
       - Ingest_Upscaler__PythonEnvironmentDirectory=/data/pyenv
@@ -64,6 +71,12 @@ services:
     profiles:
       - postgres
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d manga_ingest"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   kavita:
     image: jvmilazz0/kavita:latest

@@ -27,6 +27,9 @@ ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
 COPY ["src/MangaIngestWithUpscaling/MangaIngestWithUpscaling.csproj", "src/MangaIngestWithUpscaling/"]
 COPY ["src/MangaIngestWithUpscaling.Shared/MangaIngestWithUpscaling.Shared.csproj", "src/MangaIngestWithUpscaling.Shared/"]
+COPY ["src/MangaIngestWithUpscaling.Data/MangaIngestWithUpscaling.Data.csproj", "src/MangaIngestWithUpscaling.Data/"]
+COPY ["src/MangaIngestWithUpscaling.Data.Sqlite/MangaIngestWithUpscaling.Data.Sqlite.csproj", "src/MangaIngestWithUpscaling.Data.Sqlite/"]
+COPY ["src/MangaIngestWithUpscaling.Data.Postgres/MangaIngestWithUpscaling.Data.Postgres.csproj", "src/MangaIngestWithUpscaling.Data.Postgres/"]
 RUN dotnet restore "./src/MangaIngestWithUpscaling/MangaIngestWithUpscaling.csproj"
 COPY . .
 WORKDIR "/src/src/MangaIngestWithUpscaling"

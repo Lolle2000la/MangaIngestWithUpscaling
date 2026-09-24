@@ -3,7 +3,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <RootNamespace>MangaIngestWithUpscaling</RootNamespace>
+    <!-- Matches the project/folder name; explicit namespaces in existing files are unaffected. -->
+    <RootNamespace>MangaIngestWithUpscaling.Data</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference
