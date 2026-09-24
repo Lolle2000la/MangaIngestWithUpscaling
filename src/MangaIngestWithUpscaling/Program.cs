@@ -65,23 +65,22 @@ builder.Configuration.AddEnvironmentVariables("Ingest_");
 
 builder.RegisterConfig(); // Register the configuration classes
 
-DatabaseProvider databaseProvider = builder
-    .Configuration.GetValue<string>("DatabaseProvider")
-    ?.Trim()
-    .ToLowerInvariant() switch
-{
-    "postgres" or "postgresql" or "npgsql" => DatabaseProvider.Postgres,
-    _ => DatabaseProvider.Sqlite,
-};
+DatabaseProvider databaseProvider = DatabaseProviderResolver.Resolve(
+    builder.Configuration.GetValue<string>("DatabaseProvider")
+);
 
 bool isSqlite = databaseProvider == DatabaseProvider.Sqlite;
 
-string sqliteConnectionString =
-    builder.Configuration.GetConnectionString("DefaultConnection")
-    ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+// Each provider's connection string is only required when that provider is selected, so a
+// PostgreSQL deployment does not need DefaultConnection and vice versa (the shipped
+// appsettings.json provides both defaults).
+string sqliteConnectionString = isSqlite
+    ? builder.Configuration.GetConnectionString("DefaultConnection")
+        ?? throw new InvalidOperationException(
+            "Connection string 'DefaultConnection' not found while DatabaseProvider is 'Sqlite'."
+        )
+    : string.Empty;
 
-// Only required when PostgreSQL is actually selected, so a SQLite-only deployment that supplies its
-// own appsettings.json without the key still starts (the shipped appsettings.json provides one).
 string postgresConnectionString = isSqlite
     ? string.Empty
     : builder.Configuration.GetConnectionString("PostgresConnection")
@@ -170,7 +169,10 @@ if (!isSqlite)
     }
     catch (Exception ex)
     {
-        Console.Error.WriteLine($"Failed to ensure the PostgreSQL Logs table exists: {ex.Message}");
+        // Best effort: this runs before the host (and its logger) exists, so stderr is the only
+        // channel. A genuinely unusable database fails the migration below anyway; a missing Logs
+        // table alone means the sink (needAutoCreateTable: false) drops writes, so log the detail.
+        Console.Error.WriteLine($"Failed to ensure the PostgreSQL Logs table exists: {ex}");
     }
 }
 
