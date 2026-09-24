@@ -144,7 +144,7 @@ public static class DataMigrator
             ? typeof(SqliteMigrationsAssemblyMarker).Assembly.FullName!
             : typeof(PostgresMigrationsAssemblyMarker).Assembly.FullName!;
 
-    private static List<TableOperation> BuildTableOperations(
+    internal static List<TableOperation> BuildTableOperations(
         ApplicationDbContext source,
         ApplicationDbContext target,
         int batchSize,
@@ -293,7 +293,13 @@ public static class DataMigrator
     /// SQLite stores <see cref="DateTime"/> as text without a kind, so values read back are
     /// <see cref="DateTimeKind.Unspecified"/>. PostgreSQL rejects those for <c>timestamp with time
     /// zone</c> columns, so mark them as UTC (the application always persists UTC timestamps).
+    /// <see cref="DateTimeOffset"/> values are normalized to UTC as well.
     /// </summary>
+    /// <remarks>
+    /// Only the entity's own scalar properties are visited. EF complex/owned values that are not
+    /// surfaced as top-level properties (there are none in the current model) would not be reached;
+    /// add handling here if such a member is introduced.
+    /// </remarks>
     internal static void NormalizeUtcDateTimes(object entity)
     {
         foreach (
@@ -321,6 +327,21 @@ public static class DataMigrator
                 if (value is { Kind: not DateTimeKind.Utc })
                 {
                     property.SetValue(entity, DateTime.SpecifyKind(value.Value, DateTimeKind.Utc));
+                }
+            }
+            else if (property.PropertyType == typeof(DateTimeOffset))
+            {
+                // Npgsql sends the UTC instant regardless, but normalizing keeps the copied value
+                // canonical (for example IdentityUser.LockoutEnd).
+                var value = (DateTimeOffset)property.GetValue(entity)!;
+                property.SetValue(entity, value.ToUniversalTime());
+            }
+            else if (property.PropertyType == typeof(DateTimeOffset?))
+            {
+                var value = (DateTimeOffset?)property.GetValue(entity);
+                if (value is { } offset)
+                {
+                    property.SetValue(entity, offset.ToUniversalTime());
                 }
             }
         }
@@ -490,34 +511,41 @@ public static class DataMigrator
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// The application tables whose PostgreSQL <c>Id</c> column is an integer identity column, so
+    /// their sequences must be advanced after copying rows with explicit ids. Kept next to the copy
+    /// list and guarded by <c>MigratorTableCoverageTests</c>, which compares it to the EF model.
+    /// <c>Logs</c> is handled separately in <see cref="MigrateLogsAsync"/> (it is not part of the
+    /// application context).
+    /// </summary>
+    internal static readonly string[] PostgresIdentityTables =
+    {
+        "ApiKeys",
+        "AspNetRoleClaims",
+        "AspNetUserClaims",
+        "ChapterSplitProcessingStates",
+        "Chapters",
+        "DataProtectionKeys",
+        "FilteredImages",
+        "Libraries",
+        "LibraryFilterRules",
+        "LibraryIngestPaths",
+        "LibraryRenameRules",
+        "MangaSeries",
+        "MergedChapterInfos",
+        "PersistedTasks",
+        "StripSplitFindings",
+        "UpscalerProfiles",
+    };
+
     private static async Task ResetPostgresSequencesAsync(
         string connectionString,
         CancellationToken cancellationToken
     )
     {
-        string[] tablesWithIdentityId =
-        {
-            "ApiKeys",
-            "AspNetRoleClaims",
-            "AspNetUserClaims",
-            "ChapterSplitProcessingStates",
-            "Chapters",
-            "DataProtectionKeys",
-            "FilteredImages",
-            "Libraries",
-            "LibraryFilterRules",
-            "LibraryIngestPaths",
-            "LibraryRenameRules",
-            "MangaSeries",
-            "MergedChapterInfos",
-            "PersistedTasks",
-            "StripSplitFindings",
-            "UpscalerProfiles",
-        };
-
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
-        foreach (string table in tablesWithIdentityId)
+        foreach (string table in PostgresIdentityTables)
         {
             await ResetPostgresSequenceAsync(connection, table, cancellationToken);
         }

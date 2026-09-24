@@ -8,6 +8,9 @@
     <NoWarn>$(NoWarn);NETSDK1206;CS8669;NETSDK1187</NoWarn>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="MangaIngestWithUpscaling.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\src\MangaIngestWithUpscaling\MangaIngestWithUpscaling.csproj" />
     <ProjectReference Include="..\..\src\MangaIngestWithUpscaling.Data\MangaIngestWithUpscaling.Data.csproj" />
     <ProjectReference Include="..\..\src\MangaIngestWithUpscaling.Data.Sqlite\MangaIngestWithUpscaling.Data.Sqlite.csproj" />
