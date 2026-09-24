@@ -5,7 +5,9 @@ namespace MangaIngestWithUpscaling.Tests.Infrastructure;
 
 /// <summary>
 /// Serialises the startup tests: both set and restore process-wide <c>Ingest_</c> environment
-/// variables, so they must not run concurrently.
+/// variables, so they must not run concurrently with each other. Other collections still run in
+/// parallel, so tests that read <c>Ingest_</c> configuration must join this collection — the rest
+/// build their services explicitly and are unaffected.
 /// </summary>
 [CollectionDefinition(Name)]
 public sealed class ApplicationStartupCollection

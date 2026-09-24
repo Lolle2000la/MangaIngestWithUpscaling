@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using MangaIngestWithUpscaling.Configuration;
 
 namespace MangaIngestWithUpscaling.DbMigrator;
@@ -72,10 +73,41 @@ internal static class MigratorCli
         catch (Exception ex)
         {
             // Print the full chain (inner exceptions and stack trace): data migrations fail inside
-            // provider exceptions where the top-level message alone is not actionable.
-            Console.Error.WriteLine(ex);
+            // provider exceptions where the top-level message alone is not actionable. Redact
+            // connection strings first, since provider messages can echo them.
+            Console.Error.WriteLine(Redact(ex.ToString(), migratorOptions));
             return 1;
         }
+    }
+
+    /// <summary>
+    /// Removes connection-string secrets from a message before it is written to the console: the
+    /// connection strings supplied on the command line, and any <c>Password=</c>/<c>Pwd=</c> value a
+    /// provider exception may have embedded.
+    /// </summary>
+    internal static string Redact(string text, MigratorOptions options)
+    {
+        foreach (
+            string? connection in new[]
+            {
+                options.FromConnection,
+                options.ToConnection,
+                options.FromLogsConnection,
+                options.ToLogsConnection,
+            }
+        )
+        {
+            if (!string.IsNullOrEmpty(connection))
+            {
+                text = text.Replace(
+                    connection,
+                    "<connection string redacted>",
+                    StringComparison.Ordinal
+                );
+            }
+        }
+
+        return Regex.Replace(text, """(?i)\b(password|pwd)\s*=\s*[^;\s"]+""", "$1=***");
     }
 
     private static bool TryParseProvider(string value, out DatabaseProvider provider)

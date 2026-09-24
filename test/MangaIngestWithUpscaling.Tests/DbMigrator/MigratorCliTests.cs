@@ -1,9 +1,35 @@
+using MangaIngestWithUpscaling.Configuration;
 using MangaIngestWithUpscaling.DbMigrator;
 
 namespace MangaIngestWithUpscaling.Tests.DbMigrator;
 
 public class MigratorCliTests
 {
+    [Fact]
+    public void Redact_RemovesConnectionStringsAndInlinePasswords()
+    {
+        var options = new MigratorOptions(
+            DatabaseProvider.Postgres,
+            "Host=db;Username=u;Password=supersecret",
+            DatabaseProvider.Sqlite,
+            "Data Source=/tmp/x.db",
+            BatchSize: 500,
+            Force: false,
+            IncludeLogs: false,
+            FromLogsConnection: null,
+            ToLogsConnection: null
+        );
+
+        string redacted = MigratorCli.Redact(
+            "Npgsql failed: Host=db;Username=u;Password=supersecret and Password=other",
+            options
+        );
+
+        Assert.DoesNotContain("supersecret", redacted);
+        Assert.DoesNotContain("other", redacted);
+        Assert.Contains("Password=***", redacted);
+    }
+
     [Theory]
     [InlineData("--force", "force", true)]
     [InlineData("--force=true", "force", true)]
