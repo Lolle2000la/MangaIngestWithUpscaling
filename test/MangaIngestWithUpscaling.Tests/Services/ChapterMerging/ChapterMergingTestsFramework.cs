@@ -1380,7 +1380,7 @@ public class ChapterMergeRevertServiceTests : IDisposable
     public ChapterMergeRevertServiceTests()
     {
         // Create test database
-        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _testDb = TestDatabaseHelper.CreateDatabase();
         _dbContext = _testDb.Context;
 
         // Create mocks
@@ -1647,7 +1647,7 @@ public class ComicInfoPreservationTests : IDisposable
 
     public ComicInfoPreservationTests()
     {
-        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _testDb = TestDatabaseHelper.CreateDatabase();
     }
 
     public void Dispose()
@@ -2043,7 +2043,7 @@ public class UpscaledChapterHandlingTests : IDisposable
 
     public UpscaledChapterHandlingTests()
     {
-        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _testDb = TestDatabaseHelper.CreateDatabase();
     }
 
     public void Dispose()
@@ -2432,7 +2432,7 @@ public class PartialUpscalingMergeTests : IDisposable
 
     public PartialUpscalingMergeTests()
     {
-        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _testDb = TestDatabaseHelper.CreateDatabase();
         _tempDir = Path.Combine(
             Path.GetTempPath(),
             "partial_upscaling_tests_" + Guid.NewGuid().ToString("N")[..8]
@@ -3228,7 +3228,7 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
 
     public ChapterMergeRevertCornerCaseTests()
     {
-        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _testDb = TestDatabaseHelper.CreateDatabase();
         _tempDir = Path.Combine(
             Path.GetTempPath(),
             "revert_corner_case_tests_" + Guid.NewGuid().ToString("N")[..8]

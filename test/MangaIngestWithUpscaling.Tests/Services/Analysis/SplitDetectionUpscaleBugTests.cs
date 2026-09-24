@@ -28,7 +28,7 @@ public class SplitDetectionUpscaleBugTests : IDisposable
 
     public SplitDetectionUpscaleBugTests()
     {
-        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _testDb = TestDatabaseHelper.CreateDatabase();
         _dbContext = _testDb.Context;
 
         _logger = Substitute.For<ILogger<SplitProcessingService>>();

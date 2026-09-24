@@ -17,7 +17,7 @@ public class PersistedTaskQueriesTests : IDisposable
 
     public PersistedTaskQueriesTests()
     {
-        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _testDb = TestDatabaseHelper.CreateDatabase();
         _db = _testDb.Context;
     }
 

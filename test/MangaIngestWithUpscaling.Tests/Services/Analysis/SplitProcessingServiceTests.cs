@@ -33,7 +33,7 @@ public class SplitProcessingServiceTests : IDisposable
 
     public SplitProcessingServiceTests()
     {
-        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _testDb = TestDatabaseHelper.CreateDatabase();
         _dbContext = _testDb.Context;
 
         _logger = Substitute.For<ILogger<SplitProcessingService>>();

@@ -33,7 +33,9 @@ public static class PersistedTaskQueries
             postgres ? chapterId.ToString(CultureInfo.InvariantCulture) : chapterId,
         };
 
-        string statusClause = BuildStatusClause(statuses, parameters, 2);
+        // Derive the placeholder offset from the parameters already collected, so inserting a new
+        // filter above cannot silently misalign the status clause's placeholders.
+        string statusClause = BuildStatusClause(statuses, parameters, parameters.Count);
 
         string sql = postgres
             ? """
@@ -71,7 +73,9 @@ public static class PersistedTaskQueries
             JsonSerializer.Serialize(taskTypes),
         };
 
-        string statusClause = BuildStatusClause(statuses, parameters, 2);
+        // Derive the placeholder offset from the parameters already collected, so inserting a new
+        // filter above cannot silently misalign the status clause's placeholders.
+        string statusClause = BuildStatusClause(statuses, parameters, parameters.Count);
         bool postgres = IsPostgres(context);
 
         string sql = postgres

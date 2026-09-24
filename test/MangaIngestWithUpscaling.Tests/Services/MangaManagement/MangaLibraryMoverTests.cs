@@ -23,7 +23,7 @@ public class MangaLibraryMoverTests : IDisposable
     public MangaLibraryMoverTests()
     {
         // Create SQLite in-memory database
-        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _testDb = TestDatabaseHelper.CreateDatabase();
         _dbContext = _testDb.Context;
 
         // Create mocks

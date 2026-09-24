@@ -13,7 +13,7 @@ public class EntityTimestampTests : IDisposable
 
     public EntityTimestampTests()
     {
-        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _testDb = TestDatabaseHelper.CreateDatabase();
         _context = _testDb.Context;
     }
 

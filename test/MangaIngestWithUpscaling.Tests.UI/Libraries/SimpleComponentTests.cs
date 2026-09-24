@@ -52,7 +52,7 @@ public class SimpleComponentTests : BunitContext
 
     private void SetupDatabase()
     {
-        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _testDb = TestDatabaseHelper.CreateDatabase();
         _dbContext = _testDb.Context;
     }
 

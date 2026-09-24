@@ -10,9 +10,10 @@ public static class TestDatabaseHelper
 {
     /// <summary>
     /// Creates a fresh, isolated database for testing and returns a disposable wrapper around a
-    /// context connected to it.
+    /// context connected to it. The backend follows <c>TEST_DB_PROVIDER</c> (SQLite or PostgreSQL),
+    /// so this is deliberately not an "in-memory" helper.
     /// </summary>
-    public static TestDbContext CreateInMemoryDatabase()
+    public static TestDbContext CreateDatabase()
     {
         return new TestDbContext(TestDatabaseFactory.Create());
     }

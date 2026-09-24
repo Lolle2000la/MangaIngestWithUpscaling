@@ -34,7 +34,7 @@ public class SplitProcessingCoordinatorTests : IDisposable
 
     public SplitProcessingCoordinatorTests()
     {
-        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _testDb = TestDatabaseHelper.CreateDatabase();
         _dbContext = _testDb.Context;
 
         _taskQueue = Substitute.For<ITaskQueue>();

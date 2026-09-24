@@ -31,7 +31,7 @@ public class TaskDiscriminatorContractTests : IDisposable
 
     public TaskDiscriminatorContractTests()
     {
-        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _testDb = TestDatabaseHelper.CreateDatabase();
         _db = _testDb.Context;
     }
 

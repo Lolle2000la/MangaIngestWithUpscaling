@@ -34,7 +34,7 @@ public class IngestProcessorMultipleIngestPathsTests : IDisposable
 
     public IngestProcessorMultipleIngestPathsTests()
     {
-        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _testDb = TestDatabaseHelper.CreateDatabase();
         _tempRoot = Path.Combine(
             Path.GetTempPath(),
             "ingest_multi_path_test_" + Guid.NewGuid().ToString("N")[..8]

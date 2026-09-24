@@ -28,7 +28,7 @@ public class OnSplitsAppliedAsyncTests : IDisposable
 
     public OnSplitsAppliedAsyncTests()
     {
-        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _testDb = TestDatabaseHelper.CreateDatabase();
         _dbContext = _testDb.Context;
 
         _taskQueue = Substitute.For<ITaskQueue>();

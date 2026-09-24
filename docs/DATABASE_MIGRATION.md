@@ -215,6 +215,8 @@ on it since, migrate back with the [reverse](#reverse-postgresql--sqlite) proced
   SQLite's kind-less timestamps to UTC. Please report it.
 - **Connection errors** — check the connection string for the machine running the tool
   (`localhost` on the host vs. `postgres` inside Compose), and that the database exists.
+- **A run failed part-way through** — the target may be partially populated. Fix the cause, then
+  re-run with `--force`: without it the tool refuses to write into the non-empty target.
 - The tool prints the full exception chain on failure, including the provider's inner error.
 
 ## Known limitations

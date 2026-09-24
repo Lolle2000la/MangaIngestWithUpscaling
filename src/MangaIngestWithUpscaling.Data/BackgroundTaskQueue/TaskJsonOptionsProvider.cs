@@ -71,6 +71,17 @@ public static class TaskJsonOptionsProvider
                         continue;
                     }
 
+                    if (Options.IsReadOnly)
+                    {
+                        // The derived-type list freezes once the options are first used, so adding a
+                        // genuinely new type now would throw later, mid-serialization. Fail here with
+                        // a clearer message. Re-registering the already-known types stays a no-op.
+                        throw new InvalidOperationException(
+                            $"Cannot register task type '{type.FullName}' after the task JSON serializer "
+                                + "has been used. Register all task types before first use."
+                        );
+                    }
+
                     PolymorphismOptions.DerivedTypes.Add(new JsonDerivedType(type, type.Name));
                 }
             }

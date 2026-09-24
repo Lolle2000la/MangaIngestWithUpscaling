@@ -35,7 +35,7 @@ public class SplitApplicationServiceTests : IDisposable
 
     public SplitApplicationServiceTests()
     {
-        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _testDb = TestDatabaseHelper.CreateDatabase();
         _dbContext = _testDb.Context;
 
         _coordinator = Substitute.For<ISplitProcessingCoordinator>();
