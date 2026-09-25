@@ -29,7 +29,7 @@
 
     <RowTemplate>
         <MudTd DataLabel="@Loc["Header_Timestamp"]">
-            @context.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+            <LocalTime Value="@context.Timestamp" />
         </MudTd>
 
         <MudTd DataLabel="@Loc["Header_Level"]">

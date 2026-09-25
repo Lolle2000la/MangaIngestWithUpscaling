@@ -1,0 +1,42 @@
+@using System.Globalization
+@inject IJSRuntime JS
+
+<span @ref="_element" data-utc-ms="@UtcMilliseconds" title="@RoundTripUtc">@FallbackText</span>
+
+@code {
+    /// <summary>
+    ///     The instant to display. Values with <see cref="DateTimeKind.Unspecified" /> are treated as
+    ///     UTC, matching how timestamps are read back from SQLite text columns.
+    /// </summary>
+    [Parameter, EditorRequired]
+    public DateTime Value { get; set; }
+
+    private ElementReference _element;
+
+    private long UtcMilliseconds =>
+        new DateTimeOffset(DateTime.SpecifyKind(Value, DateTimeKind.Utc)).ToUnixTimeMilliseconds();
+
+    private string FallbackText =>
+        DateTime
+            .SpecifyKind(Value, DateTimeKind.Utc)
+            .ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+
+    private string RoundTripUtc =>
+        DateTime.SpecifyKind(Value, DateTimeKind.Utc).ToString("o", CultureInfo.InvariantCulture);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("localTime.formatElement", _element);
+        }
+        catch (JSDisconnectedException)
+        {
+            // The circuit is gone; there is no browser to format for.
+        }
+        catch (ObjectDisposedException)
+        {
+            // The renderer/JSRuntime is already disposed.
+        }
+    }
+}

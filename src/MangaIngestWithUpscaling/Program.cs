@@ -321,11 +321,11 @@ builder.Services.AddSerilog(
             lc.WriteTo.SQLite(
                 logsDbPath,
                 tableName: "Logs",
-                // Persist UTC: the logs UI reads the column back as DateTimeKind.Unspecified and
-                // calls ToLocalTime(), which treats an Unspecified value as UTC and converts it to
-                // local. Storing local wall-clock here would be treated as UTC and shifted again on
-                // a non-UTC host (the pre-existing behavior this fixes). PostgreSQL's timestamptz
-                // reads back as Utc, so both providers then render the same instant.
+                // Persist UTC: SQLite reads the column back as DateTimeKind.Unspecified, which the UI
+                // treats as UTC. The browser-side LocalTime component then converts the UTC instant
+                // to the visitor's time zone. Storing local wall-clock here would be treated as UTC
+                // and shown shifted (the pre-existing behavior this fixes). PostgreSQL's timestamptz
+                // reads back as Utc, so both providers render the same instant.
                 storeTimestampInUtc: true,
                 retentionPeriod: TimeSpan.FromDays(7),
                 maxDatabaseSize: 100,

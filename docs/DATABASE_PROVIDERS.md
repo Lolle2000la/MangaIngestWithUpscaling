@@ -34,7 +34,7 @@ The database schema is migrated automatically on startup.
 - On **PostgreSQL**, logs are written to a `Logs` table in the application database. The table is
   created automatically on startup.
 - Log timestamps are stored in **UTC** on both providers (the SQLite sink is configured with
-  `storeTimestampInUtc: true`), so the logs UI's `.ToLocalTime()` renders them correctly.
+  `storeTimestampInUtc: true`) and rendered in the browser's time zone.
 
   > **Upgrade caveat:** rows written to an existing SQLite `logs.db` before this change were stored
   > as local wall-clock time. After upgrading they are read back as `Unspecified` and, on a non-UTC
