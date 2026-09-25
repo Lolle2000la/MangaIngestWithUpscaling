@@ -5,6 +5,7 @@ using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Serilog;
+using LogEntity = MangaIngestWithUpscaling.Data.LogModel.Log;
 
 namespace MangaIngestWithUpscaling.Tests.Data.Logging;
 
@@ -126,4 +127,65 @@ public class PostgresLoggingSinkTests
         // The name alone is not enough: the index must cover the retention DELETE's column.
         Assert.Contains("\"Timestamp\"", indexDefinition);
     }
+
+    [Fact]
+    public async Task CreateTableSql_MatchesLogEntityColumnsAndNullability()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Assert.SkipWhen(TestDatabaseFactory.Backend != TestDatabaseBackend.Postgres, SkipReason);
+
+        await using TestDatabase database = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Postgres
+        );
+
+        await using var connection = new NpgsqlConnection(database.ConnectionString);
+        await connection.OpenAsync(ct);
+
+        await using (NpgsqlCommand create = connection.CreateCommand())
+        {
+            create.CommandText = PostgresLogging.CreateTableSql;
+            await create.ExecuteNonQueryAsync(ct);
+        }
+
+        var optionsBuilder = new DbContextOptionsBuilder<LoggingDbContext>();
+        DatabaseSetup.UseDatabaseProvider(
+            optionsBuilder,
+            DatabaseProvider.Postgres,
+            database.ConnectionString,
+            typeof(PostgresMigrationsAssemblyMarker).Assembly.FullName!
+        );
+        await using var logContext = new LoggingDbContext(optionsBuilder.Options);
+        var entityType = logContext.Model.FindEntityType(typeof(LogEntity))!;
+
+        // The model is the source of truth. Comparing every mapped column (name and nullability)
+        // means adding/renaming a Log property or changing its nullability fails until the DDL is
+        // updated to match.
+        string[] expected = entityType
+            .GetProperties()
+            .Select(p => DescribeColumn(p.GetColumnName(), notNull: !p.IsNullable))
+            .OrderBy(c => c, StringComparer.Ordinal)
+            .ToArray();
+
+        var actual = new List<string>();
+        await using (NpgsqlCommand columns = connection.CreateCommand())
+        {
+            columns.CommandText = """
+                SELECT column_name, is_nullable
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'Logs'
+                """;
+            await using NpgsqlDataReader reader = await columns.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                actual.Add(
+                    DescribeColumn(reader.GetString(0), notNull: reader.GetString(1) == "NO")
+                );
+            }
+        }
+
+        Assert.Equal(expected, actual.OrderBy(c => c, StringComparer.Ordinal));
+    }
+
+    private static string DescribeColumn(string column, bool notNull) =>
+        $"{column}:{(notNull ? "NOT NULL" : "NULL")}";
 }

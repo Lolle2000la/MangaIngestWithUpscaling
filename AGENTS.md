@@ -145,6 +145,13 @@ dotnet run --project src/MangaIngestWithUpscaling
 - **Automatic timestamps**: Entities whose `CreatedAt`/`ModifiedAt` should be managed by `ApplicationDbContext.UpdateTimestamps` must implement `IHasCreatedAt` / `IHasModifiedAt` (`src/MangaIngestWithUpscaling.Shared/Data/Abstractions`). Entities whose timestamps are set manually must **not** implement them.
 - **Library configuration**: Child entities of a `Library` that represent configuration (ingest paths, filter rules, rename rules) implement `ILibraryConfiguration` so that adding, updating or deleting one bumps the owning `Library.ModifiedAt`.
 
+## Logging schema
+
+- The `Logs` table is **not** managed by EF migrations; the `Log` entity (`src/MangaIngestWithUpscaling.Data/LogModel/Log.cs`) is the source of truth for its shape.
+- Adding, renaming or changing the nullability of a `Log` property requires updating `PostgresLogging.CreateTableSql`. For SQLite the table is created by the external `Serilog.Sinks.SQLite` sink; a guard test (`SqliteLoggingSinkTests`) pins the sink schema to the model.
+- Log timestamps are stored in **UTC** on both providers; the SQLite sink is configured with `storeTimestampInUtc: true` so the UI's `.ToLocalTime()` renders them correctly.
+- The migrator copies tables and resets PostgreSQL sequences from hand-maintained lists in `DataMigrator`; update them when entities change. `MigratorTableCoverageTests` fails until they match the EF model.
+
 ## Project Structure
 
 ### Key Directories

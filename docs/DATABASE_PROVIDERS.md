@@ -33,6 +33,8 @@ The database schema is migrated automatically on startup.
 - On **SQLite**, logs are written to the separate `LoggingConnection` file (as before).
 - On **PostgreSQL**, logs are written to a `Logs` table in the application database. The table is
   created automatically on startup.
+- Log timestamps are stored in **UTC** on both providers (the SQLite sink is configured with
+  `storeTimestampInUtc: true`), so the logs UI's `.ToLocalTime()` renders them correctly.
 
 ## Provider-specific differences
 

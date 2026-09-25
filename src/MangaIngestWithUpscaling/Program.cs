@@ -312,6 +312,9 @@ builder.Services.AddSerilog(
             lc.WriteTo.SQLite(
                 logsDbPath,
                 tableName: "Logs",
+                // Persist UTC so the stored instant matches PostgreSQL and the logs UI, which reads
+                // the value as Unspecified and calls ToLocalTime(); local wall-clock would shift.
+                storeTimestampInUtc: true,
                 retentionPeriod: TimeSpan.FromDays(7),
                 maxDatabaseSize: 100,
                 rollOver: false
