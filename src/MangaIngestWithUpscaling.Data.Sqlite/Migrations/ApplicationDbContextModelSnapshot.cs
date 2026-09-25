@@ -188,8 +188,7 @@ namespace MangaIngestWithUpscaling.Data.Sqlite.Migrations
                         .HasColumnType("jsonb");
 
                     b.Property<int>("Order")
-                        .HasColumnType("INTEGER")
-                        ;
+                        .HasColumnType("INTEGER");
 
                     b.Property<DateTime?>("ProcessedAt")
                         .HasColumnType("TEXT");

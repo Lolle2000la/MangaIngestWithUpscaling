@@ -262,7 +262,16 @@ static void MigratePostgresWithAdvisoryLock(
     // different versions would stop serializing with each other.
     const long migrationLockKey = 0x4D616E6761495500L;
 
-    using var lockConnection = new NpgsqlConnection(dbContext.Database.GetConnectionString());
+    // Disable pooling so disposing the connection definitely closes the session and releases the
+    // session-level advisory lock, even if the explicit unlock below fails.
+    var lockConnectionString = new NpgsqlConnectionStringBuilder(
+        dbContext.Database.GetConnectionString()
+    )
+    {
+        Pooling = false,
+    }.ConnectionString;
+
+    using var lockConnection = new NpgsqlConnection(lockConnectionString);
     lockConnection.Open();
 
     using (var lockCommand = lockConnection.CreateCommand())

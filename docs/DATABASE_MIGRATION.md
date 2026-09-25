@@ -35,6 +35,10 @@ For provider configuration and development details, see [Database Providers](./D
 
 ## Prerequisites
 
+- The **source database must be schema-current**: the tool reads the source through the current
+  application model, so run the current version of the app once against the source (or otherwise
+  ensure its migrations are applied) before migrating. Otherwise an operator who upgrades and runs
+  the migrator before ever booting the new version can hit `column does not exist` errors.
 - The application is **stopped** (see [Stopping the application](#1-stop-the-application)).
 - A reachable PostgreSQL database and a user that may run DDL — the tool and the app create the
   schema. The database itself must already exist (the tool does not create it).

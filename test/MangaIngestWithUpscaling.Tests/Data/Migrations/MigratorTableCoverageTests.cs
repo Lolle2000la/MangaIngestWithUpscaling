@@ -186,6 +186,79 @@ public class MigratorTableCoverageTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// <see cref="DataMigrator.NormalizeUtcDateTimes" /> reflects only over an entity's own top-level
+    /// scalar properties, so a <see cref="DateTime" />/<see cref="DateTimeOffset" /> stored inside an
+    /// owned entity or a complex type would be copied without being normalized to UTC. PostgreSQL
+    /// rejects a non-UTC instant for <c>timestamp with time zone</c>, so this guards against adding
+    /// such a member without extending <see cref="DataMigrator.NormalizeUtcDateTimes" />.
+    /// </summary>
+    [Fact]
+    public void NoOwnedOrComplexType_HasUnnormalizedTemporalProperties()
+    {
+        List<string> offenders = new();
+
+        foreach (IEntityType entity in _source.Model.GetEntityTypes())
+        {
+            // Top-level scalar properties of a normal entity are reached by NormalizeUtcDateTimes,
+            // but an owned type's properties are not (its members surface only through the owner).
+            if (entity.IsOwned())
+            {
+                CollectTemporalOffenders(entity, entity.DisplayName(), offenders);
+            }
+
+            // Complex values are never surfaced as top-level properties, owned or not.
+            CollectComplexTypeTemporalOffenders(entity, entity.DisplayName(), offenders);
+        }
+
+        Assert.True(
+            offenders.Count == 0,
+            "NormalizeUtcDateTimes only visits an entity's own top-level scalar properties, so these "
+                + "temporal values inside owned or complex types would be copied without being "
+                + "normalized to UTC. Extend NormalizeUtcDateTimes to reach them: "
+                + string.Join(", ", offenders.OrderBy(name => name, StringComparer.Ordinal))
+        );
+    }
+
+    private static void CollectTemporalOffenders(
+        ITypeBase type,
+        string path,
+        List<string> offenders
+    )
+    {
+        foreach (IProperty property in type.GetProperties())
+        {
+            if (IsTemporal(property.ClrType))
+            {
+                offenders.Add($"{path}.{property.Name}");
+            }
+        }
+    }
+
+    private static void CollectComplexTypeTemporalOffenders(
+        ITypeBase type,
+        string path,
+        List<string> offenders
+    )
+    {
+        foreach (IComplexProperty complexProperty in type.GetComplexProperties())
+        {
+            string complexPath = $"{path}.{complexProperty.Name}";
+            CollectTemporalOffenders(complexProperty.ComplexType, complexPath, offenders);
+            CollectComplexTypeTemporalOffenders(
+                complexProperty.ComplexType,
+                complexPath,
+                offenders
+            );
+        }
+    }
+
+    private static bool IsTemporal(Type type) =>
+        type == typeof(DateTime)
+        || type == typeof(DateTime?)
+        || type == typeof(DateTimeOffset)
+        || type == typeof(DateTimeOffset?);
+
+    /// <summary>
     /// The model's integer identity primary keys, matching the predicate the migrator's
     /// <see cref="DataMigrator.PostgresIdentityTables" /> list is guarded against.
     /// </summary>

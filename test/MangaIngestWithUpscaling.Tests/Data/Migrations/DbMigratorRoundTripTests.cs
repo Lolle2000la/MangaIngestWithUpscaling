@@ -154,6 +154,83 @@ public class DbMigratorRoundTripTests
     }
 
     [Fact]
+    public async Task Migrate_FromSqliteToPostgres_WarnsAboutUnresolvedTaskPayload_AndStillCopiesRow()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Assert.SkipWhen(TestDatabaseFactory.Backend != TestDatabaseBackend.Postgres, SkipReason);
+
+        await using TestDatabase sqliteSource = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Sqlite
+        );
+        await using TestDatabase postgresTarget = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Postgres
+        );
+
+        int taskId;
+        await using (ApplicationDbContext seed = sqliteSource.CreateContext())
+        {
+            var task = new PersistedTask
+            {
+                Data = new DetectSplitCandidatesTask(chapterId: 1, detectorVersion: 1),
+                Status = PersistedTaskStatus.Pending,
+                Order = 1,
+            };
+            seed.PersistedTasks.Add(task);
+            await seed.SaveChangesAsync(ct);
+            taskId = task.Id;
+        }
+
+        // Replace the payload with an unknown discriminator: it deserializes to a bare BaseTask, as a
+        // row left behind by an older version would.
+        await using (var connection = new SqliteConnection(sqliteSource.ConnectionString))
+        {
+            await connection.OpenAsync(ct);
+            await using SqliteCommand update = connection.CreateCommand();
+            update.CommandText =
+                "UPDATE \"PersistedTasks\" SET \"Data\" = @payload WHERE \"Id\" = @id";
+            update.Parameters.AddWithValue(
+                "@payload",
+                """{"$type":"RemovedTaskType","RetryFor":0}"""
+            );
+            update.Parameters.AddWithValue("@id", taskId);
+            await update.ExecuteNonQueryAsync(ct);
+        }
+
+        List<string> logs = new();
+        await DataMigrator.MigrateAsync(
+            new MigratorOptions(
+                DatabaseProvider.Sqlite,
+                sqliteSource.ConnectionString,
+                DatabaseProvider.Postgres,
+                postgresTarget.ConnectionString,
+                BatchSize: 500,
+                Force: false,
+                IncludeLogs: false,
+                FromLogsConnection: null,
+                ToLogsConnection: null
+            ),
+            logs.Add,
+            ct
+        );
+
+        Assert.Contains(
+            logs,
+            line =>
+                line.Contains("Warning", StringComparison.Ordinal)
+                && line.Contains($"row {taskId}", StringComparison.Ordinal)
+                && line.Contains("$type", StringComparison.Ordinal)
+        );
+
+        // The warning must not stop the copy.
+        await using ApplicationDbContext target = await postgresTarget.CreateContextAsync(
+            ensureSchema: false,
+            ct
+        );
+        PersistedTask copied = await target.PersistedTasks.SingleAsync(ct);
+        Assert.Equal(typeof(BaseTask), copied.Data.GetType());
+    }
+
+    [Fact]
     public async Task Migrate_FromPostgresToSqlite_CopiesLogs()
     {
         CancellationToken ct = TestContext.Current.CancellationToken;

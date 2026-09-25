@@ -347,6 +347,23 @@ public static class DataMigrator
         )
         {
             NormalizeUtcDateTimes(entity);
+
+            // A PersistedTask whose JSON $type did not resolve to a concrete task type loads as a bare
+            // BaseTask. Copying it in that shape drops the original discriminator and payload, so warn
+            // per row instead of failing the whole migration; stale rows are expected to be rare.
+            if (
+                entity is PersistedTask persistedTask
+                && persistedTask.Data is { } taskData
+                && taskData.GetType() == typeof(BaseTask)
+            )
+            {
+                log(
+                    $"  Warning: {name} row {persistedTask.Id} has an unresolved task payload "
+                        + "($type was not recognized); copying it drops the original discriminator and "
+                        + "payload data."
+                );
+            }
+
             batch.Add(entity);
 
             if (batch.Count >= batchSize)
