@@ -11,6 +11,10 @@
     <InternalsVisibleTo Include="MangaIngestWithUpscaling.Tests" />
   </ItemGroup>
   <ItemGroup>
+    <!-- References the web application solely to reach the concrete BaseTask types that
+         TaskJsonOptionsProvider needs to deserialize PersistedTask.Data polymorphically. That pulls
+         NetVips/MudBlazor/gRPC into this CLI (hence the NETSDK1187 suppression above). A shared
+         "task contracts" assembly would decouple it; tracked as a follow-up, not done here. -->
     <ProjectReference Include="..\..\src\MangaIngestWithUpscaling\MangaIngestWithUpscaling.csproj" />
     <ProjectReference Include="..\..\src\MangaIngestWithUpscaling.Data\MangaIngestWithUpscaling.Data.csproj" />
     <ProjectReference Include="..\..\src\MangaIngestWithUpscaling.Data.Sqlite\MangaIngestWithUpscaling.Data.Sqlite.csproj" />

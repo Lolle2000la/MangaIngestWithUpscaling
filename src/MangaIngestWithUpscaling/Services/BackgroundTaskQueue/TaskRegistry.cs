@@ -163,6 +163,21 @@ public class TaskRegistry : IHostedService, IDisposable
         List<PersistedTask> all = await db
             .PersistedTasks.AsNoTracking()
             .ToListAsync(cancellationToken);
+
+        // A row whose $type is unknown (a removed/renamed task type, or a row written by another
+        // version) deserializes to a bare BaseTask and will fail when processed. Surface it here so
+        // operators notice the stale row instead of only seeing a processing failure later.
+        foreach (PersistedTask task in all)
+        {
+            if (task.Data?.GetType() == typeof(BaseTask))
+            {
+                _logger?.LogWarning(
+                    "Persisted task {TaskId} has an unrecognized payload type and cannot be processed.",
+                    task.Id
+                );
+            }
+        }
+
         _tasks.AddOrUpdate(all);
         RebuildSnapshots();
 

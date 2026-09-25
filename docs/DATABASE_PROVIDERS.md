@@ -6,7 +6,9 @@ The application supports two relational databases:
 - **PostgreSQL** — an external server, useful for larger installations or when the database
   should be shared/backed up separately.
 
-Both providers share the same schema and feature set. The active provider is chosen at startup.
+Both providers expose the same logical schema and feature set; the active provider is chosen at
+startup. The deliberate differences are listed under
+[Provider-specific differences](#provider-specific-differences).
 
 ## Configuration
 
@@ -31,6 +33,18 @@ The database schema is migrated automatically on startup.
 - On **SQLite**, logs are written to the separate `LoggingConnection` file (as before).
 - On **PostgreSQL**, logs are written to a `Logs` table in the application database. The table is
   created automatically on startup.
+
+## Provider-specific differences
+
+The providers are equivalent for the application's features, with these deliberate differences:
+
+- **Timestamp precision** — PostgreSQL `timestamp with time zone` is microsecond-precision while .NET
+  `DateTime` uses 100-nanosecond ticks, so timestamps lose their sub-microsecond (7th) digit when
+  migrated to PostgreSQL. Ordering and behavior are unaffected. See
+  [Known limitations](./DATABASE_MIGRATION.md#known-limitations).
+- **No automatic retry** — `EnableRetryOnFailure` is intentionally not enabled for PostgreSQL, because
+  a retrying execution strategy rejects the user-initiated transactions several services open unless
+  every transaction is wrapped in `CreateExecutionStrategy()`.
 
 ## Migrating an existing installation
 

@@ -22,7 +22,7 @@ jobs:
       - name: Check formatting with Csharpier
         run: |
           dotnet tool restore
-          dotnet csharpier check src/ test/
+          dotnet csharpier check src/ test/ tools/
       - name: Restore dependencies
         run: dotnet restore MangaIngestWithUpscaling.sln
       - name: Build

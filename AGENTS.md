@@ -83,7 +83,7 @@ dotnet run --project src/MangaIngestWithUpscaling
 
 2. **Format Code:**
    ```bash
-   dotnet csharpier format src/ test/ # Or even just the modified files
+   dotnet csharpier format src/ test/ tools/ # Or even just the modified files
    # Only ever commit formatted code
    # Note that the submodule are rightly excluded from the glob pattern above
    ```
@@ -211,10 +211,10 @@ dotnet build src/MangaIngestWithUpscaling.Shared/
 ### Code Formatting
 ```bash
 # Check formatting without changes
-dotnet csharpier check src/ test/
+dotnet csharpier check src/ test/ tools/
 
 # Apply formatting fixes
-dotnet csharpier format src/ test/
+dotnet csharpier format src/ test/ tools/
 ```
 
 ### Database Operations
