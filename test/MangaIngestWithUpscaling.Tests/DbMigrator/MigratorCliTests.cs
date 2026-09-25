@@ -111,6 +111,35 @@ public class MigratorCliTests
     }
 
     [Fact]
+    public async Task RunAsync_Sqlite3Alias_IsAcceptedForParityWithTheApplication()
+    {
+        MigratorOptions? captured = null;
+
+        int exitCode = await MigratorCli.RunAsync(
+            [
+                "--from",
+                "sqlite3",
+                "--to",
+                "postgres",
+                "--from-connection",
+                "from",
+                "--to-connection",
+                "to",
+            ],
+            (options, _, _) =>
+            {
+                captured = options;
+                return Task.CompletedTask;
+            }
+        );
+
+        Assert.Equal(0, exitCode);
+        Assert.NotNull(captured);
+        Assert.Equal(DatabaseProvider.Sqlite, captured!.FromProvider);
+        Assert.Equal(DatabaseProvider.Postgres, captured.ToProvider);
+    }
+
+    [Fact]
     public async Task Migrate_SqliteSourceFileMissing_FailsWithoutCreatingTheFile()
     {
         string path = Path.Combine(

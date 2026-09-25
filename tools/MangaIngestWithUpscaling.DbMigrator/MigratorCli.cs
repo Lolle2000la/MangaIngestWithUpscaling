@@ -122,23 +122,8 @@ internal static class MigratorCli
         );
     }
 
-    private static bool TryParseProvider(string value, out DatabaseProvider provider)
-    {
-        switch (value.Trim().ToLowerInvariant())
-        {
-            case "sqlite":
-                provider = DatabaseProvider.Sqlite;
-                return true;
-            case "postgres":
-            case "postgresql":
-            case "npgsql":
-                provider = DatabaseProvider.Postgres;
-                return true;
-            default:
-                provider = DatabaseProvider.Sqlite;
-                return false;
-        }
-    }
+    private static bool TryParseProvider(string value, out DatabaseProvider provider) =>
+        DatabaseProviderResolver.TryResolve(value, out provider, out _);
 
     /// <summary>
     /// Whether a boolean flag is set. <c>--force</c> and <c>--force=true</c> are set;

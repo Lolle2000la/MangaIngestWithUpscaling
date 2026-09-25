@@ -36,6 +36,11 @@ The database schema is migrated automatically on startup.
 - Log timestamps are stored in **UTC** on both providers (the SQLite sink is configured with
   `storeTimestampInUtc: true`), so the logs UI's `.ToLocalTime()` renders them correctly.
 
+  > **Upgrade caveat:** rows written to an existing SQLite `logs.db` before this change were stored
+  > as local wall-clock time. After upgrading they are read back as `Unspecified` and, on a non-UTC
+  > host, display shifted by the host's UTC offset. New rows are correct, and logs are
+  > non-authoritative.
+
 ## Provider-specific differences
 
 The providers are equivalent for the application's features, with these deliberate differences:

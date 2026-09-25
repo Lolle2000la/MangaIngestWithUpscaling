@@ -25,14 +25,42 @@ public static class DatabaseProviderResolver
     /// </summary>
     public static DatabaseProvider Resolve(string? value)
     {
-        string normalized = value?.Trim().ToLowerInvariant() ?? string.Empty;
-        return normalized switch
+        if (TryResolve(value, out DatabaseProvider provider, out string? error))
         {
-            "" or "sqlite" or "sqlite3" => DatabaseProvider.Sqlite,
-            "postgres" or "postgresql" or "npgsql" => DatabaseProvider.Postgres,
-            _ => throw new InvalidOperationException(
-                $"Unknown DatabaseProvider '{value}'. Valid values are 'Sqlite' and 'Postgres'."
-            ),
-        };
+            return provider;
+        }
+
+        throw new InvalidOperationException(error);
+    }
+
+    /// <summary>
+    /// Attempts to map a configured provider name to a <see cref="DatabaseProvider" />. An absent or
+    /// empty value selects <see cref="DatabaseProvider.Sqlite" /> (the default). Returns
+    /// <see langword="false" /> and sets <paramref name="error" /> for an unrecognized value instead
+    /// of throwing, so callers that report errors can share the same mapping.
+    /// </summary>
+    public static bool TryResolve(string? value, out DatabaseProvider provider, out string? error)
+    {
+        string normalized = value?.Trim().ToLowerInvariant() ?? string.Empty;
+        switch (normalized)
+        {
+            case "":
+            case "sqlite":
+            case "sqlite3":
+                provider = DatabaseProvider.Sqlite;
+                error = null;
+                return true;
+            case "postgres":
+            case "postgresql":
+            case "npgsql":
+                provider = DatabaseProvider.Postgres;
+                error = null;
+                return true;
+            default:
+                provider = DatabaseProvider.Sqlite;
+                error =
+                    $"Unknown DatabaseProvider '{value}'. Valid values are 'Sqlite' and 'Postgres'.";
+                return false;
+        }
     }
 }

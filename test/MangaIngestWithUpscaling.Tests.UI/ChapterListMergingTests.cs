@@ -829,10 +829,11 @@ public class ChapterListMergingTests : BunitContext
         {
             IEnumerable<IElement> finalRows = component.FindAll("tr");
 
-            // 1. Verify that the merged chapter is now displayed with correct filename
+            // Wait for the refresh that replaces the parts with the merged chapter. Match on the
+            // merged filename, not the series name: every row contains "Test Chapter", so that
+            // alone would pass before the merge has been reflected in the UI.
             IElement? mergedChapterRow = finalRows.FirstOrDefault(row =>
                 row.TextContent.Contains("Chapter 1.cbz")
-                || row.TextContent.Contains("Test Chapter")
             );
             Assert.NotNull(mergedChapterRow); // Merged chapter should be visible
         });
