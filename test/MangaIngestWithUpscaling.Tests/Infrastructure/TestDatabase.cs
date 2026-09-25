@@ -25,7 +25,9 @@ public static class TestDatabaseFactory
 {
     private const int ContainerStartAttempts = 3;
 
-    private static readonly Lazy<TestDatabaseBackend> CurrentBackend = new(ResolveBackend);
+    private static readonly Lazy<TestDatabaseBackend> CurrentBackend = new(() =>
+        ResolveBackend(Environment.GetEnvironmentVariable("TEST_DB_PROVIDER"))
+    );
 
     // Serialises access to the shared container task. A failed start is deliberately not cached
     // (see GetPostgresContainerAsync): a plain Lazy<Task<T>> caches the faulted task, so a single
@@ -54,15 +56,23 @@ public static class TestDatabaseFactory
             _ => throw new ArgumentOutOfRangeException(nameof(backend), backend, null),
         };
 
-    private static TestDatabaseBackend ResolveBackend()
+    /// <summary>
+    /// Maps a <c>TEST_DB_PROVIDER</c> value to a backend. Empty/whitespace selects SQLite (the
+    /// default), the known aliases select their provider, and any other non-empty value throws.
+    /// Silently falling back to SQLite would let a typo'd value make a PostgreSQL CI job green
+    /// while skipping every PostgreSQL test.
+    /// </summary>
+    internal static TestDatabaseBackend ResolveBackend(string? value)
     {
-        string? value = Environment.GetEnvironmentVariable("TEST_DB_PROVIDER");
-        return
-            string.Equals(value, "postgres", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(value, "postgresql", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(value, "npgsql", StringComparison.OrdinalIgnoreCase)
-            ? TestDatabaseBackend.Postgres
-            : TestDatabaseBackend.Sqlite;
+        string normalized = value?.Trim().ToLowerInvariant() ?? string.Empty;
+        return normalized switch
+        {
+            "" or "sqlite" or "sqlite3" => TestDatabaseBackend.Sqlite,
+            "postgres" or "postgresql" or "npgsql" => TestDatabaseBackend.Postgres,
+            _ => throw new InvalidOperationException(
+                $"Unknown TEST_DB_PROVIDER '{value}'. Valid values are 'sqlite' and 'postgres'."
+            ),
+        };
     }
 
     private static Task<PostgreSqlContainer> GetPostgresContainerAsync()
@@ -90,7 +100,9 @@ public static class TestDatabaseFactory
             {
                 return await StartContainer().ConfigureAwait(false);
             }
-            catch when (attempt < ContainerStartAttempts)
+            // Cancellation must propagate immediately instead of being retried (and slept on).
+            catch (Exception ex)
+                when (ex is not OperationCanceledException && attempt < ContainerStartAttempts)
             {
                 await Task.Delay(TimeSpan.FromSeconds(attempt * 2)).ConfigureAwait(false);
             }

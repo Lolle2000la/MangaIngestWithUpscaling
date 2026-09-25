@@ -36,6 +36,15 @@ public class CrossProviderSchemaParityTests
         Dictionary<string, string[]> sqliteSchema = await ReadSqliteSchemaAsync(sqlite, ct);
         Dictionary<string, string[]> postgresSchema = await ReadPostgresSchemaAsync(postgres, ct);
 
+        // Guard against a vacuous pass: two empty schema maps would trivially satisfy the equality
+        // checks below.
+        Assert.NotEmpty(sqliteSchema);
+        Assert.NotEmpty(postgresSchema);
+
+        // Scope: only table names, column names and nullability are compared. Provider-specific
+        // column types and defaults are deliberately excluded (SQLite has no equivalent of
+        // timestamptz/boolean/numeric, and its ALTER TABLE defaults differ from the fresh PostgreSQL
+        // baseline), so this is an intentional decision, not an omission.
         Assert.Equal(postgresSchema.Keys.OrderBy(n => n), sqliteSchema.Keys.OrderBy(n => n));
         foreach (string table in postgresSchema.Keys)
         {

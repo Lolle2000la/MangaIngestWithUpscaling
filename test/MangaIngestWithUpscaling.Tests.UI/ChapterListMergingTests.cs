@@ -828,10 +828,6 @@ public class ChapterListMergingTests : BunitContext
         component.WaitForAssertion(() =>
         {
             IEnumerable<IElement> finalRows = component.FindAll("tr");
-            foreach (var r in finalRows)
-            {
-                Console.WriteLine($"Row: {r.TextContent}");
-            }
 
             // 1. Verify that the merged chapter is now displayed with correct filename
             IElement? mergedChapterRow = finalRows.FirstOrDefault(row =>

@@ -6,7 +6,8 @@ namespace MangaIngestWithUpscaling.Tests.Architecture;
 /// Guards the UTC assumption of PostgreSQL's <c>timestamp with time zone</c> columns. SQLite accepts
 /// any <see cref="DateTime"/> kind, but Npgsql rejects a non-UTC one at runtime, so code that works
 /// against SQLite can break in production. The codebase uses <c>DateTime.UtcNow</c>; this test stops
-/// the local-wall-clock habit from creeping back in. It scans <c>src/</c> and <c>tools/</c>.
+/// the local-wall-clock habit from creeping back in. It scans <c>*.cs</c> and <c>*.razor</c> under
+/// <c>src/</c> and <c>tools/</c>.
 /// </summary>
 public class UtcDateTimeGuardTests
 {
@@ -24,28 +25,34 @@ public class UtcDateTimeGuardTests
             }.Where(Directory.Exists)
         )
         {
-            foreach (
-                string file in Directory.EnumerateFiles(
-                    sourceRoot,
-                    "*.cs",
-                    SearchOption.AllDirectories
-                )
-            )
+            // C# and Razor both run in-process, so a DateTime.Now in either is equally unsafe.
+            foreach (string pattern in new[] { "*.cs", "*.razor" })
             {
-                if (IsInBuildOutput(file))
-                {
-                    continue;
-                }
-
-                string text = File.ReadAllText(file);
                 foreach (
-                    Match match in Regex.Matches(
-                        text,
-                        @"\bDateTime\.Now\b|\bDateTime\.Today\b|\bDateTimeOffset\.Now\b"
+                    string file in Directory.EnumerateFiles(
+                        sourceRoot,
+                        pattern,
+                        SearchOption.AllDirectories
                     )
                 )
                 {
-                    offenders.Add($"{Path.GetRelativePath(repositoryRoot, file)}: {match.Value}");
+                    if (IsInBuildOutput(file))
+                    {
+                        continue;
+                    }
+
+                    string text = File.ReadAllText(file);
+                    foreach (
+                        Match match in Regex.Matches(
+                            text,
+                            @"\bDateTime\.Now\b|\bDateTime\.Today\b|\bDateTimeOffset\.Now\b"
+                        )
+                    )
+                    {
+                        offenders.Add(
+                            $"{Path.GetRelativePath(repositoryRoot, file)}: {match.Value}"
+                        );
+                    }
                 }
             }
         }

@@ -11,7 +11,16 @@ namespace MangaIngestWithUpscaling.DbMigrator;
 /// </summary>
 internal static class MigratorCli
 {
-    public static async Task<int> Main(string[] args)
+    public static Task<int> Main(string[] args) => RunAsync(args, DataMigrator.MigrateAsync);
+
+    /// <summary>
+    /// The CLI body, with the migration call injected so argument handling and exit codes can be
+    /// tested without a database.
+    /// </summary>
+    internal static async Task<int> RunAsync(
+        string[] args,
+        Func<MigratorOptions, Action<string>, CancellationToken, Task> migrateAsync
+    )
     {
         Dictionary<string, string> options = ParseArgs(args);
         if (
@@ -63,11 +72,7 @@ internal static class MigratorCli
 
         try
         {
-            await DataMigrator.MigrateAsync(
-                migratorOptions,
-                Console.WriteLine,
-                CancellationToken.None
-            );
+            await migrateAsync(migratorOptions, Console.WriteLine, CancellationToken.None);
             return 0;
         }
         catch (Exception ex)
@@ -107,7 +112,11 @@ internal static class MigratorCli
             }
         }
 
-        return Regex.Replace(text, """(?i)\b(password|pwd)\s*=\s*[^;\s"]+""", "$1=***");
+        return Regex.Replace(
+            text,
+            """(?i)\b(password|pwd)\s*=\s*(?:"[^"]*"|'[^']*'|[^;\r\n]*)""",
+            "$1=***"
+        );
     }
 
     private static bool TryParseProvider(string value, out DatabaseProvider provider)

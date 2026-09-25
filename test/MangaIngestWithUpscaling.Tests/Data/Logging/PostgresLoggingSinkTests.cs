@@ -70,4 +70,57 @@ public class PostgresLoggingSinkTests
         Assert.Contains("Value", log.Properties);
         Assert.True(log.Timestamp > DateTime.UtcNow.AddMinutes(-5));
     }
+
+    [Fact]
+    public async Task CreateTableSql_DefinesNonNullableColumnsAndTimestampIndex()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Assert.SkipWhen(TestDatabaseFactory.Backend != TestDatabaseBackend.Postgres, SkipReason);
+
+        await using TestDatabase database = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Postgres
+        );
+
+        await using var connection = new NpgsqlConnection(database.ConnectionString);
+        await connection.OpenAsync(ct);
+
+        // The constant holds multiple statements; this also verifies Npgsql runs them as one batch.
+        await using (NpgsqlCommand create = connection.CreateCommand())
+        {
+            create.CommandText = PostgresLogging.CreateTableSql;
+            await create.ExecuteNonQueryAsync(ct);
+        }
+
+        var nullability = new Dictionary<string, bool>(StringComparer.Ordinal);
+        await using (NpgsqlCommand columns = connection.CreateCommand())
+        {
+            columns.CommandText = """
+                SELECT column_name, is_nullable
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'Logs'
+                """;
+            await using NpgsqlDataReader reader = await columns.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
+            {
+                nullability[reader.GetString(0)] = reader.GetString(1) == "YES";
+            }
+        }
+
+        // These match the non-nullable Log entity properties; the sink always writes them.
+        Assert.False(nullability["Level"]);
+        Assert.False(nullability["RenderedMessage"]);
+        // The entity declares these as nullable, so the DDL must keep them nullable.
+        Assert.True(nullability["Exception"]);
+        Assert.True(nullability["Properties"]);
+
+        await using NpgsqlCommand index = connection.CreateCommand();
+        index.CommandText = """
+            SELECT 1
+            FROM pg_indexes
+            WHERE schemaname = 'public'
+              AND tablename = 'Logs'
+              AND indexname = 'IX_Logs_Timestamp'
+            """;
+        Assert.NotNull(await index.ExecuteScalarAsync(ct));
+    }
 }

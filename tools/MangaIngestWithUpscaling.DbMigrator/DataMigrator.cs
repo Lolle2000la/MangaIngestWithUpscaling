@@ -6,6 +6,7 @@ using MangaIngestWithUpscaling.Data.LogModel;
 using MangaIngestWithUpscaling.Data.Postgres;
 using MangaIngestWithUpscaling.Data.Sqlite;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 
@@ -41,6 +42,8 @@ public static class DataMigrator
             throw new InvalidOperationException("Source and target providers must differ.");
         }
 
+        EnsureSqliteSourceFileExists(options.FromConnection, options.FromProvider);
+
         // The task payload is polymorphic JSON whose concrete types live in the web assembly.
         TaskJsonOptionsProvider.RegisterDerivedTypesFromAssemblies(typeof(UpscaleTask).Assembly);
 
@@ -69,15 +72,7 @@ public static class DataMigrator
             cancellationToken
         );
 
-        if (options.Force)
-        {
-            log("Clearing the target database...");
-            for (int i = tables.Count - 1; i >= 0; i--)
-            {
-                await tables[i].Clear();
-            }
-        }
-        else
+        if (!options.Force)
         {
             foreach (TableOperation table in tables)
             {
@@ -87,6 +82,23 @@ public static class DataMigrator
                         $"Target table '{table.Name}' is not empty. Use a fresh database or pass --force."
                     );
                 }
+            }
+        }
+
+        // Resolve and validate the logs target before anything is written, so a refusal (or a
+        // misconfigured logs connection) cannot leave the application tables half migrated.
+        LogsMigrationPlan? logsPlan = null;
+        if (options.IncludeLogs)
+        {
+            logsPlan = await PrepareLogsMigrationAsync(options, log, cancellationToken);
+        }
+
+        if (options.Force)
+        {
+            log("Clearing the target database...");
+            for (int i = tables.Count - 1; i >= 0; i--)
+            {
+                await tables[i].Clear();
             }
         }
 
@@ -101,12 +113,86 @@ public static class DataMigrator
             await ResetPostgresSequencesAsync(options.ToConnection, cancellationToken);
         }
 
-        if (options.IncludeLogs)
+        if (logsPlan is not null)
         {
-            await MigrateLogsAsync(options, log, cancellationToken);
+            await MigrateLogsAsync(options, logsPlan, log, cancellationToken);
         }
 
         log("Migration completed successfully.");
+    }
+
+    /// <summary>
+    /// Rejects a SQLite source that does not exist before any context is created. The default SQLite
+    /// open mode (<c>ReadWriteCreate</c>) would otherwise silently create an empty database at a
+    /// mistyped path, and the migration would run against an empty source as if it had succeeded.
+    /// PostgreSQL sources are left to the provider to validate.
+    /// </summary>
+    private static void EnsureSqliteSourceFileExists(
+        string connectionString,
+        DatabaseProvider provider
+    )
+    {
+        if (provider != DatabaseProvider.Sqlite)
+        {
+            return;
+        }
+
+        if (ResolveSqliteFile(connectionString) is { Exists: false } missing)
+        {
+            throw new InvalidOperationException(
+                $"SQLite source database file '{missing.Path}' does not exist. "
+                    + "Check the --from-connection value."
+            );
+        }
+    }
+
+    /// <summary>
+    /// Resolves the file backing a SQLite connection string. Returns <c>null</c> for in-memory
+    /// databases (which have no file), otherwise the file path and whether it exists.
+    /// </summary>
+    private static (string Path, bool Exists)? ResolveSqliteFile(string connectionString)
+    {
+        var builder = new SqliteConnectionStringBuilder(connectionString);
+        if (builder.Mode == SqliteOpenMode.Memory)
+        {
+            return null;
+        }
+
+        string dataSource = builder.DataSource;
+        if (string.IsNullOrEmpty(dataSource))
+        {
+            return null;
+        }
+
+        // Microsoft.Data.Sqlite passes "file:" URIs through to SQLite and the builder does not
+        // surface their query parameters (for example mode=memory), so parse them here.
+        string path = dataSource;
+        string? query = null;
+        if (path.StartsWith("file:", StringComparison.OrdinalIgnoreCase))
+        {
+            path = path[5..];
+            int questionMark = path.IndexOf('?');
+            if (questionMark >= 0)
+            {
+                query = path[(questionMark + 1)..];
+                path = path[..questionMark];
+            }
+        }
+
+        if (
+            path.Equals(":memory:", StringComparison.OrdinalIgnoreCase)
+            || (
+                query is not null
+                && query
+                    .Split('&')
+                    .Any(part => part.Equals("mode=memory", StringComparison.OrdinalIgnoreCase))
+            )
+        )
+        {
+            return null;
+        }
+
+        return (path, File.Exists(path));
     }
 
     private static ApplicationDbContext CreateApplicationContext(
@@ -293,7 +379,8 @@ public static class DataMigrator
     /// SQLite stores <see cref="DateTime"/> as text without a kind, so values read back are
     /// <see cref="DateTimeKind.Unspecified"/>. PostgreSQL rejects those for <c>timestamp with time
     /// zone</c> columns, so mark them as UTC (the application always persists UTC timestamps).
-    /// <see cref="DateTimeOffset"/> values are normalized to UTC as well.
+    /// <see cref="DateTimeKind.Local"/> values are converted (not relabelled) so the instant is
+    /// preserved, and <see cref="DateTimeOffset"/> values are normalized to UTC as well.
     /// </summary>
     /// <remarks>
     /// Only the entity's own scalar properties are visited. EF complex/owned values that are not
@@ -318,7 +405,7 @@ public static class DataMigrator
                 var value = (DateTime)property.GetValue(entity)!;
                 if (value.Kind != DateTimeKind.Utc)
                 {
-                    property.SetValue(entity, DateTime.SpecifyKind(value, DateTimeKind.Utc));
+                    property.SetValue(entity, ToUtc(value));
                 }
             }
             else if (property.PropertyType == typeof(DateTime?))
@@ -326,7 +413,7 @@ public static class DataMigrator
                 var value = (DateTime?)property.GetValue(entity);
                 if (value is { Kind: not DateTimeKind.Utc })
                 {
-                    property.SetValue(entity, DateTime.SpecifyKind(value.Value, DateTimeKind.Utc));
+                    property.SetValue(entity, ToUtc(value.Value));
                 }
             }
             else if (property.PropertyType == typeof(DateTimeOffset))
@@ -347,59 +434,47 @@ public static class DataMigrator
         }
     }
 
+    /// <summary>
+    /// Normalizes a value read from the source to UTC. <see cref="DateTimeKind.Local"/> is converted
+    /// so its instant is preserved; unspecified values (SQLite) are relabelled, matching the
+    /// application's convention of storing UTC.
+    /// </summary>
+    private static DateTime ToUtc(DateTime value) =>
+        value.Kind == DateTimeKind.Local
+            ? value.ToUniversalTime()
+            : DateTime.SpecifyKind(value, DateTimeKind.Utc);
+
     private static async Task MigrateLogsAsync(
         MigratorOptions options,
+        LogsMigrationPlan plan,
         Action<string> log,
         CancellationToken cancellationToken
     )
     {
-        string fromLogs = ResolveLogsConnection(
-            options.FromProvider,
-            options.FromConnection,
-            options.FromLogsConnection,
-            "from-logs-connection"
-        );
-        string toLogs = ResolveLogsConnection(
-            options.ToProvider,
-            options.ToConnection,
-            options.ToLogsConnection,
-            "to-logs-connection"
-        );
-
-        await using LoggingDbContext sourceLogs = CreateLoggingContext(
-            options.FromProvider,
-            fromLogs
-        );
-        await using LoggingDbContext targetLogs = CreateLoggingContext(options.ToProvider, toLogs);
-
-        if (
-            options.FromProvider == DatabaseProvider.Sqlite
-            && !await sourceLogs.Database.CanConnectAsync(cancellationToken)
-        )
+        if (plan.SourceCount is not int total)
         {
-            log("Logs: source SQLite logs database not found, skipping.");
+            // PrepareLogsMigrationAsync already logged that the source logs store is unavailable.
             return;
         }
 
-        await EnsureLogsTableAsync(options.ToProvider, targetLogs, toLogs, cancellationToken);
+        await using LoggingDbContext sourceLogs = CreateLoggingContext(
+            options.FromProvider,
+            plan.FromLogsConnection
+        );
+        await using LoggingDbContext targetLogs = CreateLoggingContext(
+            options.ToProvider,
+            plan.ToLogsConnection
+        );
 
         int targetCount = await targetLogs.LogEntries.CountAsync(cancellationToken);
         if (targetCount > 0)
         {
-            // The application tables are guarded the same way; logs must not be an exception, or
-            // the explicit ids below collide with the rows already there.
-            if (!options.Force)
-            {
-                throw new InvalidOperationException(
-                    "Target table 'Logs' is not empty. Use a fresh database or pass --force."
-                );
-            }
-
+            // PrepareLogsMigrationAsync only lets execution reach here with --force, so these are
+            // the rows the explicit ids below would otherwise collide with.
             log($"Logs: clearing {targetCount} existing rows in the target...");
             await targetLogs.LogEntries.ExecuteDeleteAsync(cancellationToken);
         }
 
-        int total = await sourceLogs.LogEntries.AsNoTracking().CountAsync(cancellationToken);
         if (total == 0)
         {
             log("Logs: nothing to migrate.");
@@ -449,8 +524,74 @@ public static class DataMigrator
             // reset. PostgreSQL identity columns do not advance when rows are inserted with explicit
             // ids, so without this the first log the application writes reuses an id and collides.
             log("Logs: resetting the PostgreSQL identity sequence...");
-            await ResetPostgresSequenceAsync(toLogs, "Logs", cancellationToken);
+            await ResetPostgresSequenceAsync(plan.ToLogsConnection, "Logs", cancellationToken);
         }
+    }
+
+    /// <summary>
+    /// Resolves the logs connections and validates the target before any application table is
+    /// written. Returns a plan consumed by <see cref="MigrateLogsAsync"/> after the copy, so a
+    /// refusal cannot leave the target half migrated.
+    /// </summary>
+    private static async Task<LogsMigrationPlan> PrepareLogsMigrationAsync(
+        MigratorOptions options,
+        Action<string> log,
+        CancellationToken cancellationToken
+    )
+    {
+        string fromLogs = ResolveLogsConnection(
+            options.FromProvider,
+            options.FromConnection,
+            options.FromLogsConnection,
+            "from-logs-connection"
+        );
+        string toLogs = ResolveLogsConnection(
+            options.ToProvider,
+            options.ToConnection,
+            options.ToLogsConnection,
+            "to-logs-connection"
+        );
+
+        await using LoggingDbContext sourceLogs = CreateLoggingContext(
+            options.FromProvider,
+            fromLogs
+        );
+
+        if (
+            options.FromProvider == DatabaseProvider.Sqlite
+            && ResolveSqliteFile(fromLogs) is { Exists: false }
+        )
+        {
+            log("Logs: source SQLite logs database not found, skipping.");
+            return new LogsMigrationPlan(fromLogs, toLogs, SourceCount: null);
+        }
+
+        int sourceCount;
+        try
+        {
+            sourceCount = await sourceLogs.LogEntries.AsNoTracking().CountAsync(cancellationToken);
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable)
+        {
+            // The application creates the PostgreSQL Logs table on startup; a source that never ran
+            // with logging enabled has nothing to copy.
+            log("Logs: source PostgreSQL logs table does not exist, skipping.");
+            return new LogsMigrationPlan(fromLogs, toLogs, SourceCount: null);
+        }
+
+        await using LoggingDbContext targetLogs = CreateLoggingContext(options.ToProvider, toLogs);
+        await EnsureLogsTableAsync(options.ToProvider, targetLogs, toLogs, cancellationToken);
+
+        int targetCount = await targetLogs.LogEntries.CountAsync(cancellationToken);
+        if (targetCount > 0 && !options.Force)
+        {
+            // Checked before the application tables are copied so the refusal is not destructive.
+            throw new InvalidOperationException(
+                "Target table 'Logs' is not empty. Use a fresh database or pass --force."
+            );
+        }
+
+        return new LogsMigrationPlan(fromLogs, toLogs, sourceCount);
     }
 
     private static string ResolveLogsConnection(
@@ -587,4 +728,14 @@ internal sealed record TableOperation(
     Func<Task<bool>> HasData,
     Func<Task> Clear,
     Func<Task> Copy
+);
+
+/// <summary>
+/// The resolved connections for a logs migration. <paramref name="SourceCount" /> is <c>null</c>
+/// when the source logs store is unavailable and the migration should be skipped.
+/// </summary>
+internal sealed record LogsMigrationPlan(
+    string FromLogsConnection,
+    string ToLogsConnection,
+    int? SourceCount
 );

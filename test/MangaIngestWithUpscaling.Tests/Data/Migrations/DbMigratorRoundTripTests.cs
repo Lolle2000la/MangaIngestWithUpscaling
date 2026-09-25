@@ -399,7 +399,15 @@ public class DbMigratorRoundTripTests
             TestDatabaseBackend.Postgres
         );
 
-        await using (ApplicationDbContext schema = sqliteSource.CreateContext()) { }
+        // Seed an application row so this test proves the logs refusal happens before the copy.
+        await using (ApplicationDbContext seed = sqliteSource.CreateContext())
+        {
+            seed.Libraries.Add(
+                new Library { Name = "Should Not Be Copied", NotUpscaledLibraryPath = "/regular" }
+            );
+            await seed.SaveChangesAsync(ct);
+        }
+
         await SeedSqliteLogAsync(sqliteLogsSource.ConnectionString, "hello from sqlite", ct);
         await SeedPostgresLogAsync(postgresTarget.ConnectionString, "stale target log", ct);
 
@@ -428,6 +436,71 @@ public class DbMigratorRoundTripTests
         );
         Log single = await logContext.LogEntries.AsNoTracking().SingleAsync(ct);
         Assert.Equal("stale target log", single.RenderedMessage);
+
+        // The logs guard runs before the application tables are copied, so the target app tables
+        // are still empty even though the source had a row.
+        await using ApplicationDbContext appContext = await postgresTarget.CreateContextAsync(
+            ensureSchema: false,
+            ct
+        );
+        Assert.Equal(0, await appContext.Libraries.CountAsync(ct));
+    }
+
+    [Fact]
+    public async Task Migrate_FromPostgresToSqlite_SkipsLogsWhenSourceLogsTableMissing()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Assert.SkipWhen(TestDatabaseFactory.Backend != TestDatabaseBackend.Postgres, SkipReason);
+
+        await using TestDatabase postgresSource = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Postgres
+        );
+        await using TestDatabase sqliteTarget = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Sqlite
+        );
+        await using TestDatabase sqliteLogsTarget = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Sqlite
+        );
+
+        // EnsureCreated builds the application schema; Logs is not part of it, so this source
+        // genuinely has no Logs relation for EF to query.
+        await using (ApplicationDbContext seed = await postgresSource.CreateContextAsync(ct))
+        {
+            seed.Libraries.Add(
+                new Library { Name = "No Logs Source", NotUpscaledLibraryPath = "/regular" }
+            );
+            await seed.SaveChangesAsync(ct);
+        }
+
+        await DataMigrator.MigrateAsync(
+            new MigratorOptions(
+                DatabaseProvider.Postgres,
+                postgresSource.ConnectionString,
+                DatabaseProvider.Sqlite,
+                sqliteTarget.ConnectionString,
+                BatchSize: 500,
+                Force: false,
+                IncludeLogs: true,
+                FromLogsConnection: null,
+                ToLogsConnection: sqliteLogsTarget.ConnectionString
+            ),
+            _ => { },
+            ct
+        );
+
+        await using ApplicationDbContext target = await sqliteTarget.CreateContextAsync(
+            ensureSchema: false,
+            ct
+        );
+        Assert.Equal(1, await target.Libraries.CountAsync(ct));
+
+        // The missing source table must be skipped, not created on the target.
+        await using var logsConnection = new SqliteConnection(sqliteLogsTarget.ConnectionString);
+        await logsConnection.OpenAsync(ct);
+        await using SqliteCommand check = logsConnection.CreateCommand();
+        check.CommandText =
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'Logs';";
+        Assert.Equal(0L, (long)(await check.ExecuteScalarAsync(ct))!);
     }
 
     private static LoggingDbContext CreateLoggingContext(

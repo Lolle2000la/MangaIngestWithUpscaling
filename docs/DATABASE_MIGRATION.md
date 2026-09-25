@@ -19,13 +19,19 @@ For provider configuration and development details, see [Database Providers](./D
 
 1. Applies the target provider's schema migrations to the target database.
 2. Refuses to run if the target already has data (unless `--force` is given, which clears it first).
-3. Streams every application table across — Identity (users, roles, claims, logins), libraries,
-   ingest paths/filter/rename rules, manga, chapters, merged-chapter info, filtered images, split
-   state, strip findings, tasks, API keys and data-protection keys.
+3. Streams every application table across — Identity (users, roles, claims, logins, user-roles and
+   tokens), libraries and their ingest paths/filter/rename rules, upscaler profiles, manga and
+   alternative titles, chapters, merged-chapter info, filtered images, split state, strip findings,
+   tasks, API keys and data-protection keys. (In short: every table in the application model.)
 4. Optionally copies the `Logs` table (`--include-logs`). If the target log table already has rows
    the tool refuses to overwrite it, unless `--force` is given to clear it first.
 5. Resets the PostgreSQL identity sequences (application tables and `Logs`) so the next inserted row
    cannot collide with a copied id.
+
+> **The target's schema is migrated before the empty-target check.** Step 1 runs to completion
+> before step 2 inspects the target, so pointing the tool at an existing database (for example one
+> from an older application version) will apply any pending migrations to it and only then refuse.
+> Migrations alone change the schema, not your rows, but use a fresh database to be safe.
 
 ## Prerequisites
 
@@ -177,6 +183,12 @@ mv /path/to/data/logs.db      /path/to/data/logs.db.old
 mv /path/to/data/new-logs.db  /path/to/data/logs.db
 ```
 
+> **Check before you rename.** `mv` overwrites silently: make sure a previous
+> `data.db.old`/`logs.db.old` is not clobbered (choose a dated name if in doubt). If the application
+> ever ran with WAL enabled, also remove or move the stale `data.db-wal` / `data.db-shm` (and the
+> `logs.db-*` equivalents) sidecars before starting — a leftover WAL from the old database can be
+> replayed on top of the newly copied file and corrupt it.
+
 Set `DatabaseProvider` back to `Sqlite` (or remove the override; `Sqlite` is the default) and start
 the application.
 
@@ -201,8 +213,8 @@ on it since, migrate back with the [reverse](#reverse-postgresql--sqlite) proced
 | `--from-connection <cs>` | Source connection string. |
 | `--to-connection <cs>` | Target connection string. |
 | `--batch-size <n>` | Rows inserted per batch (default `500`). |
-| `--force` | Clear a non-empty target before copying, including the `Logs` table when `--include-logs` is used. Without it the tool refuses to overwrite. |
-| `--include-logs` | Also copy the `Logs` table. |
+| `--force` | Clear a non-empty target before copying, including the `Logs` table when `--include-logs` is used. Clearing happens **before any data is copied**, so if the run then fails the target is left empty and is unusable until a successful re-run. Without it the tool refuses to overwrite. |
+| `--include-logs` | Also copy the `Logs` table. If the source has no `Logs` table (a missing SQLite logs file, or a PostgreSQL source that never logged) the copy is skipped with a message rather than failing. |
 | `--from-logs-connection <cs>` | SQLite logs file to read (required for a SQLite source with `--include-logs`). |
 | `--to-logs-connection <cs>` | SQLite logs file to write (required for a SQLite target with `--include-logs`). |
 

@@ -218,6 +218,54 @@ static void MoveCorruptDatabaseAside(string dbPath)
     }
 }
 
+// Applies the PostgreSQL migrations under a session-level advisory lock. Several replicas of the
+// app may start at the same time against the same database; without serialization they race on the
+// shared __EFMigrationsHistory table (duplicate inserts, "relation already exists", deadlocks) and,
+// because a failed PostgreSQL migration now fails fast, the losers would crash-loop. The lock is
+// held on a dedicated connection so it survives independently of EF's own connection handling for
+// the whole migration, and it is released (or auto-released when the connection closes) in a
+// finally so it cannot mask a migration error.
+static void MigratePostgresWithAdvisoryLock(
+    ApplicationDbContext dbContext,
+    Microsoft.Extensions.Logging.ILogger logger
+)
+{
+    // Fixed, application-specific advisory-lock key ("MangaIU" plus a version byte). Both the lock
+    // and the unlock must use the same value; it must not change between releases or replicas of
+    // different versions would stop serializing with each other.
+    const long migrationLockKey = 0x4D616E6761495500L;
+
+    using var lockConnection = new NpgsqlConnection(dbContext.Database.GetConnectionString());
+    lockConnection.Open();
+
+    using (var lockCommand = lockConnection.CreateCommand())
+    {
+        lockCommand.CommandText = "SELECT pg_advisory_lock(@key)";
+        lockCommand.Parameters.AddWithValue("key", migrationLockKey);
+        lockCommand.ExecuteNonQuery();
+    }
+
+    try
+    {
+        dbContext.Database.Migrate();
+    }
+    finally
+    {
+        try
+        {
+            using var unlockCommand = lockConnection.CreateCommand();
+            unlockCommand.CommandText = "SELECT pg_advisory_unlock(@key)";
+            unlockCommand.Parameters.AddWithValue("key", migrationLockKey);
+            unlockCommand.ExecuteNonQuery();
+        }
+        catch (Exception ex)
+        {
+            // Never let a failed unlock hide the real migration result.
+            logger.LogDebug(ex, "Failed to release the PostgreSQL migration advisory lock");
+        }
+    }
+}
+
 //Log.Logger = new LoggerConfiguration()
 //    .ReadFrom.Configuration(builder.Configuration)
 //    .CreateLogger();
@@ -565,7 +613,15 @@ using (var scope = app.Services.CreateScope())
 
     try
     {
-        dbContext.Database.Migrate();
+        if (isSqlite)
+        {
+            dbContext.Database.Migrate();
+        }
+        else
+        {
+            MigratePostgresWithAdvisoryLock(dbContext, logger);
+        }
+
         logger.LogDebug("Database migrations applied successfully.");
 
         if (isSqlite && upgradeMarkerFile is not null)

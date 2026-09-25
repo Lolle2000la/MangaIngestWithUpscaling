@@ -45,6 +45,19 @@ The providers are equivalent for the application's features, with these delibera
 - **No automatic retry** — `EnableRetryOnFailure` is intentionally not enabled for PostgreSQL, because
   a retrying execution strategy rejects the user-initiated transactions several services open unless
   every transaction is wrapped in `CreateExecutionStrategy()`.
+- **SQLite's historical column defaults** — columns added to the original SQLite database over time
+  with `ALTER TABLE ADD COLUMN` keep a persistent column default (for example `PersistedTasks.Order`,
+  `UpscalerProfiles.Deleted` and several timestamp columns). The fresh PostgreSQL baseline is created
+  in one migration and has no such defaults. Raw SQL `INSERT`s that omit those columns therefore lean
+  on SQLite's default but can fail or behave differently on PostgreSQL; use the EF/application APIs,
+  which always supply values.
+- **`Logs` schema and `search_path`** — the `Logs` table is pinned to the `public` schema, while the
+  application tables are resolved through the connection's `search_path`. A non-default `search_path`
+  is therefore unsupported: logs and application data would resolve against different schemas.
+- **Concurrent startup migrations** — on PostgreSQL the startup migrations run under a session-level
+  advisory lock, so several application replicas starting at once cannot race on
+  `__EFMigrationsHistory` or apply the same DDL twice. SQLite's single-writer locking makes this
+  unnecessary there.
 
 ## Migrating an existing installation
 
@@ -112,6 +125,11 @@ throwaway PostgreSQL database started with Testcontainers (Docker required):
 ```bash
 TEST_DB_PROVIDER=postgres dotnet test test/MangaIngestWithUpscaling.Tests/MangaIngestWithUpscaling.Tests.csproj
 ```
+
+Only the tests that obtain their database through `TestDatabaseFactory`/`TestDatabaseHelper` follow
+this selection (an unrecognized `TEST_DB_PROVIDER` value throws rather than silently falling back to
+SQLite). The remaining tests keep their own fixtures and are not provider-parameterized: most use EF
+Core's InMemory provider, and a few use a raw SQLite connection directly.
 
 The same applies to the UI test project, which swaps its in-memory database for the selected provider
 so database-backed component tests run on both backends.

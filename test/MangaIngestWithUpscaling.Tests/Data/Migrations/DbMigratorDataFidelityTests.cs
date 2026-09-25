@@ -179,6 +179,79 @@ public class DbMigratorDataFidelityTests
         );
     }
 
+    [Fact]
+    public async Task Migrate_PreservesExplicitCreatedAtAndModifiedAt()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Assert.SkipWhen(TestDatabaseFactory.Backend != TestDatabaseBackend.Postgres, SkipReason);
+
+        await using TestDatabase sqliteSource = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Sqlite
+        );
+        await using TestDatabase postgresTarget = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Postgres
+        );
+        await using TestDatabase sqliteTarget = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Sqlite
+        );
+
+        var createdAt = new DateTime(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+        var modifiedAt = new DateTime(2021, 6, 7, 8, 9, 10, DateTimeKind.Utc);
+
+        await using (ApplicationDbContext seed = sqliteSource.CreateContext())
+        {
+            // The application normally overwrites timestamps on save; seed the historical values so
+            // the migrator's SkipTimestampUpdates behavior can be asserted.
+            seed.SkipTimestampUpdates = true;
+            seed.Libraries.Add(
+                new Library
+                {
+                    Name = "Timestamp Library",
+                    NotUpscaledLibraryPath = "/regular",
+                    CreatedAt = createdAt,
+                    ModifiedAt = modifiedAt,
+                }
+            );
+            await seed.SaveChangesAsync(ct);
+        }
+
+        await MigrateAsync(
+            DatabaseProvider.Sqlite,
+            sqliteSource,
+            DatabaseProvider.Postgres,
+            postgresTarget,
+            force: false,
+            ct
+        );
+        await AssertTimestampsAsync(postgresTarget, createdAt, modifiedAt, ct);
+
+        await MigrateAsync(
+            DatabaseProvider.Postgres,
+            postgresTarget,
+            DatabaseProvider.Sqlite,
+            sqliteTarget,
+            force: false,
+            ct
+        );
+        await AssertTimestampsAsync(sqliteTarget, createdAt, modifiedAt, ct);
+    }
+
+    private static async Task AssertTimestampsAsync(
+        TestDatabase database,
+        DateTime createdAt,
+        DateTime modifiedAt,
+        CancellationToken ct
+    )
+    {
+        await using ApplicationDbContext context = await database.CreateContextAsync(
+            ensureSchema: false,
+            ct
+        );
+        Library library = await context.Libraries.SingleAsync(ct);
+        Assert.Equal(createdAt, library.CreatedAt);
+        Assert.Equal(modifiedAt, library.ModifiedAt);
+    }
+
     private static async Task SeedAsync(TestDatabase database, CancellationToken ct)
     {
         await using ApplicationDbContext context = database.CreateContext();
