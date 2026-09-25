@@ -25,7 +25,9 @@ COPY ["src/MangaIngestWithUpscaling.Shared/MangaIngestWithUpscaling.Shared.cspro
 COPY ["src/MangaIngestWithUpscaling.Data/MangaIngestWithUpscaling.Data.csproj", "src/MangaIngestWithUpscaling.Data/"]
 COPY ["src/MangaIngestWithUpscaling.Data.Sqlite/MangaIngestWithUpscaling.Data.Sqlite.csproj", "src/MangaIngestWithUpscaling.Data.Sqlite/"]
 COPY ["src/MangaIngestWithUpscaling.Data.Postgres/MangaIngestWithUpscaling.Data.Postgres.csproj", "src/MangaIngestWithUpscaling.Data.Postgres/"]
+COPY ["tools/MangaIngestWithUpscaling.DbMigrator/MangaIngestWithUpscaling.DbMigrator.csproj", "tools/MangaIngestWithUpscaling.DbMigrator/"]
 RUN dotnet restore "./src/MangaIngestWithUpscaling/MangaIngestWithUpscaling.csproj"
+RUN dotnet restore "./tools/MangaIngestWithUpscaling.DbMigrator/MangaIngestWithUpscaling.DbMigrator.csproj"
 COPY . .
 WORKDIR "/src/src/MangaIngestWithUpscaling"
 RUN dotnet build "./MangaIngestWithUpscaling.csproj" -c Release -o /app/build
@@ -34,6 +36,12 @@ RUN dotnet build "./MangaIngestWithUpscaling.csproj" -c Release -o /app/build
 FROM build AS publish
 ARG BUILD_CONFIGURATION=Release
 RUN dotnet publish "./MangaIngestWithUpscaling.csproj" -c Release -a $TARGETARCH -o /app/publish /p:UseAppHost=false
+# SQLite<->PostgreSQL migration CLI. It is framework-dependent (same runtime and shared deps as the
+# app), so publishing it into the same image adds only ~0.2 MB; the migrator csproj strips the web
+# app's multi-GB backend content. Run it by overriding the entrypoint, e.g.:
+#   docker run --rm --entrypoint dotnet <image> MangaIngestWithUpscaling.DbMigrator.dll <arguments>
+RUN dotnet publish "/src/tools/MangaIngestWithUpscaling.DbMigrator/MangaIngestWithUpscaling.DbMigrator.csproj" -c Release -a $TARGETARCH -o /app/migrator /p:UseAppHost=false
+RUN cp -rn /app/migrator/. /app/publish/
 
 # This stage is used in production or when running from VS in regular mode (Default when not using the Debug configuration)
 FROM base AS final
