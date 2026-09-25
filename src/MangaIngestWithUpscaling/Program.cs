@@ -166,7 +166,8 @@ if (!isSqlite)
 {
     // The DDL is IF NOT EXISTS, but concurrent DDL is not fully atomic: replicas starting together
     // can each observe a transient 23505/42P07/42710 (the other replica created the object first)
-    // or 40P01 (deadlock). Retry briefly so the loser converges instead of leaving the sink
+    // or 40P01 (deadlock), and an operator-configured lock_timeout can surface as 55P03 during the
+    // same contention. Retry briefly so the loser converges instead of leaving the sink
     // (needAutoCreateTable: false) without a table to write to. Runs before the advisory-locked
     // migration deliberately, so the table exists the moment the sink starts.
     const int maxAttempts = 5;
@@ -204,7 +205,8 @@ static bool IsRetryableLogsBootstrapFailure(PostgresException ex) =>
         is PostgresErrorCodes.UniqueViolation
             or PostgresErrorCodes.DuplicateTable
             or PostgresErrorCodes.DuplicateObject
-            or PostgresErrorCodes.DeadlockDetected;
+            or PostgresErrorCodes.DeadlockDetected
+            or PostgresErrorCodes.LockNotAvailable;
 
 static void MoveCorruptDatabaseAside(string dbPath)
 {

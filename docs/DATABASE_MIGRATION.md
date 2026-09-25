@@ -240,9 +240,11 @@ on it since, migrate back with the [reverse](#reverse-postgresql--sqlite) proced
   `DateTime` uses 100-nanosecond ticks, so migrating to PostgreSQL truncates the sub-microsecond
   digit (e.g. `…4581723` becomes `…458172`). This does not affect ordering or behavior.
 - **Logs are optional and not authoritative** — they are copied only with `--include-logs`.
-- **The data-protection key ring is machine-bound on Windows** — the tool copies the
-  `DataProtectionKeys` rows, but on Windows the default encryptor is DPAPI, which ties the key
-  material to the machine (and user). After migrating the database to a different machine or
-  container, existing auth cookies, antiforgery tokens and API-key sessions become undecryptable and
-  users must sign in again. On Linux the default encryptor is a no-op, so the copied key ring stays
-  portable.
+- **The data-protection key ring is stored unencrypted** — the tool copies the `DataProtectionKeys`
+  rows. Because the application calls `PersistKeysToDbContext` without a `ProtectKeysWith*` method,
+  ASP.NET Core disables the default encryption-at-rest mechanism, so the keys are stored unencrypted
+  and travel with the database. Existing auth cookies, antiforgery tokens and API-key sessions keep
+  working after migrating to a new machine or container, as long as `SetApplicationName` is
+  unchanged. If an operator later adds `ProtectKeysWithDpapi()` (Windows) or
+  `ProtectKeysWithCertificate(...)`, the ring becomes bound to that machine or secret and copying
+  only the database is no longer sufficient.
