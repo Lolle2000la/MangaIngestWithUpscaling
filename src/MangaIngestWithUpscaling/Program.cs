@@ -164,22 +164,47 @@ foreach (var earlyDbPath in earlyDbPaths)
 // it exists before the sink starts writing.
 if (!isSqlite)
 {
-    try
+    // The DDL is IF NOT EXISTS, but concurrent DDL is not fully atomic: replicas starting together
+    // can each observe a transient 23505/42P07/42710 (the other replica created the object first)
+    // or 40P01 (deadlock). Retry briefly so the loser converges instead of leaving the sink
+    // (needAutoCreateTable: false) without a table to write to. Runs before the advisory-locked
+    // migration deliberately, so the table exists the moment the sink starts.
+    const int maxAttempts = 5;
+    for (int attempt = 1; ; attempt++)
     {
-        using var logsConnection = new NpgsqlConnection(postgresConnectionString);
-        logsConnection.Open();
-        using var createLogsCommand = logsConnection.CreateCommand();
-        createLogsCommand.CommandText = PostgresLogging.CreateTableSql;
-        createLogsCommand.ExecuteNonQuery();
-    }
-    catch (Exception ex)
-    {
-        // Best effort: this runs before the host (and its logger) exists, so stderr is the only
-        // channel. A genuinely unusable database fails the migration below anyway; a missing Logs
-        // table alone means the sink (needAutoCreateTable: false) drops writes, so log the detail.
-        Console.Error.WriteLine($"Failed to ensure the PostgreSQL Logs table exists: {ex}");
+        try
+        {
+            using var logsConnection = new NpgsqlConnection(postgresConnectionString);
+            logsConnection.Open();
+            using var createLogsCommand = logsConnection.CreateCommand();
+            createLogsCommand.CommandText = PostgresLogging.CreateTableSql;
+            createLogsCommand.ExecuteNonQuery();
+            break;
+        }
+        catch (PostgresException ex)
+            when (IsRetryableLogsBootstrapFailure(ex) && attempt < maxAttempts)
+        {
+            Thread.Sleep(TimeSpan.FromMilliseconds(100 * attempt));
+        }
+        catch (Exception ex)
+        {
+            // Best effort: this runs before the host (and its logger) exists, so stderr is the only
+            // channel. A genuinely unusable database fails the migration below anyway; a missing Logs
+            // table alone means the sink (needAutoCreateTable: false) drops writes, so log the detail.
+            Console.Error.WriteLine($"Failed to ensure the PostgreSQL Logs table exists: {ex}");
+            break;
+        }
     }
 }
+
+// Transient failures a concurrent replica's CREATE TABLE/INDEX can cause even with IF NOT EXISTS:
+// the object is created by another session between our catalog check and our DDL.
+static bool IsRetryableLogsBootstrapFailure(PostgresException ex) =>
+    ex.SqlState
+        is PostgresErrorCodes.UniqueViolation
+            or PostgresErrorCodes.DuplicateTable
+            or PostgresErrorCodes.DuplicateObject
+            or PostgresErrorCodes.DeadlockDetected;
 
 static void MoveCorruptDatabaseAside(string dbPath)
 {

@@ -115,12 +115,15 @@ public class PostgresLoggingSinkTests
 
         await using NpgsqlCommand index = connection.CreateCommand();
         index.CommandText = """
-            SELECT 1
+            SELECT indexdef
             FROM pg_indexes
             WHERE schemaname = 'public'
               AND tablename = 'Logs'
               AND indexname = 'IX_Logs_Timestamp'
             """;
-        Assert.NotNull(await index.ExecuteScalarAsync(ct));
+        string? indexDefinition = (string?)await index.ExecuteScalarAsync(ct);
+        Assert.NotNull(indexDefinition);
+        // The name alone is not enough: the index must cover the retention DELETE's column.
+        Assert.Contains("\"Timestamp\"", indexDefinition);
     }
 }

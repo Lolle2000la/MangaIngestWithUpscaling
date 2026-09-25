@@ -150,7 +150,7 @@ public static class DataMigrator
     /// Resolves the file backing a SQLite connection string. Returns <c>null</c> for in-memory
     /// databases (which have no file), otherwise the file path and whether it exists.
     /// </summary>
-    private static (string Path, bool Exists)? ResolveSqliteFile(string connectionString)
+    internal static (string Path, bool Exists)? ResolveSqliteFile(string connectionString)
     {
         var builder = new SqliteConnectionStringBuilder(connectionString);
         if (builder.Mode == SqliteOpenMode.Memory)
@@ -177,6 +177,10 @@ public static class DataMigrator
                 query = path[(questionMark + 1)..];
                 path = path[..questionMark];
             }
+
+            // A "file:" URI percent-escapes the path (for example a space becomes %20), so decode
+            // it before touching the filesystem; otherwise a valid source is reported missing.
+            path = Uri.UnescapeDataString(path);
         }
 
         if (

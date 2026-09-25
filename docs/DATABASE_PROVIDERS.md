@@ -42,6 +42,14 @@ The providers are equivalent for the application's features, with these delibera
   `DateTime` uses 100-nanosecond ticks, so timestamps lose their sub-microsecond (7th) digit when
   migrated to PostgreSQL. Ordering and behavior are unaffected. See
   [Known limitations](./DATABASE_MIGRATION.md#known-limitations).
+- **`DateTime` kind on read** — SQLite stores `DateTime` without a kind, so values are read back as
+  `DateTimeKind.Unspecified` and `.ToLocalTime()`/display shows the stored UTC wall-clock value
+  unchanged; Npgsql returns `DateTimeKind.Utc`, so the same row is displayed converted to the host's
+  local time. On a non-UTC host the same instant can therefore display a different wall-clock time
+  after switching providers.
+- **`Logs` non-nullable columns** — on a freshly created PostgreSQL `Logs` table `"Level"` and
+  `"RenderedMessage"` are `NOT NULL`. Legacy or hand-edited rows containing `NULL` in either column
+  would fail an `--include-logs` copy, whereas SQLite accepts them.
 - **No automatic retry** — `EnableRetryOnFailure` is intentionally not enabled for PostgreSQL, because
   a retrying execution strategy rejects the user-initiated transactions several services open unless
   every transaction is wrapped in `CreateExecutionStrategy()`.

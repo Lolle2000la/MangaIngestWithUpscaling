@@ -32,19 +32,21 @@ public class MigratorCliTests
     }
 
     [Theory]
-    [InlineData("Password=supersecret", "supersecret")]
-    [InlineData("Pwd=letmein", "letmein")]
-    [InlineData("Password=\"my secret\"", "my secret")]
-    [InlineData("Pwd='top secret'", "top secret")]
-    [InlineData("password=spaced value here", "spaced value here")]
-    public void Redact_RemovesInlinePasswordValuesRegardlessOfQuoting(string input, string secret)
+    [InlineData("Password=supersecret", "Password=***")]
+    [InlineData("Pwd=letmein", "Pwd=***")]
+    [InlineData("Password=\"my secret\"", "Password=***")]
+    [InlineData("Pwd='top secret'", "Pwd=***")]
+    [InlineData("password=spaced value here", "password=***")]
+    // Connection-string builders escape an embedded quote by doubling it.
+    [InlineData("Password=\"a\"\"b\"", "Password=***")]
+    [InlineData("Pwd='a''b'", "Pwd=***")]
+    public void Redact_RemovesInlinePasswordValuesRegardlessOfQuoting(string input, string expected)
     {
         var options = OptionsWithConnection("Data Source=/tmp/migrator-redact-unrelated.db");
 
         string redacted = MigratorCli.Redact(input, options);
 
-        Assert.DoesNotContain(secret, redacted);
-        Assert.Matches(@"(?i)(password|pwd)=\*\*\*", redacted);
+        Assert.Equal(expected, redacted);
     }
 
     [Fact]
@@ -149,6 +151,70 @@ public class MigratorCliTests
                 File.Delete(path);
             }
         }
+    }
+
+    [Fact]
+    public void ResolveSqliteFile_PercentDecodesFileUriPath()
+    {
+        string directory = Path.Combine(Path.GetTempPath(), $"db-migrator-uri-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        string path = Path.Combine(directory, "my data.db");
+        File.WriteAllBytes(path, []);
+        try
+        {
+            // A valid SQLite source can be a "file:" URI whose path is percent-escaped; it must be
+            // decoded before the existence check or an existing database is reported missing.
+            string connectionString = new SqliteConnectionStringBuilder
+            {
+                DataSource = "file:" + path.Replace(" ", "%20"),
+            }.ToString();
+
+            (string Path, bool Exists)? resolved = DataMigrator.ResolveSqliteFile(connectionString);
+
+            Assert.NotNull(resolved);
+            Assert.Equal(path, resolved!.Value.Path);
+            Assert.True(resolved.Value.Exists);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void NormalizeUtcDateTimes_ConvertsLocalAndOffsetValuesToUtc()
+    {
+        var local = new DateTime(2024, 3, 4, 5, 6, 7, DateTimeKind.Local);
+        var unspecified = new DateTime(2024, 3, 4, 5, 6, 7, DateTimeKind.Unspecified);
+        var offset = new DateTimeOffset(2024, 3, 4, 5, 6, 7, TimeSpan.FromHours(2));
+
+        var holder = new TimestampHolder
+        {
+            When = local,
+            MaybeWhen = unspecified,
+            Offset = offset,
+        };
+
+        DataMigrator.NormalizeUtcDateTimes(holder);
+
+        Assert.Equal(DateTimeKind.Utc, holder.When.Kind);
+        Assert.Equal(local.ToUniversalTime(), holder.When);
+
+        // Unspecified values are relabelled, not shifted: the ticks must be preserved.
+        Assert.Equal(DateTimeKind.Utc, holder.MaybeWhen!.Value.Kind);
+        Assert.Equal(unspecified.Ticks, holder.MaybeWhen.Value.Ticks);
+
+        Assert.Equal(offset.ToUniversalTime(), holder.Offset);
+        Assert.Equal(TimeSpan.Zero, holder.Offset.Offset);
+    }
+
+    private sealed class TimestampHolder
+    {
+        public DateTime When { get; set; }
+
+        public DateTime? MaybeWhen { get; set; }
+
+        public DateTimeOffset Offset { get; set; }
     }
 
     [Theory]

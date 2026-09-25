@@ -112,9 +112,12 @@ internal static class MigratorCli
             }
         }
 
+        // The quoted alternatives allow a doubled delimiter inside the value: connection-string
+        // builders escape an embedded quote by doubling it (a password a"b becomes Password="a""b"),
+        // so a plain "[^"]*" would stop at the first inner quote and leave the tail visible.
         return Regex.Replace(
             text,
-            """(?i)\b(password|pwd)\s*=\s*(?:"[^"]*"|'[^']*'|[^;\r\n]*)""",
+            """(?i)\b(password|pwd)\s*=\s*(?:"(?:[^"]|"")*"|'(?:[^']|'')*'|[^;\r\n]*)""",
             "$1=***"
         );
     }

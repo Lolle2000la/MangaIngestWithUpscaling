@@ -70,7 +70,8 @@ public static class TestDatabaseFactory
             "" or "sqlite" or "sqlite3" => TestDatabaseBackend.Sqlite,
             "postgres" or "postgresql" or "npgsql" => TestDatabaseBackend.Postgres,
             _ => throw new InvalidOperationException(
-                $"Unknown TEST_DB_PROVIDER '{value}'. Valid values are 'sqlite' and 'postgres'."
+                $"Unknown TEST_DB_PROVIDER '{value}'. Valid values are 'sqlite', 'sqlite3', "
+                    + "'postgres', 'postgresql' and 'npgsql'."
             ),
         };
     }

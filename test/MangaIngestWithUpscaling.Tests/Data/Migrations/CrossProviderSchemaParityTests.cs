@@ -10,8 +10,14 @@ namespace MangaIngestWithUpscaling.Tests.Data.Migrations;
 /// Compares the database schema produced by each provider's migrations. The per-provider drift
 /// guards assert each runtime model against its own snapshot, but not that the historical SQLite
 /// migration chain and the fresh PostgreSQL baseline agree; this catches a table, column or
-/// nullability divergence between the two. Provider-specific column types are intentionally not
-/// compared (SQLite has no equivalent of <c>timestamptz</c>/<c>boolean</c>/<c>numeric</c>).
+/// nullability divergence between the two.
+/// <para>
+/// The comparison deliberately covers only table names, column names and nullability. It does
+/// <b>not</b> compare column types, column defaults, indexes, foreign keys or delete behavior —
+/// SQLite has no equivalent of <c>timestamptz</c>/<c>boolean</c>/<c>numeric</c> and its
+/// <c>ALTER TABLE</c> defaults differ from the fresh PostgreSQL baseline, so those differences are
+/// intentional and asserted (where relevant) by other tests rather than here.
+/// </para>
 /// </summary>
 [Trait("Category", "Integration")]
 public class CrossProviderSchemaParityTests

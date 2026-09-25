@@ -12,6 +12,7 @@ public class TestDatabaseFactoryTests
     [InlineData("   ")]
     [InlineData("sqlite")]
     [InlineData("SQLite")]
+    [InlineData("sqlite3")]
     public void ResolveBackend_EmptyOrSqlite_SelectsSqlite(string? value)
     {
         Assert.Equal(TestDatabaseBackend.Sqlite, TestDatabaseFactory.ResolveBackend(value));
@@ -21,6 +22,8 @@ public class TestDatabaseFactoryTests
     [InlineData("postgres")]
     [InlineData("postgresql")]
     [InlineData(" npgsql ")]
+    [InlineData("PostgreSQL")]
+    [InlineData("Npgsql")]
     public void ResolveBackend_PostgresAlias_SelectsPostgres(string value)
     {
         Assert.Equal(TestDatabaseBackend.Postgres, TestDatabaseFactory.ResolveBackend(value));

@@ -240,3 +240,9 @@ on it since, migrate back with the [reverse](#reverse-postgresql--sqlite) proced
   `DateTime` uses 100-nanosecond ticks, so migrating to PostgreSQL truncates the sub-microsecond
   digit (e.g. `…4581723` becomes `…458172`). This does not affect ordering or behavior.
 - **Logs are optional and not authoritative** — they are copied only with `--include-logs`.
+- **The data-protection key ring is machine-bound on Windows** — the tool copies the
+  `DataProtectionKeys` rows, but on Windows the default encryptor is DPAPI, which ties the key
+  material to the machine (and user). After migrating the database to a different machine or
+  container, existing auth cookies, antiforgery tokens and API-key sessions become undecryptable and
+  users must sign in again. On Linux the default encryptor is a no-op, so the copied key ring stays
+  portable.
