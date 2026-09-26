@@ -162,14 +162,14 @@ public class SplitProcessingCoordinator(
             return false;
         }
 
-        await EnqueueDetectionAsync(chapterId, cancellationToken, context);
+        await EnqueueDetectionAsync(chapterId, context, cancellationToken);
         return true;
     }
 
     public async Task EnqueueDetectionAsync(
         int chapterId,
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext? context = null
+        ApplicationDbContext? context = null,
+        CancellationToken cancellationToken = default
     )
     {
         logger.LogInformation(
@@ -207,8 +207,8 @@ public class SplitProcessingCoordinator(
 
     public async Task EnqueueDetectionBatchAsync(
         IEnumerable<int> chapterIds,
-        CancellationToken cancellationToken = default,
-        ApplicationDbContext? context = null
+        ApplicationDbContext? context = null,
+        CancellationToken cancellationToken = default
     )
     {
         var ids = chapterIds.ToList();

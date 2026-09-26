@@ -49,13 +49,18 @@ public sealed class AsyncGate
     }
 
     /// <summary>Runs <paramref name="operation"/> once the gate is free.</summary>
-    public Task RunAsync(Func<Task> operation)
+    public async Task RunAsync(Func<Task> operation)
     {
         ArgumentNullException.ThrowIfNull(operation);
-        return RunAsync(async () =>
+
+        await _semaphore.WaitAsync();
+        try
         {
             await operation();
-            return true;
-        });
+        }
+        finally
+        {
+            _semaphore.Release();
+        }
     }
 }

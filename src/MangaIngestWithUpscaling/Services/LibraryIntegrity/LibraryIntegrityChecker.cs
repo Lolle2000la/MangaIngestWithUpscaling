@@ -503,8 +503,8 @@ public partial class LibraryIntegrityChecker(
             {
                 await splitProcessingCoordinator.EnqueueDetectionAsync(
                     chapter.Id,
-                    cancellationToken ?? CancellationToken.None,
-                    context
+                    context,
+                    cancellationToken ?? CancellationToken.None
                 );
             }
         }

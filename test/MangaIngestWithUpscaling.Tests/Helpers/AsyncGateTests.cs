@@ -33,6 +33,7 @@ public class AsyncGateTests
         var gate = new AsyncGate();
         int active = 0;
         int maxActive = 0;
+        var childRan = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         await gate.RunAsync(async () =>
         {
@@ -51,13 +52,19 @@ public class AsyncGateTests
                     Interlocked.Decrement(ref active);
                     return Task.CompletedTask;
                 });
+                childRan.TrySetResult();
             });
 
             await Task.Delay(100);
             Interlocked.Decrement(ref active);
         });
 
-        await Task.Delay(100, TestContext.Current.CancellationToken);
+        // Prove the spawned work actually ran (and therefore acquired the gate) rather than being
+        // dropped: maxActive == 1 alone would also hold if the child never executed.
+        await childRan.Task.WaitAsync(
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken
+        );
 
         Assert.Equal(1, maxActive);
     }

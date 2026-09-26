@@ -14,6 +14,7 @@
 @using MangaIngestWithUpscaling.Shared.Services.MetadataHandling
 @using MangaIngestWithUpscaling.Shared.Services.Analysis
 @using MangaIngestWithUpscaling.Data.Analysis
+@using Microsoft.EntityFrameworkCore
 @using Microsoft.Extensions.Localization
 @using MangaIngestWithUpscaling.Shared.Helpers
 @using Humanizer
@@ -42,7 +43,7 @@
 @inject IServiceProvider ServiceProvider
 
 <MudTable T="ChapterItem" @bind-SelectedItems="selectedChapters" Items="@chapterItems" Dense="true"
-          MultiSelection="true" CanCancelEdit="true" RowEditCommit="r => _ = OnChapterMetadataCommit(r as ChapterItem)"
+          MultiSelection="true" CanCancelEdit="true" RowEditCommit="r => OnChapterMetadataCommit(r as ChapterItem)"
           RowEditCancel="r => OnChapterMetadataDiscard(r as ChapterItem)">
     <ToolBarContent>
         <MudStack Row>
@@ -418,8 +419,28 @@
         }
     }
 
-    private Task OnChapterMetadataCommit(ChapterItem? chapter) =>
-        _dbGate.RunAsync(() => OnChapterMetadataCommitCore(chapter));
+    private void OnChapterMetadataCommit(ChapterItem? chapter)
+    {
+        // RowEditCommit is fire-and-forget; observe the gated task so a failure in the metadata
+        // changer or rename is logged instead of becoming an unobserved task exception.
+        _ = CommitChapterMetadataAsync(chapter);
+    }
+
+    private async Task CommitChapterMetadataAsync(ChapterItem? chapter)
+    {
+        try
+        {
+            await _dbGate.RunAsync(() => OnChapterMetadataCommitCore(chapter));
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(
+                ex,
+                "Failed to commit metadata for chapter {ChapterId}",
+                chapter?.Chapter.Id
+            );
+        }
+    }
 
     private async Task OnChapterMetadataCommitCore(ChapterItem? chapter)
     {
@@ -727,6 +748,7 @@
             // reload cannot overlap an in-flight gated operation on the shared context.
             await InvokeAsync(() => _dbGate.RunAsync(async () =>
             {
+                await RefreshChaptersAsync();
                 await LoadChapters();
                 InvalidateMergePossibilitiesCache();
                 await UpdateMergePossibilitiesAsync();
@@ -737,6 +759,24 @@
         {
             Logger.LogError(ex, "Error checking library integrity for Manga ID {MangaId}", Manga?.Id);
         }
+    }
+
+    private async Task RefreshChaptersAsync()
+    {
+        var chaptersEntry = DbContext.Entry(Manga).Collection(m => m.Chapters);
+
+        // The integrity check runs against its own DbContext, so its edits (removed chapters, a
+        // chapter whose upscaled file vanished being marked not upscaled) are invisible to this
+        // context's tracked Manga.Chapters. Detach the stale rows and re-query the collection so the
+        // reload below renders the checker's result instead of the old graph.
+        foreach (var chapter in Manga.Chapters.ToList())
+        {
+            DbContext.Entry(chapter).State = EntityState.Detached;
+        }
+
+        Manga.Chapters.Clear();
+        chaptersEntry.IsLoaded = false;
+        await chaptersEntry.LoadAsync();
     }
 
     private async Task<bool> LoadChapters()
