@@ -6,6 +6,7 @@
 @using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks
 @using MangaIngestWithUpscaling.Services.MetadataHandling
 @using MangaIngestWithUpscaling.Shared.Helpers
+@using MangaIngestWithUpscaling.Helpers
 @using Humanizer
 @using System.Globalization
 @using System.Diagnostics
@@ -163,6 +164,11 @@
 
     private MudTable<Manga> table = default!;
 
+    // Serializes this component's DbContext work: the circuit-scoped context is shared with other
+    // components and services, and overlapping use makes EF throw "A second operation was started
+    // on this context instance". See ReentrantAsyncGate for the re-entrancy contract.
+    private readonly ReentrantAsyncGate _dbGate = new();
+
     private Manga? mangaBeforeEdit;
 
     private CompositeDisposable disposables = new();
@@ -262,7 +268,10 @@
         _searchSubject.OnNext(_searchInput);
     }
 
-    private async Task<TableData<Manga>> GetMangas(TableState state, CancellationToken cancellationToken)
+    private Task<TableData<Manga>> GetMangas(TableState state, CancellationToken cancellationToken) =>
+        _dbGate.RunAsync(() => GetMangasCore(state, cancellationToken));
+
+    private async Task<TableData<Manga>> GetMangasCore(TableState state, CancellationToken cancellationToken)
     {
         var query = DbContext.MangaSeries
         .Include(x => x.Library)
@@ -472,7 +481,9 @@
         mangaToRestore.ShouldUpscale = mangaBeforeEdit.ShouldUpscale;
     }
 
-    private async Task OnCommitEdit(object m)
+    private Task OnCommitEdit(object m) => _dbGate.RunAsync(() => OnCommitEditCore(m));
+
+    private async Task OnCommitEditCore(object m)
     {
         if (_isProcessing) return;
         _isProcessing = true;
@@ -594,6 +605,7 @@
     {
         NavigationManager.LocationChanged -= OnLocationChanged;
         disposables.Dispose();
+        _dbGate.Dispose();
     }
 
 }
