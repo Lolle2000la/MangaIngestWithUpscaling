@@ -24,14 +24,29 @@ public interface ISplitProcessingCoordinator
     /// Enqueues a split detection task for the given chapter.
     /// </summary>
     /// <param name="chapterId">The ID of the chapter.</param>
-    Task EnqueueDetectionAsync(int chapterId, CancellationToken cancellationToken = default);
+    /// <param name="context">
+    /// Optional DbContext to use. Required when called from a parallel operation, where the shared
+    /// scoped context must not be used concurrently.
+    /// </param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task EnqueueDetectionAsync(
+        int chapterId,
+        ApplicationDbContext? context = null,
+        CancellationToken cancellationToken = default
+    );
 
     /// <summary>
     /// Enqueues split detection tasks for multiple chapters.
     /// </summary>
     /// <param name="chapterIds">The IDs of the chapters.</param>
+    /// <param name="context">
+    /// Optional DbContext to use. Required when called from a parallel operation, where the shared
+    /// scoped context must not be used concurrently.
+    /// </param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     Task EnqueueDetectionBatchAsync(
         IEnumerable<int> chapterIds,
+        ApplicationDbContext? context = null,
         CancellationToken cancellationToken = default
     );
 

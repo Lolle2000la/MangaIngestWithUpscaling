@@ -9,6 +9,7 @@ using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.ChapterManagement;
 using MangaIngestWithUpscaling.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Services.LibraryIntegrity;
+using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.CbzConversion;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
@@ -143,6 +144,85 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             .Chapters.AsNoTracking()
             .FirstAsync(c => c.Id == chapter.Id, TestContext.Current.CancellationToken);
         Assert.True(reloaded.IsUpscaled);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task CheckIntegrity_ParallelPass_ForwardsThePerWorkerContextToSplitDetection()
+    {
+        // Regression guard: the parallel pass runs each chapter against its own DbContext, but the
+        // split-detection enqueue used to reach for the shared scoped context instead. Forwarding
+        // the worker context is what keeps the parallel pass off the circuit-scoped instance.
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        await using ApplicationDbContext ctx = _db.CreateContext();
+
+        string temp = Directory.CreateTempSubdirectory().FullName;
+        var lib = new Library
+        {
+            Name = "Lib",
+            NotUpscaledLibraryPath = Path.Combine(temp, "orig"),
+            StripDetectionMode = StripDetectionMode.DetectOnly,
+        };
+        Directory.CreateDirectory(lib.NotUpscaledLibraryPath);
+
+        string rel = "Series/Ch1.cbz";
+        Directory.CreateDirectory(Path.Combine(lib.NotUpscaledLibraryPath, "Series"));
+        File.WriteAllText(Path.Combine(lib.NotUpscaledLibraryPath, rel), "orig");
+
+        var manga = new Manga { PrimaryTitle = "Series", Library = lib };
+        var chapter = new Chapter
+        {
+            FileName = "ch1.cbz",
+            RelativePath = rel,
+            Manga = manga,
+        };
+        manga.Chapters.Add(chapter);
+        lib.MangaSeries.Add(manga);
+        ctx.Libraries.Add(lib);
+        await ctx.SaveChangesAsync(ct);
+
+        _metadata
+            .GetSeriesAndTitleFromComicInfoAsync(Arg.Any<string>())
+            .Returns(Task.FromResult(new ExtractedMetadata("Series", "Ch1", null)));
+        _splitCoordinator
+            .ShouldProcessAsync(
+                Arg.Any<int>(),
+                Arg.Any<StripDetectionMode>(),
+                Arg.Any<ApplicationDbContext?>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(true);
+
+        var checker = new LibraryIntegrityChecker(
+            ctx,
+            _factory,
+            _metadata,
+            _chapterRecognition,
+            new ChapterProcessingService(
+                ctx,
+                _upscalerJsonHandling,
+                _fileSystem,
+                Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
+                NullLogger<ChapterProcessingService>.Instance
+            ),
+            _taskQueue,
+            _cbzConverter,
+            NullLogger<LibraryIntegrityChecker>.Instance,
+            _options,
+            _splitCoordinator,
+            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
+        );
+
+        await checker.CheckIntegrity(manga, ct);
+
+        await _splitCoordinator
+            .Received(1)
+            .EnqueueDetectionAsync(
+                chapter.Id,
+                Arg.Is<ApplicationDbContext>(c => c != null && !ReferenceEquals(c, ctx)),
+                Arg.Any<CancellationToken>()
+            );
     }
 
     [Fact]

@@ -220,7 +220,10 @@ public class SplitProcessingCoordinatorTests : IAsyncDisposable
         var chapterId = 1;
 
         // Act
-        await _coordinator.EnqueueDetectionAsync(chapterId, TestContext.Current.CancellationToken);
+        await _coordinator.EnqueueDetectionAsync(
+            chapterId,
+            cancellationToken: TestContext.Current.CancellationToken
+        );
 
         // Assert
         await _taskQueue

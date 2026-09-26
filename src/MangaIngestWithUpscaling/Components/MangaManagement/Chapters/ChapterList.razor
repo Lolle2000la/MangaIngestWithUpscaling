@@ -14,10 +14,12 @@
 @using MangaIngestWithUpscaling.Shared.Services.MetadataHandling
 @using MangaIngestWithUpscaling.Shared.Services.Analysis
 @using MangaIngestWithUpscaling.Data.Analysis
+@using Microsoft.EntityFrameworkCore
 @using Microsoft.Extensions.Localization
 @using MangaIngestWithUpscaling.Shared.Helpers
 @using Humanizer
 @using System.Globalization
+@using Microsoft.Extensions.DependencyInjection
 @using MudBlazor
 @inject ISplitApplicationService SplitApplicationService
 @inject ApplicationDbContext DbContext
@@ -27,7 +29,6 @@
 @inject ILogger<ChapterList> Logger
 @inject IDialogService DialogService
 @inject ISnackbar Snackbar
-@inject ILibraryIntegrityChecker LibraryIntegrityChecker
 @inject IFileSystem FileSystem
 @inject IChapterChangedNotifier ChapterChangedNotifier
 @inject IChapterMergeRevertService ChapterMergeRevertService
@@ -39,9 +40,10 @@
 @inject IManualSplitService ManualSplitService
 @inject IStringLocalizer<ChapterList> Loc
 @inject IStringLocalizer<SharedResource> SharedLoc
+@inject IServiceProvider ServiceProvider
 
 <MudTable T="ChapterItem" @bind-SelectedItems="selectedChapters" Items="@chapterItems" Dense="true"
-          MultiSelection="true" CanCancelEdit="true" RowEditCommit="r => _ = OnChapterMetadataCommit(r as ChapterItem)"
+          MultiSelection="true" CanCancelEdit="true" RowEditCommit="r => OnChapterMetadataCommit(r as ChapterItem)"
           RowEditCancel="r => OnChapterMetadataDiscard(r as ChapterItem)">
     <ToolBarContent>
         <MudStack Row>
@@ -214,10 +216,18 @@
     private ReadOnlyObservableCollection<ChapterItem> chapterItems = new([]);
     private SourceList<ChapterItem> chapters = new();
 
+    // Serializes this component's DbContext work: the circuit-scoped context is shared with every
+    // other component and service, and overlapping use makes EF throw "A second operation was
+    // started on this context instance". The gate is not re-entrant, so a gated operation must call
+    // the *Core method directly instead of another gated entry point. See AsyncGate.
+    private readonly AsyncGate _dbGate = new();
+
     private HashSet<ChapterItem> selectedChapters = new();
 
 
-    private async Task DeleteSelected()
+    private Task DeleteSelected() => _dbGate.RunAsync(DeleteSelectedCore);
+
+    private async Task DeleteSelectedCore()
     {
         var result = await DialogService.ShowMessageBoxAsync(Loc["Dialog_DeleteSelected_Title"],
             Loc["Dialog_DeleteSelected_Content"], yesText: SharedLoc["Yes"], cancelText: SharedLoc["No"]);
@@ -231,16 +241,21 @@
         }
     }
 
-    private async Task UpscaleSelectedChapters()
+    private Task UpscaleSelectedChapters() => _dbGate.RunAsync(UpscaleSelectedChaptersCore);
+
+    private async Task UpscaleSelectedChaptersCore()
     {
         var chaptersToUpscale = selectedChapters.Where(c => !c.Chapter.IsUpscaled).ToList();
         foreach (var c in chaptersToUpscale)
         {
-            await UpscaleChapter(c.Chapter);
+            // Already inside the gate; call the Core method directly (the gate is not re-entrant).
+            await UpscaleChapterCore(c.Chapter);
         }
     }
 
-    private async Task DeleteSelectedUpscaled()
+    private Task DeleteSelectedUpscaled() => _dbGate.RunAsync(DeleteSelectedUpscaledCore);
+
+    private async Task DeleteSelectedUpscaledCore()
     {
         var result = await DialogService.ShowMessageBoxAsync(Loc["Dialog_DeleteUpscaledSelected_Title"],
             Loc["Dialog_DeleteUpscaledSelected_Content"], SharedLoc["Yes"], cancelText: SharedLoc["No"]);
@@ -254,7 +269,9 @@
         }
     }
 
-    private async Task RevertSelectedMergedChapters()
+    private Task RevertSelectedMergedChapters() => _dbGate.RunAsync(RevertSelectedMergedChaptersCore);
+
+    private async Task RevertSelectedMergedChaptersCore()
     {
         // Filter to only merged chapters from the selection
         var mergedChapters = selectedChapters.Where(c => c.IsMerged).ToList();
@@ -306,7 +323,10 @@
         }
     }
 
-    private async Task DeleteChapterConfirm(Chapter chapter)
+    private Task DeleteChapterConfirm(Chapter chapter) =>
+        _dbGate.RunAsync(() => DeleteChapterConfirmCore(chapter));
+
+    private async Task DeleteChapterConfirmCore(Chapter chapter)
     {
         var result = await DialogService.ShowMessageBoxAsync(Loc["Dialog_DeleteChapter_Title"], Loc["Dialog_DeleteChapter_Content"],
             yesText: SharedLoc["Yes"], cancelText: SharedLoc["No"]);
@@ -316,7 +336,10 @@
         }
     }
 
-    private async Task RevertMergedChapterConfirm(Chapter chapter)
+    private Task RevertMergedChapterConfirm(Chapter chapter) =>
+        _dbGate.RunAsync(() => RevertMergedChapterConfirmCore(chapter));
+
+    private async Task RevertMergedChapterConfirmCore(Chapter chapter)
     {
         var result = await DialogService.ShowMessageBoxAsync(
             Loc["Dialog_RevertMergedChapter_Title"],
@@ -396,7 +419,30 @@
         }
     }
 
-    private async Task OnChapterMetadataCommit(ChapterItem? chapter)
+    private void OnChapterMetadataCommit(ChapterItem? chapter)
+    {
+        // RowEditCommit is fire-and-forget; observe the gated task so a failure in the metadata
+        // changer or rename is logged instead of becoming an unobserved task exception.
+        _ = CommitChapterMetadataAsync(chapter);
+    }
+
+    private async Task CommitChapterMetadataAsync(ChapterItem? chapter)
+    {
+        try
+        {
+            await _dbGate.RunAsync(() => OnChapterMetadataCommitCore(chapter));
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(
+                ex,
+                "Failed to commit metadata for chapter {ChapterId}",
+                chapter?.Chapter.Id
+            );
+        }
+    }
+
+    private async Task OnChapterMetadataCommitCore(ChapterItem? chapter)
     {
         if (chapter == null) return;
 
@@ -470,7 +516,9 @@
         InvalidateMergePossibilitiesCache();
     }
 
-    private async Task UpscaleChapter(Chapter chapter)
+    private Task UpscaleChapter(Chapter chapter) => _dbGate.RunAsync(() => UpscaleChapterCore(chapter));
+
+    private async Task UpscaleChapterCore(Chapter chapter)
     {
         if (chapter.IsUpscaled)
         {
@@ -497,7 +545,10 @@
             new UpscaleTask(chapter));
     }
 
-    private async Task DeleteUpscaledConfirm(Chapter chapter)
+    private Task DeleteUpscaledConfirm(Chapter chapter) =>
+        _dbGate.RunAsync(() => DeleteUpscaledConfirmCore(chapter));
+
+    private async Task DeleteUpscaledConfirmCore(Chapter chapter)
     {
         var result = await DialogService.ShowMessageBoxAsync(Loc["Dialog_DeleteUpscaledChapter_Title"],
             Loc["Dialog_DeleteUpscaledChapter_Content"], yesText: SharedLoc["Yes"], cancelText: SharedLoc["No"]);
@@ -647,7 +698,9 @@
         return success;
     }
 
-    protected override async Task OnInitializedAsync()
+    protected override Task OnInitializedAsync() => _dbGate.RunAsync(OnInitializedCore);
+
+    private async Task OnInitializedCore()
     {
         if (!DbContext.Entry(Manga).Collection(m => m.Chapters).IsLoaded)
         {
@@ -670,25 +723,60 @@
         // Force initial cache update and UI state refresh to ensure merge buttons appear
         await ForceUpdateMergePossibilitiesAsync();
 
-        _ = Task.Run(async () => { return await LibraryIntegrityChecker.CheckIntegrity(Manga); }).ContinueWith(async t =>
+        // Run the integrity check in its own DI scope so it gets a dedicated DbContext: it runs on a
+        // thread-pool thread and must not touch the circuit-scoped context concurrently with the UI.
+        _ = RunIntegrityCheckAsync();
+    }
+
+    private async Task RunIntegrityCheckAsync()
+    {
+        try
         {
-            if (t.IsFaulted)
+            bool libraryChanged;
+            await using (var scope = ServiceProvider.CreateAsyncScope())
             {
-                Logger.LogError(t.Exception, "Error checking library integrity for Manga ID {MangaId}", Manga?.Id);
+                var checker = scope.ServiceProvider.GetRequiredService<ILibraryIntegrityChecker>();
+                libraryChanged = await checker.CheckIntegrity(Manga);
+            }
+
+            if (!libraryChanged)
+            {
                 return;
             }
 
-            if (t.Result) // t.Result is the boolean from CheckIntegrity
+            // The gate is not re-entrant, but this is a fresh flow: RunAsync must acquire it so the
+            // reload cannot overlap an in-flight gated operation on the shared context.
+            await InvokeAsync(() => _dbGate.RunAsync(async () =>
             {
-                await InvokeAsync(async () =>
-                {
-                    await LoadChapters();
-                    InvalidateMergePossibilitiesCache();
-                    await UpdateMergePossibilitiesAsync();
-                    StateHasChanged();
-                });
-            }
-        }, TaskScheduler.FromCurrentSynchronizationContext());
+                await RefreshChaptersAsync();
+                await LoadChapters();
+                InvalidateMergePossibilitiesCache();
+                await UpdateMergePossibilitiesAsync();
+                StateHasChanged();
+            }));
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error checking library integrity for Manga ID {MangaId}", Manga?.Id);
+        }
+    }
+
+    private async Task RefreshChaptersAsync()
+    {
+        var chaptersEntry = DbContext.Entry(Manga).Collection(m => m.Chapters);
+
+        // The integrity check runs against its own DbContext, so its edits (removed chapters, a
+        // chapter whose upscaled file vanished being marked not upscaled) are invisible to this
+        // context's tracked Manga.Chapters. Detach the stale rows and re-query the collection so the
+        // reload below renders the checker's result instead of the old graph.
+        foreach (var chapter in Manga.Chapters.ToList())
+        {
+            DbContext.Entry(chapter).State = EntityState.Detached;
+        }
+
+        Manga.Chapters.Clear();
+        chaptersEntry.IsLoaded = false;
+        await chaptersEntry.LoadAsync();
     }
 
     private async Task<bool> LoadChapters()
@@ -908,7 +996,9 @@
         return match.Success ? match.Groups[1].Value : null;
     }
 
-    private async Task MergeSelectedChapters()
+    private Task MergeSelectedChapters() => _dbGate.RunAsync(MergeSelectedChaptersCore);
+
+    private async Task MergeSelectedChaptersCore()
     {
         if (!selectedChapters.Any())
         {
@@ -962,7 +1052,10 @@
         await PerformMergeOperations(mergeActionsWithLatest, includeLatest);
     }
 
-    private async Task MergeChapterConfirm(Chapter chapter)
+    private Task MergeChapterConfirm(Chapter chapter) =>
+        _dbGate.RunAsync(() => MergeChapterConfirmCore(chapter));
+
+    private async Task MergeChapterConfirmCore(Chapter chapter)
     {
         // Get all chapters in the series to properly identify merge actions
         var allChapters = chapterItems.Where(ci => !ci.IsMerged).Select(ci => ci.Chapter).ToList();
@@ -1260,130 +1353,138 @@
 
     private void DetectSplits(Chapter chapter)
     {
-        _ = InvokeAsync(async () =>
-        {
-            try
-            {
-                bool queued = await SplitProcessingCoordinator.EnqueueDetectionIfPlausibleAsync(chapter.Id);
-                if (queued)
-                {
-                    Snackbar.Add(string.Format(Loc["Snackbar_SplitDetectionQueued"], chapter.FileName), Severity.Success);
-                }
-                else
-                {
-                    Snackbar.Add(string.Format(Loc["Snackbar_SplitDetectionCompleted"], chapter.FileName), Severity.Success);
-                }
+        _ = InvokeAsync(() => _dbGate.RunAsync(() => DetectSplitsCore(chapter)));
+    }
 
-                await LoadChapters();
-                StateHasChanged();
-            }
-            catch (Exception ex)
+    private async Task DetectSplitsCore(Chapter chapter)
+    {
+        try
+        {
+            bool queued = await SplitProcessingCoordinator.EnqueueDetectionIfPlausibleAsync(chapter.Id);
+            if (queued)
             {
-                Logger.LogError(ex, "Failed to queue split detection for chapter {ChapterId}", chapter.Id);
-                Snackbar.Add(string.Format(Loc["Snackbar_SplitDetectionFailure"], ex.Message), Severity.Error);
+                Snackbar.Add(string.Format(Loc["Snackbar_SplitDetectionQueued"], chapter.FileName), Severity.Success);
             }
-        });
+            else
+            {
+                Snackbar.Add(string.Format(Loc["Snackbar_SplitDetectionCompleted"], chapter.FileName), Severity.Success);
+            }
+
+            await LoadChapters();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to queue split detection for chapter {ChapterId}", chapter.Id);
+            Snackbar.Add(string.Format(Loc["Snackbar_SplitDetectionFailure"], ex.Message), Severity.Error);
+        }
     }
 
     private void ViewSplits(Chapter chapter)
     {
-        _ = InvokeAsync(async () =>
+        _ = InvokeAsync(() => _dbGate.RunAsync(() => ViewSplitsCore(chapter)));
+    }
+
+    private async Task ViewSplitsCore(Chapter chapter)
+    {
+        try
         {
-            try
+            var parameters = new DialogParameters
             {
-                var parameters = new DialogParameters
-                {
-                    { "ChapterId", chapter.Id }
-                };
+                { "ChapterId", chapter.Id }
+            };
 
-                var options = new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseButton = true };
+            var options = new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseButton = true };
 
-                var dialog = await DialogService.ShowAsync<SplitEditorDialog>(Loc["Dialog_EditSplits_Title"], parameters, options);
-                await dialog.Result;
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError(ex, "Failed to show split editor dialog for chapter {ChapterId}", chapter.Id);
-            }
-        });
+            var dialog = await DialogService.ShowAsync<SplitEditorDialog>(Loc["Dialog_EditSplits_Title"], parameters, options);
+            await dialog.Result;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to show split editor dialog for chapter {ChapterId}", chapter.Id);
+        }
     }
 
     private void ApplySplits(Chapter chapter)
     {
-        _ = InvokeAsync(async () =>
+        _ = InvokeAsync(() => _dbGate.RunAsync(() => ApplySplitsCore(chapter)));
+    }
+
+    private async Task ApplySplitsCore(Chapter chapter)
+    {
+        try
         {
-            try
+            var result = await DialogService.ShowMessageBoxAsync(
+                Loc["Dialog_ApplySplits_Title"],
+                Loc["Dialog_ApplySplits_Content"],
+                SharedLoc["Yes"],
+                cancelText: SharedLoc["No"]);
+
+            if (result == true)
             {
-                var result = await DialogService.ShowMessageBoxAsync(
-                    Loc["Dialog_ApplySplits_Title"],
-                    Loc["Dialog_ApplySplits_Content"],
-                    SharedLoc["Yes"],
-                    cancelText: SharedLoc["No"]);
+                var splitState = await SplitStateManager.GetStateAsync(chapter.Id, null, CancellationToken.None);
 
-                if (result == true)
-                {
-                    var splitState = await SplitStateManager.GetStateAsync(chapter.Id, null, CancellationToken.None);
+                var latestFindingDetectorVersion = await DbContext
+                    .Set<StripSplitFinding>()
+                    .Where(f => f.ChapterId == chapter.Id)
+                    .OrderByDescending(f => f.DetectorVersion)
+                    .Select(f => (int?)f.DetectorVersion)
+                    .FirstOrDefaultAsync(CancellationToken.None);
 
-                    var latestFindingDetectorVersion = await DbContext
-                        .Set<StripSplitFinding>()
-                        .Where(f => f.ChapterId == chapter.Id)
-                        .OrderByDescending(f => f.DetectorVersion)
-                        .Select(f => (int?)f.DetectorVersion)
-                        .FirstOrDefaultAsync(CancellationToken.None);
+                int detectorVersion =
+                    latestFindingDetectorVersion
+                    ?? splitState?.LastProcessedDetectorVersion
+                    ?? SplitDetectionService.CURRENT_DETECTOR_VERSION;
 
-                    int detectorVersion =
-                        latestFindingDetectorVersion
-                        ?? splitState?.LastProcessedDetectorVersion
-                        ?? SplitDetectionService.CURRENT_DETECTOR_VERSION;
+                await SplitApplicationService.ApplySplitsAsync(chapter.Id, detectorVersion, CancellationToken.None);
+                Snackbar.Add(string.Format(Loc["Snackbar_SplitApplicationQueued"], chapter.FileName), Severity.Success);
 
-                    await SplitApplicationService.ApplySplitsAsync(chapter.Id, detectorVersion, CancellationToken.None);
-                    Snackbar.Add(string.Format(Loc["Snackbar_SplitApplicationQueued"], chapter.FileName), Severity.Success);
+                await SplitStateManager.ResetToPendingAsync(chapter.Id, null, CancellationToken.None);
 
-                    await SplitStateManager.ResetToPendingAsync(chapter.Id, null, CancellationToken.None);
-
-                    await LoadChapters();
-                    StateHasChanged();
-                }
+                await LoadChapters();
+                StateHasChanged();
             }
-            catch (Exception ex)
-            {
-                Logger.LogError(ex, "Failed to apply splits for chapter {ChapterId}", chapter.Id);
-                Snackbar.Add(string.Format(Loc["Snackbar_SplitApplicationFailure"], ex.Message), Severity.Error);
-            }
-        });
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to apply splits for chapter {ChapterId}", chapter.Id);
+            Snackbar.Add(string.Format(Loc["Snackbar_SplitApplicationFailure"], ex.Message), Severity.Error);
+        }
     }
 
     private void ManualSplit(Chapter chapter)
     {
-        _ = InvokeAsync(async () =>
+        _ = InvokeAsync(() => _dbGate.RunAsync(() => ManualSplitCore(chapter)));
+    }
+
+    private async Task ManualSplitCore(Chapter chapter)
+    {
+        try
         {
-            try
+            var parameters = new DialogParameters
             {
-                var parameters = new DialogParameters
-                {
-                    { "ChapterId", chapter.Id }
-                };
+                { "ChapterId", chapter.Id }
+            };
 
-                var options = new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseButton = true };
+            var options = new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseButton = true };
 
-                var dialog = await DialogService.ShowAsync<ManualSplitDialog>(Loc["Dialog_ManualSplit_Title"], parameters, options);
-                var result = await dialog.Result;
+            var dialog = await DialogService.ShowAsync<ManualSplitDialog>(Loc["Dialog_ManualSplit_Title"], parameters, options);
+            var result = await dialog.Result;
 
-                if (result is { Canceled: false })
-                {
-                    await LoadChapters();
-                    StateHasChanged();
-                }
-                else if (result == null)
-                {
-                    Logger.LogWarning("Dialog result was null for ManualSplitDialog");
-                }
-            }
-            catch (Exception ex)
+            if (result is { Canceled: false })
             {
-                Logger.LogError(ex, "Failed in manual split dialog for chapter {ChapterId}", chapter.Id);
+                await LoadChapters();
+                StateHasChanged();
             }
-        });
+            else if (result == null)
+            {
+                Logger.LogWarning("Dialog result was null for ManualSplitDialog");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed in manual split dialog for chapter {ChapterId}", chapter.Id);
+        }
     }
 
     private record ChapterItem
@@ -1396,5 +1497,4 @@
         public ChapterSplitProcessingState? SplitState { get; set; }
         public int SplitFindingsCount { get; set; }
     }
-
 }
