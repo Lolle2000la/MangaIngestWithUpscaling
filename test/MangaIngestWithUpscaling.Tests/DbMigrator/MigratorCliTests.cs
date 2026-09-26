@@ -140,6 +140,131 @@ public class MigratorCliTests
     }
 
     [Fact]
+    public async Task RunAsync_BareFlags_AreTrueAndBatchSizeDefaults()
+    {
+        MigratorOptions? captured = null;
+
+        int exitCode = await MigratorCli.RunAsync(
+            [
+                "--from",
+                "sqlite",
+                "--to",
+                "postgres",
+                "--from-connection",
+                "from",
+                "--to-connection",
+                "to",
+                "--force",
+                "--include-logs",
+            ],
+            (options, _, _) =>
+            {
+                captured = options;
+                return Task.CompletedTask;
+            }
+        );
+
+        Assert.Equal(0, exitCode);
+        Assert.NotNull(captured);
+        Assert.True(captured!.Force);
+        Assert.True(captured.IncludeLogs);
+        Assert.Equal(500, captured.BatchSize);
+    }
+
+    [Fact]
+    public async Task RunAsync_SpaceSeparatedFalse_IsUnset()
+    {
+        MigratorOptions? captured = null;
+
+        int exitCode = await MigratorCli.RunAsync(
+            [
+                "--from",
+                "sqlite",
+                "--to",
+                "postgres",
+                "--from-connection",
+                "from",
+                "--to-connection",
+                "to",
+                "--force",
+                "false",
+                "--include-logs",
+                "false",
+            ],
+            (options, _, _) =>
+            {
+                captured = options;
+                return Task.CompletedTask;
+            }
+        );
+
+        Assert.Equal(0, exitCode);
+        Assert.NotNull(captured);
+        Assert.False(captured!.Force);
+        Assert.False(captured.IncludeLogs);
+    }
+
+    [Fact]
+    public async Task RunAsync_Help_ReturnsZeroAndPrintsUsage()
+    {
+        var output = new StringWriter();
+        var error = new StringWriter();
+
+        int exitCode = await MigratorCli.RunAsync(["--help"], NeverRuns, output, error);
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("--from", output.ToString());
+        Assert.Contains("--include-logs", output.ToString());
+    }
+
+    [Fact]
+    public async Task RunAsync_UnknownOption_ReturnsNonZero()
+    {
+        int exitCode = await MigratorCli.RunAsync(
+            [
+                "--from",
+                "sqlite",
+                "--to",
+                "postgres",
+                "--from-connection",
+                "from",
+                "--to-connection",
+                "to",
+                "--bogus",
+            ],
+            NeverRuns,
+            new StringWriter(),
+            new StringWriter()
+        );
+
+        Assert.NotEqual(0, exitCode);
+    }
+
+    [Fact]
+    public async Task RunAsync_NonPositiveBatchSize_ReturnsNonZero()
+    {
+        int exitCode = await MigratorCli.RunAsync(
+            [
+                "--from",
+                "sqlite",
+                "--to",
+                "postgres",
+                "--from-connection",
+                "from",
+                "--to-connection",
+                "to",
+                "--batch-size",
+                "0",
+            ],
+            NeverRuns,
+            new StringWriter(),
+            new StringWriter()
+        );
+
+        Assert.NotEqual(0, exitCode);
+    }
+
+    [Fact]
     public async Task Migrate_SqliteSourceFileMissing_FailsWithoutCreatingTheFile()
     {
         string path = Path.Combine(
@@ -246,29 +371,14 @@ public class MigratorCliTests
         public DateTimeOffset Offset { get; set; }
     }
 
-    [Theory]
-    [InlineData("--force", "force", true)]
-    [InlineData("--force=true", "force", true)]
-    [InlineData("--force=false", "force", false)]
-    [InlineData("--force=0", "force", false)]
-    [InlineData("--include-logs", "include-logs", true)]
-    [InlineData("--include-logs=false", "include-logs", false)]
-    public void IsFlagSet_ParsesExplicitBooleanValues(string arg, string name, bool expected)
-    {
-        Dictionary<string, string> options = MigratorCli.ParseArgs([arg]);
-        Assert.Equal(expected, MigratorCli.IsFlagSet(options, name));
-    }
-
-    [Fact]
-    public void IsFlagSet_SpaceSeparatedFalse_IsUnset()
-    {
-        Dictionary<string, string> options = MigratorCli.ParseArgs(["--force", "false"]);
-        Assert.False(MigratorCli.IsFlagSet(options, "force"));
-    }
-
-    [Fact]
-    public void IsFlagSet_AbsentFlag_IsUnset() =>
-        Assert.False(MigratorCli.IsFlagSet(MigratorCli.ParseArgs([]), "force"));
+    private static Task NeverRuns(
+        MigratorOptions options,
+        Action<string> log,
+        CancellationToken cancellationToken
+    ) =>
+        throw new InvalidOperationException(
+            "The migration must not run when the arguments do not parse."
+        );
 
     private static MigratorOptions OptionsWithConnection(string fromConnection) =>
         new(

@@ -23,6 +23,9 @@
     <ProjectReference Include="..\..\src\MangaIngestWithUpscaling.Data.Sqlite\MangaIngestWithUpscaling.Data.Sqlite.csproj" />
     <ProjectReference Include="..\..\src\MangaIngestWithUpscaling.Data.Postgres\MangaIngestWithUpscaling.Data.Postgres.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" Version="2.0.12" />
+  </ItemGroup>
   <!--
     The referenced web app copies its linked MangaJaNaiConverterGui ML backend (multiple GB) and
     appstate2.json into its output as content. Those 'None' items flow transitively through the
