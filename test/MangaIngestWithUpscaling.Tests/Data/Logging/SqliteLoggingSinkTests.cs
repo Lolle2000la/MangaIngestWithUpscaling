@@ -4,6 +4,7 @@ using MangaIngestWithUpscaling.Data.Sqlite;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
+using Serilog.Events;
 using LogEntity = MangaIngestWithUpscaling.Data.LogModel.Log;
 
 namespace MangaIngestWithUpscaling.Tests.Data.Logging;
@@ -73,6 +74,73 @@ public class SqliteLoggingSinkTests
             );
 
             await AssertSinkColumnsMatchModelAsync(connectionString, logContext, ct);
+        }
+        finally
+        {
+            // Release the sink's pooled SQLite connections so the temp directory can be removed.
+            SqliteConnection.ClearAllPools();
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+            catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public async Task Sink_PersistsSerilogLevelNames()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        string directory = Path.Combine(Path.GetTempPath(), $"manga-logs-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+
+        try
+        {
+            string dbPath = Path.Combine(directory, "logs.db");
+
+            var logger = new LoggerConfiguration()
+                .MinimumLevel.Verbose()
+                .WriteTo.SQLite(
+                    dbPath,
+                    tableName: "Logs",
+                    storeTimestampInUtc: true,
+                    retentionPeriod: TimeSpan.FromDays(7),
+                    maxDatabaseSize: 100,
+                    rollOver: false
+                )
+                .CreateLogger();
+
+            logger.Verbose("verbose");
+            logger.Debug("debug");
+            logger.Information("information");
+            logger.Warning("warning");
+            logger.Error("error");
+            logger.Fatal("fatal");
+            (logger as IDisposable)?.Dispose();
+
+            string connectionString = new SqliteConnectionStringBuilder
+            {
+                DataSource = dbPath,
+            }.ToString();
+            var optionsBuilder = new DbContextOptionsBuilder<LoggingDbContext>();
+            DatabaseSetup.UseDatabaseProvider(
+                optionsBuilder,
+                DatabaseProvider.Sqlite,
+                connectionString,
+                typeof(SqliteMigrationsAssemblyMarker).Assembly.FullName!
+            );
+            await using var logContext = new LoggingDbContext(optionsBuilder.Options);
+
+            List<string> stored = await logContext
+                .LogEntries.Select(log => log.Level)
+                .ToListAsync(ct);
+
+            // The logs page filters on these exact strings (LogLevelFilter), so this pins the sink
+            // side of the contract: a Fatal event must be stored as "Fatal", not "Critical".
+            Assert.Equal(
+                Enum.GetNames<LogEventLevel>().OrderBy(name => name),
+                stored.OrderBy(name => name)
+            );
         }
         finally
         {

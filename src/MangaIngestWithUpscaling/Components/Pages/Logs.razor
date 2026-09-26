@@ -1,5 +1,7 @@
 ﻿@page "/logs"
 @using MangaIngestWithUpscaling.Data.LogModel
+@using MangaIngestWithUpscaling.Services.Logging
+@using Serilog.Events
 @inject LoggingDbContext DbContext
 @inject IDialogService DialogService
 @inject IStringLocalizer<Logs> Loc
@@ -13,7 +15,7 @@
         <MudSpacer />
         <MudSelect @bind-Value="_selectedLevel" @bind-Value:after="async () => await table.ReloadServerData()"
             Label="@Loc["FilterLabel"]" Immediate="true">
-            @foreach (var level in Enum.GetValues<LogLevel>())
+            @foreach (var level in Enum.GetValues<LogEventLevel>())
             {
                 <MudSelectItem Value="@level">@level.ToString()</MudSelectItem>
             }
@@ -61,7 +63,7 @@
 
 @code {
     private List<Log> _logs = new();
-    private LogLevel _selectedLevel = LogLevel.Warning;
+    private LogEventLevel _selectedLevel = LogEventLevel.Warning;
 
     private MudTable<Log> table = null!;
 
@@ -69,9 +71,9 @@
     {
         IQueryable<Log> query = DbContext.Logs;
 
-        var logLevels = Enum.GetNames<LogLevel>()
-        .Skip((int)_selectedLevel)
-        .ToList();
+        // Serilog's level names ("Verbose"…"Fatal"), not Microsoft.Extensions.Logging's
+        // ("Trace"…"Critical"), because those are what the sinks persist.
+        var logLevels = LogLevelFilter.AtOrAbove(_selectedLevel);
 
         query = query.Where(log => logLevels.Contains(log.Level));
 
