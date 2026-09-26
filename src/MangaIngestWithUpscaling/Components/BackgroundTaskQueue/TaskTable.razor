@@ -41,9 +41,18 @@
         <MudTd DataLabel="@Loc["Header_Name"]">
             <TaskTitle Task="@context.Data" />
         </MudTd>
-        <MudTd DataLabel="@Loc["Header_QueuedAt"]">@context.CreatedAt.ToLocalTime()</MudTd>
-        <MudTd DataLabel="@Loc["Header_FinishedAt"]">@(context.ProcessedAt is not null ?
-                        context.ProcessedAt.Value.ToLocalTime() : "")
+        <MudTd DataLabel="@Loc["Header_QueuedAt"]">
+            <LocalTime Value="@context.CreatedAt" />
+        </MudTd>
+        <MudTd DataLabel="@Loc["Header_FinishedAt"]">
+            @if (context.ProcessedAt is not null)
+            {
+                <LocalTime Value="context.ProcessedAt.Value" />
+            }
+            else
+            {
+                @("")
+            }
         </MudTd>
         <MudTd DataLabel="@Loc["Header_Status"]">
             @Loc[$"Status_{context.Status}"]

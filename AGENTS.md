@@ -83,7 +83,7 @@ dotnet run --project src/MangaIngestWithUpscaling
 
 2. **Format Code:**
    ```bash
-   dotnet csharpier format src/ test/ # Or even just the modified files
+   dotnet csharpier format src/ test/ tools/ # Or even just the modified files
    # Only ever commit formatted code
    # Note that the submodule are rightly excluded from the glob pattern above
    ```
@@ -114,6 +114,10 @@ dotnet run --project src/MangaIngestWithUpscaling
      dotnet test --solution MangaIngestWithUpscaling.sln --filter-not-trait Category=Download
      ```
      Don't run download tests unless you have a specific reason. They can take very long.
+   - To also run the main test project against PostgreSQL (Testcontainers, Docker required):
+     ```bash
+     TEST_DB_PROVIDER=postgres dotnet test test/MangaIngestWithUpscaling.Tests/MangaIngestWithUpscaling.Tests.csproj --filter-not-trait Category=Download
+     ```
    - If you add new features or make changes that affect logic, consider writing new or updating existing tests.
    - Ensure tests pass before PR or merge.
    - Unless specified differently, tests should be written using xUnit v3, NSubstitute, and bUnit if testing Blazor components.
@@ -141,6 +145,13 @@ dotnet run --project src/MangaIngestWithUpscaling
 - **Automatic timestamps**: Entities whose `CreatedAt`/`ModifiedAt` should be managed by `ApplicationDbContext.UpdateTimestamps` must implement `IHasCreatedAt` / `IHasModifiedAt` (`src/MangaIngestWithUpscaling.Shared/Data/Abstractions`). Entities whose timestamps are set manually must **not** implement them.
 - **Library configuration**: Child entities of a `Library` that represent configuration (ingest paths, filter rules, rename rules) implement `ILibraryConfiguration` so that adding, updating or deleting one bumps the owning `Library.ModifiedAt`.
 
+## Logging schema
+
+- The `Logs` table is **not** managed by EF migrations; the `Log` entity (`src/MangaIngestWithUpscaling.Data/LogModel/Log.cs`) is the source of truth for its shape.
+- Adding, renaming or changing the nullability of a `Log` property requires updating `PostgresLogging.CreateTableSql`. For SQLite the table is created by the external `Serilog.Sinks.SQLite` sink; a guard test (`SqliteLoggingSinkTests`) pins the sink schema to the model.
+- Log timestamps are stored in **UTC** on both providers; the SQLite sink is configured with `storeTimestampInUtc: true` so the UI can render them in the browser's time zone.
+- The migrator copies tables and resets PostgreSQL sequences from hand-maintained lists in `DataMigrator`; update them when entities change. `MigratorTableCoverageTests` fails until they match the EF model.
+
 ## Project Structure
 
 ### Key Directories
@@ -149,12 +160,17 @@ dotnet run --project src/MangaIngestWithUpscaling
 ├── src/
 │   ├── MangaIngestWithUpscaling/          # Main Blazor web application
 │   ├── MangaIngestWithUpscaling.Shared/   # Shared library (models, services)
+│   ├── MangaIngestWithUpscaling.Data/     # EF Core entities, DbContexts, task queries
+│   ├── MangaIngestWithUpscaling.Data.Sqlite/   # SQLite migrations
+│   ├── MangaIngestWithUpscaling.Data.Postgres/ # PostgreSQL migrations
 │   └── MangaIngestWithUpscaling.RemoteWorker/ # Remote upscaling worker
 ├── test/
-│   ├── MangaIngestWithUpscaling.Tests/    # Unit tests for main app
+│   ├── MangaIngestWithUpscaling.Tests/    # Unit tests for main app (dual-provider)
 │   ├── MangaIngestWithUpscaling.Shared.Tests/ # Unit tests for shared lib
 │   ├── MangaIngestWithUpscaling.RemoteWorker.Tests/ # Unit tests for worker
 │   └── MangaIngestWithUpscaling.Tests.UI/ # UI tests
+├── tools/
+│   └── MangaIngestWithUpscaling.DbMigrator/ # SQLite <-> PostgreSQL data migration CLI
 ├── MangaJaNaiConverterGui/            # Git submodule (ML backend files)
 ├── docs/                              # Documentation
 └── .github/workflows/                 # CI/CD pipelines
@@ -202,26 +218,30 @@ dotnet build src/MangaIngestWithUpscaling.Shared/
 ### Code Formatting
 ```bash
 # Check formatting without changes
-dotnet csharpier check src/ test/
+dotnet csharpier check src/ test/ tools/
 
 # Apply formatting fixes
-dotnet csharpier format src/ test/
+dotnet csharpier format src/ test/ tools/
 ```
 
 ### Database Operations
-The application uses SQLite with Entity Framework Core. Database migrations are applied automatically on startup.
+The application supports SQLite (default) and PostgreSQL with Entity Framework Core. Migrations are applied automatically on startup. See [Database Providers](./docs/DATABASE_PROVIDERS.md) for configuration and the SQLite ⇄ PostgreSQL migration tool.
 
-There are two contexts — `ApplicationDbContext` (application data) and `LoggingDbContext` (logs) — so EF tooling commands must pass `--context`:
+Each provider owns its migrations in a separate assembly (`MangaIngestWithUpscaling.Data.Sqlite` / `MangaIngestWithUpscaling.Data.Postgres`). Scaffold a schema change for both providers with:
 
 ```bash
-# Add a migration after changing the model
-dotnet ef migrations add <Name> --project src/MangaIngestWithUpscaling --startup-project src/MangaIngestWithUpscaling --context ApplicationDbContext
+./scripts/create-dual-migration.sh <Name>
+```
 
-# Verify the model and snapshot agree (should be clean before merging)
-dotnet ef migrations has-pending-model-changes --project src/MangaIngestWithUpscaling --startup-project src/MangaIngestWithUpscaling --context ApplicationDbContext
+To verify a single provider's model and snapshot agree:
+
+```bash
+dotnet ef migrations has-pending-model-changes --project src/MangaIngestWithUpscaling.Data.Sqlite --startup-project src/MangaIngestWithUpscaling.Data.Sqlite --context ApplicationDbContext
+dotnet ef migrations has-pending-model-changes --project src/MangaIngestWithUpscaling.Data.Postgres --startup-project src/MangaIngestWithUpscaling.Data.Postgres --context ApplicationDbContext
 ```
 
 - Review generated migrations before committing. Data backfills must run **before** a column is dropped (see `AddMultipleIngestPaths`), and migrations that transform data should get a regression test that migrates to the previous migration, seeds old-schema data, then migrates forward (see `AddMultipleIngestPathsMigrationTests`).
+- Data-backfill migrations must use provider-specific SQL (SQLite's `json_each` vs PostgreSQL's `jsonb_array_elements_text`).
 - An "EF tools version is older than the runtime" warning is expected and harmless.
 
 ### Testing Scenarios

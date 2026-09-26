@@ -35,7 +35,7 @@ public class IngestProcessorSplitDetectionTests : IDisposable
 
     public IngestProcessorSplitDetectionTests()
     {
-        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _testDb = TestDatabaseHelper.CreateDatabase();
         _tempRoot = Path.Combine(
             Path.GetTempPath(),
             "ingest_split_test_" + Guid.NewGuid().ToString("N")[..8]

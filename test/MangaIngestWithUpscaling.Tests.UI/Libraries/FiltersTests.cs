@@ -5,8 +5,8 @@ using System.Linq;
 using MangaIngestWithUpscaling.Components.Libraries.Filters;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.AspNetCore.Components;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
 using MudBlazor.Services;
@@ -16,6 +16,7 @@ namespace MangaIngestWithUpscaling.Tests.UI.Libraries;
 
 public class FiltersTests : BunitContext
 {
+    private TestDatabaseHelper.TestDbContext _testDb = null!;
     private ApplicationDbContext _dbContext = null!;
 
     public FiltersTests()
@@ -26,15 +27,8 @@ public class FiltersTests : BunitContext
 
     private void SetupDatabase()
     {
-        var connection = new SqliteConnection("Data Source=:memory:");
-        connection.Open();
-
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseSqlite(connection)
-            .Options;
-
-        _dbContext = new ApplicationDbContext(options);
-        _dbContext.Database.EnsureCreated();
+        _testDb = TestDatabaseHelper.CreateDatabase();
+        _dbContext = _testDb.Context;
     }
 
     private void RegisterServices()
@@ -413,8 +407,7 @@ public class FiltersTests : BunitContext
     {
         if (disposing)
         {
-            _dbContext?.Database.CloseConnection();
-            _dbContext?.Dispose();
+            _testDb?.Dispose();
         }
         base.Dispose(disposing);
     }

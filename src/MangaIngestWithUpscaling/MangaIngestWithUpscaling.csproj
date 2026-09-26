@@ -44,8 +44,10 @@
     <PackageReference Include="Microsoft.Build.Tasks.Core" Version="18.9.6" />
     <PackageReference Include="Microsoft.Build.Utilities.Core" Version="18.9.6" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.12" />
+    <!-- Used directly for the PostgreSQL Logs-table bootstrap; pin it rather than rely on the
+         transitive reference through MangaIngestWithUpscaling.Data.Postgres. -->
+    <PackageReference Include="Npgsql" Version="10.0.3" />
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
-    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.12" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="10.0.12">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
@@ -70,6 +72,7 @@
     <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
     <PackageReference Include="Serilog.Settings.Configuration" Version="10.0.1" />
     <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
+    <PackageReference Include="Serilog.Sinks.Postgresql.Alternative" Version="4.3.0" />
     <PackageReference Include="Serilog.Sinks.SQLite" Version="7.0.0" />
     <PackageReference Include="NetVips" Version="3.2.0" />
     <!-- Platform-specific NetVips native libraries -->
@@ -147,5 +150,8 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\MangaIngestWithUpscaling.Shared\MangaIngestWithUpscaling.Shared.csproj" />
+    <ProjectReference Include="..\MangaIngestWithUpscaling.Data\MangaIngestWithUpscaling.Data.csproj" />
+    <ProjectReference Include="..\MangaIngestWithUpscaling.Data.Sqlite\MangaIngestWithUpscaling.Data.Sqlite.csproj" />
+    <ProjectReference Include="..\MangaIngestWithUpscaling.Data.Postgres\MangaIngestWithUpscaling.Data.Postgres.csproj" />
   </ItemGroup>
 </Project>

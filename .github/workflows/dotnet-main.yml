@@ -9,7 +9,18 @@ on:
     paths:
       - "src/MangaIngestWithUpscaling/**"
       - "src/MangaIngestWithUpscaling.Shared/**"
+      - "src/MangaIngestWithUpscaling.Data/**"
+      - "src/MangaIngestWithUpscaling.Data.Sqlite/**"
+      - "src/MangaIngestWithUpscaling.Data.Postgres/**"
+      - "src/MangaIngestWithUpscaling.RemoteWorker/**"
+      - "test/MangaIngestWithUpscaling.Tests/**"
+      - "test/MangaIngestWithUpscaling.Tests.UI/**"
+      - "test/MangaIngestWithUpscaling.Shared.Tests/**"
+      - "test/MangaIngestWithUpscaling.RemoteWorker.Tests/**"
+      - "tools/MangaIngestWithUpscaling.DbMigrator/**"
+      - "scripts/**"
       - "MangaIngestWithUpscaling.sln"
+      - "docker-compose.yml"
       - "Dockerfile"
       - "rocm.Dockerfile"
       - "remoteonly.Dockerfile"
@@ -34,7 +45,17 @@ jobs:
         run: dotnet build --no-restore MangaIngestWithUpscaling.sln /warnaserror
       - name: Test shared
         run: dotnet test --no-build --verbosity normal --project test/MangaIngestWithUpscaling.Shared.Tests/MangaIngestWithUpscaling.Shared.Tests.csproj --filter-not-trait Category=Download
+      # The SQLite steps run the full suite, including the slow Category=Download tests; the
+      # PostgreSQL passes skip them because a download test does not depend on the database provider.
       - name: Test server
         run: dotnet test --no-build --verbosity normal --project test/MangaIngestWithUpscaling.Tests/MangaIngestWithUpscaling.Tests.csproj
+      - name: Test server against PostgreSQL (Testcontainers)
+        env:
+          TEST_DB_PROVIDER: postgres
+        run: dotnet test --no-build --verbosity normal --project test/MangaIngestWithUpscaling.Tests/MangaIngestWithUpscaling.Tests.csproj --filter-not-trait Category=Download
       - name: Test server UI
         run: dotnet test --no-build --verbosity normal --project test/MangaIngestWithUpscaling.Tests.UI/MangaIngestWithUpscaling.Tests.UI.csproj
+      - name: Test server UI against PostgreSQL (Testcontainers)
+        env:
+          TEST_DB_PROVIDER: postgres
+        run: dotnet test --no-build --verbosity normal --project test/MangaIngestWithUpscaling.Tests.UI/MangaIngestWithUpscaling.Tests.UI.csproj --filter-not-trait Category=Download

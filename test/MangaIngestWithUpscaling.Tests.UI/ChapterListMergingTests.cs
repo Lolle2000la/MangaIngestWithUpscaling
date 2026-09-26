@@ -19,6 +19,7 @@ using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Tests.Infrastructure;
 using MangaIngestWithUpscaling.Tests.Services.Analysis;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
@@ -33,6 +34,7 @@ namespace MangaIngestWithUpscaling.Tests.UI;
 
 public class ChapterListMergingTests : BunitContext
 {
+    private TestDatabaseHelper.TestDbContext _testDb = null!;
     private ApplicationDbContext _dbContext = null!;
     private IChapterChangedNotifier _subChapterChangedNotifier = null!;
     private IDialogService _subDialogService = null!;
@@ -86,14 +88,8 @@ public class ChapterListMergingTests : BunitContext
 
     private void SetupDatabase()
     {
-        DbContextOptions<ApplicationDbContext> options =
-            new DbContextOptionsBuilder<ApplicationDbContext>()
-                .UseSqlite("Data Source=:memory:")
-                .Options;
-
-        _dbContext = new ApplicationDbContext(options);
-        _dbContext.Database.OpenConnection();
-        _dbContext.Database.EnsureCreated();
+        _testDb = TestDatabaseHelper.CreateDatabase();
+        _dbContext = _testDb.Context;
     }
 
     private void RegisterServices()
@@ -380,11 +376,14 @@ public class ChapterListMergingTests : BunitContext
         // Assert
         Assert.NotNull(component);
 
-        // Verify merge coordinator was called for getting possibilities
+        // Verify merge coordinator was called for getting possibilities. The component loads
+        // chapters asynchronously, so wait for the call instead of asserting immediately.
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
-        await _subMergeCoordinator
-            .Received()
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>());
+        component.WaitForAssertion(() =>
+            _subMergeCoordinator
+                .Received()
+                .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+        );
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
     }
 
@@ -392,8 +391,7 @@ public class ChapterListMergingTests : BunitContext
     {
         if (disposing)
         {
-            _dbContext?.Database.CloseConnection();
-            _dbContext?.Dispose();
+            _testDb?.Dispose();
         }
 
         base.Dispose(disposing);
@@ -523,11 +521,14 @@ public class ChapterListMergingTests : BunitContext
             parameters => parameters.Add(p => p.Manga, manga)
         );
 
-        // Assert - Check that merge possibilities service is called (indicates caching system works)
+        // Assert - Check that merge possibilities service is called (indicates caching system works).
+        // Wait for the asynchronous chapter load to complete first.
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
-        await _subMergeCoordinator
-            .Received()
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>());
+        component.WaitForAssertion(() =>
+            _subMergeCoordinator
+                .Received()
+                .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+        );
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Check that merge buttons exist in the UI
@@ -569,11 +570,14 @@ public class ChapterListMergingTests : BunitContext
             parameters => parameters.Add(p => p.Manga, manga)
         );
 
-        // Assert - Verify that the component properly calls the merge coordinator for possibilities
+        // Assert - Verify that the component properly calls the merge coordinator for possibilities.
+        // Wait for the asynchronous chapter load to complete first.
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
-        await _subMergeCoordinator
-            .Received()
-            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>());
+        component.WaitForAssertion(() =>
+            _subMergeCoordinator
+                .Received()
+                .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+        );
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Test that merge button exists when there are merge possibilities
@@ -793,29 +797,30 @@ public class ChapterListMergingTests : BunitContext
             parameters => parameters.Add(p => p.Manga, manga)
         );
 
-        // Verify initial state - both individual chapters should be visible
-        IEnumerable<IElement> initialRows = component.FindAll("tr");
-        IElement? initialChapter11 = initialRows.FirstOrDefault(row =>
-            row.TextContent.Contains("Chapter 1.1.cbz")
-        );
-        IElement? initialChapter12 = initialRows.FirstOrDefault(row =>
-            row.TextContent.Contains("Chapter 1.2.cbz")
-        );
+        // Verify initial state - both individual chapters should be visible. The chapters load
+        // asynchronously, so wait for them to appear.
+        component.WaitForAssertion(() =>
+        {
+            IEnumerable<IElement> rows = component.FindAll("tr");
+            Assert.Contains(rows, row => row.TextContent.Contains("Chapter 1.1.cbz"));
+            Assert.Contains(rows, row => row.TextContent.Contains("Chapter 1.2.cbz"));
+        });
 
-        Assert.NotNull(initialChapter11); // Chapter 1.1 should be visible initially
-        Assert.NotNull(initialChapter12); // Chapter 1.2 should be visible initially
-
-        // Step 2: Find and click the merge button for Chapter 1.1
-        IEnumerable<IElement> mergeButtons = component
+        // Step 2: Count the merge buttons before merging.
+        int initialMergeButtonCount = component
             .FindAll("button")
-            .Where(btn => btn.GetAttribute("title")?.Contains("Merge this chapter") == true);
+            .Count(btn => btn.GetAttribute("title")?.Contains("Merge this chapter") == true);
+        Assert.True(initialMergeButtonCount > 0, "Should find merge buttons in the component");
 
-        Assert.True(mergeButtons.Any(), "Should find merge buttons in the component");
-
-        IElement mergeButton = mergeButtons.First();
-
-        // Act - Step 3: Click the merge button to trigger actual UI merge action
-        await mergeButton.ClickAsync(new MouseEventArgs());
+        // Act - Step 3: Click the merge button to trigger actual UI merge action. The find and click
+        // happen inside InvokeAsync so the element's event handler is still valid at click time (the
+        // async chapter load re-renders the tree, which otherwise invalidates the element).
+        await component.InvokeAsync(() =>
+            component
+                .FindAll("button")
+                .First(btn => btn.GetAttribute("title")?.Contains("Merge this chapter") == true)
+                .Click(new MouseEventArgs())
+        );
 
         // The component should automatically refresh after the merge operation
 
@@ -823,15 +828,12 @@ public class ChapterListMergingTests : BunitContext
         component.WaitForAssertion(() =>
         {
             IEnumerable<IElement> finalRows = component.FindAll("tr");
-            foreach (var r in finalRows)
-            {
-                Console.WriteLine($"Row: {r.TextContent}");
-            }
 
-            // 1. Verify that the merged chapter is now displayed with correct filename
+            // Wait for the refresh that replaces the parts with the merged chapter. Match on the
+            // merged filename, not the series name: every row contains "Test Chapter", so that
+            // alone would pass before the merge has been reflected in the UI.
             IElement? mergedChapterRow = finalRows.FirstOrDefault(row =>
                 row.TextContent.Contains("Chapter 1.cbz")
-                || row.TextContent.Contains("Test Chapter")
             );
             Assert.NotNull(mergedChapterRow); // Merged chapter should be visible
         });
@@ -912,7 +914,7 @@ public class ChapterListMergingTests : BunitContext
             .Where(btn => btn.GetAttribute("title")?.Contains("Merge this chapter") == true);
         // Should have fewer merge buttons now (or none if only the merged chapter and third chapter remain)
         Assert.True(
-            remainingMergeButtons.Count() < mergeButtons.Count(),
+            remainingMergeButtons.Count() < initialMergeButtonCount,
             "Should have fewer merge buttons after merging chapters"
         );
     }

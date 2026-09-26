@@ -26,6 +26,8 @@
     <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.12" />
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.15.0" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />
@@ -33,5 +35,6 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\MangaIngestWithUpscaling\MangaIngestWithUpscaling.csproj" />
     <ProjectReference Include="..\..\src\MangaIngestWithUpscaling.Shared\MangaIngestWithUpscaling.Shared.csproj" />
+    <ProjectReference Include="..\..\tools\MangaIngestWithUpscaling.DbMigrator\MangaIngestWithUpscaling.DbMigrator.csproj" />
   </ItemGroup>
 </Project>

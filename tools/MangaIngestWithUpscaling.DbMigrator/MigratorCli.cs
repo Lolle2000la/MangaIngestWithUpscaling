@@ -1,0 +1,202 @@
+using System.Globalization;
+using System.Text.RegularExpressions;
+using MangaIngestWithUpscaling.Configuration;
+
+namespace MangaIngestWithUpscaling.DbMigrator;
+
+/// <summary>
+/// Command-line entry point. The logic lives in <see cref="DataMigrator"/> so it can be tested; this
+/// type only parses arguments and reports errors. It is a named class (not top-level statements) to
+/// avoid generating a second global <c>Program</c> that would collide with the web application's.
+/// </summary>
+internal static class MigratorCli
+{
+    public static Task<int> Main(string[] args) => RunAsync(args, DataMigrator.MigrateAsync);
+
+    /// <summary>
+    /// The CLI body, with the migration call injected so argument handling and exit codes can be
+    /// tested without a database.
+    /// </summary>
+    internal static async Task<int> RunAsync(
+        string[] args,
+        Func<MigratorOptions, Action<string>, CancellationToken, Task> migrateAsync
+    )
+    {
+        Dictionary<string, string> options = ParseArgs(args);
+        if (
+            !options.TryGetValue("from", out string? fromProviderName)
+            || !options.TryGetValue("to", out string? toProviderName)
+            || !options.TryGetValue("from-connection", out string? fromConnection)
+            || !options.TryGetValue("to-connection", out string? toConnection)
+        )
+        {
+            PrintUsage();
+            return 1;
+        }
+
+        if (
+            !TryParseProvider(fromProviderName, out DatabaseProvider fromProvider)
+            || !TryParseProvider(toProviderName, out DatabaseProvider toProvider)
+        )
+        {
+            Console.Error.WriteLine("Unknown provider. Use 'sqlite' or 'postgres'.");
+            return 1;
+        }
+
+        int batchSize =
+            options.TryGetValue("batch-size", out string? batch)
+            && int.TryParse(
+                batch,
+                NumberStyles.Integer,
+                CultureInfo.InvariantCulture,
+                out int parsed
+            )
+            && parsed > 0
+                ? parsed
+                : 500;
+
+        options.TryGetValue("from-logs-connection", out string? fromLogsConnection);
+        options.TryGetValue("to-logs-connection", out string? toLogsConnection);
+
+        var migratorOptions = new MigratorOptions(
+            fromProvider,
+            fromConnection,
+            toProvider,
+            toConnection,
+            batchSize,
+            IsFlagSet(options, "force"),
+            IsFlagSet(options, "include-logs"),
+            fromLogsConnection,
+            toLogsConnection
+        );
+
+        try
+        {
+            await migrateAsync(migratorOptions, Console.WriteLine, CancellationToken.None);
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            // Print the full chain (inner exceptions and stack trace): data migrations fail inside
+            // provider exceptions where the top-level message alone is not actionable. Redact
+            // connection strings first, since provider messages can echo them.
+            Console.Error.WriteLine(Redact(ex.ToString(), migratorOptions));
+            return 1;
+        }
+    }
+
+    /// <summary>
+    /// Removes connection-string secrets from a message before it is written to the console: the
+    /// connection strings supplied on the command line, and any <c>Password=</c>/<c>Pwd=</c> value a
+    /// provider exception may have embedded.
+    /// </summary>
+    internal static string Redact(string text, MigratorOptions options)
+    {
+        foreach (
+            string? connection in new[]
+            {
+                options.FromConnection,
+                options.ToConnection,
+                options.FromLogsConnection,
+                options.ToLogsConnection,
+            }
+        )
+        {
+            if (!string.IsNullOrEmpty(connection))
+            {
+                text = text.Replace(
+                    connection,
+                    "<connection string redacted>",
+                    StringComparison.Ordinal
+                );
+            }
+        }
+
+        // The quoted alternatives allow a doubled delimiter inside the value: connection-string
+        // builders escape an embedded quote by doubling it (a password a"b becomes Password="a""b"),
+        // so a plain "[^"]*" would stop at the first inner quote and leave the tail visible.
+        return Regex.Replace(
+            text,
+            """(?i)\b(password|pwd)\s*=\s*(?:"(?:[^"]|"")*"|'(?:[^']|'')*'|[^;\r\n]*)""",
+            "$1=***"
+        );
+    }
+
+    private static bool TryParseProvider(string value, out DatabaseProvider provider) =>
+        DatabaseProviderResolver.TryResolve(value, out provider, out _);
+
+    /// <summary>
+    /// Whether a boolean flag is set. <c>--force</c> and <c>--force=true</c> are set;
+    /// <c>--force=false</c> and <c>--force=0</c> are unset, so a flag can be turned off explicitly.
+    /// </summary>
+    internal static bool IsFlagSet(Dictionary<string, string> options, string name)
+    {
+        if (!options.TryGetValue(name, out string? value))
+        {
+            return false;
+        }
+
+        return !(
+            value.Equals("false", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("0", StringComparison.Ordinal)
+        );
+    }
+
+    internal static Dictionary<string, string> ParseArgs(string[] input)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < input.Length; i++)
+        {
+            string arg = input[i];
+            if (!arg.StartsWith("--", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            string trimmed = arg[2..];
+            int equalsIndex = trimmed.IndexOf('=');
+            if (equalsIndex >= 0)
+            {
+                result[trimmed[..equalsIndex]] = trimmed[(equalsIndex + 1)..];
+                continue;
+            }
+
+            if (i + 1 < input.Length && !input[i + 1].StartsWith("--", StringComparison.Ordinal))
+            {
+                result[trimmed] = input[i + 1];
+                i++;
+            }
+            else
+            {
+                result[trimmed] = "true";
+            }
+        }
+
+        return result;
+    }
+
+    private static void PrintUsage()
+    {
+        Console.WriteLine("Usage:");
+        Console.WriteLine("  dotnet run --project tools/MangaIngestWithUpscaling.DbMigrator -- \\");
+        Console.WriteLine("    --from <sqlite|postgres> --to <sqlite|postgres> \\");
+        Console.WriteLine(
+            "    --from-connection \"<connection string>\" --to-connection \"<connection string>\" \\"
+        );
+        Console.WriteLine("    [--batch-size 500] [--force] [--include-logs] \\");
+        Console.WriteLine(
+            "    [--from-logs-connection \"<sqlite logs connection>\"] [--to-logs-connection \"<sqlite logs connection>\"]"
+        );
+        Console.WriteLine();
+        Console.WriteLine("Notes:");
+        Console.WriteLine(
+            "  - The target must be empty unless --force is passed (which clears it first)."
+        );
+        Console.WriteLine(
+            "  - For SQLite, logs live in a separate file; pass the corresponding *-logs-connection."
+        );
+        Console.WriteLine(
+            "  - Run the migration against a stopped application to avoid concurrent writes."
+        );
+    }
+}

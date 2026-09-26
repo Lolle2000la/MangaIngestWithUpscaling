@@ -22,10 +22,18 @@ jobs:
       - name: Check formatting with Csharpier
         run: |
           dotnet tool restore
-          dotnet csharpier check src/ test/
+          dotnet csharpier check src/ test/ tools/
       - name: Restore dependencies
         run: dotnet restore MangaIngestWithUpscaling.sln
       - name: Build
         run: dotnet build --no-restore MangaIngestWithUpscaling.sln /warnaserror
       - name: Test (Unit Tests Only)
         run: dotnet test --no-build --verbosity normal --solution MangaIngestWithUpscaling.sln --filter-not-trait Category=Download
+      - name: Test against PostgreSQL (Testcontainers)
+        env:
+          TEST_DB_PROVIDER: postgres
+        run: dotnet test --no-build --verbosity normal --project test/MangaIngestWithUpscaling.Tests/MangaIngestWithUpscaling.Tests.csproj --filter-not-trait Category=Download
+      - name: Test UI against PostgreSQL (Testcontainers)
+        env:
+          TEST_DB_PROVIDER: postgres
+        run: dotnet test --no-build --verbosity normal --project test/MangaIngestWithUpscaling.Tests.UI/MangaIngestWithUpscaling.Tests.UI.csproj --filter-not-trait Category=Download

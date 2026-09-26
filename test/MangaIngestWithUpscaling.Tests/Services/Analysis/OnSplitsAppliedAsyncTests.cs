@@ -6,6 +6,7 @@ using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
+using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -15,6 +16,7 @@ namespace MangaIngestWithUpscaling.Tests.Services.Analysis;
 
 public class OnSplitsAppliedAsyncTests : IDisposable
 {
+    private readonly TestDatabaseHelper.TestDbContext _testDb;
     private readonly ApplicationDbContext _dbContext;
     private readonly ITaskQueue _taskQueue;
     private readonly IChapterChangedNotifier _chapterChangedNotifier;
@@ -26,13 +28,8 @@ public class OnSplitsAppliedAsyncTests : IDisposable
 
     public OnSplitsAppliedAsyncTests()
     {
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseSqlite("Data Source=:memory:")
-            .Options;
-
-        _dbContext = new ApplicationDbContext(options);
-        _dbContext.Database.OpenConnection();
-        _dbContext.Database.EnsureCreated();
+        _testDb = TestDatabaseHelper.CreateDatabase();
+        _dbContext = _testDb.Context;
 
         _taskQueue = Substitute.For<ITaskQueue>();
         _chapterChangedNotifier = Substitute.For<IChapterChangedNotifier>();
@@ -53,8 +50,7 @@ public class OnSplitsAppliedAsyncTests : IDisposable
 
     public void Dispose()
     {
-        _dbContext.Database.CloseConnection();
-        _dbContext.Dispose();
+        _testDb.Dispose();
     }
 
     [Fact]

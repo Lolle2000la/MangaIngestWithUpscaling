@@ -33,7 +33,7 @@ public class IngestProcessorTaskCancellationTests : IDisposable
 
     public IngestProcessorTaskCancellationTests()
     {
-        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _testDb = TestDatabaseHelper.CreateDatabase();
     }
 
     public void Dispose()

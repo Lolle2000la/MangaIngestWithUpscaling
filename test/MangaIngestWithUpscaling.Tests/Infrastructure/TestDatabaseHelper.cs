@@ -1,58 +1,42 @@
 using MangaIngestWithUpscaling.Data;
-using Microsoft.Data.Sqlite;
-using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Tests.Infrastructure;
 
 /// <summary>
-/// Helper class for creating SQLite in-memory databases for testing
+/// Convenience wrapper around <see cref="TestDatabaseFactory"/> for tests that only need a single
+/// context. The backend is selected through <c>TEST_DB_PROVIDER</c>.
 /// </summary>
 public static class TestDatabaseHelper
 {
     /// <summary>
-    /// Creates a new SQLite in-memory database context for testing
+    /// Creates a fresh, isolated database for testing and returns a disposable wrapper around a
+    /// context connected to it. The backend follows <c>TEST_DB_PROVIDER</c> (SQLite or PostgreSQL),
+    /// so this is deliberately not an "in-memory" helper.
     /// </summary>
-    /// <returns>A disposable context that maintains connection automatically</returns>
-    public static TestDbContext CreateInMemoryDatabase()
+    public static TestDbContext CreateDatabase()
     {
-        return new TestDbContext();
+        return new TestDbContext(TestDatabaseFactory.Create());
     }
 
     public class TestDbContext : IDisposable
     {
-        private readonly SqliteConnection _connection;
+        private readonly TestDatabase _database;
+
         public ApplicationDbContext Context { get; }
 
-        public TestDbContext()
+        public TestDbContext(TestDatabase database)
         {
-            // Create in-memory SQLite database
-            _connection = new SqliteConnection("DataSource=:memory:");
-            _connection.Open();
-
-            var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-                .UseSqlite(_connection)
-                .ConfigureWarnings(warnings =>
-                    warnings.Ignore(
-                        Microsoft
-                            .EntityFrameworkCore
-                            .Diagnostics
-                            .RelationalEventId
-                            .AmbientTransactionWarning
-                    )
-                )
-                .Options;
-
-            Context = new ApplicationDbContext(options);
-
-            // Create the database schema
-            Context.Database.EnsureCreated();
+            _database = database;
+            Context = database.CreateContext();
         }
 
         public void Dispose()
         {
             Context?.Dispose();
-            _connection?.Close();
-            _connection?.Dispose();
+            // Run the async teardown away from any captured synchronization context: bUnit disposes
+            // components from the renderer's context, where blocking on async continuations that want
+            // the same context can deadlock.
+            Task.Run(() => _database.DisposeAsync().AsTask()).GetAwaiter().GetResult();
         }
     }
 }

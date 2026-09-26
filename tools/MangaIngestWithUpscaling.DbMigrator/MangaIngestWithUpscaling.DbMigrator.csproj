@@ -1,0 +1,74 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- NETSDK1187: MudBlazor.Translations ships a 'ckb-iq' resource folder that the SDK normalizes to 'ckb-IQ' (pulled in transitively via the web app). -->
+    <NoWarn>$(NoWarn);NETSDK1206;CS8669;NETSDK1187</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="MangaIngestWithUpscaling.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- References the web application solely to reach the concrete BaseTask types that
+         TaskJsonOptionsProvider needs to deserialize PersistedTask.Data polymorphically. That pulls
+         NetVips/MudBlazor/gRPC into this CLI (hence the NETSDK1187 suppression above). The targets
+         below strip the web app's transitive content (its linked MangaJaNaiConverterGui backend and
+         appstate2.json) so this tool only takes the assembly and its build/publish output stays
+         small. A shared "task contracts" assembly would decouple it; tracked as a follow-up, not
+         done here. -->
+    <ProjectReference Include="..\..\src\MangaIngestWithUpscaling\MangaIngestWithUpscaling.csproj" />
+    <ProjectReference Include="..\..\src\MangaIngestWithUpscaling.Data\MangaIngestWithUpscaling.Data.csproj" />
+    <ProjectReference Include="..\..\src\MangaIngestWithUpscaling.Data.Sqlite\MangaIngestWithUpscaling.Data.Sqlite.csproj" />
+    <ProjectReference Include="..\..\src\MangaIngestWithUpscaling.Data.Postgres\MangaIngestWithUpscaling.Data.Postgres.csproj" />
+  </ItemGroup>
+  <!--
+    The referenced web app copies its linked MangaJaNaiConverterGui ML backend (multiple GB) and
+    appstate2.json into its output as content. Those 'None' items flow transitively through the
+    ProjectReference above, so without intervention this tool would inherit a multi-gigabyte output
+    and publish artifact despite only needing the web assembly. The two targets below drop that
+    content before the SDK stages the build-copy and publish item lists. They key off the SDK's own
+    intermediate items (populated by GetCopyToOutputDirectoryItems / GetCopyToPublishDirectoryItems,
+    which run as dependencies of the consuming targets) so nothing else is affected.
+  -->
+  <Target
+    Name="RemoveMangaAppContentFromCopyToOutputDirectory"
+    BeforeTargets="_CopyOutOfDateSourceItemsToOutputDirectory;_CopyOutOfDateSourceItemsToOutputDirectoryAlways;_CopyDifferingSourceItemsToOutputDirectory"
+  >
+    <ItemGroup>
+      <_MangaAppContentToRemove
+        Include="@(_SourceItemsToCopyToOutputDirectory);@(_SourceItemsToCopyToOutputDirectoryAlways);@(_SourceItemsToCopyToOutputDirectoryIfDifferent)"
+        Condition="$([System.String]::Copy('%(TargetPath)').Replace('\','/').StartsWith('backend/')) Or $([System.String]::Copy('%(TargetPath)').Replace('\','/').EndsWith('appstate2.json')) Or $([System.String]::Copy('%(FullPath)').Contains('MangaJaNaiConverterGui'))"
+      />
+    </ItemGroup>
+    <ItemGroup>
+      <_SourceItemsToCopyToOutputDirectory Remove="@(_MangaAppContentToRemove)" />
+      <_SourceItemsToCopyToOutputDirectoryAlways Remove="@(_MangaAppContentToRemove)" />
+      <_SourceItemsToCopyToOutputDirectoryIfDifferent Remove="@(_MangaAppContentToRemove)" />
+    </ItemGroup>
+  </Target>
+  <Target
+    Name="RemoveMangaAppContentFromPublishDirectory"
+    BeforeTargets="_ComputeCopyToPublishDirectoryItems;ComputeResolvedFilesToPublishList"
+  >
+    <ItemGroup>
+      <_MangaAppPublishSourceContentToRemove
+        Include="@(_SourceItemsToCopyToPublishDirectory);@(_SourceItemsToCopyToPublishDirectoryAlways)"
+        Condition="$([System.String]::Copy('%(TargetPath)').Replace('\','/').StartsWith('backend/')) Or $([System.String]::Copy('%(TargetPath)').Replace('\','/').EndsWith('appstate2.json')) Or $([System.String]::Copy('%(FullPath)').Contains('MangaJaNaiConverterGui'))"
+      />
+      <!-- Belt-and-braces: ResolvedFileToPublish is populated from the source items above; strip
+           any matching entries too in case a different SDK path already staged them. It uses a
+           separate item list because only publish-stage items define RelativePath metadata. -->
+      <_MangaAppPublishResolvedContentToRemove
+        Include="@(ResolvedFileToPublish)"
+        Condition="$([System.String]::Copy('%(RelativePath)').Replace('\','/').StartsWith('backend/')) Or $([System.String]::Copy('%(RelativePath)').Replace('\','/').EndsWith('appstate2.json')) Or $([System.String]::Copy('%(FullPath)').Contains('MangaJaNaiConverterGui'))"
+      />
+    </ItemGroup>
+    <ItemGroup>
+      <_SourceItemsToCopyToPublishDirectory Remove="@(_MangaAppPublishSourceContentToRemove);@(_MangaAppPublishResolvedContentToRemove)" />
+      <_SourceItemsToCopyToPublishDirectoryAlways Remove="@(_MangaAppPublishSourceContentToRemove);@(_MangaAppPublishResolvedContentToRemove)" />
+      <ResolvedFileToPublish Remove="@(_MangaAppPublishSourceContentToRemove);@(_MangaAppPublishResolvedContentToRemove)" />
+    </ItemGroup>
+  </Target>
+</Project>

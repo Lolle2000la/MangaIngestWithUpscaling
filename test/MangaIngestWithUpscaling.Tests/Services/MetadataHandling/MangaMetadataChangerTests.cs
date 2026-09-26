@@ -32,7 +32,7 @@ public class MangaMetadataChangerTests : IDisposable
     public MangaMetadataChangerTests()
     {
         // Create SQLite in-memory database
-        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _testDb = TestDatabaseHelper.CreateDatabase();
         _dbContext = _testDb.Context;
 
         // Create mocks

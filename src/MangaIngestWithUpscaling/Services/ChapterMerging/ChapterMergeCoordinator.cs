@@ -1509,10 +1509,8 @@ public class ChapterMergeCoordinator(
         }
 
         // Cancel any existing upscale tasks for this chapter
-        List<PersistedTask> existingTasks = await dbContext
-            .PersistedTasks.FromSql(
-                $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(UpscaleTask)} AND Data->>'$.ChapterId' = {existingMergedChapter.Id}"
-            )
+        List<PersistedTask> existingTasks = await PersistedTaskQueries
+            .ForTaskTypeAndChapter<UpscaleTask>(dbContext, existingMergedChapter.Id)
             .ToListAsync(cancellationToken);
 
         foreach (PersistedTask task in existingTasks)
