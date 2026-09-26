@@ -5,10 +5,12 @@ using System.Linq;
 using System.Threading.Tasks;
 using MangaIngestWithUpscaling.Components.Libraries;
 using MangaIngestWithUpscaling.Components.Libraries.FilteredImages;
+using MangaIngestWithUpscaling.Components.MangaManagement;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.ImageFiltering;
+using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.AspNetCore.Components;
 using Microsoft.EntityFrameworkCore;
@@ -30,10 +32,10 @@ public class SimpleComponentTests : BunitContext
     private TestDatabaseHelper.TestDbContext _testDb = null!;
     private ApplicationDbContext _dbContext = null!;
     private ITaskQueue _mockTaskQueue = null!;
+    private IMangaMetadataChanger _mockMetadataChanger = null!;
     private IImageFilterService _mockImageFilterService = null!;
     private IDialogService _mockDialogService = null!;
     private ISnackbar _mockSnackbar = null!;
-    private NavigationManager _mockNavigationManager = null!;
 
     public SimpleComponentTests()
     {
@@ -45,10 +47,10 @@ public class SimpleComponentTests : BunitContext
     private void SetupMocks()
     {
         _mockTaskQueue = Substitute.For<ITaskQueue>();
+        _mockMetadataChanger = Substitute.For<IMangaMetadataChanger>();
         _mockImageFilterService = Substitute.For<IImageFilterService>();
         _mockDialogService = Substitute.For<IDialogService>();
         _mockSnackbar = Substitute.For<ISnackbar>();
-        _mockNavigationManager = Substitute.For<NavigationManager>();
     }
 
     private void SetupDatabase()
@@ -63,10 +65,10 @@ public class SimpleComponentTests : BunitContext
         Services.AddSingleton(typeof(IStringLocalizer<>), typeof(MockStringLocalizer<>));
         Services.AddSingleton(_dbContext);
         Services.AddSingleton(_mockTaskQueue);
+        Services.AddSingleton(_mockMetadataChanger);
         Services.AddSingleton(_mockImageFilterService);
         Services.AddSingleton(_mockDialogService);
         Services.AddSingleton(_mockSnackbar);
-        Services.AddSingleton(_mockNavigationManager);
 
         // Add missing services
         Services.AddSingleton(
@@ -129,6 +131,34 @@ public class SimpleComponentTests : BunitContext
         // Should have Upscale All button
         var upscaleButton = component.Find("button:contains('Upscale All')");
         Assert.NotNull(upscaleButton);
+    }
+
+    // Mangas Component Tests
+    [Fact]
+    public void Mangas_ShouldListLibrariesInDropdown()
+    {
+        // Arrange
+        _dbContext.Libraries.Add(
+            new Library
+            {
+                Id = 1,
+                Name = "Library Alpha",
+                IngestPaths = [new LibraryIngestPath { Path = "/test/ingest" }],
+                NotUpscaledLibraryPath = "/test/library",
+                UpscaledLibraryPath = "/test/upscaled",
+                FilterRules = new List<LibraryFilterRule>(),
+                RenameRules = new ObservableCollection<LibraryRenameRule>(),
+            }
+        );
+        _dbContext.SaveChanges();
+
+        // Act
+        var component = Render<Mangas>();
+
+        // Assert: the MudSelectItems are rendered as child components even though their content
+        // only appears in the popover once it opens, so inspect them directly, not the markup.
+        var items = component.FindComponents<MudSelectItem<Library?>>();
+        Assert.Contains(items, item => item.Instance.Value?.Name == "Library Alpha");
     }
 
     // EditLibraryForm Component Tests

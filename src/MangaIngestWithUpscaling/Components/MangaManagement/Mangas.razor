@@ -35,7 +35,7 @@
                 <MudSelect Label="@Loc["LibraryToBrowse"]" T="Library ?" @bind-Value="selectedLibrary"
                     @bind-Value:after="async () => await table.ReloadServerData()" Disabled="@_isProcessing">
                     <MudSelectItem T="Library?" Value="null">@Loc["Library_All"]</MudSelectItem>
-                    @foreach (var library in DbContext.Libraries)
+                    @foreach (var library in libraries)
                     {
                         <MudSelectItem T="Library?" Value="@library">@library.Name</MudSelectItem>
                     }
@@ -144,6 +144,7 @@
 
 @code {
     private Library? selectedLibrary;
+    private List<Library> libraries = new();
 
     private string _searchInput = "";
     private bool _parametersInitialized = false;
@@ -199,6 +200,14 @@
             })
             .DisposeWith(disposables);
         _searchSubject.DisposeWith(disposables);
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Materialize the library list once. Enumerating DbContext.Libraries directly in the render
+        // tree ran a synchronous query that could collide with the MudTable's ServerData query on
+        // the same scoped context ("A second operation was started on this context instance").
+        libraries = await DbContext.Libraries.AsNoTracking().ToListAsync();
     }
 
     private void OnLocationChanged(object? sender, LocationChangedEventArgs e)

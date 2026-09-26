@@ -17,7 +17,7 @@
                 @((MarkupString)Loc["Warning_MoveFiles"].Value)
             </MudText>
             <MudSelect Label="@Loc["SelectLibrary"]" T="Library" @bind-Value="selected">
-                @foreach (var library in DbContext.Libraries)
+                @foreach (var library in libraries)
                 {
                     <MudSelectItem T="Library" Value="@library">@library.Name</MudSelectItem>
                 }
@@ -37,6 +37,13 @@
     [Parameter] public required List<Manga> Mangas { get; set; }
 
     private Library? selected;
+    private List<Library> libraries = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Materialize once: enumerating the DbSet in the render tree runs a synchronous query.
+        libraries = await DbContext.Libraries.AsNoTracking().ToListAsync();
+    }
 
     async Task Submit()
     {
