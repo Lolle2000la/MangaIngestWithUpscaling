@@ -180,16 +180,23 @@ public class DialogsTests : BunitContext
 
     protected override async ValueTask DisposeAsyncCore()
     {
-        // Let bUnit dispose the renderer and its service provider first, then release the database.
+        // Run the whole teardown on the thread pool: bUnit's service-provider disposal (which
+        // disposes the shared ApplicationDbContext) and the database drop both resume async
+        // continuations, and resuming them on the renderer's synchronization context can deadlock -
+        // the same reason TestDatabaseFactory.Create runs on the thread pool. A thread-pool thread
+        // has no synchronization context, so nothing posts back to the renderer.
+        await Task.Run(DisposeCoreAsync).ConfigureAwait(false);
+    }
+
+    private async Task DisposeCoreAsync()
+    {
         await base.DisposeAsyncCore().ConfigureAwait(false);
 
         if (_testDb is not null)
         {
             TestDatabaseHelper.TestDbContext testDb = _testDb;
             _testDb = null!;
-            // Run the database teardown on the thread pool: resuming async continuations on the
-            // renderer's context can deadlock (the same reason TestDatabaseFactory.Create does).
-            await Task.Run(() => testDb.DisposeAsync().AsTask()).ConfigureAwait(false);
+            await testDb.DisposeAsync().ConfigureAwait(false);
         }
     }
 }
