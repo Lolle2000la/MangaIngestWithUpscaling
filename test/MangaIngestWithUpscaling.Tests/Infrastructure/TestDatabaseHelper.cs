@@ -37,8 +37,8 @@ public static class TestDatabaseHelper
 
         public async ValueTask DisposeAsync()
         {
-            await Context.DisposeAsync();
-            await _database.DisposeAsync();
+            await Context.DisposeAsync().ConfigureAwait(false);
+            await _database.DisposeAsync().ConfigureAwait(false);
         }
     }
 }

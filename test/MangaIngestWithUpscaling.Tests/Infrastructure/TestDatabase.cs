@@ -190,7 +190,7 @@ public sealed class TestDatabase : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        await _dispose(CancellationToken.None);
+        await _dispose(CancellationToken.None).ConfigureAwait(false);
         _initLock.Dispose();
     }
 

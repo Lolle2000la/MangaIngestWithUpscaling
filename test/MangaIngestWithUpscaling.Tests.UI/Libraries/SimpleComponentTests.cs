@@ -386,12 +386,15 @@ public class SimpleComponentTests : BunitContext
     protected override async ValueTask DisposeAsyncCore()
     {
         // Let bUnit dispose the renderer and its service provider first, then release the database.
-        await base.DisposeAsyncCore();
+        await base.DisposeAsyncCore().ConfigureAwait(false);
 
         if (_testDb is not null)
         {
-            await _testDb.DisposeAsync();
+            TestDatabaseHelper.TestDbContext testDb = _testDb;
             _testDb = null!;
+            // Run the database teardown on the thread pool: resuming async continuations on the
+            // renderer's context can deadlock (the same reason TestDatabaseFactory.Create does).
+            await Task.Run(() => testDb.DisposeAsync().AsTask()).ConfigureAwait(false);
         }
     }
 }
