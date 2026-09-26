@@ -265,6 +265,88 @@ public class MigratorCliTests
     }
 
     [Fact]
+    public async Task RunAsync_NonNumericBatchSize_FailsWithoutEchoingTheValue()
+    {
+        const string secret = "Host=db;Username=u;Password=supersecret";
+        var error = new StringWriter();
+
+        int exitCode = await MigratorCli.RunAsync(
+            [
+                "--from",
+                "sqlite",
+                "--to",
+                "postgres",
+                "--from-connection",
+                "from",
+                "--to-connection",
+                "to",
+                "--batch-size",
+                secret,
+            ],
+            NeverRuns,
+            new StringWriter(),
+            error
+        );
+
+        // This used to throw out of the validator and print the raw value in an unhandled exception.
+        Assert.NotEqual(0, exitCode);
+        Assert.DoesNotContain("supersecret", error.ToString());
+    }
+
+    [Fact]
+    public async Task RunAsync_MistypedConnectionOption_DoesNotEchoTheValue()
+    {
+        const string secret = "Host=db;Username=u;Password=supersecret";
+        var error = new StringWriter();
+
+        int exitCode = await MigratorCli.RunAsync(
+            [
+                "--form-connection",
+                secret,
+                "--from",
+                "sqlite",
+                "--to",
+                "postgres",
+                "--to-connection",
+                "y",
+            ],
+            NeverRuns,
+            new StringWriter(),
+            error
+        );
+
+        Assert.NotEqual(0, exitCode);
+        Assert.DoesNotContain("supersecret", error.ToString());
+    }
+
+    [Fact]
+    public async Task RunAsync_UnmatchedConnectionToken_DoesNotEchoTheValue()
+    {
+        const string secret = "Host=db;Username=u;Password=supersecret";
+        var error = new StringWriter();
+
+        int exitCode = await MigratorCli.RunAsync(
+            [
+                "--from",
+                "sqlite",
+                "--to",
+                "postgres",
+                "--from-connection",
+                "x",
+                "--to-connection",
+                "y",
+                secret,
+            ],
+            NeverRuns,
+            new StringWriter(),
+            error
+        );
+
+        Assert.NotEqual(0, exitCode);
+        Assert.DoesNotContain("supersecret", error.ToString());
+    }
+
+    [Fact]
     public async Task Migrate_SqliteSourceFileMissing_FailsWithoutCreatingTheFile()
     {
         string path = Path.Combine(

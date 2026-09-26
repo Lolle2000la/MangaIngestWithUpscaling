@@ -610,7 +610,10 @@ public static class DataMigrator
             && ResolveSqliteFile(fromLogs) is { Exists: false }
         )
         {
-            log("Logs: source SQLite logs database not found, skipping.");
+            log(
+                "Logs: source SQLite logs database not found; skipping the logs copy "
+                    + "(the target Logs table is left untouched)."
+            );
             return new LogsMigrationPlan(fromLogs, toLogs, SourceCount: null);
         }
 
@@ -623,7 +626,10 @@ public static class DataMigrator
         {
             // The application creates the PostgreSQL Logs table on startup; a source that never ran
             // with logging enabled has nothing to copy.
-            log("Logs: source PostgreSQL logs table does not exist, skipping.");
+            log(
+                "Logs: source PostgreSQL logs table does not exist; skipping the logs copy "
+                    + "(the target Logs table is left untouched)."
+            );
             return new LogsMigrationPlan(fromLogs, toLogs, SourceCount: null);
         }
 
