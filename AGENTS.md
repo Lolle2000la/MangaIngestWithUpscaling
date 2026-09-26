@@ -132,36 +132,29 @@ dotnet run --project src/MangaIngestWithUpscaling
 `TEST_DB_PROVIDER=postgres`. Each test class registers one `ApplicationDbContext` as a singleton so
 the bUnit renderer and the test method share it.
 
-**Any UI test class that owns a `TestDatabase` must run its entire `DisposeAsyncCore` on the thread
-pool** — bUnit's own `base.DisposeAsyncCore()` (the renderer plus the service provider that disposes
-the shared `DbContext`) as well as the database drop:
+**Known issue: the PostgreSQL pass can hang intermittently.** The run stops after the first skipped
+test with no further output. A captured dump shows the test class's disposal blocked in
+`DbContext.DisposeAsync` → `RelationalConnection.ResetStateAsync` → `NpgsqlConnection.CloseAsync` →
+`NpgsqlDataReader.Close`, waiting for a PostgreSQL backend message: the shared context still has a
+query in flight when the test disposes it. SQLite never hits this because closing its connection is
+local and synchronous.
 
-```csharp
-protected override async ValueTask DisposeAsyncCore() =>
-    await Task.Run(DisposeCoreAsync).ConfigureAwait(false);
-
-private async Task DisposeCoreAsync()
-{
-    await base.DisposeAsyncCore().ConfigureAwait(false);
-    if (_testDb is not null)
-    {
-        TestDatabaseHelper.TestDbContext testDb = _testDb;
-        _testDb = null!;
-        await testDb.DisposeAsync().ConfigureAwait(false);
-    }
-}
-```
-
-- On PostgreSQL the disposal is genuinely asynchronous; if a continuation resumes on the renderer's
-  synchronization context the run **deadlocks**, stopping after the first skipped test with no
-  further output. SQLite's disposal is effectively synchronous, so this only bites the PostgreSQL
-  pass.
-- Wrapping only the database drop (not `base.DisposeAsyncCore()`) is not enough — that was tried and
-  the hang came back.
-- The hang is intermittent (roughly 1 in 4 on CI, rarer locally), so a single green run is not
-  proof; watch several runs.
-- To diagnose a hang, attach a managed stack dump to the test host while it is stuck:
-  `dotnet-stack report -p <pid>` (the process is `MangaIngestWithUpscaling.Tests.UI`).
+- Reproduces only on the PostgreSQL pass, and more readily on a low-core machine (~1 in 4 on CI,
+  rarer on a fast one). Running the main PostgreSQL pass immediately before the UI pass, pinned to
+  4 CPUs (`taskset -c 0-3`), reproduces it quickly.
+- Diagnose by collecting a dump of the **test host** (not the `dotnet test` CLI) while it is stuck:
+  ```bash
+  dotnet-dump collect -p <host-pid> -o hang.dmp
+  dotnet-dump analyze hang.dmp -c "dumpasync" -c "clrstack -all" -c "exit"
+  ```
+  The host process is
+  `test/MangaIngestWithUpscaling.Tests.UI/bin/Debug/net10.0/MangaIngestWithUpscaling.Tests.UI`.
+- Fixed in `TestDatabaseHelper.TestDbContext.DisposeAsync` by dropping the database **before**
+  disposing the context: the drop terminates the context's backend connection, so the context close
+  cannot block on the in-flight reader. Sharing one `DbContext` between the renderer and the test is
+  still the underlying design smell — a per-operation context would remove the race entirely — but
+  the drop-order change is sufficient and much smaller. Moving the teardown onto the thread pool does
+  **not** address it; that was tried and the hang came back.
 
 ## Commenting Guidelines
 
@@ -241,7 +234,10 @@ private async Task DisposeCoreAsync()
 ### Environment Variables (for development)
 - `Ingest_Upscaler__RemoteOnly=true` - Skip Python/ML setup
 - `Ingest_Upscaler__UseCPU=true` - Force CPU backend
-- `Ingest_ConnectionStrings__DefaultConnection` - Database path
+- `Ingest_DatabaseProvider=Postgres` - Select the database backend (`Sqlite` is the default; also accepts `sqlite3`, `postgres`, `postgresql`, `npgsql`; an unknown value fails startup instead of silently falling back)
+- `Ingest_ConnectionStrings__DefaultConnection` - SQLite database path (SQLite only)
+- `Ingest_ConnectionStrings__PostgresConnection=Host=…;Database=…;Username=…;Password=…` - Required when `Ingest_DatabaseProvider=Postgres`
+- `Ingest_ConnectionStrings__LoggingConnection` - SQLite logs file (SQLite only; on PostgreSQL the logs live in the application database)
 
 ## Common Tasks
 
@@ -364,15 +360,22 @@ dotnet build --no-restore MangaIngestWithUpscaling.sln /p:TreatWarningsAsErrors=
 dotnet test --solution MangaIngestWithUpscaling.sln --filter-not-trait Category=Download
 ```
 
+CI (`.github/workflows/dotnet.yml`) runs **three** test passes: unit tests on SQLite, the main test
+project against PostgreSQL, and the UI test project against PostgreSQL (the last two via
+Testcontainers, so Docker is required). A change that passes locally on SQLite can still fail CI, so
+run the two `TEST_DB_PROVIDER=postgres` commands above when your change touches data access.
+
 ## Key Dependencies
 
 - **.NET 10.0** - Required runtime and SDK
 - **Blazor Server** - Web framework
 - **MudBlazor** - UI component library  
 - **Entity Framework Core** - Database ORM
-- **SQLite** - Database engine
+- **SQLite / PostgreSQL (Npgsql)** - Supported database engines (SQLite is the default)
+- **Testcontainers** - Spins up PostgreSQL for the dual-provider test passes (Docker required)
 - **gRPC** - Communication protocol
 - **Serilog** - Logging framework
+- **System.CommandLine** - CLI parsing for the database migrator
 - **Python 3.x + PyTorch** - ML backend (optional with RemoteOnly)
 
 Remember: **ALWAYS use RemoteOnly mode for development** unless you specifically need to test ML functionality locally.

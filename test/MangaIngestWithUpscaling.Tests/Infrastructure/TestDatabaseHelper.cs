@@ -37,8 +37,12 @@ public static class TestDatabaseHelper
 
         public async ValueTask DisposeAsync()
         {
-            await Context.DisposeAsync().ConfigureAwait(false);
+            // Drop the database before disposing the context. Dropping it terminates the context's
+            // backend connection, so the context disposal cannot block waiting for a query that the
+            // bUnit renderer left in flight. On PostgreSQL that wait hangs the whole run (see
+            // AGENTS.md "UI tests"); on SQLite it is local and synchronous, so it never showed.
             await _database.DisposeAsync().ConfigureAwait(false);
+            await Context.DisposeAsync().ConfigureAwait(false);
         }
     }
 }
