@@ -118,9 +118,50 @@ dotnet run --project src/MangaIngestWithUpscaling
      ```bash
      TEST_DB_PROVIDER=postgres dotnet test test/MangaIngestWithUpscaling.Tests/MangaIngestWithUpscaling.Tests.csproj --filter-not-trait Category=Download
      ```
+   - To also run the UI test project against PostgreSQL (see [UI tests](#ui-tests-bunit)):
+     ```bash
+     TEST_DB_PROVIDER=postgres dotnet test test/MangaIngestWithUpscaling.Tests.UI/MangaIngestWithUpscaling.Tests.UI.csproj --filter-not-trait Category=Download
+     ```
    - If you add new features or make changes that affect logic, consider writing new or updating existing tests.
    - Ensure tests pass before PR or merge.
    - Unless specified differently, tests should be written using xUnit v3, NSubstitute, and bUnit if testing Blazor components.
+
+## UI tests (bUnit)
+
+`MangaIngestWithUpscaling.Tests.UI` runs against SQLite by default and against PostgreSQL with
+`TEST_DB_PROVIDER=postgres`. Each test class registers one `ApplicationDbContext` as a singleton so
+the bUnit renderer and the test method share it.
+
+**Any UI test class that owns a `TestDatabase` must run its entire `DisposeAsyncCore` on the thread
+pool** — bUnit's own `base.DisposeAsyncCore()` (the renderer plus the service provider that disposes
+the shared `DbContext`) as well as the database drop:
+
+```csharp
+protected override async ValueTask DisposeAsyncCore() =>
+    await Task.Run(DisposeCoreAsync).ConfigureAwait(false);
+
+private async Task DisposeCoreAsync()
+{
+    await base.DisposeAsyncCore().ConfigureAwait(false);
+    if (_testDb is not null)
+    {
+        TestDatabaseHelper.TestDbContext testDb = _testDb;
+        _testDb = null!;
+        await testDb.DisposeAsync().ConfigureAwait(false);
+    }
+}
+```
+
+- On PostgreSQL the disposal is genuinely asynchronous; if a continuation resumes on the renderer's
+  synchronization context the run **deadlocks**, stopping after the first skipped test with no
+  further output. SQLite's disposal is effectively synchronous, so this only bites the PostgreSQL
+  pass.
+- Wrapping only the database drop (not `base.DisposeAsyncCore()`) is not enough — that was tried and
+  the hang came back.
+- The hang is intermittent (roughly 1 in 4 on CI, rarer locally), so a single green run is not
+  proof; watch several runs.
+- To diagnose a hang, attach a managed stack dump to the test host while it is stuck:
+  `dotnet-stack report -p <pid>` (the process is `MangaIngestWithUpscaling.Tests.UI`).
 
 ## Commenting Guidelines
 
