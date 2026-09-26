@@ -19,7 +19,7 @@ namespace MangaIngestWithUpscaling.Tests.Services.BackgroundTaskQueue;
 ///     SQLite is used because the rename task includes <c>Library</c>, whose complex type the
 ///     in-memory provider cannot shape.
 /// </summary>
-public class RemoteOnlyReroutedTaskTests : IDisposable
+public class RemoteOnlyReroutedTaskTests : IAsyncDisposable
 {
     private readonly TestDatabase _database;
     private readonly ServiceProvider _provider;
@@ -101,10 +101,10 @@ public class RemoteOnlyReroutedTaskTests : IDisposable
         _chapterId = chapter.Id;
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _provider.Dispose();
-        _database.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        await _provider.DisposeAsync();
+        await _database.DisposeAsync();
     }
 
     [Fact]

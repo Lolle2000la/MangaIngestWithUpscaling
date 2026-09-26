@@ -12,7 +12,7 @@ using NSubstitute;
 
 namespace MangaIngestWithUpscaling.Tests.Services.BackgroundTaskQueue;
 
-public class TaskQueueRemovalConcurrencyTests : IDisposable
+public class TaskQueueRemovalConcurrencyTests : IAsyncDisposable
 {
     private readonly DeleteBeforeSaveInterceptor _interceptor = new();
     private readonly string _dbFile;
@@ -45,9 +45,9 @@ public class TaskQueueRemovalConcurrencyTests : IDisposable
         );
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _provider.Dispose();
+        await _provider.DisposeAsync();
         SqliteConnection.ClearAllPools();
         try
         {

@@ -20,7 +20,7 @@ namespace MangaIngestWithUpscaling.Tests.Services.BackgroundTaskQueue;
 ///     in-memory provider because the chapter/skip branches include <c>Library</c>, whose complex
 ///     type the in-memory provider cannot shape.
 /// </summary>
-public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
+public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
 {
     private readonly TestDatabase _database;
     private readonly ServiceProvider _provider;
@@ -68,10 +68,10 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
         );
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _provider.Dispose();
-        _database.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        await _provider.DisposeAsync();
+        await _database.DisposeAsync();
     }
 
     [Fact]

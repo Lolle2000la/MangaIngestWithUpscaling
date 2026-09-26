@@ -387,14 +387,16 @@ public class ChapterListMergingTests : BunitContext
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
     }
 
-    protected override void Dispose(bool disposing)
+    protected override async ValueTask DisposeAsyncCore()
     {
-        if (disposing)
-        {
-            _testDb?.Dispose();
-        }
+        // Let bUnit dispose the renderer and its service provider first, then release the database.
+        await base.DisposeAsyncCore();
 
-        base.Dispose(disposing);
+        if (_testDb is not null)
+        {
+            await _testDb.DisposeAsync();
+            _testDb = null!;
+        }
     }
 
     [Fact]

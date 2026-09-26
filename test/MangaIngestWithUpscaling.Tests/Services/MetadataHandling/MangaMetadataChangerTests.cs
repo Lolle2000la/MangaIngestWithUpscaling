@@ -15,7 +15,7 @@ using NSubstitute;
 
 namespace MangaIngestWithUpscaling.Tests.Services.MetadataHandling;
 
-public class MangaMetadataChangerTests : IDisposable
+public class MangaMetadataChangerTests : IAsyncDisposable
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly MangaMetadataChanger _metadataChanger;
@@ -94,9 +94,9 @@ public class MangaMetadataChangerTests : IDisposable
         );
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _testDb?.Dispose();
+        await _testDb.DisposeAsync();
         if (Directory.Exists(_tempDir))
         {
             Directory.Delete(_tempDir, true);

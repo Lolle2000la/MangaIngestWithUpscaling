@@ -28,7 +28,7 @@ using NSubstitute;
 
 namespace MangaIngestWithUpscaling.Tests.Services.ChapterManagement;
 
-public class IngestProcessorSplitDetectionTests : IDisposable
+public class IngestProcessorSplitDetectionTests : IAsyncDisposable
 {
     private readonly TestDatabaseHelper.TestDbContext _testDb;
     private readonly string _tempRoot;
@@ -43,9 +43,9 @@ public class IngestProcessorSplitDetectionTests : IDisposable
         Directory.CreateDirectory(_tempRoot);
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _testDb?.Dispose();
+        await _testDb.DisposeAsync();
         if (Directory.Exists(_tempRoot))
         {
             try

@@ -15,7 +15,7 @@ namespace MangaIngestWithUpscaling.Tests.Data.BackgroundTaskQueue;
 /// <see cref="PersistedTaskQueries"/> matches on exactly that string. Renaming a task class (or
 /// removing it from the registered set) would otherwise silently turn existing rows into no-ops.
 /// </summary>
-public class TaskDiscriminatorContractTests : IDisposable
+public class TaskDiscriminatorContractTests : IAsyncDisposable
 {
     private static readonly Type[] ChapterScopedTaskTypes =
     {
@@ -35,7 +35,7 @@ public class TaskDiscriminatorContractTests : IDisposable
         _db = _testDb.Context;
     }
 
-    public void Dispose() => _testDb.Dispose();
+    public async ValueTask DisposeAsync() => await _testDb.DisposeAsync();
 
     public static IEnumerable<object[]> ConcreteTaskTypes() =>
         // The concrete task types live in the web application assembly, not in the data assembly.

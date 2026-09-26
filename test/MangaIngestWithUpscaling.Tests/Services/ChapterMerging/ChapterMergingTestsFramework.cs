@@ -1368,7 +1368,7 @@ public class ChapterPartMergerTests : IDisposable
 /// <summary>
 /// Integration tests for database operations during chapter merging
 /// </summary>
-public class ChapterMergeRevertServiceTests : IDisposable
+public class ChapterMergeRevertServiceTests : IAsyncDisposable
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly IChapterPartMerger _mockChapterPartMerger;
@@ -1408,9 +1408,9 @@ public class ChapterMergeRevertServiceTests : IDisposable
         _dbContext.SaveChanges();
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _testDb?.Dispose();
+        await _testDb.DisposeAsync();
     }
 
     [Fact]
@@ -1641,7 +1641,7 @@ public class ChapterNumberExtractionIntegrationTests
 /// <summary>
 /// Tests for ComicInfo.xml preservation during chapter merge and restoration operations
 /// </summary>
-public class ComicInfoPreservationTests : IDisposable
+public class ComicInfoPreservationTests : IAsyncDisposable
 {
     private readonly TestDatabaseHelper.TestDbContext _testDb;
 
@@ -1650,9 +1650,9 @@ public class ComicInfoPreservationTests : IDisposable
         _testDb = TestDatabaseHelper.CreateDatabase();
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _testDb?.Dispose();
+        await _testDb.DisposeAsync();
     }
 
     private ApplicationDbContext CreateDbContext() => _testDb.Context;
@@ -2037,7 +2037,7 @@ public class ComicInfoPreservationTests : IDisposable
 /// <summary>
 /// Tests for upscaled chapter handling during merge and restoration operations
 /// </summary>
-public class UpscaledChapterHandlingTests : IDisposable
+public class UpscaledChapterHandlingTests : IAsyncDisposable
 {
     private readonly TestDatabaseHelper.TestDbContext _testDb;
 
@@ -2046,9 +2046,9 @@ public class UpscaledChapterHandlingTests : IDisposable
         _testDb = TestDatabaseHelper.CreateDatabase();
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _testDb?.Dispose();
+        await _testDb.DisposeAsync();
     }
 
     private ApplicationDbContext CreateDbContext() => _testDb.Context;
@@ -2425,7 +2425,7 @@ public class TestScope : IDisposable
 /// <summary>
 /// Tests for partial upscaling functionality during chapter merging operations
 /// </summary>
-public class PartialUpscalingMergeTests : IDisposable
+public class PartialUpscalingMergeTests : IAsyncDisposable
 {
     private readonly string _tempDir;
     private readonly TestDatabaseHelper.TestDbContext _testDb;
@@ -2440,9 +2440,9 @@ public class PartialUpscalingMergeTests : IDisposable
         Directory.CreateDirectory(_tempDir);
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _testDb?.Dispose();
+        await _testDb.DisposeAsync();
         if (Directory.Exists(_tempDir))
         {
             Directory.Delete(_tempDir, true);
@@ -3221,7 +3221,7 @@ public class PartialUpscalingMergeTests : IDisposable
 /// <summary>
 /// Tests for the corner cases in chapter merge reverting operations
 /// </summary>
-public class ChapterMergeRevertCornerCaseTests : IDisposable
+public class ChapterMergeRevertCornerCaseTests : IAsyncDisposable
 {
     private readonly string _tempDir;
     private readonly TestDatabaseHelper.TestDbContext _testDb;
@@ -3236,9 +3236,9 @@ public class ChapterMergeRevertCornerCaseTests : IDisposable
         Directory.CreateDirectory(_tempDir);
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _testDb?.Dispose();
+        await _testDb.DisposeAsync();
         if (Directory.Exists(_tempDir))
         {
             Directory.Delete(_tempDir, true);

@@ -10,7 +10,7 @@ namespace MangaIngestWithUpscaling.Tests.Data.BackgroundTaskQueue;
 /// Exercises the provider-specific SQL over the persisted-task JSON payload on both SQLite and
 /// PostgreSQL (selected via <c>TEST_DB_PROVIDER</c>).
 /// </summary>
-public class PersistedTaskQueriesTests : IDisposable
+public class PersistedTaskQueriesTests : IAsyncDisposable
 {
     private readonly TestDatabaseHelper.TestDbContext _testDb;
     private readonly ApplicationDbContext _db;
@@ -21,7 +21,7 @@ public class PersistedTaskQueriesTests : IDisposable
         _db = _testDb.Context;
     }
 
-    public void Dispose() => _testDb.Dispose();
+    public async ValueTask DisposeAsync() => await _testDb.DisposeAsync();
 
     [Fact]
     public async Task ForTaskTypeAndChapter_ReturnsOnlyMatchingTypeAndChapter()

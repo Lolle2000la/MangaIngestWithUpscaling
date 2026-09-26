@@ -14,7 +14,7 @@ using Xunit;
 
 namespace MangaIngestWithUpscaling.Tests.Services.Analysis;
 
-public class OnSplitsAppliedAsyncTests : IDisposable
+public class OnSplitsAppliedAsyncTests : IAsyncDisposable
 {
     private readonly TestDatabaseHelper.TestDbContext _testDb;
     private readonly ApplicationDbContext _dbContext;
@@ -48,9 +48,9 @@ public class OnSplitsAppliedAsyncTests : IDisposable
         );
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _testDb.Dispose();
+        await _testDb.DisposeAsync();
     }
 
     [Fact]

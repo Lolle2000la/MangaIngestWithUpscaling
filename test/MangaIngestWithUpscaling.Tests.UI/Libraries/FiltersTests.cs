@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading.Tasks;
 using MangaIngestWithUpscaling.Components.Libraries.Filters;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
@@ -403,12 +404,15 @@ public class FiltersTests : BunitContext
         }
     }
 
-    protected override void Dispose(bool disposing)
+    protected override async ValueTask DisposeAsyncCore()
     {
-        if (disposing)
+        // Let bUnit dispose the renderer and its service provider first, then release the database.
+        await base.DisposeAsyncCore();
+
+        if (_testDb is not null)
         {
-            _testDb?.Dispose();
+            await _testDb.DisposeAsync();
+            _testDb = null!;
         }
-        base.Dispose(disposing);
     }
 }

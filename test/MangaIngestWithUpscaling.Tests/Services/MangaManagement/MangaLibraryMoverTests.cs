@@ -10,7 +10,7 @@ using NSubstitute;
 
 namespace MangaIngestWithUpscaling.Tests.Services.MangaManagement;
 
-public class MangaLibraryMoverTests : IDisposable
+public class MangaLibraryMoverTests : IAsyncDisposable
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly MangaLibraryMover _libraryMover;
@@ -42,9 +42,9 @@ public class MangaLibraryMoverTests : IDisposable
         );
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _testDb?.Dispose();
+        await _testDb.DisposeAsync();
         if (Directory.Exists(_tempDir))
         {
             Directory.Delete(_tempDir, true);

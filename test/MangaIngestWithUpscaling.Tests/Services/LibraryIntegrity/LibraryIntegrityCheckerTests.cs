@@ -25,7 +25,7 @@ using TestContext = Xunit.TestContext;
 
 namespace MangaIngestWithUpscaling.Tests.Services.LibraryIntegrity;
 
-public class LibraryIntegrityCheckerTests : IDisposable
+public class LibraryIntegrityCheckerTests : IAsyncDisposable
 {
     private readonly SharedSqliteDb _db;
     private readonly IDbContextFactory<ApplicationDbContext> _factory;
@@ -54,9 +54,9 @@ public class LibraryIntegrityCheckerTests : IDisposable
         _options = Options.Create(new IntegrityCheckerConfig { MaxParallelism = 1 });
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _db.Dispose();
+        await _db.DisposeAsync();
     }
 
     [Fact]
@@ -2061,14 +2061,11 @@ public class LibraryIntegrityCheckerTests : IDisposable
     /// A database shared across several contexts, backed by whichever provider
     /// <c>TEST_DB_PROVIDER</c> selects.
     /// </summary>
-    private sealed class SharedSqliteDb : IDisposable
+    private sealed class SharedSqliteDb : IAsyncDisposable
     {
         private readonly TestDatabase _database = TestDatabaseFactory.Create();
 
-        public void Dispose()
-        {
-            _database.DisposeAsync().AsTask().GetAwaiter().GetResult();
-        }
+        public ValueTask DisposeAsync() => _database.DisposeAsync();
 
         public ApplicationDbContext CreateContext()
         {

@@ -9,16 +9,21 @@ namespace MangaIngestWithUpscaling.Tests.Infrastructure;
 public static class TestDatabaseHelper
 {
     /// <summary>
-    /// Creates a fresh, isolated database for testing and returns a disposable wrapper around a
-    /// context connected to it. The backend follows <c>TEST_DB_PROVIDER</c> (SQLite or PostgreSQL),
-    /// so this is deliberately not an "in-memory" helper.
+    /// Creates a fresh, isolated database for testing and returns an asynchronously disposable
+    /// wrapper around a context connected to it. The backend follows <c>TEST_DB_PROVIDER</c> (SQLite
+    /// or PostgreSQL), so this is deliberately not an "in-memory" helper.
     /// </summary>
     public static TestDbContext CreateDatabase()
     {
         return new TestDbContext(TestDatabaseFactory.Create());
     }
 
-    public class TestDbContext : IDisposable
+    /// <summary>
+    /// Owns a context and its underlying <see cref="TestDatabase"/>. Disposal is asynchronous
+    /// because the database teardown (and the PostgreSQL container) is asynchronous; owning test
+    /// classes should implement <see cref="IAsyncDisposable"/> so xUnit awaits it.
+    /// </summary>
+    public class TestDbContext : IAsyncDisposable
     {
         private readonly TestDatabase _database;
 
@@ -30,13 +35,10 @@ public static class TestDatabaseHelper
             Context = database.CreateContext();
         }
 
-        public void Dispose()
+        public async ValueTask DisposeAsync()
         {
-            Context?.Dispose();
-            // Run the async teardown away from any captured synchronization context: bUnit disposes
-            // components from the renderer's context, where blocking on async continuations that want
-            // the same context can deadlock.
-            Task.Run(() => _database.DisposeAsync().AsTask()).GetAwaiter().GetResult();
+            await Context.DisposeAsync();
+            await _database.DisposeAsync();
         }
     }
 }

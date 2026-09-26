@@ -22,7 +22,7 @@ using Xunit;
 
 namespace MangaIngestWithUpscaling.Tests.Services.Analysis;
 
-public class SplitApplicationServiceTests : IDisposable
+public class SplitApplicationServiceTests : IAsyncDisposable
 {
     private readonly TestDatabaseHelper.TestDbContext _testDb;
     private readonly ApplicationDbContext _dbContext;
@@ -56,9 +56,9 @@ public class SplitApplicationServiceTests : IDisposable
         Directory.CreateDirectory(_tempDir);
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _testDb.Dispose();
+        await _testDb.DisposeAsync();
 
         if (Directory.Exists(_tempDir))
         {

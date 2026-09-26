@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Tests.Data;
 
-public class EntityTimestampTests : IDisposable
+public class EntityTimestampTests : IAsyncDisposable
 {
     private readonly TestDatabaseHelper.TestDbContext _testDb;
     private readonly ApplicationDbContext _context;
@@ -17,9 +17,9 @@ public class EntityTimestampTests : IDisposable
         _context = _testDb.Context;
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _testDb.Dispose();
+        await _testDb.DisposeAsync();
     }
 
     [Fact]
