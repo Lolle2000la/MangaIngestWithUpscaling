@@ -155,10 +155,14 @@ public class SimpleComponentTests : BunitContext
         // Act
         var component = Render<Mangas>();
 
-        // Assert: the MudSelectItems are rendered as child components even though their content
-        // only appears in the popover once it opens, so inspect them directly, not the markup.
-        var items = component.FindComponents<MudSelectItem<Library?>>();
-        Assert.Contains(items, item => item.Instance.Value?.Name == "Library Alpha");
+        // Assert: the library list is loaded asynchronously, so wait for it to reach the select.
+        // The MudSelectItems are rendered as child components even though their content only
+        // appears in the popover once it opens, so inspect them directly, not the markup.
+        component.WaitForAssertion(() =>
+        {
+            var items = component.FindComponents<MudSelectItem<Library?>>();
+            Assert.Contains(items, item => item.Instance.Value?.Name == "Library Alpha");
+        });
     }
 
     // EditLibraryForm Component Tests
