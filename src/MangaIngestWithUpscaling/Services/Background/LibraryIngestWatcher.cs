@@ -11,11 +11,18 @@ namespace MangaIngestWithUpscaling.Services.Background;
 public class LibraryIngestWatcher : BackgroundService
 {
     private readonly IServiceScopeFactory _serviceScopeFactory;
+    private readonly ILogger<LibraryIngestWatcher> _logger;
 
     private readonly List<IDisposable> fileSystemWatchers = new();
 
-    public LibraryIngestWatcher(IServiceScopeFactory serviceScopeFactory) =>
+    public LibraryIngestWatcher(
+        IServiceScopeFactory serviceScopeFactory,
+        ILogger<LibraryIngestWatcher> logger
+    )
+    {
         _serviceScopeFactory = serviceScopeFactory;
+        _logger = logger;
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -74,22 +81,40 @@ public class LibraryIngestWatcher : BackgroundService
                             .Throttle(TimeSpan.FromSeconds(15))
                             .Subscribe(async e =>
                             {
-                                // process the new file
-                                using var scope = _serviceScopeFactory.CreateScope();
-                                var dbContext =
-                                    scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-                                var taskQueue =
-                                    scope.ServiceProvider.GetRequiredService<ITaskQueue>();
-                                // ensure the library still exists
-                                if (
-                                    await dbContext.Libraries.AnyAsync(
-                                        l => l.Id == library.Id,
-                                        stoppingToken
+                                // Subscribe(Action<...>) makes this handler async void, so an
+                                // exception after the first await would be unobserved and can tear
+                                // down the process. Observe and log everything instead.
+                                try
+                                {
+                                    // process the new file
+                                    using var scope = _serviceScopeFactory.CreateScope();
+                                    var dbContext =
+                                        scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                                    var taskQueue =
+                                        scope.ServiceProvider.GetRequiredService<ITaskQueue>();
+                                    // ensure the library still exists
+                                    if (
+                                        await dbContext.Libraries.AnyAsync(
+                                            l => l.Id == library.Id,
+                                            stoppingToken
+                                        )
                                     )
-                                )
-                                    await taskQueue.EnqueueAsync(
-                                        new ScanIngestTask() { LibraryId = library.Id }
+                                        await taskQueue.EnqueueAsync(
+                                            new ScanIngestTask() { LibraryId = library.Id }
+                                        );
+                                }
+                                catch (OperationCanceledException)
+                                {
+                                    // Host is shutting down; nothing to do.
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.LogError(
+                                        ex,
+                                        "Failed to handle a new file event for library {LibraryId}",
+                                        library.Id
                                     );
+                                }
                             })
                             .DisposeWith(compositeDisposable);
 

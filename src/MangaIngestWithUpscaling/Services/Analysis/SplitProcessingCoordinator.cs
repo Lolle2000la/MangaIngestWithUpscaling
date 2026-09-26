@@ -168,7 +168,8 @@ public class SplitProcessingCoordinator(
 
     public async Task EnqueueDetectionAsync(
         int chapterId,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext? context = null
     )
     {
         logger.LogInformation(
@@ -177,7 +178,10 @@ public class SplitProcessingCoordinator(
             SplitDetectionService.CURRENT_DETECTOR_VERSION
         );
 
-        var chapter = await dbContext
+        // Callers running in parallel (see LibraryIntegrityChecker) pass their own context; the
+        // shared scoped context must not be used from multiple workers at once.
+        var db = context ?? dbContext;
+        var chapter = await db
             .Chapters.Include(c => c.Manga)
             .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
 
@@ -203,7 +207,8 @@ public class SplitProcessingCoordinator(
 
     public async Task EnqueueDetectionBatchAsync(
         IEnumerable<int> chapterIds,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext? context = null
     )
     {
         var ids = chapterIds.ToList();
@@ -216,7 +221,8 @@ public class SplitProcessingCoordinator(
             SplitDetectionService.CURRENT_DETECTOR_VERSION
         );
 
-        var chapters = await dbContext
+        var db = context ?? dbContext;
+        var chapters = await db
             .Chapters.Include(c => c.Manga)
             .Where(c => ids.Contains(c.Id))
             .ToDictionaryAsync(c => c.Id, cancellationToken);

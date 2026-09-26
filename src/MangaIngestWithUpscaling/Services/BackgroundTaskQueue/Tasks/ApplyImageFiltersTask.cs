@@ -74,8 +74,12 @@ public class ApplyImageFiltersTask : BaseTask
         int processedChapters = 0;
         int filteredImages = 0;
 
+        // Materialize before the parallel loop: enumerating an EF async stream while the loop body
+        // runs concurrently uses the same DbContext from several threads, which EF forbids.
+        var chapters = await chaptersQuery.AsNoTracking().ToListAsync(cancellationToken);
+
         await Parallel.ForEachAsync(
-            chaptersQuery.AsAsyncEnumerable(),
+            chapters,
             cancellationToken,
             async (chapter, token) =>
             {
