@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Security.Claims;
 using MangaIngestWithUpscaling.Api;
 using MangaIngestWithUpscaling.Api.Auth;
@@ -6,10 +5,8 @@ using MangaIngestWithUpscaling.Components;
 using MangaIngestWithUpscaling.Components.Account;
 using MangaIngestWithUpscaling.Configuration;
 using MangaIngestWithUpscaling.Data;
-using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.TaskDescribers;
-using MangaIngestWithUpscaling.Services.ChapterMerging;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.Python;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
@@ -22,7 +19,6 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Localization;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
@@ -62,102 +58,12 @@ builder.Configuration.AddEnvironmentVariables("Ingest_");
 
 builder.RegisterConfig(); // Register the configuration classes
 
-string connectionString =
-    builder.Configuration.GetConnectionString("DefaultConnection")
-    ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
+DatabaseConfiguration databaseConfiguration = DatabaseConfiguration.Resolve(builder.Configuration);
 
-SqliteConnectionStringBuilder sqliteConnectionStringBuilder = new(connectionString);
-
-var loggingConnectionString =
-    builder.Configuration.GetConnectionString("LoggingConnection") ?? "Data Source=logs.db";
-
-var loggingConnectionReadOnlyStringBuilder = new SqliteConnectionStringBuilder(
-    loggingConnectionString
-);
-var loggingConnectionReadOnlyString = loggingConnectionReadOnlyStringBuilder.ConnectionString;
-
-// Set WAL before app startup. This is idempotent and safe for existing databases.
-// Do it before builder.Build() so logs.db is configured before Serilog opens it.
-// For the logs database, also detect corruption and move the file aside so a fresh
-// one can be created instead of crashing the application on startup.
-var logsDbPath = Path.GetFullPath(loggingConnectionReadOnlyStringBuilder.DataSource);
-foreach (
-    var earlyDbPath in new[]
-    {
-        Path.GetFullPath(sqliteConnectionStringBuilder.DataSource),
-        logsDbPath,
-    }
-)
-{
-    var isLogsDb = earlyDbPath == logsDbPath;
-    try
-    {
-        using var earlyConn = new SqliteConnection($"Data Source={earlyDbPath}");
-        earlyConn.Open();
-        using var integrityCmd = earlyConn.CreateCommand();
-        integrityCmd.CommandText = "PRAGMA integrity_check";
-        var integrityResult = integrityCmd.ExecuteScalar() as string;
-        if (!string.Equals(integrityResult, "ok", StringComparison.OrdinalIgnoreCase))
-        {
-            if (isLogsDb)
-            {
-                MoveCorruptDatabaseAside(earlyDbPath);
-                continue;
-            }
-
-            throw new IOException($"Database integrity check failed: {integrityResult}");
-        }
-
-        using var earlyCmd = earlyConn.CreateCommand();
-        earlyCmd.CommandText = "PRAGMA journal_mode=WAL";
-        earlyCmd.ExecuteScalar();
-    }
-    catch when (isLogsDb)
-    {
-        MoveCorruptDatabaseAside(earlyDbPath);
-    }
-    catch
-    {
-        // Non-critical: WAL mode will be re-verified with logging after migrations
-    }
-}
-
-static void MoveCorruptDatabaseAside(string dbPath)
-{
-    try
-    {
-        if (File.Exists(dbPath))
-        {
-            var timestamp = DateTime.UtcNow.ToString(
-                "yyyyMMddHHmmss",
-                CultureInfo.InvariantCulture
-            );
-            var backupPath = $"{dbPath}.corrupted.{timestamp}";
-            File.Move(dbPath, backupPath);
-        }
-
-        var walPath = dbPath + "-wal";
-        var shmPath = dbPath + "-shm";
-        try
-        {
-            if (File.Exists(walPath))
-                File.Delete(walPath);
-        }
-        catch { }
-
-        try
-        {
-            if (File.Exists(shmPath))
-                File.Delete(shmPath);
-        }
-        catch { }
-    }
-    catch
-    {
-        // Best effort: if we can't move/delete the files, the startup will
-        // proceed normally and may fail with the original error
-    }
-}
+// Prepare the SQLite files (WAL, corruption handling) before Serilog opens logs.db, and make sure
+// the PostgreSQL Logs table exists before the sink starts writing. Both run before Build().
+DatabaseBootstrap.PrepareSqliteDatabases(databaseConfiguration);
+DatabaseBootstrap.EnsurePostgresLogsTable(databaseConfiguration);
 
 //Log.Logger = new LoggerConfiguration()
 //    .ReadFrom.Configuration(builder.Configuration)
@@ -165,20 +71,42 @@ static void MoveCorruptDatabaseAside(string dbPath)
 
 builder.Services.AddSerilog(
     (services, lc) =>
-        lc
-            .ReadFrom.Configuration(builder.Configuration)
+    {
+        lc.ReadFrom.Configuration(builder.Configuration)
             .ReadFrom.Services(services)
             .Enrich.FromLogContext()
             .WriteTo.Console(
                 outputTemplate: "[{Timestamp:yyyy-MM-dd HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}"
-            )
-            .WriteTo.SQLite(
-                Path.GetFullPath(loggingConnectionReadOnlyStringBuilder.DataSource),
+            );
+
+        if (databaseConfiguration.IsSqlite)
+        {
+            lc.WriteTo.SQLite(
+                databaseConfiguration.LogsDbPath,
                 tableName: "Logs",
+                // Persist UTC: SQLite reads the column back as DateTimeKind.Unspecified, which the UI
+                // treats as UTC. The browser-side LocalTime component then converts the UTC instant
+                // to the visitor's time zone. Storing local wall-clock here would be treated as UTC
+                // and shown shifted (the pre-existing behavior this fixes). PostgreSQL's timestamptz
+                // reads back as Utc, so both providers render the same instant.
+                storeTimestampInUtc: true,
                 retentionPeriod: TimeSpan.FromDays(7),
                 maxDatabaseSize: 100,
                 rollOver: false
-            )
+            );
+        }
+        else
+        {
+            lc.WriteTo.PostgreSQL(
+                databaseConfiguration.PostgresConnectionString,
+                tableName: PostgresLogging.TableName,
+                columnOptions: PostgresLogging.ColumnWriters,
+                schemaName: PostgresLogging.SchemaName,
+                needAutoCreateTable: false,
+                retentionTime: TimeSpan.FromDays(7)
+            );
+        }
+    }
 );
 
 // Configure Forwarded Headers
@@ -348,32 +276,31 @@ if (builder.Configuration.GetValue<bool>("OIDC:Enabled"))
 
 // Register a factory to create short-lived DbContext instances for parallel/background operations
 builder.Services.AddDbContextFactory<ApplicationDbContext>(options =>
-    options.UseSqlite(
-        connectionString,
-        sqlite =>
-        {
-            sqlite.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
-        }
+    DatabaseSetup.UseDatabaseProvider(
+        options,
+        databaseConfiguration.Provider,
+        databaseConfiguration.ApplicationConnectionString,
+        databaseConfiguration.ApplicationMigrationsAssembly
     )
 );
 builder.Services.AddDbContext<ApplicationDbContext>(
     options =>
-        options.UseSqlite(
-            connectionString,
-            sqlite =>
-            {
-                sqlite.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
-            }
+        DatabaseSetup.UseDatabaseProvider(
+            options,
+            databaseConfiguration.Provider,
+            databaseConfiguration.ApplicationConnectionString,
+            databaseConfiguration.ApplicationMigrationsAssembly
         ),
     optionsLifetime: ServiceLifetime.Singleton
 );
 builder.Services.AddDbContext<LoggingDbContext>(options =>
-    options.UseSqlite(
-        loggingConnectionReadOnlyString,
-        builder =>
-        {
-            builder.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
-        }
+    DatabaseSetup.UseDatabaseProvider(
+        options,
+        databaseConfiguration.Provider,
+        databaseConfiguration.IsSqlite
+            ? databaseConfiguration.LoggingConnectionReadOnlyString!
+            : databaseConfiguration.PostgresConnectionString,
+        databaseConfiguration.ApplicationMigrationsAssembly
     )
 );
 builder.Services.AddDatabaseDeveloperPageExceptionFilter();
@@ -443,177 +370,14 @@ if (app.Configuration.GetValue<bool>("DeprecatedImageVariant"))
 // Apply migrations on startup
 using (var scope = app.Services.CreateScope())
 {
-    var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
 
-    // Create database backup before .NET 10 upgrade if this is the first time
-    var dbPath = Path.GetFullPath(sqliteConnectionStringBuilder.DataSource);
-    string dbDirectory =
-        Path.GetDirectoryName(dbPath)
-        ?? throw new InvalidOperationException("Unable to determine database directory");
-    var upgradeMarkerFile = Path.Combine(dbDirectory, ".net10-upgrade-complete");
-
-    if (!File.Exists(upgradeMarkerFile) && File.Exists(dbPath))
-    {
-        try
-        {
-            var backupPath = dbPath + ".bak";
-            File.Copy(dbPath, backupPath, overwrite: false);
-            logger.LogInformation(
-                "Created database backup at {BackupPath} before .NET 10 upgrade",
-                backupPath
-            );
-
-            // Also backup the logging database if it exists
-            var loggingDbPath = Path.GetFullPath(loggingConnectionReadOnlyStringBuilder.DataSource);
-            if (File.Exists(loggingDbPath))
-            {
-                var loggingBackupPath = loggingDbPath + ".bak";
-                File.Copy(loggingDbPath, loggingBackupPath, overwrite: false);
-                logger.LogInformation(
-                    "Created logging database backup at {BackupPath}",
-                    loggingBackupPath
-                );
-            }
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(
-                ex,
-                "Failed to create database backup before .NET 10 upgrade. Continuing with migration..."
-            );
-        }
-    }
-
-    try
-    {
-        dbContext.Database.Migrate();
-        logger.LogDebug("Database migrations applied successfully.");
-
-        // Mark the .NET 10 upgrade as complete
-        try
-        {
-            await File.WriteAllTextAsync(
-                upgradeMarkerFile,
-                $"Upgrade completed on {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC"
-            );
-            logger.LogDebug("Marked .NET 10 upgrade as complete");
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(
-                ex,
-                "Failed to create upgrade marker file, but migration completed successfully"
-            );
-        }
-
-        // Re-assert and verify WAL mode for the main database.
-        // SQLite returns the active journal mode, so check the returned value.
-        try
-        {
-            dbContext.Database.OpenConnection();
-            var mainConn = dbContext.Database.GetDbConnection();
-            using var walCmd = mainConn.CreateCommand();
-            walCmd.CommandText = "PRAGMA journal_mode=WAL";
-            var mode = (string?)await walCmd.ExecuteScalarAsync() ?? "unknown";
-            if (mode == "wal")
-                logger.LogDebug("WAL journal mode enabled for main database.");
-            else
-                logger.LogWarning(
-                    "WAL journal mode could not be enabled for the main database (current mode: {Mode}). "
-                        + "The database may be more susceptible to corruption on unexpected shutdowns.",
-                    mode
-                );
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(
-                ex,
-                "Failed to enable WAL journal mode for the main database. "
-                    + "The database may be more susceptible to corruption on unexpected shutdowns."
-            );
-        }
-        finally
-        {
-            dbContext.Database.CloseConnection();
-        }
-
-        // Best-effort: re-apply WAL mode for the logging database.
-        try
-        {
-            var loggingDbContext = scope.ServiceProvider.GetRequiredService<LoggingDbContext>();
-            loggingDbContext.Database.OpenConnection();
-            try
-            {
-                var loggingConn = loggingDbContext.Database.GetDbConnection();
-                using var walCmd = loggingConn.CreateCommand();
-                walCmd.CommandText = "PRAGMA journal_mode=WAL";
-                var mode = (string?)await walCmd.ExecuteScalarAsync() ?? "unknown";
-                if (mode == "wal")
-                    logger.LogDebug("WAL journal mode enabled for logging database.");
-                else
-                    logger.LogWarning(
-                        "WAL journal mode could not be enabled for the logging database (current mode: {Mode}).",
-                        mode
-                    );
-            }
-            finally
-            {
-                loggingDbContext.Database.CloseConnection();
-            }
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Failed to enable WAL journal mode for logging database.");
-        }
-
-        if (app.Environment.IsProduction())
-        {
-            // A quick check to see if vacuum is needed could go here (e.g. checking file size)
-            await dbContext.Database.ExecuteSqlRawAsync("VACUUM;");
-            logger.LogInformation("Database vacuumed successfully.");
-
-            // Also vacuum the logging database to reclaim space from truncated logs
-            try
-            {
-                var loggingDbContext = scope.ServiceProvider.GetRequiredService<LoggingDbContext>();
-                await loggingDbContext.Database.ExecuteSqlRawAsync("VACUUM;");
-                logger.LogInformation("Logging database vacuumed successfully.");
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Failed to vacuum logging database.");
-            }
-        }
-
-        // reset any tasks that were "Processing" (e.g. during a crash) back to "Pending"
-        await dbContext
-            .PersistedTasks.Where(task => task.Status == PersistedTaskStatus.Processing)
-            .ExecuteUpdateAsync(s =>
-                s.SetProperty(p => p.Status, p => PersistedTaskStatus.Pending)
-            );
-
-        // Validate and upgrade existing merged chapter records for backward compatibility
-        try
-        {
-            var backwardCompatibilityService =
-                scope.ServiceProvider.GetRequiredService<IBackwardCompatibilityService>();
-            await backwardCompatibilityService.ValidateAndUpgradeExistingRecordsAsync();
-            logger.LogDebug("Backward compatibility validation completed successfully.");
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(
-                ex,
-                "Backward compatibility validation failed, but application will continue. Some merge functionality may be affected for existing records."
-            );
-        }
-    }
-    catch (Exception ex)
-    {
-        logger.LogError(ex, $"An error occurred while applying migrations: {ex.Message}");
-        // Log or handle the exception as appropriate for your app
-    }
+    await DatabaseBootstrap.ApplyStartupMigrationsAsync(
+        scope.ServiceProvider,
+        databaseConfiguration,
+        app.Environment,
+        logger
+    );
 
     // Also initialize python environment
     var upscalerConfig = scope.ServiceProvider.GetRequiredService<IOptions<UpscalerConfig>>();

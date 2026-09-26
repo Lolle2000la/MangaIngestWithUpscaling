@@ -29,3 +29,34 @@ README.md
 !.git/packed-refs
 !.git/refs/heads/**
 test_data/
+
+# Local-only artifacts that a clean CI checkout never has. Excluding them keeps local image builds
+# representative of CI and prevents baking a developer environment (e.g. a multi-GB Python venv)
+# into the image.
+#
+# Do NOT exclude *.pth/*.onnx: the submodules/manga-vert-split-nn models are tracked and needed.
+**/.venv
+**/venv
+**/__pycache__
+**/*.pyc
+**/*.egg-info
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/.cache
+
+# Databases, their sidecars and startup markers created by running the app from a checkout. In the
+# container these live on the /data volume instead.
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.db.bak
+**/*.corrupted.*
+**/.net10-upgrade-complete
+
+# Local test / IDE / miscellaneous artifacts
+**/test_env/
+**/.idea/
+**/.reasonix/
+**/*.DotSettings.user
+**/*.cbz

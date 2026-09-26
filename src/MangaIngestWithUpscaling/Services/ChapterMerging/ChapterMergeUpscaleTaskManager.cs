@@ -1,4 +1,3 @@
-using System.Text.Json;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
@@ -40,17 +39,8 @@ public class ChapterMergeUpscaleTaskManager(
         List<int> chapterIds = originalChapters.Select(c => c.Id).ToList();
 
         // Find and handle all upscale and split-related tasks for the chapters being merged
-        string chapterIdsJson = JsonSerializer.Serialize(chapterIds);
-        string taskTypesJson = JsonSerializer.Serialize(ChapterScopedTaskTypes);
-
-        List<PersistedTask> allRelatedTasks = await dbContext
-            .PersistedTasks.FromSql(
-                $"""
-                    SELECT * FROM PersistedTasks 
-                    WHERE Data->>'$.ChapterId' IN (SELECT value FROM json_each({chapterIdsJson})) 
-                      AND Data->>'$.$type' IN (SELECT value FROM json_each({taskTypesJson}))
-                """
-            )
+        List<PersistedTask> allRelatedTasks = await PersistedTaskQueries
+            .ForTaskTypesAndChapters(dbContext, chapterIds, ChapterScopedTaskTypes)
             .OrderBy(p => p.Status == PersistedTaskStatus.Pending ? 0 : 1)
             .ToListAsync(cancellationToken);
 
@@ -219,19 +209,12 @@ public class ChapterMergeUpscaleTaskManager(
         // Check if any chapters have pending or in-progress upscale or split tasks for logging purposes
         List<int> chapterIds = chapters.Select(c => c.Id).ToList();
 
-        string chapterIdsJson = JsonSerializer.Serialize(chapterIds);
-        string taskTypesJson = JsonSerializer.Serialize(ChapterScopedTaskTypes);
-
-        List<PersistedTask> pendingTasks = await dbContext
-            .PersistedTasks.FromSql(
-                $"""
-                    SELECT * FROM PersistedTasks 
-                    WHERE Data->>'$.ChapterId' IN (SELECT value FROM json_each({chapterIdsJson})) 
-                      AND Data->>'$.$type' IN (SELECT value FROM json_each({taskTypesJson}))
-                      AND Status IN ({nameof(PersistedTaskStatus.Pending)}, {nameof(
-                    PersistedTaskStatus.Processing
-                )})
-                """
+        List<PersistedTask> pendingTasks = await PersistedTaskQueries
+            .ForTaskTypesAndChapters(
+                dbContext,
+                chapterIds,
+                ChapterScopedTaskTypes,
+                [PersistedTaskStatus.Pending, PersistedTaskStatus.Processing]
             )
             .ToListAsync(cancellationToken);
 

@@ -15,7 +15,7 @@ using NSubstitute;
 
 namespace MangaIngestWithUpscaling.Tests.Services.MetadataHandling;
 
-public class MangaMetadataChangerTests : IDisposable
+public class MangaMetadataChangerTests : IAsyncDisposable
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly MangaMetadataChanger _metadataChanger;
@@ -32,7 +32,7 @@ public class MangaMetadataChangerTests : IDisposable
     public MangaMetadataChangerTests()
     {
         // Create SQLite in-memory database
-        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _testDb = TestDatabaseHelper.CreateDatabase();
         _dbContext = _testDb.Context;
 
         // Create mocks
@@ -94,9 +94,9 @@ public class MangaMetadataChangerTests : IDisposable
         );
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _testDb?.Dispose();
+        await _testDb.DisposeAsync();
         if (Directory.Exists(_tempDir))
         {
             Directory.Delete(_tempDir, true);

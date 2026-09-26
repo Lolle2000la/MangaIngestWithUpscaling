@@ -900,10 +900,8 @@ public partial class IngestProcessor(
     {
         foreach (Chapter ch in originals)
         {
-            List<PersistedTask> tasks = await dbContext
-                .PersistedTasks.FromSql(
-                    $"SELECT * FROM PersistedTasks WHERE Data->>'$.$type' = {nameof(UpscaleTask)} AND Data->>'$.ChapterId' = {ch.Id}"
-                )
+            List<PersistedTask> tasks = await PersistedTaskQueries
+                .ForTaskTypeAndChapter<UpscaleTask>(dbContext, ch.Id)
                 .ToListAsync(cancellationToken);
 
             foreach (PersistedTask task in tasks)

@@ -8,7 +8,7 @@
     <DialogContent>
         <div Style="overflow-y:auto; flex:1 1 auto;">
             <MudStack Spacing="3">
-                <MudText><b>@Loc["Header_Timestamp"]:</b> @Log.Timestamp.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")
+                <MudText><b>@Loc["Header_Timestamp"]:</b> <LocalTime Value="@Log.Timestamp" />
                 </MudText>
                 <MudText><b>@Loc["Header_Level"]:</b> @Log.Level</MudText>
 

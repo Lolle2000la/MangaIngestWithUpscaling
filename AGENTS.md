@@ -83,7 +83,7 @@ dotnet run --project src/MangaIngestWithUpscaling
 
 2. **Format Code:**
    ```bash
-   dotnet csharpier format src/ test/ # Or even just the modified files
+   dotnet csharpier format src/ test/ tools/ # Or even just the modified files
    # Only ever commit formatted code
    # Note that the submodule are rightly excluded from the glob pattern above
    ```
@@ -114,9 +114,47 @@ dotnet run --project src/MangaIngestWithUpscaling
      dotnet test --solution MangaIngestWithUpscaling.sln --filter-not-trait Category=Download
      ```
      Don't run download tests unless you have a specific reason. They can take very long.
+   - To also run the main test project against PostgreSQL (Testcontainers, Docker required):
+     ```bash
+     TEST_DB_PROVIDER=postgres dotnet test test/MangaIngestWithUpscaling.Tests/MangaIngestWithUpscaling.Tests.csproj --filter-not-trait Category=Download
+     ```
+   - To also run the UI test project against PostgreSQL (see [UI tests](#ui-tests-bunit)):
+     ```bash
+     TEST_DB_PROVIDER=postgres dotnet test test/MangaIngestWithUpscaling.Tests.UI/MangaIngestWithUpscaling.Tests.UI.csproj --filter-not-trait Category=Download
+     ```
    - If you add new features or make changes that affect logic, consider writing new or updating existing tests.
    - Ensure tests pass before PR or merge.
    - Unless specified differently, tests should be written using xUnit v3, NSubstitute, and bUnit if testing Blazor components.
+
+## UI tests (bUnit)
+
+`MangaIngestWithUpscaling.Tests.UI` runs against SQLite by default and against PostgreSQL with
+`TEST_DB_PROVIDER=postgres`. Each test class registers one `ApplicationDbContext` as a singleton so
+the bUnit renderer and the test method share it.
+
+**Known issue: the PostgreSQL pass can hang intermittently.** The run stops after the first skipped
+test with no further output. A captured dump shows the test class's disposal blocked in
+`DbContext.DisposeAsync` → `RelationalConnection.ResetStateAsync` → `NpgsqlConnection.CloseAsync` →
+`NpgsqlDataReader.Close`, waiting for a PostgreSQL backend message: the shared context still has a
+query in flight when the test disposes it. SQLite never hits this because closing its connection is
+local and synchronous.
+
+- Reproduces only on the PostgreSQL pass, and more readily on a low-core machine (~1 in 4 on CI,
+  rarer on a fast one). Running the main PostgreSQL pass immediately before the UI pass, pinned to
+  4 CPUs (`taskset -c 0-3`), reproduces it quickly.
+- Diagnose by collecting a dump of the **test host** (not the `dotnet test` CLI) while it is stuck:
+  ```bash
+  dotnet-dump collect -p <host-pid> -o hang.dmp
+  dotnet-dump analyze hang.dmp -c "dumpasync" -c "clrstack -all" -c "exit"
+  ```
+  The host process is
+  `test/MangaIngestWithUpscaling.Tests.UI/bin/Debug/net10.0/MangaIngestWithUpscaling.Tests.UI`.
+- Fixed in `TestDatabaseHelper.TestDbContext.DisposeAsync` by dropping the database **before**
+  disposing the context: the drop terminates the context's backend connection, so the context close
+  cannot block on the in-flight reader. Sharing one `DbContext` between the renderer and the test is
+  still the underlying design smell — a per-operation context would remove the race entirely — but
+  the drop-order change is sufficient and much smaller. Moving the teardown onto the thread pool does
+  **not** address it; that was tried and the hang came back.
 
 ## Commenting Guidelines
 
@@ -141,6 +179,13 @@ dotnet run --project src/MangaIngestWithUpscaling
 - **Automatic timestamps**: Entities whose `CreatedAt`/`ModifiedAt` should be managed by `ApplicationDbContext.UpdateTimestamps` must implement `IHasCreatedAt` / `IHasModifiedAt` (`src/MangaIngestWithUpscaling.Shared/Data/Abstractions`). Entities whose timestamps are set manually must **not** implement them.
 - **Library configuration**: Child entities of a `Library` that represent configuration (ingest paths, filter rules, rename rules) implement `ILibraryConfiguration` so that adding, updating or deleting one bumps the owning `Library.ModifiedAt`.
 
+## Logging schema
+
+- The `Logs` table is **not** managed by EF migrations; the `Log` entity (`src/MangaIngestWithUpscaling.Data/LogModel/Log.cs`) is the source of truth for its shape.
+- Adding, renaming or changing the nullability of a `Log` property requires updating `PostgresLogging.CreateTableSql`. For SQLite the table is created by the external `Serilog.Sinks.SQLite` sink; a guard test (`SqliteLoggingSinkTests`) pins the sink schema to the model.
+- Log timestamps are stored in **UTC** on both providers; the SQLite sink is configured with `storeTimestampInUtc: true` so the UI can render them in the browser's time zone.
+- The migrator copies tables and resets PostgreSQL sequences from hand-maintained lists in `DataMigrator`; update them when entities change. `MigratorTableCoverageTests` fails until they match the EF model.
+
 ## Project Structure
 
 ### Key Directories
@@ -149,12 +194,17 @@ dotnet run --project src/MangaIngestWithUpscaling
 ├── src/
 │   ├── MangaIngestWithUpscaling/          # Main Blazor web application
 │   ├── MangaIngestWithUpscaling.Shared/   # Shared library (models, services)
+│   ├── MangaIngestWithUpscaling.Data/     # EF Core entities, DbContexts, task queries
+│   ├── MangaIngestWithUpscaling.Data.Sqlite/   # SQLite migrations
+│   ├── MangaIngestWithUpscaling.Data.Postgres/ # PostgreSQL migrations
 │   └── MangaIngestWithUpscaling.RemoteWorker/ # Remote upscaling worker
 ├── test/
-│   ├── MangaIngestWithUpscaling.Tests/    # Unit tests for main app
+│   ├── MangaIngestWithUpscaling.Tests/    # Unit tests for main app (dual-provider)
 │   ├── MangaIngestWithUpscaling.Shared.Tests/ # Unit tests for shared lib
 │   ├── MangaIngestWithUpscaling.RemoteWorker.Tests/ # Unit tests for worker
 │   └── MangaIngestWithUpscaling.Tests.UI/ # UI tests
+├── tools/
+│   └── MangaIngestWithUpscaling.DbMigrator/ # SQLite <-> PostgreSQL data migration CLI
 ├── MangaJaNaiConverterGui/            # Git submodule (ML backend files)
 ├── docs/                              # Documentation
 └── .github/workflows/                 # CI/CD pipelines
@@ -184,7 +234,10 @@ dotnet run --project src/MangaIngestWithUpscaling
 ### Environment Variables (for development)
 - `Ingest_Upscaler__RemoteOnly=true` - Skip Python/ML setup
 - `Ingest_Upscaler__UseCPU=true` - Force CPU backend
-- `Ingest_ConnectionStrings__DefaultConnection` - Database path
+- `Ingest_DatabaseProvider=Postgres` - Select the database backend (`Sqlite` is the default; also accepts `sqlite3`, `postgres`, `postgresql`, `npgsql`; an unknown value fails startup instead of silently falling back)
+- `Ingest_ConnectionStrings__DefaultConnection` - SQLite database path (SQLite only)
+- `Ingest_ConnectionStrings__PostgresConnection=Host=…;Database=…;Username=…;Password=…` - Required when `Ingest_DatabaseProvider=Postgres`
+- `Ingest_ConnectionStrings__LoggingConnection` - SQLite logs file (SQLite only; on PostgreSQL the logs live in the application database)
 
 ## Common Tasks
 
@@ -202,26 +255,30 @@ dotnet build src/MangaIngestWithUpscaling.Shared/
 ### Code Formatting
 ```bash
 # Check formatting without changes
-dotnet csharpier check src/ test/
+dotnet csharpier check src/ test/ tools/
 
 # Apply formatting fixes
-dotnet csharpier format src/ test/
+dotnet csharpier format src/ test/ tools/
 ```
 
 ### Database Operations
-The application uses SQLite with Entity Framework Core. Database migrations are applied automatically on startup.
+The application supports SQLite (default) and PostgreSQL with Entity Framework Core. Migrations are applied automatically on startup. See [Database Providers](./docs/DATABASE_PROVIDERS.md) for configuration and the SQLite ⇄ PostgreSQL migration tool.
 
-There are two contexts — `ApplicationDbContext` (application data) and `LoggingDbContext` (logs) — so EF tooling commands must pass `--context`:
+Each provider owns its migrations in a separate assembly (`MangaIngestWithUpscaling.Data.Sqlite` / `MangaIngestWithUpscaling.Data.Postgres`). Scaffold a schema change for both providers with:
 
 ```bash
-# Add a migration after changing the model
-dotnet ef migrations add <Name> --project src/MangaIngestWithUpscaling --startup-project src/MangaIngestWithUpscaling --context ApplicationDbContext
+./scripts/create-dual-migration.sh <Name>
+```
 
-# Verify the model and snapshot agree (should be clean before merging)
-dotnet ef migrations has-pending-model-changes --project src/MangaIngestWithUpscaling --startup-project src/MangaIngestWithUpscaling --context ApplicationDbContext
+To verify a single provider's model and snapshot agree:
+
+```bash
+dotnet ef migrations has-pending-model-changes --project src/MangaIngestWithUpscaling.Data.Sqlite --startup-project src/MangaIngestWithUpscaling.Data.Sqlite --context ApplicationDbContext
+dotnet ef migrations has-pending-model-changes --project src/MangaIngestWithUpscaling.Data.Postgres --startup-project src/MangaIngestWithUpscaling.Data.Postgres --context ApplicationDbContext
 ```
 
 - Review generated migrations before committing. Data backfills must run **before** a column is dropped (see `AddMultipleIngestPaths`), and migrations that transform data should get a regression test that migrates to the previous migration, seeds old-schema data, then migrates forward (see `AddMultipleIngestPathsMigrationTests`).
+- Data-backfill migrations must use provider-specific SQL (SQLite's `json_each` vs PostgreSQL's `jsonb_array_elements_text`).
 - An "EF tools version is older than the runtime" warning is expected and harmless.
 
 ### Testing Scenarios
@@ -303,15 +360,22 @@ dotnet build --no-restore MangaIngestWithUpscaling.sln /p:TreatWarningsAsErrors=
 dotnet test --solution MangaIngestWithUpscaling.sln --filter-not-trait Category=Download
 ```
 
+CI (`.github/workflows/dotnet.yml`) runs **three** test passes: unit tests on SQLite, the main test
+project against PostgreSQL, and the UI test project against PostgreSQL (the last two via
+Testcontainers, so Docker is required). A change that passes locally on SQLite can still fail CI, so
+run the two `TEST_DB_PROVIDER=postgres` commands above when your change touches data access.
+
 ## Key Dependencies
 
 - **.NET 10.0** - Required runtime and SDK
 - **Blazor Server** - Web framework
 - **MudBlazor** - UI component library  
 - **Entity Framework Core** - Database ORM
-- **SQLite** - Database engine
+- **SQLite / PostgreSQL (Npgsql)** - Supported database engines (SQLite is the default)
+- **Testcontainers** - Spins up PostgreSQL for the dual-provider test passes (Docker required)
 - **gRPC** - Communication protocol
 - **Serilog** - Logging framework
+- **System.CommandLine** - CLI parsing for the database migrator
 - **Python 3.x + PyTorch** - ML backend (optional with RemoteOnly)
 
 Remember: **ALWAYS use RemoteOnly mode for development** unless you specifically need to test ML functionality locally.

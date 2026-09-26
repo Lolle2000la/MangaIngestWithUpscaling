@@ -27,14 +27,14 @@ using NSubstitute;
 
 namespace MangaIngestWithUpscaling.Tests.Services.ChapterManagement;
 
-public class IngestProcessorMultipleIngestPathsTests : IDisposable
+public class IngestProcessorMultipleIngestPathsTests : IAsyncDisposable
 {
     private readonly TestDatabaseHelper.TestDbContext _testDb;
     private readonly string _tempRoot;
 
     public IngestProcessorMultipleIngestPathsTests()
     {
-        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _testDb = TestDatabaseHelper.CreateDatabase();
         _tempRoot = Path.Combine(
             Path.GetTempPath(),
             "ingest_multi_path_test_" + Guid.NewGuid().ToString("N")[..8]
@@ -42,9 +42,9 @@ public class IngestProcessorMultipleIngestPathsTests : IDisposable
         Directory.CreateDirectory(_tempRoot);
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _testDb?.Dispose();
+        await _testDb.DisposeAsync();
         if (Directory.Exists(_tempRoot))
         {
             try

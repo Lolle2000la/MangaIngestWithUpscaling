@@ -11,7 +11,7 @@ using NSubstitute;
 
 namespace MangaIngestWithUpscaling.Tests.Services.MangaManagement;
 
-public class MangaMergerTests : IDisposable
+public class MangaMergerTests : IAsyncDisposable
 {
     private readonly ApplicationDbContext _dbContext;
     private readonly MangaMerger _mangaMerger;
@@ -26,7 +26,7 @@ public class MangaMergerTests : IDisposable
     public MangaMergerTests()
     {
         // Create SQLite in-memory database
-        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _testDb = TestDatabaseHelper.CreateDatabase();
         _dbContext = _testDb.Context;
 
         // Create mocks
@@ -49,9 +49,9 @@ public class MangaMergerTests : IDisposable
         );
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _testDb?.Dispose();
+        await _testDb.DisposeAsync();
         if (Directory.Exists(_tempDir))
         {
             Directory.Delete(_tempDir, true);

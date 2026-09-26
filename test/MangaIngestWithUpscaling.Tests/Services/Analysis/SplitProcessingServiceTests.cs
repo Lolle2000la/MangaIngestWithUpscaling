@@ -12,6 +12,7 @@ using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
+using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -19,8 +20,9 @@ using Xunit;
 
 namespace MangaIngestWithUpscaling.Tests.Services.Analysis;
 
-public class SplitProcessingServiceTests : IDisposable
+public class SplitProcessingServiceTests : IAsyncDisposable
 {
+    private readonly TestDatabaseHelper.TestDbContext _testDb;
     private readonly ApplicationDbContext _dbContext;
     private readonly ILogger<SplitProcessingService> _logger;
     private readonly ITaskQueue _taskQueue;
@@ -31,13 +33,8 @@ public class SplitProcessingServiceTests : IDisposable
 
     public SplitProcessingServiceTests()
     {
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseSqlite("Data Source=:memory:")
-            .Options;
-
-        _dbContext = new ApplicationDbContext(options);
-        _dbContext.Database.OpenConnection();
-        _dbContext.Database.EnsureCreated();
+        _testDb = TestDatabaseHelper.CreateDatabase();
+        _dbContext = _testDb.Context;
 
         _logger = Substitute.For<ILogger<SplitProcessingService>>();
         _taskQueue = Substitute.For<ITaskQueue>();
@@ -54,10 +51,9 @@ public class SplitProcessingServiceTests : IDisposable
         );
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _dbContext.Database.CloseConnection();
-        _dbContext.Dispose();
+        await _testDb.DisposeAsync();
     }
 
     [Fact]

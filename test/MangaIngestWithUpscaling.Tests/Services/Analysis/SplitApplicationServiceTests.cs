@@ -13,6 +13,7 @@ using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
+using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
@@ -21,8 +22,9 @@ using Xunit;
 
 namespace MangaIngestWithUpscaling.Tests.Services.Analysis;
 
-public class SplitApplicationServiceTests : IDisposable
+public class SplitApplicationServiceTests : IAsyncDisposable
 {
+    private readonly TestDatabaseHelper.TestDbContext _testDb;
     private readonly ApplicationDbContext _dbContext;
     private readonly ISplitProcessingCoordinator _coordinator;
     private readonly ISplitApplier _splitApplier;
@@ -33,13 +35,8 @@ public class SplitApplicationServiceTests : IDisposable
 
     public SplitApplicationServiceTests()
     {
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseSqlite("Data Source=:memory:")
-            .Options;
-
-        _dbContext = new ApplicationDbContext(options);
-        _dbContext.Database.OpenConnection();
-        _dbContext.Database.EnsureCreated();
+        _testDb = TestDatabaseHelper.CreateDatabase();
+        _dbContext = _testDb.Context;
 
         _coordinator = Substitute.For<ISplitProcessingCoordinator>();
         _splitApplier = Substitute.For<ISplitApplier>();
@@ -59,10 +56,9 @@ public class SplitApplicationServiceTests : IDisposable
         Directory.CreateDirectory(_tempDir);
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _dbContext.Database.CloseConnection();
-        _dbContext.Dispose();
+        await _testDb.DisposeAsync();
 
         if (Directory.Exists(_tempDir))
         {

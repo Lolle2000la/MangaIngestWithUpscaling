@@ -1136,15 +1136,13 @@ public partial class LibraryIntegrityChecker(
         CancellationToken cancellationToken
     )
     {
-        IQueryable<PersistedTask> query = context.PersistedTasks.FromSql(
-            $@"
-            SELECT * FROM PersistedTasks
-            WHERE Data->>'$.$type' = {nameof(UpscaleTask)}
-              AND Data->>'$.ChapterId' = {chapterId}
-              AND Status IN ({nameof(PersistedTaskStatus.Pending)}, {nameof(PersistedTaskStatus.Processing)})
-        "
-        );
-        return await query.AnyAsync(cancellationToken);
+        return await PersistedTaskQueries
+            .ForTaskTypeAndChapter<UpscaleTask>(
+                context,
+                chapterId,
+                [PersistedTaskStatus.Pending, PersistedTaskStatus.Processing]
+            )
+            .AnyAsync(cancellationToken);
     }
 
     private static async Task<bool> HasExistingRepairTaskAsync(
@@ -1153,15 +1151,13 @@ public partial class LibraryIntegrityChecker(
         CancellationToken cancellationToken
     )
     {
-        IQueryable<PersistedTask> query = context.PersistedTasks.FromSql(
-            $@"
-            SELECT * FROM PersistedTasks
-            WHERE Data->>'$.$type' = {nameof(RepairUpscaleTask)}
-              AND Data->>'$.ChapterId' = {chapterId}
-              AND Status IN ({nameof(PersistedTaskStatus.Pending)}, {nameof(PersistedTaskStatus.Processing)})
-        "
-        );
-        return await query.AnyAsync(cancellationToken);
+        return await PersistedTaskQueries
+            .ForTaskTypeAndChapter<RepairUpscaleTask>(
+                context,
+                chapterId,
+                [PersistedTaskStatus.Pending, PersistedTaskStatus.Processing]
+            )
+            .AnyAsync(cancellationToken);
     }
 
     /// <summary>

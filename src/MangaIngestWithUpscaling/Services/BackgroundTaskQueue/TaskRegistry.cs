@@ -163,6 +163,21 @@ public class TaskRegistry : IHostedService, IDisposable
         List<PersistedTask> all = await db
             .PersistedTasks.AsNoTracking()
             .ToListAsync(cancellationToken);
+
+        // A row whose $type is unknown (a removed/renamed task type, or a row written by another
+        // version) deserializes to a bare BaseTask and will fail when processed. Surface it here so
+        // operators notice the stale row instead of only seeing a processing failure later.
+        foreach (PersistedTask task in all)
+        {
+            if (task.Data?.GetType() == typeof(BaseTask))
+            {
+                _logger?.LogWarning(
+                    "Persisted task {TaskId} has an unrecognized payload type and cannot be processed.",
+                    task.Id
+                );
+            }
+        }
+
         _tasks.AddOrUpdate(all);
         RebuildSnapshots();
 
@@ -171,13 +186,30 @@ public class TaskRegistry : IHostedService, IDisposable
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
+        // Dispose can run before StopAsync: the instance is registered both as a plain singleton
+        // and as an IHostedService, so the container's teardown order is not guaranteed. Treat an
+        // already-disposed registry as already stopped instead of cancelling a disposed CTS.
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            return;
+        }
+
         _taskQueue.TaskEnqueuedOrChanged -= OnTaskChanged;
         _taskQueue.TaskRemoved -= OnTaskRemoved;
         _standardProcessor.StatusChanged -= OnTaskChanged;
         _upscaleProcessor.StatusChanged -= OnTaskChanged;
         _distributedUpscaleProcessor.StatusChanged -= OnTaskChanged;
 
-        await _cts.CancelAsync();
+        try
+        {
+            await _cts.CancelAsync();
+        }
+        catch (ObjectDisposedException)
+        {
+            // Lost the race with Dispose; nothing left to stop.
+            return;
+        }
+
         if (_flushTask != null)
         {
             try

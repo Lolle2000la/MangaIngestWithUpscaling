@@ -6,7 +6,7 @@ using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.RepairServices;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
-using Microsoft.Data.Sqlite;
+using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -20,9 +20,9 @@ namespace MangaIngestWithUpscaling.Tests.Services.BackgroundTaskQueue;
 ///     in-memory provider because the chapter/skip branches include <c>Library</c>, whose complex
 ///     type the in-memory provider cannot shape.
 /// </summary>
-public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
+public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
 {
-    private readonly string _dbFile;
+    private readonly TestDatabase _database;
     private readonly ServiceProvider _provider;
     private readonly TaskQueue _taskQueue;
     private readonly DistributedUpscaleTaskProcessor _processor;
@@ -31,13 +31,9 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
     {
         var services = new ServiceCollection();
         services.AddLogging();
-        _dbFile = Path.Combine(
-            Path.GetTempPath(),
-            $"distributed-persistence-{Guid.NewGuid():N}.db"
-        );
-        services.AddDbContext<ApplicationDbContext>(options =>
-            options.UseSqlite($"Data Source={_dbFile}")
-        );
+        _database = TestDatabaseFactory.Create();
+        using (ApplicationDbContext schema = _database.CreateContext()) { }
+        services.AddDbContext<ApplicationDbContext>(options => _database.Configure(options));
 
         var cleanup = Substitute.For<IQueueCleanup>();
         cleanup.CleanupAsync().Returns(Task.FromResult<IReadOnlyList<int>>(Array.Empty<int>()));
@@ -72,18 +68,10 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IDisposable
         );
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _provider.Dispose();
-        SqliteConnection.ClearAllPools();
-        try
-        {
-            File.Delete(_dbFile);
-        }
-        catch (IOException)
-        {
-            // Best-effort cleanup of the temp database.
-        }
+        await _provider.DisposeAsync();
+        await _database.DisposeAsync();
     }
 
     [Fact]

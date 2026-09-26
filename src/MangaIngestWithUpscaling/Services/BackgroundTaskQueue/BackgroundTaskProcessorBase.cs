@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.ComponentModel;
+using System.Reactive.Linq;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
@@ -233,17 +235,22 @@ public abstract class BackgroundTaskProcessorBase(
         {
             // Polymorphic processing based on concrete type, forward debounced progress to UI
             var last = DateTime.UtcNow;
-            using var progressSubscription = task.Data.Progress.Changed.Subscribe(_ =>
-            {
-                OnProgressChanged(task);
-
-                var now = DateTime.UtcNow;
-                if (now - last >= _progressDebounce)
+            using var progressSubscription = Observable
+                .FromEventPattern<PropertyChangedEventHandler, PropertyChangedEventArgs>(
+                    handler => task.Data.Progress.PropertyChanged += handler,
+                    handler => task.Data.Progress.PropertyChanged -= handler
+                )
+                .Subscribe(_ =>
                 {
-                    last = now;
-                    StatusChanged?.Invoke(task);
-                }
-            });
+                    OnProgressChanged(task);
+
+                    var now = DateTime.UtcNow;
+                    if (now - last >= _progressDebounce)
+                    {
+                        last = now;
+                        StatusChanged?.Invoke(task);
+                    }
+                });
 
             await task.Data.ProcessAsync(scope.ServiceProvider, stoppingToken);
             StatusChanged?.Invoke(task);

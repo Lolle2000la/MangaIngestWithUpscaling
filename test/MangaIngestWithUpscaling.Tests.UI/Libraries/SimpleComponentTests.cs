@@ -2,14 +2,15 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading.Tasks;
 using MangaIngestWithUpscaling.Components.Libraries;
 using MangaIngestWithUpscaling.Components.Libraries.FilteredImages;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.ImageFiltering;
+using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.AspNetCore.Components;
-using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
 using MudBlazor;
@@ -26,6 +27,7 @@ public class SimpleComponentTests : BunitContext
         RxAppBuilder.CreateReactiveUIBuilder().WithBlazor().BuildApp();
     }
 
+    private TestDatabaseHelper.TestDbContext _testDb = null!;
     private ApplicationDbContext _dbContext = null!;
     private ITaskQueue _mockTaskQueue = null!;
     private IImageFilterService _mockImageFilterService = null!;
@@ -51,15 +53,8 @@ public class SimpleComponentTests : BunitContext
 
     private void SetupDatabase()
     {
-        var connection = new SqliteConnection("Data Source=:memory:");
-        connection.Open();
-
-        var options = new DbContextOptionsBuilder<ApplicationDbContext>()
-            .UseSqlite(connection)
-            .Options;
-
-        _dbContext = new ApplicationDbContext(options);
-        _dbContext.Database.EnsureCreated();
+        _testDb = TestDatabaseHelper.CreateDatabase();
+        _dbContext = _testDb.Context;
     }
 
     private void RegisterServices()
@@ -388,13 +383,25 @@ public class SimpleComponentTests : BunitContext
         );
     }
 
-    protected override void Dispose(bool disposing)
+    protected override async ValueTask DisposeAsyncCore()
     {
-        if (disposing)
+        // Run the whole teardown on the thread pool: bUnit's service-provider disposal (which
+        // disposes the shared ApplicationDbContext) and the database drop both resume async
+        // continuations, and resuming them on the renderer's synchronization context can deadlock -
+        // the same reason TestDatabaseFactory.Create runs on the thread pool. A thread-pool thread
+        // has no synchronization context, so nothing posts back to the renderer.
+        await Task.Run(DisposeCoreAsync).ConfigureAwait(false);
+    }
+
+    private async Task DisposeCoreAsync()
+    {
+        await base.DisposeAsyncCore().ConfigureAwait(false);
+
+        if (_testDb is not null)
         {
-            _dbContext?.Database.CloseConnection();
-            _dbContext?.Dispose();
+            TestDatabaseHelper.TestDbContext testDb = _testDb;
+            _testDb = null!;
+            await testDb.DisposeAsync().ConfigureAwait(false);
         }
-        base.Dispose(disposing);
     }
 }

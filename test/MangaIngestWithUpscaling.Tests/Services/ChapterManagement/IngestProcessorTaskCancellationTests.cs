@@ -27,18 +27,18 @@ using NSubstitute;
 
 namespace MangaIngestWithUpscaling.Tests.Services.ChapterManagement;
 
-public class IngestProcessorTaskCancellationTests : IDisposable
+public class IngestProcessorTaskCancellationTests : IAsyncDisposable
 {
     private readonly TestDatabaseHelper.TestDbContext _testDb;
 
     public IngestProcessorTaskCancellationTests()
     {
-        _testDb = TestDatabaseHelper.CreateInMemoryDatabase();
+        _testDb = TestDatabaseHelper.CreateDatabase();
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        _testDb?.Dispose();
+        await _testDb.DisposeAsync();
     }
 
     private ApplicationDbContext CreateDb()
