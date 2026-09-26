@@ -3,6 +3,7 @@
 @using MangaIngestWithUpscaling.Configuration
 @using MangaIngestWithUpscaling.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Shared.Data.Analysis
+@using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Shared.Helpers
 @using Microsoft.Extensions.Options
 @using Humanizer
@@ -134,7 +135,7 @@
                         @bind-Value="Library.UpscalerProfileId" @bind-Value:after="OnInputChanged" Clearable="true"
                         Variant="Variant.Outlined">
                         <MudSelectItem T="int?" Value="null">@Loc["Option_None"]</MudSelectItem>
-                        @foreach (var upscalerConfig in DbContext.UpscalerProfiles)
+                        @foreach (var upscalerConfig in upscalerProfiles)
                         {
                             <MudSelectItem T="int?" Value="@upscalerConfig.Id">@upscalerConfig.Name</MudSelectItem>
                         }
@@ -266,6 +267,8 @@
     [Parameter] public bool IsValid { get; set; } = false;
     [Parameter] public EventCallback<bool> IsValidChanged { get; set; }
 
+    private List<UpscalerProfile> upscalerProfiles = new();
+
     private void IsValidChangedHandler(bool isValid)
     {
         IsValid = isValid;
@@ -279,6 +282,12 @@
         {
             Library.IngestPaths.Add(new LibraryIngestPath { SortOrder = 0 });
         }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Materialize once: enumerating the DbSet in the render tree runs a synchronous query.
+        upscalerProfiles = await DbContext.UpscalerProfiles.AsNoTracking().ToListAsync();
     }
 
     private void OnIngestPathChanged(int index, string newPath)

@@ -179,6 +179,17 @@ local and synchronous.
 - **Automatic timestamps**: Entities whose `CreatedAt`/`ModifiedAt` should be managed by `ApplicationDbContext.UpdateTimestamps` must implement `IHasCreatedAt` / `IHasModifiedAt` (`src/MangaIngestWithUpscaling.Shared/Data/Abstractions`). Entities whose timestamps are set manually must **not** implement them.
 - **Library configuration**: Child entities of a `Library` that represent configuration (ingest paths, filter rules, rename rules) implement `ILibraryConfiguration` so that adding, updating or deleting one bumps the owning `Library.ModifiedAt`.
 
+## Blazor + EF Core
+
+- Never enumerate a `DbSet`/`IQueryable` directly in a render tree (e.g.
+  `@foreach (var library in DbContext.Libraries)`). That runs a synchronous query during render, and
+  on PostgreSQL it collides with any other query in flight on the same scoped `ApplicationDbContext`
+  ("A second operation was started on this context instance before a previous operation completed").
+  Materialize the data first in `OnInitializedAsync`/`OnParametersSetAsync` (or an async `MudTable`
+  `ServerData`) and render from the result. `MudSelect` dropdowns are the usual offender.
+- Never run a synchronous EF query from a property read in markup (e.g.
+  `UserManager.Users.Any()`); compute it in an async lifecycle method instead.
+
 ## Logging schema
 
 - The `Logs` table is **not** managed by EF migrations; the `Log` entity (`src/MangaIngestWithUpscaling.Data/LogModel/Log.cs`) is the source of truth for its shape.

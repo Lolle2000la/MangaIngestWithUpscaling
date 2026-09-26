@@ -85,11 +85,18 @@ else
     : $"Error: {string.Join(", ", identityErrors.Select(error =>
         error.Description))}";
 
-    private bool SingleUserExistsAlready => UserManager.Users.Any();
+    private bool singleUserExistsAlready;
+
+    private bool SingleUserExistsAlready => singleUserExistsAlready;
 
     protected override void OnInitialized()
     {
     Input ??= new InputModel();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        singleUserExistsAlready = await UserManager.Users.AnyAsync();
     }
 
     public async Task RegisterUser(EditContext editContext)
