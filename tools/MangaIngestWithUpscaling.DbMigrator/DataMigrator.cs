@@ -8,6 +8,7 @@ using MangaIngestWithUpscaling.Data.Sqlite;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Npgsql;
 
 namespace MangaIngestWithUpscaling.DbMigrator;
@@ -93,18 +94,31 @@ public static class DataMigrator
             logsPlan = await PrepareLogsMigrationAsync(options, log, cancellationToken);
         }
 
-        if (options.Force)
+        // Every application-table write runs in one target transaction, so a failure after --force
+        // cleared the target rolls back instead of leaving it empty or partially populated. The
+        // sequence reset below uses its own connection and must run after the commit, or it would
+        // not see the uncommitted rows.
+        await using (
+            IDbContextTransaction transaction = await target.Database.BeginTransactionAsync(
+                cancellationToken
+            )
+        )
         {
-            log("Clearing the target database...");
-            for (int i = tables.Count - 1; i >= 0; i--)
+            if (options.Force)
             {
-                await tables[i].Clear();
+                log("Clearing the target database...");
+                for (int i = tables.Count - 1; i >= 0; i--)
+                {
+                    await tables[i].Clear();
+                }
             }
-        }
 
-        foreach (TableOperation table in tables)
-        {
-            await table.Copy();
+            foreach (TableOperation table in tables)
+            {
+                await table.Copy();
+            }
+
+            await transaction.CommitAsync(cancellationToken);
         }
 
         if (options.ToProvider == DatabaseProvider.Postgres)
@@ -247,13 +261,18 @@ public static class DataMigrator
         void Add<T>(
             string name,
             Func<ApplicationDbContext, IQueryable<T>> query,
-            DbSet<T> targetSet,
-            bool ignoreQueryFilters = false
+            DbSet<T> targetSet
         )
             where T : class
         {
+            // The migrator copies whole tables, so it must see rows a global query filter hides
+            // (UpscalerProfiles' soft-delete filter today, and any future one). IgnoreQueryFilters is
+            // a no-op for unfiltered entities, so applying it unconditionally means a new filter
+            // cannot silently drop rows - and keeps the emptiness check, --force clear and copy
+            // consistent (a filtered row would otherwise be invisible to the check yet still collide
+            // on its primary key during the copy).
             IQueryable<T> SourceQuery(ApplicationDbContext context) =>
-                ignoreQueryFilters ? query(context).IgnoreQueryFilters() : query(context);
+                query(context).IgnoreQueryFilters();
 
             operations.Add(
                 new TableOperation(
@@ -278,12 +297,7 @@ public static class DataMigrator
         // Parents before children so that a --force clear can run in reverse order.
         Add("AspNetRoles", c => c.Roles, target.Roles);
         Add("AspNetUsers", c => c.Users, target.Users);
-        Add(
-            "UpscalerProfiles",
-            c => c.UpscalerProfiles,
-            target.UpscalerProfiles,
-            ignoreQueryFilters: true
-        );
+        Add("UpscalerProfiles", c => c.UpscalerProfiles, target.UpscalerProfiles);
         Add("Libraries", c => c.Libraries, target.Libraries);
         Add("LibraryIngestPaths", c => c.LibraryIngestPaths, target.LibraryIngestPaths);
         Add("LibraryFilterRules", c => c.LibraryFilterRules, target.LibraryFilterRules);
@@ -487,36 +501,58 @@ public static class DataMigrator
             plan.ToLogsConnection
         );
 
-        int targetCount = await targetLogs.LogEntries.CountAsync(cancellationToken);
-        if (targetCount > 0)
-        {
-            // PrepareLogsMigrationAsync only lets execution reach here with --force, so these are
-            // the rows the explicit ids below would otherwise collide with.
-            log($"Logs: clearing {targetCount} existing rows in the target...");
-            await targetLogs.LogEntries.ExecuteDeleteAsync(cancellationToken);
-        }
-
-        if (total == 0)
-        {
-            log("Logs: nothing to migrate.");
-            return;
-        }
-
-        log($"Logs: migrating {total} rows...");
-        int copied = 0;
-        var batch = new List<Log>(options.BatchSize);
-
-        await foreach (
-            Log logEntry in sourceLogs
-                .LogEntries.AsNoTracking()
-                .AsAsyncEnumerable()
-                .WithCancellation(cancellationToken)
+        // As for the application tables, the clear and copy run in one target transaction so a
+        // failure rolls back rather than leaving the log table cleared or partially copied. The
+        // sequence reset below uses its own connection and must run after the commit.
+        await using (
+            IDbContextTransaction transaction = await targetLogs.Database.BeginTransactionAsync(
+                cancellationToken
+            )
         )
         {
-            NormalizeUtcDateTimes(logEntry);
-            batch.Add(logEntry);
+            int targetCount = await targetLogs.LogEntries.CountAsync(cancellationToken);
+            if (targetCount > 0)
+            {
+                // PrepareLogsMigrationAsync only lets execution reach here with --force, so these are
+                // the rows the explicit ids below would otherwise collide with.
+                log($"Logs: clearing {targetCount} existing rows in the target...");
+                await targetLogs.LogEntries.ExecuteDeleteAsync(cancellationToken);
+            }
 
-            if (batch.Count >= options.BatchSize)
+            if (total == 0)
+            {
+                log("Logs: nothing to migrate.");
+                await transaction.CommitAsync(cancellationToken);
+                return;
+            }
+
+            log($"Logs: migrating {total} rows...");
+            int copied = 0;
+            var batch = new List<Log>(options.BatchSize);
+
+            await foreach (
+                Log logEntry in sourceLogs
+                    .LogEntries.AsNoTracking()
+                    .AsAsyncEnumerable()
+                    .WithCancellation(cancellationToken)
+            )
+            {
+                NormalizeUtcDateTimes(logEntry);
+                batch.Add(logEntry);
+
+                if (batch.Count >= options.BatchSize)
+                {
+                    copied += await FlushBatchAsync(
+                        targetLogs,
+                        targetLogs.LogEntries,
+                        batch,
+                        cancellationToken
+                    );
+                    log($"  Logs: {copied}/{total}");
+                }
+            }
+
+            if (batch.Count > 0)
             {
                 copied += await FlushBatchAsync(
                     targetLogs,
@@ -526,17 +562,8 @@ public static class DataMigrator
                 );
                 log($"  Logs: {copied}/{total}");
             }
-        }
 
-        if (batch.Count > 0)
-        {
-            copied += await FlushBatchAsync(
-                targetLogs,
-                targetLogs.LogEntries,
-                batch,
-                cancellationToken
-            );
-            log($"  Logs: {copied}/{total}");
+            await transaction.CommitAsync(cancellationToken);
         }
 
         if (options.ToProvider == DatabaseProvider.Postgres)

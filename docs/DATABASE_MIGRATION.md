@@ -237,7 +237,7 @@ on it since, migrate back with the [reverse](#reverse-postgresql--sqlite) proced
 | `--from-connection <cs>` | Source connection string. |
 | `--to-connection <cs>` | Target connection string. |
 | `--batch-size <n>` | Rows inserted per batch (default `500`). Must be greater than zero. |
-| `--force` | Clear a non-empty target before copying, including the `Logs` table when `--include-logs` is used. The application tables are cleared **before any data is copied**, so if the run then fails the target is left empty and is unusable until a successful re-run. The target `Logs` table is cleared later, inside the log-copy step, and only when there is a source logs store to copy from — if the source logs store is missing or unavailable, the target `Logs` table is left untouched even with `--force`. Without it the tool refuses to overwrite. |
+| `--force` | Clear a non-empty target before copying, including the `Logs` table when `--include-logs` is used. The clear and the application-table copy run in **one target transaction**, so a failure during the copy rolls the target back to its previous contents instead of leaving it empty or partial. The `Logs` table is cleared and copied in its own transaction, later, and only when there is a source logs store to copy from — if the source logs store is missing or unavailable, the target `Logs` table is left untouched even with `--force`. Without it the tool refuses to overwrite. |
 | `--include-logs` | Also copy the `Logs` table. If the source has no `Logs` table (a missing SQLite logs file, or a PostgreSQL source that never logged) the copy is skipped with a message rather than failing. |
 | `--from-logs-connection <cs>` | SQLite logs file to read (required for a SQLite source with `--include-logs`). |
 | `--to-logs-connection <cs>` | SQLite logs file to write (required for a SQLite target with `--include-logs`). |
@@ -257,8 +257,10 @@ on it since, migrate back with the [reverse](#reverse-postgresql--sqlite) proced
   SQLite's kind-less timestamps to UTC. Please report it.
 - **Connection errors** — check the connection string for the machine running the tool
   (`localhost` on the host vs. `postgres` inside Compose), and that the database exists.
-- **A run failed part-way through** — the target may be partially populated. Fix the cause, then
-  re-run with `--force`: without it the tool refuses to write into the non-empty target.
+- **A run failed part-way through** — the application tables (and, with `--include-logs`, the `Logs`
+  table) are written in a transaction, so the target is rolled back to its previous contents; fix the
+  cause and re-run. The only step after the commit is the PostgreSQL sequence reset: if the run
+  reports an error there, the rows are committed but re-run with `--force` to reset the sequences.
 - The tool prints the full exception chain on failure, including the provider's inner error.
 
 ## Known limitations

@@ -580,6 +580,94 @@ public class DbMigratorRoundTripTests
         Assert.Equal(0L, (long)(await check.ExecuteScalarAsync(ct))!);
     }
 
+    /// <summary>
+    /// The application-table clear and copy share one target transaction: cancelling the copy after
+    /// <c>--force</c> cleared the target must roll that clear back rather than leave the target
+    /// empty or partially populated.
+    /// </summary>
+    [Fact]
+    public async Task Migrate_CancelledAfterForceClear_RollsBackTheTarget()
+    {
+        CancellationToken ct = TestContext.Current.CancellationToken;
+        Assert.SkipWhen(TestDatabaseFactory.Backend != TestDatabaseBackend.Postgres, SkipReason);
+
+        await using TestDatabase sqliteSource = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Sqlite
+        );
+        await using TestDatabase postgresTarget = TestDatabaseFactory.Create(
+            TestDatabaseBackend.Postgres
+        );
+
+        await using (ApplicationDbContext seed = sqliteSource.CreateContext())
+        {
+            seed.Libraries.Add(
+                new Library
+                {
+                    Name = "Rollback Library",
+                    NotUpscaledLibraryPath = "/regular",
+                    IngestPaths = { new LibraryIngestPath { Path = "/ingest" } },
+                }
+            );
+            await seed.SaveChangesAsync(ct);
+        }
+
+        // Migrate once so the target holds a committed row that --force would otherwise remove.
+        await DataMigrator.MigrateAsync(
+            SqliteToPostgres(sqliteSource, postgresTarget, force: false),
+            _ => { },
+            ct
+        );
+        await AssertTargetLibraryCountAsync(postgresTarget, expected: 1, ct);
+
+        // Re-run with --force, cancelling as soon as the first copy begins. The clear must roll back.
+        using var cts = new CancellationTokenSource();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            DataMigrator.MigrateAsync(
+                SqliteToPostgres(sqliteSource, postgresTarget, force: true),
+                message =>
+                {
+                    if (message.Contains(": migrating", StringComparison.Ordinal))
+                    {
+                        cts.Cancel();
+                    }
+                },
+                cts.Token
+            )
+        );
+
+        await AssertTargetLibraryCountAsync(postgresTarget, expected: 1, ct);
+    }
+
+    private static MigratorOptions SqliteToPostgres(
+        TestDatabase source,
+        TestDatabase target,
+        bool force
+    ) =>
+        new(
+            DatabaseProvider.Sqlite,
+            source.ConnectionString,
+            DatabaseProvider.Postgres,
+            target.ConnectionString,
+            BatchSize: 500,
+            Force: force,
+            IncludeLogs: false,
+            FromLogsConnection: null,
+            ToLogsConnection: null
+        );
+
+    private static async Task AssertTargetLibraryCountAsync(
+        TestDatabase target,
+        int expected,
+        CancellationToken ct
+    )
+    {
+        await using ApplicationDbContext context = await target.CreateContextAsync(
+            ensureSchema: false,
+            ct
+        );
+        Assert.Equal(expected, await context.Libraries.CountAsync(ct));
+    }
+
     private static LoggingDbContext CreateLoggingContext(
         DatabaseProvider provider,
         string connectionString

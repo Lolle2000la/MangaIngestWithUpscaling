@@ -90,9 +90,13 @@ public static class DatabaseBootstrap
         // The DDL is IF NOT EXISTS, but concurrent DDL is not fully atomic: replicas starting
         // together can each observe a transient 23505/42P07/42710 (the other replica created the
         // object first) or 40P01 (deadlock), and an operator-configured lock_timeout can surface as
-        // 55P03 during the same contention. Retry briefly so the loser converges instead of leaving
-        // the sink (needAutoCreateTable: false) without a table to write to. Runs before the
-        // advisory-locked migration deliberately, so the table exists the moment the sink starts.
+        // 55P03 during the same contention. Other transient conditions - the server still starting
+        // up (57P03), connection saturation (53300), a statement timeout (57014), a serialization
+        // failure (40001), or a connection-level failure (a bare NpgsqlException) - would otherwise
+        // leave the sink (needAutoCreateTable: false) without a table to write to, silently dropping
+        // every log write until the next restart. Retry briefly so those converge instead. Runs
+        // before the advisory-locked migration deliberately, so the table exists the moment the sink
+        // starts.
         const int maxAttempts = 5;
         for (int attempt = 1; ; attempt++)
         {
@@ -107,7 +111,7 @@ public static class DatabaseBootstrap
                 createLogsCommand.ExecuteNonQuery();
                 break;
             }
-            catch (PostgresException ex)
+            catch (NpgsqlException ex)
                 when (IsRetryableLogsBootstrapFailure(ex) && attempt < maxAttempts)
             {
                 Thread.Sleep(TimeSpan.FromMilliseconds(100 * attempt));
@@ -444,13 +448,23 @@ public static class DatabaseBootstrap
         }
     }
 
-    // Transient failures a concurrent replica's CREATE TABLE/INDEX can cause even with IF NOT EXISTS:
-    // the object is created by another session between our catalog check and our DDL.
-    private static bool IsRetryableLogsBootstrapFailure(PostgresException ex) =>
-        ex.SqlState
+    // Transient conditions that can make the CREATE TABLE/INDEX fail even with IF NOT EXISTS: a
+    // concurrent replica winning the race (23505/42P07/42710), lock contention (40P01/55P03), a
+    // server that is still starting up (57P03), connection saturation (53300), a statement timeout
+    // (57014), or a serialization failure (40001). A connection-level failure (the server is briefly
+    // unreachable) surfaces as a bare NpgsqlException rather than a PostgresException, so it is
+    // retried too. A permanent error (bad credentials, missing CREATE privilege) is not retried and
+    // falls through to the best-effort handler below.
+    private static bool IsRetryableLogsBootstrapFailure(NpgsqlException ex) =>
+        ex is not PostgresException postgres
+        || postgres.SqlState
             is PostgresErrorCodes.UniqueViolation
                 or PostgresErrorCodes.DuplicateTable
                 or PostgresErrorCodes.DuplicateObject
                 or PostgresErrorCodes.DeadlockDetected
-                or PostgresErrorCodes.LockNotAvailable;
+                or PostgresErrorCodes.LockNotAvailable
+                or PostgresErrorCodes.CannotConnectNow
+                or PostgresErrorCodes.TooManyConnections
+                or PostgresErrorCodes.QueryCanceled
+                or PostgresErrorCodes.SerializationFailure;
 }
