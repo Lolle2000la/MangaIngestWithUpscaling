@@ -162,7 +162,7 @@ public class SplitProcessingCoordinator(
             return false;
         }
 
-        await EnqueueDetectionAsync(chapterId, cancellationToken);
+        await EnqueueDetectionAsync(chapterId, cancellationToken, context);
         return true;
     }
 

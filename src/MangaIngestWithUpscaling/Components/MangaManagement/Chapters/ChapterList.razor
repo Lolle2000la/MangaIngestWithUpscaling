@@ -40,7 +40,6 @@
 @inject IStringLocalizer<ChapterList> Loc
 @inject IStringLocalizer<SharedResource> SharedLoc
 @inject IServiceProvider ServiceProvider
-@implements IDisposable
 
 <MudTable T="ChapterItem" @bind-SelectedItems="selectedChapters" Items="@chapterItems" Dense="true"
           MultiSelection="true" CanCancelEdit="true" RowEditCommit="r => _ = OnChapterMetadataCommit(r as ChapterItem)"
@@ -218,8 +217,9 @@
 
     // Serializes this component's DbContext work: the circuit-scoped context is shared with every
     // other component and service, and overlapping use makes EF throw "A second operation was
-    // started on this context instance". See ReentrantAsyncGate for the re-entrancy contract.
-    private readonly ReentrantAsyncGate _dbGate = new();
+    // started on this context instance". The gate is not re-entrant, so a gated operation must call
+    // the *Core method directly instead of another gated entry point. See AsyncGate.
+    private readonly AsyncGate _dbGate = new();
 
     private HashSet<ChapterItem> selectedChapters = new();
 
@@ -247,7 +247,8 @@
         var chaptersToUpscale = selectedChapters.Where(c => !c.Chapter.IsUpscaled).ToList();
         foreach (var c in chaptersToUpscale)
         {
-            await UpscaleChapter(c.Chapter);
+            // Already inside the gate; call the Core method directly (the gate is not re-entrant).
+            await UpscaleChapterCore(c.Chapter);
         }
     }
 
@@ -703,35 +704,39 @@
 
         // Run the integrity check in its own DI scope so it gets a dedicated DbContext: it runs on a
         // thread-pool thread and must not touch the circuit-scoped context concurrently with the UI.
-        _ = Task
-            .Run(async () =>
-            {
-                await using var scope = ServiceProvider.CreateAsyncScope();
-                var checker = scope.ServiceProvider.GetRequiredService<ILibraryIntegrityChecker>();
-                return await checker.CheckIntegrity(Manga);
-            })
-            .ContinueWith(
-                async t =>
-                {
-                    if (t.IsFaulted)
-                    {
-                        Logger.LogError(t.Exception, "Error checking library integrity for Manga ID {MangaId}", Manga?.Id);
-                        return;
-                    }
+        _ = RunIntegrityCheckAsync();
+    }
 
-                    if (t.Result) // t.Result is the boolean from CheckIntegrity
-                    {
-                        await InvokeAsync(() => _dbGate.RunAsync(async () =>
-                        {
-                            await LoadChapters();
-                            InvalidateMergePossibilitiesCache();
-                            await UpdateMergePossibilitiesAsync();
-                            StateHasChanged();
-                        }));
-                    }
-                },
-                TaskScheduler.FromCurrentSynchronizationContext()
-            );
+    private async Task RunIntegrityCheckAsync()
+    {
+        try
+        {
+            bool libraryChanged;
+            await using (var scope = ServiceProvider.CreateAsyncScope())
+            {
+                var checker = scope.ServiceProvider.GetRequiredService<ILibraryIntegrityChecker>();
+                libraryChanged = await checker.CheckIntegrity(Manga);
+            }
+
+            if (!libraryChanged)
+            {
+                return;
+            }
+
+            // The gate is not re-entrant, but this is a fresh flow: RunAsync must acquire it so the
+            // reload cannot overlap an in-flight gated operation on the shared context.
+            await InvokeAsync(() => _dbGate.RunAsync(async () =>
+            {
+                await LoadChapters();
+                InvalidateMergePossibilitiesCache();
+                await UpdateMergePossibilitiesAsync();
+                StateHasChanged();
+            }));
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error checking library integrity for Manga ID {MangaId}", Manga?.Id);
+        }
     }
 
     private async Task<bool> LoadChapters()
@@ -1452,7 +1457,4 @@
         public ChapterSplitProcessingState? SplitState { get; set; }
         public int SplitFindingsCount { get; set; }
     }
-
-    public void Dispose() => _dbGate.Dispose();
-
 }

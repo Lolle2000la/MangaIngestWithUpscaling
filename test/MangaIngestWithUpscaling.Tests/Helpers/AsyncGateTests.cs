@@ -2,12 +2,12 @@ using MangaIngestWithUpscaling.Helpers;
 
 namespace MangaIngestWithUpscaling.Tests.Helpers;
 
-public class ReentrantAsyncGateTests
+public class AsyncGateTests
 {
     [Fact]
     public async Task RunAsync_SerializesConcurrentOperations()
     {
-        using var gate = new ReentrantAsyncGate();
+        var gate = new AsyncGate();
         int active = 0;
         int maxActive = 0;
 
@@ -28,28 +28,44 @@ public class ReentrantAsyncGateTests
     }
 
     [Fact]
-    public async Task RunAsync_AllowsReentrantCallsWithoutDeadlock()
+    public async Task RunAsync_WorkSpawnedInsideTheHolderDoesNotBypassTheGate()
     {
-        using var gate = new ReentrantAsyncGate();
-        int runs = 0;
+        var gate = new AsyncGate();
+        int active = 0;
+        int maxActive = 0;
 
         await gate.RunAsync(async () =>
         {
-            runs++;
-            await gate.RunAsync(async () =>
+            int now = Interlocked.Increment(ref active);
+            maxActive = Math.Max(maxActive, now);
+
+            // A fire-and-forget task started by the holder must wait for the gate. A re-entrant gate
+            // keyed on AsyncLocal would let this inherit the "already holds the gate" marker and run
+            // alongside the holder, which is exactly the overlap the gate exists to prevent.
+            _ = Task.Run(async () =>
             {
-                runs++;
-                await Task.Yield();
+                await gate.RunAsync(() =>
+                {
+                    int child = Interlocked.Increment(ref active);
+                    maxActive = Math.Max(maxActive, child);
+                    Interlocked.Decrement(ref active);
+                    return Task.CompletedTask;
+                });
             });
+
+            await Task.Delay(100);
+            Interlocked.Decrement(ref active);
         });
 
-        Assert.Equal(2, runs);
+        await Task.Delay(100, TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, maxActive);
     }
 
     [Fact]
     public async Task RunAsync_ReleasesGateAfterFailure()
     {
-        using var gate = new ReentrantAsyncGate();
+        var gate = new AsyncGate();
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             gate.RunAsync(() => throw new InvalidOperationException("boom"))
