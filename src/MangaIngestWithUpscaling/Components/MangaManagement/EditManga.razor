@@ -152,7 +152,8 @@
                                                     <MudText Typo="Typo.body1" Class="flex-grow-1">@title.Title</MudText>
                                                     <MudTooltip Text="@Loc["Tooltip_RemoveTitle"]">
                                                         <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
-                                                            Size="Size.Small" OnClick="() => manga.OtherTitles.Remove(title)" />
+                                                            Size="Size.Small"
+                                                            OnClick="() => RemoveAlternativeTitle(title)" />
                                                     </MudTooltip>
                                                 </MudStack>
                                             </MudPaper>
@@ -264,17 +265,45 @@ else
         upscalerProfiles = await db.UpscalerProfiles.AsNoTracking().ToListAsync();
     }
 
-    private void AddAlternativeTitle()
+    private async Task AddAlternativeTitle()
     {
-        if (!string.IsNullOrEmpty(newTitle) && manga is not null)
+        if (string.IsNullOrEmpty(newTitle) || manga is null)
         {
-            manga.OtherTitles.Add(new MangaAlternativeTitle
-            {
-                Title = newTitle,
-                MangaId = manga.Id,
-                Manga = manga
-            });
-            newTitle = string.Empty; // Clear the input field
+            return;
+        }
+
+        manga.OtherTitles.Add(new MangaAlternativeTitle
+        {
+            Title = newTitle,
+            MangaId = manga.Id,
+            Manga = manga
+        });
+        newTitle = string.Empty; // Clear the input field
+        await MarkFormTouchedAsync();
+    }
+
+    private async Task RemoveAlternativeTitle(MangaAlternativeTitle title)
+    {
+        if (manga is null)
+        {
+            return;
+        }
+
+        manga.OtherTitles.Remove(title);
+        await MarkFormTouchedAsync();
+    }
+
+    /// <summary>
+    /// Marks the form as touched after a mutation that does not go through a form input (adding
+    /// or removing an alternative title). Blazor buttons do not touch a <see cref="MudForm"/> the
+    /// way text inputs do, so without this the Save button would stay disabled and the change
+    /// would be silently lost. Validating also refreshes <c>isValid</c> from the current model.
+    /// </summary>
+    private async Task MarkFormTouchedAsync()
+    {
+        if (form is not null)
+        {
+            await form.ValidateAsync();
         }
     }
 

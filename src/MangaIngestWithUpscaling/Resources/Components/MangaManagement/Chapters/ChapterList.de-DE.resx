@@ -337,6 +337,9 @@
   <data name="Snackbar_AddChaptersFailure" xml:space="preserve">
     <value>Fehler beim Hinzufügen von Kapiteln zum bestehenden zusammengeführten Kapitel {0}. Überprüfen Sie die Protokolle für weitere Informationen.</value>
   </data>
+  <data name="Snackbar_NoChaptersAdded" xml:space="preserve">
+    <value>Es wurde nichts zum bestehenden zusammengeführten Kapitel {0} hinzugefügt.</value>
+  </data>
   <data name="Text_NotAvailable" xml:space="preserve">
     <value>N/V</value>
   </data>

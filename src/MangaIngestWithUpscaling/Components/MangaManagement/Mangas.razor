@@ -316,9 +316,10 @@
         _isProcessing = true;
         try
         {
+            var affected = selectedMangas.ToList();
             var parameters = new DialogParameters<MergeMangaDialog>
             {
-                { x => x.Mangas, selectedMangas.ToList() }
+                { x => x.Mangas, affected }
             };
 
             var dialog = await DialogService.ShowAsync<MergeMangaDialog>(Loc["Dialog_Merge_Title"], parameters);
@@ -326,6 +327,7 @@
 
             if (result is { Canceled: false })
             {
+                RemoveSelection(affected);
                 await table.ReloadServerData();
             }
         }
@@ -347,14 +349,16 @@
         _isProcessing = true;
         try
         {
+            var affected = selectedMangas.ToList();
             var parameters = new DialogParameters<MoveMangasToLibraryDialog>
             {
-                { x => x.Mangas, selectedMangas.ToList() }
+                { x => x.Mangas, affected }
             };
             var dialog = await DialogService.ShowAsync<MoveMangasToLibraryDialog>(Loc["Dialog_Move_Title"], parameters);
             var result = await dialog.Result;
             if (result is { Canceled: false })
             {
+                RemoveSelection(affected);
                 await table.ReloadServerData();
             }
         }
@@ -376,9 +380,10 @@
         _isProcessing = true;
         try
         {
+            var affected = selectedMangas.ToList();
             var parameters = new DialogParameters<DeleteMangasDialog>
             {
-                { x => x.Mangas, selectedMangas }
+                { x => x.Mangas, affected }
             };
 
             var dialog = await DialogService.ShowAsync<DeleteMangasDialog>(Loc["Dialog_Delete_Title"], parameters);
@@ -386,6 +391,7 @@
 
             if (result is { Canceled: false })
             {
+                RemoveSelection(affected);
                 await table.ReloadServerData();
             }
         }
@@ -415,6 +421,7 @@
             var result = await dialog.Result;
             if (result is { Canceled: false })
             {
+                RemoveSelection(new[] { manga });
                 await table.ReloadServerData();
             }
         }
@@ -427,6 +434,24 @@
         finally
         {
             _isProcessing = false;
+        }
+    }
+
+    /// <summary>
+    /// Drops mangas that are no longer part of the visible table from the multi-selection. The
+    /// toolbar's enabled state is driven by <c>selectedMangas.Count</c>; without this, a deleted,
+    /// merged or moved row stays selected and the toolbar keeps acting on a vanished entity.
+    /// </summary>
+    private void RemoveSelection(IReadOnlyCollection<Manga> mangas)
+    {
+        if (mangas.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var manga in mangas)
+        {
+            selectedMangas.Remove(manga);
         }
     }
 

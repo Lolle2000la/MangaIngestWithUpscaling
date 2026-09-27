@@ -25,7 +25,7 @@
                 </MudCard>
             }
 
-            <MudTextField @bind-Value="FilteredImage.Description" Label="@Loc["Label_Description"]"
+            <MudTextField @bind-Value="description" Label="@Loc["Label_Description"]"
                 Placeholder="@Loc["Placeholder_Description"]" Lines="3" />
 
             <MudStack Row="true" Spacing="4" AlignItems="AlignItems.Center">
@@ -65,12 +65,17 @@
     [CascadingParameter] private IMudDialogInstance DialogReference { get; set; } = null!;
     [Parameter] public FilteredImage FilteredImage { get; set; } = null!;
 
+    // Bound to the text field instead of FilteredImage.Description so that closing the dialog
+    // without saving (Cancel, X or backdrop) leaves the row the page renders untouched.
+    private string? description;
+
     // Captured so a failed save can undo the in-memory edit instead of leaving the list showing a
     // change that never reached the database.
     private string? originalDescription;
 
     protected override void OnInitialized()
     {
+        description = FilteredImage.Description;
         originalDescription = FilteredImage.Description;
     }
 
@@ -89,8 +94,12 @@
                 );
             }
 
-            tracked.Description = FilteredImage.Description;
+            tracked.Description = description;
             await db.SaveChangesAsync();
+
+            // The page reloads the table from its detached in-memory Library graph rather than
+            // re-querying, so reflect the saved value on the row it renders.
+            FilteredImage.Description = description;
 
             DialogReference.Close(DialogResult.Ok(true));
         }

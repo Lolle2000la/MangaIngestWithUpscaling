@@ -244,6 +244,9 @@
   <data name="Snackbar_AddChaptersFailure" xml:space="preserve">
     <value>既存の結合されたチャプター {0} へのチャプター追加に失敗しました。詳細についてはログを確認してください。</value>
   </data>
+  <data name="Snackbar_NoChaptersAdded" xml:space="preserve">
+    <value>既存の結合されたチャプター {0} には何も追加されませんでした。</value>
+  </data>
   <data name="Snackbar_AddChaptersSuccess" xml:space="preserve">
     <value>{0} チャプターを既存の結合されたチャプター {1} に正常に追加しました。</value>
   </data>

@@ -26,7 +26,7 @@ public class ChapterMergeCoordinator(
     ILogger<ChapterMergeCoordinator> logger
 ) : IChapterMergeCoordinator
 {
-    public async Task ProcessExistingChapterPartsForMergingAsync(
+    public async Task<int> ProcessExistingChapterPartsForMergingAsync(
         Manga manga,
         CancellationToken cancellationToken = default,
         ApplicationDbContext? context = null
@@ -63,7 +63,7 @@ public class ChapterMergeCoordinator(
             bool shouldMerge = manga.MergeChapterParts ?? library.MergeChapterParts;
             if (!shouldMerge)
             {
-                return;
+                return 0;
             }
 
             // Extract chapter numbers from all existing chapters in this manga
@@ -117,7 +117,7 @@ public class ChapterMergeCoordinator(
 
             if (!mergeResult.MergeInformation.Any())
             {
-                return;
+                return 0;
             }
 
             // Separate merge groups into new merges and additions to existing merged chapters
@@ -135,8 +135,12 @@ public class ChapterMergeCoordinator(
 
             if (!newMergeInfos.Any() && !existingMergeAdditions.Any())
             {
-                return;
+                return 0;
             }
+
+            // Counts the chapter records that were actually merged or added. Used by callers (the
+            // chapter list) to distinguish a real change from a silent no-op.
+            int mergedChapterCount = 0;
 
             logger.LogDebug(
                 "Found {NewMergeCount} new merge groups and {ExistingAdditionCount} groups to add to existing merged chapters for series {SeriesTitle}",
@@ -161,7 +165,7 @@ public class ChapterMergeCoordinator(
 
                 if (dbChaptersToUpdate.Count == mergeInfo.OriginalParts.Count)
                 {
-                    await ProcessSingleMergeGroupAsync(
+                    bool merged = await ProcessSingleMergeGroupAsync(
                         mergeInfo,
                         dbChaptersToUpdate,
                         library,
@@ -170,12 +174,17 @@ public class ChapterMergeCoordinator(
                         dbContext
                     );
 
-                    logger.LogInformation(
-                        "Successfully merged {PartCount} existing chapter parts into {MergedFileName} for series {SeriesTitle}",
-                        mergeInfo.OriginalParts.Count,
-                        mergeInfo.MergedChapter.FileName,
-                        manga.PrimaryTitle
-                    );
+                    if (merged)
+                    {
+                        mergedChapterCount += mergeInfo.OriginalParts.Count;
+
+                        logger.LogInformation(
+                            "Successfully merged {PartCount} existing chapter parts into {MergedFileName} for series {SeriesTitle}",
+                            mergeInfo.OriginalParts.Count,
+                            mergeInfo.MergedChapter.FileName,
+                            manga.PrimaryTitle
+                        );
+                    }
                 }
                 else
                 {
@@ -191,7 +200,7 @@ public class ChapterMergeCoordinator(
             // Process additions to existing merged chapters
             foreach (MergeInfo mergeInfo in existingMergeAdditions)
             {
-                await ProcessAdditionToExistingMergedChapterAsync(
+                mergedChapterCount += await ProcessAdditionToExistingMergedChapterAsync(
                     mergeInfo,
                     manga,
                     library,
@@ -202,6 +211,8 @@ public class ChapterMergeCoordinator(
             }
 
             await dbContext.SaveChangesAsync(cancellationToken);
+
+            return mergedChapterCount;
         }
         catch (Exception ex)
         {
@@ -210,6 +221,7 @@ public class ChapterMergeCoordinator(
                 "Error during chapter part merging for series {SeriesTitle}",
                 manga.PrimaryTitle
             );
+            return 0;
         }
     }
 
@@ -1220,7 +1232,7 @@ public class ChapterMergeCoordinator(
         }
     }
 
-    private async Task ProcessAdditionToExistingMergedChapterAsync(
+    private async Task<int> ProcessAdditionToExistingMergedChapterAsync(
         MergeInfo mergeInfo,
         Manga manga,
         Library library,
@@ -1247,7 +1259,7 @@ public class ChapterMergeCoordinator(
                     mergeInfo.BaseChapterNumber,
                     manga.PrimaryTitle
                 );
-                return;
+                return 0;
             }
 
             // Find the existing merged chapter
@@ -1266,7 +1278,7 @@ public class ChapterMergeCoordinator(
                     "No matching chapters found for addition to existing merged chapter {BaseNumber}",
                     mergeInfo.BaseChapterNumber
                 );
-                return;
+                return 0;
             }
 
             // Check upscale compatibility
@@ -1284,7 +1296,7 @@ public class ChapterMergeCoordinator(
                     mergeInfo.BaseChapterNumber,
                     compatibility.Reason
                 );
-                return;
+                return 0;
             }
 
             // Add the new parts to the existing merged chapter file
@@ -1338,6 +1350,8 @@ public class ChapterMergeCoordinator(
                 mergeInfo.BaseChapterNumber,
                 manga.PrimaryTitle
             );
+
+            return newChapterParts.Count;
         }
         catch (Exception ex)
         {
@@ -1347,6 +1361,7 @@ public class ChapterMergeCoordinator(
                 mergeInfo.BaseChapterNumber,
                 manga.PrimaryTitle
             );
+            return 0;
         }
     }
 
@@ -1838,7 +1853,8 @@ public class ChapterMergeCoordinator(
     /// <summary>
     /// Processes a single merge group with common merge operations.
     /// </summary>
-    private async Task ProcessSingleMergeGroupAsync(
+    /// <returns>True when the chapters were actually merged; false when the merge was skipped.</returns>
+    private async Task<bool> ProcessSingleMergeGroupAsync(
         MergeInfo mergeInfo,
         List<Chapter> originalChapters,
         Library library,
@@ -1862,7 +1878,7 @@ public class ChapterMergeCoordinator(
                 mergeInfo.MergedChapter.FileName,
                 compatibility.Reason
             );
-            return;
+            return false;
         }
 
         // Handle merging of upscaled versions if they exist
@@ -1891,6 +1907,8 @@ public class ChapterMergeCoordinator(
             cancellationToken,
             dbContext
         );
+
+        return true;
     }
 
     #endregion

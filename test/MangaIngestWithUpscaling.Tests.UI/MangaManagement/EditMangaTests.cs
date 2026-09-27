@@ -265,6 +265,78 @@ public class EditMangaTests : BunitContext
         });
     }
 
+    [Fact]
+    public async Task EditManga_RemoveAlternativeTitle_EnablesSaveWithoutEditingTextField()
+    {
+        Manga manga = await SeedMangaAsync("A", new[] { "B" });
+
+        var component = RenderWithProviders<EditManga>(parameters =>
+            parameters.Add(p => p.MangaId, manga.Id)
+        );
+        component.WaitForAssertion(() =>
+            Assert.Contains(
+                component.FindComponents<MudInput<string>>(),
+                i => i.Instance.GetState(x => x.Value) == "A"
+            )
+        );
+
+        // Switch to the alternative titles tab: MudTabs only materializes the active panel.
+        // Find and click in one dispatch so an async re-render cannot swap the handler in between.
+        await component.InvokeAsync(() =>
+        {
+            IElement tab = component
+                .FindAll("[role='tab']")
+                .First(t => t.TextContent.Contains("Tab_AltTitles", StringComparison.Ordinal));
+            tab.Click(new MouseEventArgs());
+        });
+
+        component.WaitForAssertion(() =>
+            Assert.Contains(
+                component.FindComponents<MudListItem<MangaAlternativeTitle>>(),
+                i => i.Instance.Value.Title == "B"
+            )
+        );
+
+        await component.InvokeAsync(() =>
+        {
+            IRenderedComponent<MudListItem<MangaAlternativeTitle>> titleItem = component
+                .FindComponents<MudListItem<MangaAlternativeTitle>>()
+                .First(i => i.Instance.Value.Title == "B");
+            titleItem.Find("button").Click(new MouseEventArgs());
+        });
+
+        // No text field was edited and this test never calls ValidateAsync itself: removing a
+        // title must mark the form touched, otherwise the visible removal is unsavable.
+        component.WaitForAssertion(() =>
+        {
+            IElement saveButton = component
+                .FindAll("button")
+                .First(b => b.TextContent.Contains("Save Changes", StringComparison.Ordinal));
+            Assert.False(
+                saveButton.HasAttribute("disabled"),
+                "Save must be enabled after removing an alternative title"
+            );
+        });
+
+        await component.InvokeAsync(() =>
+        {
+            component
+                .FindAll("button")
+                .First(b => b.TextContent.Contains("Save Changes", StringComparison.Ordinal))
+                .Click(new MouseEventArgs());
+        });
+
+        component.WaitForAssertion(() =>
+        {
+            using var db = _testDb.Database.CreateContext();
+            Manga persisted = db
+                .MangaSeries.Include(m => m.OtherTitles)
+                .First(m => m.Id == manga.Id);
+            Assert.Equal("A", persisted.PrimaryTitle);
+            Assert.Empty(persisted.OtherTitles);
+        });
+    }
+
     // ---------------------------------------------------------------- other save fields
 
     [Fact]

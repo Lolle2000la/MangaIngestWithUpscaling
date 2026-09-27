@@ -380,6 +380,9 @@
             // otherwise successful revert.
             await LoadChapters();
 
+            // The merged row is gone once its parts are restored, so drop the stale selection.
+            selectedChapters.RemoveWhere(ci => ci.Chapter.Id == chapter.Id);
+
             // Clear merge cache to ensure fresh recalculation
             InvalidateMergePossibilitiesCache();
 
@@ -469,19 +472,28 @@
 
         string toDelete = Path.Combine(Manga.Library.NotUpscaledLibraryPath, chapter.RelativePath);
 
-        if (!File.Exists(toDelete))
+        if (File.Exists(toDelete))
         {
-            return;
+            try
+            {
+                File.Delete(toDelete);
+            }
+            catch (Exception e)
+            {
+                Logger.LogError(e, "Failed to delete file of Chapter {ChapterId}", chapter.Id);
+                Snackbar.Add(string.Format(Loc["Snackbar_DeleteFile_Failure"], chapter.FileName), Severity.Error);
+            }
         }
-
-        try
+        else
         {
-            File.Delete(toDelete);
-        }
-        catch (Exception e)
-        {
-            Logger.LogError(e, "Failed to delete file of Chapter {ChapterId}", chapter.Id);
-            Snackbar.Add(string.Format(Loc["Snackbar_DeleteFile_Failure"], chapter.FileName), Severity.Error);
+            // The backing file is already gone. Do not bail out: the row and its database record
+            // must still be reconciled, otherwise the list keeps showing a chapter that no longer
+            // exists on disk (and a reload would silently resurrect or drop it).
+            Logger.LogWarning(
+                "Chapter file not found on disk for chapter {ChapterId}: {Path}",
+                chapter.Id,
+                toDelete
+            );
         }
 
         await using (var db = await DbContextFactory.CreateDbContextAsync())
@@ -501,6 +513,11 @@
         {
             chapters.Remove(chapterItem);
         }
+
+        // Drop the deleted chapter from the selection explicitly. MudBlazor prunes the selection
+        // when a row is disposed, but a selection captured before a reload no longer matches any
+        // row, so nothing prunes it and the toolbar would stay enabled for a chapter that is gone.
+        selectedChapters.RemoveWhere(ci => ci.Chapter.Id == chapter.Id);
 
         // Invalidate the merge cache and recompute it: deleting a chapter can change which
         // remaining chapters are mergeable, and without the recompute every row's merge button
@@ -561,19 +578,28 @@
         }
 
         string toDelete = Path.Combine(Manga.Library.UpscaledLibraryPath, chapter.RelativePath);
-        if (!File.Exists(toDelete))
+        if (File.Exists(toDelete))
         {
-            return;
+            try
+            {
+                File.Delete(toDelete);
+            }
+            catch (Exception e)
+            {
+                Logger.LogError(e, "Failed to delete upscaled file of Chapter {ChapterId}", chapter.Id);
+                Snackbar.Add(string.Format(Loc["Snackbar_DeleteUpscaledFile_Failure"], chapter.FileName), Severity.Error);
+            }
         }
-
-        try
+        else
         {
-            File.Delete(toDelete);
-        }
-        catch (Exception e)
-        {
-            Logger.LogError(e, "Failed to delete upscaled file of Chapter {ChapterId}", chapter.Id);
-            Snackbar.Add(string.Format(Loc["Snackbar_DeleteUpscaledFile_Failure"], chapter.FileName), Severity.Error);
+            // The upscaled file is already gone. Still clear the flag below: the database says the
+            // chapter is upscaled but there is no file, and otherwise the row keeps advertising
+            // "delete upscaled" for a file that does not exist.
+            Logger.LogWarning(
+                "Upscaled file not found on disk for chapter {ChapterId}: {Path}",
+                chapter.Id,
+                toDelete
+            );
         }
 
         chapter.IsUpscaled = false;
@@ -585,6 +611,10 @@
             tracked.IsUpscaled = false;
             await db.SaveChangesAsync();
         }
+
+        // The affected item's upscaled state changed and its row is not removed, so MudBlazor will
+        // not prune it; drop it so the selection reflects the new state.
+        selectedChapters.RemoveWhere(ci => ci.Chapter.Id == chapter.Id);
     }
 
     private async Task<bool> RenameChapterFile(Chapter chapter, string newFileName)
@@ -1111,7 +1141,7 @@
         }
     }
 
-    private async Task PerformMergeOperation(List<Chapter> chaptersToMerge, bool includeLatestChapters)
+    private async Task<bool> PerformMergeOperation(List<Chapter> chaptersToMerge, bool includeLatestChapters)
     {
         try
         {
@@ -1122,17 +1152,16 @@
             if (!completedMerges.Any())
             {
                 Snackbar.Add(Loc["Snackbar_NoChaptersMerged"], Severity.Warning);
-                return;
+                return false;
             }
 
             int totalProcessedChapters = 0;
+            var originalChapterIds = chaptersToMerge.Select(c => c.Id).ToHashSet();
 
             // Update UI: Remove original chapters and add merged chapters
             foreach (var mergeInfo in completedMerges)
             {
                 // Remove ALL the original chapters from the UI (we'll add the updated merged chapter below)
-                var originalChapterIds = chaptersToMerge.Select(c => c.Id).ToHashSet();
-
                 var itemsToRemove = chapterItems.Where(ci => originalChapterIds.Contains(ci.Chapter.Id)).ToList();
                 foreach (var item in itemsToRemove)
                 {
@@ -1187,6 +1216,10 @@
                 ? string.Format(Loc["Snackbar_MergeSuccess_Single"], totalProcessedChapters)
                 : string.Format(Loc["Snackbar_MergeSuccess_Multiple"], totalProcessedChapters, completedMerges.Count);
 
+            // The merged-away original rows are gone; drop them from the selection so the toolbar
+            // does not act on chapters that no longer exist.
+            selectedChapters.RemoveWhere(ci => originalChapterIds.Contains(ci.Chapter.Id));
+
             // Clear merge cache to ensure fresh recalculation
             InvalidateMergePossibilitiesCache();
 
@@ -1200,11 +1233,14 @@
 
             // Final UI refresh to ensure all button states are correct
             StateHasChanged();
+
+            return true;
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Failed to perform manual merge operations");
             Snackbar.Add(Loc["Snackbar_MergeFailure"], Severity.Error);
+            return false;
         }
     }
 
@@ -1218,15 +1254,19 @@
             // Handle new merges first
             foreach (var (baseNumber, chapterList) in mergeActions.NewMergeGroups)
             {
-                await PerformMergeOperation(chapterList, includeLatestChapters);
-                totalNewMerges++;
+                if (await PerformMergeOperation(chapterList, includeLatestChapters))
+                {
+                    totalNewMerges++;
+                }
             }
 
             // Handle additions to existing merged chapters
             foreach (var (baseNumber, chapterList) in mergeActions.AdditionsToExistingMerged)
             {
-                await PerformAdditionToExistingMerged(chapterList, baseNumber);
-                totalAdditions++;
+                if (await PerformAdditionToExistingMerged(chapterList, baseNumber))
+                {
+                    totalAdditions++;
+                }
             }
 
             // Update merge possibilities cache
@@ -1258,46 +1298,39 @@
         }
     }
 
-    private async Task PerformAdditionToExistingMerged(List<Chapter> chaptersToAdd, string baseNumber)
+    private async Task<bool> PerformAdditionToExistingMerged(List<Chapter> chaptersToAdd, string baseNumber)
     {
         try
         {
-            // Use the chapter merging coordinator to add chapters to existing merged chapter
-            await ChapterMergeCoordinator.ProcessExistingChapterPartsForMergingAsync(Manga);
+            // Ask the coordinator to add the chapters to the existing merged chapter. It returns
+            // how many chapter records it actually merged/added; 0 means nothing changed (merging
+            // disabled, a conflict, or a swallowed failure), in which case we must not remove rows
+            // or claim success.
+            int mergedCount = await ChapterMergeCoordinator.ProcessExistingChapterPartsForMergingAsync(Manga);
 
-            // Remove the added chapters from UI since they're now part of the merged chapter
-            foreach (var chapter in chaptersToAdd)
+            if (mergedCount == 0)
             {
-                var chapterItem = chapterItems.FirstOrDefault(ci => ci.Chapter.Id == chapter.Id);
-                if (chapterItem != null)
-                {
-                    chapters.Remove(chapterItem);
-                }
+                Snackbar.Add(
+                    string.Format(Loc["Snackbar_NoChaptersAdded"], baseNumber),
+                    Severity.Info
+                );
+                return false;
             }
 
-            // Find and update the merged chapter in the UI
-            await using var db = await DbContextFactory.CreateDbContextAsync();
-            var mergedChapter = await db.Chapters
-                .Include(c => c.Manga)
-                    .ThenInclude(m => m.Library)
-                .Include(c => c.UpscalerProfile)
-                .FirstOrDefaultAsync(c =>
-                    c.MangaId == Manga.Id
-                    && (c.FileName.StartsWith(baseNumber + ".") || c.FileName == baseNumber + ".cbz"));
-
-            if (mergedChapter != null)
+            // Notify connected services that the existing merged chapter changed. The list itself is
+            // rebuilt from the database below; this is only for external consumers.
+            await using (var db = await DbContextFactory.CreateDbContextAsync())
             {
-                var existingItem = chapterItems.FirstOrDefault(ci => ci.Chapter.Id == mergedChapter.Id);
-                if (existingItem != null)
+                var mergedChapter = await db.Chapters
+                    .Include(c => c.Manga)
+                        .ThenInclude(m => m.Library)
+                    .Include(c => c.UpscalerProfile)
+                    .FirstOrDefaultAsync(c =>
+                        c.MangaId == Manga.Id
+                        && (c.FileName.StartsWith(baseNumber + ".") || c.FileName == baseNumber + ".cbz"));
+
+                if (mergedChapter != null)
                 {
-                    // Update the existing item
-                    var extractedMetadata = await MetadataHandler.GetSeriesAndTitleFromComicInfoAsync(
-                        Path.Combine(mergedChapter.Manga.Library.NotUpscaledLibraryPath, mergedChapter.RelativePath));
-
-                    existingItem.ExtractedMetadata = extractedMetadata;
-                    existingItem.NewTitle = extractedMetadata?.ChapterTitle ?? string.Empty;
-                    existingItem.NewFileName = Path.GetFileNameWithoutExtension(mergedChapter.FileName);
-
                     try
                     {
                         await ChapterChangedNotifier.Notify(mergedChapter, false);
@@ -1315,17 +1348,30 @@
                 }
             }
 
-            // Update merge possibilities cache after successful addition
+            // Rebuild the list from the database instead of optimistically removing the selected
+            // rows: the coordinator decides what actually merged, and only the database is the truth.
+            await LoadChapters();
+
+            var addedIds = chaptersToAdd.Select(c => c.Id).ToHashSet();
+            selectedChapters.RemoveWhere(ci => addedIds.Contains(ci.Chapter.Id));
+
+            // Invalidate *before* recomputing: UpdateMergePossibilitiesAsync returns early while the
+            // 5s cache window is still open, so without the invalidate the row merge buttons stay stale.
+            InvalidateMergePossibilitiesCache();
             await UpdateMergePossibilitiesAsync();
 
-            Snackbar.Add(string.Format(Loc["Snackbar_AddChaptersSuccess"], chaptersToAdd.Count, baseNumber),
-                Severity.Success);
+            Snackbar.Add(
+                string.Format(Loc["Snackbar_AddChaptersSuccess"], mergedCount, baseNumber),
+                Severity.Success
+            );
+            return true;
         }
         catch (Exception ex)
         {
             Logger.LogError(ex, "Failed to add chapters to existing merged chapter {BaseNumber}", baseNumber);
             Snackbar.Add(string.Format(Loc["Snackbar_AddChaptersFailure"], baseNumber),
                 Severity.Error);
+            return false;
         }
     }
 
@@ -1365,6 +1411,9 @@
             var options = new DialogOptions { MaxWidth = MaxWidth.ExtraLarge, FullWidth = true, CloseButton = true };
 
             var dialog = await DialogService.ShowAsync<SplitEditorDialog>(Loc["Dialog_EditSplits_Title"], parameters, options);
+            // SplitEditorDialog returns DialogResult.Ok(findings), but the dialog is read-only today:
+            // it only displays detected splits, so the result is intentionally not applied here.
+            // If the dialog ever starts persisting changes, handle the result and reload the list.
             await dialog.Result;
         }
         catch (Exception ex)

@@ -291,14 +291,14 @@
         upscalerProfiles = await db.UpscalerProfiles.AsNoTracking().ToListAsync();
     }
 
-    private void OnIngestPathChanged(int index, string newPath)
+    private void OnIngestPathChanged(int index, string? newPath)
     {
         if (index < 0 || index >= Library.IngestPaths.Count)
         {
             return;
         }
 
-        Library.IngestPaths[index].Path = newPath;
+        Library.IngestPaths[index].Path = newPath ?? string.Empty;
         OnInputChanged();
     }
 
@@ -324,9 +324,9 @@
         OnInputChanged();
     }
 
-    private void OnNotUpscaledPathChanged(string newPath)
+    private void OnNotUpscaledPathChanged(string? newPath)
     {
-        Library.NotUpscaledLibraryPath = newPath;
+        Library.NotUpscaledLibraryPath = newPath ?? string.Empty;
         OnInputChanged();
     }
 

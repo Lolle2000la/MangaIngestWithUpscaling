@@ -399,6 +399,201 @@ public class MangasTests : BunitContext
         Assert.Equal(new[] { moved.Id }, mangas.Select(m => m.Id).ToArray());
     }
 
+    // ---------------------------------------------------------------- selection pruning
+
+    [Fact]
+    public async Task Mangas_DeleteSelected_PrunesSelectionAndDisablesToolbar()
+    {
+        Library library = await AddLibraryAsync("Library A");
+        await AddMangaAsync(library, "Keep Me");
+        Manga deleteOne = await AddMangaAsync(library, "Delete One");
+        Manga deleteTwo = await AddMangaAsync(library, "Delete Two");
+
+        _subDialogService
+            .ShowAsync<DeleteMangasDialog>(Arg.Any<string>(), Arg.Any<DialogParameters>())
+            .Returns(async callInfo =>
+            {
+                var parameters = callInfo.Arg<DialogParameters>();
+                var mangas = (IEnumerable<Manga>)parameters["Mangas"]!;
+                await using (var db = await _testDb.Database.CreateContextAsync())
+                {
+                    foreach (Manga manga in mangas)
+                    {
+                        Manga? tracked = await db.MangaSeries.FindAsync(manga.Id);
+                        if (tracked is not null)
+                        {
+                            db.MangaSeries.Remove(tracked);
+                        }
+                    }
+                    await db.SaveChangesAsync(CancellationToken.None);
+                }
+
+                var reference = Substitute.For<IDialogReference>();
+                reference.Result.Returns(Task.FromResult<DialogResult?>(DialogResult.Ok(true)));
+                return reference;
+            });
+
+        var component = RenderComponentWithProviders<Mangas>();
+        component.WaitForAssertion(() =>
+            Assert.True(FindDataRow(component, "Delete One") is not null)
+        );
+
+        var table = component.FindComponent<MudTable<Manga>>();
+        await component.InvokeAsync(() =>
+            table.Instance.SelectedItemsChanged.InvokeAsync(
+                new HashSet<Manga> { deleteOne, deleteTwo }
+            )
+        );
+
+        IElement deleteButton = FindToolbarButton(component, "Delete Selected");
+        await component.InvokeAsync(() => deleteButton.Click(new MouseEventArgs()));
+
+        component.WaitForAssertion(() =>
+        {
+            Assert.True(FindDataRow(component, "Delete One") is null);
+            Assert.True(FindDataRow(component, "Delete Two") is null);
+        });
+
+        // Nothing is selected any more, so the destructive toolbar must be disabled again rather
+        // than keep acting on the vanished rows.
+        component.WaitForAssertion(() =>
+            Assert.True(
+                FindToolbarButton(component, "Delete Selected").HasAttribute("disabled"),
+                "The delete toolbar should be disabled once the deleted rows are pruned"
+            )
+        );
+    }
+
+    [Fact]
+    public async Task Mangas_MergeSelected_PrunesSelectionAndReloadsRows()
+    {
+        Library library = await AddLibraryAsync("Library A");
+        Manga survivor = await AddMangaAsync(library, "Merge A");
+        Manga absorbed = await AddMangaAsync(library, "Merge B");
+
+        // The real dialog merges the selection into one manga; simulate that by dropping the
+        // absorbed rows and completing with Ok.
+        _subDialogService
+            .ShowAsync<MergeMangaDialog>(Arg.Any<string>(), Arg.Any<DialogParameters>())
+            .Returns(async callInfo =>
+            {
+                var parameters = callInfo.Arg<DialogParameters>();
+                var mangas = (IEnumerable<Manga>)parameters["Mangas"]!;
+                await using (var db = await _testDb.Database.CreateContextAsync())
+                {
+                    foreach (Manga manga in mangas.Where(m => m.Id != survivor.Id))
+                    {
+                        Manga? tracked = await db.MangaSeries.FindAsync(manga.Id);
+                        if (tracked is not null)
+                        {
+                            db.MangaSeries.Remove(tracked);
+                        }
+                    }
+                    await db.SaveChangesAsync(CancellationToken.None);
+                }
+
+                var reference = Substitute.For<IDialogReference>();
+                reference.Result.Returns(Task.FromResult<DialogResult?>(DialogResult.Ok(true)));
+                return reference;
+            });
+
+        var component = RenderComponentWithProviders<Mangas>();
+        component.WaitForAssertion(() =>
+            Assert.True(FindDataRow(component, "Merge B") is not null)
+        );
+
+        var table = component.FindComponent<MudTable<Manga>>();
+        await component.InvokeAsync(() =>
+            table.Instance.SelectedItemsChanged.InvokeAsync(
+                new HashSet<Manga> { survivor, absorbed }
+            )
+        );
+
+        IElement mergeButton = FindToolbarButton(component, "Merge Selected");
+        await component.InvokeAsync(() => mergeButton.Click(new MouseEventArgs()));
+
+        component.WaitForAssertion(() =>
+        {
+            Assert.True(FindDataRow(component, "Merge B") is null);
+            Assert.True(FindDataRow(component, "Merge A") is not null);
+        });
+
+        component.WaitForAssertion(() =>
+            Assert.True(
+                FindToolbarButton(component, "Merge Selected").HasAttribute("disabled"),
+                "The merge toolbar should be disabled once the merged rows are pruned"
+            )
+        );
+    }
+
+    [Fact]
+    public async Task Mangas_MoveSelected_PrunesSelectionAndReloadsFilteredRows()
+    {
+        Library source = await AddLibraryAsync("Library A");
+        Library target = await AddLibraryAsync("Library B");
+        Manga moved = await AddMangaAsync(source, "Move Me");
+        await AddMangaAsync(source, "Stay Here");
+
+        _subDialogService
+            .ShowAsync<MoveMangasToLibraryDialog>(Arg.Any<string>(), Arg.Any<DialogParameters>())
+            .Returns(async callInfo =>
+            {
+                var parameters = callInfo.Arg<DialogParameters>();
+                var mangas = (IEnumerable<Manga>)parameters["Mangas"]!;
+                await using (var db = await _testDb.Database.CreateContextAsync())
+                {
+                    foreach (Manga manga in mangas)
+                    {
+                        Manga? tracked = await db.MangaSeries.FindAsync(manga.Id);
+                        if (tracked is not null)
+                        {
+                            tracked.LibraryId = target.Id;
+                        }
+                    }
+                    await db.SaveChangesAsync(CancellationToken.None);
+                }
+
+                var reference = Substitute.For<IDialogReference>();
+                reference.Result.Returns(Task.FromResult<DialogResult?>(DialogResult.Ok(true)));
+                return reference;
+            });
+
+        var component = RenderComponentWithProviders<Mangas>();
+        component.WaitForAssertion(() =>
+        {
+            Assert.True(FindDataRow(component, "Move Me") is not null);
+            Assert.True(FindDataRow(component, "Stay Here") is not null);
+        });
+
+        // Filter to the source library so a moved row leaves the reloaded table.
+        var librarySelect = component.FindComponent<MudSelect<Library?>>();
+        await component.InvokeAsync(() => librarySelect.Instance.ValueChanged.InvokeAsync(source));
+
+        var table = component.FindComponent<MudTable<Manga>>();
+        await component.InvokeAsync(() =>
+            table.Instance.SelectedItemsChanged.InvokeAsync(new HashSet<Manga> { moved })
+        );
+
+        IElement moveButton = FindToolbarButton(component, "Move Selected");
+        await component.InvokeAsync(() => moveButton.Click(new MouseEventArgs()));
+
+        component.WaitForAssertion(() =>
+        {
+            Assert.True(
+                FindDataRow(component, "Move Me") is null,
+                "The moved manga should leave the source-library table"
+            );
+            Assert.True(FindDataRow(component, "Stay Here") is not null);
+        });
+
+        component.WaitForAssertion(() =>
+            Assert.True(
+                FindToolbarButton(component, "Move Selected").HasAttribute("disabled"),
+                "The move toolbar should be disabled once the moved rows are pruned"
+            )
+        );
+    }
+
     // ---------------------------------------------------------------- library filter
 
     [Fact]

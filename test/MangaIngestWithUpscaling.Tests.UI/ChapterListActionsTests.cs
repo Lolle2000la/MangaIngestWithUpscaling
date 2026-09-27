@@ -368,6 +368,109 @@ public class ChapterListActionsTests : ChapterListTestBase
         await Task.Delay(50);
         Assert.Equal(metadataCallsBefore, GetMetadataCallCount());
     }
+
+    // ------------------------------------------------------------------ delete clears stale selection (B2)
+
+    [Fact]
+    public async Task DeleteSelected_StaleSelection_IsPrunedSoToolbarDisables()
+    {
+        // Deleting a chapter whose selected instance is still current is pruned by MudBlazor itself
+        // (TableContext.Remove handles the disposed row). This variant covers a selection captured
+        // before a reload: the stale instance no longer matches any row, so there is nothing for
+        // MudBlazor to prune and the toolbar would stay enabled unless the component prunes by id.
+        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+        ConfigureNoMergePossibilities();
+        ConfirmAllMessageBoxes();
+        _subSplitProcessingCoordinator
+            .EnqueueDetectionIfPlausibleAsync(Arg.Any<int>())
+            .Returns(false);
+
+        var component = RenderComponentWithProviders<ChapterList>(parameters =>
+            parameters.Add(p => p.Manga, manga)
+        );
+        component.WaitForAssertion(() => Assert.NotNull(FindDataRow(component, "Chapter 1.1.cbz")));
+
+        await SelectRow(component, "Chapter 1.1.cbz", true);
+        object staleItem = CaptureSingleSelection(component.Instance);
+
+        // Force a reload that replaces every item while the captured instance becomes stale.
+        await InvokeSplitCallback(component, "Chapter 1.1.cbz", pill => pill.DetectSplitsCallback);
+
+        AddSelection(component.Instance, staleItem);
+        component.Render(builder => builder.Add(p => p.Manga, manga));
+
+        component.WaitForAssertion(() =>
+            Assert.False(IsDisabled(FindToolbarButton(component, "Delete Selected")))
+        );
+
+        await ClickToolbarButton(component, "Delete Selected");
+
+        component.WaitForAssertion(() => Assert.Null(FindDataRow(component, "Chapter 1.1.cbz")));
+
+        Assert.True(
+            IsDisabled(FindToolbarButton(component, "Delete Selected")),
+            "Deleting a chapter selected under a stale instance must still clear the selection"
+        );
+        Assert.True(IsDisabled(FindToolbarButton(component, "Upscale Selected")));
+
+        await using var verifyDb = await _testDb.Database.CreateContextAsync();
+        Assert.False(await verifyDb.Chapters.AnyAsync(c => c.Id == chapters[0].Id));
+    }
+
+    // ------------------------------------------------------------------ missing backing files (B6)
+
+    [Fact]
+    public async Task DeleteChapter_MissingBackingFile_StillReconcilesRowAndDatabase()
+    {
+        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+        ConfigureNoMergePossibilities();
+        ConfirmAllMessageBoxes();
+
+        // Simulate the file disappearing behind the app's back.
+        File.Delete(Path.Combine(_libraryPath, "Chapter 1.1.cbz"));
+
+        var component = RenderComponentWithProviders<ChapterList>(parameters =>
+            parameters.Add(p => p.Manga, manga)
+        );
+        component.WaitForAssertion(() => Assert.NotNull(FindDataRow(component, "Chapter 1.1.cbz")));
+
+        await ClickRowButton(component, "Chapter 1.1.cbz", "Delete chapter");
+
+        component.WaitForAssertion(() => Assert.Null(FindDataRow(component, "Chapter 1.1.cbz")));
+
+        await using var verifyDb = await _testDb.Database.CreateContextAsync();
+        Assert.False(await verifyDb.Chapters.AnyAsync(c => c.Id == chapters[0].Id));
+    }
+
+    [Fact]
+    public async Task DeleteUpscaledChapter_MissingUpscaledFile_ClearsFlag()
+    {
+        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync(
+            chapter3Upscaled: true
+        );
+        ConfigureNoMergePossibilities();
+        ConfirmAllMessageBoxes();
+
+        // Simulate the upscaled file disappearing behind the app's back.
+        File.Delete(Path.Combine(_upscaledPath, "Chapter 2.cbz"));
+
+        var component = RenderComponentWithProviders<ChapterList>(parameters =>
+            parameters.Add(p => p.Manga, manga)
+        );
+        component.WaitForAssertion(() =>
+            Assert.True(RowHasButton(component, "Chapter 2.cbz", "Delete upscaled"))
+        );
+
+        await ClickRowButton(component, "Chapter 2.cbz", "Delete upscaled");
+
+        component.WaitForAssertion(() =>
+            Assert.True(RowHasButton(component, "Chapter 2.cbz", "Upscale"))
+        );
+
+        await using var verifyDb = await _testDb.Database.CreateContextAsync();
+        Chapter? tracked = await verifyDb.Chapters.FirstAsync(c => c.Id == chapters[2].Id);
+        Assert.False(tracked.IsUpscaled);
+    }
 }
 
 /// <summary>
@@ -1093,5 +1196,181 @@ public abstract class ChapterListTestBase : BunitContext
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
+    }
+}
+
+/// <summary>
+/// Regression tests for adding chapters to an existing merged chapter: the coordinator result is
+/// the source of truth, so a no-op must not remove rows or report success, a real addition must
+/// refresh the list and invalidate the merge cache, and a failed merge must not be summarised as a
+/// success.
+/// </summary>
+public class ChapterListMergeAdditionTests : ChapterListTestBase
+{
+    private void ConfigureAdditionGroup(params Chapter[] chapters)
+    {
+        ConfigureMergePossibilities(
+            new MergeActionInfo
+            {
+                AdditionsToExistingMerged = new Dictionary<string, List<Chapter>>
+                {
+                    { "1", chapters.ToList() },
+                },
+            }
+        );
+    }
+
+    private void ConfigureAdditionResult(int mergedCount)
+    {
+        _subMergeCoordinator
+            .ProcessExistingChapterPartsForMergingAsync(
+                Arg.Any<Manga>(),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<ApplicationDbContext?>()
+            )
+            .Returns(mergedCount);
+    }
+
+    private int CountPossibleMergeActionsCalls(bool includeLatest)
+    {
+        return _subMergeCoordinator
+            .ReceivedCalls()
+            .Count(c =>
+                c.GetMethodInfo().Name
+                    == nameof(IChapterMergeCoordinator.GetPossibleMergeActionsAsync)
+                && (bool)c.GetArguments()[1]! == includeLatest
+            );
+    }
+
+    [Fact]
+    public async Task AddToExistingMerged_NoOp_KeepsRowsAndDoesNotReportSuccess()
+    {
+        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+        AddMergedChapterInfo(chapters[0].Id);
+        ConfigureAdditionGroup(chapters[1]);
+
+        // The coordinator reports a no-op (0 chapters merged/added), exactly as it does when
+        // merging is disabled or a conflict stops the addition. The reading path never used to
+        // check this, removed the row and claimed success anyway.
+        ConfigureAdditionResult(0);
+        ConfirmAllMessageBoxes();
+
+        var component = RenderComponentWithProviders<ChapterList>(parameters =>
+            parameters.Add(p => p.Manga, manga)
+        );
+        component.WaitForAssertion(() =>
+            Assert.True(RowHasButton(component, "Chapter 1.2.cbz", "Merge this chapter"))
+        );
+
+        await ClickRowButton(component, "Chapter 1.2.cbz", "Merge this chapter");
+
+        await _subMergeCoordinator
+            .Received()
+            .ProcessExistingChapterPartsForMergingAsync(
+                Arg.Any<Manga>(),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<ApplicationDbContext?>()
+            );
+
+        // Nothing changed, so the row must remain and no success may be shown.
+        component.WaitForAssertion(() => Assert.NotNull(FindDataRow(component, "Chapter 1.2.cbz")));
+        _subSnackbar
+            .DidNotReceive()
+            .Add(
+                Arg.Is<string>(m => m.Contains("Snackbar_AddChaptersSuccess")),
+                Arg.Any<Severity>(),
+                Arg.Any<Action<SnackbarOptions>?>(),
+                Arg.Any<string?>()
+            );
+
+        await using var verifyDb = await _testDb.Database.CreateContextAsync();
+        Assert.True(await verifyDb.Chapters.AnyAsync(c => c.Id == chapters[1].Id));
+    }
+
+    [Fact]
+    public async Task AddToExistingMerged_RecomputesMergePossibilities()
+    {
+        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+        AddMergedChapterInfo(chapters[0].Id);
+        ConfigureAdditionGroup(chapters[1]);
+        ConfigureAdditionResult(1);
+        ConfirmAllMessageBoxes();
+
+        var component = RenderComponentWithProviders<ChapterList>(parameters =>
+            parameters.Add(p => p.Manga, manga)
+        );
+        component.WaitForAssertion(() =>
+            Assert.True(RowHasButton(component, "Chapter 1.2.cbz", "Merge this chapter"))
+        );
+
+        int latestCallsBefore = CountPossibleMergeActionsCalls(includeLatest: true);
+
+        await ClickRowButton(component, "Chapter 1.2.cbz", "Merge this chapter");
+
+        // One "include latest" call is the confirm path; a second proves the cache was invalidated
+        // and recomputed. Without the invalidate the 5s guard skipped the recompute.
+        component.WaitForAssertion(() =>
+            Assert.True(
+                CountPossibleMergeActionsCalls(includeLatest: true) - latestCallsBefore >= 2,
+                "A real addition must invalidate and recompute the merge possibilities"
+            )
+        );
+
+        _subSnackbar
+            .Received()
+            .Add(
+                Arg.Is<string>(m => m.Contains("Snackbar_AddChaptersSuccess")),
+                Severity.Success,
+                Arg.Any<Action<SnackbarOptions>?>(),
+                Arg.Any<string?>()
+            );
+    }
+
+    [Fact]
+    public async Task MergeOperations_NothingMerged_DoesNotShowSuccessSummary()
+    {
+        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+        ConfigureMergePossibilities(CreateMergeInfo((chapters[0], chapters[1])));
+
+        // The coordinator reports that it merged nothing.
+        _subMergeCoordinator
+            .MergeSelectedChaptersAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .Returns(new List<MergeInfo>());
+        ConfirmAllMessageBoxes();
+
+        var component = RenderComponentWithProviders<ChapterList>(parameters =>
+            parameters.Add(p => p.Manga, manga)
+        );
+        component.WaitForAssertion(() =>
+            Assert.True(RowHasButton(component, "Chapter 1.1.cbz", "Merge this chapter"))
+        );
+
+        await SelectRow(component, "Chapter 1.1.cbz", true);
+        component.WaitForAssertion(() =>
+            Assert.False(IsDisabled(FindToolbarButton(component, "Merge Selected")))
+        );
+
+        await ClickToolbarButton(component, "Merge Selected");
+
+        component.WaitForAssertion(() =>
+            _subSnackbar
+                .Received()
+                .Add(
+                    Arg.Is<string>(m => m.Contains("Snackbar_NoChaptersMerged")),
+                    Severity.Warning,
+                    Arg.Any<Action<SnackbarOptions>?>(),
+                    Arg.Any<string?>()
+                )
+        );
+
+        // The warning must not be followed by a success summary that counts the attempted merge.
+        _subSnackbar
+            .DidNotReceive()
+            .Add(
+                Arg.Is<string>(m => m.Contains("Snackbar_MergeOperationsSuccess")),
+                Arg.Any<Severity>(),
+                Arg.Any<Action<SnackbarOptions>?>(),
+                Arg.Any<string?>()
+            );
     }
 }

@@ -293,7 +293,7 @@ builder.Services.AddDbContext<ApplicationDbContext>(
         ),
     optionsLifetime: ServiceLifetime.Singleton
 );
-builder.Services.AddDbContext<LoggingDbContext>(options =>
+builder.Services.AddDbContextFactory<LoggingDbContext>(options =>
     DatabaseSetup.UseDatabaseProvider(
         options,
         databaseConfiguration.Provider,
@@ -302,6 +302,18 @@ builder.Services.AddDbContext<LoggingDbContext>(options =>
             : databaseConfiguration.PostgresConnectionString,
         databaseConfiguration.ApplicationMigrationsAssembly
     )
+);
+builder.Services.AddDbContext<LoggingDbContext>(
+    options =>
+        DatabaseSetup.UseDatabaseProvider(
+            options,
+            databaseConfiguration.Provider,
+            databaseConfiguration.IsSqlite
+                ? databaseConfiguration.LoggingConnectionReadOnlyString!
+                : databaseConfiguration.PostgresConnectionString,
+            databaseConfiguration.ApplicationMigrationsAssembly
+        ),
+    optionsLifetime: ServiceLifetime.Singleton
 );
 builder.Services.AddDatabaseDeveloperPageExceptionFilter();
 

@@ -13,7 +13,12 @@ public interface IChapterMergeCoordinator
     /// <param name="manga">The manga whose chapters should be processed for merging</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <param name="context">Optional caller-owned context in which the entities are tracked.</param>
-    Task ProcessExistingChapterPartsForMergingAsync(
+    /// <returns>
+    /// The number of chapter records that were actually merged or added. Returns 0 when merging is
+    /// disabled, when there was nothing to do, or when the operation failed, so callers can tell a
+    /// real change apart from a no-op.
+    /// </returns>
+    Task<int> ProcessExistingChapterPartsForMergingAsync(
         Manga manga,
         CancellationToken cancellationToken = default,
         ApplicationDbContext? context = null

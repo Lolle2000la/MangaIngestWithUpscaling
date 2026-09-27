@@ -167,10 +167,11 @@ public class AddImageFilterDialogTests : LibraryTestBase
         await dialog.InvokeAsync(() => upload.Instance.FilesChanged.InvokeAsync(file));
     }
 
-    internal static async Task SetDescriptionAsync(
-        IRenderedComponent<AddImageFilterDialog> dialog,
+    internal static async Task SetDescriptionAsync<TComponent>(
+        IRenderedComponent<TComponent> dialog,
         string description
     )
+        where TComponent : class, IComponent
     {
         var field = dialog
             .FindComponents<MudTextField<string>>()
@@ -226,12 +227,15 @@ public class EditImageFilterDialogTests : LibraryTestBase
         IRenderedComponent<EditImageFilterDialog> dialog =
             AddImageFilterDialogTests.FindDialog<EditImageFilterDialog>(host);
 
-        dialog.Instance.FilteredImage.Description = "updated description";
+        await AddImageFilterDialogTests.SetDescriptionAsync(dialog, "updated description");
         await AddImageFilterDialogTests.ClickDialogButtonAsync(dialog, "Save");
         DialogResult? result = await AddImageFilterDialogTests.AwaitResultAsync(reference);
 
         Assert.NotNull(result);
         Assert.False(result!.Canceled);
+
+        // The row the page renders from is refreshed in memory on success, not re-queried.
+        Assert.Equal("updated description", detached.Description);
 
         await using var db = await _testDb.Database.CreateContextAsync();
         FilteredImage persisted = await db.FilteredImages.SingleAsync(f => f.Id == detached.Id);
@@ -265,7 +269,7 @@ public class EditImageFilterDialogTests : LibraryTestBase
             await db.SaveChangesAsync(CancellationToken.None);
         }
 
-        detached.Description = "cannot be saved";
+        await AddImageFilterDialogTests.SetDescriptionAsync(dialog, "cannot be saved");
         await AddImageFilterDialogTests.ClickDialogButtonAsync(dialog, "Save");
         DialogResult? result = await AddImageFilterDialogTests.AwaitResultAsync(reference);
 
@@ -280,6 +284,41 @@ public class EditImageFilterDialogTests : LibraryTestBase
             .Add(
                 Arg.Is<string>(m => m.Contains("Error_SaveFailed")),
                 Severity.Error,
+                Arg.Any<Action<SnackbarOptions>?>(),
+                Arg.Any<string?>()
+            );
+    }
+
+    [Fact]
+    public async Task Cancel_LeavesTheRowAndTheDatabaseUntouched()
+    {
+        (Library library, FilteredImage detached) = await SeedFilteredImageAsync();
+
+        IRenderedComponent<ContainerFragment> host = RenderDialogHost();
+        IDialogReference reference = await ShowEditDialogAsync(host, detached);
+        IRenderedComponent<EditImageFilterDialog> dialog =
+            AddImageFilterDialogTests.FindDialog<EditImageFilterDialog>(host);
+
+        await AddImageFilterDialogTests.SetDescriptionAsync(dialog, "typed but cancelled");
+        await AddImageFilterDialogTests.ClickDialogButtonAsync(dialog, "Cancel");
+        DialogResult? result = await AddImageFilterDialogTests.AwaitResultAsync(reference);
+
+        Assert.NotNull(result);
+        Assert.True(result!.Canceled);
+
+        // The regression: the binding used to mutate the shared detached row, so the grid kept
+        // showing the description after a cancel even though nothing was saved.
+        Assert.Equal("original description", detached.Description);
+
+        await using var db = await _testDb.Database.CreateContextAsync();
+        FilteredImage persisted = await db.FilteredImages.SingleAsync(f => f.Id == detached.Id);
+        Assert.Equal("original description", persisted.Description);
+
+        _subSnackbar
+            .DidNotReceive()
+            .Add(
+                Arg.Any<string>(),
+                Arg.Any<Severity>(),
                 Arg.Any<Action<SnackbarOptions>?>(),
                 Arg.Any<string?>()
             );
@@ -409,7 +448,7 @@ public class FilteredImagesPageTests : LibraryTestBase
         await ClickRowButtonAsync(page, "existing.png", buttonIndex: 0);
         IRenderedComponent<EditImageFilterDialog> dialog =
             AddImageFilterDialogTests.FindDialog<EditImageFilterDialog>(host);
-        dialog.Instance.FilteredImage.Description = "edited from page";
+        await AddImageFilterDialogTests.SetDescriptionAsync(dialog, "edited from page");
         await AddImageFilterDialogTests.ClickDialogButtonAsync(dialog, "Save");
 
         page.WaitForAssertion(() =>

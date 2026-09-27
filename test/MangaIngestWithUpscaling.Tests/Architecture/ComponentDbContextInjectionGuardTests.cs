@@ -4,41 +4,44 @@ namespace MangaIngestWithUpscaling.Tests.Architecture;
 
 /// <summary>
 /// Guards the per-operation DbContext invariant for Blazor components. A circuit-scoped
-/// <c>ApplicationDbContext</c> shared by every component, dialog and scoped service lets overlapping
-/// operations collide ("A second operation was started on this context instance") and keeps every
-/// entity it ever loaded tracked for the life of the circuit. Components must instead inject
-/// <c>IDbContextFactory&lt;ApplicationDbContext&gt;</c> and open a context per operation.
+/// <c>ApplicationDbContext</c> (or <c>LoggingDbContext</c>) shared by every component, dialog and
+/// scoped service lets overlapping operations collide ("A second operation was started on this
+/// context instance") and keeps every entity it ever loaded tracked for the life of the circuit.
+/// Components must instead inject <c>IDbContextFactory&lt;TContext&gt;</c> and open a context per
+/// operation.
 /// </summary>
 public class ComponentDbContextInjectionGuardTests
 {
     /// <summary>
-    /// Matches direct construction of the context type through the common injection/service-locator
-    /// shapes. An alias (`@using AppDb = ...ApplicationDbContext`) is still possible but is
-    /// deliberately out of scope; this catches the realistic regressions.
+    /// Matches a bare <c>*DbContext</c> type, optionally namespace-qualified (including an alias
+    /// qualifier such as <c>global::</c>). A named capture is deliberately not used: the trailing
+    /// context below pins the token so a context type used as a generic argument
+    /// (<c>IDbContextFactory&lt;ApplicationDbContext&gt;</c>) does not trip the guard.
+    /// </summary>
+    private const string ContextType = @"(?:[A-Za-z_][\w.:]*\.)?\w+DbContext";
+
+    /// <summary>
+    /// Matches direct use of a context type through the common injection/service-locator shapes. An
+    /// alias (<c>@using AppDb = ...ApplicationDbContext</c>) is still possible but is deliberately
+    /// out of scope; this catches the realistic regressions.
     /// </summary>
     private static readonly Regex[] ForbiddenPatterns =
     [
-        // @inject ApplicationDbContext DbContext / @inject global::...ApplicationDbContext
-        new(@"@inject\s+([A-Za-z_][\w.]*::)?ApplicationDbContext\b", RegexOptions.Compiled),
+        // @inject ApplicationDbContext DbContext / @inject global::...LoggingDbContext DbContext
+        new($@"@inject\s+{ContextType}\??\s+[A-Za-z_]\w*", RegexOptions.Compiled),
         // [Inject] public ApplicationDbContext DbContext { get; set; }
+        new($@"\[Inject\][^\n]*\b{ContextType}\??\s+[A-Za-z_]\w*", RegexOptions.Compiled),
+        // GetRequiredService<ApplicationDbContext>() / GetService<LoggingDbContext>()
+        new($@"Get(?:Required)?Service\s*<\s*{ContextType}\s*>", RegexOptions.Compiled),
+        // GetRequiredService(typeof(ApplicationDbContext)) / GetService(typeof(LoggingDbContext))
         new(
-            @"\[Inject\][^\n]*\bApplicationDbContext\b",
-            RegexOptions.Compiled | RegexOptions.Singleline
-        ),
-        // GetRequiredService<ApplicationDbContext>() / GetService<ApplicationDbContext>()
-        new(
-            @"Get(Required)?Service\s*<\s*([A-Za-z_][\w.]*::)?ApplicationDbContext\s*>",
-            RegexOptions.Compiled
-        ),
-        // GetRequiredService(typeof(ApplicationDbContext)) / GetService(typeof(ApplicationDbContext))
-        new(
-            @"Get(Required)?Service\s*\(\s*typeof\s*\(\s*([A-Za-z_][\w.]*::)?ApplicationDbContext\s*\)",
+            $@"Get(?:Required)?Service\s*\(\s*typeof\s*\(\s*{ContextType}\s*\)",
             RegexOptions.Compiled
         ),
     ];
 
     [Fact]
-    public void ComponentsDoNotUseTheSharedApplicationDbContext()
+    public void ComponentsDoNotUseASharedDbContext()
     {
         string repositoryRoot = FindRepositoryRoot();
         string componentsRoot = Path.Combine(
@@ -74,8 +77,8 @@ public class ComponentDbContextInjectionGuardTests
 
         Assert.True(
             offenders.Count == 0,
-            "Blazor components must not use a shared ApplicationDbContext. Inject "
-                + "IDbContextFactory<ApplicationDbContext> and open a context per operation instead:"
+            "Blazor components must not use a shared DbContext. Inject "
+                + "IDbContextFactory<TContext> and open a context per operation instead:"
                 + Environment.NewLine
                 + string.Join(Environment.NewLine, offenders)
         );

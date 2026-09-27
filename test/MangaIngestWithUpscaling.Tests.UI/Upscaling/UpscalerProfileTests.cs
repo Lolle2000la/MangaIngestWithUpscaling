@@ -213,6 +213,37 @@ public class UpscalerProfileTests : BunitContext
     // ------------------------------------------------------------------ edit + versioning
 
     [Fact]
+    public async Task CreateUpscalerProfile_OutOfRangeQuality_IsStillSaved()
+    {
+        // Pins the current behavior: UpscalerProfileForm.Validate() only checks Name, so the
+        // [Range(1, 100)] on UpscalerProfile.Quality is not enforced by the form and an out-of-range
+        // value reaches the database. If the validation is tightened, update this test.
+        IRenderedComponent<CreateUpscalerProfile> component = Render<CreateUpscalerProfile>();
+
+        // Invoke the bound value directly to model an out-of-range value reaching the form (the UI
+        // clamps typed input to Min/Max, which is why the gap is only observable programmatically).
+        IRenderedComponent<MudNumericField<int>> qualityField = component.FindComponent<
+            MudNumericField<int>
+        >();
+        await component.InvokeAsync(() => qualityField.Instance.ValueChanged.InvokeAsync(1000));
+
+        IRenderedComponent<MudInput<string>> nameInput = component.FindComponent<
+            MudInput<string>
+        >();
+        await component.InvokeAsync(() => nameInput.Instance.ValueChanged.InvokeAsync("Valid"));
+
+        IElement createButton = component
+            .FindAll("button")
+            .First(b => b.TextContent.Contains("Create", StringComparison.Ordinal));
+        Assert.False(createButton.HasAttribute("disabled"));
+        await component.InvokeAsync(() => createButton.Click(new MouseEventArgs()));
+
+        await using var verifyDb = await _testDb.Database.CreateContextAsync();
+        UpscalerProfile persisted = await verifyDb.UpscalerProfiles.SingleAsync();
+        Assert.Equal(1000, persisted.Quality);
+    }
+
+    [Fact]
     public async Task EditUpscalerProfile_SaveCreatesNewVersionAndRepointsReferences()
     {
         var originalCreatedAt = new DateTime(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc);
