@@ -99,6 +99,15 @@
             trackedOldProfile.Deleted = true;
         }
         await db.SaveChangesAsync();
+
+        // SaveChanges runs ApplicationDbContext.UpdateTimestamps, which overwrites CreatedAt on
+        // Added IHasCreatedAt entities, so the pre-set value above is lost. Restore the original
+        // creation date with a direct update: the new row versions the old profile and must keep its
+        // creation date rather than appearing freshly created.
+        await db.UpscalerProfiles
+            .Where(p => p.Id == Profile.Id)
+            .ExecuteUpdateAsync(s => s.SetProperty(p => p.CreatedAt, existingProfile.CreatedAt));
+
         // change all references to existingProfile to Profile, except for concrete chapters
         // (right now this is only the upscaler profile id in the library))
         await db.Libraries

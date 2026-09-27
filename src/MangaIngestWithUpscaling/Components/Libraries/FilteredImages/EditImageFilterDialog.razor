@@ -1,6 +1,8 @@
 @using MangaIngestWithUpscaling.Data.LibraryManagement
 @using Microsoft.Extensions.Localization
 @inject IDbContextFactory<ApplicationDbContext> DbContextFactory
+@inject ISnackbar Snackbar
+@inject ILogger<EditImageFilterDialog> Logger
 @inject IStringLocalizer<EditImageFilterDialog> Loc
 @inject IStringLocalizer<SharedResource> SharedLoc
 
@@ -63,27 +65,40 @@
     [CascadingParameter] private IMudDialogInstance DialogReference { get; set; } = null!;
     [Parameter] public FilteredImage FilteredImage { get; set; } = null!;
 
+    // Captured so a failed save can undo the in-memory edit instead of leaving the list showing a
+    // change that never reached the database.
+    private string? originalDescription;
+
+    protected override void OnInitialized()
+    {
+        originalDescription = FilteredImage.Description;
+    }
+
     private async Task Submit()
     {
         try
         {
             await using var db = await DbContextFactory.CreateDbContextAsync();
-            // Ensure the description update is persisted even if the entity is detached
-            var entry = db.Entry(FilteredImage);
-            if (entry.State == EntityState.Detached)
+            // Edit the tracked row rather than attaching the detached graph: attaching
+            // FilteredImage would traverse its Library navigation and pull in every sibling filter.
+            var tracked = await db.FilteredImages.FirstOrDefaultAsync(f => f.Id == FilteredImage.Id);
+            if (tracked is null)
             {
-                db.Attach(FilteredImage);
-                entry = db.Entry(FilteredImage);
+                throw new InvalidOperationException(
+                    $"Filtered image {FilteredImage.Id} no longer exists."
+                );
             }
 
-            // Mark only the Description property as modified
-            entry.Property(nameof(FilteredImage.Description)).IsModified = true;
+            tracked.Description = FilteredImage.Description;
             await db.SaveChangesAsync();
 
             DialogReference.Close(DialogResult.Ok(true));
         }
-        catch
+        catch (Exception ex)
         {
+            FilteredImage.Description = originalDescription;
+            Logger.LogError(ex, "Failed to update filtered image {FilteredImageId}", FilteredImage.Id);
+            Snackbar.Add(Loc["Error_SaveFailed"], Severity.Error);
             DialogReference.Close(DialogResult.Cancel());
         }
     }

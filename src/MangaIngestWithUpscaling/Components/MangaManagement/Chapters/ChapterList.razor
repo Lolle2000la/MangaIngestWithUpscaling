@@ -351,28 +351,11 @@
                 context: db
             );
 
-            // Remove the merged chapter from the UI
-            var chapterItem = chapterItems.FirstOrDefault(ci => ci.Chapter.Id == chapter.Id);
-            if (chapterItem != null)
-            {
-                chapters.Remove(chapterItem);
-            }
-
-            // Add the restored chapters to the UI
+            // Notify connected services for each restored part. This must happen with the entities
+            // the revert service returned, since they carry the filenames/upscaled flags of the
+            // restored files.
             foreach (var restoredChapter in restoredChapters)
             {
-                var extractedMetadata = await MetadataHandler.GetSeriesAndTitleFromComicInfoAsync(
-                    Path.Combine(trackedChapter.Manga.Library.NotUpscaledLibraryPath, restoredChapter.RelativePath));
-
-                chapters.Add(new ChapterItem
-                {
-                    Chapter = restoredChapter,
-                    ExtractedMetadata = extractedMetadata,
-                    NewTitle = extractedMetadata?.ChapterTitle ?? string.Empty,
-                    NewFileName = Path.GetFileNameWithoutExtension(restoredChapter.FileName),
-                    IsMerged = false // Restored chapters are not merged
-                });
-
                 try
                 {
                     await ChapterChangedNotifier.Notify(restoredChapter, false);
@@ -388,6 +371,14 @@
                     Snackbar.Add(string.Format(Loc["Snackbar_NotifyChange_Failure"], restoredChapter.FileName), Severity.Error);
                 }
             }
+
+            // Rebuild the list from a single context instead of appending the restored entities.
+            // The restored entities' Manga still references the revert context's graph while
+            // chapterItems holds chapters loaded by LoadChapters from a different context. Mixing
+            // the two graphs makes EF's graph-attach in the merge coordinator see two instances
+            // with the same key and throw, which left the list in an inconsistent state after an
+            // otherwise successful revert.
+            await LoadChapters();
 
             // Clear merge cache to ensure fresh recalculation
             InvalidateMergePossibilitiesCache();
@@ -503,9 +494,19 @@
             }
         }
 
-        chapters.Remove(chapterItems.First(ci => ci.Chapter == chapter));
-        // Invalidate merge possibilities cache since chapters changed
+        // Match by id, not reference: after any LoadChapters the list holds fresh Chapter
+        // instances, so a selection captured before a reload would no longer match by reference.
+        var chapterItem = chapterItems.FirstOrDefault(ci => ci.Chapter.Id == chapter.Id);
+        if (chapterItem != null)
+        {
+            chapters.Remove(chapterItem);
+        }
+
+        // Invalidate the merge cache and recompute it: deleting a chapter can change which
+        // remaining chapters are mergeable, and without the recompute every row's merge button
+        // disappears until the next reload.
         InvalidateMergePossibilitiesCache();
+        await UpdateMergePossibilitiesAsync();
     }
 
     private async Task UpscaleChapter(Chapter chapter)

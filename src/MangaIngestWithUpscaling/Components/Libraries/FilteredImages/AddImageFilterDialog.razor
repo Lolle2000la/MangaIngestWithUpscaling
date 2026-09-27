@@ -272,7 +272,7 @@
                 Logger.LogInformation("Generated content hash for {FileName}: {ContentHash}", selectedFile.Name, contentHash);
 
                 filteredImage = await ImageFilterService.CreateFilteredImageFromBytesAsync(
-                imageBytes, selectedFile.Name, Library, description);
+                imageBytes, selectedFile.Name, Library, description: description);
                 if (filteredImage != null)
                 {
                     // Ensure description is persisted regardless of service behavior
@@ -303,19 +303,25 @@
                 return;
             }
 
-            if (filteredImage != null)
+            if (filteredImage == null)
             {
-                Logger.LogInformation("Saving filtered image to database - OriginalFileName: {OriginalFileName}, ContentHash: {ContentHash}",
-                filteredImage.OriginalFileName, filteredImage.ContentHash);
-
-                await using var db = await DbContextFactory.CreateDbContextAsync();
-                // The library instance passed to this dialog is detached; keep only the foreign key
-                // so adding the filter does not try to re-insert the library.
-                filteredImage.Library = null!;
-                db.FilteredImages.Add(filteredImage);
-                await db.SaveChangesAsync();
-                Logger.LogInformation("Successfully saved filtered image to database");
+                // The service produced no filter (e.g. it refused the image); treat it as a cancel so
+                // the page does not announce a success that never happened.
+                Logger.LogWarning("No filtered image was created; closing the dialog without success");
+                DialogReference?.Close(DialogResult.Cancel());
+                return;
             }
+
+            Logger.LogInformation("Saving filtered image to database - OriginalFileName: {OriginalFileName}, ContentHash: {ContentHash}",
+            filteredImage.OriginalFileName, filteredImage.ContentHash);
+
+            await using var db = await DbContextFactory.CreateDbContextAsync();
+            // The library instance passed to this dialog is detached; keep only the foreign key
+            // so adding the filter does not try to re-insert the library.
+            filteredImage.Library = null!;
+            db.FilteredImages.Add(filteredImage);
+            await db.SaveChangesAsync();
+            Logger.LogInformation("Successfully saved filtered image to database");
 
             Logger.LogInformation("Closing dialog with success");
             DialogReference?.Close(DialogResult.Ok(true));

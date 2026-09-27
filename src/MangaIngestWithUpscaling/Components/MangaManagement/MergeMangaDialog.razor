@@ -2,6 +2,7 @@
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.MangaManagement
 @using Microsoft.Extensions.Localization
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IMangaMerger MangaMerger
 @inject IStringLocalizer<MergeMangaDialog> Loc
 
@@ -38,8 +39,46 @@
         {
             return;
         }
-        var toBeMerged = Mangas.Where(m => m != primary);
-        await MangaMerger.MergeAsync(primary, toBeMerged);
+
+        // The mangas were supplied by a MudTable ServerData query that opens a fresh, no-tracking
+        // context per call. Identity is only resolved within one query, so two rows from different
+        // pages/filters can carry distinct Library instances with the same key. Passing that graph
+        // to the merger would make EF graph-attach throw, so reload the roots tracked by id in one
+        // context and hand that context to the merger (mirrors MoveMangasToLibraryDialog).
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+        var trackedPrimary = await db
+            .MangaSeries.Include(m => m.Library)
+            .FirstOrDefaultAsync(m => m.Id == primary.Id);
+        if (trackedPrimary is null)
+        {
+            MudDialog.Cancel();
+            return;
+        }
+
+        var trackedToBeMerged = new List<Manga>();
+        foreach (var manga in Mangas)
+        {
+            if (manga.Id == primary.Id)
+            {
+                continue;
+            }
+
+            var tracked = await db
+                .MangaSeries.Include(m => m.Library)
+                .FirstOrDefaultAsync(m => m.Id == manga.Id);
+            if (tracked is not null)
+            {
+                trackedToBeMerged.Add(tracked);
+            }
+        }
+
+        if (trackedToBeMerged.Count == 0)
+        {
+            MudDialog.Cancel();
+            return;
+        }
+
+        await MangaMerger.MergeAsync(trackedPrimary, trackedToBeMerged, context: db);
         MudDialog.Close(DialogResult.Ok(true));
     }
 

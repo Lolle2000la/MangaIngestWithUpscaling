@@ -13,7 +13,8 @@ public interface IMangaMerger
     /// <param name="cancellationToken">The token to use in to cancel the operation.</param>
     /// <param name="context">
     /// Optional caller-owned context in which the entities are tracked. When omitted the
-    /// implementation opens a short-lived context and attaches the entities.
+    /// implementation opens a short-lived context and reloads the roots tracked by id, so callers
+    /// do not need to supply an identity-resolved graph.
     /// </param>
     /// <returns></returns>
     Task MergeAsync(

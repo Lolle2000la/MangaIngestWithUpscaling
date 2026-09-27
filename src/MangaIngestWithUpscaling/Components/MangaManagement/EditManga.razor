@@ -299,11 +299,31 @@ else
             {
                 var newTitle = manga.PrimaryTitle;
                 manga.PrimaryTitle = originalTitle;
+
+                // ChangeMangaTitle attaches this no-tracking manga and then loads OtherTitles from
+                // the database onto it (Attach leaves IsLoaded false). That load resurrects
+                // alternative titles the user deleted in the UI, so capture the intended set now and
+                // rebuild it after a successful rename before the reconcile below runs.
+                var intendedOtherTitles = manga.OtherTitles.Select(t => t.Title).ToList();
+
                 var result = await MetadataChanger.ChangeMangaTitle(manga, newTitle, addOldTitleToOtherTitles);
                 if (result is not RenameResult.Ok)
                 {
                     Snackbar.Add(Loc["Error_ChangeTitle"], Severity.Error);
                     return;
+                }
+
+                var finalOtherTitles = new List<string>(intendedOtherTitles);
+                finalOtherTitles.RemoveAll(t => t == newTitle); // promoted to the primary title
+                if (addOldTitleToOtherTitles && !finalOtherTitles.Contains(originalTitle))
+                {
+                    finalOtherTitles.Add(originalTitle);
+                }
+
+                manga.OtherTitles.Clear();
+                foreach (var title in finalOtherTitles)
+                {
+                    manga.OtherTitles.Add(new MangaAlternativeTitle { Title = title });
                 }
             }
 

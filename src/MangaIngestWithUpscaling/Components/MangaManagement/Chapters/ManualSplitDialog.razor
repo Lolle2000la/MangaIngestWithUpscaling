@@ -24,6 +24,7 @@
 @inject IFileSystem FileSystem
 @inject IServiceProvider Services
 @inject IJSRuntime JSRuntime
+@inject ILogger<ManualSplitDialog> Logger
 
 <MudDialog>
     <TitleContent>@Loc["Dialog_ManualSplit_Title"]</TitleContent>
@@ -514,6 +515,18 @@
                 if (splits == null || !splits.Any())
                     continue;
 
+                // A split can exist for an image whose dimensions never loaded (for example the
+                // image failed to decode in OnImageLoad). Reading the dictionary with the indexer
+                // would throw KeyNotFoundException and abort the whole save, so skip it instead.
+                if (!_imageDimensions.TryGetValue(imagePath, out var dimensions))
+                {
+                    Logger.LogWarning(
+                        "Skipping manual split for {ImagePath}: image dimensions are unknown",
+                        imagePath
+                    );
+                    continue;
+                }
+
                 // Get just the filename to use in the CBZ
                 var imageFileName = Path.GetFileName(imagePath);
                 var outputDir = Path.Combine(tempDir, Path.GetDirectoryName(imagePath) ?? string.Empty);
@@ -526,8 +539,8 @@
                 var detectionResult = new SplitDetectionResult
                 {
                     ImagePath = imageFileName,
-                    OriginalHeight = _imageDimensions[imagePath].Height,
-                    OriginalWidth = _imageDimensions[imagePath].Width,
+                    OriginalHeight = dimensions.Height,
+                    OriginalWidth = dimensions.Width,
                     Splits = splits.Select(pos => new DetectedSplit
                     {
                         YOriginal = pos,

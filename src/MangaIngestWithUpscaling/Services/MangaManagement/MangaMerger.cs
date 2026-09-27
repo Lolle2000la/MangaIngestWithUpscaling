@@ -35,16 +35,18 @@ public class MangaMerger(
         List<Manga> mergedIntoList = mergedInto.ToList();
         if (context is null)
         {
-            // The entities came from another (possibly disposed) context; attach them so their
-            // references can be loaded and changes tracked here. Callers must supply an
-            // identity-resolved graph so no navigation carries two instances with the same key.
-            dbContext.Attach(primary);
-            foreach (var manga in mergedIntoList)
+            // The entities came from another (possibly disposed) context. Attaching the caller's
+            // graph can throw when it carries two instances with the same key (e.g. table rows
+            // loaded by separate per-query identity resolutions). Reload the roots tracked by id
+            // instead, so the navigations below are loaded into a single, consistent graph.
+            primary = await ReloadTrackedOrKeepAsync(dbContext, primary, cancellationToken);
+            for (int i = 0; i < mergedIntoList.Count; i++)
             {
-                if (dbContext.Entry(manga).State == EntityState.Detached)
-                {
-                    dbContext.Attach(manga);
-                }
+                mergedIntoList[i] = await ReloadTrackedOrKeepAsync(
+                    dbContext,
+                    mergedIntoList[i],
+                    cancellationToken
+                );
             }
         }
 
@@ -72,7 +74,7 @@ public class MangaMerger(
         var mergeOperations = new List<MergeOperation>();
         var mangasToRemove = new List<Manga>();
 
-        foreach (var manga in mergedInto)
+        foreach (var manga in mergedIntoList)
         {
             if (!dbContext.Entry(manga).Reference(m => m.Library).IsLoaded)
                 await dbContext.Entry(manga).Reference(m => m.Library).LoadAsync(cancellationToken);
@@ -414,6 +416,38 @@ public class MangaMerger(
             },
             cancellationToken
         );
+    }
+
+    /// <summary>
+    /// Returns the database-tracked root for <paramref name="manga"/> when it exists so the merge
+    /// never graph-attaches caller-owned navigations. Entities that are not persisted (e.g. an
+    /// unsaved primary in a test, or a row deleted concurrently) are tracked root-only, which keeps
+    /// the validation paths below working without traversing navigations.
+    /// </summary>
+    private static async Task<Manga> ReloadTrackedOrKeepAsync(
+        ApplicationDbContext dbContext,
+        Manga manga,
+        CancellationToken cancellationToken
+    )
+    {
+        if (manga.Id != 0)
+        {
+            var tracked = await dbContext
+                .MangaSeries.Include(m => m.Library)
+                .FirstOrDefaultAsync(m => m.Id == manga.Id, cancellationToken);
+            if (tracked is not null)
+            {
+                return tracked;
+            }
+        }
+
+        var entry = dbContext.Entry(manga);
+        if (entry.State == EntityState.Detached)
+        {
+            entry.State = EntityState.Unchanged;
+        }
+
+        return manga;
     }
 
     private List<string> GetTitlesToTransfer(Manga sourceManga, Manga targetManga)

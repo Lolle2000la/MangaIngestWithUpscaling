@@ -21,7 +21,7 @@
     <div class="col-xl-6">
         <EditForm Model="Input" FormName="apiKey" OnValidSubmit="OnValidSubmitAsync" method="post">
             <div class="form-floating mb-3">
-                <input type="text" value="@apiKey?.Key" id="apiKey" class="form-control"
+                <input type="text" name="Input.ApiKey" value="@apiKey?.Key" id="apiKey" class="form-control"
                     placeholder="@Loc["Placeholder"]" readonly />
                 <label for="apiKey" class="form-label">@Loc["Label"]</label>
             </div>
@@ -65,12 +65,11 @@
             apiKey = await ApiKeyService.CreateApiKeyAsync(user.Id);
         }
 
-        if (Input == null)
-        {
-            Input = new();
-        }
-
-        Input!.ApiKey ??= apiKey.Key;
+        // The form model has to carry the key even though the input is readonly: a readonly field is
+        // still posted, and [Required] would reject the empty default if it were not bound. Assigning
+        // unconditionally (rather than only when null) also keeps validation valid when the form is
+        // re-rendered after a POST.
+        Input!.ApiKey = apiKey.Key;
     }
 
     private async Task OnValidSubmitAsync()

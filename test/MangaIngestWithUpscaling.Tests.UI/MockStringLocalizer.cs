@@ -86,6 +86,98 @@ public class MockStringLocalizer<T> : IStringLocalizer<T>
         { "Menu_ViewEdit", "View/Edit" },
         { "Menu_ApplySplits", "Apply Splits" },
         { "Suffix_Old", "(Old)" },
+        // Mangas
+        { "MergeSelected", "Merge Selected" },
+        { "MoveSelected", "Move Selected" },
+        { "DeleteSelected", "Delete Selected" },
+        { "Tooltip_Edit", "Edit this manga" },
+        { "Tooltip_Delete", "Delete this manga" },
+        { "LibraryToBrowse", "Library to browse" },
+        { "Library_All", "All" },
+        { "SearchLabel", "Search" },
+        { "SearchPlaceholder", "Search for mangas..." },
+        { "Header_Library", "Library" },
+        { "Header_Title", "Title" },
+        { "Header_Chapters", "Chapters" },
+        { "Header_ShouldUpscale", "Should Upscale" },
+        { "ChapterCount", "{0} ({1} upscaled)" },
+        { "Word_Chapter", "chapter" },
+        { "UseLibrarySettings", "Use Library Settings" },
+        // MergeMangaDialog
+        { "Title_Multiple", "Merge {0} mangas" },
+        { "Title_Single", "Merge {0}" },
+        { "SelectPrimary", "Primary" },
+        { "Button_Merge", "Merge" },
+        { "Button_Cancel", "Cancel" },
+        // MoveMangasToLibraryDialog
+        { "SelectLibrary", "Library" },
+        { "Button_Move", "Move" },
+        // DeleteMangasDialog
+        { "Button_Delete", "Delete" },
+        { "Option_Original", "Delete original files" },
+        { "Option_Upscaled", "Delete upscaled files" },
+        // EditManga
+        { "Header_EditManga", "Edit Manga" },
+        { "Label_PrimaryTitle", "Primary title" },
+        { "Label_AddOldTitle", "Add old title to alternative titles" },
+        { "Label_UpscalerProfile", "Upscaler profile" },
+        { "Label_ChapterMerging", "Chapter merging" },
+        { "Button_SaveChanges", "Save Changes" },
+        { "Button_AddTitle", "Add Title" },
+        { "Label_AltTitle", "Alternative title" },
+        { "Tooltip_RemoveTitle", "Remove title" },
+        { "Success_Update", "Changes saved" },
+        { "Error_FormValidation", "The form contains invalid values" },
+        { "Error_ChangeTitle", "Failed to change the title" },
+        { "Loading", "Loading" },
+        // Libraries (page)
+        { "CreateLibrary", "Create Library" },
+        { "UpscaleAll", "Upscale All" },
+        { "NoLibrariesYet", "No Libraries Yet" },
+        { "CreateFirstLibraryDescription", "Create your first library to start ingesting manga." },
+        { "CreateYourFirstLibrary", "Create your first library" },
+        { "LibraryOverview", "Library Overview" },
+        { "Stats_Libraries", "{0}" },
+        { "Stats_MangaSeries", "{0}" },
+        { "Stats_Chapters", "{0}" },
+        { "Word_Library", "library" },
+        { "Word_MangaSeries", "manga series" },
+        { "Header_LibraryName", "Name" },
+        { "Header_IngestPath", "Ingest Path" },
+        { "Header_UpscalerConfig", "Upscaler" },
+        { "NotConfigured", "Not configured" },
+        { "AutoUpscale", "Auto upscale" },
+        { "Tooltip_Scan", "Scan" },
+        { "Tooltip_Integrity", "Check integrity" },
+        { "Tooltip_Filters", "Image filters" },
+        { "DeleteDialog_Title", "Delete Library" },
+        { "DeleteDialog_Content", "Are you sure you want to delete this library?" },
+        // EditLibrary
+        { "SaveButton", "Save Changes" },
+        // AddImageFilterDialog / EditImageFilterDialog
+        { "Save", "Save" },
+        { "Close", "Close" },
+        { "Button_AddFilter", "Add Filter" },
+        { "Button_SelectImage", "Select Image File" },
+        { "Label_Description", "Description" },
+        { "Placeholder_Description", "Why is this image being filtered?" },
+        { "Text_NoDescription", "No description" },
+        { "Text_Never", "Never" },
+        { "Word_FilteredImage", "image" },
+        { "Text_NoFilteredImages", "No filtered images" },
+        { "Header_Preview", "Preview" },
+        { "Header_Filename", "Filename" },
+        { "Header_Description", "Description" },
+        { "Header_Added", "Added" },
+        { "Header_Occurrences", "Occurrences" },
+        { "Header_LastMatched", "Last Matched" },
+        { "Button_ApplyRetroactively", "Apply retroactively" },
+        { "NoRecords_Title", "No records" },
+        { "NoRecords_Subtitle", "Nothing matches your search" },
+        // PreviewLibraryRenames
+        { "Panel_ExistingSeries", "Existing Series" },
+        { "Header_OriginalSeries", "Original" },
+        { "Header_RenamedSeries", "Renamed" },
     };
 
     public LocalizedString this[string name]
@@ -111,6 +203,30 @@ public class MockStringLocalizer<T> : IStringLocalizer<T>
             if (typeof(T).Name.Contains("EditLibraryFilters") && name == "Title")
             {
                 return new LocalizedString(name, "Edit Ingest Filters");
+            }
+            if (typeof(T).Name == "Libraries" && name == "Title")
+            {
+                return new LocalizedString(name, "Libraries");
+            }
+            if (typeof(T).Name == "FilteredImages" && name == "Title")
+            {
+                return new LocalizedString(name, "Filtered Images");
+            }
+            if (typeof(T).Name == "AddImageFilterDialog" && name == "Title")
+            {
+                return new LocalizedString(name, "Add Image Filter");
+            }
+            if (typeof(T).Name == "EditImageFilterDialog" && name == "Title")
+            {
+                return new LocalizedString(name, "Edit Image Filter");
+            }
+            if (typeof(T).Name == "PreviewLibraryRenames" && name == "Title")
+            {
+                return new LocalizedString(name, "Rename Preview");
+            }
+            if (typeof(T).Name == "LibraryRenameDialog" && name == "Title")
+            {
+                return new LocalizedString(name, "Rename Rules");
             }
 
             if (_translations.TryGetValue(name, out var value))

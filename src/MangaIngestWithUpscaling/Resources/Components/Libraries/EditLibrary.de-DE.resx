@@ -67,4 +67,7 @@
   <data name="SaveButton" xml:space="preserve">
     <value>Änderungen speichern</value>
   </data>
+  <data name="Error_LibraryNotFound" xml:space="preserve">
+    <value>Diese Bibliothek existiert nicht mehr. Sie wurde möglicherweise in einem anderen Tab gelöscht.</value>
+  </data>
 </root>

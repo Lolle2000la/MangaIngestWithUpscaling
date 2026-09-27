@@ -79,4 +79,7 @@
   <data name="Text_LastMatched" xml:space="preserve">
     <value>Zuletzt gefunden: {0}</value>
   </data>
+  <data name="Error_SaveFailed" xml:space="preserve">
+    <value>Die Beschreibung konnte nicht gespeichert werden.</value>
+  </data>
 </root>

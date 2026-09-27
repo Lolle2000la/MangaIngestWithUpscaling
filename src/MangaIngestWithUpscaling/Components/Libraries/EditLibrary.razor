@@ -3,6 +3,7 @@
 
 @inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject NavigationManager NavigationManager
+@inject ISnackbar Snackbar
 @inject IStringLocalizer<EditLibrary> Loc
 
 <PageTitle>@string.Format(Loc["PageTitle"], Library?.Name ?? Loc["UnknownLibrary"])</PageTitle>
@@ -72,7 +73,15 @@
             .Include(l => l.IngestPaths)
             .Include(l => l.FilterRules)
             .Include(l => l.RenameRules)
-            .FirstAsync(l => l.Id == Library.Id);
+            .FirstOrDefaultAsync(l => l.Id == Library.Id);
+
+        if (tracked is null)
+        {
+            // The library was deleted in another tab between loading and saving.
+            Snackbar.Add(Loc["Error_LibraryNotFound"], Severity.Error);
+            NavigationManager.NavigateTo("/libraries");
+            return;
+        }
 
         tracked.Name = Library.Name;
         tracked.NotUpscaledLibraryPath = Library.NotUpscaledLibraryPath;
