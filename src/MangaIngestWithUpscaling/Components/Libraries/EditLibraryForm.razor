@@ -8,7 +8,7 @@
 @using Microsoft.Extensions.Options
 @using Humanizer
 @using System.Globalization
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IOptions<KavitaConfiguration> KavitaConfig
 @inject IDialogService DialogService
 @inject IStringLocalizer<EditLibraryForm> Loc
@@ -287,7 +287,8 @@
     protected override async Task OnInitializedAsync()
     {
         // Materialize once: enumerating the DbSet in the render tree runs a synchronous query.
-        upscalerProfiles = await DbContext.UpscalerProfiles.AsNoTracking().ToListAsync();
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+        upscalerProfiles = await db.UpscalerProfiles.AsNoTracking().ToListAsync();
     }
 
     private void OnIngestPathChanged(int index, string newPath)

@@ -5,11 +5,15 @@ using MangaIngestWithUpscaling.Helpers;
 namespace MangaIngestWithUpscaling.Services.ChapterManagement;
 
 [RegisterScoped]
-public class ChapterDeletion(ApplicationDbContext dbContext, ILogger<ChapterDeletion> logger)
-    : IChapterDeletion
+public class ChapterDeletion(ILogger<ChapterDeletion> logger) : IChapterDeletion
 {
     /// <inheritdoc/>
-    public void DeleteChapter(Chapter chapter, bool deleteNormal, bool deleteUpscaled)
+    public void DeleteChapter(
+        ApplicationDbContext dbContext,
+        Chapter chapter,
+        bool deleteNormal,
+        bool deleteUpscaled
+    )
     {
         var normalPath = Path.Combine(
             chapter.Manga.Library.NotUpscaledLibraryPath,
@@ -49,11 +53,17 @@ public class ChapterDeletion(ApplicationDbContext dbContext, ILogger<ChapterDele
     }
 
     /// <inheritdoc/>
-    public void DeleteManga(Manga manga, bool deleteNormal, bool deleteUpscaled)
+    public void DeleteManga(
+        ApplicationDbContext dbContext,
+        Manga manga,
+        bool deleteNormal,
+        bool deleteUpscaled
+    )
     {
         foreach (var chapter in manga.Chapters)
         {
-            DeleteChapter(chapter, deleteNormal, deleteUpscaled);
+            chapter.Manga ??= manga;
+            DeleteChapter(dbContext, chapter, deleteNormal, deleteUpscaled);
         }
 
         dbContext.MangaSeries.Remove(manga);

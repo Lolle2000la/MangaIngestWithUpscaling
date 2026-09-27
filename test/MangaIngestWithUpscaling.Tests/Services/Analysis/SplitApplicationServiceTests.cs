@@ -44,7 +44,7 @@ public class SplitApplicationServiceTests : IAsyncDisposable
         _logger = Substitute.For<ILogger<SplitApplicationService>>();
 
         _service = new SplitApplicationService(
-            _dbContext,
+            new TestDbContextFactory(_testDb.Database),
             _coordinator,
             _splitApplier,
             _upscaler,
@@ -180,7 +180,12 @@ public class SplitApplicationServiceTests : IAsyncDisposable
         // Verify upscaler was called to upscale the split pages
         await _upscaler
             .Received(1)
-            .Upscale(Arg.Any<string>(), Arg.Any<string>(), profile, Arg.Any<CancellationToken>());
+            .Upscale(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Is<UpscalerProfile>(p => p.Id == profile.Id),
+                Arg.Any<CancellationToken>()
+            );
 
         // Verify the upscaled CBZ still exists and has been updated
         Assert.True(File.Exists(upscaledCbzPath), "Upscaled CBZ should still exist");

@@ -227,6 +227,7 @@ public partial class IngestProcessor(
                 library,
                 series,
                 originalSeriesTitle,
+                dbContext,
                 cancellationToken
             );
             processedSeriesEntities.Add(seriesEntity); // Track this series
@@ -872,7 +873,8 @@ public partial class IngestProcessor(
         {
             await chapterMergeCoordinator.ProcessExistingChapterPartsForMergingAsync(
                 seriesEntity,
-                cancellationToken
+                cancellationToken,
+                dbContext
             );
         }
 

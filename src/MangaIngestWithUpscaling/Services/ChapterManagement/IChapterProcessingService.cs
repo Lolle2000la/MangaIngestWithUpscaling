@@ -1,3 +1,4 @@
+using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
@@ -26,10 +27,12 @@ public interface IChapterProcessingService
     /// Finds an existing upscaler profile or creates a new one based on the DTO.
     /// </summary>
     /// <param name="dto">The upscaler profile DTO</param>
+    /// <param name="dbContext">The caller's context; the operation runs inside it.</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>The upscaler profile, or null if creation failed</returns>
     Task<UpscalerProfile?> FindOrCreateUpscalerProfileAsync(
         UpscalerProfileJsonDto dto,
+        ApplicationDbContext dbContext,
         CancellationToken cancellationToken
     );
 
@@ -39,12 +42,14 @@ public interface IChapterProcessingService
     /// <param name="library">The library</param>
     /// <param name="seriesTitle">The series title</param>
     /// <param name="originalSeriesTitle">The original series title (for alternative titles)</param>
+    /// <param name="dbContext">The caller's context; the operation runs inside it.</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>The manga series entity</returns>
     Task<Manga> GetOrCreateMangaSeriesAsync(
         Library library,
         string seriesTitle,
         string? originalSeriesTitle,
+        ApplicationDbContext dbContext,
         CancellationToken cancellationToken
     );
 

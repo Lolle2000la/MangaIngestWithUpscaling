@@ -36,10 +36,13 @@ public class OnSplitsAppliedAsyncTests : IAsyncDisposable
         _fileSystem = Substitute.For<IFileSystem>();
         _logger = Substitute.For<ILogger<SplitProcessingCoordinator>>();
         _stateManagerLogger = Substitute.For<ILogger<SplitProcessingStateManager>>();
-        _stateManager = new SplitProcessingStateManager(_dbContext, _stateManagerLogger);
+        _stateManager = new SplitProcessingStateManager(
+            new TestDbContextFactory(_testDb.Database),
+            _stateManagerLogger
+        );
 
         _coordinator = new SplitProcessingCoordinator(
-            _dbContext,
+            new TestDbContextFactory(_testDb.Database),
             _taskQueue,
             _chapterChangedNotifier,
             _fileSystem,

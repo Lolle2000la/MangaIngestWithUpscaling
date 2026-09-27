@@ -36,7 +36,7 @@ public class MangaLibraryMoverTests : IAsyncDisposable
 
         _libraryMover = new MangaLibraryMover(
             _mockLogger,
-            _dbContext,
+            new TestDbContextFactory(_testDb.Database),
             _mockTaskQueue,
             _mockFileSystem
         );

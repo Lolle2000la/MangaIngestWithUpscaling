@@ -19,6 +19,7 @@ using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
@@ -70,6 +71,9 @@ public class IngestProcessorTaskCancellationTests : IAsyncDisposable
         services.AddLogging();
         services.AddSingleton(db);
         services.AddScoped<IQueueCleanup, QueueCleanup>();
+        services.AddSingleton<IDbContextFactory<ApplicationDbContext>>(
+            new TestDbContextFactory(_testDb.Database)
+        );
         ServiceProvider provider = services.BuildServiceProvider();
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
         var taskQueue = new TaskQueue(scopeFactory, Substitute.For<ILogger<TaskQueue>>());
@@ -156,6 +160,7 @@ public class IngestProcessorTaskCancellationTests : IAsyncDisposable
                 Arg.Any<Library>(),
                 Arg.Any<string>(),
                 Arg.Any<string>(),
+                Arg.Any<ApplicationDbContext>(),
                 Arg.Any<CancellationToken>()
             )
             .Returns(Task.FromResult(manga));

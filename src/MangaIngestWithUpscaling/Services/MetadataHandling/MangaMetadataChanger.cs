@@ -17,7 +17,7 @@ namespace MangaIngestWithUpscaling.Services.MetadataHandling;
 [RegisterScoped]
 public class MangaMetadataChanger(
     IMetadataHandlingService metadataHandling,
-    ApplicationDbContext dbContext,
+    IDbContextFactory<ApplicationDbContext> dbContextFactory,
     IDialogService dialogService,
     ILogger<MangaMetadataChanger> logger,
     ITaskQueue taskQueue,
@@ -75,9 +75,23 @@ public class MangaMetadataChanger(
         string newTitle,
         bool addOldToAlternative = true,
         CancellationToken cancellationToken = default,
-        IProgress<MangaRenameProgress>? progress = null
+        IProgress<MangaRenameProgress>? progress = null,
+        ApplicationDbContext? context = null
     )
     {
+        await using ApplicationDbContext? owned = context is null
+            ? await dbContextFactory.CreateDbContextAsync(cancellationToken)
+            : null;
+        var dbContext = context ?? owned!;
+        if (context is null)
+        {
+            // The manga was loaded by another (possibly disposed) context. Attaching requires the
+            // caller's graph to be identity-resolved (the components load with
+            // AsNoTrackingWithIdentityResolution), so distinct navigations never carry two instances
+            // with the same key.
+            dbContext.Attach(manga);
+        }
+
         var possibleCurrent = await dbContext.MangaSeries.FirstOrDefaultAsync(
             m =>
                 m.Id != manga.Id
@@ -103,7 +117,9 @@ public class MangaMetadataChanger(
             return RenameResult.Cancelled;
         }
 
-        // Load library and chapters if not already loaded
+        // Load library, chapters and alternative titles if not already loaded. ChangePrimaryTitle
+        // depends on OtherTitles being populated to add the old title and to promote an existing
+        // alternative title to the primary one.
         if (!dbContext.Entry(manga).Reference(m => m.Library).IsLoaded)
         {
             await dbContext.Entry(manga).Reference(m => m.Library).LoadAsync(cancellationToken);
@@ -112,6 +128,14 @@ public class MangaMetadataChanger(
         if (!dbContext.Entry(manga).Collection(m => m.Chapters).IsLoaded)
         {
             await dbContext.Entry(manga).Collection(m => m.Chapters).LoadAsync(cancellationToken);
+        }
+
+        if (!dbContext.Entry(manga).Collection(m => m.OtherTitles).IsLoaded)
+        {
+            await dbContext
+                .Entry(manga)
+                .Collection(m => m.OtherTitles)
+                .LoadAsync(cancellationToken);
         }
 
         if (manga.Library == null)
@@ -407,8 +431,22 @@ public class MangaMetadataChanger(
     }
 
     /// <inheritdoc />
-    public async Task ChangeChapterTitle(Chapter chapter, string newTitle)
+    public async Task ChangeChapterTitle(
+        Chapter chapter,
+        string newTitle,
+        ApplicationDbContext? context = null
+    )
     {
+        await using ApplicationDbContext? owned = context is null
+            ? await dbContextFactory.CreateDbContextAsync()
+            : null;
+        var dbContext = context ?? owned!;
+        if (context is null)
+        {
+            // Track only the chapter root; attaching the graph can throw on duplicate keys.
+            dbContext.Attach(chapter);
+        }
+
         await dbContext.Entry(chapter).Reference(c => c.Manga).LoadAsync();
         await dbContext.Entry(chapter.Manga).Reference(m => m.Library).LoadAsync();
 

@@ -9,7 +9,7 @@
 @inject IdentityUserAccessor UserAccessor
 @inject IdentityRedirectManager RedirectManager
 @inject IApiKeyService ApiKeyService
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IStringLocalizer<ApiKeys> Loc
 
 <PageTitle>@Loc["PageTitle"]</PageTitle>
@@ -54,7 +54,11 @@
         Input ??= new InputModel();
 
         user = await UserAccessor.GetRequiredUserAsync(HttpContext);
-        apiKey = await DbContext.ApiKeys.FirstOrDefaultAsync(k => k.User == user && k.IsActive);
+        await using (var db = await DbContextFactory.CreateDbContextAsync())
+        {
+            apiKey = await db.ApiKeys.AsNoTracking()
+                .FirstOrDefaultAsync(k => k.UserId == user.Id && k.IsActive);
+        }
 
         if (apiKey == null)
         {
@@ -77,7 +81,15 @@
         }
 
         apiKey.IsActive = false;
-        await DbContext.SaveChangesAsync();
+        await using (var db = await DbContextFactory.CreateDbContextAsync())
+        {
+            var trackedKey = await db.ApiKeys.FindAsync(apiKey.Id);
+            if (trackedKey is not null)
+            {
+                trackedKey.IsActive = false;
+                await db.SaveChangesAsync();
+            }
+        }
         apiKey = await ApiKeyService.CreateApiKeyAsync(user.Id);
 
         await SignInManager.RefreshSignInAsync(user);

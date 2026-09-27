@@ -12,7 +12,7 @@ namespace MangaIngestWithUpscaling.Services.ChapterMerging;
 
 [RegisterScoped]
 public class ChapterMergeUpscaleTaskManager(
-    ApplicationDbContext dbContext,
+    IDbContextFactory<ApplicationDbContext> dbContextFactory,
     ITaskQueue taskQueue,
     UpscaleTaskProcessor upscaleTaskProcessor,
     ISplitProcessingCoordinator splitProcessingCoordinator,
@@ -33,9 +33,25 @@ public class ChapterMergeUpscaleTaskManager(
         MergeInfo mergeInfo,
         Library library,
         UpscaledMergeResult? upscaledMergeResult = null,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext? context = null
     )
     {
+        await using ApplicationDbContext? owned = context is null
+            ? await dbContextFactory.CreateDbContextAsync(cancellationToken)
+            : null;
+        var dbContext = context ?? owned!;
+        if (context is null)
+        {
+            foreach (var chapter in originalChapters)
+            {
+                if (dbContext.Entry(chapter).State == EntityState.Detached)
+                {
+                    dbContext.Attach(chapter);
+                }
+            }
+        }
+
         List<int> chapterIds = originalChapters.Select(c => c.Id).ToList();
 
         // Find and handle all upscale and split-related tasks for the chapters being merged
@@ -197,15 +213,22 @@ public class ChapterMergeUpscaleTaskManager(
             mergeInfo,
             library,
             upscaledMergeResult,
-            cancellationToken
+            cancellationToken,
+            dbContext
         );
     }
 
     public async Task<UpscaleCompatibilityResult> CheckUpscaleCompatibilityForMergeAsync(
         List<Chapter> chapters,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext? context = null
     )
     {
+        await using ApplicationDbContext? owned = context is null
+            ? await dbContextFactory.CreateDbContextAsync(cancellationToken)
+            : null;
+        var dbContext = context ?? owned!;
+
         // Check if any chapters have pending or in-progress upscale or split tasks for logging purposes
         List<int> chapterIds = chapters.Select(c => c.Id).ToList();
 
@@ -253,7 +276,8 @@ public class ChapterMergeUpscaleTaskManager(
         MergeInfo mergeInfo,
         Library library,
         UpscaledMergeResult? upscaledMergeResult,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        ApplicationDbContext dbContext
     )
     {
         Chapter primaryChapter = originalChapters.First();

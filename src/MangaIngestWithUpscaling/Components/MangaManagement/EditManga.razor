@@ -4,7 +4,7 @@
 @using MangaIngestWithUpscaling.Services.MetadataHandling
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IMangaMetadataChanger MetadataChanger
 @inject NavigationManager NavigationManager
 @inject ISnackbar Snackbar
@@ -244,7 +244,9 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        manga = await DbContext.MangaSeries
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+        manga = await db.MangaSeries
+        .AsNoTrackingWithIdentityResolution()
         .Include(m => m.Library)
         .Include(m => m.Chapters)
         .ThenInclude(c => c.UpscalerProfile)
@@ -259,7 +261,7 @@ else
         }
 
         originalTitle = manga.PrimaryTitle;
-        upscalerProfiles = await DbContext.UpscalerProfiles.ToListAsync();
+        upscalerProfiles = await db.UpscalerProfiles.AsNoTracking().ToListAsync();
     }
 
     private void AddAlternativeTitle()
@@ -305,7 +307,28 @@ else
                 }
             }
 
-            await DbContext.SaveChangesAsync();
+            await using (var db = await DbContextFactory.CreateDbContextAsync())
+            {
+                var tracked = await db.MangaSeries
+                    .Include(m => m.OtherTitles)
+                    .FirstAsync(m => m.Id == manga.Id);
+
+                tracked.PrimaryTitle = manga.PrimaryTitle;
+                tracked.UpscalerProfilePreferenceId = manga.UpscalerProfilePreferenceId;
+                tracked.MergeChapterParts = manga.MergeChapterParts;
+
+                foreach (var removed in tracked.OtherTitles.Where(t => !manga.OtherTitles.Any(e => e.Title == t.Title)).ToList())
+                {
+                    db.Remove(removed);
+                }
+
+                foreach (var title in manga.OtherTitles.Where(t => !tracked.OtherTitles.Any(x => x.Title == t.Title)))
+                {
+                    tracked.OtherTitles.Add(new MangaAlternativeTitle { Title = title.Title });
+                }
+
+                await db.SaveChangesAsync();
+            }
 
             Snackbar.Add(Loc["Success_Update"], Severity.Success);
             NavigationManager.NavigateTo("/mangas");

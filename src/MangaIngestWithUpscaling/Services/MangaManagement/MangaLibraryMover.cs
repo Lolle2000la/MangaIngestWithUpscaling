@@ -4,13 +4,14 @@ using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
+using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Services.MangaManagement;
 
 [RegisterScoped]
 public class MangaLibraryMover(
     ILogger<MangaLibraryMover> logger,
-    ApplicationDbContext dbContext,
+    IDbContextFactory<ApplicationDbContext> dbContextFactory,
     ITaskQueue taskQueue,
     IFileSystem fileSystem
 ) : IMangaLibraryMover
@@ -18,7 +19,8 @@ public class MangaLibraryMover(
     public async Task MoveMangaAsync(
         Manga manga,
         Library targetLibrary,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext? context = null
     )
     {
         // A manga library change is very close to a rename in how it is handled.
@@ -28,6 +30,22 @@ public class MangaLibraryMover(
         {
             // The manga is already in the target library. Nothing to do.
             return;
+        }
+
+        await using ApplicationDbContext? owned = context is null
+            ? await dbContextFactory.CreateDbContextAsync(cancellationToken)
+            : null;
+        var dbContext = context ?? owned!;
+        if (context is null)
+        {
+            // The entities came from another (possibly disposed) context; attach them so their
+            // references can be loaded and changes tracked here. The same-library early-out above
+            // keeps this safe when targetLibrary and manga.Library are different instances.
+            dbContext.Attach(manga);
+            if (dbContext.Entry(targetLibrary).State == EntityState.Detached)
+            {
+                dbContext.Attach(targetLibrary);
+            }
         }
 
         // first, let's load the chapters and the library if they are not already loaded.

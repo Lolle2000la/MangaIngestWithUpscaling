@@ -64,6 +64,9 @@ public class SimpleComponentTests : BunitContext
         Services.AddMudServices();
         Services.AddSingleton(typeof(IStringLocalizer<>), typeof(MockStringLocalizer<>));
         Services.AddSingleton(_dbContext);
+        Services.AddSingleton<IDbContextFactory<ApplicationDbContext>>(
+            new TestDbContextFactory(_testDb.Database)
+        );
         Services.AddSingleton(_mockTaskQueue);
         Services.AddSingleton(_mockMetadataChanger);
         Services.AddSingleton(_mockImageFilterService);

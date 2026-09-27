@@ -1,4 +1,5 @@
-﻿using MangaIngestWithUpscaling.Data.LibraryManagement;
+﻿using MangaIngestWithUpscaling.Data;
+using MangaIngestWithUpscaling.Data.LibraryManagement;
 
 namespace MangaIngestWithUpscaling.Services.MetadataHandling;
 
@@ -21,6 +22,10 @@ public interface IMangaMetadataChanger
     /// <param name="progress">
     /// Optional progress reporter used to surface per-chapter rename progress to the UI.
     /// </param>
+    /// <param name="context">
+    /// Optional caller-owned context in which <paramref name="manga"/> is tracked. When omitted the
+    /// implementation opens a short-lived context and attaches the entity.
+    /// </param>
     /// <exception cref="TitleAlreadyUsedException">Indicates that the title has already been used.</exception>
     /// <returns></returns>
     Task<RenameResult> ChangeMangaTitle(
@@ -28,7 +33,8 @@ public interface IMangaMetadataChanger
         string newTitle,
         bool addOldToAlternative = true,
         CancellationToken cancellationToken = default,
-        IProgress<MangaRenameProgress>? progress = null
+        IProgress<MangaRenameProgress>? progress = null,
+        ApplicationDbContext? context = null
     );
 
     /// <summary>
@@ -48,7 +54,11 @@ public interface IMangaMetadataChanger
     /// </summary>
     /// <param name="chapter">The chapter whose metadata to change.</param>
     /// <param name="newTitle">The new title to apply.</param>
-    Task ChangeChapterTitle(Chapter chapter, string newTitle);
+    /// <param name="context">
+    /// Optional caller-owned context in which <paramref name="chapter"/> is tracked. When omitted the
+    /// implementation opens a short-lived context and attaches the entity.
+    /// </param>
+    Task ChangeChapterTitle(Chapter chapter, string newTitle, ApplicationDbContext? context = null);
 }
 
 public enum RenameResult

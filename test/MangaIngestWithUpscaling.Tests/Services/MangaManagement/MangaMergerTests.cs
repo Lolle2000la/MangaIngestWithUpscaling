@@ -40,7 +40,7 @@ public class MangaMergerTests : IAsyncDisposable
         Directory.CreateDirectory(_tempDir);
 
         _mangaMerger = new MangaMerger(
-            _dbContext,
+            new TestDbContextFactory(_testDb.Database),
             _mockMetadataHandling,
             _mockMetadataChanger,
             _mockLogger,

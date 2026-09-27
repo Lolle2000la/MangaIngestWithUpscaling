@@ -11,19 +11,21 @@ namespace MangaIngestWithUpscaling.Services.Analysis;
 /// </summary>
 [RegisterScoped]
 public class SplitProcessingStateManager(
-    ApplicationDbContext dbContext,
+    IDbContextFactory<ApplicationDbContext> dbContextFactory,
     ILogger<SplitProcessingStateManager> logger
 ) : ISplitProcessingStateManager
 {
-    private ApplicationDbContext GetContext(ApplicationDbContext? context) => context ?? dbContext;
-
     public async Task<ChapterSplitProcessingState> GetOrCreateStateAsync(
         int chapterId,
         ApplicationDbContext? context = null,
         CancellationToken cancellationToken = default
     )
     {
-        var ctx = GetContext(context);
+        await using ApplicationDbContext? owned = context is null
+            ? await dbContextFactory.CreateDbContextAsync(cancellationToken)
+            : null;
+        var ctx = context ?? owned!;
+
         var state = await ctx.ChapterSplitProcessingStates.FirstOrDefaultAsync(
             s => s.ChapterId == chapterId,
             cancellationToken
@@ -58,8 +60,11 @@ public class SplitProcessingStateManager(
         CancellationToken cancellationToken = default
     )
     {
-        var ctx = GetContext(context);
-        var state = await GetOrCreateStateAsync(chapterId, context, cancellationToken);
+        await using ApplicationDbContext? owned = context is null
+            ? await dbContextFactory.CreateDbContextAsync(cancellationToken)
+            : null;
+        var ctx = context ?? owned!;
+        var state = await GetOrCreateStateAsync(chapterId, ctx, cancellationToken);
 
         state.LastProcessedDetectorVersion = detectorVersion;
         state.Status = SplitProcessingStatus.Detected;
@@ -82,8 +87,11 @@ public class SplitProcessingStateManager(
         CancellationToken cancellationToken = default
     )
     {
-        var ctx = GetContext(context);
-        var state = await GetOrCreateStateAsync(chapterId, context, cancellationToken);
+        await using ApplicationDbContext? owned = context is null
+            ? await dbContextFactory.CreateDbContextAsync(cancellationToken)
+            : null;
+        var ctx = context ?? owned!;
+        var state = await GetOrCreateStateAsync(chapterId, ctx, cancellationToken);
 
         state.LastProcessedDetectorVersion = detectorVersion;
         state.Status = SplitProcessingStatus.NoSplitsFound;
@@ -106,8 +114,11 @@ public class SplitProcessingStateManager(
         CancellationToken cancellationToken = default
     )
     {
-        var ctx = GetContext(context);
-        var state = await GetOrCreateStateAsync(chapterId, context, cancellationToken);
+        await using ApplicationDbContext? owned = context is null
+            ? await dbContextFactory.CreateDbContextAsync(cancellationToken)
+            : null;
+        var ctx = context ?? owned!;
+        var state = await GetOrCreateStateAsync(chapterId, ctx, cancellationToken);
 
         // Ensure LastProcessedDetectorVersion is set if not already
         if (state.LastProcessedDetectorVersion == 0)
@@ -135,8 +146,11 @@ public class SplitProcessingStateManager(
         CancellationToken cancellationToken = default
     )
     {
-        var ctx = GetContext(context);
-        var state = await GetOrCreateStateAsync(chapterId, context, cancellationToken);
+        await using ApplicationDbContext? owned = context is null
+            ? await dbContextFactory.CreateDbContextAsync(cancellationToken)
+            : null;
+        var ctx = context ?? owned!;
+        var state = await GetOrCreateStateAsync(chapterId, ctx, cancellationToken);
 
         state.Status = SplitProcessingStatus.Failed;
         state.ModifiedAt = DateTime.UtcNow;
@@ -154,8 +168,11 @@ public class SplitProcessingStateManager(
         CancellationToken cancellationToken = default
     )
     {
-        var ctx = GetContext(context);
-        var state = await GetOrCreateStateAsync(chapterId, context, cancellationToken);
+        await using ApplicationDbContext? owned = context is null
+            ? await dbContextFactory.CreateDbContextAsync(cancellationToken)
+            : null;
+        var ctx = context ?? owned!;
+        var state = await GetOrCreateStateAsync(chapterId, ctx, cancellationToken);
 
         state.LastProcessedDetectorVersion = detectorVersion;
         state.Status = SplitProcessingStatus.Processing;
@@ -177,7 +194,10 @@ public class SplitProcessingStateManager(
         CancellationToken cancellationToken = default
     )
     {
-        var ctx = GetContext(context);
+        await using ApplicationDbContext? owned = context is null
+            ? await dbContextFactory.CreateDbContextAsync(cancellationToken)
+            : null;
+        var ctx = context ?? owned!;
         return await ctx.ChapterSplitProcessingStates.FirstOrDefaultAsync(
             s => s.ChapterId == chapterId,
             cancellationToken
@@ -191,8 +211,11 @@ public class SplitProcessingStateManager(
         CancellationToken cancellationToken = default
     )
     {
-        var ctx = GetContext(context);
-        var state = await GetOrCreateStateAsync(chapterId, context, cancellationToken);
+        await using ApplicationDbContext? owned = context is null
+            ? await dbContextFactory.CreateDbContextAsync(cancellationToken)
+            : null;
+        var ctx = context ?? owned!;
+        var state = await GetOrCreateStateAsync(chapterId, ctx, cancellationToken);
 
         state.Status = newStatus;
         state.ModifiedAt = DateTime.UtcNow;
@@ -213,8 +236,11 @@ public class SplitProcessingStateManager(
         CancellationToken cancellationToken = default
     )
     {
-        var ctx = GetContext(context);
-        var state = await GetOrCreateStateAsync(chapterId, context, cancellationToken);
+        await using ApplicationDbContext? owned = context is null
+            ? await dbContextFactory.CreateDbContextAsync(cancellationToken)
+            : null;
+        var ctx = context ?? owned!;
+        var state = await GetOrCreateStateAsync(chapterId, ctx, cancellationToken);
 
         state.Status = SplitProcessingStatus.Pending;
         state.LastProcessedDetectorVersion = 0;
@@ -236,7 +262,10 @@ public class SplitProcessingStateManager(
         CancellationToken cancellationToken = default
     )
     {
-        var ctx = GetContext(context);
+        await using ApplicationDbContext? owned = context is null
+            ? await dbContextFactory.CreateDbContextAsync(cancellationToken)
+            : null;
+        var ctx = context ?? owned!;
         var state = await ctx.ChapterSplitProcessingStates.FirstOrDefaultAsync(
             s => s.ChapterId == chapterId,
             cancellationToken

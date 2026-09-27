@@ -5,13 +5,14 @@ using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 
 namespace MangaIngestWithUpscaling.Services.MangaManagement;
 
 [RegisterScoped]
 public class MangaMerger(
-    ApplicationDbContext dbContext,
+    IDbContextFactory<ApplicationDbContext> dbContextFactory,
     IMetadataHandlingService metadataHandling,
     IMangaMetadataChanger metadataChanger,
     ILogger<MangaMerger> logger,
@@ -23,9 +24,30 @@ public class MangaMerger(
     public async Task MergeAsync(
         Manga primary,
         IEnumerable<Manga> mergedInto,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        ApplicationDbContext? context = null
     )
     {
+        await using ApplicationDbContext? owned = context is null
+            ? await dbContextFactory.CreateDbContextAsync(cancellationToken)
+            : null;
+        var dbContext = context ?? owned!;
+        List<Manga> mergedIntoList = mergedInto.ToList();
+        if (context is null)
+        {
+            // The entities came from another (possibly disposed) context; attach them so their
+            // references can be loaded and changes tracked here. Callers must supply an
+            // identity-resolved graph so no navigation carries two instances with the same key.
+            dbContext.Attach(primary);
+            foreach (var manga in mergedIntoList)
+            {
+                if (dbContext.Entry(manga).State == EntityState.Detached)
+                {
+                    dbContext.Attach(manga);
+                }
+            }
+        }
+
         if (!dbContext.Entry(primary).Reference(m => m.Library).IsLoaded)
             await dbContext.Entry(primary).Reference(m => m.Library).LoadAsync(cancellationToken);
         if (!dbContext.Entry(primary).Collection(m => m.OtherTitles).IsLoaded)
@@ -375,7 +397,7 @@ public class MangaMerger(
             () =>
             {
                 foreach (
-                    var uniqueLibraryPath in mergedInto
+                    var uniqueLibraryPath in mergedIntoList
                         .SelectMany(m =>
                             new[]
                             {

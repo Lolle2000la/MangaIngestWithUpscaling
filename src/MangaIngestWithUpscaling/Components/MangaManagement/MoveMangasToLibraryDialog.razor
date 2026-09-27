@@ -2,7 +2,7 @@
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using MangaIngestWithUpscaling.Services.MangaManagement
 @using Microsoft.Extensions.Localization
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IMangaLibraryMover MangaMover
 @inject IStringLocalizer<MoveMangasToLibraryDialog> Loc
 
@@ -42,7 +42,8 @@
     protected override async Task OnInitializedAsync()
     {
         // Materialize once: enumerating the DbSet in the render tree runs a synchronous query.
-        libraries = await DbContext.Libraries.AsNoTracking().ToListAsync();
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+        libraries = await db.Libraries.AsNoTracking().ToListAsync();
     }
 
     async Task Submit()
@@ -52,9 +53,23 @@
             return;
         }
 
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+        var targetLibrary = await db.Libraries.FindAsync(selected.Id);
+        if (targetLibrary is null)
+        {
+            MudDialog.Cancel();
+            return;
+        }
+
         foreach (var manga in Mangas)
         {
-            await MangaMover.MoveMangaAsync(manga, selected);
+            var trackedManga = await db.MangaSeries.FindAsync(manga.Id);
+            if (trackedManga is null)
+            {
+                continue;
+            }
+
+            await MangaMover.MoveMangaAsync(trackedManga, targetLibrary, context: db);
         }
         MudDialog.Close(DialogResult.Ok(true));
     }

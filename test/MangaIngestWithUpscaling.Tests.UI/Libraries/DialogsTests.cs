@@ -37,6 +37,9 @@ public class DialogsTests : BunitContext
         Services.AddMudServices();
         Services.AddSingleton(typeof(IStringLocalizer<>), typeof(MockStringLocalizer<>));
         Services.AddSingleton(_dbContext);
+        Services.AddSingleton<IDbContextFactory<ApplicationDbContext>>(
+            new TestDbContextFactory(_testDb.Database)
+        );
 
         // Setup MudBlazor JavaScript interop
         JSInterop.Mode = JSRuntimeMode.Loose;

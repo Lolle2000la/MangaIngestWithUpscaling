@@ -65,7 +65,7 @@ public class IngestProcessorMultipleIngestPathsTests : IAsyncDisposable
         IFileSystem FileSystem
     );
 
-    private static IngestSetup BuildIngestProcessor(ApplicationDbContext db)
+    private IngestSetup BuildIngestProcessor(ApplicationDbContext db)
     {
         var chapterRecognition = Substitute.For<IChapterInIngestRecognitionService>();
         var renaming = Substitute.For<ILibraryRenamingService>();
@@ -84,6 +84,9 @@ public class IngestProcessorMultipleIngestPathsTests : IAsyncDisposable
         services.AddLogging();
         services.AddSingleton(db);
         services.AddScoped<IQueueCleanup, QueueCleanup>();
+        services.AddSingleton<IDbContextFactory<ApplicationDbContext>>(
+            new TestDbContextFactory(_testDb.Database)
+        );
         ServiceProvider provider = services.BuildServiceProvider();
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
         var taskQueue = new TaskQueue(scopeFactory, Substitute.For<ILogger<TaskQueue>>());
@@ -167,6 +170,7 @@ public class IngestProcessorMultipleIngestPathsTests : IAsyncDisposable
                 Arg.Any<Library>(),
                 Arg.Any<string>(),
                 Arg.Any<string>(),
+                Arg.Any<ApplicationDbContext>(),
                 Arg.Any<CancellationToken>()
             )
             .Returns(Task.FromResult(manga));

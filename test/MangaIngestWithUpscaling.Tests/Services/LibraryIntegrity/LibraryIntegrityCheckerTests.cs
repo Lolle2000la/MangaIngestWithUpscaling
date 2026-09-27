@@ -121,7 +121,6 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -132,7 +131,10 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(
+                new TestDbContextFactory(_db),
+                NullLogger<SplitProcessingStateManager>.Instance
+            ),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -199,7 +201,6 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -210,7 +211,10 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(
+                new TestDbContextFactory(_db),
+                NullLogger<SplitProcessingStateManager>.Instance
+            ),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -287,7 +291,6 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -298,7 +301,10 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(
+                new TestDbContextFactory(_db),
+                NullLogger<SplitProcessingStateManager>.Instance
+            ),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -356,7 +362,6 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -367,7 +372,10 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(
+                new TestDbContextFactory(_db),
+                NullLogger<SplitProcessingStateManager>.Instance
+            ),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -433,7 +441,6 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -444,7 +451,10 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(
+                new TestDbContextFactory(_db),
+                NullLogger<SplitProcessingStateManager>.Instance
+            ),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -513,7 +523,6 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -524,7 +533,10 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(
+                new TestDbContextFactory(_db),
+                NullLogger<SplitProcessingStateManager>.Instance
+            ),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -618,7 +630,6 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -629,7 +640,10 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(
+                new TestDbContextFactory(_db),
+                NullLogger<SplitProcessingStateManager>.Instance
+            ),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -699,7 +713,6 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -710,7 +723,10 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(
+                new TestDbContextFactory(_db),
+                NullLogger<SplitProcessingStateManager>.Instance
+            ),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -802,7 +818,6 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -813,7 +828,10 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(
+                new TestDbContextFactory(_db),
+                NullLogger<SplitProcessingStateManager>.Instance
+            ),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -873,7 +891,6 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -884,7 +901,10 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(
+                new TestDbContextFactory(_db),
+                NullLogger<SplitProcessingStateManager>.Instance
+            ),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -964,7 +984,6 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -975,7 +994,10 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(
+                new TestDbContextFactory(_db),
+                NullLogger<SplitProcessingStateManager>.Instance
+            ),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -1033,7 +1055,6 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -1044,7 +1065,10 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(
+                new TestDbContextFactory(_db),
+                NullLogger<SplitProcessingStateManager>.Instance
+            ),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -1128,7 +1152,6 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -1139,7 +1162,10 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(
+                new TestDbContextFactory(_db),
+                NullLogger<SplitProcessingStateManager>.Instance
+            ),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -1256,7 +1282,6 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -1267,7 +1292,10 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(
+                new TestDbContextFactory(_db),
+                NullLogger<SplitProcessingStateManager>.Instance
+            ),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -1379,7 +1407,6 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -1390,7 +1417,10 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(
+                new TestDbContextFactory(_db),
+                NullLogger<SplitProcessingStateManager>.Instance
+            ),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -1486,7 +1516,6 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -1497,7 +1526,10 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(
+                new TestDbContextFactory(_db),
+                NullLogger<SplitProcessingStateManager>.Instance
+            ),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -1614,7 +1646,6 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -1625,7 +1656,10 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(
+                new TestDbContextFactory(_db),
+                NullLogger<SplitProcessingStateManager>.Instance
+            ),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -1696,7 +1730,6 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -1707,7 +1740,10 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(
+                new TestDbContextFactory(_db),
+                NullLogger<SplitProcessingStateManager>.Instance
+            ),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -1806,7 +1842,6 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -1817,7 +1852,10 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(
+                new TestDbContextFactory(_db),
+                NullLogger<SplitProcessingStateManager>.Instance
+            ),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -1891,7 +1929,6 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -1902,7 +1939,10 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(
+                new TestDbContextFactory(_db),
+                NullLogger<SplitProcessingStateManager>.Instance
+            ),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -1993,7 +2033,6 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -2004,7 +2043,10 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(
+                new TestDbContextFactory(_db),
+                NullLogger<SplitProcessingStateManager>.Instance
+            ),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 
@@ -2087,7 +2129,6 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             _metadata,
             _chapterRecognition,
             new ChapterProcessingService(
-                ctx,
                 _upscalerJsonHandling,
                 _fileSystem,
                 Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
@@ -2098,7 +2139,10 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
             NullLogger<LibraryIntegrityChecker>.Instance,
             _options,
             _splitCoordinator,
-            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            new SplitProcessingStateManager(
+                new TestDbContextFactory(_db),
+                NullLogger<SplitProcessingStateManager>.Instance
+            ),
             Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
         );
 

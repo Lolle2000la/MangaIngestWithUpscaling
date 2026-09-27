@@ -8,7 +8,7 @@
 @using Humanizer
 @using System.Globalization
 
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IDialogService DialogService
 @inject ITaskQueue TaskQueue
 @inject IImageFilterService ImageFilterService
@@ -185,7 +185,9 @@
 
     protected override async Task OnInitializedAsync()
     {
-        Library = await DbContext.Libraries
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+        Library = await db.Libraries
+        .AsNoTracking()
         .Include(l => l.FilteredImages)
         .FirstOrDefaultAsync(l => l.Id == LibraryId);
 
@@ -242,6 +244,18 @@
 
         if (result is not null && !result.Canceled)
         {
+            // The dialog saved through its own context, so refresh the in-memory library graph that
+            // this page renders from.
+            await using var db = await DbContextFactory.CreateDbContextAsync();
+            var reloaded = await db.Libraries
+                .AsNoTracking()
+                .Include(l => l.FilteredImages)
+                .FirstOrDefaultAsync(l => l.Id == LibraryId);
+            if (reloaded is not null)
+            {
+                Library = reloaded;
+            }
+
             await table.ReloadServerData();
             Snackbar.Add(Loc["Snackbar_FilterAdded"], Severity.Success);
         }
@@ -274,7 +288,6 @@
 
         if (result is not null && !result.Canceled)
         {
-            await DbContext.SaveChangesAsync();
             await table.ReloadServerData();
             Snackbar.Add(Loc["Snackbar_FilterUpdated"], Severity.Success);
         }
@@ -289,9 +302,15 @@
 
         if (confirm == true)
         {
+            await using var db = await DbContextFactory.CreateDbContextAsync();
+            var tracked = await db.FilteredImages.FindAsync(filteredImage.Id);
+            if (tracked is not null)
+            {
+                db.FilteredImages.Remove(tracked);
+                await db.SaveChangesAsync();
+            }
+
             Library!.FilteredImages.Remove(filteredImage);
-            DbContext.FilteredImages.Remove(filteredImage);
-            await DbContext.SaveChangesAsync();
             await table.ReloadServerData();
             Snackbar.Add(Loc["Snackbar_FilterDeleted"], Severity.Success);
         }

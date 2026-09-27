@@ -18,7 +18,7 @@ namespace MangaIngestWithUpscaling.Services.Analysis;
 
 [RegisterScoped]
 public class SplitApplicationService(
-    ApplicationDbContext dbContext,
+    IDbContextFactory<ApplicationDbContext> dbContextFactory,
     ISplitProcessingCoordinator splitProcessingCoordinator,
     ISplitApplier splitApplier,
     IUpscaler upscaler,
@@ -32,6 +32,7 @@ public class SplitApplicationService(
         CancellationToken cancellationToken
     )
     {
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var chapter = await dbContext
             .Chapters.Include(c => c.Manga)
                 .ThenInclude(m => m.Library)

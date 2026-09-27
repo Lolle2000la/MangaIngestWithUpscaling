@@ -10,7 +10,7 @@ namespace MangaIngestWithUpscaling.Services.ChapterMerging;
 /// </summary>
 [RegisterScoped]
 public class BackwardCompatibilityService(
-    ApplicationDbContext dbContext,
+    IDbContextFactory<ApplicationDbContext> dbContextFactory,
     ILogger<BackwardCompatibilityService> logger
 ) : IBackwardCompatibilityService
 {
@@ -21,6 +21,7 @@ public class BackwardCompatibilityService(
         CancellationToken cancellationToken = default
     )
     {
+        await using var dbContext = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         logger.LogInformation(
             "Starting backward compatibility validation for existing merged chapter records"
         );

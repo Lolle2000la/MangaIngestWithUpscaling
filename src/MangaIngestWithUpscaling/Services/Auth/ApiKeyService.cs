@@ -1,18 +1,13 @@
 ﻿using System.Security.Cryptography;
 using MangaIngestWithUpscaling.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Services.Auth;
 
 [RegisterScoped]
-public class ApiKeyService : IApiKeyService
+public class ApiKeyService(IDbContextFactory<ApplicationDbContext> dbContextFactory)
+    : IApiKeyService
 {
-    private readonly ApplicationDbContext _context;
-
-    public ApiKeyService(ApplicationDbContext context)
-    {
-        _context = context;
-    }
-
     public string GenerateApiKey()
     {
         return Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
@@ -28,8 +23,9 @@ public class ApiKeyService : IApiKeyService
             IsActive = true,
         };
 
-        _context.ApiKeys.Add(apiKey);
-        await _context.SaveChangesAsync();
+        await using var context = await dbContextFactory.CreateDbContextAsync();
+        context.ApiKeys.Add(apiKey);
+        await context.SaveChangesAsync();
 
         return apiKey;
     }

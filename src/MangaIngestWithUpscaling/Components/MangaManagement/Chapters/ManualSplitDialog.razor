@@ -191,7 +191,10 @@
         _isLoading = true;
         try
         {
-            var dbContext = Services.GetRequiredService<ApplicationDbContext>();
+            var dbContextFactory = Services.GetRequiredService<
+                IDbContextFactory<ApplicationDbContext>
+            >();
+            await using var dbContext = await dbContextFactory.CreateDbContextAsync();
             var chapter = await dbContext.Chapters
                 .Include(c => c.Manga)
                     .ThenInclude(m => m.Library)
@@ -473,7 +476,10 @@
 
         try
         {
-            var dbContext = Services.GetRequiredService<ApplicationDbContext>();
+            var dbContextFactory = Services.GetRequiredService<
+                IDbContextFactory<ApplicationDbContext>
+            >();
+            await using var dbContext = await dbContextFactory.CreateDbContextAsync();
             var chapter = await dbContext.Chapters
                 .Include(c => c.Manga)
                     .ThenInclude(m => m.Library)

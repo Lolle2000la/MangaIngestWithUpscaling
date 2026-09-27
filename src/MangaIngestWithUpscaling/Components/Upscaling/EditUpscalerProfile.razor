@@ -2,7 +2,7 @@
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 @using Microsoft.Extensions.Localization
 
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject NavigationManager NavigationManager
 @inject IStringLocalizer<EditUpscalerProfile> Loc
 
@@ -55,7 +55,9 @@
     {
         if (ProfileId.HasValue)
         {
-            existingProfile = await DbContext.UpscalerProfiles.FindAsync(ProfileId.Value);
+            await using var db = await DbContextFactory.CreateDbContextAsync();
+            existingProfile = await db.UpscalerProfiles.AsNoTracking()
+                .FirstOrDefaultAsync(p => p.Id == ProfileId.Value);
             if (existingProfile != null)
             {
                 Profile = new UpscalerProfile
@@ -89,20 +91,25 @@
         Profile.CreatedAt = existingProfile.CreatedAt;
         Profile.ModifiedAt = DateTime.UtcNow;
 
-        DbContext.UpscalerProfiles.Add(Profile);
-        existingProfile.Deleted = true;
-        await DbContext.SaveChangesAsync();
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+        db.UpscalerProfiles.Add(Profile);
+        var trackedOldProfile = await db.UpscalerProfiles.FindAsync(existingProfile.Id);
+        if (trackedOldProfile is not null)
+        {
+            trackedOldProfile.Deleted = true;
+        }
+        await db.SaveChangesAsync();
         // change all references to existingProfile to Profile, except for concrete chapters
         // (right now this is only the upscaler profile id in the library))
-        await DbContext.Libraries
+        await db.Libraries
         .Where(l => l.UpscalerProfileId == existingProfile.Id)
         .ExecuteUpdateAsync(s => s.SetProperty(l => l.UpscalerProfileId, Profile.Id));
 
-        await DbContext.MangaSeries
+        await db.MangaSeries
         .Where(m => m.UpscalerProfilePreferenceId == existingProfile.Id)
         .ExecuteUpdateAsync(s => s.SetProperty(m => m.UpscalerProfilePreferenceId, Profile.Id));
 
-        await DbContext.SaveChangesAsync();
+        await db.SaveChangesAsync();
         NavigationManager.NavigateTo("/upscaling/profiles");
     }
 
