@@ -108,10 +108,15 @@ public class FolderPickerTests : BunitContext
         component.WaitForAssertion(() => Assert.Contains(selected, changed));
 
         changed.Clear();
-        IElement clearButton = component
-            .FindAll("button")
-            .First(b => b.GetAttribute("title") == "Clear selection");
-        await component.InvokeAsync(() => clearButton.Click(new MouseEventArgs()));
+        // Find and click in one dispatch: the picker's throttled directory load can re-render
+        // between a separate find and click and invalidate the handler id.
+        await component.InvokeAsync(() =>
+        {
+            component
+                .FindAll("button")
+                .First(b => b.GetAttribute("title") == "Clear selection")
+                .Click(new MouseEventArgs());
+        });
 
         component.WaitForAssertion(() =>
         {
