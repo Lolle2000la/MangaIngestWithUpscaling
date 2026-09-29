@@ -6,6 +6,7 @@ using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.RemoteWorker.Background;
 using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Xunit;
@@ -131,7 +132,11 @@ public class PageStreamClientTests
     }
 
     private static PageStreamClient CreateClient(FakeWorkerClient worker) =>
-        new(worker, Substitute.For<ILogger<PageStreamClient>>());
+        new(
+            worker,
+            Substitute.For<IServiceScopeFactory>(),
+            Substitute.For<ILogger<PageStreamClient>>()
+        );
 
     private static string CreateSourceCbz(string directory)
     {

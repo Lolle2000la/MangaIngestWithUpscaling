@@ -151,6 +151,12 @@ message UploadPageResponse {
   bool terminal = 5;
 }
 
+message UploadPageDetectionRequest {
+  int32 task_id = 1;
+  int32 page_index = 2;
+  string result_json = 3; // JSON of one SplitDetectionResult for the page.
+}
+
 service UpscalingService {
   // Request a task to be upscaled
   rpc RequestUpscaleTask(google.protobuf.Empty) returns (UpscaleTaskDelegationResponse);
@@ -169,6 +175,7 @@ service UpscalingService {
   rpc GetPageManifest(PageManifestRequest) returns (PageManifestResponse);
   rpc GetPages(GetPagesRequest) returns (stream PageChunk);
   rpc UploadPage(stream UploadPageChunk) returns (UploadPageResponse);
+  rpc UploadPageDetection(UploadPageDetectionRequest) returns (UploadDetectionResultResponse);
 }
 
 // Represents a preconfigured upscaler setting that can be associated with chapters.

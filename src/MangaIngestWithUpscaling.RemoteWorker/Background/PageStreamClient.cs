@@ -1,9 +1,14 @@
+using System.Text.Json;
 using System.Threading.Channels;
 using Google.Protobuf;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Api.Upscaling;
+using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
+using Microsoft.Extensions.DependencyInjection;
 using UpscalerProfile = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.UpscalerProfile;
 
 namespace MangaIngestWithUpscaling.RemoteWorker.Background;
@@ -16,6 +21,7 @@ namespace MangaIngestWithUpscaling.RemoteWorker.Background;
 /// </summary>
 public sealed class PageStreamClient(
     IMangaJaNaiWorkerClient workerClient,
+    IServiceScopeFactory scopeFactory,
     ILogger<PageStreamClient> logger
 )
 {
@@ -179,6 +185,185 @@ public sealed class PageStreamClient(
         }
     }
 
+    /// <summary>
+    /// Runs a split-detection task as a page stream: fetches the pages the server still needs,
+    /// detects each one and uploads its result. The server finalizes the chapter's findings once
+    /// every page has been reported.
+    /// </summary>
+    public async Task RunDetectionAsync(
+        UpscalingService.UpscalingServiceClient client,
+        int taskId,
+        CancellationToken stoppingToken
+    )
+    {
+        PageManifestResponse manifest = await client.GetPageManifestAsync(
+            new PageManifestRequest { TaskId = taskId },
+            deadline: DateTime.UtcNow.Add(ManifestTimeout),
+            cancellationToken: stoppingToken
+        );
+
+        if (manifest.Pages.Count == 0)
+        {
+            throw new InvalidOperationException($"Task {taskId} has no pages to detect.");
+        }
+
+        if (manifest.Complete)
+        {
+            logger.LogInformation("Task {TaskId} was already fully detected.", taskId);
+            return;
+        }
+
+        Dictionary<int, string> nameByIndex = manifest.Pages.ToDictionary(
+            p => p.Index,
+            p => p.SourceName
+        );
+        HashSet<int> completed = manifest.CompletedPages.ToHashSet();
+        List<int> missing = manifest
+            .Pages.Where(p => !completed.Contains(p.Index))
+            .Select(p => p.Index)
+            .ToList();
+
+        string workDirectory = Path.Combine(
+            Path.GetTempPath(),
+            $"mangaingest_page_detect_{taskId}_{Guid.NewGuid():N}"
+        );
+        string sourceDirectory = Path.Combine(workDirectory, "source");
+        Directory.CreateDirectory(sourceDirectory);
+
+        try
+        {
+            using IServiceScope scope = scopeFactory.CreateScope();
+            var detection = scope.ServiceProvider.GetRequiredService<ISplitDetectionService>();
+            using var progressReporter = new StreamingProgressReporter(
+                client,
+                taskId,
+                stoppingToken,
+                logger
+            );
+
+            int current = completed.Count;
+            foreach (int pageIndex in missing)
+            {
+                stoppingToken.ThrowIfCancellationRequested();
+
+                string sourceName = nameByIndex[pageIndex];
+                string path = Path.Combine(
+                    sourceDirectory,
+                    $"{pageIndex:D5}_{Path.GetFileName(sourceName)}"
+                );
+
+                await FetchPageToFileAsync(
+                    client,
+                    taskId,
+                    manifest.TaskIdentity,
+                    pageIndex,
+                    path,
+                    stoppingToken
+                );
+
+                List<SplitDetectionResult> results = await detection.DetectSplitsAsync(
+                    path,
+                    progressReporter.Progress,
+                    stoppingToken
+                );
+
+                foreach (SplitDetectionResult result in results)
+                {
+                    string json = JsonSerializer.Serialize(
+                        result,
+                        SharedJsonContext.Default.SplitDetectionResult
+                    );
+                    UploadDetectionResultResponse response = await client.UploadPageDetectionAsync(
+                        new UploadPageDetectionRequest
+                        {
+                            TaskId = taskId,
+                            PageIndex = pageIndex,
+                            ResultJson = json,
+                        },
+                        deadline: DateTime.UtcNow.Add(PageTimeout),
+                        cancellationToken: stoppingToken
+                    );
+                    if (!response.Success)
+                    {
+                        throw new IOException(
+                            $"Uploading the detection result for page {pageIndex} of task {taskId} failed: {response.Message}"
+                        );
+                    }
+                }
+
+                current++;
+                progressReporter.Progress.Report(
+                    new UpscaleProgress(manifest.Pages.Count, current, "Detecting Splits", null)
+                );
+            }
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(workDirectory))
+                {
+                    Directory.Delete(workDirectory, recursive: true);
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(
+                    ex,
+                    "Failed to delete detection work directory {Directory}.",
+                    workDirectory
+                );
+            }
+        }
+    }
+
+    private static async Task FetchPageToFileAsync(
+        UpscalingService.UpscalingServiceClient client,
+        int taskId,
+        string identity,
+        int pageIndex,
+        string path,
+        CancellationToken cancellationToken
+    )
+    {
+        using AsyncServerStreamingCall<PageChunk> call = client.GetPages(
+            new GetPagesRequest
+            {
+                TaskId = taskId,
+                TaskIdentity = identity,
+                PageIndexes = { pageIndex },
+            },
+            deadline: DateTime.UtcNow.Add(PageTimeout),
+            cancellationToken: cancellationToken
+        );
+
+        await using FileStream file = new(
+            path,
+            FileMode.Create,
+            FileAccess.Write,
+            FileShare.None,
+            81920,
+            FileOptions.Asynchronous
+        );
+        await foreach (PageChunk chunk in call.ResponseStream.ReadAllAsync(cancellationToken))
+        {
+            if (chunk.PageIndex != pageIndex)
+            {
+                continue;
+            }
+
+            if (!chunk.Chunk.IsEmpty)
+            {
+                await file.WriteAsync(chunk.Chunk.Memory, cancellationToken);
+            }
+
+            if (chunk.IsLast)
+            {
+                break;
+            }
+        }
+    }
+
     private async IAsyncEnumerable<ChapterPage> FetchPagesAsync(
         UpscalingService.UpscalingServiceClient client,
         int taskId,
@@ -199,48 +384,14 @@ public sealed class PageStreamClient(
                 $"{pageIndex:D5}_{Path.GetFileName(sourceName)}"
             );
 
-            using AsyncServerStreamingCall<PageChunk> call = client.GetPages(
-                new GetPagesRequest
-                {
-                    TaskId = taskId,
-                    TaskIdentity = identity,
-                    PageIndexes = { pageIndex },
-                },
-                deadline: DateTime.UtcNow.Add(PageTimeout),
-                cancellationToken: cancellationToken
+            await FetchPageToFileAsync(
+                client,
+                taskId,
+                identity,
+                pageIndex,
+                path,
+                cancellationToken
             );
-
-            await using (
-                FileStream file = new(
-                    path,
-                    FileMode.Create,
-                    FileAccess.Write,
-                    FileShare.None,
-                    81920,
-                    FileOptions.Asynchronous
-                )
-            )
-            {
-                await foreach (
-                    PageChunk chunk in call.ResponseStream.ReadAllAsync(cancellationToken)
-                )
-                {
-                    if (chunk.PageIndex != pageIndex)
-                    {
-                        continue;
-                    }
-
-                    if (!chunk.Chunk.IsEmpty)
-                    {
-                        await file.WriteAsync(chunk.Chunk.Memory, cancellationToken);
-                    }
-
-                    if (chunk.IsLast)
-                    {
-                        break;
-                    }
-                }
-            }
 
             yield return new ChapterPage(pageIndex, sourceName, path);
         }

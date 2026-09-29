@@ -13,6 +13,8 @@ using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.Upscaling;
+using MangaIngestWithUpscaling.Shared.Data.Analysis;
+using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
@@ -53,8 +55,10 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
     private string _root = null!;
     private string _upscaledPath = null!;
     private int _taskId;
+    private int _detectTaskId;
     private int _chapterId;
     private SharedUpscalerProfile _profile = null!;
+    private ISplitProcessingService _splitProcessing = null!;
 
     public async ValueTask InitializeAsync()
     {
@@ -98,7 +102,8 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
             new MetadataHandlingService(Substitute.For<ILogger<MetadataHandlingService>>())
         );
         builder.Services.AddSingleton(Substitute.For<IChapterChangedNotifier>());
-        builder.Services.AddSingleton(Substitute.For<ISplitProcessingService>());
+        _splitProcessing = Substitute.For<ISplitProcessingService>();
+        builder.Services.AddSingleton(_splitProcessing);
         builder.Services.AddSingleton(Substitute.For<ISplitProcessingCoordinator>());
 
         // The distribution service is [Authorize(AuthenticationSchemes = "ApiKey")]; the test
@@ -144,6 +149,7 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         var worker = new FakeWorkerClient();
         var sut = new RemotePageStreamClient(
             worker,
+            Substitute.For<IServiceScopeFactory>(),
             Substitute.For<ILogger<RemotePageStreamClient>>()
         );
 
@@ -188,6 +194,7 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         var droppingWorker = new FakeWorkerClient { DropAfterPages = 1 };
         var dropping = new RemotePageStreamClient(
             droppingWorker,
+            Substitute.For<IServiceScopeFactory>(),
             Substitute.For<ILogger<RemotePageStreamClient>>()
         );
         await Assert.ThrowsAnyAsync<Exception>(() =>
@@ -200,6 +207,7 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         var recoveringWorker = new FakeWorkerClient();
         var recovering = new RemotePageStreamClient(
             recoveringWorker,
+            Substitute.For<IServiceScopeFactory>(),
             Substitute.For<ILogger<RemotePageStreamClient>>()
         );
         await recovering.RunAsync(client, _taskId, _profile, TestContext.Current.CancellationToken);
@@ -210,6 +218,54 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         using ZipArchive zip = ZipFile.OpenRead(_upscaledPath);
         Assert.Equal(new byte[] { 3, 2, 1 }, ReadEntry(zip, "001.webp"));
         Assert.Equal(new byte[] { 6, 5, 4 }, ReadEntry(zip, "002.webp"));
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task StreamsDetectionOverRealGrpc()
+    {
+        var client = new RemoteUpscalingServiceClient(_channel);
+        var detection = Substitute.For<ISplitDetectionService>();
+        detection
+            .DetectSplitsAsync(
+                Arg.Any<string>(),
+                Arg.Any<IProgress<UpscaleProgress>?>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(ci => new List<SplitDetectionResult>
+            {
+                new()
+                {
+                    ImagePath = ci.Arg<string>(),
+                    Splits =
+                    {
+                        new DetectedSplit { YOriginal = 42, Confidence = 0.9 },
+                    },
+                    Count = 1,
+                },
+            });
+
+        using ServiceProvider provider = new ServiceCollection()
+            .AddSingleton(detection)
+            .BuildServiceProvider();
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+
+        var sut = new RemotePageStreamClient(
+            Substitute.For<IMangaJaNaiWorkerClient>(),
+            scopeFactory,
+            Substitute.For<ILogger<RemotePageStreamClient>>()
+        );
+
+        await sut.RunDetectionAsync(client, _detectTaskId, TestContext.Current.CancellationToken);
+
+        await _splitProcessing
+            .Received(1)
+            .ProcessDetectionResultsAsync(
+                _chapterId,
+                Arg.Is<List<SplitDetectionResult>>(r => r.Count == 2),
+                1,
+                Arg.Any<CancellationToken>()
+            );
     }
 
     private async Task SeedAsync(string notUpscaledDir, string upscaledDir)
@@ -240,8 +296,17 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         context.PersistedTasks.Add(task);
         await context.SaveChangesAsync();
 
+        var detectTask = new PersistedTask
+        {
+            Data = new DetectSplitCandidatesTask { ChapterId = chapter.Id, DetectorVersion = 1 },
+            Status = PersistedTaskStatus.Pending,
+        };
+        context.PersistedTasks.Add(detectTask);
+        await context.SaveChangesAsync();
+
         _chapterId = chapter.Id;
         _taskId = task.Id;
+        _detectTaskId = detectTask.Id;
     }
 
     private static void CreateSourceCbz(string path)

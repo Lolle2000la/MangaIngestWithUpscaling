@@ -303,13 +303,14 @@ public class RemoteTaskProcessor(
                 // Page streaming: hand the reserved task to the streaming loop without downloading
                 // the CBZ. The streaming loop owns the keep-alive from here.
                 if (
-                    resp.TaskType == TaskType.Upscale
+                    (resp.TaskType is TaskType.Upscale or TaskType.SplitDetection)
                     && _pageStreamingAvailable
                     && _toStream is not null
                 )
                 {
                     var streaming = new StreamingItem(
                         resp.TaskId,
+                        resp.TaskType,
                         prefetchProfile,
                         persistentKeepAliveCts,
                         persistentKeepAliveTask
@@ -1084,8 +1085,24 @@ public class RemoteTaskProcessor(
 
             try
             {
-                logger.LogInformation("Page-streaming task {TaskId}.", item.TaskId);
-                await pageStreamClient.RunAsync(client, item.TaskId, item.Profile, streamCts.Token);
+                if (item.TaskType == TaskType.SplitDetection)
+                {
+                    logger.LogInformation(
+                        "Page-streaming split detection for task {TaskId}.",
+                        item.TaskId
+                    );
+                    await pageStreamClient.RunDetectionAsync(client, item.TaskId, streamCts.Token);
+                }
+                else
+                {
+                    logger.LogInformation("Page-streaming task {TaskId}.", item.TaskId);
+                    await pageStreamClient.RunAsync(
+                        client,
+                        item.TaskId,
+                        item.Profile,
+                        streamCts.Token
+                    );
+                }
             }
             catch (OperationCanceledException)
             {
@@ -1390,6 +1407,7 @@ public class RemoteTaskProcessor(
 
     private sealed record StreamingItem(
         int TaskId,
+        TaskType TaskType,
         UpscalerProfile Profile,
         CancellationTokenSource PersistentKeepAliveCts,
         Task PersistentKeepAliveTask

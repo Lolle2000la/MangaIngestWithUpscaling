@@ -1,13 +1,16 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Google.Protobuf;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.Upscaling;
+using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Constants;
+using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
 using SharedCompressionFormat = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat;
@@ -70,7 +73,7 @@ public partial class UpscalingDistributionService
             {
                 TaskId = pageContext.Task.Id,
                 TaskIdentity = pageContext.Identity,
-                TaskType = TaskType.Upscale,
+                TaskType = ToProtoTaskType(pageContext.Kind),
                 Complete = true,
             };
         }
@@ -79,8 +82,10 @@ public partial class UpscalingDistributionService
         {
             TaskId = pageContext.Task.Id,
             TaskIdentity = pageContext.Identity,
-            TaskType = TaskType.Upscale,
-            UpscalerProfile = ToProtoProfile(pageContext.Profile),
+            TaskType = ToProtoTaskType(pageContext.Kind),
+            UpscalerProfile = pageContext.Profile is null
+                ? null
+                : ToProtoProfile(pageContext.Profile),
         };
         response.Pages.AddRange(
             pageContext.Pages.Select(p => new PageDescriptor
@@ -311,12 +316,97 @@ public partial class UpscalingDistributionService
         };
     }
 
+    public override async Task<UploadDetectionResultResponse> UploadPageDetection(
+        UploadPageDetectionRequest request,
+        ServerCallContext context
+    )
+    {
+        PageContext? pageContext = await ResolvePageContextAsync(
+            request.TaskId,
+            CancellationToken.None
+        );
+        if (pageContext is null || pageContext.Kind != PageContextKind.Detect)
+        {
+            return new UploadDetectionResultResponse
+            {
+                Success = false,
+                Message = "Task is not a page-streamed detection task",
+            };
+        }
+
+        PageStreamSession session = pageStreamSpool.GetOrCreateSession(
+            request.TaskId,
+            pageContext.Identity,
+            pageContext.Pages.Count
+        );
+
+        await pageStreamSpool.WritePageAsync(
+            session,
+            request.PageIndex,
+            new MemoryStream(Encoding.UTF8.GetBytes(request.ResultJson)),
+            context.CancellationToken
+        );
+
+        if (!pageStreamSpool.IsComplete(session))
+        {
+            return new UploadDetectionResultResponse { Success = true, Message = "Result stored" };
+        }
+
+        // Every page reported: finalize the chapter's findings.
+        try
+        {
+            var results = new List<SplitDetectionResult>();
+            foreach (SpoolPageDescriptor page in pageContext.Pages)
+            {
+                string path = session.PagePath(page.Index);
+                if (!File.Exists(path))
+                {
+                    continue;
+                }
+
+                string json = await File.ReadAllTextAsync(path, CancellationToken.None);
+                SplitDetectionResult? result = JsonSerializer.Deserialize(
+                    json,
+                    SharedJsonContext.Default.SplitDetectionResult
+                );
+                if (result is not null)
+                {
+                    results.Add(result);
+                }
+            }
+
+            await splitProcessingService.ProcessDetectionResultsAsync(
+                pageContext.Chapter.Id,
+                results,
+                pageContext.DetectorVersion,
+                CancellationToken.None
+            );
+            await taskProcessor.TaskCompleted(request.TaskId);
+            pageStreamSpool.Remove(request.TaskId);
+
+            return new UploadDetectionResultResponse
+            {
+                Success = true,
+                Message = "Detection results processed",
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Failed to process page-streamed detection results for task {TaskId}",
+                request.TaskId
+            );
+            return new UploadDetectionResultResponse { Success = false, Message = ex.Message };
+        }
+    }
+
     private async Task AssembleUpscaledChapterAsync(
         PageContext pageContext,
         PageStreamSession session
     )
     {
-        if (pageContext.IsRepair)
+        if (pageContext.Kind == PageContextKind.Repair)
         {
             await AssembleRepairedChapterAsync(pageContext, session);
             return;
@@ -334,7 +424,7 @@ public partial class UpscalingDistributionService
             pageStreamSpool.Assemble(session, pageContext.SourcePath, pageContext.Pages, tempCbz);
             await upscalerJsonHandlingService.WriteUpscalerJsonAsync(
                 tempCbz,
-                pageContext.Profile,
+                pageContext.Profile!,
                 CancellationToken.None
             );
             fileSystem.ApplyPermissions(tempCbz);
@@ -354,7 +444,7 @@ public partial class UpscalingDistributionService
             fileSystem.Move(tempCbz, destination);
 
             pageContext.Chapter.IsUpscaled = true;
-            pageContext.Chapter.UpscalerProfileId = pageContext.Profile.Id;
+            pageContext.Chapter.UpscalerProfileId = pageContext.Profile!.Id;
             await dbContext.SaveChangesAsync();
             await taskProcessor.TaskCompleted(pageContext.Task.Id);
             _ = chapterChangedNotifier.Notify(pageContext.Chapter, true);
@@ -420,7 +510,7 @@ public partial class UpscalingDistributionService
                 pages,
                 ComputeIdentity(sourcePath, profile),
                 sourcePath,
-                IsRepair: false
+                Kind: PageContextKind.Upscale
             );
         }
 
@@ -476,7 +566,39 @@ public partial class UpscalingDistributionService
                     differences.MissingPages
                 ),
                 sourcePath,
-                IsRepair: true
+                Kind: PageContextKind.Repair
+            );
+        }
+
+        if (task.Data is DetectSplitCandidatesTask detectTask)
+        {
+            Chapter? chapter = await LoadChapterAsync(detectTask.ChapterId, ct);
+            if (chapter is null)
+            {
+                return null;
+            }
+
+            string sourcePath = chapter.NotUpscaledFullPath;
+            if (!File.Exists(sourcePath))
+            {
+                return null;
+            }
+
+            List<SpoolPageDescriptor> pages = BuildDetectionPageDescriptors(sourcePath);
+            if (pages.Count == 0)
+            {
+                return null;
+            }
+
+            return new PageContext(
+                task,
+                chapter,
+                Profile: null,
+                pages,
+                ComputeDetectionIdentity(sourcePath, detectTask.DetectorVersion),
+                sourcePath,
+                Kind: PageContextKind.Detect,
+                DetectorVersion: detectTask.DetectorVersion
             );
         }
 
@@ -620,6 +742,47 @@ public partial class UpscalingDistributionService
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
     }
 
+    internal static List<SpoolPageDescriptor> BuildDetectionPageDescriptors(string sourcePath)
+    {
+        var pages = new List<SpoolPageDescriptor>();
+        using ZipArchive archive = ZipFile.OpenRead(sourcePath);
+        int index = 0;
+        foreach (ZipArchiveEntry entry in archive.Entries)
+        {
+            if (string.IsNullOrEmpty(entry.Name))
+            {
+                continue;
+            }
+
+            if (!ImageConstants.IsSupportedImageExtension(Path.GetExtension(entry.FullName)))
+            {
+                continue;
+            }
+
+            pages.Add(new SpoolPageDescriptor(index, entry.FullName, entry.FullName));
+            index++;
+        }
+
+        return pages;
+    }
+
+    internal static string ComputeDetectionIdentity(string sourcePath, int detectorVersion)
+    {
+        FileInfo info = new(sourcePath);
+        string material = string.Join(
+            '|',
+            "detect",
+            sourcePath,
+            info.Length,
+            info.LastWriteTimeUtc.Ticks,
+            detectorVersion
+        );
+        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
+    }
+
+    private static TaskType ToProtoTaskType(PageContextKind kind) =>
+        kind == PageContextKind.Detect ? TaskType.SplitDetection : TaskType.Upscale;
+
     internal static string ComputeIdentity(string sourcePath, SharedUpscalerProfile profile)
     {
         FileInfo info = new(sourcePath);
@@ -674,13 +837,21 @@ public partial class UpscalingDistributionService
             },
         };
 
+    private enum PageContextKind
+    {
+        Upscale,
+        Repair,
+        Detect,
+    }
+
     private sealed record PageContext(
         PersistedTask Task,
         Chapter Chapter,
-        SharedUpscalerProfile Profile,
+        SharedUpscalerProfile? Profile,
         List<SpoolPageDescriptor> Pages,
         string Identity,
         string SourcePath,
-        bool IsRepair
+        PageContextKind Kind,
+        int DetectorVersion = 0
     );
 }
