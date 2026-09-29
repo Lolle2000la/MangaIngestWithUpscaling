@@ -50,10 +50,20 @@ public class PageStreamSpoolTests
             };
             PageStreamSession session = _spool.GetOrCreateSession(1, "identity", pages.Count);
 
-            await _spool.WritePageAsync(session, 0, new MemoryStream(new byte[] { 10, 11 }));
+            await _spool.WritePageAsync(
+                session,
+                0,
+                new MemoryStream(new byte[] { 10, 11 }),
+                TestContext.Current.CancellationToken
+            );
             Assert.False(_spool.IsComplete(session));
 
-            await _spool.WritePageAsync(session, 1, new MemoryStream(new byte[] { 12, 13 }));
+            await _spool.WritePageAsync(
+                session,
+                1,
+                new MemoryStream(new byte[] { 12, 13 }),
+                TestContext.Current.CancellationToken
+            );
             Assert.True(_spool.IsComplete(session));
             Assert.Equal(new[] { 0, 1 }, _spool.GetCompletedPages(session).OrderBy(i => i));
 
@@ -80,7 +90,12 @@ public class PageStreamSpoolTests
     public async Task GetOrCreateSession_ResetsCompletedPagesWhenIdentityChanges()
     {
         PageStreamSession session = _spool.GetOrCreateSession(2, "identity-a", 2);
-        await _spool.WritePageAsync(session, 0, new MemoryStream(new byte[] { 1 }));
+        await _spool.WritePageAsync(
+            session,
+            0,
+            new MemoryStream(new byte[] { 1 }),
+            TestContext.Current.CancellationToken
+        );
         Assert.Single(_spool.GetCompletedPages(session));
 
         PageStreamSession same = _spool.GetOrCreateSession(2, "identity-b", 2);
@@ -95,8 +110,18 @@ public class PageStreamSpoolTests
     {
         PageStreamSession session = _spool.GetOrCreateSession(3, "identity", 1);
 
-        await _spool.WritePageAsync(session, 0, new MemoryStream(new byte[] { 1, 2, 3 }));
-        await _spool.WritePageAsync(session, 0, new MemoryStream(new byte[] { 9 }));
+        await _spool.WritePageAsync(
+            session,
+            0,
+            new MemoryStream(new byte[] { 1, 2, 3 }),
+            TestContext.Current.CancellationToken
+        );
+        await _spool.WritePageAsync(
+            session,
+            0,
+            new MemoryStream(new byte[] { 9 }),
+            TestContext.Current.CancellationToken
+        );
 
         Assert.True(_spool.IsComplete(session));
         Assert.Single(_spool.GetCompletedPages(session));

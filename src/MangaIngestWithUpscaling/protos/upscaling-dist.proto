@@ -114,6 +114,9 @@ message PageManifestResponse {
   repeated PageDescriptor pages = 4;
   repeated int32 completed_pages = 5; // Pages already spooled on the server.
   optional UpscalerProfile upscaler_profile = 6;
+  // True when every page was already spooled; the server assembled the chapter and the worker has
+  // nothing to do.
+  bool complete = 7;
 }
 
 message GetPagesRequest {

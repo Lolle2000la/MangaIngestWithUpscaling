@@ -48,6 +48,33 @@ public partial class UpscalingDistributionService
             pageContext.Pages.Count
         );
 
+        // Every page was already spooled by a previous run (e.g. assembly failed transiently):
+        // finish the chapter instead of asking the worker to upscale it again.
+        if (pageStreamSpool.IsComplete(session))
+        {
+            try
+            {
+                await AssembleUpscaledChapterAsync(pageContext, session);
+                pageStreamSpool.Remove(pageContext.Task.Id);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Failed to assemble an already-complete page stream for task {TaskId}.",
+                    pageContext.Task.Id
+                );
+            }
+
+            return new PageManifestResponse
+            {
+                TaskId = pageContext.Task.Id,
+                TaskIdentity = pageContext.Identity,
+                TaskType = TaskType.Upscale,
+                Complete = true,
+            };
+        }
+
         var response = new PageManifestResponse
         {
             TaskId = pageContext.Task.Id,
@@ -343,7 +370,10 @@ public partial class UpscalingDistributionService
             t => t.Id == taskId,
             ct
         );
-        if (task is null || task.Status == PersistedTaskStatus.Canceled)
+        if (
+            task is null
+            || task.Status is PersistedTaskStatus.Canceled or PersistedTaskStatus.Completed
+        )
         {
             return null;
         }

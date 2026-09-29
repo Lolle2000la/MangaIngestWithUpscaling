@@ -10,6 +10,7 @@ using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
+using Microsoft.Extensions.Options;
 using CompressionFormat = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat;
 using ScaleFactor = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.ScaleFactor;
 using UpscalerMethod = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.UpscalerMethod;
@@ -17,19 +18,26 @@ using UpscalerProfile = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.U
 
 namespace MangaIngestWithUpscaling.RemoteWorker.Background;
 
-public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : BackgroundService
+public class RemoteTaskProcessor(
+    IServiceScopeFactory serviceScopeFactory,
+    IOptions<WorkerConfig> workerConfig
+) : BackgroundService
 {
+    private readonly WorkerConfig _workerConfig = workerConfig.Value;
+
     // Tracks download and processing statistics to optimize prefetch timing.
     private readonly PrefetchCoordinator _coordinator = new();
 
     // State tracking for task lifecycle coordination and exclusion.
     private int? _currentTaskId;
     private volatile bool _fetchInProgress;
+    private bool _pageStreamingAvailable;
 
     // Channel-based processing pipeline for coordinating fetch, upscale, and upload operations.
     private Channel<bool>? _fetchSignals;
     private Channel<ProcessedItem>? _toUpload;
     private Channel<FetchedItem>? _toUpscale;
+    private Channel<StreamingItem>? _toStream;
     private int? _uploadInProgressTaskId;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -64,13 +72,69 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
             }
         );
 
+        _toStream = Channel.CreateBounded<StreamingItem>(
+            new BoundedChannelOptions(1)
+            {
+                SingleReader = true,
+                SingleWriter = true,
+                FullMode = BoundedChannelFullMode.Wait,
+            }
+        );
+
+        if (_workerConfig.UsePageStreaming)
+        {
+            _pageStreamingAvailable = await ProbePageStreamingAsync(logger, stoppingToken);
+        }
+
         _fetchSignals.Writer.TryWrite(true);
 
         Task fetchTask = FetchLoop(stoppingToken);
         Task upscaleTask = UpscaleLoop(stoppingToken);
         Task uploadTask = UploadLoop(stoppingToken);
+        Task streamingTask = StreamingLoop(stoppingToken);
 
-        await Task.WhenAll(fetchTask, upscaleTask, uploadTask);
+        await Task.WhenAll(fetchTask, upscaleTask, uploadTask, streamingTask);
+    }
+
+    /// <summary>
+    /// Checks whether the server implements the page-streaming RPCs. A task id of 0 is not a real
+    /// task, so the call has no side effects: <c>NotFound</c> means the RPC exists, while
+    /// <c>Unimplemented</c> means it does not and the worker must use the whole-CBZ path.
+    /// </summary>
+    private async Task<bool> ProbePageStreamingAsync(
+        ILogger<RemoteTaskProcessor> logger,
+        CancellationToken stoppingToken
+    )
+    {
+        using var scope = serviceScopeFactory.CreateScope();
+        var client =
+            scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
+        try
+        {
+            await client.GetPageManifestAsync(
+                new PageManifestRequest { TaskId = 0 },
+                deadline: DateTime.UtcNow.AddSeconds(15),
+                cancellationToken: stoppingToken
+            );
+            return true;
+        }
+        catch (RpcException ex) when (ex.StatusCode == StatusCode.Unimplemented)
+        {
+            logger.LogWarning(
+                "The server does not support page streaming; falling back to whole-CBZ transfers."
+            );
+            return false;
+        }
+        catch (RpcException)
+        {
+            // NotFound / InvalidArgument: the RPC exists.
+            return true;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Could not probe page-streaming support; assuming unavailable.");
+            return false;
+        }
     }
 
     /// <summary>
@@ -235,6 +299,40 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     () => prefetchTaskId,
                     id => new KeepAliveRequest { TaskId = id, Prefetch = true }
                 );
+
+                // Page streaming: hand the reserved task to the streaming loop without downloading
+                // the CBZ. The streaming loop owns the keep-alive from here.
+                if (
+                    resp.TaskType == TaskType.Upscale
+                    && _pageStreamingAvailable
+                    && _toStream is not null
+                )
+                {
+                    var streaming = new StreamingItem(
+                        resp.TaskId,
+                        prefetchProfile,
+                        persistentKeepAliveCts,
+                        persistentKeepAliveTask
+                    );
+                    try
+                    {
+                        await _toStream.Writer.WriteAsync(streaming, stoppingToken);
+                    }
+                    catch
+                    {
+                        await persistentKeepAliveCts.CancelAsync();
+                        try
+                        {
+                            await persistentKeepAliveTask;
+                        }
+                        catch { }
+                        persistentKeepAliveCts.Dispose();
+                        throw;
+                    }
+
+                    _fetchInProgress = false;
+                    continue;
+                }
 
                 try
                 {
@@ -935,6 +1033,103 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
         }
     }
 
+    private async Task StreamingLoop(CancellationToken stoppingToken)
+    {
+        if (_toStream is null)
+        {
+            return;
+        }
+
+        using var scope = serviceScopeFactory.CreateScope();
+        var client =
+            scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
+        var logger = scope.ServiceProvider.GetRequiredService<ILogger<RemoteTaskProcessor>>();
+        var pageStreamClient = scope.ServiceProvider.GetRequiredService<PageStreamClient>();
+
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            StreamingItem item;
+            try
+            {
+                item = await _toStream.Reader.ReadAsync(stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
+            _currentTaskId = item.TaskId;
+
+            if (item.PersistentKeepAliveCts.IsCancellationRequested)
+            {
+                logger.LogInformation(
+                    "Task {TaskId} was cancelled prior to page streaming, skipping.",
+                    item.TaskId
+                );
+                await item.PersistentKeepAliveCts.CancelAsync();
+                try
+                {
+                    await item.PersistentKeepAliveTask;
+                }
+                catch { }
+                item.PersistentKeepAliveCts.Dispose();
+                _currentTaskId = null;
+                continue;
+            }
+
+            using var streamCts = CancellationTokenSource.CreateLinkedTokenSource(
+                stoppingToken,
+                item.PersistentKeepAliveCts.Token
+            );
+
+            try
+            {
+                logger.LogInformation("Page-streaming task {TaskId}.", item.TaskId);
+                await pageStreamClient.RunAsync(client, item.TaskId, item.Profile, streamCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // Normal user interruption or task cancellation.
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Task {TaskId} failed during page streaming.", item.TaskId);
+                try
+                {
+                    await client.ReportTaskFailedAsync(
+                        new ReportTaskFailedRequest
+                        {
+                            TaskId = item.TaskId,
+                            ErrorMessage = ex.Message,
+                        },
+                        deadline: DateTime.UtcNow.AddSeconds(15),
+                        cancellationToken: stoppingToken
+                    );
+                }
+                catch (Exception rpcEx)
+                {
+                    logger.LogWarning(
+                        rpcEx,
+                        "Failed to report page-streaming failure for {TaskId}",
+                        item.TaskId
+                    );
+                }
+            }
+            finally
+            {
+                await item.PersistentKeepAliveCts.CancelAsync();
+                try
+                {
+                    await item.PersistentKeepAliveTask;
+                }
+                catch { }
+                item.PersistentKeepAliveCts.Dispose();
+                _currentTaskId = null;
+                _fetchSignals?.Writer.TryWrite(true);
+            }
+        }
+    }
+
     private async Task UploadFile(
         UpscalingService.UpscalingServiceClient client,
         ILogger<RemoteTaskProcessor> logger,
@@ -1192,6 +1387,13 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
             cts.Token
         );
     }
+
+    private sealed record StreamingItem(
+        int TaskId,
+        UpscalerProfile Profile,
+        CancellationTokenSource PersistentKeepAliveCts,
+        Task PersistentKeepAliveTask
+    );
 
     private sealed record FetchedItem(
         int TaskId,
