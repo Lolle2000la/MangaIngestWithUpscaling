@@ -42,18 +42,18 @@ public sealed class PageStreamClient(
             cancellationToken: stoppingToken
         );
 
-        if (manifest.Pages.Count == 0)
-        {
-            throw new InvalidOperationException($"Task {taskId} has no pages to upscale.");
-        }
-
         if (manifest.Complete)
         {
             logger.LogInformation(
-                "Task {TaskId} was already fully spooled; the server assembled it.",
+                "Task {TaskId} was already fully spooled; the server finalized it.",
                 taskId
             );
             return;
+        }
+
+        if (manifest.Pages.Count == 0)
+        {
+            throw new InvalidOperationException($"Task {taskId} has no pages to upscale.");
         }
 
         Dictionary<int, string> nameByIndex = manifest.Pages.ToDictionary(
@@ -109,7 +109,24 @@ public sealed class PageStreamClient(
                     && indexByName.TryGetValue(file.Input, out int pageIndex)
                 )
                 {
-                    uploads.Writer.TryWrite(new PageUpload(pageIndex, file.Output));
+                    uploads.Writer.TryWrite(new PageUpload(pageIndex, file.Output, Failed: false));
+                    return;
+                }
+
+                if (indexByName.TryGetValue(file.Input, out int failedIndex))
+                {
+                    // The engine could not upscale this page. Report it so the server copies the
+                    // source page through, matching the whole-CBZ path, rather than failing the
+                    // whole chapter.
+                    logger.LogWarning(
+                        "Page {Page} of task {TaskId} failed to upscale ({Status}); copying the source page through.",
+                        file.Input,
+                        taskId,
+                        file.Status
+                    );
+                    uploads.Writer.TryWrite(
+                        new PageUpload(failedIndex, string.Empty, Failed: true)
+                    );
                 }
                 else
                 {
@@ -202,15 +219,15 @@ public sealed class PageStreamClient(
             cancellationToken: stoppingToken
         );
 
-        if (manifest.Pages.Count == 0)
-        {
-            throw new InvalidOperationException($"Task {taskId} has no pages to detect.");
-        }
-
         if (manifest.Complete)
         {
             logger.LogInformation("Task {TaskId} was already fully detected.", taskId);
             return;
+        }
+
+        if (manifest.Pages.Count == 0)
+        {
+            throw new InvalidOperationException($"Task {taskId} has no pages to detect.");
         }
 
         Dictionary<int, string> nameByIndex = manifest.Pages.ToDictionary(
@@ -413,8 +430,26 @@ public sealed class PageStreamClient(
                     cancellationToken: stoppingToken
                 );
 
-            await using (FileStream file = File.OpenRead(upload.Path))
+            if (upload.Failed)
             {
+                // A single terminating chunk with no payload: the server copies the source page
+                // through instead of replacing it.
+                await call.RequestStream.WriteAsync(
+                    new UploadPageChunk
+                    {
+                        TaskId = taskId,
+                        PageIndex = upload.PageIndex,
+                        ChunkNumber = 0,
+                        IsLast = true,
+                        ContentIdentity = identity,
+                        Failed = true,
+                    },
+                    stoppingToken
+                );
+            }
+            else
+            {
+                await using FileStream file = File.OpenRead(upload.Path);
                 byte[] buffer = new byte[ChunkSizeBytes];
                 int chunkNumber = 0;
                 int bytesRead;
@@ -452,7 +487,7 @@ public sealed class PageStreamClient(
         }
     }
 
-    private sealed record PageUpload(int PageIndex, string Path);
+    private sealed record PageUpload(int PageIndex, string Path, bool Failed);
 
     /// <summary>
     /// Forwards upscale progress as keep-alives without blocking the worker's event reader thread.
@@ -463,6 +498,7 @@ public sealed class PageStreamClient(
             new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropOldest }
         );
         private readonly ILogger<PageStreamClient> _logger;
+        private readonly CancellationTokenSource _cts;
         private readonly Task _sender;
 
         public StreamingProgressReporter(
@@ -473,6 +509,7 @@ public sealed class PageStreamClient(
         )
         {
             _logger = logger;
+            _cts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
             Progress = new Progress<UpscaleProgress>(p => _channel.Writer.TryWrite(p));
             _sender = Task.Run(
                 async () =>
@@ -481,7 +518,7 @@ public sealed class PageStreamClient(
                     UpscaleProgress? pending = null;
                     try
                     {
-                        while (!stoppingToken.IsCancellationRequested)
+                        while (!_cts.IsCancellationRequested)
                         {
                             while (_channel.Reader.TryRead(out UpscaleProgress? latest))
                             {
@@ -501,7 +538,7 @@ public sealed class PageStreamClient(
                                             Phase = pending.Phase ?? string.Empty,
                                         },
                                         deadline: DateTime.UtcNow.AddSeconds(10),
-                                        cancellationToken: stoppingToken
+                                        cancellationToken: _cts.Token
                                     );
                                 }
                                 catch (Exception ex)
@@ -514,7 +551,7 @@ public sealed class PageStreamClient(
                                 }
                             }
 
-                            await debounce.WaitForNextTickAsync(stoppingToken);
+                            await debounce.WaitForNextTickAsync(_cts.Token);
                         }
                     }
                     catch (OperationCanceledException)
@@ -530,6 +567,8 @@ public sealed class PageStreamClient(
         public void Dispose()
         {
             _channel.Writer.TryComplete();
+            _cts.Cancel();
+            _cts.Dispose();
         }
     }
 }

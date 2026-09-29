@@ -52,19 +52,27 @@ public partial class UpscalingDistributionService
         );
 
         // Every page was already spooled by a previous run (e.g. assembly failed transiently):
-        // finish the chapter instead of asking the worker to upscale it again.
+        // finish the chapter instead of asking the worker to produce it again.
         if (pageStreamSpool.IsComplete(session))
         {
             try
             {
-                await AssembleUpscaledChapterAsync(pageContext, session);
+                if (pageContext.Kind == PageContextKind.Detect)
+                {
+                    await FinalizeDetectionAsync(pageContext, session);
+                }
+                else
+                {
+                    await AssembleUpscaledChapterAsync(pageContext, session);
+                }
+
                 pageStreamSpool.Remove(pageContext.Task.Id);
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(
                     ex,
-                    "Failed to assemble an already-complete page stream for task {TaskId}.",
+                    "Failed to finalize an already-complete page stream for task {TaskId}.",
                     pageContext.Task.Id
                 );
             }
@@ -190,6 +198,7 @@ public partial class UpscalingDistributionService
     {
         int taskId = 0;
         int pageIndex = 0;
+        bool failed = false;
         string identity = string.Empty;
         using var buffer = new MemoryStream();
 
@@ -202,6 +211,11 @@ public partial class UpscalingDistributionService
             if (!string.IsNullOrEmpty(chunk.ContentIdentity))
             {
                 identity = chunk.ContentIdentity;
+            }
+
+            if (chunk.Failed)
+            {
+                failed = true;
             }
 
             if (!chunk.Chunk.IsEmpty)
@@ -246,6 +260,18 @@ public partial class UpscalingDistributionService
             };
         }
 
+        if (pageIndex < 0 || pageIndex >= pageContext.Pages.Count)
+        {
+            return new UploadPageResponse
+            {
+                Success = false,
+                Message = $"Page index {pageIndex} is out of range for task {taskId}",
+                TaskId = taskId,
+                PageIndex = pageIndex,
+                Terminal = true,
+            };
+        }
+
         PageStreamSession session = pageStreamSpool.GetOrCreateSession(
             taskId,
             pageContext.Identity,
@@ -254,13 +280,20 @@ public partial class UpscalingDistributionService
 
         try
         {
-            buffer.Position = 0;
-            await pageStreamSpool.WritePageAsync(
-                session,
-                pageIndex,
-                buffer,
-                context.CancellationToken
-            );
+            if (failed)
+            {
+                pageStreamSpool.MarkPageFailed(session, pageIndex);
+            }
+            else
+            {
+                buffer.Position = 0;
+                await pageStreamSpool.WritePageAsync(
+                    session,
+                    pageIndex,
+                    buffer,
+                    context.CancellationToken
+                );
+            }
         }
         catch (Exception ex)
         {
@@ -340,6 +373,16 @@ public partial class UpscalingDistributionService
             pageContext.Pages.Count
         );
 
+        if (request.PageIndex < 0 || request.PageIndex >= pageContext.Pages.Count)
+        {
+            return new UploadDetectionResultResponse
+            {
+                Success = false,
+                Message =
+                    $"Page index {request.PageIndex} is out of range for task {request.TaskId}",
+            };
+        }
+
         await pageStreamSpool.WritePageAsync(
             session,
             request.PageIndex,
@@ -355,33 +398,7 @@ public partial class UpscalingDistributionService
         // Every page reported: finalize the chapter's findings.
         try
         {
-            var results = new List<SplitDetectionResult>();
-            foreach (SpoolPageDescriptor page in pageContext.Pages)
-            {
-                string path = session.PagePath(page.Index);
-                if (!File.Exists(path))
-                {
-                    continue;
-                }
-
-                string json = await File.ReadAllTextAsync(path, CancellationToken.None);
-                SplitDetectionResult? result = JsonSerializer.Deserialize(
-                    json,
-                    SharedJsonContext.Default.SplitDetectionResult
-                );
-                if (result is not null)
-                {
-                    results.Add(result);
-                }
-            }
-
-            await splitProcessingService.ProcessDetectionResultsAsync(
-                pageContext.Chapter.Id,
-                results,
-                pageContext.DetectorVersion,
-                CancellationToken.None
-            );
-            await taskProcessor.TaskCompleted(request.TaskId);
+            await FinalizeDetectionAsync(pageContext, session);
             pageStreamSpool.Remove(request.TaskId);
 
             return new UploadDetectionResultResponse
@@ -399,6 +416,41 @@ public partial class UpscalingDistributionService
             );
             return new UploadDetectionResultResponse { Success = false, Message = ex.Message };
         }
+    }
+
+    /// <summary>
+    /// Reads the spooled per-page detection results and finalizes the chapter's findings. Used both
+    /// when the last page arrives and when an already-complete stream is retried.
+    /// </summary>
+    private async Task FinalizeDetectionAsync(PageContext pageContext, PageStreamSession session)
+    {
+        var results = new List<SplitDetectionResult>();
+        foreach (SpoolPageDescriptor page in pageContext.Pages)
+        {
+            string path = session.PagePath(page.Index);
+            if (!File.Exists(path))
+            {
+                continue;
+            }
+
+            string json = await File.ReadAllTextAsync(path, CancellationToken.None);
+            SplitDetectionResult? result = JsonSerializer.Deserialize(
+                json,
+                SharedJsonContext.Default.SplitDetectionResult
+            );
+            if (result is not null)
+            {
+                results.Add(result);
+            }
+        }
+
+        await splitProcessingService.ProcessDetectionResultsAsync(
+            pageContext.Chapter.Id,
+            results,
+            pageContext.DetectorVersion,
+            CancellationToken.None
+        );
+        await taskProcessor.TaskCompleted(pageContext.Task.Id);
     }
 
     private async Task AssembleUpscaledChapterAsync(

@@ -2,7 +2,9 @@ extern alias remote;
 
 using System.IO.Compression;
 using System.Security.Claims;
+using System.Text;
 using System.Text.Encodings.Web;
+using System.Text.Json;
 using Grpc.Net.Client;
 using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.Data;
@@ -13,6 +15,7 @@ using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.Upscaling;
+using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
@@ -29,6 +32,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using Xunit;
+using RemotePageManifestRequest = remote::MangaIngestWithUpscaling.Api.Upscaling.PageManifestRequest;
+using RemotePageManifestResponse = remote::MangaIngestWithUpscaling.Api.Upscaling.PageManifestResponse;
 using RemotePageStreamClient = remote::MangaIngestWithUpscaling.RemoteWorker.Background.PageStreamClient;
 using RemoteUpscalingServiceClient = remote::MangaIngestWithUpscaling.Api.Upscaling.UpscalingService.UpscalingServiceClient;
 using SharedCompressionFormat = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat;
@@ -258,6 +263,100 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
 
         await sut.RunDetectionAsync(client, _detectTaskId, TestContext.Current.CancellationToken);
 
+        await _splitProcessing
+            .Received(1)
+            .ProcessDetectionResultsAsync(
+                _chapterId,
+                Arg.Is<List<SplitDetectionResult>>(r => r.Count == 2),
+                1,
+                Arg.Any<CancellationToken>()
+            );
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task GetPageManifest_FinalizesAnAlreadyCompleteUpscaleStream()
+    {
+        var client = new RemoteUpscalingServiceClient(_channel);
+        RemotePageManifestResponse manifest = await client.GetPageManifestAsync(
+            new RemotePageManifestRequest { TaskId = _taskId },
+            deadline: DateTime.UtcNow.AddSeconds(30),
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        // Simulate a previous run that spooled every page but failed to finalize.
+        var spool = _app.Services.GetRequiredService<PageStreamSpool>();
+        PageStreamSession session = spool.GetOrCreateSession(
+            _taskId,
+            manifest.TaskIdentity,
+            manifest.Pages.Count
+        );
+        foreach (var page in manifest.Pages)
+        {
+            await spool.WritePageAsync(
+                session,
+                page.Index,
+                new MemoryStream(new byte[] { (byte)(page.Index + 10) }),
+                TestContext.Current.CancellationToken
+            );
+        }
+
+        RemotePageManifestResponse second = await client.GetPageManifestAsync(
+            new RemotePageManifestRequest { TaskId = _taskId },
+            deadline: DateTime.UtcNow.AddSeconds(30),
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        Assert.True(second.Complete);
+        Assert.True(File.Exists(_upscaledPath));
+        await using ApplicationDbContext context = await _database.CreateContextAsync(
+            TestContext.Current.CancellationToken
+        );
+        Chapter chapter = await context.Chapters.FirstAsync(
+            c => c.Id == _chapterId,
+            TestContext.Current.CancellationToken
+        );
+        Assert.True(chapter.IsUpscaled);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task GetPageManifest_FinalizesAnAlreadyCompleteDetectionStream()
+    {
+        var client = new RemoteUpscalingServiceClient(_channel);
+        RemotePageManifestResponse manifest = await client.GetPageManifestAsync(
+            new RemotePageManifestRequest { TaskId = _detectTaskId },
+            deadline: DateTime.UtcNow.AddSeconds(30),
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        var spool = _app.Services.GetRequiredService<PageStreamSpool>();
+        PageStreamSession session = spool.GetOrCreateSession(
+            _detectTaskId,
+            manifest.TaskIdentity,
+            manifest.Pages.Count
+        );
+        foreach (var page in manifest.Pages)
+        {
+            string json = JsonSerializer.Serialize(
+                new SplitDetectionResult { ImagePath = page.SourceName, Count = 0 },
+                SharedJsonContext.Default.SplitDetectionResult
+            );
+            await spool.WritePageAsync(
+                session,
+                page.Index,
+                new MemoryStream(Encoding.UTF8.GetBytes(json)),
+                TestContext.Current.CancellationToken
+            );
+        }
+
+        RemotePageManifestResponse second = await client.GetPageManifestAsync(
+            new RemotePageManifestRequest { TaskId = _detectTaskId },
+            deadline: DateTime.UtcNow.AddSeconds(30),
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        Assert.True(second.Complete);
         await _splitProcessing
             .Received(1)
             .ProcessDetectionResultsAsync(

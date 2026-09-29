@@ -131,6 +131,45 @@ public class PageStreamSpoolTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task MarkPageFailed_CountsAsCompleteAndCopiesTheSourceThrough()
+    {
+        string directory = Directory.CreateTempSubdirectory("spool_failed").FullName;
+        try
+        {
+            string source = CreateSourceCbz(directory);
+            var pages = new List<SpoolPageDescriptor>
+            {
+                new(0, "001.jpg", "001.webp"),
+                new(1, "002.jpg", "002.webp"),
+            };
+            PageStreamSession session = _spool.GetOrCreateSession(5, "identity", pages.Count);
+
+            await _spool.WritePageAsync(
+                session,
+                0,
+                new MemoryStream(new byte[] { 10, 11 }),
+                TestContext.Current.CancellationToken
+            );
+            _spool.MarkPageFailed(session, 1);
+
+            Assert.True(_spool.IsComplete(session));
+
+            string destination = Path.Combine(directory, "failed.cbz");
+            _spool.Assemble(session, source, pages, destination);
+
+            using ZipArchive zip = ZipFile.OpenRead(destination);
+            Assert.Equal(new byte[] { 10, 11 }, ReadEntry(zip, "001.webp"));
+            // The failed page is copied through unchanged under its source name.
+            Assert.Equal(new byte[] { 4, 5, 6 }, ReadEntry(zip, "002.jpg"));
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void Remove_DeletesSpoolDirectory()
     {
         PageStreamSession session = _spool.GetOrCreateSession(4, "identity", 1);

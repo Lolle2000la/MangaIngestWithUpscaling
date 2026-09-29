@@ -25,8 +25,15 @@ public sealed class PageStreamSpool
         _logger = logger;
     }
 
-    public string SpoolRoot =>
-        Path.Combine(Path.GetTempPath(), "mangaingestwithupscaling", "page_spool");
+    // Unique per PageStreamSpool instance (and therefore per process): two app instances, or two
+    // test collections, on one host must not share task directories.
+    public string SpoolRoot { get; } =
+        Path.Combine(
+            Path.GetTempPath(),
+            "mangaingestwithupscaling",
+            "page_spool",
+            $"{Environment.ProcessId}-{Guid.NewGuid():N}"
+        );
 
     /// <summary>
     /// Returns the session for a task, creating it or resetting it when the identity changed.
@@ -52,7 +59,7 @@ public sealed class PageStreamSpool
                     taskId,
                     session.Completed.Count
                 );
-                session.Reset(identity, pageCount);
+                session.Reset(identity, pageCount, Path.Combine(SpoolRoot, taskId.ToString()));
             }
             else
             {
@@ -90,7 +97,8 @@ public sealed class PageStreamSpool
         }
 
         string path = session.PagePath(pageIndex);
-        string temp = path + ".tmp";
+        // Unique per write so two workers racing on the same page cannot corrupt each other's temp.
+        string temp = $"{path}.{Guid.NewGuid():N}.tmp";
         await using (
             FileStream output = new(
                 temp,
@@ -109,7 +117,22 @@ public sealed class PageStreamSpool
 
         lock (session.Gate)
         {
+            session.FailedPages.Remove(pageIndex);
             session.Completed.Add(pageIndex);
+            session.LastTouchedUtc = DateTime.UtcNow;
+        }
+    }
+
+    /// <summary>
+    /// Records that a page could not be produced. The page counts as done (so the chapter can
+    /// finish) and is copied through from the source archive during assembly.
+    /// </summary>
+    public void MarkPageFailed(PageStreamSession session, int pageIndex)
+    {
+        lock (session.Gate)
+        {
+            session.Completed.Remove(pageIndex);
+            session.FailedPages.Add(pageIndex);
             session.LastTouchedUtc = DateTime.UtcNow;
         }
     }
@@ -118,7 +141,8 @@ public sealed class PageStreamSpool
     {
         lock (session.Gate)
         {
-            return session.PageCount > 0 && session.Completed.Count >= session.PageCount;
+            return session.PageCount > 0
+                && session.Completed.Count + session.FailedPages.Count >= session.PageCount;
         }
     }
 
@@ -138,6 +162,11 @@ public sealed class PageStreamSpool
             p => p.SourceName,
             StringComparer.Ordinal
         );
+        HashSet<int> failed;
+        lock (session.Gate)
+        {
+            failed = new HashSet<int>(session.FailedPages);
+        }
 
         string? destinationDirectory = Path.GetDirectoryName(destinationPath);
         if (destinationDirectory is not null)
@@ -156,7 +185,10 @@ public sealed class PageStreamSpool
                 continue;
             }
 
-            if (bySource.TryGetValue(entry.FullName, out SpoolPageDescriptor? page))
+            if (
+                bySource.TryGetValue(entry.FullName, out SpoolPageDescriptor? page)
+                && !failed.Contains(page.Index)
+            )
             {
                 string pagePath = session.PagePath(page.Index);
                 if (!File.Exists(pagePath))
@@ -199,9 +231,20 @@ public sealed class PageStreamSpool
             Directory.CreateDirectory(destinationDirectory);
         }
 
+        HashSet<int> failed;
+        lock (session.Gate)
+        {
+            failed = new HashSet<int>(session.FailedPages);
+        }
+
         using ZipArchive output = ZipFile.Open(destinationPath, ZipArchiveMode.Create);
         foreach (SpoolPageDescriptor page in pages)
         {
+            if (failed.Contains(page.Index))
+            {
+                continue;
+            }
+
             string pagePath = session.PagePath(page.Index);
             if (!File.Exists(pagePath))
             {
@@ -244,7 +287,50 @@ public sealed class PageStreamSpool
                 removed.DeleteDirectory(_logger);
             }
         }
+
+        // Roots left by a previous process are invisible to _sessions (which is empty after a
+        // restart), so sweep the shared parent as well, skipping this process's live root.
+        try
+        {
+            if (Directory.Exists(SpoolParent))
+            {
+                foreach (string directory in Directory.EnumerateDirectories(SpoolParent))
+                {
+                    if (string.Equals(directory, SpoolRoot, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        if (Directory.GetLastWriteTimeUtc(directory) < cutoff)
+                        {
+                            Directory.Delete(directory, recursive: true);
+                            _logger.LogInformation(
+                                "Removed stale page spool root {Directory}.",
+                                directory
+                            );
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(
+                            ex,
+                            "Failed to sweep page spool root {Directory}.",
+                            directory
+                        );
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to sweep the page spool parent {Parent}.", SpoolParent);
+        }
     }
+
+    private static string SpoolParent =>
+        Path.Combine(Path.GetTempPath(), "mangaingestwithupscaling", "page_spool");
 }
 
 /// <summary>Mutable per-task spool state, guarded by <see cref="Gate"/>.</summary>
@@ -263,23 +349,22 @@ public sealed class PageStreamSession
     public int PageCount { get; set; }
     public string Directory { get; private set; }
     public HashSet<int> Completed { get; } = new();
+
+    /// <summary>Pages the worker reported as failed; they are copied through during assembly.</summary>
+    public HashSet<int> FailedPages { get; } = new();
     public Lock Gate { get; } = new();
     public DateTime LastTouchedUtc { get; set; } = DateTime.UtcNow;
 
     public string PagePath(int pageIndex) => Path.Combine(Directory, $"page_{pageIndex:D5}.bin");
 
-    public void Reset(string identity, int pageCount)
+    public void Reset(string identity, int pageCount, string directory)
     {
         DeleteDirectory();
         Identity = identity;
         PageCount = pageCount;
-        Directory = Path.Combine(
-            Path.GetTempPath(),
-            "mangaingestwithupscaling",
-            "page_spool",
-            TaskId.ToString()
-        );
+        Directory = directory;
         Completed.Clear();
+        FailedPages.Clear();
     }
 
     public void DeleteDirectory(ILogger? logger = null)

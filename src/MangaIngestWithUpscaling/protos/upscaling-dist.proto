@@ -141,6 +141,9 @@ message UploadPageChunk {
   bytes chunk = 4;
   bool is_last = 5;
   string content_identity = 6;
+  // Set on a single terminating chunk to report that the worker could not produce this page. The
+  // server then copies the source page through unchanged instead of failing the chapter.
+  bool failed = 7;
 }
 
 message UploadPageResponse {

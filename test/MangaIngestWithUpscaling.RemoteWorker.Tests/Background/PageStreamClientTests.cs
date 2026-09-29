@@ -131,6 +131,58 @@ public class PageStreamClientTests
         }
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunAsync_ReturnsCleanlyWhenTheCompleteManifestOmitsPages()
+    {
+        string directory = Directory.CreateTempSubdirectory("page_stream_complete").FullName;
+        try
+        {
+            string source = CreateSourceCbz(directory);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination) { OmitPagesWhenComplete = true };
+            server.Completed.UnionWith(server.Pages.Select(p => p.Index));
+            var client = server.CreateClient();
+            var worker = new FakeWorkerClient();
+            var sut = CreateClient(worker);
+
+            // The real server's complete response carries no descriptors; the client must return
+            // before the "no pages" guard, not throw.
+            await sut.RunAsync(client, 1, Profile, TestContext.Current.CancellationToken);
+
+            Assert.Empty(server.RequestedPages);
+            Assert.Equal(0, worker.ProcessedPages);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunDetectionAsync_ReturnsCleanlyWhenTheCompleteManifestOmitsPages()
+    {
+        string directory = Directory.CreateTempSubdirectory("page_detect_complete").FullName;
+        try
+        {
+            string source = CreateSourceCbz(directory);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination) { OmitPagesWhenComplete = true };
+            server.Completed.UnionWith(server.Pages.Select(p => p.Index));
+            var client = server.CreateClient();
+            var sut = CreateClient(new FakeWorkerClient());
+
+            await sut.RunDetectionAsync(client, 1, TestContext.Current.CancellationToken);
+
+            Assert.Empty(server.RequestedPages);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
     private static PageStreamClient CreateClient(FakeWorkerClient worker) =>
         new(
             worker,
@@ -205,6 +257,7 @@ public class PageStreamClientTests
         public HashSet<int> Completed { get; } = new();
         public List<int> RequestedPages { get; } = new();
         public Dictionary<int, byte[]> Uploaded { get; } = new();
+        public bool OmitPagesWhenComplete { get; set; }
 
         public UpscalingService.UpscalingServiceClient CreateClient()
         {
@@ -248,7 +301,12 @@ public class PageStreamClientTests
                 TaskType = TaskType.Upscale,
                 Complete = Completed.Count >= Pages.Count,
             };
-            response.Pages.AddRange(Pages);
+            // The real server omits the descriptors when it reports the chapter as already
+            // complete; allow tests to reproduce that shape.
+            if (!(OmitPagesWhenComplete && response.Complete))
+            {
+                response.Pages.AddRange(Pages);
+            }
             response.CompletedPages.AddRange(Completed);
             return response;
         }

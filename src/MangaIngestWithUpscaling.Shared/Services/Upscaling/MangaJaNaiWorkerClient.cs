@@ -263,13 +263,17 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                     _ = RequestCancelAsync(request.Id);
                 });
 
-                Task monitor = MonitorTimeoutAsync(job, timeout);
+                // Only monitor inactivity when a timeout was supplied; a null timeout would
+                // otherwise leave an infinite, never-completing task alive for the process.
+                Task? monitor = timeout is null ? null : MonitorTimeoutAsync(job, timeout);
 
-                Task completed = await Task.WhenAny(
-                    job.Completion.Task,
-                    monitor,
-                    cancelSignal.Task
-                );
+                List<Task> waiters = [job.Completion.Task, cancelSignal.Task];
+                if (monitor is not null)
+                {
+                    waiters.Add(monitor);
+                }
+
+                Task completed = await Task.WhenAny(waiters);
 
                 if (completed == cancelSignal.Task)
                 {
@@ -296,7 +300,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                     throw new OperationCanceledException(cancellationToken);
                 }
 
-                if (completed == monitor)
+                if (monitor is not null && completed == monitor)
                 {
                     await monitor;
                 }
