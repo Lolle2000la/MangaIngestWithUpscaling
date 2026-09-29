@@ -9,24 +9,26 @@ public class ResumableUploadStoreTests : IDisposable
     private const string Identity = "sha256:aaaa";
     private const string OtherIdentity = "sha256:bbbb";
 
+    private readonly string _baseDirectory;
     private readonly string _root;
     private readonly ResumableUploadStore _store;
 
     public ResumableUploadStoreTests()
     {
-        _root = Path.Combine(
+        _baseDirectory = Path.Combine(
             Path.GetTempPath(),
             "resumable_upload_test_" + Guid.NewGuid().ToString("N")[..8]
         );
+        _root = Path.Combine(_baseDirectory, "uploads");
         Directory.CreateDirectory(_root);
         _store = new ResumableUploadStore(_root);
     }
 
     public void Dispose()
     {
-        if (Directory.Exists(_root))
+        if (Directory.Exists(_baseDirectory))
         {
-            Directory.Delete(_root, true);
+            Directory.Delete(_baseDirectory, true);
         }
     }
 
@@ -168,6 +170,34 @@ public class ResumableUploadStoreTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task GetContiguousChunkCount_LegacyClientWithStoredIdentity_ReportsZeroWithoutDeleting()
+    {
+        await _store.WriteChunkAsync(11, 0, Bytes("a"), Identity, CancellationToken.None);
+
+        Assert.Equal(0, _store.GetContiguousChunkCount(11, null));
+        // The identified upload's state is untouched by the read.
+        Assert.Equal(1, _store.GetContiguousChunkCount(11, Identity));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task WriteChunkAsync_LegacyClientAfterIdentifiedUpload_DiscardsIdentifiedChunks()
+    {
+        await _store.WriteChunkAsync(4, 0, Bytes("identified-a"), Identity, CancellationToken.None);
+        await _store.WriteChunkAsync(4, 1, Bytes("identified-b"), Identity, CancellationToken.None);
+
+        // A client that declares no identity must not build on the identified chunks.
+        await _store.WriteChunkAsync(4, 0, Bytes("legacy"), null, CancellationToken.None);
+
+        Assert.Equal(1, _store.GetContiguousChunkCount(4, null));
+        Assert.Equal(
+            Convert.ToHexStringLower(SHA256.HashData(Bytes("legacy"))),
+            await AssembleAndHashAsync(_store, 4, 1)
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task SweepStaleUploads_RemovesOldDirectoriesAndKeepsFreshOnes()
     {
         await _store.WriteChunkAsync(1, 0, Bytes("stale"), Identity, CancellationToken.None);
@@ -183,6 +213,23 @@ public class ResumableUploadStoreTests : IDisposable
         Assert.Equal(1, removed);
         Assert.Equal(0, _store.GetContiguousChunkCount(1, Identity));
         Assert.Equal(1, _store.GetContiguousChunkCount(2, Identity));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void SweepStaleUploads_RemovesLegacyChunkFiles()
+    {
+        string legacyStale = Path.Combine(_baseDirectory, "upscaled_1_0.chunk");
+        string legacyFresh = Path.Combine(_baseDirectory, "upscaled_2_0.chunk");
+        File.WriteAllBytes(legacyStale, Bytes("old"));
+        File.WriteAllBytes(legacyFresh, Bytes("new"));
+        File.SetLastWriteTimeUtc(legacyStale, DateTime.UtcNow - TimeSpan.FromHours(48));
+
+        int removed = _store.SweepStaleUploads(TimeSpan.FromHours(24));
+
+        Assert.Equal(1, removed);
+        Assert.False(File.Exists(legacyStale));
+        Assert.True(File.Exists(legacyFresh));
     }
 
     [Fact]

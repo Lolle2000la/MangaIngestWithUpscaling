@@ -91,10 +91,15 @@ public class ResumableUploadStore
         gate.Wait();
         try
         {
-            if (
-                !string.IsNullOrEmpty(contentId)
-                && !string.Equals(ReadIdentity(taskId), contentId, StringComparison.Ordinal)
-            )
+            string? stored = ReadIdentity(taskId);
+            if (string.IsNullOrEmpty(contentId))
+            {
+                // A client that declares no identity (older client) must not resume into chunks
+                // that belong to an identified upload. Report nothing to resume.
+                return stored == null ? CountContiguous(taskId) : 0;
+            }
+
+            if (!string.Equals(stored, contentId, StringComparison.Ordinal))
             {
                 return 0;
             }
@@ -208,17 +213,61 @@ public class ResumableUploadStore
             }
         }
 
+        removed += SweepLegacyChunkFiles(cutoffUtc);
+        return removed;
+    }
+
+    /// <summary>
+    /// Removes chunk files left by pre-resumable versions, which wrote
+    /// <c>upscaled_{taskId}_{chunk}.chunk</c> next to (not inside) the uploads directory. This store
+    /// never reads them, so they would otherwise leak after an upgrade.
+    /// </summary>
+    private int SweepLegacyChunkFiles(DateTime cutoffUtc)
+    {
+        DirectoryInfo? parent = Directory.GetParent(_rootDirectory);
+        if (parent is null || !parent.Exists)
+        {
+            return 0;
+        }
+
+        int removed = 0;
+        foreach (string file in Directory.EnumerateFiles(parent.FullName, "upscaled_*.chunk"))
+        {
+            try
+            {
+                if (File.GetLastWriteTimeUtc(file) >= cutoffUtc)
+                {
+                    continue;
+                }
+
+                File.Delete(file);
+                removed++;
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+
         return removed;
     }
 
     private async Task EnsureIdentityAsync(int taskId, string? contentId, CancellationToken ct)
     {
+        string? stored = ReadIdentity(taskId);
+
         if (string.IsNullOrEmpty(contentId))
         {
+            // A client that doesn't declare an identity (older client) must never build on chunks
+            // that belong to an identified upload. Wipe them on the first write; subsequent writes
+            // then see no identity file and proceed normally.
+            if (stored != null)
+            {
+                TryDeleteDirectory(taskId);
+                Directory.CreateDirectory(GetTaskDirectory(taskId));
+            }
+
             return;
         }
 
-        string? stored = ReadIdentity(taskId);
         if (string.Equals(stored, contentId, StringComparison.Ordinal))
         {
             return;

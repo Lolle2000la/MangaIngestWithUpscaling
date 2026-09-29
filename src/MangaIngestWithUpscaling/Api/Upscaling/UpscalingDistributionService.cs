@@ -784,15 +784,33 @@ public partial class UpscalingDistributionService(
                 return;
             }
 
-            await using (FileStream fileStream = File.Create(tempFile))
+            try
             {
-                await uploadStore.AssembleAsync(
-                    taskId,
-                    totalChunks,
-                    fileStream,
-                    hasher,
-                    context.CancellationToken
+                await using (FileStream fileStream = File.Create(tempFile))
+                {
+                    await uploadStore.AssembleAsync(
+                        taskId,
+                        totalChunks,
+                        fileStream,
+                        hasher,
+                        context.CancellationToken
+                    );
+                }
+            }
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+            {
+                // A chunk disappeared between the completeness check and assembly (a concurrent
+                // identity reset, ReportTaskFailed, or sweep). That is a resumable condition, not a
+                // permanent failure: keep the chunks and ask the client to retry.
+                await responseStream.WriteAsync(
+                    new UploadUpscaledCbzResponse
+                    {
+                        Success = false,
+                        Message = "Uploaded chunks changed during assembly; please retry.",
+                        TaskId = taskId,
+                    }
                 );
+                return;
             }
 
             // Guard against stale chunks from a different output being mixed with this one (the
@@ -838,11 +856,13 @@ public partial class UpscalingDistributionService(
             bool alreadyCompleted = false;
             try
             {
+                // Use a non-cancelled token: the trigger is often a cancelled call, and the guard
+                // is useless if the query is cancelled too.
                 alreadyCompleted = await dbContext
                     .PersistedTasks.AsNoTracking()
                     .AnyAsync(
                         t => t.Id == taskId && t.Status == PersistedTaskStatus.Completed,
-                        context.CancellationToken
+                        CancellationToken.None
                     );
             }
             catch (Exception)
