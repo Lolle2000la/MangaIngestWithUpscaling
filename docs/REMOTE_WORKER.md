@@ -78,6 +78,10 @@ process. If the server restarts, its temp directory is cleared, or the worker re
 different replica behind a load balancer, the server reports no progress and the worker safely
 starts that upload over from the beginning rather than corrupting it.
 
+Because the upload request-body size limit is lifted, the server bounds each task's upload itself:
+at most `Uploads:MaxTotalChunks` chunks (default 16384, about 16 GiB at the worker's 1 MiB chunk
+size), each at most `Uploads:MaxChunkBytes` bytes (default 16 MiB).
+
 ## Running the Remote Worker
 
 To run the remote worker:
