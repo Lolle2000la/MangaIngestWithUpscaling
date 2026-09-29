@@ -54,6 +54,31 @@ message CbzFileChunk {
   int32 task_id = 1; // Task ID of the upscaling task
   int32 chunk_number = 2; // Chunk number of the Cbz file
   bytes chunk = 3; // Chunk of the Cbz file
+  // Total number of chunks the file is split into. Sent with every chunk so the server can
+  // tell when an upload is complete and assemble it. 0 means unknown (older clients).
+  int32 total_chunks = 4;
+  // Opaque identity of the file being uploaded, e.g. "sha256:<hex>". The server uses it to decide
+  // whether chunks from a previous attempt belong to the same bytes. Empty from older clients.
+  string content_id = 5;
+}
+
+enum UploadState {
+  UPLOAD_STATE_PENDING = 0; // More chunks are required to complete the upload
+  UPLOAD_STATE_COMPLETE = 1; // The task already finished, nothing left to upload
+  UPLOAD_STATE_REJECTED = 2; // The task is missing or in a terminal state; do not upload
+}
+
+message UploadProgressRequest {
+  int32 task_id = 1;
+  // Opaque identity of the file about to be uploaded. The server discards stored chunks that were
+  // written for a different identity. Empty from older clients, which disables resume.
+  string content_id = 2;
+}
+
+message UploadProgressResponse {
+  UploadState state = 1;
+  // Number of contiguous chunks (0..uploaded_chunks-1) the server already stored for this task.
+  int32 uploaded_chunks = 2;
 }
 
 message KeepAliveRequest {
@@ -75,6 +100,9 @@ message UploadUpscaledCbzResponse {
   bool success = 1; // True if the upload was successful
   string message = 2; // Message from the server
   int32 taskId = 3; // Task ID of the upscaling task
+  // True when a failed response is permanent (e.g. the task or chapter no longer exists) and
+  // retrying cannot help. Defaults to false so older servers keep the retrying behavior.
+  bool terminal = 4;
 }
 
 message CheckConnectionResponse {
@@ -97,6 +125,9 @@ service UpscalingService {
   rpc GetCbzFile(CbzToUpscaleRequest) returns (stream CbzFileChunk);
   rpc RequestCbzFileChunk(CbzFileChunkRequest) returns (CbzFileChunk);
   rpc UploadUpscaledCbzFile(stream CbzFileChunk) returns (stream UploadUpscaledCbzResponse);
+  // Report how many contiguous chunks of an interrupted upload are already stored, so the
+  // worker can resume instead of re-sending the whole file.
+  rpc GetUploadProgress(UploadProgressRequest) returns (UploadProgressResponse);
   rpc KeepAlive(KeepAliveRequest) returns (KeepAliveResponse);
   rpc CheckConnection(google.protobuf.Empty) returns (CheckConnectionResponse);
   rpc ReportTaskFailed(ReportTaskFailedRequest) returns (google.protobuf.Empty);

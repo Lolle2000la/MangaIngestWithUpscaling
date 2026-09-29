@@ -18,5 +18,8 @@ public static class ConfigRegistration
         builder.Services.Configure<IntegrityCheckerConfig>(
             builder.Configuration.GetSection(IntegrityCheckerConfig.Position)
         );
+        builder.Services.Configure<UploadsConfig>(
+            builder.Configuration.GetSection(UploadsConfig.Position)
+        );
     }
 }

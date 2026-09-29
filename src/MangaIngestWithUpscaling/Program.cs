@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Localization;
@@ -126,7 +127,16 @@ builder.Services.AddControllers();
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddMemoryCache();
 
-builder.Services.AddGrpc();
+// Upload chunks are individual gRPC messages, so the receive limit must exceed Uploads:MaxChunkBytes
+// (plus protobuf overhead) for that configured guard to be the effective limit instead of gRPC's
+// 4 MiB default, which would otherwise reject any chunk larger than ~4 MiB.
+int maxUploadChunkBytes = builder.Configuration.GetValue(
+    $"{UploadsConfig.Position}:MaxChunkBytes",
+    new UploadsConfig().MaxChunkBytes
+);
+builder.Services.AddGrpc(options =>
+    options.MaxReceiveMessageSize = maxUploadChunkBytes + (1024 * 1024)
+);
 builder.Services.AddHealthChecks();
 
 builder.Services.AddMudServices();
@@ -351,6 +361,33 @@ if (rxApp.TaskpoolScheduler != null)
 var app = builder.Build();
 
 app.UseForwardedHeaders();
+
+// Upscaled cbz files are streamed as the request body during gRPC uploads and routinely exceed
+// Kestrel's ~28.6 MB default. Lift the cap only for gRPC requests so the limit (and its slowloris
+// protection) still applies everywhere else. Authentication and authorization run before the gRPC
+// handler reads the body, so an unauthorized request never streams the body itself, and
+// MinRequestBodyDataRate still bounds slow senders.
+app.Use(
+    async (context, next) =>
+    {
+        if (
+            context.Request.ContentType?.StartsWith(
+                "application/grpc",
+                StringComparison.OrdinalIgnoreCase
+            ) == true
+        )
+        {
+            IHttpMaxRequestBodySizeFeature? sizeFeature =
+                context.Features.Get<IHttpMaxRequestBodySizeFeature>();
+            if (sizeFeature is { IsReadOnly: false })
+            {
+                sizeFeature.MaxRequestBodySize = null;
+            }
+        }
+
+        await next();
+    }
+);
 
 // Warn users who are running a deprecated image variant
 if (app.Configuration.GetValue<bool>("DeprecatedImageVariant"))
