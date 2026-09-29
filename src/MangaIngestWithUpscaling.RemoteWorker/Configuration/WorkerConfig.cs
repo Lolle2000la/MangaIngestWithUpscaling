@@ -21,7 +21,9 @@ public class WorkerConfig
     /// <summary>
     /// How long to keep retrying a failing upload before giving up and reporting the task failed.
     /// This bounds an outage rather than a fixed attempt count: a link that is down for longer than
-    /// this still forces a re-download and re-upscale, so it defaults generously.
+    /// this still forces a re-download and re-upscale, so it defaults generously. The clock starts
+    /// at the first failure, so a long but healthy initial attempt does not consume the budget; an
+    /// attempt's deadline (<see cref="UploadTimeoutFloor"/> / throughput) is separate.
     /// </summary>
     public TimeSpan UploadRetryMaxElapsed { get; set; } = TimeSpan.FromMinutes(10);
 

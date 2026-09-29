@@ -949,7 +949,7 @@ public class RemoteTaskProcessor(
 
     /// <summary>
     /// Uploads an upscaled cbz, resuming from the chunks the server already stored after a
-    /// transient failure. The per-attempt gRPC deadline is sized from the remaining bytes so a
+    /// transient failure. The per-attempt gRPC deadline is sized from the whole file so a
     /// slow-but-healthy link is not cut off by an arbitrary fixed timeout.
     /// </summary>
     private async Task UploadFile(
@@ -975,7 +975,10 @@ public class RemoteTaskProcessor(
             _workerConfig
         );
 
-        long retryStartTimestamp = Stopwatch.GetTimestamp();
+        // The retry budget measures the outage, not total elapsed time: start the clock on the first
+        // failure so a long but healthy first attempt (normal on a slow link, and with a deadline
+        // sized from the whole file) cannot consume the entire budget and suppress all retries.
+        long? retryStartTimestamp = null;
         int attempt = 0;
         Exception? lastError = null;
         while (attempt < _workerConfig.UploadMaxAttempts)
@@ -1033,7 +1036,8 @@ public class RemoteTaskProcessor(
             catch (Exception ex) when (UploadRetryPolicy.IsRetryable(ex))
             {
                 lastError = ex;
-                TimeSpan elapsed = Stopwatch.GetElapsedTime(retryStartTimestamp);
+                retryStartTimestamp ??= Stopwatch.GetTimestamp();
+                TimeSpan elapsed = Stopwatch.GetElapsedTime(retryStartTimestamp.Value);
                 if (!UploadRetryPolicy.CanRetry(attempt, elapsed, _workerConfig))
                 {
                     break;

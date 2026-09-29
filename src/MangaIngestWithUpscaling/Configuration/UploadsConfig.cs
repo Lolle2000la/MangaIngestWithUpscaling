@@ -30,4 +30,11 @@ public class UploadsConfig
     ///     worker's 1 MiB chunk so other clients have headroom.
     /// </summary>
     public int MaxChunkBytes { get; set; } = 16 * 1024 * 1024;
+
+    /// <summary>
+    ///     Upper bound on the total bytes of chunks stored for a single task. This is the effective
+    ///     per-task disk bound, independent of the per-chunk limit. Defaults to 16 GiB, matching
+    ///     <see cref="MaxTotalChunks"/> at the worker's 1 MiB chunk size.
+    /// </summary>
+    public long MaxTaskBytes { get; set; } = 16L * 1024 * 1024 * 1024;
 }

@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Google.Protobuf;
@@ -651,11 +652,12 @@ public partial class UpscalingDistributionService(
         // assembled once its contiguous run is complete.
         var taskUploads = new Dictionary<int, TaskUploadState>();
 
-        // The gRPC request-body cap is lifted for uploads, so the declared chunk count and chunk
-        // size are the only bound on how much disk an authenticated worker can consume before the
-        // periodic sweep. Reject anything outside a sane range.
+        // The gRPC request-body cap is lifted for uploads, so these bounds (plus accepting chunks
+        // only for real tasks) are what keep an authenticated worker from filling the disk before
+        // the periodic sweep. Reject anything outside a sane range.
         int maxTotalChunks = uploadsConfig.Value.MaxTotalChunks;
         int maxChunkBytes = uploadsConfig.Value.MaxChunkBytes;
+        long maxTaskBytes = uploadsConfig.Value.MaxTaskBytes;
 
         await foreach (
             CbzFileChunk request in requestStream.ReadAllAsync(context.CancellationToken)
@@ -687,12 +689,52 @@ public partial class UpscalingDistributionService(
 
             if (!taskUploads.TryGetValue(request.TaskId, out TaskUploadState? state))
             {
-                state = new TaskUploadState();
+                state = new TaskUploadState
+                {
+                    Accepted = await IsAcceptingTaskAsync(
+                        request.TaskId,
+                        context.CancellationToken
+                    ),
+                };
                 taskUploads[request.TaskId] = state;
+
+                if (!state.Accepted)
+                {
+                    await responseStream.WriteAsync(
+                        new UploadUpscaledCbzResponse
+                        {
+                            Success = false,
+                            Message = "Task is unknown or in a terminal state.",
+                            TaskId = request.TaskId,
+                            Terminal = true,
+                        }
+                    );
+                }
+            }
+
+            if (!state.Accepted)
+            {
+                continue;
             }
 
             // The identity is the same for every chunk; the first non-empty one wins.
             state.ContentId ??= string.IsNullOrEmpty(request.ContentId) ? null : request.ContentId;
+
+            // Track the size stored for each chunk number so a re-sent chunk doesn't double-count,
+            // and reject an upload that would push a single task past its disk bound.
+            long previousSize = state.ChunkSizes.TryGetValue(request.ChunkNumber, out int size)
+                ? size
+                : 0;
+            long projectedBytes = state.StoredBytes - previousSize + request.Chunk.Length;
+            if (projectedBytes > maxTaskBytes)
+            {
+                throw new RpcException(
+                    new Status(
+                        StatusCode.InvalidArgument,
+                        $"Task {request.TaskId} would exceed the {maxTaskBytes} byte upload limit."
+                    )
+                );
+            }
 
             await uploadStore.WriteChunkAsync(
                 request.TaskId,
@@ -702,16 +744,26 @@ public partial class UpscalingDistributionService(
                 context.CancellationToken
             );
 
+            state.ChunkSizes[request.ChunkNumber] = request.Chunk.Length;
+            state.StoredBytes = projectedBytes;
             state.HighestChunkNumber = Math.Max(state.HighestChunkNumber, request.ChunkNumber);
             state.TotalChunks = Math.Max(state.TotalChunks, request.TotalChunks);
         }
 
         foreach (var (taskId, state) in taskUploads)
         {
+            if (!state.Accepted)
+            {
+                continue;
+            }
+
             // Older clients don't report the total, so infer it from the highest chunk received.
             int totalChunks =
                 state.TotalChunks > 0 ? state.TotalChunks : state.HighestChunkNumber + 1;
-            int receivedChunks = uploadStore.GetContiguousChunkCount(taskId, state.ContentId);
+            int receivedChunks = await uploadStore.GetContiguousChunkCountAsync(
+                taskId,
+                state.ContentId
+            );
 
             if (receivedChunks < totalChunks)
             {
@@ -759,14 +811,17 @@ public partial class UpscalingDistributionService(
         if (task.Status == PersistedTaskStatus.Completed)
         {
             // The upload already committed; its chunks are no longer useful.
-            uploadStore.Delete(request.TaskId);
+            await uploadStore.DeleteAsync(request.TaskId);
             return new UploadProgressResponse { State = UploadState.Complete };
         }
 
         return new UploadProgressResponse
         {
             State = UploadState.Pending,
-            UploadedChunks = uploadStore.GetContiguousChunkCount(request.TaskId, request.ContentId),
+            UploadedChunks = await uploadStore.GetContiguousChunkCountAsync(
+                request.TaskId,
+                request.ContentId
+            ),
         };
     }
 
@@ -805,7 +860,7 @@ public partial class UpscalingDistributionService(
 
             if (currentStatus == PersistedTaskStatus.Completed)
             {
-                uploadStore.Delete(taskId);
+                await uploadStore.DeleteAsync(taskId);
                 await responseStream.WriteAsync(
                     new UploadUpscaledCbzResponse
                     {
@@ -858,7 +913,7 @@ public partial class UpscalingDistributionService(
                 )
             )
             {
-                uploadStore.Delete(taskId);
+                await uploadStore.DeleteAsync(taskId);
                 await responseStream.WriteAsync(
                     new UploadUpscaledCbzResponse
                     {
@@ -872,7 +927,7 @@ public partial class UpscalingDistributionService(
             }
 
             await ProcessUploadedCbzAsync(taskId, tempFile, responseStream, context);
-            uploadStore.Delete(taskId);
+            await uploadStore.DeleteAsync(taskId);
         }
         catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
         {
@@ -880,9 +935,30 @@ public partial class UpscalingDistributionService(
             // the task processing so the worker can resume instead of re-uploading everything.
             throw;
         }
+        catch (Exception ex) when (IsTransientProcessingFailure(ex))
+        {
+            // The chunks are already on disk and the failure is plausibly transient (a disk or
+            // database blip during assembly/move/save), so keep them and ask the worker to retry
+            // rather than forcing a full re-upload. The worker's retry budget bounds this, and if it
+            // gives up it reports the task failed, which clears the chunks. The task intentionally
+            // stays processing so GetUploadProgress keeps accepting the resume.
+            _logger.LogWarning(
+                ex,
+                "Transient failure while processing the upload for task {TaskId}; keeping chunks for a retry.",
+                taskId
+            );
+            await responseStream.WriteAsync(
+                new UploadUpscaledCbzResponse
+                {
+                    Success = false,
+                    Message = ex.Message,
+                    TaskId = taskId,
+                }
+            );
+        }
         catch (Exception ex)
         {
-            uploadStore.Delete(taskId);
+            await uploadStore.DeleteAsync(taskId);
 
             // The task may have committed before a late response-write failure. A completed task
             // must not be reported (or logged) as failed.
@@ -1025,7 +1101,7 @@ public partial class UpscalingDistributionService(
             );
             _ = chapterChangedNotifier.Notify(chapter, true);
         }
-        else if (task.Data is RepairUpscaleTask repairTask)
+        else if (task.Data is RepairUpscaleTask)
         {
             // For repair tasks, save the upscaled result to the designated repair path
             DistributedUpscaleTaskProcessor.RemoteRepairState? repairState =
@@ -1146,7 +1222,7 @@ public partial class UpscalingDistributionService(
         // Mark the task failed first. If that throws, the stored chunks survive to be resumed or
         // swept; deleting them first would lose the resumable state while leaving the task as it was.
         await taskProcessor.TaskFailed(request.TaskId, request.ErrorMessage);
-        uploadStore.Delete(request.TaskId);
+        await uploadStore.DeleteAsync(request.TaskId);
         return new Empty();
     }
 
@@ -1157,6 +1233,14 @@ public partial class UpscalingDistributionService(
         // processing gate; revisit this if that serialization ever goes away.
         return Path.Combine(tempDir, $"upscaled_{taskId}.cbz");
     }
+
+    /// <summary>
+    /// Whether a processing failure is plausibly transient, so the stored chunks should be kept and
+    /// the worker allowed to resume: disk/transport I/O and database failures, as opposed to logic
+    /// errors that would deterministically recur and warrant a terminal failure.
+    /// </summary>
+    private static bool IsTransientProcessingFailure(Exception exception) =>
+        exception is IOException or DbException or DbUpdateException;
 
     private static void SafeDeleteFile(string? path)
     {
@@ -1170,10 +1254,32 @@ public partial class UpscalingDistributionService(
         catch { }
     }
 
+    /// <summary>
+    /// Whether the server is willing to store chunks for a task. Mirrors
+    /// <see cref="GetUploadProgress"/>'s rejection rule (unknown, cancelled or failed tasks);
+    /// completed tasks are accepted so the assembly path can resolve them as a no-op. Without this
+    /// a client could create unbounded <c>task_N</c> directories for arbitrary ids.
+    /// </summary>
+    private async Task<bool> IsAcceptingTaskAsync(int taskId, CancellationToken cancellationToken)
+    {
+        PersistedTaskStatus? status = await dbContext
+            .PersistedTasks.AsNoTracking()
+            .Where(t => t.Id == taskId)
+            .Select(t => (PersistedTaskStatus?)t.Status)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return status.HasValue
+            && status.Value != PersistedTaskStatus.Canceled
+            && status.Value != PersistedTaskStatus.Failed;
+    }
+
     private sealed class TaskUploadState
     {
         public int HighestChunkNumber { get; set; } = -1;
         public int TotalChunks { get; set; }
         public string? ContentId { get; set; }
+        public bool Accepted { get; set; } = true;
+        public Dictionary<int, int> ChunkSizes { get; } = new();
+        public long StoredBytes { get; set; }
     }
 }

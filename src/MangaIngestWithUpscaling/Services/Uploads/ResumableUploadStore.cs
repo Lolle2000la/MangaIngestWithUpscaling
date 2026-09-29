@@ -85,10 +85,10 @@ public class ResumableUploadStore
     /// write replaces them. Keeping this path read-only means <c>GetUploadProgress</c> cannot wipe
     /// another in-flight upload.
     /// </summary>
-    public int GetContiguousChunkCount(int taskId, string? contentId)
+    public async Task<int> GetContiguousChunkCountAsync(int taskId, string? contentId)
     {
         SemaphoreSlim gate = GetTaskLock(taskId);
-        gate.Wait();
+        await gate.WaitAsync();
         try
         {
             string? stored = ReadIdentity(taskId);
@@ -151,10 +151,10 @@ public class ResumableUploadStore
         }
     }
 
-    public void Delete(int taskId)
+    public async Task DeleteAsync(int taskId)
     {
         SemaphoreSlim gate = GetTaskLock(taskId);
-        gate.Wait();
+        await gate.WaitAsync();
         try
         {
             TryDeleteDirectory(taskId);

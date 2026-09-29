@@ -55,7 +55,7 @@ worker's `WorkerConfig` section (or via `Ingest_WorkerConfig__…` environment v
 | --- | --- | --- |
 | `UploadMaxAttempts` | `10` | Hard cap on attempts before the task is reported as failed. |
 | `UploadRetryBaseDelay` | `00:00:10` | Delay before the first retry; subsequent retries back off exponentially (capped at 5 minutes). |
-| `UploadRetryMaxElapsed` | `00:10:00` | How long to keep retrying a failing upload before giving up. Bound the outages you want to survive here. |
+| `UploadRetryMaxElapsed` | `00:10:00` | How long to keep retrying a failing upload before giving up, measured from the first failure (a long but healthy initial attempt does not count against it). Bound the outages you want to survive here. |
 | `UploadTimeoutFloor` | `00:02:00` | Minimum per-attempt deadline. |
 | `UploadMinThroughputBytesPerSecond` | `131072` | Assumed worst-case speed used to size the per-attempt deadline. |
 
@@ -79,8 +79,11 @@ different replica behind a load balancer, the server reports no progress and the
 starts that upload over from the beginning rather than corrupting it.
 
 Because the upload request-body size limit is lifted, the server bounds each task's upload itself:
-at most `Uploads:MaxTotalChunks` chunks (default 16384, about 16 GiB at the worker's 1 MiB chunk
-size), each at most `Uploads:MaxChunkBytes` bytes (default 16 MiB).
+chunks are accepted only for a task that exists and is not cancelled or failed, at most
+`Uploads:MaxTotalChunks` chunks per task (default 16384), each at most `Uploads:MaxChunkBytes` bytes
+(default 16 MiB). The effective per-task disk bound is `Uploads:MaxTaskBytes` (default 16 GiB),
+which is what prevents a client using larger chunks from occupying up to
+`MaxTotalChunks × MaxChunkBytes` (about 256 GiB).
 
 ## Running the Remote Worker
 

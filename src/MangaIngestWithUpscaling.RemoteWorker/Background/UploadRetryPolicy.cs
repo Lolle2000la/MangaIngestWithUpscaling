@@ -40,9 +40,10 @@ internal static class UploadRetryPolicy
     }
 
     /// <summary>
-    /// Whether another attempt is allowed, bounded both by the attempt cap and by the total elapsed
-    /// retry budget. The elapsed bound is what makes the worker survive an outage of a given
-    /// duration rather than a given number of attempts.
+    /// Whether another attempt is allowed, bounded both by the attempt cap and by the elapsed retry
+    /// budget. The elapsed bound is what makes the worker survive an outage of a given duration
+    /// rather than a given number of attempts. Callers measure <paramref name="elapsed"/> from the
+    /// first failure, so healthy transfer time before it does not count against the budget.
     /// </summary>
     public static bool CanRetry(int attempt, TimeSpan elapsed, WorkerConfig config) =>
         attempt < config.UploadMaxAttempts && elapsed < config.UploadRetryMaxElapsed;

@@ -54,7 +54,7 @@ public class ResumableUploadStoreTests : IDisposable
         await _store.WriteChunkAsync(1, 1, Bytes("b"), Identity, CancellationToken.None);
         await _store.WriteChunkAsync(1, 3, Bytes("d"), Identity, CancellationToken.None);
 
-        Assert.Equal(2, _store.GetContiguousChunkCount(1, Identity));
+        Assert.Equal(2, await _store.GetContiguousChunkCountAsync(1, Identity));
     }
 
     [Fact]
@@ -65,15 +65,15 @@ public class ResumableUploadStoreTests : IDisposable
         await _store.WriteChunkAsync(12, 0, Bytes("x"), Identity, CancellationToken.None);
         await _store.WriteChunkAsync(12, 1, Bytes("y"), Identity, CancellationToken.None);
 
-        Assert.Equal(1, _store.GetContiguousChunkCount(1, Identity));
-        Assert.Equal(2, _store.GetContiguousChunkCount(12, Identity));
+        Assert.Equal(1, await _store.GetContiguousChunkCountAsync(1, Identity));
+        Assert.Equal(2, await _store.GetContiguousChunkCountAsync(12, Identity));
     }
 
     [Fact]
     [Trait("Category", "Unit")]
-    public void GetContiguousChunkCount_NoChunks_ReturnsZero()
+    public async Task GetContiguousChunkCount_NoChunks_ReturnsZero()
     {
-        Assert.Equal(0, _store.GetContiguousChunkCount(42, Identity));
+        Assert.Equal(0, await _store.GetContiguousChunkCountAsync(42, Identity));
     }
 
     [Fact]
@@ -83,7 +83,7 @@ public class ResumableUploadStoreTests : IDisposable
         await _store.WriteChunkAsync(1, 0, Bytes("old"), Identity, CancellationToken.None);
         await _store.WriteChunkAsync(1, 0, Bytes("new"), Identity, CancellationToken.None);
 
-        Assert.Equal(1, _store.GetContiguousChunkCount(1, Identity));
+        Assert.Equal(1, await _store.GetContiguousChunkCountAsync(1, Identity));
 
         await using MemoryStream assembled = new();
         await _store.AssembleAsync(1, 1, assembled, null, CancellationToken.None);
@@ -123,9 +123,9 @@ public class ResumableUploadStoreTests : IDisposable
         await _store.WriteChunkAsync(9, 0, Bytes("a"), Identity, CancellationToken.None);
         await _store.WriteChunkAsync(9, 1, Bytes("b"), Identity, CancellationToken.None);
 
-        _store.Delete(9);
+        await _store.DeleteAsync(9);
 
-        Assert.Equal(0, _store.GetContiguousChunkCount(9, Identity));
+        Assert.Equal(0, await _store.GetContiguousChunkCountAsync(9, Identity));
     }
 
     [Fact]
@@ -135,11 +135,11 @@ public class ResumableUploadStoreTests : IDisposable
         await _store.WriteChunkAsync(5, 0, Bytes("old-a"), Identity, CancellationToken.None);
         await _store.WriteChunkAsync(5, 1, Bytes("old-b"), Identity, CancellationToken.None);
 
-        int count = _store.GetContiguousChunkCount(5, OtherIdentity);
+        int count = await _store.GetContiguousChunkCountAsync(5, OtherIdentity);
 
         // The read path reports nothing to resume but must not destroy another upload's state.
         Assert.Equal(0, count);
-        Assert.Equal(2, _store.GetContiguousChunkCount(5, Identity));
+        Assert.Equal(2, await _store.GetContiguousChunkCountAsync(5, Identity));
     }
 
     [Fact]
@@ -152,7 +152,7 @@ public class ResumableUploadStoreTests : IDisposable
         // A new output for the same task writes chunk 0 under a new identity.
         await _store.WriteChunkAsync(6, 0, Bytes("new-a"), OtherIdentity, CancellationToken.None);
 
-        Assert.Equal(1, _store.GetContiguousChunkCount(6, OtherIdentity));
+        Assert.Equal(1, await _store.GetContiguousChunkCountAsync(6, OtherIdentity));
 
         string actual = await AssembleAndHashAsync(_store, 6, 1);
         Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(Bytes("new-a"))), actual);
@@ -165,7 +165,7 @@ public class ResumableUploadStoreTests : IDisposable
         await _store.WriteChunkAsync(8, 0, Bytes("a"), null, CancellationToken.None);
         await _store.WriteChunkAsync(8, 1, Bytes("b"), null, CancellationToken.None);
 
-        Assert.Equal(2, _store.GetContiguousChunkCount(8, null));
+        Assert.Equal(2, await _store.GetContiguousChunkCountAsync(8, null));
     }
 
     [Fact]
@@ -174,9 +174,9 @@ public class ResumableUploadStoreTests : IDisposable
     {
         await _store.WriteChunkAsync(11, 0, Bytes("a"), Identity, CancellationToken.None);
 
-        Assert.Equal(0, _store.GetContiguousChunkCount(11, null));
+        Assert.Equal(0, await _store.GetContiguousChunkCountAsync(11, null));
         // The identified upload's state is untouched by the read.
-        Assert.Equal(1, _store.GetContiguousChunkCount(11, Identity));
+        Assert.Equal(1, await _store.GetContiguousChunkCountAsync(11, Identity));
     }
 
     [Fact]
@@ -189,7 +189,7 @@ public class ResumableUploadStoreTests : IDisposable
         // A client that declares no identity must not build on the identified chunks.
         await _store.WriteChunkAsync(4, 0, Bytes("legacy"), null, CancellationToken.None);
 
-        Assert.Equal(1, _store.GetContiguousChunkCount(4, null));
+        Assert.Equal(1, await _store.GetContiguousChunkCountAsync(4, null));
         Assert.Equal(
             Convert.ToHexStringLower(SHA256.HashData(Bytes("legacy"))),
             await AssembleAndHashAsync(_store, 4, 1)
@@ -211,8 +211,8 @@ public class ResumableUploadStoreTests : IDisposable
         int removed = _store.SweepStaleUploads(TimeSpan.FromHours(24));
 
         Assert.Equal(1, removed);
-        Assert.Equal(0, _store.GetContiguousChunkCount(1, Identity));
-        Assert.Equal(1, _store.GetContiguousChunkCount(2, Identity));
+        Assert.Equal(0, await _store.GetContiguousChunkCountAsync(1, Identity));
+        Assert.Equal(1, await _store.GetContiguousChunkCountAsync(2, Identity));
     }
 
     [Fact]
@@ -244,7 +244,7 @@ public class ResumableUploadStoreTests : IDisposable
 
         await Task.WhenAll(writers);
 
-        Assert.Equal(1, _store.GetContiguousChunkCount(3, Identity));
+        Assert.Equal(1, await _store.GetContiguousChunkCountAsync(3, Identity));
 
         string actual = await AssembleAndHashAsync(_store, 3, 1);
         Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(content)), actual);
