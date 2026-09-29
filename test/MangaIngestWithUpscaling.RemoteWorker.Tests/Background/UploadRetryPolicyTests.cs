@@ -66,7 +66,35 @@ public class UploadRetryPolicyTests
     {
         TimeSpan delay = UploadRetryPolicy.GetRetryDelay(20, Config());
 
-        Assert.Equal(TimeSpan.FromMinutes(2), delay);
+        Assert.Equal(TimeSpan.FromMinutes(5), delay);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void CanRetry_TrueWhileBothBudgetsRemain()
+    {
+        WorkerConfig config = Config();
+
+        Assert.True(UploadRetryPolicy.CanRetry(attempt: 1, TimeSpan.Zero, config));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void CanRetry_FalseWhenAttemptsExhausted()
+    {
+        WorkerConfig config = Config();
+
+        Assert.False(UploadRetryPolicy.CanRetry(config.UploadMaxAttempts, TimeSpan.Zero, config));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void CanRetry_FalseWhenElapsedBudgetExhausted()
+    {
+        WorkerConfig config = Config();
+
+        // Few attempts used, but the outage has lasted longer than the configured budget.
+        Assert.False(UploadRetryPolicy.CanRetry(1, config.UploadRetryMaxElapsed, config));
     }
 
     [Theory]

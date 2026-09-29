@@ -968,6 +968,7 @@ public class RemoteTaskProcessor(
         // (e.g. the task was re-dispatched after a profile or model change) are never mixed in.
         string contentId = await ComputeContentIdentityAsync(upscaledFile, stoppingToken);
 
+        long retryStartTimestamp = Stopwatch.GetTimestamp();
         int attempt = 0;
         Exception? lastError = null;
         while (attempt < _workerConfig.UploadMaxAttempts)
@@ -1026,7 +1027,8 @@ public class RemoteTaskProcessor(
             catch (Exception ex) when (UploadRetryPolicy.IsRetryable(ex))
             {
                 lastError = ex;
-                if (attempt >= _workerConfig.UploadMaxAttempts)
+                TimeSpan elapsed = Stopwatch.GetElapsedTime(retryStartTimestamp);
+                if (!UploadRetryPolicy.CanRetry(attempt, elapsed, _workerConfig))
                 {
                     break;
                 }
@@ -1034,10 +1036,11 @@ public class RemoteTaskProcessor(
                 TimeSpan delay = UploadRetryPolicy.GetRetryDelay(attempt, _workerConfig);
                 logger.LogWarning(
                     ex,
-                    "Upload attempt {attempt}/{max} for task {taskId} failed; retrying in {delay}s.",
+                    "Upload attempt {attempt}/{max} for task {taskId} failed after {elapsed}s; retrying in {delay}s.",
                     attempt,
                     _workerConfig.UploadMaxAttempts,
                     taskId,
+                    elapsed.TotalSeconds,
                     delay.TotalSeconds
                 );
                 await Task.Delay(delay, stoppingToken);
@@ -1104,7 +1107,7 @@ public class RemoteTaskProcessor(
         await using FileStream fileStream = File.OpenRead(upscaledFile);
         fileStream.Seek((long)startChunk * UploadChunkSizeBytes, SeekOrigin.Begin);
 
-        AsyncDuplexStreamingCall<CbzFileChunk, UploadUpscaledCbzResponse> uploadStream =
+        using AsyncDuplexStreamingCall<CbzFileChunk, UploadUpscaledCbzResponse> uploadStream =
             client.UploadUpscaledCbzFile(
                 deadline: DateTime.UtcNow.Add(
                     UploadRetryPolicy.ComputeAttemptTimeout(remainingBytes, _workerConfig)

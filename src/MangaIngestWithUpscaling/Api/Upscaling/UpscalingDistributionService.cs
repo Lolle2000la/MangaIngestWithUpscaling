@@ -725,6 +725,8 @@ public partial class UpscalingDistributionService(
 
         if (task.Status == PersistedTaskStatus.Completed)
         {
+            // The upload already committed; its chunks are no longer useful.
+            uploadStore.Delete(request.TaskId);
             return new UploadProgressResponse { State = UploadState.Complete };
         }
 
@@ -829,9 +831,40 @@ public partial class UpscalingDistributionService(
         }
         catch (Exception ex)
         {
+            uploadStore.Delete(taskId);
+
+            // The task may have committed before a late response-write failure. A completed task
+            // must not be reported (or logged) as failed.
+            bool alreadyCompleted = false;
+            try
+            {
+                alreadyCompleted = await dbContext
+                    .PersistedTasks.AsNoTracking()
+                    .AnyAsync(
+                        t => t.Id == taskId && t.Status == PersistedTaskStatus.Completed,
+                        context.CancellationToken
+                    );
+            }
+            catch (Exception)
+            {
+                // If the status cannot be read, fall through and report the failure.
+            }
+
+            if (alreadyCompleted)
+            {
+                await responseStream.WriteAsync(
+                    new UploadUpscaledCbzResponse
+                    {
+                        Success = true,
+                        Message = "Chapter already upscaled",
+                        TaskId = taskId,
+                    }
+                );
+                return;
+            }
+
             // Ensure the task is marked as failed so it doesn't get stuck in Processing. The task is
             // now Failed, so the worker must not keep retrying this upload.
-            uploadStore.Delete(taskId);
             await taskProcessor.TaskFailed(taskId, ex.Message);
 
             await responseStream.WriteAsync(

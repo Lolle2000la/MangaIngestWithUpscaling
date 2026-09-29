@@ -12,7 +12,7 @@ namespace MangaIngestWithUpscaling.RemoteWorker.Background;
 internal static class UploadRetryPolicy
 {
     private static readonly TimeSpan MaxAttemptTimeout = TimeSpan.FromHours(6);
-    private static readonly TimeSpan MaxRetryDelay = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan MaxRetryDelay = TimeSpan.FromMinutes(5);
 
     /// <summary>
     /// Sizes the gRPC deadline for one attempt from the bytes still to send, so a slow but healthy
@@ -35,6 +35,14 @@ internal static class UploadRetryPolicy
         TimeSpan delay = TimeSpan.FromSeconds(seconds);
         return delay < MaxRetryDelay ? delay : MaxRetryDelay;
     }
+
+    /// <summary>
+    /// Whether another attempt is allowed, bounded both by the attempt cap and by the total elapsed
+    /// retry budget. The elapsed bound is what makes the worker survive an outage of a given
+    /// duration rather than a given number of attempts.
+    /// </summary>
+    public static bool CanRetry(int attempt, TimeSpan elapsed, WorkerConfig config) =>
+        attempt < config.UploadMaxAttempts && elapsed < config.UploadRetryMaxElapsed;
 
     /// <summary>
     /// Classifies an attempt failure. A missing local file or an explicit non-retryable rejection

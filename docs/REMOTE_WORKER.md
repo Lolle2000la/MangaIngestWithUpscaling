@@ -51,14 +51,25 @@ worker's `WorkerConfig` section (or via `Ingest_WorkerConfig__…` environment v
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `UploadMaxAttempts` | `5` | Total attempts before the task is reported as failed. |
-| `UploadRetryBaseDelay` | `00:00:05` | Delay before the first retry; subsequent retries back off exponentially (capped at 2 minutes). |
+| `UploadMaxAttempts` | `10` | Hard cap on attempts before the task is reported as failed. |
+| `UploadRetryBaseDelay` | `00:00:10` | Delay before the first retry; subsequent retries back off exponentially (capped at 5 minutes). |
+| `UploadRetryMaxElapsed` | `00:10:00` | How long to keep retrying a failing upload before giving up. Bound the outages you want to survive here. |
 | `UploadTimeoutFloor` | `00:02:00` | Minimum per-attempt deadline. |
 | `UploadMinThroughputBytesPerSecond` | `131072` | Assumed worst-case speed used to size the per-attempt deadline. |
 
+If an outage lasts longer than `UploadRetryMaxElapsed`, the attempts are abandoned and the task has
+to be re-downloaded and re-upscaled, so size that budget for the outages you expect.
+
 When the worker is hosted behind a reverse proxy, make sure the proxy does not cut long-lived gRPC
-streams: for nginx, raise `grpc_read_timeout` and `grpc_send_timeout` (both default to 60 seconds)
-well above the expected upload time.
+streams or reject large bodies: for nginx, raise `grpc_read_timeout` and `grpc_send_timeout` (both
+default to 60 seconds) well above the expected upload time, and raise `client_max_body_size` (it
+defaults to `1m` and will otherwise reject an upscaled cbz).
+
+The server keeps partial uploads for 24 hours by default before a periodic cleanup removes them
+(`Uploads:ChunkRetention` / `Uploads:CleanupInterval`, or the `Ingest_Uploads__…` environment
+variables). A link that cannot sustain Kestrel's minimum request body data rate (240 B/s) will have
+each attempt aborted, but resumption still lets it make progress across attempts as long as the
+retry budget above allows.
 
 ## Running the Remote Worker
 

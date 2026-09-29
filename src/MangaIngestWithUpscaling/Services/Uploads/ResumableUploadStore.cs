@@ -9,8 +9,9 @@ namespace MangaIngestWithUpscaling.Services.Uploads;
 /// ever counted once it is fully on disk.
 /// <para>
 /// Stored chunks are bound to a <c>contentId</c> supplied by the client. When the client presents a
-/// different identity, the previous chunks are discarded: a task can be re-dispatched with the same
-/// id but a new upscaled file, and mixing the two would corrupt the result.
+/// different identity, the old chunks are no longer counted and are replaced on the next write: a
+/// task can be re-dispatched with the same id but a new upscaled file, and mixing the two would
+/// corrupt the result.
 /// </para>
 /// </summary>
 public class ResumableUploadStore
@@ -80,7 +81,9 @@ public class ResumableUploadStore
 
     /// <summary>
     /// Number of chunks present starting at 0 without gaps, for the given content identity. When the
-    /// identity differs from what is stored, the old chunks are discarded and 0 is returned.
+    /// identity differs from what is stored, 0 is reported without touching the files; the next
+    /// write replaces them. Keeping this path read-only means <c>GetUploadProgress</c> cannot wipe
+    /// another in-flight upload.
     /// </summary>
     public int GetContiguousChunkCount(int taskId, string? contentId)
     {
@@ -93,7 +96,6 @@ public class ResumableUploadStore
                 && !string.Equals(ReadIdentity(taskId), contentId, StringComparison.Ordinal)
             )
             {
-                TryDeleteDirectory(taskId);
                 return 0;
             }
 
@@ -118,16 +120,29 @@ public class ResumableUploadStore
         CancellationToken cancellationToken
     )
     {
-        byte[] buffer = new byte[81920];
-        for (int chunkNumber = 0; chunkNumber < totalChunks; chunkNumber++)
+        // Hold the task lock so a concurrent delete (identity reset or ReportTaskFailed) cannot
+        // remove a chunk mid-assembly and turn a resumable condition into a hard failure.
+        SemaphoreSlim gate = GetTaskLock(taskId);
+        await gate.WaitAsync(cancellationToken);
+        try
         {
-            await using FileStream chunkStream = File.OpenRead(GetChunkPath(taskId, chunkNumber));
-            int bytesRead;
-            while ((bytesRead = await chunkStream.ReadAsync(buffer, cancellationToken)) > 0)
+            byte[] buffer = new byte[81920];
+            for (int chunkNumber = 0; chunkNumber < totalChunks; chunkNumber++)
             {
-                hash?.AppendData(buffer, 0, bytesRead);
-                await destination.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+                await using FileStream chunkStream = File.OpenRead(
+                    GetChunkPath(taskId, chunkNumber)
+                );
+                int bytesRead;
+                while ((bytesRead = await chunkStream.ReadAsync(buffer, cancellationToken)) > 0)
+                {
+                    hash?.AppendData(buffer, 0, bytesRead);
+                    await destination.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+                }
             }
+        }
+        finally
+        {
+            gate.Release();
         }
     }
 
@@ -143,6 +158,57 @@ public class ResumableUploadStore
         {
             gate.Release();
         }
+    }
+
+    /// <summary>
+    /// Deletes task directories whose last write is older than <paramref name="maxAge"/>. Best-effort
+    /// and used by the periodic cleanup to bound disk usage from abandoned or cancelled uploads that
+    /// never report a failure.
+    /// </summary>
+    public int SweepStaleUploads(TimeSpan maxAge)
+    {
+        if (!Directory.Exists(_rootDirectory))
+        {
+            return 0;
+        }
+
+        DateTime cutoffUtc = DateTime.UtcNow - maxAge;
+        int removed = 0;
+        foreach (string directory in Directory.EnumerateDirectories(_rootDirectory))
+        {
+            string name = Path.GetFileName(directory);
+            if (
+                !name.StartsWith("task_", StringComparison.Ordinal)
+                || !int.TryParse(name.AsSpan("task_".Length), out int taskId)
+            )
+            {
+                continue;
+            }
+
+            SemaphoreSlim gate = GetTaskLock(taskId);
+            gate.Wait();
+            try
+            {
+                if (
+                    !Directory.Exists(directory)
+                    || Directory.GetLastWriteTimeUtc(directory) >= cutoffUtc
+                )
+                {
+                    continue;
+                }
+
+                Directory.Delete(directory, recursive: true);
+                removed++;
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            finally
+            {
+                gate.Release();
+            }
+        }
+
+        return removed;
     }
 
     private async Task EnsureIdentityAsync(int taskId, string? contentId, CancellationToken ct)

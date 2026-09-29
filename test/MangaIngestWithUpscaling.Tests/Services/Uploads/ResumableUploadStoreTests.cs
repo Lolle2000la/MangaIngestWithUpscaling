@@ -128,16 +128,16 @@ public class ResumableUploadStoreTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task GetContiguousChunkCount_WithDifferentIdentity_DiscardsStoredChunks()
+    public async Task GetContiguousChunkCount_WithDifferentIdentity_ReportsZeroButKeepsFiles()
     {
         await _store.WriteChunkAsync(5, 0, Bytes("old-a"), Identity, CancellationToken.None);
         await _store.WriteChunkAsync(5, 1, Bytes("old-b"), Identity, CancellationToken.None);
 
         int count = _store.GetContiguousChunkCount(5, OtherIdentity);
 
+        // The read path reports nothing to resume but must not destroy another upload's state.
         Assert.Equal(0, count);
-        // The old chunks are gone, so a resume under the old identity also starts from zero.
-        Assert.Equal(0, _store.GetContiguousChunkCount(5, Identity));
+        Assert.Equal(2, _store.GetContiguousChunkCount(5, Identity));
     }
 
     [Fact]
@@ -164,6 +164,25 @@ public class ResumableUploadStoreTests : IDisposable
         await _store.WriteChunkAsync(8, 1, Bytes("b"), null, CancellationToken.None);
 
         Assert.Equal(2, _store.GetContiguousChunkCount(8, null));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task SweepStaleUploads_RemovesOldDirectoriesAndKeepsFreshOnes()
+    {
+        await _store.WriteChunkAsync(1, 0, Bytes("stale"), Identity, CancellationToken.None);
+        await _store.WriteChunkAsync(2, 0, Bytes("fresh"), Identity, CancellationToken.None);
+
+        Directory.SetLastWriteTimeUtc(
+            _store.GetTaskDirectory(1),
+            DateTime.UtcNow - TimeSpan.FromHours(48)
+        );
+
+        int removed = _store.SweepStaleUploads(TimeSpan.FromHours(24));
+
+        Assert.Equal(1, removed);
+        Assert.Equal(0, _store.GetContiguousChunkCount(1, Identity));
+        Assert.Equal(1, _store.GetContiguousChunkCount(2, Identity));
     }
 
     [Fact]

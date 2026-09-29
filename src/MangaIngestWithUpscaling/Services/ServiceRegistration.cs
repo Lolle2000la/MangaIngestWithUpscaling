@@ -38,6 +38,8 @@ public static class ServiceRegistration
         services.AddHostedService(sp => sp.GetRequiredService<TaskRegistry>());
         services.AddSingleton<IPreprocessedInputCache, PreprocessedInputCache>();
         services.AddSingleton(_ => new ResumableUploadStore());
+        services.AddSingleton<ResumableUploadCleanupService>();
+        services.AddHostedService(sp => sp.GetRequiredService<ResumableUploadCleanupService>());
         services.AddScoped<ILibraryRenamingService, LibraryRenamingService>();
         services.AddScoped<IRepairService, RepairService>();
     }
