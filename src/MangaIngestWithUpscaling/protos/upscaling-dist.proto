@@ -94,6 +94,9 @@ message UploadUpscaledCbzResponse {
   bool success = 1; // True if the upload was successful
   string message = 2; // Message from the server
   int32 taskId = 3; // Task ID of the upscaling task
+  // True when a failed response is permanent (e.g. the task or chapter no longer exists) and
+  // retrying cannot help. Defaults to false so older servers keep the retrying behavior.
+  bool terminal = 4;
 }
 
 message CheckConnectionResponse {

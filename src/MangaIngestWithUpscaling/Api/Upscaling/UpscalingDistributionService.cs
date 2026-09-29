@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Text.Json;
 using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
@@ -36,9 +35,14 @@ public partial class UpscalingDistributionService(
         "mangaingestwithupscaling"
     );
 
-    // Serializes assembling and completing a single task so a client retry can't process the same
-    // upload twice.
-    private static readonly ConcurrentDictionary<int, SemaphoreSlim> uploadProcessingGates = new();
+    // Serializes assembling and completing a task so a client retry can't process the same upload
+    // twice. Striped, so the number of gates stays bounded no matter how many tasks a long-running
+    // server processes.
+    private const int UploadProcessingLockCount = 64;
+    private static readonly SemaphoreSlim[] uploadProcessingGates = Enumerable
+        .Range(0, UploadProcessingLockCount)
+        .Select(_ => new SemaphoreSlim(1, 1))
+        .ToArray();
     private readonly ILogger<UpscalingDistributionService> _logger = logger;
 
     public override Task<CheckConnectionResponse> CheckConnection(
@@ -731,7 +735,8 @@ public partial class UpscalingDistributionService(
         ServerCallContext context
     )
     {
-        SemaphoreSlim gate = uploadProcessingGates.GetOrAdd(taskId, _ => new SemaphoreSlim(1, 1));
+        int gateIndex = (int)((uint)taskId % UploadProcessingLockCount);
+        SemaphoreSlim gate = uploadProcessingGates[gateIndex];
         await gate.WaitAsync(context.CancellationToken);
 
         string? tempFile = null;
@@ -770,8 +775,14 @@ public partial class UpscalingDistributionService(
                 );
             }
 
-            uploadStore.Delete(taskId);
             await ProcessUploadedCbzAsync(taskId, tempFile, responseStream, context);
+            uploadStore.Delete(taskId);
+        }
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+        {
+            // The client's connection dropped (deadline or socket). Keep the stored chunks and leave
+            // the task processing so the worker can resume instead of re-uploading everything.
+            throw;
         }
         catch (Exception ex)
         {
@@ -813,6 +824,7 @@ public partial class UpscalingDistributionService(
                     Success = false,
                     Message = "Task not found or cancelled",
                     TaskId = taskId,
+                    Terminal = true,
                 }
             );
             return;
@@ -835,6 +847,7 @@ public partial class UpscalingDistributionService(
                         Success = false,
                         Message = "Chapter not found",
                         TaskId = taskId,
+                        Terminal = true,
                     }
                 );
                 return;
@@ -849,6 +862,7 @@ public partial class UpscalingDistributionService(
                         Success = false,
                         Message = "Suitable location to save the chapter not found.",
                         TaskId = taskId,
+                        Terminal = true,
                     }
                 );
                 return;
@@ -897,6 +911,7 @@ public partial class UpscalingDistributionService(
                         Success = false,
                         Message = "No upscaled missing pages path specified for repair task.",
                         TaskId = taskId,
+                        Terminal = true,
                     }
                 );
                 return;
@@ -948,6 +963,7 @@ public partial class UpscalingDistributionService(
                         Success = false,
                         Message = "Chapter not found",
                         TaskId = taskId,
+                        Terminal = true,
                     }
                 );
                 return;
@@ -984,6 +1000,7 @@ public partial class UpscalingDistributionService(
                     Success = false,
                     Message = "Invalid task type",
                     TaskId = taskId,
+                    Terminal = true,
                 }
             );
             return;

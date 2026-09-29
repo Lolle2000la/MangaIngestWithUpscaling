@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.IO.Compression;
-using System.Net.Sockets;
 using System.Threading.Channels;
 using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
@@ -969,48 +968,37 @@ public class RemoteTaskProcessor(
         {
             attempt++;
 
-            UploadProgressResponse progress;
             try
             {
-                progress = await client.GetUploadProgressAsync(
-                    new UploadProgressRequest { TaskId = taskId },
-                    deadline: DateTime.UtcNow.AddSeconds(30),
-                    cancellationToken: stoppingToken
+                // The progress lookup participates in the retry loop; a transient failure there is
+                // as recoverable as a failed transfer.
+                UploadProgressResponse progress = await GetUploadProgressAsync(
+                    client,
+                    taskId,
+                    stoppingToken
                 );
-            }
-            catch (RpcException ex) when (ex.StatusCode == StatusCode.Unimplemented)
-            {
-                // Older server without resume support: upload the whole file in one attempt.
-                progress = new UploadProgressResponse
+
+                if (progress.State == UploadState.Complete)
                 {
-                    State = UploadState.Pending,
-                    UploadedChunks = 0,
-                };
-            }
+                    logger.LogInformation(
+                        "Upscaled file for task {taskId} was already uploaded; skipping.",
+                        taskId
+                    );
+                    return;
+                }
 
-            if (progress.State == UploadState.Complete)
-            {
-                logger.LogInformation(
-                    "Upscaled file for task {taskId} was already uploaded; skipping.",
-                    taskId
-                );
-                return;
-            }
+                if (progress.State == UploadState.Rejected)
+                {
+                    throw new NonRetryableUploadException(
+                        $"Server rejected the upload for task {taskId}: the task is missing or in a terminal state."
+                    );
+                }
 
-            if (progress.State == UploadState.Rejected)
-            {
-                throw new InvalidOperationException(
-                    $"Server rejected the upload for task {taskId}: the task is missing or in a terminal state."
-                );
-            }
+                // Never skip the last chunk: re-sending it makes the server assemble an upload
+                // whose final chunk was stored but whose completion was never observed.
+                int startChunk = Math.Clamp(progress.UploadedChunks, 0, totalChunks - 1);
+                long remainingBytes = fileLength - (long)startChunk * UploadChunkSizeBytes;
 
-            // Never skip the last chunk: re-sending it makes the server assemble an upload whose
-            // final chunk was stored but whose completion was never observed.
-            int startChunk = Math.Clamp(progress.UploadedChunks, 0, totalChunks - 1);
-            long remainingBytes = fileLength - (long)startChunk * UploadChunkSizeBytes;
-
-            try
-            {
                 await UploadFileOnceAsync(
                     client,
                     logger,
@@ -1027,28 +1015,52 @@ public class RemoteTaskProcessor(
             {
                 throw;
             }
-            catch (Exception ex) when (attempt < _workerConfig.UploadMaxAttempts && IsRetryable(ex))
+            catch (Exception ex) when (UploadRetryPolicy.IsRetryable(ex))
             {
                 lastError = ex;
-                TimeSpan delay = GetRetryDelay(attempt);
+                if (attempt >= _workerConfig.UploadMaxAttempts)
+                {
+                    break;
+                }
+
+                TimeSpan delay = UploadRetryPolicy.GetRetryDelay(attempt, _workerConfig);
                 logger.LogWarning(
                     ex,
-                    "Upload attempt {attempt}/{max} for task {taskId} failed; retrying in {delay}s (server has {uploaded}/{total} chunks).",
+                    "Upload attempt {attempt}/{max} for task {taskId} failed; retrying in {delay}s.",
                     attempt,
                     _workerConfig.UploadMaxAttempts,
                     taskId,
-                    delay.TotalSeconds,
-                    progress.UploadedChunks,
-                    totalChunks
+                    delay.TotalSeconds
                 );
                 await Task.Delay(delay, stoppingToken);
             }
         }
 
         throw new IOException(
-            $"Upload of task {taskId} failed after {_workerConfig.UploadMaxAttempts} attempts.",
+            $"Upload of task {taskId} failed after {attempt} attempt(s).",
             lastError
         );
+    }
+
+    private static async Task<UploadProgressResponse> GetUploadProgressAsync(
+        UpscalingService.UpscalingServiceClient client,
+        int taskId,
+        CancellationToken stoppingToken
+    )
+    {
+        try
+        {
+            return await client.GetUploadProgressAsync(
+                new UploadProgressRequest { TaskId = taskId },
+                deadline: DateTime.UtcNow.AddSeconds(30),
+                cancellationToken: stoppingToken
+            );
+        }
+        catch (RpcException ex) when (ex.StatusCode == StatusCode.Unimplemented)
+        {
+            // Older server without resume support: upload the whole file in one attempt.
+            return new UploadProgressResponse { State = UploadState.Pending, UploadedChunks = 0 };
+        }
     }
 
     private async Task UploadFileOnceAsync(
@@ -1067,7 +1079,9 @@ public class RemoteTaskProcessor(
 
         AsyncDuplexStreamingCall<CbzFileChunk, UploadUpscaledCbzResponse> uploadStream =
             client.UploadUpscaledCbzFile(
-                deadline: DateTime.UtcNow.Add(ComputeAttemptTimeout(remainingBytes)),
+                deadline: DateTime.UtcNow.Add(
+                    UploadRetryPolicy.ComputeAttemptTimeout(remainingBytes, _workerConfig)
+                ),
                 cancellationToken: stoppingToken
             );
 
@@ -1093,6 +1107,7 @@ public class RemoteTaskProcessor(
         await uploadStream.RequestStream.CompleteAsync();
 
         bool success = false;
+        bool terminal = false;
         string? failureMessage = null;
         await foreach (
             UploadUpscaledCbzResponse response in uploadStream.ResponseStream.ReadAllAsync(
@@ -1111,6 +1126,7 @@ public class RemoteTaskProcessor(
             else
             {
                 failureMessage = response.Message;
+                terminal = response.Terminal;
                 logger.LogWarning(
                     "Server reported a failed upload for task {taskId}: {message}",
                     response.TaskId,
@@ -1121,47 +1137,16 @@ public class RemoteTaskProcessor(
 
         if (!success)
         {
-            throw new RetryableUploadException(
-                failureMessage ?? $"Server did not confirm the upload of task {taskId}."
-            );
+            string message =
+                failureMessage ?? $"Server did not confirm the upload of task {taskId}.";
+            if (terminal)
+            {
+                throw new NonRetryableUploadException(message);
+            }
+
+            throw new RetryableUploadException(message);
         }
     }
-
-    private TimeSpan ComputeAttemptTimeout(long remainingBytes)
-    {
-        long throughput = Math.Max(1, _workerConfig.UploadMinThroughputBytesPerSecond);
-        TimeSpan scaled = TimeSpan.FromSeconds((double)remainingBytes / throughput);
-        TimeSpan timeout =
-            scaled > _workerConfig.UploadTimeoutFloor ? scaled : _workerConfig.UploadTimeoutFloor;
-        TimeSpan ceiling = TimeSpan.FromHours(6);
-        return timeout < ceiling ? timeout : ceiling;
-    }
-
-    private TimeSpan GetRetryDelay(int attempt)
-    {
-        double seconds = _workerConfig.UploadRetryBaseDelay.TotalSeconds * Math.Pow(2, attempt - 1);
-        TimeSpan delay = TimeSpan.FromSeconds(seconds);
-        TimeSpan ceiling = TimeSpan.FromMinutes(2);
-        return delay < ceiling ? delay : ceiling;
-    }
-
-    private static bool IsRetryable(Exception exception) =>
-        exception switch
-        {
-            RetryableUploadException => true,
-            RpcException rpc
-                when rpc.StatusCode
-                    is StatusCode.Unavailable
-                        or StatusCode.DeadlineExceeded
-                        or StatusCode.ResourceExhausted
-                        or StatusCode.Aborted
-                        or StatusCode.Internal => true,
-            IOException => true,
-            SocketException => true,
-            _ => false,
-        };
-
-    private sealed class RetryableUploadException(string message) : Exception(message);
 
     private async Task UploadDetectionResultAndCleanup(
         UpscalingService.UpscalingServiceClient client,

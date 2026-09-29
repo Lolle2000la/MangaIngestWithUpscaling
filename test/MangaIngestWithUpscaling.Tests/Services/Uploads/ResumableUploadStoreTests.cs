@@ -97,4 +97,22 @@ public class ResumableUploadStoreTests : IDisposable
 
         Assert.Equal(0, _store.GetContiguousChunkCount(9));
     }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task WriteChunkAsync_ConcurrentWritersForSameChunk_DoNotCorruptIt()
+    {
+        byte[] content = Bytes("the only content");
+        Task[] writers = Enumerable
+            .Range(0, 8)
+            .Select(_ => _store.WriteChunkAsync(3, 0, content, CancellationToken.None))
+            .ToArray();
+
+        await Task.WhenAll(writers);
+
+        Assert.Equal(1, _store.GetContiguousChunkCount(3));
+        await using MemoryStream assembled = new();
+        await _store.AssembleAsync(3, 1, assembled, CancellationToken.None);
+        Assert.Equal("the only content", Encoding.UTF8.GetString(assembled.ToArray()));
+    }
 }

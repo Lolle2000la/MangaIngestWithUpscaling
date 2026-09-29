@@ -40,7 +40,10 @@ public class ResumableUploadStore
         Directory.CreateDirectory(taskDirectory);
 
         string chunkPath = GetChunkPath(taskId, chunkNumber);
-        string temporaryPath = chunkPath + ".tmp";
+        // A unique temp name keeps concurrent writers for the same chunk from corrupting each
+        // other's temp file; the move is atomic and the bytes are identical, so last-write-wins is
+        // safe.
+        string temporaryPath = $"{chunkPath}.{Guid.NewGuid():N}.tmp";
         await File.WriteAllBytesAsync(temporaryPath, data, cancellationToken);
         File.Move(temporaryPath, chunkPath, overwrite: true);
     }
