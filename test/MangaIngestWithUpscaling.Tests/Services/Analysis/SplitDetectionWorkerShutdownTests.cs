@@ -14,6 +14,7 @@ public class SplitDetectionWorkerShutdownTests
 {
     private readonly IPythonService _pythonService;
     private readonly IMangaJaNaiWorkerClient _workerClient;
+    private readonly IDetectServerClient _detectServer;
     private readonly UpscalerConfig _config;
     private readonly SplitDetectionService _service;
 
@@ -21,10 +22,12 @@ public class SplitDetectionWorkerShutdownTests
     {
         _pythonService = Substitute.For<IPythonService>();
         _workerClient = Substitute.For<IMangaJaNaiWorkerClient>();
+        _detectServer = Substitute.For<IDetectServerClient>();
         _config = new UpscalerConfig();
         _service = new SplitDetectionService(
             _pythonService,
             _workerClient,
+            _detectServer,
             Options.Create(_config),
             Substitute.For<ILogger<SplitDetectionService>>(),
             Substitute.For<IStringLocalizer<SplitDetectionService>>()

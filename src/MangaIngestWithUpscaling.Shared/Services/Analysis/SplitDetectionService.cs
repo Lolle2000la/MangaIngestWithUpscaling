@@ -15,17 +15,13 @@ namespace MangaIngestWithUpscaling.Shared.Services.Analysis;
 public class SplitDetectionService(
     IPythonService pythonService,
     IMangaJaNaiWorkerClient workerClient,
+    IDetectServerClient detectServer,
     IOptions<UpscalerConfig> upscalerConfig,
     ILogger<SplitDetectionService> logger,
     IStringLocalizer<SplitDetectionService> localizer
 ) : ISplitDetectionService
 {
     public const int CURRENT_DETECTOR_VERSION = 1;
-
-    private const string SubmodulePath = "backend/src/manga-vert-split-nn";
-    private const string ScriptName = "detect_breaks.py";
-    private const string ModelPath = "models/BCE Only (v8)/final_deployment/best_model.pth";
-    private const string ConfigPath = "models/BCE Only (v8)/final_deployment/model_config.json";
 
     public async Task<List<SplitDetectionResult>> DetectSplitsAsync(
         string inputPath,
@@ -120,15 +116,39 @@ public class SplitDetectionService(
         }
     }
 
+    /// <summary>
+    /// Detects one image through the resident detection server, falling back to the per-image CLI
+    /// when the server cannot be started or spoken to (e.g. a missing script or Python environment).
+    /// </summary>
     private async Task<SplitDetectionResult> DetectSingleImageAsync(
         string imagePath,
         CancellationToken cancellationToken
     )
     {
-        var baseDir = AppContext.BaseDirectory;
-        var scriptPath = Path.Combine(baseDir, SubmodulePath, ScriptName);
-        var checkpointPath = Path.Combine(baseDir, SubmodulePath, ModelPath);
-        var configPath = Path.Combine(baseDir, SubmodulePath, ConfigPath);
+        try
+        {
+            return await detectServer.DetectAsync(imagePath, cancellationToken);
+        }
+        catch (DetectServerUnavailableException ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Resident detection server unavailable; falling back to the detection CLI for {ImagePath}.",
+                imagePath
+            );
+        }
+
+        return await DetectSingleImageViaCliAsync(imagePath, cancellationToken);
+    }
+
+    private async Task<SplitDetectionResult> DetectSingleImageViaCliAsync(
+        string imagePath,
+        CancellationToken cancellationToken
+    )
+    {
+        var scriptPath = SplitDetectionLayout.ScriptPath;
+        var checkpointPath = SplitDetectionLayout.CheckpointPath;
+        var configPath = SplitDetectionLayout.ConfigPath;
 
         if (!File.Exists(scriptPath))
         {
