@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
@@ -13,6 +14,7 @@ using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.Uploads;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
+using MangaIngestWithUpscaling.Shared.Services.Uploads;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 
@@ -656,10 +658,14 @@ public partial class UpscalingDistributionService(
                 taskUploads[request.TaskId] = state;
             }
 
+            // The identity is the same for every chunk; the first non-empty one wins.
+            state.ContentId ??= string.IsNullOrEmpty(request.ContentId) ? null : request.ContentId;
+
             await uploadStore.WriteChunkAsync(
                 request.TaskId,
                 request.ChunkNumber,
                 request.Chunk.ToByteArray(),
+                state.ContentId,
                 context.CancellationToken
             );
 
@@ -672,7 +678,7 @@ public partial class UpscalingDistributionService(
             // Older clients don't report the total, so infer it from the highest chunk received.
             int totalChunks =
                 state.TotalChunks > 0 ? state.TotalChunks : state.HighestChunkNumber + 1;
-            int receivedChunks = uploadStore.GetContiguousChunkCount(taskId);
+            int receivedChunks = uploadStore.GetContiguousChunkCount(taskId, state.ContentId);
 
             if (receivedChunks < totalChunks)
             {
@@ -688,7 +694,13 @@ public partial class UpscalingDistributionService(
                 continue;
             }
 
-            await AssembleAndProcessUploadAsync(taskId, totalChunks, responseStream, context);
+            await AssembleAndProcessUploadAsync(
+                taskId,
+                totalChunks,
+                state.ContentId,
+                responseStream,
+                context
+            );
         }
 
         context.Status = new Status(StatusCode.OK, "File(s) uploaded");
@@ -719,18 +731,20 @@ public partial class UpscalingDistributionService(
         return new UploadProgressResponse
         {
             State = UploadState.Pending,
-            UploadedChunks = uploadStore.GetContiguousChunkCount(request.TaskId),
+            UploadedChunks = uploadStore.GetContiguousChunkCount(request.TaskId, request.ContentId),
         };
     }
 
     /// <summary>
-    /// Assembles the stored chunks into the temporary cbz and hands it to the task-specific
+    /// Assembles the stored chunks into the temporary cbz, verifies the result against the client's
+    /// declared content identity when one was supplied, and hands it to the task-specific
     /// processing. The per-task gate keeps a fast client retry from assembling and completing the
     /// same task twice.
     /// </summary>
     private async Task AssembleAndProcessUploadAsync(
         int taskId,
         int totalChunks,
+        string? contentId,
         IServerStreamWriter<UploadUpscaledCbzResponse> responseStream,
         ServerCallContext context
     )
@@ -740,6 +754,9 @@ public partial class UpscalingDistributionService(
         await gate.WaitAsync(context.CancellationToken);
 
         string? tempFile = null;
+        IncrementalHash? hasher = string.IsNullOrEmpty(contentId)
+            ? null
+            : IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         try
         {
             tempFile = PrepareTempFile(taskId);
@@ -771,8 +788,34 @@ public partial class UpscalingDistributionService(
                     taskId,
                     totalChunks,
                     fileStream,
+                    hasher,
                     context.CancellationToken
                 );
+            }
+
+            // Guard against stale chunks from a different output being mixed with this one (the
+            // store is keyed by identity, but a failed reset or concurrent writer could slip
+            // through). A mismatch is retryable: the client re-uploads from scratch.
+            if (
+                hasher != null
+                && !string.Equals(
+                    ContentIdentity.FromSha256(hasher.GetHashAndReset()),
+                    contentId,
+                    StringComparison.Ordinal
+                )
+            )
+            {
+                uploadStore.Delete(taskId);
+                await responseStream.WriteAsync(
+                    new UploadUpscaledCbzResponse
+                    {
+                        Success = false,
+                        Message =
+                            "Uploaded content did not match its declared identity; please retry.",
+                        TaskId = taskId,
+                    }
+                );
+                return;
             }
 
             await ProcessUploadedCbzAsync(taskId, tempFile, responseStream, context);
@@ -786,22 +829,24 @@ public partial class UpscalingDistributionService(
         }
         catch (Exception ex)
         {
-            // Ensure the task is marked as failed so it doesn't get stuck in Processing
+            // Ensure the task is marked as failed so it doesn't get stuck in Processing. The task is
+            // now Failed, so the worker must not keep retrying this upload.
             uploadStore.Delete(taskId);
             await taskProcessor.TaskFailed(taskId, ex.Message);
 
-            context.Status = new Status(StatusCode.Internal, ex.Message);
             await responseStream.WriteAsync(
                 new UploadUpscaledCbzResponse
                 {
                     Success = false,
                     Message = ex.Message,
                     TaskId = taskId,
+                    Terminal = true,
                 }
             );
         }
         finally
         {
+            hasher?.Dispose();
             SafeDeleteFile(tempFile);
             gate.Release();
         }
@@ -1039,5 +1084,6 @@ public partial class UpscalingDistributionService(
     {
         public int HighestChunkNumber { get; set; } = -1;
         public int TotalChunks { get; set; }
+        public string? ContentId { get; set; }
     }
 }

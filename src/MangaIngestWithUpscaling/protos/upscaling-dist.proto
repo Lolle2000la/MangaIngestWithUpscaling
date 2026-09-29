@@ -57,6 +57,9 @@ message CbzFileChunk {
   // Total number of chunks the file is split into. Sent with every chunk so the server can
   // tell when an upload is complete and assemble it. 0 means unknown (older clients).
   int32 total_chunks = 4;
+  // Opaque identity of the file being uploaded, e.g. "sha256:<hex>". The server uses it to decide
+  // whether chunks from a previous attempt belong to the same bytes. Empty from older clients.
+  string content_id = 5;
 }
 
 enum UploadState {
@@ -67,6 +70,9 @@ enum UploadState {
 
 message UploadProgressRequest {
   int32 task_id = 1;
+  // Opaque identity of the file about to be uploaded. The server discards stored chunks that were
+  // written for a different identity. Empty from older clients, which disables resume.
+  string content_id = 2;
 }
 
 message UploadProgressResponse {

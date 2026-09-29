@@ -355,7 +355,9 @@ app.UseForwardedHeaders();
 
 // Upscaled cbz files are streamed as the request body during gRPC uploads and routinely exceed
 // Kestrel's ~28.6 MB default. Lift the cap only for gRPC requests so the limit (and its slowloris
-// protection) still applies everywhere else.
+// protection) still applies everywhere else. Authentication and authorization run before the gRPC
+// handler reads the body, so an unauthorized request never streams the body itself, and
+// MinRequestBodyDataRate still bounds slow senders.
 app.Use(
     async (context, next) =>
     {

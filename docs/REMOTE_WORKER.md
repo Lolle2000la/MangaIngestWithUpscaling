@@ -39,6 +39,12 @@ after a dropped connection the worker retries only the missing bytes instead of 
 file. The worker also sends HTTP/2 keepalive pings, which turn a silently dead connection into a
 fast, retryable failure rather than a long hang.
 
+Resume state is bound to a **content identity** (a SHA-256 of the file being uploaded). If the same
+task is re-dispatched with a different upscaled output — for example after an upscaler profile or
+model change — the stored chunks no longer match and are discarded, so old and new bytes are never
+mixed. The server also hashes the assembled file and rejects it if it does not match the identity,
+which catches truncation or corruption; the worker then re-uploads from scratch.
+
 The per-attempt gRPC deadline is sized from the number of bytes still to send, so a legitimately
 slow-but-healthy transfer is not cut off by a fixed timeout. These settings can be tuned in the
 worker's `WorkerConfig` section (or via `Ingest_WorkerConfig__…` environment variables):
