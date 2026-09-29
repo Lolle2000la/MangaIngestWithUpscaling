@@ -30,6 +30,14 @@ In addition, you can use environment variables to override the settings in `apps
 
 The remote worker communicates with the main application exclusively over HTTPS. gRPC, the underlying communication protocol, requires HTTP/2. Modern reverse proxies, when configured for HTTPS, will typically use HTTP/2 automatically for clients that support it. Ensure your reverse proxy hosting the main application has HTTPS and HTTP/2 enabled.
 
+## Page streaming
+
+Upscaling a chapter is streamed **page by page** by default. The worker fetches only the source pages the server is still missing, feeds them to the local upscaler as they arrive, and uploads each upscaled page as soon as it is written. The server spools the pages and assembles the final CBZ, so a dropped connection resumes at the first missing page instead of re-downloading and re-upscaling the whole chapter.
+
+If the server does not implement the page-streaming RPCs, the worker detects this at startup and falls back to whole-CBZ transfers automatically. To force the old whole-CBZ behaviour (for example while diagnosing a problem), set `WorkerConfig:UsePageStreaming` (or `Ingest_WorkerConfig__UsePageStreaming`) to `false`.
+
+Partial page state lives in the server's temp directory and is bounded by a 24-hour retention sweep. It is process-local, so a server restart (or a different replica behind a load balancer) safely restarts the affected chapter from the beginning rather than mixing bytes.
+
 ## Running the Remote Worker
 
 To run the remote worker:
