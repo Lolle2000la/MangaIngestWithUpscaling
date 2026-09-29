@@ -91,4 +91,77 @@ public class MangaJaNaiWorkerClientTests
         WorkerCacheReleasedEvent released = Assert.IsType<WorkerCacheReleasedEvent>(evt);
         Assert.Equal("busy", released.Status);
     }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void BuildChapterLine_ProducesOpenChapterRequest()
+    {
+        var request = new ChapterJobRequest
+        {
+            Id = "chap-1",
+            OutputFolder = "/out",
+            Format = CompressionFormat.Webp,
+            Scale = ScaleFactor.TwoX,
+            TotalPages = 42,
+        };
+
+        string line = MangaJaNaiWorkerClient.BuildChapterLine(request);
+
+        using JsonDocument doc = JsonDocument.Parse(line);
+        Assert.Equal("open_chapter", doc.RootElement.GetProperty("type").GetString());
+        Assert.Equal("chap-1", doc.RootElement.GetProperty("id").GetString());
+        Assert.Equal(
+            "/out",
+            doc.RootElement.GetProperty("output").GetProperty("folder").GetString()
+        );
+        Assert.Equal(
+            "webp",
+            doc.RootElement.GetProperty("output").GetProperty("format").GetString()
+        );
+        Assert.Equal(2, doc.RootElement.GetProperty("options").GetProperty("scale").GetInt32());
+        Assert.Equal(42, doc.RootElement.GetProperty("total_pages").GetInt32());
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void BuildPageLine_ProducesPageRequest()
+    {
+        string line = MangaJaNaiWorkerClient.BuildPageLine(
+            "chap-1",
+            new ChapterPage(3, "004.jpg", "/tmp/004.jpg")
+        );
+
+        using JsonDocument doc = JsonDocument.Parse(line);
+        Assert.Equal("page", doc.RootElement.GetProperty("type").GetString());
+        Assert.Equal("chap-1", doc.RootElement.GetProperty("id").GetString());
+        Assert.Equal(3, doc.RootElement.GetProperty("index").GetInt32());
+        Assert.Equal("004.jpg", doc.RootElement.GetProperty("name").GetString());
+        Assert.Equal("/tmp/004.jpg", doc.RootElement.GetProperty("path").GetString());
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void BuildCloseChapterLine_ProducesCloseChapterRequest()
+    {
+        string line = MangaJaNaiWorkerClient.BuildCloseChapterLine("chap-1");
+
+        Assert.Equal("""{"type":"close_chapter","id":"chap-1"}""", line);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void WorkerEvent_DeserializesPageDoneEvent()
+    {
+        WorkerEvent? evt = JsonSerializer.Deserialize<WorkerEvent>(
+            """{"type":"page_done","id":"chap-1","index":3,"input":"004.jpg","output":"/out/004.webp","status":"upscaled"}""",
+            WorkerJson.Options
+        );
+
+        WorkerPageDoneEvent pageDone = Assert.IsType<WorkerPageDoneEvent>(evt);
+        Assert.Equal("chap-1", pageDone.Id);
+        Assert.Equal(3, pageDone.Index);
+        Assert.Equal("004.jpg", pageDone.Input);
+        Assert.Equal("/out/004.webp", pageDone.Output);
+        Assert.Equal("upscaled", pageDone.Status);
+    }
 }

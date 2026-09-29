@@ -177,6 +177,163 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         }
     }
 
+    public async Task<UpscaleJobResult> RunChapterAsync(
+        ChapterJobRequest request,
+        IAsyncEnumerable<ChapterPage> pages,
+        IProgress<UpscaleProgress>? progress,
+        Action<UpscaleJobFile> onPageDone,
+        CancellationToken cancellationToken,
+        TimeSpan? timeout
+    )
+    {
+        await _submitLock.WaitAsync(cancellationToken);
+        try
+        {
+            TouchActivity();
+            await EnsureWorkerAsync(cancellationToken);
+
+            WorkerJob job = new(request.Id, progress, onPageDone);
+            if (!_jobs.TryAdd(request.Id, job))
+            {
+                throw new InvalidOperationException(
+                    $"A job with id '{request.Id}' is already in flight."
+                );
+            }
+
+            _currentJobId = request.Id;
+
+            try
+            {
+                try
+                {
+                    await SendLineAsync(BuildChapterLine(request), cancellationToken);
+                }
+                catch (InvalidOperationException)
+                    when (_stdin is null && !cancellationToken.IsCancellationRequested)
+                {
+                    _logger.LogWarning(
+                        "Upscale worker crashed during chapter submission; respawning and retrying once."
+                    );
+                    _jobs.TryRemove(request.Id, out _);
+                    job = new WorkerJob(request.Id, progress, onPageDone);
+                    _jobs.TryAdd(request.Id, job);
+                    await EnsureWorkerAsync(cancellationToken);
+                    await SendLineAsync(BuildChapterLine(request), cancellationToken);
+                }
+
+                using var producerCts = CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken
+                );
+                Exception? producerError = null;
+                Task producer = Task.Run(
+                    async () =>
+                    {
+                        try
+                        {
+                            await foreach (
+                                ChapterPage page in pages.WithCancellation(producerCts.Token)
+                            )
+                            {
+                                await SendLineAsync(
+                                    BuildPageLine(request.Id, page),
+                                    producerCts.Token
+                                );
+                            }
+
+                            await SendLineAsync(
+                                BuildCloseChapterLine(request.Id),
+                                producerCts.Token
+                            );
+                        }
+                        catch (Exception ex)
+                        {
+                            producerError = ex;
+                            await RequestCancelAsync(request.Id);
+                        }
+                    },
+                    CancellationToken.None
+                );
+
+                var cancelSignal = new TaskCompletionSource(
+                    TaskCreationOptions.RunContinuationsAsynchronously
+                );
+                using CancellationTokenRegistration cancelReg = cancellationToken.Register(() =>
+                {
+                    cancelSignal.TrySetResult();
+                    _ = RequestCancelAsync(request.Id);
+                });
+
+                Task monitor = MonitorTimeoutAsync(job, timeout);
+
+                Task completed = await Task.WhenAny(
+                    job.Completion.Task,
+                    monitor,
+                    cancelSignal.Task
+                );
+
+                if (completed == cancelSignal.Task)
+                {
+                    try
+                    {
+                        await job.Completion.Task.WaitAsync(
+                            CancelGracePeriod,
+                            CancellationToken.None
+                        );
+                    }
+                    catch (Exception)
+                    { /* the worker may already be gone; cancellation wins */
+                    }
+
+                    if (!job.Completion.Task.IsCompleted)
+                    {
+                        _logger.LogWarning(
+                            "Upscale worker chapter {JobId} did not cancel in time; killing the worker.",
+                            request.Id
+                        );
+                        await KillWorkerAsync();
+                    }
+
+                    throw new OperationCanceledException(cancellationToken);
+                }
+
+                if (completed == monitor)
+                {
+                    await monitor;
+                }
+
+                // Stop feeding pages once the chapter has finished (or failed).
+                await producerCts.CancelAsync();
+                try
+                {
+                    await producer.WaitAsync(CancelGracePeriod, CancellationToken.None);
+                }
+                catch (Exception)
+                { /* the producer stops with the chapter */
+                }
+
+                if (producerError is not null)
+                {
+                    throw new InvalidOperationException(
+                        "Failed to stream the chapter pages to the upscale worker.",
+                        producerError
+                    );
+                }
+
+                return await job.Completion.Task;
+            }
+            finally
+            {
+                _jobs.TryRemove(request.Id, out _);
+                _currentJobId = null;
+                TouchActivity();
+            }
+        }
+        finally
+        {
+            _submitLock.Release();
+        }
+    }
+
     public async Task ShutdownWorkerAsync(CancellationToken cancellationToken)
     {
         Process? process;
@@ -624,6 +781,42 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         return JsonSerializer.Serialize(job, WorkerJson.Options);
     }
 
+    internal static string BuildChapterLine(ChapterJobRequest request)
+    {
+        var chapter = new WorkerChapterRequest
+        {
+            Id = request.Id,
+            Output = new WorkerJobOutput
+            {
+                Folder = request.OutputFolder,
+                Filename = "%filename%",
+                Format = ToFormatString(request.Format),
+                Overwrite = true,
+            },
+            Options = new WorkerJobOptions { Scale = (int)request.Scale },
+            TotalPages = request.TotalPages,
+        };
+        return JsonSerializer.Serialize(chapter, WorkerJson.Options);
+    }
+
+    internal static string BuildPageLine(string id, ChapterPage page)
+    {
+        var request = new WorkerPageRequest
+        {
+            Id = id,
+            Index = page.Index,
+            Name = page.Name,
+            Path = page.Path,
+        };
+        return JsonSerializer.Serialize(request, WorkerJson.Options);
+    }
+
+    internal static string BuildCloseChapterLine(string id)
+    {
+        var request = new WorkerCloseChapterRequest { Id = id };
+        return JsonSerializer.Serialize(request, WorkerJson.Options);
+    }
+
     internal static string ToFormatString(CompressionFormat format) =>
         format switch
         {
@@ -745,6 +938,9 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                 case WorkerDoneEvent done:
                     DispatchDone(done);
                     break;
+                case WorkerPageDoneEvent pageDone:
+                    DispatchPageDone(pageDone);
+                    break;
                 case WorkerErrorEvent error:
                     DispatchError(error);
                     break;
@@ -821,6 +1017,18 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         }
 
         job.TrySetResult(new UpscaleJobResult(job.Id, status, files, done.ElapsedSeconds));
+    }
+
+    private void DispatchPageDone(WorkerPageDoneEvent pageDone)
+    {
+        if (!TryGetAndTouch(pageDone.Id, out WorkerJob? job))
+        {
+            return;
+        }
+
+        job.OnPageDone?.Invoke(
+            new UpscaleJobFile(pageDone.Input ?? "", pageDone.Output ?? "", pageDone.Status ?? "")
+        );
     }
 
     private void DispatchError(WorkerErrorEvent error)
@@ -981,10 +1189,15 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         private long _lastEventTicks;
         private volatile bool _allPagesProcessed;
 
-        public WorkerJob(string id, IProgress<UpscaleProgress>? progress)
+        public WorkerJob(
+            string id,
+            IProgress<UpscaleProgress>? progress,
+            Action<UpscaleJobFile>? onPageDone = null
+        )
         {
             Id = id;
             Progress = progress;
+            OnPageDone = onPageDone;
             Completion = new TaskCompletionSource<UpscaleJobResult>(
                 TaskCreationOptions.RunContinuationsAsynchronously
             );
@@ -993,6 +1206,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
         public string Id { get; }
         public IProgress<UpscaleProgress>? Progress { get; }
+        public Action<UpscaleJobFile>? OnPageDone { get; }
         public TaskCompletionSource<UpscaleJobResult> Completion { get; }
 
         public bool AllPagesProcessed => _allPagesProcessed;

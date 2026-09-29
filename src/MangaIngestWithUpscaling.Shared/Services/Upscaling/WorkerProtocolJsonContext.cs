@@ -12,5 +12,8 @@ namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 )]
 [JsonSerializable(typeof(WorkerEvent))]
 [JsonSerializable(typeof(WorkerJobRequest))]
+[JsonSerializable(typeof(WorkerChapterRequest))]
+[JsonSerializable(typeof(WorkerPageRequest))]
+[JsonSerializable(typeof(WorkerCloseChapterRequest))]
 [JsonSerializable(typeof(WorkerCommand))]
 public partial class WorkerProtocolJsonContext : JsonSerializerContext { }

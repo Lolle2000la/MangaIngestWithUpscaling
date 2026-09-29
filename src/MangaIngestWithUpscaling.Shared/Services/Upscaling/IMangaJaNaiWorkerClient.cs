@@ -24,6 +24,27 @@ public interface IMangaJaNaiWorkerClient
     );
 
     /// <summary>
+    /// Runs a chapter as a stream of pages: <paramref name="pages"/> is consumed and sent to the
+    /// worker as it is produced, and <paramref name="onPageDone"/> is invoked (from the worker's
+    /// stdout reader thread) as each page finishes so the caller can stream it back immediately.
+    /// The call returns when the worker emits its final <c>done</c> event.
+    /// </summary>
+    /// <param name="request">Chapter output settings.</param>
+    /// <param name="pages">The pages to process, in order.</param>
+    /// <param name="progress">Optional sink for progress events.</param>
+    /// <param name="onPageDone">Invoked for every finished page (upscaled or failed).</param>
+    /// <param name="cancellationToken">Cancels the chapter (sends a <c>cancel</c> request).</param>
+    /// <param name="timeout">Optional inactivity timeout; when exceeded the chapter is cancelled and the worker restarted.</param>
+    Task<UpscaleJobResult> RunChapterAsync(
+        ChapterJobRequest request,
+        IAsyncEnumerable<ChapterPage> pages,
+        IProgress<UpscaleProgress>? progress,
+        Action<UpscaleJobFile> onPageDone,
+        CancellationToken cancellationToken,
+        TimeSpan? timeout
+    );
+
+    /// <summary>
     /// Gracefully shuts the worker process down and releases GPU resources.
     /// </summary>
     Task ShutdownWorkerAsync(CancellationToken cancellationToken);
@@ -52,6 +73,19 @@ public sealed record UpscaleJobRequest
 }
 
 public sealed record UpscaleJobFile(string Input, string Output, string Status);
+
+/// <summary>Output settings for a streamed chapter. Pages arrive later via the page stream.</summary>
+public sealed record ChapterJobRequest
+{
+    public required string Id { get; init; }
+    public required string OutputFolder { get; init; }
+    public required CompressionFormat Format { get; init; }
+    public required ScaleFactor Scale { get; init; }
+    public int TotalPages { get; init; }
+}
+
+/// <summary>One page of a streamed chapter.</summary>
+public sealed record ChapterPage(int Index, string Name, string Path);
 
 public sealed record UpscaleJobResult(
     string Id,
