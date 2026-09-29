@@ -182,6 +182,42 @@ public sealed class PageStreamSpool
         }
     }
 
+    /// <summary>
+    /// Builds a CBZ containing only the spooled pages, named by their output names. Used for
+    /// repair, where the result is merged into the existing upscaled chapter rather than replacing
+    /// it.
+    /// </summary>
+    public void AssemblePagesOnly(
+        PageStreamSession session,
+        IReadOnlyList<SpoolPageDescriptor> pages,
+        string destinationPath
+    )
+    {
+        string? destinationDirectory = Path.GetDirectoryName(destinationPath);
+        if (destinationDirectory is not null)
+        {
+            Directory.CreateDirectory(destinationDirectory);
+        }
+
+        using ZipArchive output = ZipFile.Open(destinationPath, ZipArchiveMode.Create);
+        foreach (SpoolPageDescriptor page in pages)
+        {
+            string pagePath = session.PagePath(page.Index);
+            if (!File.Exists(pagePath))
+            {
+                throw new FileNotFoundException(
+                    $"Spooled page {page.Index} for task {session.TaskId} is missing.",
+                    pagePath
+                );
+            }
+
+            ZipArchiveEntry outputEntry = output.CreateEntry(page.OutputName);
+            using Stream input = File.OpenRead(pagePath);
+            using Stream target = outputEntry.Open();
+            input.CopyTo(target);
+        }
+    }
+
     public void Remove(int taskId)
     {
         if (_sessions.TryRemove(taskId, out PageStreamSession? session))

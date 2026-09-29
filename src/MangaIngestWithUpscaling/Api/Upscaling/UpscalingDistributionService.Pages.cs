@@ -316,6 +316,12 @@ public partial class UpscalingDistributionService
         PageStreamSession session
     )
     {
+        if (pageContext.IsRepair)
+        {
+            await AssembleRepairedChapterAsync(pageContext, session);
+            return;
+        }
+
         string tempDir = Path.Combine(Path.GetTempPath(), "mangaingestwithupscaling");
         fileSystem.CreateDirectory(tempDir);
         string tempCbz = Path.Combine(
@@ -378,52 +384,147 @@ public partial class UpscalingDistributionService
             return null;
         }
 
-        if (task.Data is not UpscaleTask upscaleTask)
+        if (task.Data is UpscaleTask upscaleTask)
         {
-            return null;
+            Chapter? chapter = await LoadChapterAsync(upscaleTask.ChapterId, ct);
+            if (chapter?.UpscaledFullPath is null)
+            {
+                return null;
+            }
+
+            SharedUpscalerProfile? profile = await LoadProfileAsync(
+                upscaleTask.UpscalerProfileId,
+                ct
+            );
+            if (profile is null)
+            {
+                return null;
+            }
+
+            string sourcePath = chapter.NotUpscaledFullPath;
+            if (!File.Exists(sourcePath))
+            {
+                return null;
+            }
+
+            List<SpoolPageDescriptor> pages = BuildPageDescriptors(sourcePath, profile);
+            if (pages.Count == 0)
+            {
+                return null;
+            }
+
+            return new PageContext(
+                task,
+                chapter,
+                profile,
+                pages,
+                ComputeIdentity(sourcePath, profile),
+                sourcePath,
+                IsRepair: false
+            );
         }
 
-        Chapter? chapter = await dbContext
-            .Chapters.Include(c => c.Manga)
-                .ThenInclude(m => m.Library)
-            .FirstOrDefaultAsync(c => c.Id == upscaleTask.ChapterId, ct);
-        if (chapter?.UpscaledFullPath is null)
+        if (task.Data is RepairUpscaleTask repairTask)
         {
-            return null;
+            Chapter? chapter = await LoadChapterAsync(repairTask.ChapterId, ct);
+            if (chapter?.UpscaledFullPath is null || !File.Exists(chapter.UpscaledFullPath))
+            {
+                return null;
+            }
+
+            SharedUpscalerProfile? profile =
+                chapter.UpscalerProfile ?? await LoadProfileAsync(repairTask.UpscalerProfileId, ct);
+            if (profile is null)
+            {
+                return null;
+            }
+
+            string sourcePath = chapter.NotUpscaledFullPath;
+            if (!File.Exists(sourcePath))
+            {
+                return null;
+            }
+
+            var differences = await metadataHandling.AnalyzePageDifferencesAsync(
+                sourcePath,
+                chapter.UpscaledFullPath
+            );
+            if (differences.MissingPages.Count == 0)
+            {
+                return null;
+            }
+
+            List<SpoolPageDescriptor> pages = BuildRepairPageDescriptors(
+                sourcePath,
+                differences.MissingPages,
+                profile
+            );
+            if (pages.Count == 0)
+            {
+                return null;
+            }
+
+            return new PageContext(
+                task,
+                chapter,
+                profile,
+                pages,
+                ComputeRepairIdentity(
+                    sourcePath,
+                    chapter.UpscaledFullPath,
+                    profile,
+                    differences.MissingPages
+                ),
+                sourcePath,
+                IsRepair: true
+            );
         }
 
-        SharedUpscalerProfile? profile = await dbContext.UpscalerProfiles.FirstOrDefaultAsync(
-            p => p.Id == upscaleTask.UpscalerProfileId,
-            ct
-        );
-        if (profile is null)
-        {
-            return null;
-        }
-
-        string sourcePath = chapter.NotUpscaledFullPath;
-        if (!File.Exists(sourcePath))
-        {
-            return null;
-        }
-
-        List<SpoolPageDescriptor> pages = BuildPageDescriptors(sourcePath, profile);
-        if (pages.Count == 0)
-        {
-            return null;
-        }
-
-        return new PageContext(
-            task,
-            chapter,
-            profile,
-            pages,
-            ComputeIdentity(sourcePath, profile),
-            sourcePath
-        );
+        return null;
     }
 
-    private static List<SpoolPageDescriptor> BuildPageDescriptors(
+    /// <summary>
+    /// Finishes a page-streamed repair: builds a CBZ from the spooled missing pages and hands it to
+    /// the task processor, which merges it into the existing upscaled chapter (and removes extra
+    /// pages) through the same repair path used for whole-CBZ transfers.
+    /// </summary>
+    private async Task AssembleRepairedChapterAsync(
+        PageContext pageContext,
+        PageStreamSession session
+    )
+    {
+        var repairState = taskProcessor.GetRemoteRepairState(pageContext.Task.Id);
+        if (repairState is null || string.IsNullOrEmpty(repairState.UpscaledMissingPagesCbzPath))
+        {
+            throw new InvalidOperationException(
+                $"No prepared repair state for task {pageContext.Task.Id}."
+            );
+        }
+
+        pageStreamSpool.AssemblePagesOnly(
+            session,
+            pageContext.Pages,
+            repairState.UpscaledMissingPagesCbzPath
+        );
+
+        // Runs HandleRepairTaskCompletion, which merges the missing pages into the existing
+        // upscaled CBZ and marks the task complete.
+        await taskProcessor.TaskCompleted(pageContext.Task.Id);
+    }
+
+    private async Task<Chapter?> LoadChapterAsync(int chapterId, CancellationToken ct) =>
+        await dbContext
+            .Chapters.Include(c => c.Manga)
+                .ThenInclude(m => m.Library)
+            .Include(c => c.UpscalerProfile)
+            .FirstOrDefaultAsync(c => c.Id == chapterId, ct);
+
+    private async Task<SharedUpscalerProfile?> LoadProfileAsync(
+        int profileId,
+        CancellationToken ct
+    ) => await dbContext.UpscalerProfiles.FirstOrDefaultAsync(p => p.Id == profileId, ct);
+
+    internal static List<SpoolPageDescriptor> BuildPageDescriptors(
         string sourcePath,
         SharedUpscalerProfile profile
     )
@@ -452,7 +553,74 @@ public partial class UpscalingDistributionService
         return pages;
     }
 
-    private static string ComputeIdentity(string sourcePath, SharedUpscalerProfile profile)
+    internal static List<SpoolPageDescriptor> BuildRepairPageDescriptors(
+        string sourcePath,
+        IReadOnlyList<string> missingStems,
+        SharedUpscalerProfile profile
+    )
+    {
+        string extension = FormatExtension(profile.CompressionFormat);
+        var byStem = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        using (ZipArchive archive = ZipFile.OpenRead(sourcePath))
+        {
+            foreach (ZipArchiveEntry entry in archive.Entries)
+            {
+                if (string.IsNullOrEmpty(entry.Name))
+                {
+                    continue;
+                }
+
+                if (!ImageConstants.IsSupportedImageExtension(Path.GetExtension(entry.FullName)))
+                {
+                    continue;
+                }
+
+                byStem.TryAdd(Path.GetFileNameWithoutExtension(entry.FullName), entry.FullName);
+            }
+        }
+
+        var pages = new List<SpoolPageDescriptor>();
+        int index = 0;
+        foreach (string stem in missingStems)
+        {
+            if (byStem.TryGetValue(stem, out string? sourceName))
+            {
+                pages.Add(new SpoolPageDescriptor(index, sourceName, $"{stem}.{extension}"));
+                index++;
+            }
+        }
+
+        return pages;
+    }
+
+    internal static string ComputeRepairIdentity(
+        string sourcePath,
+        string upscaledPath,
+        SharedUpscalerProfile profile,
+        IReadOnlyList<string> missingPages
+    )
+    {
+        FileInfo source = new(sourcePath);
+        FileInfo upscaled = new(upscaledPath);
+        string material = string.Join(
+            '|',
+            "repair",
+            sourcePath,
+            source.Length,
+            source.LastWriteTimeUtc.Ticks,
+            upscaledPath,
+            upscaled.Length,
+            upscaled.LastWriteTimeUtc.Ticks,
+            profile.Id,
+            (int)profile.CompressionFormat,
+            (int)profile.ScalingFactor,
+            profile.Quality,
+            string.Join(',', missingPages.OrderBy(p => p, StringComparer.Ordinal))
+        );
+        return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
+    }
+
+    internal static string ComputeIdentity(string sourcePath, SharedUpscalerProfile profile)
     {
         FileInfo info = new(sourcePath);
         string material = string.Join(
@@ -468,7 +636,7 @@ public partial class UpscalingDistributionService
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
     }
 
-    private static string FormatExtension(SharedCompressionFormat format) =>
+    internal static string FormatExtension(SharedCompressionFormat format) =>
         format switch
         {
             SharedCompressionFormat.Avif => "avif",
@@ -512,6 +680,7 @@ public partial class UpscalingDistributionService
         SharedUpscalerProfile Profile,
         List<SpoolPageDescriptor> Pages,
         string Identity,
-        string SourcePath
+        string SourcePath,
+        bool IsRepair
     );
 }
