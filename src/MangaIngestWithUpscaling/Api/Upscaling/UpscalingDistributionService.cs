@@ -691,6 +691,7 @@ public partial class UpscalingDistributionService(
             {
                 state = new TaskUploadState
                 {
+                    ContentId = string.IsNullOrEmpty(request.ContentId) ? null : request.ContentId,
                     Accepted = await IsAcceptingTaskAsync(
                         request.TaskId,
                         context.CancellationToken
@@ -710,6 +711,30 @@ public partial class UpscalingDistributionService(
                         }
                     );
                 }
+                else
+                {
+                    // Seed from the chunks already on disk so the byte cap covers the whole task,
+                    // not just the chunks written in this call.
+                    foreach (
+                        var (chunkNumber, length) in await uploadStore.GetStoredChunkSizesAsync(
+                            request.TaskId,
+                            state.ContentId
+                        )
+                    )
+                    {
+                        state.ChunkSizes[chunkNumber] = length;
+                        state.StoredBytes += length;
+                    }
+                }
+            }
+            else if (state.ContentId == null && !string.IsNullOrEmpty(request.ContentId))
+            {
+                // The identity arrived only after identity-less chunks. The next write wipes
+                // everything stored for the task (including this call's chunks), so reset the
+                // accounting to match.
+                state.ContentId = request.ContentId;
+                state.ChunkSizes.Clear();
+                state.StoredBytes = 0;
             }
 
             if (!state.Accepted)
@@ -717,12 +742,9 @@ public partial class UpscalingDistributionService(
                 continue;
             }
 
-            // The identity is the same for every chunk; the first non-empty one wins.
-            state.ContentId ??= string.IsNullOrEmpty(request.ContentId) ? null : request.ContentId;
-
             // Track the size stored for each chunk number so a re-sent chunk doesn't double-count,
             // and reject an upload that would push a single task past its disk bound.
-            long previousSize = state.ChunkSizes.TryGetValue(request.ChunkNumber, out int size)
+            long previousSize = state.ChunkSizes.TryGetValue(request.ChunkNumber, out long size)
                 ? size
                 : 0;
             long projectedBytes = state.StoredBytes - previousSize + request.Chunk.Length;
@@ -1279,7 +1301,7 @@ public partial class UpscalingDistributionService(
         public int TotalChunks { get; set; }
         public string? ContentId { get; set; }
         public bool Accepted { get; set; } = true;
-        public Dictionary<int, int> ChunkSizes { get; } = new();
+        public Dictionary<int, long> ChunkSizes { get; } = new();
         public long StoredBytes { get; set; }
     }
 }

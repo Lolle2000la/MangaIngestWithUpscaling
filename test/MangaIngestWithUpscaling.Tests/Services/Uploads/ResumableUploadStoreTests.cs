@@ -181,6 +181,30 @@ public class ResumableUploadStoreTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task GetStoredChunkSizesAsync_ReturnsLengthsForMatchingIdentity()
+    {
+        await _store.WriteChunkAsync(20, 0, Bytes("ab"), Identity, CancellationToken.None);
+        await _store.WriteChunkAsync(20, 1, Bytes("cdef"), Identity, CancellationToken.None);
+
+        Dictionary<int, long> sizes = await _store.GetStoredChunkSizesAsync(20, Identity);
+
+        Assert.Equal(2, sizes[0]);
+        Assert.Equal(4, sizes[1]);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task GetStoredChunkSizesAsync_MismatchedIdentity_ReturnsEmptyWithoutDeleting()
+    {
+        await _store.WriteChunkAsync(21, 0, Bytes("ab"), Identity, CancellationToken.None);
+
+        Assert.Empty(await _store.GetStoredChunkSizesAsync(21, OtherIdentity));
+        // The identified upload's bytes are still there for its own identity.
+        Assert.Equal(2, (await _store.GetStoredChunkSizesAsync(21, Identity))[0]);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task WriteChunkAsync_LegacyClientAfterIdentifiedUpload_DiscardsIdentifiedChunks()
     {
         await _store.WriteChunkAsync(4, 0, Bytes("identified-a"), Identity, CancellationToken.None);

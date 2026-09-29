@@ -981,7 +981,10 @@ public class RemoteTaskProcessor(
         long? retryStartTimestamp = null;
         int attempt = 0;
         Exception? lastError = null;
-        while (attempt < _workerConfig.UploadMaxAttempts)
+        // Guard against a misconfigured non-positive cap, which would otherwise run zero attempts
+        // and report a failure without even trying.
+        int maxAttempts = Math.Max(1, _workerConfig.UploadMaxAttempts);
+        while (attempt < maxAttempts)
         {
             attempt++;
 
@@ -1048,7 +1051,7 @@ public class RemoteTaskProcessor(
                     ex,
                     "Upload attempt {attempt}/{max} for task {taskId} failed after {elapsed}s; retrying in {delay}s.",
                     attempt,
-                    _workerConfig.UploadMaxAttempts,
+                    maxAttempts,
                     taskId,
                     elapsed.TotalSeconds,
                     delay.TotalSeconds

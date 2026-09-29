@@ -127,7 +127,16 @@ builder.Services.AddControllers();
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddMemoryCache();
 
-builder.Services.AddGrpc();
+// Upload chunks are individual gRPC messages, so the receive limit must exceed Uploads:MaxChunkBytes
+// (plus protobuf overhead) for that configured guard to be the effective limit instead of gRPC's
+// 4 MiB default, which would otherwise reject any chunk larger than ~4 MiB.
+int maxUploadChunkBytes = builder.Configuration.GetValue(
+    $"{UploadsConfig.Position}:MaxChunkBytes",
+    new UploadsConfig().MaxChunkBytes
+);
+builder.Services.AddGrpc(options =>
+    options.MaxReceiveMessageSize = maxUploadChunkBytes + (1024 * 1024)
+);
 builder.Services.AddHealthChecks();
 
 builder.Services.AddMudServices();

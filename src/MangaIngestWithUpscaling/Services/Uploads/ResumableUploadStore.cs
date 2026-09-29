@@ -70,8 +70,25 @@ public class ResumableUploadStore
             // other's temp file; the move is atomic and the bytes are identical, so last-write-wins
             // is safe.
             string temporaryPath = $"{chunkPath}.{Guid.NewGuid():N}.tmp";
-            await File.WriteAllBytesAsync(temporaryPath, data, cancellationToken);
-            File.Move(temporaryPath, chunkPath, overwrite: true);
+            try
+            {
+                await File.WriteAllBytesAsync(temporaryPath, data, cancellationToken);
+                File.Move(temporaryPath, chunkPath, overwrite: true);
+            }
+            finally
+            {
+                // A failed write or move (cancellation, disk full) would otherwise leave the temp
+                // file behind; it is not counted by CountContiguous and would linger until the sweep.
+                if (File.Exists(temporaryPath))
+                {
+                    try
+                    {
+                        File.Delete(temporaryPath);
+                    }
+                    catch (IOException) { }
+                    catch (UnauthorizedAccessException) { }
+                }
+            }
         }
         finally
         {
@@ -105,6 +122,54 @@ public class ResumableUploadStore
             }
 
             return CountContiguous(taskId);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Byte length of each chunk currently stored for a task, keyed by chunk number, for the given
+    /// content identity. Returns an empty map when the identity does not match (the next write wipes
+    /// those chunks). Lets a caller enforce a byte limit over everything already on disk for the
+    /// task, not just the chunks written in the current call.
+    /// </summary>
+    public async Task<Dictionary<int, long>> GetStoredChunkSizesAsync(int taskId, string? contentId)
+    {
+        SemaphoreSlim gate = GetTaskLock(taskId);
+        await gate.WaitAsync();
+        try
+        {
+            var sizes = new Dictionary<int, long>();
+            string? stored = ReadIdentity(taskId);
+            if (string.IsNullOrEmpty(contentId))
+            {
+                if (stored != null)
+                {
+                    return sizes;
+                }
+            }
+            else if (!string.Equals(stored, contentId, StringComparison.Ordinal))
+            {
+                return sizes;
+            }
+
+            string directory = GetTaskDirectory(taskId);
+            if (!Directory.Exists(directory))
+            {
+                return sizes;
+            }
+
+            foreach (string file in Directory.EnumerateFiles(directory, $"*{ChunkExtension}"))
+            {
+                if (int.TryParse(Path.GetFileNameWithoutExtension(file), out int chunkNumber))
+                {
+                    sizes[chunkNumber] = new FileInfo(file).Length;
+                }
+            }
+
+            return sizes;
         }
         finally
         {
