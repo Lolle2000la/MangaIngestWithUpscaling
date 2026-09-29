@@ -29,6 +29,9 @@ public static class TestDatabaseHelper
 
         public ApplicationDbContext Context { get; }
 
+        /// <summary>The isolated database behind <see cref="Context"/>.</summary>
+        public TestDatabase Database => _database;
+
         public TestDbContext(TestDatabase database)
         {
             _database = database;

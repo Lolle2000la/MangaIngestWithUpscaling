@@ -17,7 +17,7 @@ namespace MangaIngestWithUpscaling.Services.Analysis;
 
 [RegisterScoped]
 public class SplitProcessingCoordinator(
-    ApplicationDbContext dbContext,
+    IDbContextFactory<ApplicationDbContext> dbContextFactory,
     ITaskQueue taskQueue,
     IChapterChangedNotifier chapterChangedNotifier,
     IFileSystem fileSystem,
@@ -37,7 +37,10 @@ public class SplitProcessingCoordinator(
             return false;
         }
 
-        var db = context ?? dbContext;
+        await using ApplicationDbContext? owned = context is null
+            ? await dbContextFactory.CreateDbContextAsync(cancellationToken)
+            : null;
+        var db = context ?? owned!;
         var state = await db
             .ChapterSplitProcessingStates.AsNoTracking()
             .FirstOrDefaultAsync(s => s.ChapterId == chapterId, cancellationToken);
@@ -68,7 +71,7 @@ public class SplitProcessingCoordinator(
                     await stateManager.SetNoSplitsFoundAsync(
                         chapterId,
                         SplitDetectionService.CURRENT_DETECTOR_VERSION,
-                        context,
+                        db,
                         cancellationToken
                     );
                     return false;
@@ -126,7 +129,10 @@ public class SplitProcessingCoordinator(
         CancellationToken cancellationToken = default
     )
     {
-        var db = context ?? dbContext;
+        await using ApplicationDbContext? owned = context is null
+            ? await dbContextFactory.CreateDbContextAsync(cancellationToken)
+            : null;
+        var db = context ?? owned!;
         var chapter = await db
             .Chapters.Include(c => c.Manga)
                 .ThenInclude(m => m.Library)
@@ -147,7 +153,7 @@ public class SplitProcessingCoordinator(
             await stateManager.SetNoSplitsFoundAsync(
                 chapterId,
                 SplitDetectionService.CURRENT_DETECTOR_VERSION,
-                context,
+                db,
                 cancellationToken
             );
 
@@ -162,7 +168,7 @@ public class SplitProcessingCoordinator(
             return false;
         }
 
-        await EnqueueDetectionAsync(chapterId, context, cancellationToken);
+        await EnqueueDetectionAsync(chapterId, db, cancellationToken);
         return true;
     }
 
@@ -180,7 +186,10 @@ public class SplitProcessingCoordinator(
 
         // Callers running in parallel (see LibraryIntegrityChecker) pass their own context; the
         // shared scoped context must not be used from multiple workers at once.
-        var db = context ?? dbContext;
+        await using ApplicationDbContext? owned = context is null
+            ? await dbContextFactory.CreateDbContextAsync(cancellationToken)
+            : null;
+        var db = context ?? owned!;
         var chapter = await db
             .Chapters.Include(c => c.Manga)
             .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
@@ -221,12 +230,14 @@ public class SplitProcessingCoordinator(
             SplitDetectionService.CURRENT_DETECTOR_VERSION
         );
 
-        var db = context ?? dbContext;
+        await using ApplicationDbContext? owned = context is null
+            ? await dbContextFactory.CreateDbContextAsync(cancellationToken)
+            : null;
+        var db = context ?? owned!;
         var chapters = await db
             .Chapters.Include(c => c.Manga)
             .Where(c => ids.Contains(c.Id))
             .ToDictionaryAsync(c => c.Id, cancellationToken);
-
         foreach (var id in ids)
         {
             if (chapters.TryGetValue(id, out var chapter))
@@ -271,14 +282,16 @@ public class SplitProcessingCoordinator(
         CancellationToken cancellationToken = default
     )
     {
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+
         // Update state to Applied
-        await stateManager.SetAppliedAsync(chapterId, detectorVersion, null, cancellationToken);
+        await stateManager.SetAppliedAsync(chapterId, detectorVersion, db, cancellationToken);
 
         // Load chapter with all necessary navigation properties for upscale task creation
         // UpscalerProfilePreference is required for EffectiveUpscalerProfile to work correctly
         // Note: We need two separate .Include(c => c.Manga) calls because EF Core requires a new
         // Include statement for each branch when loading nested navigation properties
-        var chapter = await dbContext
+        var chapter = await db
             .Chapters.Include(c => c.Manga)
                 .ThenInclude(m => m.Library)
                     .ThenInclude(l => l.UpscalerProfile)

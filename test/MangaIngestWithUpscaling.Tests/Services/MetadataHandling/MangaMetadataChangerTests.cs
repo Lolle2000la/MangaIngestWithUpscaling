@@ -84,7 +84,7 @@ public class MangaMetadataChangerTests : IAsyncDisposable
 
         _metadataChanger = new MangaMetadataChanger(
             _mockMetadataHandling,
-            _dbContext,
+            new TestDbContextFactory(_testDb.Database),
             _mockDialogService,
             _mockLogger,
             _mockTaskQueue,

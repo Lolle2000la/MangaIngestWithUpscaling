@@ -304,6 +304,9 @@
   <data name="Snackbar_AddChaptersFailure" xml:space="preserve">
     <value>Failed to add chapters to existing merged chapter {0}. Check the logs for more information.</value>
   </data>
+  <data name="Snackbar_NoChaptersAdded" xml:space="preserve">
+    <value>Nothing was added to existing merged chapter {0}.</value>
+  </data>
   <data name="Snackbar_SplitDetectionQueued" xml:space="preserve">
     <value>Queued split detection check for {0}</value>
   </data>

@@ -146,6 +146,7 @@
     private int _reloadPending;
     private int _reloadRunning;
     private volatile bool _disposed;
+    private IReadOnlyCollection<PersistedTask>? _lastTasksParameter;
 
     protected override void OnInitialized()
     {
@@ -155,6 +156,21 @@
             TaskRegistry.UpscaleTasksChanged += OnTasksChanged;
         else
             TaskRegistry.StandardTasksChanged += OnTasksChanged;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // A caller-supplied Tasks collection can be replaced by a shorter one on a parent re-render.
+        // Reload (and clamp) when the reference changes so the table never keeps showing a page that
+        // no longer exists.
+        if (!ReferenceEquals(Tasks, _lastTasksParameter))
+        {
+            _lastTasksParameter = Tasks;
+            if (Tasks is not null && Table is not null)
+            {
+                await ReloadOrClampAsync();
+            }
+        }
     }
 
     public void Dispose()
@@ -224,7 +240,7 @@
 
                 if (Table is not null)
                 {
-                    await Table.ReloadServerData();
+                    await ReloadOrClampAsync();
                 }
             }
             catch (Exception ex)
@@ -248,9 +264,7 @@
         // the default view; an explicit column sort orders the source once per reload. The
         // registry's snapshots are already sorted, so the default ordering is identical for a
         // caller-supplied collection that comes from the same registry view.
-        IReadOnlyCollection<PersistedTask> source =
-            Tasks
-            ?? (Upscale ? TaskRegistry.GetUpscaleSnapshot() : TaskRegistry.GetStandardSnapshot());
+        IReadOnlyCollection<PersistedTask> source = GetSource();
 
         IEnumerable<PersistedTask> ordered = ApplySort(source, state);
         int skip = state.Page * state.PageSize;
@@ -262,6 +276,30 @@
             new TableData<PersistedTask> { Items = page, TotalItems = source.Count }
         );
     }
+
+    /// <summary>
+    ///     Reloads the current page, or resets to the first page when the data has shrunk below the
+    ///     current page's start. MudTable only clamps when the page start is strictly past the end, so
+    ///     a total that is exactly a page-size multiple would otherwise leave an out-of-range page
+    ///     and render blank. Resetting triggers the reload with the fresh data.
+    /// </summary>
+    private async Task ReloadOrClampAsync()
+    {
+        if (Table is null)
+            return;
+
+        int pageStart = Table.CurrentPage * Table.RowsPerPage;
+        if (Table.CurrentPage > 0 && pageStart >= GetSource().Count)
+        {
+            Table.NavigateTo(0);
+            return;
+        }
+
+        await Table.ReloadServerData();
+    }
+
+    private IReadOnlyCollection<PersistedTask> GetSource() =>
+        Tasks ?? (Upscale ? TaskRegistry.GetUpscaleSnapshot() : TaskRegistry.GetStandardSnapshot());
 
     private static IEnumerable<PersistedTask> ApplySort(
         IEnumerable<PersistedTask> source,

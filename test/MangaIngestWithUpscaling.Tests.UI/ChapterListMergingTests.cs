@@ -11,10 +11,12 @@ using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.Analysis;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.ChapterMerging;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.LibraryIntegrity;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
@@ -97,6 +99,9 @@ public class ChapterListMergingTests : BunitContext
         Services.AddMudServices();
         Services.AddSingleton(typeof(IStringLocalizer<>), typeof(MockStringLocalizer<>));
         Services.AddSingleton(_dbContext);
+        Services.AddSingleton<IDbContextFactory<ApplicationDbContext>>(
+            new TestDbContextFactory(_testDb.Database)
+        );
         Services.AddSingleton(_subMergeCoordinator);
         Services.AddSingleton(_subRevertService);
         Services.AddSingleton(_subMetadataHandler);
@@ -254,6 +259,60 @@ public class ChapterListMergingTests : BunitContext
     }
 
     [Fact]
+    public async Task ChapterList_UpscaleChapter_ShouldEnqueueUpscaleTaskWithEffectiveProfile()
+    {
+        // Regression guard: the upscale handler loads the effective profile in its own per-operation
+        // context, then must enqueue a task built from that profile. Building the task from the
+        // chapter's (stale) navigation graph used to throw "has no effective upscaler profile set".
+        (Manga manga, Library library, List<Chapter> chapters) = await CreateTestDataAsync();
+
+        var profile = new UpscalerProfile
+        {
+            Id = 1,
+            Name = "Test Profile",
+            ScalingFactor = ScaleFactor.TwoX,
+            CompressionFormat = CompressionFormat.Png,
+            Quality = 90,
+        };
+        _dbContext.UpscalerProfiles.Add(profile);
+        library.UpscalerProfileId = profile.Id;
+        library.UpscalerProfile = profile;
+        await _dbContext.SaveChangesAsync(CancellationToken.None);
+
+#pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+        _subMergeCoordinator
+            .GetPossibleMergeActionsAsync(Arg.Any<List<Chapter>>(), Arg.Any<bool>())
+            .Returns(new MergeActionInfo());
+#pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
+
+        var component = RenderComponentWithProviders<ChapterList>(parameters =>
+            parameters.Add(p => p.Manga, manga)
+        );
+
+        component.WaitForAssertion(() =>
+            Assert.NotNull(
+                component
+                    .FindAll("button")
+                    .FirstOrDefault(b => b.GetAttribute("title") == "Upscale")
+            )
+        );
+
+        // Act: find and click in one dispatch so the async load cannot swap the handler in between.
+        await component.InvokeAsync(() =>
+        {
+            IElement button = component
+                .FindAll("button")
+                .First(b => b.GetAttribute("title") == "Upscale");
+            button.Click();
+        });
+
+        // Assert
+        component.WaitForAssertion(() =>
+            _subTaskQueue.Received(1).EnqueueAsync(Arg.Any<UpscaleTask>())
+        );
+    }
+
+    [Fact]
     public async Task ChapterList_WithMergedChapter_ShouldShowRevertButton()
     {
         // Arrange
@@ -285,7 +344,13 @@ public class ChapterListMergingTests : BunitContext
 
         // Setup revert service to indicate chapter can be reverted
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
-        _subRevertService.CanRevertChapterAsync(chapters[0]).Returns(true);
+        _subRevertService
+            .CanRevertChapterAsync(
+                Arg.Is<Chapter>(c => c.Id == chapters[0].Id),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<ApplicationDbContext>()
+            )
+            .Returns(true);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Setup merge coordinator
@@ -365,7 +430,13 @@ public class ChapterListMergingTests : BunitContext
 
         // Setup revert service to indicate the merged chapter can be reverted
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
-        _subRevertService.CanRevertChapterAsync(mergedChapter).Returns(true);
+        _subRevertService
+            .CanRevertChapterAsync(
+                Arg.Is<Chapter>(c => c.Id == mergedChapter.Id),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<ApplicationDbContext>()
+            )
+            .Returns(true);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Act
@@ -441,7 +512,13 @@ public class ChapterListMergingTests : BunitContext
 
         // Setup revert service to indicate this chapter can be reverted (it's merged)
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
-        _subRevertService.CanRevertChapterAsync(chapters[0]).Returns(true);
+        _subRevertService
+            .CanRevertChapterAsync(
+                Arg.Is<Chapter>(c => c.Id == chapters[0].Id),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<ApplicationDbContext>()
+            )
+            .Returns(true);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Setup merge coordinator to return NO merge possibilities for the merged chapter
@@ -525,7 +602,13 @@ public class ChapterListMergingTests : BunitContext
 
         // Chapters are NOT merged, so revert service should return false
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
-        _subRevertService.CanRevertChapterAsync(Arg.Any<Chapter>()).Returns(false);
+        _subRevertService
+            .CanRevertChapterAsync(
+                Arg.Any<Chapter>(),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<ApplicationDbContext>()
+            )
+            .Returns(false);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Act
@@ -627,9 +710,27 @@ public class ChapterListMergingTests : BunitContext
 
         // Setup revert service - first chapter can be reverted (it's merged)
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
-        _subRevertService.CanRevertChapterAsync(chapters[0]).Returns(true);
-        _subRevertService.CanRevertChapterAsync(chapters[1]).Returns(false);
-        _subRevertService.CanRevertChapterAsync(chapters[2]).Returns(false);
+        _subRevertService
+            .CanRevertChapterAsync(
+                Arg.Is<Chapter>(c => c.Id == chapters[0].Id),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<ApplicationDbContext>()
+            )
+            .Returns(true);
+        _subRevertService
+            .CanRevertChapterAsync(
+                Arg.Is<Chapter>(c => c.Id == chapters[1].Id),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<ApplicationDbContext>()
+            )
+            .Returns(false);
+        _subRevertService
+            .CanRevertChapterAsync(
+                Arg.Is<Chapter>(c => c.Id == chapters[2].Id),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<ApplicationDbContext>()
+            )
+            .Returns(false);
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // Setup merge coordinator - second chapter can be merged
@@ -787,10 +888,18 @@ public class ChapterListMergingTests : BunitContext
         // Setup revert service to reflect initial and post-merge states
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
         _subRevertService
-            .CanRevertChapterAsync(Arg.Is<Chapter>(c => c.Id == chapters[0].Id))
+            .CanRevertChapterAsync(
+                Arg.Is<Chapter>(c => c.Id == chapters[0].Id),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<ApplicationDbContext>()
+            )
             .Returns(false, true); // Initially not merged, then after merge, it can be reverted
         _subRevertService
-            .CanRevertChapterAsync(Arg.Is<Chapter>(c => c.Id == chapters[1].Id))
+            .CanRevertChapterAsync(
+                Arg.Is<Chapter>(c => c.Id == chapters[1].Id),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<ApplicationDbContext>()
+            )
             .Returns(false); // Chapter 1.2 is never merged (gets removed)
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
@@ -898,7 +1007,13 @@ public class ChapterListMergingTests : BunitContext
 
         // 7. Verify that revert service was called to update merge status
 #pragma warning disable xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
-        await _subRevertService.Received().CanRevertChapterAsync(Arg.Any<Chapter>());
+        await _subRevertService
+            .Received()
+            .CanRevertChapterAsync(
+                Arg.Any<Chapter>(),
+                Arg.Any<CancellationToken>(),
+                Arg.Any<ApplicationDbContext>()
+            );
 #pragma warning restore xUnit1051 // Calls to methods which accept CancellationToken should use TestContext.Current.CancellationToken
 
         // 8. Verify that only merged chapters are displayed (merged chapter + third chapter)

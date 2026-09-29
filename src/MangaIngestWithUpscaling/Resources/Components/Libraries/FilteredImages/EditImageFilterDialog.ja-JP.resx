@@ -79,4 +79,7 @@
   <data name="Text_LastMatched" xml:space="preserve">
     <value>最終一致: {0}</value>
   </data>
+  <data name="Error_SaveFailed" xml:space="preserve">
+    <value>説明の保存に失敗しました。</value>
+  </data>
 </root>

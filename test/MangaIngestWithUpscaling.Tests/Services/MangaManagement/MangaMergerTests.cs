@@ -6,6 +6,7 @@ using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
 
@@ -40,7 +41,7 @@ public class MangaMergerTests : IAsyncDisposable
         Directory.CreateDirectory(_tempDir);
 
         _mangaMerger = new MangaMerger(
-            _dbContext,
+            new TestDbContextFactory(_testDb.Database),
             _mockMetadataHandling,
             _mockMetadataChanger,
             _mockLogger,
@@ -107,16 +108,35 @@ public class MangaMergerTests : IAsyncDisposable
         );
 
         // Assert
-        // Verify chapters were transferred to primary manga
-        Assert.Equal(2, primaryManga.Chapters.Count);
-        Assert.Contains(chapter1, primaryManga.Chapters);
-        Assert.Contains(chapter2, primaryManga.Chapters);
+        // The merger reloads the roots from the database when no caller context is supplied, so the
+        // caller's instances are no longer the tracked ones. Assert against persisted state.
+        await using (var verifyDb = CreateVerificationContext())
+        {
+            // Verify chapters were transferred to primary manga
+            var transferredChapterIds = await verifyDb
+                .Chapters.Where(c => c.MangaId == primaryManga.Id)
+                .Select(c => c.Id)
+                .ToListAsync(TestContext.Current.CancellationToken);
+            Assert.Equal(2, transferredChapterIds.Count);
+            Assert.Contains(chapter1.Id, transferredChapterIds);
+            Assert.Contains(chapter2.Id, transferredChapterIds);
 
-        // Verify merged manga was removed
-        Assert.DoesNotContain(mergedManga, _dbContext.MangaSeries);
+            // Verify merged manga was removed
+            Assert.False(
+                await verifyDb.MangaSeries.AnyAsync(
+                    m => m.Id == mergedManga.Id,
+                    TestContext.Current.CancellationToken
+                )
+            );
 
-        // Verify alternative title was added
-        Assert.Contains(primaryManga.OtherTitles, t => t.Title == "Merged Manga");
+            // Verify alternative title was added
+            Assert.True(
+                await verifyDb.MangaAlternativeTitles.AnyAsync(
+                    t => t.MangaId == primaryManga.Id && t.Title == "Merged Manga",
+                    TestContext.Current.CancellationToken
+                )
+            );
+        }
 
         // Verify file operations
         _mockFileSystem.Received(2).Move(Arg.Any<string>(), Arg.Any<string>());
@@ -179,8 +199,16 @@ public class MangaMergerTests : IAsyncDisposable
         );
 
         // Assert
-        // Verify chapter was transferred
-        Assert.Contains(chapter, primaryManga.Chapters);
+        // Verify chapter was transferred (the merger reloads the roots when no context is supplied)
+        await using (var verifyDb = CreateVerificationContext())
+        {
+            Assert.True(
+                await verifyDb.Chapters.AnyAsync(
+                    c => c.Id == chapter.Id && c.MangaId == primaryManga.Id,
+                    TestContext.Current.CancellationToken
+                )
+            );
+        }
 
         // Verify upscaled file was processed
 #pragma warning disable CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
@@ -188,7 +216,10 @@ public class MangaMergerTests : IAsyncDisposable
             .Received(1)
             .ApplyMangaTitleToUpscaledAsync(
 #pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
-                chapter, "Primary Manga", upscaledChapterPath);
+                Arg.Is<Chapter>(c => c.Id == chapter.Id),
+                "Primary Manga",
+                upscaledChapterPath
+            );
     }
 
     [Fact]
@@ -241,10 +272,20 @@ public class MangaMergerTests : IAsyncDisposable
             );
 
         // Verify merged manga was NOT removed (since not all chapters could be moved)
-        Assert.Contains(mergedManga, _dbContext.MangaSeries);
+        Assert.True(
+            await _dbContext.MangaSeries.AnyAsync(
+                m => m.Id == mergedManga.Id,
+                TestContext.Current.CancellationToken
+            )
+        );
 
         // Verify no chapters were transferred (since not all could be moved)
-        Assert.Empty(primaryManga.Chapters);
+        Assert.False(
+            await _dbContext.Chapters.AnyAsync(
+                c => c.MangaId == primaryManga.Id,
+                TestContext.Current.CancellationToken
+            )
+        );
     }
 
     [Fact]
@@ -347,11 +388,20 @@ public class MangaMergerTests : IAsyncDisposable
 
         // Assert
         // Verify merged manga was removed
-        Assert.DoesNotContain(mergedManga, _dbContext.MangaSeries);
+        Assert.False(
+            await _dbContext.MangaSeries.AnyAsync(
+                m => m.Id == mergedManga.Id,
+                TestContext.Current.CancellationToken
+            )
+        );
 
-        // Verify titles were transferred
-        Assert.Contains(primaryManga.OtherTitles, t => t.Title == "Merged Manga");
-        Assert.Contains(primaryManga.OtherTitles, t => t.Title == "Alternative Title");
+        // Verify titles were transferred (the merger reloads the roots when no context is supplied)
+        var transferredTitles = await _dbContext
+            .MangaAlternativeTitles.Where(t => t.MangaId == primaryManga.Id)
+            .Select(t => t.Title)
+            .ToListAsync(TestContext.Current.CancellationToken);
+        Assert.Contains("Merged Manga", transferredTitles);
+        Assert.Contains("Alternative Title", transferredTitles);
 
         // Verify no file operations occurred
         _mockFileSystem.DidNotReceive().Move(Arg.Any<string>(), Arg.Any<string>());
@@ -399,22 +449,25 @@ public class MangaMergerTests : IAsyncDisposable
 
         // Assert
         // Verify merged manga was removed
-        Assert.DoesNotContain(mergedManga, _dbContext.MangaSeries);
-
-        // Verify no duplicate titles were added (primary should keep its existing title, merged should add its title)
-        var primaryExistingTitleCount = primaryManga.OtherTitles.Count(t =>
-            t.Title == "Primary Existing Title"
+        Assert.False(
+            await _dbContext.MangaSeries.AnyAsync(
+                m => m.Id == mergedManga.Id,
+                TestContext.Current.CancellationToken
+            )
         );
-        Assert.Equal(1, primaryExistingTitleCount);
 
-        // Verify merged manga's title was transferred to primary
-        var mergedTitleCount = primaryManga.OtherTitles.Count(t =>
-            t.Title == "Merged Existing Title"
-        );
-        Assert.Equal(1, mergedTitleCount);
+        // Verify no duplicate titles were added (primary should keep its existing title, merged
+        // should add its title). The merger reloads the roots when no context is supplied, so
+        // assert against the persisted titles.
+        var persistedTitles = await _dbContext
+            .MangaAlternativeTitles.Where(t => t.MangaId == primaryManga.Id)
+            .Select(t => t.Title)
+            .ToListAsync(TestContext.Current.CancellationToken);
 
+        Assert.Equal(1, persistedTitles.Count(t => t == "Primary Existing Title"));
+        Assert.Equal(1, persistedTitles.Count(t => t == "Merged Existing Title"));
         // Verify primary title wasn't added as alternative (same as primary)
-        Assert.DoesNotContain(primaryManga.OtherTitles, t => t.Title == "Primary Manga");
+        Assert.DoesNotContain("Primary Manga", persistedTitles);
     }
 
     [Fact]
@@ -459,6 +512,12 @@ public class MangaMergerTests : IAsyncDisposable
         // Verify no operations occurred
         _mockFileSystem.DidNotReceive().Move(Arg.Any<string>(), Arg.Any<string>());
     }
+
+    /// <summary>
+    /// Opens a separate context so assertions observe committed database state rather than the
+    /// seeding context's tracked (and now detached) instances.
+    /// </summary>
+    private ApplicationDbContext CreateVerificationContext() => _testDb.Database.CreateContext();
 
     private Library CreateTestLibrary()
     {

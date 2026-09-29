@@ -1681,6 +1681,7 @@ public partial class LibraryIntegrityChecker(
                 library,
                 chapterToUse.Metadata.Series,
                 null,
+                dbContext,
                 cancellationToken
             );
 
@@ -1733,6 +1734,7 @@ public partial class LibraryIntegrityChecker(
                 var upscalerProfile =
                     await chapterProcessingService.FindOrCreateUpscalerProfileAsync(
                         group.UpscalerProfileDto,
+                        dbContext,
                         cancellationToken
                     );
                 if (upscalerProfile != null)
@@ -1808,6 +1810,7 @@ public partial class LibraryIntegrityChecker(
                 var upscalerProfile =
                     await chapterProcessingService.FindOrCreateUpscalerProfileAsync(
                         group.UpscalerProfileDto,
+                        dbContext,
                         cancellationToken
                     );
                 if (upscalerProfile != null)

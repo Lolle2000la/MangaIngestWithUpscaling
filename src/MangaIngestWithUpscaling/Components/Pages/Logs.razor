@@ -2,7 +2,7 @@
 @using MangaIngestWithUpscaling.Data.LogModel
 @using MangaIngestWithUpscaling.Services.Logging
 @using Serilog.Events
-@inject LoggingDbContext DbContext
+@inject IDbContextFactory<LoggingDbContext> DbContextFactory
 @inject IDialogService DialogService
 @inject IStringLocalizer<Logs> Loc
 
@@ -13,7 +13,7 @@
     <ToolBarContent>
         <MudText Typo="Typo.h6">@Loc["Title"]</MudText>
         <MudSpacer />
-        <MudSelect @bind-Value="_selectedLevel" @bind-Value:after="async () => await table.ReloadServerData()"
+        <MudSelect @bind-Value="_selectedLevel" @bind-Value:after="OnFilterChanged"
             Label="@Loc["FilterLabel"]" Immediate="true">
             @foreach (var level in Enum.GetValues<LogEventLevel>())
             {
@@ -69,7 +69,11 @@
 
     private async Task<TableData<Log>> ServerData(TableState state, CancellationToken cancellationToken)
     {
-        IQueryable<Log> query = DbContext.Logs;
+        // Open a short-lived context per request instead of injecting the circuit-scoped one: rapid
+        // filter/sort reloads can otherwise overlap and hit "A second operation was started on this
+        // context instance".
+        await using var dbContext = await DbContextFactory.CreateDbContextAsync(cancellationToken);
+        IQueryable<Log> query = dbContext.Logs;
 
         // Serilog's level names ("Verbose"…"Fatal"), not Microsoft.Extensions.Logging's
         // ("Trace"…"Critical"), because those are what the sinks persist.
@@ -92,6 +96,27 @@
         .ToListAsync(cancellationToken);
 
         return new TableData<Log> { TotalItems = totalItems, Items = items };
+    }
+
+    /// <summary>
+    ///     Reloads after the severity filter changed. The table is reset to the first page because
+    ///     MudTable only clamps the page when its start is strictly past the end; a filter that
+    ///     leaves exactly a page-size multiple of rows would otherwise keep an out-of-range page and
+    ///     render blank.
+    /// </summary>
+    private async Task OnFilterChanged()
+    {
+        if (table is null)
+            return;
+
+        if (table.CurrentPage != 0)
+        {
+            // NavigateTo(0) changes the page and triggers its own server reload with the new filter.
+            table.NavigateTo(0);
+            return;
+        }
+
+        await table.ReloadServerData();
     }
 
     private Color GetLevelColor(string level)

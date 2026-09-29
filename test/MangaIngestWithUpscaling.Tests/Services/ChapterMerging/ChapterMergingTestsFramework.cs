@@ -16,6 +16,7 @@ using MangaIngestWithUpscaling.Shared.Services.ChapterRecognition;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
@@ -1390,7 +1391,7 @@ public class ChapterMergeRevertServiceTests : IAsyncDisposable
 
         // Create service under test
         _revertService = new ChapterMergeRevertService(
-            _dbContext,
+            new TestDbContextFactory(_testDb.Database),
             _mockChapterPartMerger,
             null!,
             null!,
@@ -2186,7 +2187,7 @@ public class UpscaledChapterHandlingTests : IAsyncDisposable
                 partMergerLogger
             );
             var revertService = new ChapterMergeRevertService(
-                context,
+                new TestDbContextFactory(_testDb.Database),
                 chapterPartMerger,
                 chapterChangedNotifier,
                 upscalerJsonService,
@@ -2330,7 +2331,7 @@ public class UpscaledChapterHandlingTests : IAsyncDisposable
                 partMergerLogger
             );
             var revertService = new ChapterMergeRevertService(
-                context,
+                new TestDbContextFactory(_testDb.Database),
                 chapterPartMerger,
                 chapterChangedNotifier,
                 upscalerJsonService,
@@ -2464,7 +2465,7 @@ public class PartialUpscalingMergeTests : IAsyncDisposable
         var taskQueueStub = Substitute.For<ITaskQueue>();
 
         var coordinator = new ChapterMergeCoordinator(
-            context,
+            new TestDbContextFactory(_testDb.Database),
             chapterPartMerger,
             upscaleTaskManager,
             taskQueueStub,
@@ -2591,6 +2592,9 @@ public class PartialUpscalingMergeTests : IAsyncDisposable
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddSingleton(context);
+        services.AddSingleton<IDbContextFactory<ApplicationDbContext>>(
+            new TestDbContextFactory(_testDb.Database)
+        );
         services.AddScoped<IQueueCleanup, QueueCleanup>();
         var provider = services.BuildServiceProvider();
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
@@ -2612,7 +2616,7 @@ public class PartialUpscalingMergeTests : IAsyncDisposable
 
         var splitCoordinator = Substitute.For<ISplitProcessingCoordinator>();
         var realTaskManager = new ChapterMergeUpscaleTaskManager(
-            context,
+            new TestDbContextFactory(_testDb.Database),
             taskQueue,
             processor,
             splitCoordinator,
@@ -2699,6 +2703,9 @@ public class PartialUpscalingMergeTests : IAsyncDisposable
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddSingleton(context);
+        services.AddSingleton<IDbContextFactory<ApplicationDbContext>>(
+            new TestDbContextFactory(_testDb.Database)
+        );
         var provider = services.BuildServiceProvider();
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
         var realQueueForProcessor = new TaskQueue(
@@ -2721,7 +2728,7 @@ public class PartialUpscalingMergeTests : IAsyncDisposable
         var taskManagerLogger = Substitute.For<ILogger<ChapterMergeUpscaleTaskManager>>();
 
         var taskManager = new ChapterMergeUpscaleTaskManager(
-            context,
+            new TestDbContextFactory(_testDb.Database),
             taskQueue,
             upscaleTaskProcessor,
             splitCoordinator,
@@ -2783,6 +2790,9 @@ public class PartialUpscalingMergeTests : IAsyncDisposable
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddSingleton(context);
+        services.AddSingleton<IDbContextFactory<ApplicationDbContext>>(
+            new TestDbContextFactory(_testDb.Database)
+        );
         var provider = services.BuildServiceProvider();
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
         var realQueueForProcessor = new TaskQueue(
@@ -2810,7 +2820,7 @@ public class PartialUpscalingMergeTests : IAsyncDisposable
             .Returns(true);
 
         var taskManager = new ChapterMergeUpscaleTaskManager(
-            context,
+            new TestDbContextFactory(_testDb.Database),
             taskQueue,
             upscaleTaskProcessor,
             splitCoordinator,
@@ -2823,7 +2833,8 @@ public class PartialUpscalingMergeTests : IAsyncDisposable
             mergeInfo,
             library,
             null,
-            TestContext.Current.CancellationToken
+            TestContext.Current.CancellationToken,
+            context
         );
 
         // Assert
@@ -2850,7 +2861,7 @@ public class PartialUpscalingMergeTests : IAsyncDisposable
         var taskQueueStub2 = Substitute.For<ITaskQueue>();
 
         var coordinator = new ChapterMergeCoordinator(
-            context,
+            new TestDbContextFactory(_testDb.Database),
             chapterPartMerger,
             upscaleTaskManager,
             taskQueueStub2,
@@ -2955,7 +2966,7 @@ public class PartialUpscalingMergeTests : IAsyncDisposable
         var taskQueueStub3 = Substitute.For<ITaskQueue>();
 
         var coordinator = new ChapterMergeCoordinator(
-            context,
+            new TestDbContextFactory(_testDb.Database),
             chapterPartMerger,
             upscaleTaskManager,
             taskQueueStub3,
@@ -3046,7 +3057,7 @@ public class PartialUpscalingMergeTests : IAsyncDisposable
         var splitCoordinator = Substitute.For<ISplitProcessingCoordinator>();
 
         var coordinator = new ChapterMergeCoordinator(
-            context,
+            new TestDbContextFactory(_testDb.Database),
             chapterPartMerger,
             upscaleTaskManager,
             taskQueue,
@@ -3113,6 +3124,7 @@ public class PartialUpscalingMergeTests : IAsyncDisposable
                     existingMergedChapter,
                     library,
                     TestContext.Current.CancellationToken,
+                    context,
                 }
             )!;
         await task;
@@ -3261,7 +3273,7 @@ public class ChapterMergeRevertCornerCaseTests : IAsyncDisposable
         var taskQueue = Substitute.For<ITaskQueue>();
 
         var revertService = new ChapterMergeRevertService(
-            context,
+            new TestDbContextFactory(_testDb.Database),
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -3408,7 +3420,7 @@ public class ChapterMergeRevertCornerCaseTests : IAsyncDisposable
         var taskQueue2 = Substitute.For<ITaskQueue>();
 
         var revertService = new ChapterMergeRevertService(
-            context,
+            new TestDbContextFactory(_testDb.Database),
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -3558,7 +3570,7 @@ public class ChapterMergeRevertCornerCaseTests : IAsyncDisposable
         var taskQueue = Substitute.For<ITaskQueue>();
 
         var revertService = new ChapterMergeRevertService(
-            context,
+            new TestDbContextFactory(_testDb.Database),
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -3697,7 +3709,7 @@ public class ChapterMergeRevertCornerCaseTests : IAsyncDisposable
         var taskQueue = Substitute.For<ITaskQueue>();
 
         var revertService = new ChapterMergeRevertService(
-            context,
+            new TestDbContextFactory(_testDb.Database),
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -3758,7 +3770,7 @@ public class ChapterMergeRevertCornerCaseTests : IAsyncDisposable
         var taskQueue = Substitute.For<ITaskQueue>();
 
         var revertService = new ChapterMergeRevertService(
-            context,
+            new TestDbContextFactory(_testDb.Database),
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -3850,7 +3862,7 @@ public class ChapterMergeRevertCornerCaseTests : IAsyncDisposable
             .Returns(new LocalizedString("Error_NotAMergedChapter", "is not a merged chapter"));
 
         var revertService = new ChapterMergeRevertService(
-            context,
+            new TestDbContextFactory(_testDb.Database),
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -3964,7 +3976,7 @@ public class ChapterMergeRevertCornerCaseTests : IAsyncDisposable
             .Do(_ => throw new InvalidOperationException("Queue failure"));
 
         var revertService = new ChapterMergeRevertService(
-            context,
+            new TestDbContextFactory(_testDb.Database),
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -4080,13 +4092,16 @@ public class ChapterMergeRevertCornerCaseTests : IAsyncDisposable
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddSingleton(context);
+        services.AddSingleton<IDbContextFactory<ApplicationDbContext>>(
+            new TestDbContextFactory(_testDb.Database)
+        );
         services.AddScoped<IQueueCleanup, QueueCleanup>();
         ServiceProvider provider = services.BuildServiceProvider();
         var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
         var taskQueue = new TaskQueue(scopeFactory, Substitute.For<ILogger<TaskQueue>>());
 
         var revertService = new ChapterMergeRevertService(
-            context,
+            new TestDbContextFactory(_testDb.Database),
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,
@@ -4185,7 +4200,8 @@ public class ChapterMergeRevertCornerCaseTests : IAsyncDisposable
         // Act
         List<Chapter> restored = await revertService.RevertMergedChapterAsync(
             merged,
-            TestContext.Current.CancellationToken
+            TestContext.Current.CancellationToken,
+            context
         );
 
         // Assert: the pending RepairUpscaleTask should be removed from the queue
@@ -4216,7 +4232,7 @@ public class ChapterMergeRevertCornerCaseTests : IAsyncDisposable
         var taskQueue = Substitute.For<ITaskQueue>();
 
         var revertService = new ChapterMergeRevertService(
-            context,
+            new TestDbContextFactory(_testDb.Database),
             chapterPartMerger,
             chapterChangedNotifier,
             upscalerJsonHandling,

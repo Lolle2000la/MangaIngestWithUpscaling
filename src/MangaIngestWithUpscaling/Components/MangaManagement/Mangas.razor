@@ -12,7 +12,7 @@
 @using System.Diagnostics
 @implements IDisposable
 
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IDialogService DialogService
 @inject NavigationManager NavigationManager
 @inject IMangaMetadataChanger MangaMetadataChanger
@@ -164,12 +164,6 @@
 
     private MudTable<Manga> table = default!;
 
-    // Serializes this component's DbContext work: the circuit-scoped context is shared with other
-    // components and services, and overlapping use makes EF throw "A second operation was started
-    // on this context instance". The gate is not re-entrant, so a gated operation must call the
-    // *Core method directly instead of another gated entry point. See AsyncGate.
-    private readonly AsyncGate _dbGate = new();
-
     private Manga? mangaBeforeEdit;
 
     private CompositeDisposable disposables = new();
@@ -209,16 +203,14 @@
         _searchSubject.DisposeWith(disposables);
     }
 
-    protected override Task OnInitializedAsync() => _dbGate.RunAsync(LoadLibrariesAsync);
+    protected override Task OnInitializedAsync() => LoadLibrariesAsync();
 
     private async Task LoadLibrariesAsync()
     {
         // Materialize the library list once. Enumerating DbContext.Libraries directly in the render
-        // tree ran a synchronous query that could collide with the MudTable's ServerData query on
-        // the same scoped context ("A second operation was started on this context instance").
-        // OnInitializedAsync is still in flight at first render, when MudTable.OnAfterRenderAsync
-        // already calls ServerData, so this read goes through the gate too.
-        libraries = await DbContext.Libraries.AsNoTracking().ToListAsync();
+        // tree ran a synchronous query; a per-operation context removes the shared-context hazard.
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+        libraries = await db.Libraries.AsNoTracking().ToListAsync();
     }
 
     private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
@@ -273,12 +265,11 @@
         _searchSubject.OnNext(_searchInput);
     }
 
-    private Task<TableData<Manga>> GetMangas(TableState state, CancellationToken cancellationToken) =>
-        _dbGate.RunAsync(() => GetMangasCore(state, cancellationToken));
-
-    private async Task<TableData<Manga>> GetMangasCore(TableState state, CancellationToken cancellationToken)
+    private async Task<TableData<Manga>> GetMangas(TableState state, CancellationToken cancellationToken)
     {
-        var query = DbContext.MangaSeries
+        await using var db = await DbContextFactory.CreateDbContextAsync(cancellationToken);
+        var query = db.MangaSeries
+        .AsNoTrackingWithIdentityResolution()
         .Include(x => x.Library)
         .ThenInclude(x => x.UpscalerProfile)
         .Include(x => x.Chapters)
@@ -325,9 +316,10 @@
         _isProcessing = true;
         try
         {
+            var affected = selectedMangas.ToList();
             var parameters = new DialogParameters<MergeMangaDialog>
             {
-                { x => x.Mangas, selectedMangas.ToList() }
+                { x => x.Mangas, affected }
             };
 
             var dialog = await DialogService.ShowAsync<MergeMangaDialog>(Loc["Dialog_Merge_Title"], parameters);
@@ -335,6 +327,7 @@
 
             if (result is { Canceled: false })
             {
+                RemoveSelection(affected);
                 await table.ReloadServerData();
             }
         }
@@ -356,14 +349,16 @@
         _isProcessing = true;
         try
         {
+            var affected = selectedMangas.ToList();
             var parameters = new DialogParameters<MoveMangasToLibraryDialog>
             {
-                { x => x.Mangas, selectedMangas.ToList() }
+                { x => x.Mangas, affected }
             };
             var dialog = await DialogService.ShowAsync<MoveMangasToLibraryDialog>(Loc["Dialog_Move_Title"], parameters);
             var result = await dialog.Result;
             if (result is { Canceled: false })
             {
+                RemoveSelection(affected);
                 await table.ReloadServerData();
             }
         }
@@ -385,9 +380,10 @@
         _isProcessing = true;
         try
         {
+            var affected = selectedMangas.ToList();
             var parameters = new DialogParameters<DeleteMangasDialog>
             {
-                { x => x.Mangas, selectedMangas }
+                { x => x.Mangas, affected }
             };
 
             var dialog = await DialogService.ShowAsync<DeleteMangasDialog>(Loc["Dialog_Delete_Title"], parameters);
@@ -395,6 +391,7 @@
 
             if (result is { Canceled: false })
             {
+                RemoveSelection(affected);
                 await table.ReloadServerData();
             }
         }
@@ -424,6 +421,7 @@
             var result = await dialog.Result;
             if (result is { Canceled: false })
             {
+                RemoveSelection(new[] { manga });
                 await table.ReloadServerData();
             }
         }
@@ -436,6 +434,24 @@
         finally
         {
             _isProcessing = false;
+        }
+    }
+
+    /// <summary>
+    /// Drops mangas that are no longer part of the visible table from the multi-selection. The
+    /// toolbar's enabled state is driven by <c>selectedMangas.Count</c>; without this, a deleted,
+    /// merged or moved row stays selected and the toolbar keeps acting on a vanished entity.
+    /// </summary>
+    private void RemoveSelection(IReadOnlyCollection<Manga> mangas)
+    {
+        if (mangas.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var manga in mangas)
+        {
+            selectedMangas.Remove(manga);
         }
     }
 
@@ -488,20 +504,15 @@
 
     private async Task OnCommitEdit(object m)
     {
-        bool reload = false;
-        await _dbGate.RunAsync(async () =>
-        {
-            reload = await OnCommitEditCore(m);
-        });
+        bool reload = await CommitMangaEditAsync(m);
 
         if (!reload)
         {
             return;
         }
 
-        // Reload outside the gate: ReloadServerData re-enters GetMangas, which takes the gate, so it
-        // must not run while this handler still holds it (the gate is not re-entrant). RowEditCommit
-        // is Action<object?>, so this runs fire-and-forget; catches handle disposal on navigation.
+        // RowEditCommit is Action<object?>, so this runs fire-and-forget; catches handle disposal on
+        // navigation.
         try
         {
             await table.ReloadServerData();
@@ -510,7 +521,7 @@
         catch (InvalidOperationException) { }
     }
 
-    private async Task<bool> OnCommitEditCore(object m)
+    private async Task<bool> CommitMangaEditAsync(object m)
     {
         if (_isProcessing) return false;
         _isProcessing = true;
@@ -523,7 +534,6 @@
             // if the primary title was changed, change it back and then use the metadata changer.
             if (manga.PrimaryTitle != mangaBeforeEdit.PrimaryTitle)
             {
-                await DbContext.Entry(manga).Collection(x => x.OtherTitles).LoadAsync();
                 var newTitle = manga.PrimaryTitle.Trim();
                 manga.PrimaryTitle = mangaBeforeEdit.PrimaryTitle;
 
@@ -603,7 +613,17 @@
 
             try
             {
-                await DbContext.SaveChangesAsync();
+                // The row's manga was loaded without tracking; persist the edited fields on a
+                // freshly loaded entity.
+                await using var db = await DbContextFactory.CreateDbContextAsync();
+                var tracked = await db.MangaSeries.FirstOrDefaultAsync(x => x.Id == manga.Id);
+                if (tracked is not null)
+                {
+                    tracked.PrimaryTitle = manga.PrimaryTitle;
+                    tracked.LibraryId = manga.LibraryId;
+                    tracked.ShouldUpscale = manga.ShouldUpscale;
+                    await db.SaveChangesAsync();
+                }
             }
             catch (Exception e)
             {
@@ -611,8 +631,6 @@
                 Logger.LogError(e, Loc["Error_Saving"], manga.Id);
             }
 
-            // The caller reloads the table after the gate is released so the table reflects saved
-            // state.
             return true;
         }
         finally

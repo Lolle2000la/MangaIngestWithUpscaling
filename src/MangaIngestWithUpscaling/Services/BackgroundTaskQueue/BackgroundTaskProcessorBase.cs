@@ -93,7 +93,7 @@ public abstract class BackgroundTaskProcessorBase(
     /// Otherwise, consistency issues may arise.
     /// </summary>
     /// <param name="checkAgainst">The task to check against if it is still the current task. Does so by using the Id.</param>
-    public void CancelCurrent(PersistedTask checkAgainst)
+    public virtual void CancelCurrent(PersistedTask checkAgainst)
     {
         using (_lock.EnterScope())
         {

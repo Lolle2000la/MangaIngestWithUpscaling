@@ -1,20 +1,35 @@
 using System;
-using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
+using MangaIngestWithUpscaling.Components.Libraries;
 using MangaIngestWithUpscaling.Components.Libraries.Dialogs;
+using MangaIngestWithUpscaling.Components.Libraries.Filters;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Services.ChapterRecognition;
+using MangaIngestWithUpscaling.Services.LibraryFiltering;
+using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
+using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Web;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
 using MudBlazor;
 using MudBlazor.Services;
 using NSubstitute;
 
+// The shared bUnit context aliases TestContext, so the xUnit-recommended
+// TestContext.Current.CancellationToken is unavailable here.
+#pragma warning disable xUnit1051
+
 namespace MangaIngestWithUpscaling.Tests.UI.Libraries;
 
+/// <summary>
+/// Interaction tests for the rename-rule dialog and its live preview. The previous tests only
+/// asserted that some markup existed; these drive the real preview generation and the rule-change
+/// refresh path.
+/// </summary>
 public class DialogsTests : BunitContext
 {
     private TestDatabaseHelper.TestDbContext _testDb = null!;
@@ -35,10 +50,17 @@ public class DialogsTests : BunitContext
     private void RegisterServices()
     {
         Services.AddMudServices();
+        Services.AddLogging();
         Services.AddSingleton(typeof(IStringLocalizer<>), typeof(MockStringLocalizer<>));
         Services.AddSingleton(_dbContext);
+        Services.AddSingleton<IDbContextFactory<ApplicationDbContext>>(
+            new TestDbContextFactory(_testDb.Database)
+        );
+        Services.AddSingleton<ILibraryRenamingService, LibraryRenamingService>();
+        Services.AddSingleton(Substitute.For<IChapterInIngestRecognitionService>());
+        Services.AddSingleton(Substitute.For<IMetadataHandlingService>());
+        Services.AddSingleton(Substitute.For<ISnackbar>());
 
-        // Setup MudBlazor JavaScript interop
         JSInterop.Mode = JSRuntimeMode.Loose;
         JSInterop.SetupVoid("mudPopover.initialize").SetVoidResult();
         JSInterop.SetupVoid("mudKeyInterceptor.connect").SetVoidResult();
@@ -60,131 +82,139 @@ public class DialogsTests : BunitContext
     }
 
     [Fact]
-    public void LibraryRenameDialog_ShouldRenderWithLibraryParameter()
+    public async Task PreviewLibraryRenames_GeneratesSeriesPreviewFromRules()
     {
-        // Arrange
-        var library = new Library
-        {
-            Id = 1,
-            Name = "Test Library",
-            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest" }],
-            NotUpscaledLibraryPath = "/test/library",
-            UpscaledLibraryPath = "/test/upscaled",
-            RenameRules = new ObservableCollection<LibraryRenameRule>(),
-        };
+        Library library = CreateLibraryWithRenames();
 
-        // Act
-        var component = Render<LibraryRenameDialog>(parameters =>
+        var preview = Render<PreviewLibraryRenames>(parameters =>
             parameters.Add(p => p.Library, library)
         );
 
-        // Assert
-        Assert.NotNull(component);
-        // Component should render without exceptions - some content might not be available due to setup
-        var markup = component.Markup;
-        Assert.NotNull(markup);
+        await ExpandExistingSeriesPanelAsync(preview);
+
+        preview.WaitForAssertion(() => Assert.True(GetSeriesPreviewCount(preview) > 0));
+        preview.WaitForAssertion(() =>
+            Assert.Contains(
+                preview.FindAll("td"),
+                td => td.TextContent.Contains("Changed Series", StringComparison.Ordinal)
+            )
+        );
+        Assert.Contains(
+            preview.FindAll("td"),
+            td => td.TextContent.Contains("Original Series", StringComparison.Ordinal)
+        );
+    }
+
+    private static int GetSeriesPreviewCount(IRenderedComponent<PreviewLibraryRenames> preview)
+    {
+        object collection = typeof(PreviewLibraryRenames)
+            .GetField(
+                "seriesPreviews",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic
+            )!
+            .GetValue(preview.Instance)!;
+        return (int)collection.GetType().GetProperty("Count")!.GetValue(collection)!;
     }
 
     [Fact]
-    public void LibraryRenameDialog_CloseButton_ShouldTriggerDialogClose()
+    public async Task LibraryRenameDialog_RemovingARule_RefreshesThePreview()
     {
-        // Arrange
-        var library = new Library
-        {
-            Id = 1,
-            Name = "Test Library",
-            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest" }],
-            NotUpscaledLibraryPath = "/test/library",
-            UpscaledLibraryPath = "/test/upscaled",
-            RenameRules = new ObservableCollection<LibraryRenameRule>(),
-        };
+        Library library = CreateLibraryWithRenames();
 
-        var mockDialogInstance = Substitute.For<IMudDialogInstance>();
-
-        // Act
-        var component = Render<LibraryRenameDialog>(parameters =>
+        var host = Render(builder =>
         {
-            parameters.Add(p => p.Library, library);
-            parameters.AddCascadingValue(mockDialogInstance);
+            builder.OpenComponent<MudPopoverProvider>(0);
+            builder.CloseComponent();
+            builder.OpenComponent<MudDialogProvider>(1);
+            builder.CloseComponent();
         });
 
-        // Try to find and click close button if it exists, otherwise just verify component rendered
-        var closeButtons = component.FindAll("button:contains('Close')");
-        if (closeButtons.Any())
+        var dialogService = Services.GetRequiredService<IDialogService>();
+        var parameters = new DialogParameters<LibraryRenameDialog>
         {
-            closeButtons.First().Click();
-            // Assert
-            mockDialogInstance.Received(1).Close();
-        }
-        else
-        {
-            // Component rendered but button not found - that's acceptable for this test setup
-            Assert.True(true, "Component rendered without exceptions");
-        }
+            { component => component.Library, library },
+        };
+        IDialogReference reference = await dialogService.ShowAsync<LibraryRenameDialog>(
+            "Renames",
+            parameters
+        );
+
+        IRenderedComponent<LibraryRenameDialog> dialog = null!;
+        host.WaitForAssertion(() => dialog = host.FindComponent<LibraryRenameDialog>());
+        IRenderedComponent<PreviewLibraryRenames> preview =
+            dialog.FindComponent<PreviewLibraryRenames>();
+        await ExpandExistingSeriesPanelAsync(preview);
+        preview.WaitForAssertion(() =>
+            Assert.Contains(
+                preview.FindAll("td"),
+                td => td.TextContent.Contains("Changed Series", StringComparison.Ordinal)
+            )
+        );
+
+        // Adding a rule keeps a preview around and grows the collection.
+        IRenderedComponent<EditLibraryRenames> editRenames =
+            dialog.FindComponent<EditLibraryRenames>();
+        IRenderedComponent<MudIconButton> addButton = editRenames
+            .FindComponents<MudIconButton>()
+            .First(b => b.Instance.Icon == Icons.Material.Filled.Add);
+        await editRenames.InvokeAsync(() =>
+            addButton.Instance.OnClick.InvokeAsync(new MouseEventArgs())
+        );
+        Assert.Equal(2, library.RenameRules.Count);
+
+        // Removing the renaming rule must clear the generated preview again.
+        IRenderedComponent<MudIconButton> removeButton = editRenames
+            .FindComponents<MudIconButton>()
+            .First(b => b.Instance.Icon == Icons.Material.Filled.Delete);
+        await editRenames.InvokeAsync(() =>
+            removeButton.Instance.OnClick.InvokeAsync(new MouseEventArgs())
+        );
+
+        Assert.Single(library.RenameRules);
+        preview.WaitForAssertion(() =>
+            Assert.DoesNotContain(
+                preview.FindAll("td"),
+                td => td.TextContent.Contains("Changed Series", StringComparison.Ordinal)
+            )
+        );
     }
 
-    [Fact]
-    public void LibraryRenameDialog_ShouldContainEditLibraryRenamesComponent()
+    private static Library CreateLibraryWithRenames()
     {
-        // Arrange
-        var library = new Library
+        return new Library
         {
             Id = 1,
             Name = "Test Library",
-            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest" }],
-            NotUpscaledLibraryPath = "/test/library",
-            UpscaledLibraryPath = "/test/upscaled",
+            MangaSeries = [new Manga { Id = 1, PrimaryTitle = "Original Series" }],
+            IngestPaths = [new LibraryIngestPath { Path = "/does/not/exist", SortOrder = 0 }],
             RenameRules = new ObservableCollection<LibraryRenameRule>
             {
-                new() { Pattern = "test", Replacement = "TEST" },
+                new()
+                {
+                    Pattern = "Original",
+                    PatternType = LibraryRenamePatternType.Contains,
+                    TargetField = LibraryRenameTargetField.SeriesTitle,
+                    Replacement = "Changed",
+                },
             },
         };
-
-        // Act
-        var component = Render<LibraryRenameDialog>(parameters =>
-            parameters.Add(p => p.Library, library)
-        );
-
-        // Assert
-        Assert.NotNull(component);
-        // Component should render without exceptions
-        var markup = component.Markup;
-        Assert.NotNull(markup);
     }
 
-    [Fact]
-    public void LibraryRenameDialog_ShouldContainPreviewLibraryRenamesComponent()
+    private static async Task ExpandExistingSeriesPanelAsync(
+        IRenderedComponent<PreviewLibraryRenames> preview
+    )
     {
-        // Arrange
-        var library = new Library
-        {
-            Id = 1,
-            Name = "Test Library",
-            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest" }],
-            NotUpscaledLibraryPath = "/test/library",
-            UpscaledLibraryPath = "/test/upscaled",
-            RenameRules = new ObservableCollection<LibraryRenameRule>(),
-        };
-
-        // Act
-        var component = Render<LibraryRenameDialog>(parameters =>
-            parameters.Add(p => p.Library, library)
-        );
-
-        // Assert
-        Assert.NotNull(component);
-        // Component should render without exceptions
-        var markup = component.Markup;
-        Assert.NotNull(markup);
+        IRenderedComponent<MudExpansionPanel> panel = preview
+            .FindComponents<MudExpansionPanel>()
+            .First(p => p.Instance.Text.Contains("Existing Series", StringComparison.Ordinal));
+        await preview.InvokeAsync(() => panel.Instance.ExpandAsync());
     }
 
     protected override async ValueTask DisposeAsyncCore()
     {
         // Run the whole teardown on the thread pool: bUnit's service-provider disposal (which
         // disposes the shared ApplicationDbContext) and the database drop both resume async
-        // continuations, and resuming them on the renderer's synchronization context can deadlock -
-        // the same reason TestDatabaseFactory.Create runs on the thread pool. A thread-pool thread
-        // has no synchronization context, so nothing posts back to the renderer.
+        // continuations, and resuming them on the renderer's synchronization context can deadlock.
         await Task.Run(DisposeCoreAsync).ConfigureAwait(false);
     }
 

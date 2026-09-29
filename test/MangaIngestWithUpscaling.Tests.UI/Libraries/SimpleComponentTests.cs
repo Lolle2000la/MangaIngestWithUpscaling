@@ -2,23 +2,32 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
+using AngleSharp.Dom;
 using MangaIngestWithUpscaling.Components.Libraries;
 using MangaIngestWithUpscaling.Components.Libraries.FilteredImages;
 using MangaIngestWithUpscaling.Components.MangaManagement;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.ImageFiltering;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Web;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
+using Microsoft.Extensions.Logging.Abstractions;
 using MudBlazor;
 using MudBlazor.Services;
 using NSubstitute;
-using ReactiveUI.Builder;
+
+// The shared bUnit context aliases TestContext, so the xUnit-recommended
+// TestContext.Current.CancellationToken is unavailable here.
+#pragma warning disable xUnit1051
 
 namespace MangaIngestWithUpscaling.Tests.UI.Libraries;
 
@@ -26,7 +35,7 @@ public class SimpleComponentTests : BunitContext
 {
     static SimpleComponentTests()
     {
-        RxAppBuilder.CreateReactiveUIBuilder().WithBlazor().BuildApp();
+        ReactiveUiTestSetup.EnsureInitialized();
     }
 
     private TestDatabaseHelper.TestDbContext _testDb = null!;
@@ -64,11 +73,22 @@ public class SimpleComponentTests : BunitContext
         Services.AddMudServices();
         Services.AddSingleton(typeof(IStringLocalizer<>), typeof(MockStringLocalizer<>));
         Services.AddSingleton(_dbContext);
+        Services.AddSingleton<IDbContextFactory<ApplicationDbContext>>(
+            new TestDbContextFactory(_testDb.Database)
+        );
         Services.AddSingleton(_mockTaskQueue);
         Services.AddSingleton(_mockMetadataChanger);
         Services.AddSingleton(_mockImageFilterService);
         Services.AddSingleton(_mockDialogService);
         Services.AddSingleton(_mockSnackbar);
+
+        // Libraries.razor injects the concrete TaskQueue, so register a real instance (the page's
+        // scan/upscale/integrity actions must reach the database).
+        Services.AddSingleton(Substitute.For<IQueueCleanup>());
+        Services.AddSingleton(sp => new TaskQueue(
+            sp.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<TaskQueue>.Instance
+        ));
 
         // Add missing services
         Services.AddSingleton(
@@ -95,6 +115,20 @@ public class SimpleComponentTests : BunitContext
         JSInterop.Setup<bool>("mudElementRef.restoreFocus").SetResult(true);
     }
 
+    private IRenderedComponent<T> RenderWithProviders<T>(
+        Action<ComponentParameterCollectionBuilder<T>>? parameterBuilder = null
+    )
+        where T : class, IComponent
+    {
+        Render(builder =>
+        {
+            builder.OpenComponent<MudPopoverProvider>(0);
+            builder.CloseComponent();
+        });
+
+        return parameterBuilder != null ? Render<T>(parameterBuilder) : Render<T>();
+    }
+
     // CreateLibrary Component Tests
     [Fact]
     public void CreateLibrary_ShouldRenderInitialForm()
@@ -110,27 +144,132 @@ public class SimpleComponentTests : BunitContext
     }
 
     // Libraries Component Tests
-    [Fact(Skip = "Libraries component requires complex TaskQueue setup")]
-    public void Libraries_ShouldRenderEmptyState()
+    [Fact]
+    public void Libraries_EmptyState_ShowsCreateAffordances()
     {
-        // Act
-        var component = Render<MangaIngestWithUpscaling.Components.Libraries.Libraries>();
+        var component =
+            RenderWithProviders<MangaIngestWithUpscaling.Components.Libraries.Libraries>();
 
-        // Assert
-        Assert.NotNull(component);
-        Assert.Contains("Libraries", component.Markup);
-        Assert.Contains("No Libraries Yet", component.Markup);
-        Assert.Contains("Create your first library", component.Markup);
+        component.WaitForAssertion(() =>
+        {
+            Assert.Contains("No Libraries Yet", component.Markup);
+            Assert.Contains("Create your first library", component.Markup);
+        });
 
-        // Should have Create Library button
-        var createButton = component.Find(
-            "button:contains('Create Library'), a[href='libraries/create']"
+        Assert.NotNull(component.Find("a[href='libraries/create']"));
+        Assert.Contains(
+            component.FindAll("button"),
+            b => b.TextContent.Contains("Upscale All", StringComparison.Ordinal)
         );
-        Assert.NotNull(createButton);
+    }
 
-        // Should have Upscale All button
-        var upscaleButton = component.Find("button:contains('Upscale All')");
-        Assert.NotNull(upscaleButton);
+    [Fact]
+    public async Task Libraries_SeededLibrary_IsListedAndDeleteRemovesIt()
+    {
+        _dbContext.Libraries.Add(
+            new Library
+            {
+                Name = "Library Alpha",
+                NotUpscaledLibraryPath = "/test/library",
+                UpscaledLibraryPath = "/test/upscaled",
+                IngestPaths = [new LibraryIngestPath { Path = "/test/ingest" }],
+            }
+        );
+        await _dbContext.SaveChangesAsync(CancellationToken.None);
+
+        _mockDialogService
+            .ShowMessageBoxAsync(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<DialogOptions>()
+            )
+            .Returns(Task.FromResult<bool?>(true));
+
+        var component =
+            RenderWithProviders<MangaIngestWithUpscaling.Components.Libraries.Libraries>();
+        component.WaitForAssertion(() => Assert.Contains("Library Alpha", component.Markup));
+
+        IElement row = component
+            .FindAll("tr")
+            .First(tr => tr.TextContent.Contains("Library Alpha", StringComparison.Ordinal));
+        IElement deleteButton = row.QuerySelectorAll("button").Last();
+        await component.InvokeAsync(() => deleteButton.Click(new MouseEventArgs()));
+
+        component.WaitForAssertion(() => Assert.DoesNotContain("Library Alpha", component.Markup));
+
+        await using var db = await _testDb.Database.CreateContextAsync();
+        Assert.Empty(db.Libraries);
+    }
+
+    [Fact]
+    public async Task Libraries_UpscaleAll_EnqueuesOnlyNonUpscaledChapters()
+    {
+        var profile = new UpscalerProfile
+        {
+            Name = "Profile",
+            ScalingFactor = ScaleFactor.TwoX,
+            CompressionFormat = CompressionFormat.Png,
+            Quality = 90,
+        };
+        _dbContext.UpscalerProfiles.Add(profile);
+
+        var library = new Library
+        {
+            Name = "Library Alpha",
+            NotUpscaledLibraryPath = "/test/library",
+            UpscaledLibraryPath = "/test/upscaled",
+            UpscalerProfile = profile,
+            IngestPaths = [new LibraryIngestPath { Path = "/test/ingest" }],
+        };
+        var manga = new Manga
+        {
+            PrimaryTitle = "Manga",
+            Library = library,
+            LibraryId = library.Id,
+        };
+        manga.Chapters =
+        [
+            new Chapter
+            {
+                FileName = "1.cbz",
+                RelativePath = "1.cbz",
+                Manga = manga,
+                MangaId = manga.Id,
+                IsUpscaled = false,
+            },
+            new Chapter
+            {
+                FileName = "2.cbz",
+                RelativePath = "2.cbz",
+                Manga = manga,
+                MangaId = manga.Id,
+                IsUpscaled = true,
+            },
+        ];
+        _dbContext.Libraries.Add(library);
+        _dbContext.MangaSeries.Add(manga);
+        await _dbContext.SaveChangesAsync(CancellationToken.None);
+
+        var component =
+            RenderWithProviders<MangaIngestWithUpscaling.Components.Libraries.Libraries>();
+        component.WaitForAssertion(() => Assert.Contains("Library Alpha", component.Markup));
+
+        IElement upscaleAll = component
+            .FindAll("button")
+            .First(b => b.TextContent.Contains("Upscale All", StringComparison.Ordinal));
+        await component.InvokeAsync(() => upscaleAll.Click(new MouseEventArgs()));
+
+        await using var db = await _testDb.Database.CreateContextAsync();
+        for (int attempt = 0; attempt < 50 && await db.PersistedTasks.CountAsync() == 0; attempt++)
+        {
+            await Task.Delay(20);
+        }
+
+        Assert.Equal(1, await db.PersistedTasks.CountAsync());
+        Assert.IsType<UpscaleTask>((await db.PersistedTasks.SingleAsync()).Data);
     }
 
     // Mangas Component Tests

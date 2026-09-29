@@ -1,8 +1,9 @@
 @page "/libraries/edit/{LibraryId:int}"
 @using MangaIngestWithUpscaling.Data.LibraryManagement
 
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject NavigationManager NavigationManager
+@inject ISnackbar Snackbar
 @inject IStringLocalizer<EditLibrary> Loc
 
 <PageTitle>@string.Format(Loc["PageTitle"], Library?.Name ?? Loc["UnknownLibrary"])</PageTitle>
@@ -44,7 +45,9 @@
     {
         if (LibraryId.HasValue)
         {
-            Library = await DbContext.Libraries
+            await using var db = await DbContextFactory.CreateDbContextAsync();
+            Library = await db.Libraries
+            .AsNoTracking()
             .Include(l => l.IngestPaths)
             .Include(l => l.MangaSeries)
             .Include(l => l.FilterRules)
@@ -65,7 +68,122 @@
     {
         if (Library == null) return;
 
-        await DbContext.SaveChangesAsync();
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+        var tracked = await db.Libraries
+            .Include(l => l.IngestPaths)
+            .Include(l => l.FilterRules)
+            .Include(l => l.RenameRules)
+            .FirstOrDefaultAsync(l => l.Id == Library.Id);
+
+        if (tracked is null)
+        {
+            // The library was deleted in another tab between loading and saving.
+            Snackbar.Add(Loc["Error_LibraryNotFound"], Severity.Error);
+            NavigationManager.NavigateTo("/libraries");
+            return;
+        }
+
+        tracked.Name = Library.Name;
+        tracked.NotUpscaledLibraryPath = Library.NotUpscaledLibraryPath;
+        tracked.UpscaledLibraryPath = Library.UpscaledLibraryPath;
+        tracked.UpscaleOnIngest = Library.UpscaleOnIngest;
+        tracked.UpscalerProfileId = Library.UpscalerProfileId;
+        tracked.MergeChapterParts = Library.MergeChapterParts;
+        tracked.StripDetectionMode = Library.StripDetectionMode;
+        tracked.KavitaConfig = Library.KavitaConfig;
+
+        SyncIngestPaths(db, tracked, Library);
+        SyncFilterRules(db, tracked, Library);
+        SyncRenameRules(db, tracked, Library);
+
+        await db.SaveChangesAsync();
         NavigationManager.NavigateTo("/libraries");
+    }
+
+    private static void SyncIngestPaths(
+        ApplicationDbContext db,
+        Library tracked,
+        Library edited
+    )
+    {
+        foreach (var removed in tracked.IngestPaths.Where(t => !edited.IngestPaths.Any(e => e.Id == t.Id)).ToList())
+        {
+            db.Remove(removed);
+        }
+
+        foreach (var e in edited.IngestPaths)
+        {
+            var existing = e.Id == 0 ? null : tracked.IngestPaths.FirstOrDefault(t => t.Id == e.Id);
+            if (existing is null)
+            {
+                tracked.IngestPaths.Add(new LibraryIngestPath { Path = e.Path, SortOrder = e.SortOrder });
+            }
+            else
+            {
+                existing.Path = e.Path;
+                existing.SortOrder = e.SortOrder;
+            }
+        }
+    }
+
+    private static void SyncFilterRules(ApplicationDbContext db, Library tracked, Library edited)
+    {
+        foreach (var removed in tracked.FilterRules.Where(t => !edited.FilterRules.Any(e => e.Id == t.Id)).ToList())
+        {
+            db.Remove(removed);
+        }
+
+        foreach (var e in edited.FilterRules)
+        {
+            var existing = e.Id == 0 ? null : tracked.FilterRules.FirstOrDefault(t => t.Id == e.Id);
+            if (existing is null)
+            {
+                tracked.FilterRules.Add(new LibraryFilterRule
+                {
+                    Library = tracked,
+                    Pattern = e.Pattern,
+                    PatternType = e.PatternType,
+                    TargetField = e.TargetField,
+                    Action = e.Action,
+                });
+            }
+            else
+            {
+                existing.Pattern = e.Pattern;
+                existing.PatternType = e.PatternType;
+                existing.TargetField = e.TargetField;
+                existing.Action = e.Action;
+            }
+        }
+    }
+
+    private static void SyncRenameRules(ApplicationDbContext db, Library tracked, Library edited)
+    {
+        foreach (var removed in tracked.RenameRules.Where(t => !edited.RenameRules.Any(e => e.Id == t.Id)).ToList())
+        {
+            db.Remove(removed);
+        }
+
+        foreach (var e in edited.RenameRules)
+        {
+            var existing = e.Id == 0 ? null : tracked.RenameRules.FirstOrDefault(t => t.Id == e.Id);
+            if (existing is null)
+            {
+                tracked.RenameRules.Add(new LibraryRenameRule
+                {
+                    Pattern = e.Pattern,
+                    PatternType = e.PatternType,
+                    TargetField = e.TargetField,
+                    Replacement = e.Replacement,
+                });
+            }
+            else
+            {
+                existing.Pattern = e.Pattern;
+                existing.PatternType = e.PatternType;
+                existing.TargetField = e.TargetField;
+                existing.Replacement = e.Replacement;
+            }
+        }
     }
 }

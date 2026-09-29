@@ -7,7 +7,7 @@
 @using System.Globalization
 
 
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IDialogService DialogService
 @inject TaskQueue TaskQueue
 @inject IStringLocalizer<Libraries> Loc
@@ -223,7 +223,9 @@
 
     private async Task LoadLibrariesAsync()
     {
-        LoadedLibraries = await DbContext.Libraries
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+        LoadedLibraries = await db.Libraries
+        .AsNoTrackingWithIdentityResolution()
         .Include(x => x.IngestPaths)
         .Include(x => x.UpscalerProfile)
         .Include(x => x.MangaSeries)
@@ -262,8 +264,16 @@
 
         if (result.HasValue && result.Value)
         {
-            DbContext.Libraries.Remove(library);
-            await DbContext.SaveChangesAsync();
+            await using var db = await DbContextFactory.CreateDbContextAsync();
+            var trackedLibrary = await db.Libraries
+                .Include(l => l.MangaSeries)
+                .ThenInclude(m => m.Chapters)
+                .FirstOrDefaultAsync(l => l.Id == library.Id);
+            if (trackedLibrary is not null)
+            {
+                db.Libraries.Remove(trackedLibrary);
+                await db.SaveChangesAsync();
+            }
         }
 
         await OnLibraryChanged();

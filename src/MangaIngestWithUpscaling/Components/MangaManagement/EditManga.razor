@@ -4,7 +4,7 @@
 @using MangaIngestWithUpscaling.Services.MetadataHandling
 @using MangaIngestWithUpscaling.Shared.Data.LibraryManagement
 
-@inject ApplicationDbContext DbContext
+@inject IDbContextFactory<ApplicationDbContext> DbContextFactory
 @inject IMangaMetadataChanger MetadataChanger
 @inject NavigationManager NavigationManager
 @inject ISnackbar Snackbar
@@ -152,7 +152,8 @@
                                                     <MudText Typo="Typo.body1" Class="flex-grow-1">@title.Title</MudText>
                                                     <MudTooltip Text="@Loc["Tooltip_RemoveTitle"]">
                                                         <MudIconButton Icon="@Icons.Material.Filled.Delete" Color="Color.Error"
-                                                            Size="Size.Small" OnClick="() => manga.OtherTitles.Remove(title)" />
+                                                            Size="Size.Small"
+                                                            OnClick="() => RemoveAlternativeTitle(title)" />
                                                     </MudTooltip>
                                                 </MudStack>
                                             </MudPaper>
@@ -244,7 +245,9 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        manga = await DbContext.MangaSeries
+        await using var db = await DbContextFactory.CreateDbContextAsync();
+        manga = await db.MangaSeries
+        .AsNoTrackingWithIdentityResolution()
         .Include(m => m.Library)
         .Include(m => m.Chapters)
         .ThenInclude(c => c.UpscalerProfile)
@@ -259,20 +262,48 @@ else
         }
 
         originalTitle = manga.PrimaryTitle;
-        upscalerProfiles = await DbContext.UpscalerProfiles.ToListAsync();
+        upscalerProfiles = await db.UpscalerProfiles.AsNoTracking().ToListAsync();
     }
 
-    private void AddAlternativeTitle()
+    private async Task AddAlternativeTitle()
     {
-        if (!string.IsNullOrEmpty(newTitle) && manga is not null)
+        if (string.IsNullOrEmpty(newTitle) || manga is null)
         {
-            manga.OtherTitles.Add(new MangaAlternativeTitle
-            {
-                Title = newTitle,
-                MangaId = manga.Id,
-                Manga = manga
-            });
-            newTitle = string.Empty; // Clear the input field
+            return;
+        }
+
+        manga.OtherTitles.Add(new MangaAlternativeTitle
+        {
+            Title = newTitle,
+            MangaId = manga.Id,
+            Manga = manga
+        });
+        newTitle = string.Empty; // Clear the input field
+        await MarkFormTouchedAsync();
+    }
+
+    private async Task RemoveAlternativeTitle(MangaAlternativeTitle title)
+    {
+        if (manga is null)
+        {
+            return;
+        }
+
+        manga.OtherTitles.Remove(title);
+        await MarkFormTouchedAsync();
+    }
+
+    /// <summary>
+    /// Marks the form as touched after a mutation that does not go through a form input (adding
+    /// or removing an alternative title). Blazor buttons do not touch a <see cref="MudForm"/> the
+    /// way text inputs do, so without this the Save button would stay disabled and the change
+    /// would be silently lost. Validating also refreshes <c>isValid</c> from the current model.
+    /// </summary>
+    private async Task MarkFormTouchedAsync()
+    {
+        if (form is not null)
+        {
+            await form.ValidateAsync();
         }
     }
 
@@ -297,15 +328,56 @@ else
             {
                 var newTitle = manga.PrimaryTitle;
                 manga.PrimaryTitle = originalTitle;
+
+                // ChangeMangaTitle attaches this no-tracking manga and then loads OtherTitles from
+                // the database onto it (Attach leaves IsLoaded false). That load resurrects
+                // alternative titles the user deleted in the UI, so capture the intended set now and
+                // rebuild it after a successful rename before the reconcile below runs.
+                var intendedOtherTitles = manga.OtherTitles.Select(t => t.Title).ToList();
+
                 var result = await MetadataChanger.ChangeMangaTitle(manga, newTitle, addOldTitleToOtherTitles);
                 if (result is not RenameResult.Ok)
                 {
                     Snackbar.Add(Loc["Error_ChangeTitle"], Severity.Error);
                     return;
                 }
+
+                var finalOtherTitles = new List<string>(intendedOtherTitles);
+                finalOtherTitles.RemoveAll(t => t == newTitle); // promoted to the primary title
+                if (addOldTitleToOtherTitles && !finalOtherTitles.Contains(originalTitle))
+                {
+                    finalOtherTitles.Add(originalTitle);
+                }
+
+                manga.OtherTitles.Clear();
+                foreach (var title in finalOtherTitles)
+                {
+                    manga.OtherTitles.Add(new MangaAlternativeTitle { Title = title });
+                }
             }
 
-            await DbContext.SaveChangesAsync();
+            await using (var db = await DbContextFactory.CreateDbContextAsync())
+            {
+                var tracked = await db.MangaSeries
+                    .Include(m => m.OtherTitles)
+                    .FirstAsync(m => m.Id == manga.Id);
+
+                tracked.PrimaryTitle = manga.PrimaryTitle;
+                tracked.UpscalerProfilePreferenceId = manga.UpscalerProfilePreferenceId;
+                tracked.MergeChapterParts = manga.MergeChapterParts;
+
+                foreach (var removed in tracked.OtherTitles.Where(t => !manga.OtherTitles.Any(e => e.Title == t.Title)).ToList())
+                {
+                    db.Remove(removed);
+                }
+
+                foreach (var title in manga.OtherTitles.Where(t => !tracked.OtherTitles.Any(x => x.Title == t.Title)))
+                {
+                    tracked.OtherTitles.Add(new MangaAlternativeTitle { Title = title.Title });
+                }
+
+                await db.SaveChangesAsync();
+            }
 
             Snackbar.Add(Loc["Success_Update"], Severity.Success);
             NavigationManager.NavigateTo("/mangas");

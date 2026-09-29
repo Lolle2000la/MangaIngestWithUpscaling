@@ -35,10 +35,13 @@ public class SplitDetectionUpscaleBugTests : IAsyncDisposable
         _taskQueue = Substitute.For<ITaskQueue>();
         _fileSystem = Substitute.For<IFileSystem>();
         _stateManagerLogger = Substitute.For<ILogger<SplitProcessingStateManager>>();
-        _stateManager = new SplitProcessingStateManager(_dbContext, _stateManagerLogger);
+        _stateManager = new SplitProcessingStateManager(
+            new TestDbContextFactory(_testDb.Database),
+            _stateManagerLogger
+        );
 
         _service = new SplitProcessingService(
-            _dbContext,
+            new TestDbContextFactory(_testDb.Database),
             _logger,
             _taskQueue,
             _fileSystem,

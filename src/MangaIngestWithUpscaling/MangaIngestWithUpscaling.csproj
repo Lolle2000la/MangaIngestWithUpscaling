@@ -21,6 +21,7 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="MangaIngestWithUpscaling.Tests" />
+    <InternalsVisibleTo Include="MangaIngestWithUpscaling.Tests.UI" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="AutoRegisterInject" Version="2.0.3" />

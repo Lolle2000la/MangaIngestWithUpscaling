@@ -79,4 +79,7 @@
   <data name="Text_LastMatched" xml:space="preserve">
     <value>Last Matched: {0}</value>
   </data>
+  <data name="Error_SaveFailed" xml:space="preserve">
+    <value>Failed to save the description.</value>
+  </data>
 </root>

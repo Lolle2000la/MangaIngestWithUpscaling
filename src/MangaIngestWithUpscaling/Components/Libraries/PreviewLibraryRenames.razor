@@ -264,7 +264,12 @@
         await Task.Run(async () =>
         {
             await using var scope = ServiceProvider.CreateAsyncScope();
-            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            var dbContextFactory = ServiceProvider.GetRequiredService<
+                IDbContextFactory<ApplicationDbContext>
+            >();
+            await using var dbContext = await dbContextFactory.CreateDbContextAsync(
+                cancellationToken
+            );
             var renamingService = scope.ServiceProvider.GetRequiredService<ILibraryRenamingService>();
             var chapterRecognition = scope.ServiceProvider.GetRequiredService<IChapterInIngestRecognitionService>();
             var metadataHandlingService = scope.ServiceProvider.GetRequiredService<IMetadataHandlingService>();

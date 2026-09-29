@@ -61,7 +61,7 @@
                 Disabled="@(ViewModel?.Disabled == true || (ViewModel?.Loading ?? false))" Class="flex-grow-1"
                 ReadOnly="true" />
         </MudStack>
-        <MudIconButton Icon="@Icons.Material.Sharp.Clear" OnClick="(e) => SelectedPath = null"
+        <MudIconButton Icon="@Icons.Material.Sharp.Clear" OnClick="ClearSelection"
             Disabled="@(ViewModel?.Disabled == true || Required || (ViewModel?.Loading ?? false))"
             title="Clear selection" />
     </MudStack>
@@ -74,13 +74,18 @@
 
     [Parameter] public string? SelectedPath { get; set; }
 
-    [Parameter] public EventCallback<string> SelectedPathChanged { get; set; }
+    [Parameter] public EventCallback<string?> SelectedPathChanged { get; set; }
 
     [Parameter][EditorRequired] public required string Title { get; set; }
 
     [Parameter] public bool Disabled { get; set; }
 
     private readonly CompositeDisposable disposables = new();
+
+    // The last RootDirectory pushed into the view model. OnParametersSet must not re-apply an
+    // unchanged value: the parent re-renders on every keystroke, and resetting the root would
+    // undo in-picker navigation (double-click / GoToParent).
+    private string? appliedRootDirectory;
 
     protected override void OnInitialized()
     {
@@ -99,10 +104,23 @@
         base.OnParametersSet();
 
         if (ViewModel == null) return;
-        ViewModel.RootDirectory = RootDirectory;
+        if (!string.Equals(appliedRootDirectory, RootDirectory, StringComparison.Ordinal))
+        {
+            appliedRootDirectory = RootDirectory;
+            ViewModel.RootDirectory = RootDirectory;
+        }
         ViewModel.Title = Title;
         ViewModel.Disabled = Disabled;
         ViewModel.SelectedPath = SelectedPath;
+    }
+
+    private async Task ClearSelection()
+    {
+        if (ViewModel == null) return;
+
+        ViewModel.SelectedPath = null;
+        SelectedPath = null;
+        await SelectedPathChanged.InvokeAsync(null);
     }
 
     protected override void Dispose(bool disposing)
