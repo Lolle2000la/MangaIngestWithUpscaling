@@ -3,6 +3,7 @@ using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.LibraryFiltering;
 using MangaIngestWithUpscaling.Services.RepairServices;
+using MangaIngestWithUpscaling.Services.Uploads;
 using MangaIngestWithUpscaling.Shared.Services;
 
 namespace MangaIngestWithUpscaling.Services;
@@ -36,6 +37,7 @@ public static class ServiceRegistration
         services.AddSingleton<TaskRegistry>();
         services.AddHostedService(sp => sp.GetRequiredService<TaskRegistry>());
         services.AddSingleton<IPreprocessedInputCache, PreprocessedInputCache>();
+        services.AddSingleton(_ => new ResumableUploadStore());
         services.AddScoped<ILibraryRenamingService, LibraryRenamingService>();
         services.AddScoped<IRepairService, RepairService>();
     }

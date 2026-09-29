@@ -104,17 +104,31 @@ builder.Configuration.GetSection(WorkerConfig.SectionName).Bind(boundWorkerConfi
 string apiUrl = boundWorkerConfig.ApiUrl ?? builder.Configuration["WorkerConfig:ApiUrl"]!;
 string authHeaderValue = $"ApiKey {boundWorkerConfig.ApiKey}";
 
-builder.Services.AddGrpcClient<UpscalingService.UpscalingServiceClient>(o =>
-{
-    o.CallOptionsActions.Add(context =>
+builder
+    .Services.AddGrpcClient<UpscalingService.UpscalingServiceClient>(o =>
     {
-        Metadata metadata = context.CallOptions.Headers ?? new Metadata();
-        metadata.Add("Authorization", authHeaderValue);
-        context.CallOptions = context.CallOptions.WithHeaders(metadata);
-    });
+        o.CallOptionsActions.Add(context =>
+        {
+            Metadata metadata = context.CallOptions.Headers ?? new Metadata();
+            metadata.Add("Authorization", authHeaderValue);
+            context.CallOptions = context.CallOptions.WithHeaders(metadata);
+        });
 
-    o.Address = new Uri(apiUrl);
-});
+        o.Address = new Uri(apiUrl);
+    })
+    // Detect a dead connection quickly (rather than hanging until the RPC deadline) by sending
+    // HTTP/2 keepalive pings even while an upload stream is active.
+    .ConfigurePrimaryHttpMessageHandler(() =>
+        new SocketsHttpHandler
+        {
+            ConnectTimeout = TimeSpan.FromSeconds(15),
+            KeepAlivePingDelay = TimeSpan.FromSeconds(30),
+            KeepAlivePingTimeout = TimeSpan.FromSeconds(15),
+            KeepAlivePingPolicy = HttpKeepAlivePingPolicy.WithActiveRequests,
+            PooledConnectionIdleTimeout = Timeout.InfiniteTimeSpan,
+            EnableMultipleHttp2Connections = true,
+        }
+    );
 
 builder.Services.RegisterRemoteWorkerServices();
 

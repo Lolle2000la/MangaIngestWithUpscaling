@@ -42,6 +42,13 @@ if (!builder.Environment.IsDevelopment())
             o.Protocols = HttpProtocols.Http1AndHttp2AndHttp3;
         });
 
+        // Upscaled cbz files are streamed as the request body and routinely exceed Kestrel's
+        // ~28.6 MB default, so lift the cap for the upload endpoints.
+        options.Limits.MaxRequestBodySize = null;
+        // A remote worker on a slow or flaky link can pause for more than the default 5 second
+        // grace period; aborting the request there would defeat resumable uploads.
+        options.Limits.MinRequestBodyDataRate = null;
+
         options.ListenAnyIP(8080);
         options.ListenAnyIP(
             8081,

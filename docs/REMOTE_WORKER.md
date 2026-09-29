@@ -30,6 +30,30 @@ In addition, you can use environment variables to override the settings in `apps
 
 The remote worker communicates with the main application exclusively over HTTPS. gRPC, the underlying communication protocol, requires HTTP/2. Modern reverse proxies, when configured for HTTPS, will typically use HTTP/2 automatically for clients that support it. Ensure your reverse proxy hosting the main application has HTTPS and HTTP/2 enabled.
 
+## Resilient uploads
+
+Uploading an upscaled cbz is the longest single transfer the worker performs, and on a slow or
+unreliable link it can take a while. Uploads are therefore **resumable**: the server stores each
+uploaded chunk in a per-task directory and reports how many contiguous chunks it already has, so
+after a dropped connection the worker retries only the missing bytes instead of re-sending the whole
+file. The worker also sends HTTP/2 keepalive pings, which turn a silently dead connection into a
+fast, retryable failure rather than a long hang.
+
+The per-attempt gRPC deadline is sized from the number of bytes still to send, so a legitimately
+slow-but-healthy transfer is not cut off by a fixed timeout. These settings can be tuned in the
+worker's `WorkerConfig` section (or via `Ingest_WorkerConfig__…` environment variables):
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `UploadMaxAttempts` | `5` | Total attempts before the task is reported as failed. |
+| `UploadRetryBaseDelay` | `00:00:05` | Delay before the first retry; subsequent retries back off exponentially (capped at 2 minutes). |
+| `UploadTimeoutFloor` | `00:02:00` | Minimum per-attempt deadline. |
+| `UploadMinThroughputBytesPerSecond` | `131072` | Assumed worst-case speed used to size the per-attempt deadline. |
+
+When the worker is hosted behind a reverse proxy, make sure the proxy does not cut long-lived gRPC
+streams: for nginx, raise `grpc_read_timeout` and `grpc_send_timeout` (both default to 60 seconds)
+well above the expected upload time.
+
 ## Running the Remote Worker
 
 To run the remote worker:
