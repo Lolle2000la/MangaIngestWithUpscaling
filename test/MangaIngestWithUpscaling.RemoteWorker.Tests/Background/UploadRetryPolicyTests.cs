@@ -17,7 +17,7 @@ public class UploadRetryPolicyTests
 
     [Fact]
     [Trait("Category", "Unit")]
-    public void ComputeAttemptTimeout_UsesFloorForSmallRemainders()
+    public void ComputeAttemptTimeout_UsesFloorForSmallFiles()
     {
         TimeSpan timeout = UploadRetryPolicy.ComputeAttemptTimeout(0, Config());
 
@@ -26,13 +26,13 @@ public class UploadRetryPolicyTests
 
     [Fact]
     [Trait("Category", "Unit")]
-    public void ComputeAttemptTimeout_ScalesWithRemainingBytes()
+    public void ComputeAttemptTimeout_ScalesWithFileSize()
     {
         WorkerConfig config = Config();
         // 10 minutes worth of bytes at the configured throughput.
-        long remainingBytes = (long)config.UploadMinThroughputBytesPerSecond * 600;
+        long fileBytes = (long)config.UploadMinThroughputBytesPerSecond * 600;
 
-        TimeSpan timeout = UploadRetryPolicy.ComputeAttemptTimeout(remainingBytes, config);
+        TimeSpan timeout = UploadRetryPolicy.ComputeAttemptTimeout(fileBytes, config);
 
         Assert.Equal(TimeSpan.FromMinutes(10), timeout);
     }

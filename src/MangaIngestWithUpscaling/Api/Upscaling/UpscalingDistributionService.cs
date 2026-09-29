@@ -3,6 +3,7 @@ using System.Text.Json;
 using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
+using MangaIngestWithUpscaling.Configuration;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.Analysis;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
@@ -17,6 +18,7 @@ using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.Uploads;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace MangaIngestWithUpscaling.Api.Upscaling;
 
@@ -29,6 +31,7 @@ public partial class UpscalingDistributionService(
     ISplitProcessingService splitProcessingService,
     ISplitProcessingCoordinator splitProcessingCoordinator,
     ResumableUploadStore uploadStore,
+    IOptions<UploadsConfig> uploadsConfig,
     ILogger<UpscalingDistributionService> logger
 ) : UpscalingService.UpscalingServiceBase
 {
@@ -648,10 +651,40 @@ public partial class UpscalingDistributionService(
         // assembled once its contiguous run is complete.
         var taskUploads = new Dictionary<int, TaskUploadState>();
 
+        // The gRPC request-body cap is lifted for uploads, so the declared chunk count and chunk
+        // size are the only bound on how much disk an authenticated worker can consume before the
+        // periodic sweep. Reject anything outside a sane range.
+        int maxTotalChunks = uploadsConfig.Value.MaxTotalChunks;
+        int maxChunkBytes = uploadsConfig.Value.MaxChunkBytes;
+
         await foreach (
             CbzFileChunk request in requestStream.ReadAllAsync(context.CancellationToken)
         )
         {
+            if (
+                request.ChunkNumber < 0
+                || request.ChunkNumber >= maxTotalChunks
+                || request.TotalChunks > maxTotalChunks
+            )
+            {
+                throw new RpcException(
+                    new Status(
+                        StatusCode.InvalidArgument,
+                        $"Chunk number {request.ChunkNumber} or declared total {request.TotalChunks} exceeds the limit of {maxTotalChunks} chunks."
+                    )
+                );
+            }
+
+            if (request.Chunk.Length > maxChunkBytes)
+            {
+                throw new RpcException(
+                    new Status(
+                        StatusCode.InvalidArgument,
+                        $"Chunk {request.ChunkNumber} is {request.Chunk.Length} bytes, exceeding the limit of {maxChunkBytes} bytes."
+                    )
+                );
+            }
+
             if (!taskUploads.TryGetValue(request.TaskId, out TaskUploadState? state))
             {
                 state = new TaskUploadState();
@@ -1110,14 +1143,18 @@ public partial class UpscalingDistributionService(
         ServerCallContext context
     )
     {
-        uploadStore.Delete(request.TaskId);
+        // Mark the task failed first. If that throws, the stored chunks survive to be resumed or
+        // swept; deleting them first would lose the resumable state while leaving the task as it was.
         await taskProcessor.TaskFailed(request.TaskId, request.ErrorMessage);
+        uploadStore.Delete(request.TaskId);
         return new Empty();
     }
 
     private string PrepareTempFile(int taskId)
     {
         fileSystem.CreateDirectory(tempDir);
+        // The fixed per-task name is safe because assembly for a task is serialized by the
+        // processing gate; revisit this if that serialization ever goes away.
         return Path.Combine(tempDir, $"upscaled_{taskId}.cbz");
     }
 

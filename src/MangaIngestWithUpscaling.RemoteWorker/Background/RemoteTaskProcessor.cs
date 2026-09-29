@@ -968,6 +968,13 @@ public class RemoteTaskProcessor(
         // (e.g. the task was re-dispatched after a profile or model change) are never mixed in.
         string contentId = await ComputeContentIdentityAsync(upscaledFile, stoppingToken);
 
+        // Size every attempt's deadline from the whole file: the server has to hash, assemble and
+        // move all of it even when a resume only re-sends the final chunk.
+        TimeSpan attemptTimeout = UploadRetryPolicy.ComputeAttemptTimeout(
+            fileLength,
+            _workerConfig
+        );
+
         long retryStartTimestamp = Stopwatch.GetTimestamp();
         int attempt = 0;
         Exception? lastError = null;
@@ -1005,7 +1012,6 @@ public class RemoteTaskProcessor(
                 // Never skip the last chunk: re-sending it makes the server assemble an upload
                 // whose final chunk was stored but whose completion was never observed.
                 int startChunk = Math.Clamp(progress.UploadedChunks, 0, totalChunks - 1);
-                long remainingBytes = fileLength - (long)startChunk * UploadChunkSizeBytes;
 
                 await UploadFileOnceAsync(
                     client,
@@ -1015,7 +1021,7 @@ public class RemoteTaskProcessor(
                     contentId,
                     startChunk,
                     totalChunks,
-                    remainingBytes,
+                    attemptTimeout,
                     stoppingToken
                 );
                 return;
@@ -1100,7 +1106,7 @@ public class RemoteTaskProcessor(
         string contentId,
         int startChunk,
         int totalChunks,
-        long remainingBytes,
+        TimeSpan attemptTimeout,
         CancellationToken stoppingToken
     )
     {
@@ -1109,9 +1115,7 @@ public class RemoteTaskProcessor(
 
         using AsyncDuplexStreamingCall<CbzFileChunk, UploadUpscaledCbzResponse> uploadStream =
             client.UploadUpscaledCbzFile(
-                deadline: DateTime.UtcNow.Add(
-                    UploadRetryPolicy.ComputeAttemptTimeout(remainingBytes, _workerConfig)
-                ),
+                deadline: DateTime.UtcNow.Add(attemptTimeout),
                 cancellationToken: stoppingToken
             );
 

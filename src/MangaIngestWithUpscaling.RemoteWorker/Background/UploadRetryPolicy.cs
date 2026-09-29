@@ -15,13 +15,16 @@ internal static class UploadRetryPolicy
     private static readonly TimeSpan MaxRetryDelay = TimeSpan.FromMinutes(5);
 
     /// <summary>
-    /// Sizes the gRPC deadline for one attempt from the bytes still to send, so a slow but healthy
-    /// transfer is not cut off at an arbitrary fixed time.
+    /// Sizes the gRPC deadline for one attempt from the full file size, so a slow but healthy
+    /// transfer is not cut off at an arbitrary fixed time. The full size is used rather than only
+    /// the bytes still to send because the call's deadline also has to cover the server hashing,
+    /// assembling and moving the whole file; on a near-complete resume those are far larger than
+    /// the remaining transfer. The floor keeps small files and the assembly from being cut short.
     /// </summary>
-    public static TimeSpan ComputeAttemptTimeout(long remainingBytes, WorkerConfig config)
+    public static TimeSpan ComputeAttemptTimeout(long fileBytes, WorkerConfig config)
     {
         long throughput = Math.Max(1, config.UploadMinThroughputBytesPerSecond);
-        TimeSpan scaled = TimeSpan.FromSeconds((double)remainingBytes / throughput);
+        TimeSpan scaled = TimeSpan.FromSeconds((double)fileBytes / throughput);
         TimeSpan timeout = scaled > config.UploadTimeoutFloor ? scaled : config.UploadTimeoutFloor;
         return timeout < MaxAttemptTimeout ? timeout : MaxAttemptTimeout;
     }

@@ -26,15 +26,16 @@ public class WorkerConfig
     public TimeSpan UploadRetryMaxElapsed { get; set; } = TimeSpan.FromMinutes(10);
 
     /// <summary>
-    /// Lower bound for the per-attempt gRPC deadline, which is otherwise sized from the number of
-    /// bytes still to send divided by <see cref="UploadMinThroughputBytesPerSecond"/>.
+    /// Lower bound for the per-attempt gRPC deadline, which is otherwise sized from the full file
+    /// size divided by <see cref="UploadMinThroughputBytesPerSecond"/>. The full size is used
+    /// because the deadline also covers the server assembling the whole file.
     /// </summary>
     public TimeSpan UploadTimeoutFloor { get; set; } = TimeSpan.FromMinutes(2);
 
     /// <summary>
     /// Assumed worst-case upload throughput used to size the per-attempt gRPC deadline. The
-    /// deadline scales with the remaining bytes so a legitimately slow transfer is not cut off at
-    /// an arbitrary fixed time.
+    /// deadline scales with the full file size (remaining transfer plus server-side assembly) so a
+    /// legitimately slow transfer is not cut off at an arbitrary fixed time.
     /// </summary>
     public long UploadMinThroughputBytesPerSecond { get; set; } = 128 * 1024;
 }

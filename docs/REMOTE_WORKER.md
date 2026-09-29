@@ -45,8 +45,10 @@ model change — the stored chunks no longer match and are discarded, so old and
 mixed. The server also hashes the assembled file and rejects it if it does not match the identity,
 which catches truncation or corruption; the worker then re-uploads from scratch.
 
-The per-attempt gRPC deadline is sized from the number of bytes still to send, so a legitimately
-slow-but-healthy transfer is not cut off by a fixed timeout. These settings can be tuned in the
+The per-attempt gRPC deadline is sized from the whole file, not just the bytes still to send,
+because the server has to hash, assemble and move the entire file even when a resume only re-sends
+the last chunk. A legitimately slow-but-healthy transfer is therefore not cut off by a fixed
+timeout. These settings can be tuned in the
 worker's `WorkerConfig` section (or via `Ingest_WorkerConfig__…` environment variables):
 
 | Setting | Default | Purpose |
@@ -70,6 +72,11 @@ The server keeps partial uploads for 24 hours by default before a periodic clean
 variables). A link that cannot sustain Kestrel's minimum request body data rate (240 B/s) will have
 each attempt aborted, but resumption still lets it make progress across attempts as long as the
 retry budget above allows.
+
+Partial uploads are stored as local temporary files, so resume works only against the same server
+process. If the server restarts, its temp directory is cleared, or the worker reconnects to a
+different replica behind a load balancer, the server reports no progress and the worker safely
+starts that upload over from the beginning rather than corrupting it.
 
 ## Running the Remote Worker
 
