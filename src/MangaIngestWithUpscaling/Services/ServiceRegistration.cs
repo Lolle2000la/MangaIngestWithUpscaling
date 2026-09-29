@@ -3,6 +3,7 @@ using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.LibraryFiltering;
 using MangaIngestWithUpscaling.Services.RepairServices;
+using MangaIngestWithUpscaling.Services.Upscaling;
 using MangaIngestWithUpscaling.Shared.Services;
 
 namespace MangaIngestWithUpscaling.Services;
@@ -25,6 +26,7 @@ public static class ServiceRegistration
         services.AddHostedService(sp => sp.GetRequiredService<UpscaleTaskProcessor>());
         services.AddSingleton<DistributedUpscaleTaskProcessor>();
         services.AddHostedService(sp => sp.GetRequiredService<DistributedUpscaleTaskProcessor>());
+        services.AddSingleton<PageStreamSpool>();
         services.AddSingleton<PeriodicIngestWatcher>();
         services.AddHostedService(sp => sp.GetRequiredService<PeriodicIngestWatcher>());
         services.AddSingleton<LibraryIngestWatcher>();

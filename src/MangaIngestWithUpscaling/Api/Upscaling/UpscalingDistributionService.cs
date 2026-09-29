@@ -10,8 +10,10 @@ using MangaIngestWithUpscaling.Services.Analysis;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.Integrations;
+using MangaIngestWithUpscaling.Services.Upscaling;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 
@@ -25,6 +27,8 @@ public partial class UpscalingDistributionService(
     IChapterChangedNotifier chapterChangedNotifier,
     ISplitProcessingService splitProcessingService,
     ISplitProcessingCoordinator splitProcessingCoordinator,
+    PageStreamSpool pageStreamSpool,
+    IUpscalerJsonHandlingService upscalerJsonHandlingService,
     ILogger<UpscalingDistributionService> logger
 ) : UpscalingService.UpscalingServiceBase
 {

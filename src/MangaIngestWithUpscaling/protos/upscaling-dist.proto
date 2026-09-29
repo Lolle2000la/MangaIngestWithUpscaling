@@ -87,6 +87,67 @@ message ReportTaskFailedRequest {
   optional string error_message = 2;
 }
 
+// ---------------------------------------------------------------------------
+// Page streaming
+//
+// Instead of transferring whole CBZ files, a worker fetches a chapter's source
+// pages one at a time and uploads each upscaled page as it finishes. The server
+// spools the results and assembles the final CBZ, so a dropped connection only
+// loses the in-flight pages and a re-dispatched task resumes where it left off.
+// ---------------------------------------------------------------------------
+
+message PageDescriptor {
+  int32 index = 1; // Ordinal of the page in the source archive.
+  string source_name = 2; // Entry name in the source, e.g. "005.jpg".
+  string output_name = 3; // Entry name to write, e.g. "005.webp".
+}
+
+message PageManifestRequest {
+  int32 task_id = 1;
+}
+
+message PageManifestResponse {
+  int32 task_id = 1;
+  // Identity of (source + profile + preprocessing). Changes invalidate spooled pages.
+  string task_identity = 2;
+  TaskType task_type = 3;
+  repeated PageDescriptor pages = 4;
+  repeated int32 completed_pages = 5; // Pages already spooled on the server.
+  optional UpscalerProfile upscaler_profile = 6;
+}
+
+message GetPagesRequest {
+  int32 task_id = 1;
+  string task_identity = 2;
+  repeated int32 page_indexes = 3; // Pages to fetch (the ones still missing).
+}
+
+message PageChunk {
+  int32 task_id = 1;
+  int32 page_index = 2;
+  int32 chunk_number = 3;
+  bytes chunk = 4;
+  bool is_last = 5;
+  string content_identity = 6;
+}
+
+message UploadPageChunk {
+  int32 task_id = 1;
+  int32 page_index = 2;
+  int32 chunk_number = 3;
+  bytes chunk = 4;
+  bool is_last = 5;
+  string content_identity = 6;
+}
+
+message UploadPageResponse {
+  bool success = 1;
+  string message = 2;
+  int32 task_id = 3;
+  int32 page_index = 4;
+  bool terminal = 5;
+}
+
 service UpscalingService {
   // Request a task to be upscaled
   rpc RequestUpscaleTask(google.protobuf.Empty) returns (UpscaleTaskDelegationResponse);
@@ -101,6 +162,10 @@ service UpscalingService {
   rpc CheckConnection(google.protobuf.Empty) returns (CheckConnectionResponse);
   rpc ReportTaskFailed(ReportTaskFailedRequest) returns (google.protobuf.Empty);
   rpc UploadDetectionResult(UploadDetectionResultRequest) returns (UploadDetectionResultResponse);
+  // Page streaming: manifest, source pages, and per-page result uploads.
+  rpc GetPageManifest(PageManifestRequest) returns (PageManifestResponse);
+  rpc GetPages(GetPagesRequest) returns (stream PageChunk);
+  rpc UploadPage(stream UploadPageChunk) returns (UploadPageResponse);
 }
 
 // Represents a preconfigured upscaler setting that can be associated with chapters.
