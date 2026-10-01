@@ -245,7 +245,8 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
             .DetectSplitsAsync(
                 Arg.Any<string>(),
                 Arg.Any<IProgress<UpscaleProgress>?>(),
-                Arg.Any<CancellationToken>()
+                Arg.Any<CancellationToken>(),
+                Arg.Any<bool>()
             )
             .Returns(ci => new List<SplitDetectionResult>
             {
@@ -483,6 +484,111 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
             TestContext.Current.CancellationToken
         );
         Assert.Equal(PersistedTaskStatus.Completed, task.Status);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task RepairsANestedMissingPageOverRealGrpcAndMergesIt()
+    {
+        // Nested archive: the upscaled chapter has ch1/001.webp but is missing ch1/002.webp.
+        string nestedNotUpscaledDir = Path.Combine(_root, "nested_not_upscaled");
+        string nestedUpscaledDir = Path.Combine(_root, "nested_upscaled");
+        Directory.CreateDirectory(nestedNotUpscaledDir);
+        Directory.CreateDirectory(nestedUpscaledDir);
+
+        string nestedSource = Path.Combine(nestedNotUpscaledDir, "Series", "Chapter 2.cbz");
+        string nestedUpscaled = Path.Combine(nestedUpscaledDir, "Series", "Chapter 2.cbz");
+        Directory.CreateDirectory(Path.GetDirectoryName(nestedSource)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(nestedUpscaled)!);
+        using (ZipArchive zip = ZipFile.Open(nestedSource, ZipArchiveMode.Create))
+        {
+            WriteEntry(zip, "ch1/001.jpg", new byte[] { 1, 2, 3 });
+            WriteEntry(zip, "ch1/002.jpg", new byte[] { 4, 5, 6 });
+        }
+        using (ZipArchive zip = ZipFile.Open(nestedUpscaled, ZipArchiveMode.Create))
+        {
+            WriteEntry(zip, "ch1/001.webp", new byte[] { 9, 9, 9 });
+        }
+
+        int nestedTaskId = await SeedNestedRepairAsync(nestedNotUpscaledDir, nestedUpscaledDir);
+
+        _metadata
+            .AnalyzePageDifferencesAsync(Arg.Any<string?>(), Arg.Any<string?>())
+            .Returns(new PageDifferenceResult(new[] { "002" }, Array.Empty<string>()));
+
+        var processor = _app.Services.GetRequiredService<DistributedUpscaleTaskProcessor>();
+        MethodInfo prepare = typeof(DistributedUpscaleTaskProcessor).GetMethod(
+            "PrepareRepairTaskForRemote",
+            BindingFlags.NonPublic | BindingFlags.Instance
+        )!;
+        using (IServiceScope scope = _app.Services.CreateScope())
+        {
+            PersistedTask repairTask = await LoadTaskAsync(nestedTaskId);
+            var prepared =
+                (Task<bool>)
+                    prepare.Invoke(
+                        processor,
+                        new object[]
+                        {
+                            repairTask.Data,
+                            repairTask,
+                            scope.ServiceProvider,
+                            CancellationToken.None,
+                        }
+                    )!;
+            Assert.True(await prepared);
+        }
+
+        var client = new RemoteUpscalingServiceClient(_channel);
+        var sut = new RemotePageStreamClient(
+            new FakeWorkerClient(),
+            Substitute.For<IServiceScopeFactory>(),
+            Options.Create(new UpscalerConfig()),
+            Substitute.For<ILogger<RemotePageStreamClient>>()
+        );
+
+        await sut.RunAsync(client, nestedTaskId, _profile, TestContext.Current.CancellationToken);
+
+        // The repaired page is merged as a top-level entry (the merge copies by file name); before
+        // the flatten fix it was written as ch1/002.webp, missed by the non-recursive merge, and the
+        // repair silently no-opped.
+        using ZipArchive result = ZipFile.OpenRead(nestedUpscaled);
+        Assert.Equal(new byte[] { 6, 5, 4 }, ReadEntry(result, "002.webp"));
+        Assert.NotNull(result.GetEntry("ch1/001.webp"));
+    }
+
+    private async Task<int> SeedNestedRepairAsync(string notUpscaledDir, string upscaledDir)
+    {
+        await using ApplicationDbContext context = await _database.CreateContextAsync();
+
+        var library = new Library
+        {
+            Name = "Nested Library",
+            NotUpscaledLibraryPath = notUpscaledDir,
+            UpscaledLibraryPath = upscaledDir,
+        };
+        var manga = new Manga { PrimaryTitle = "Nested Series", Library = library };
+        var chapter = new Chapter
+        {
+            Manga = manga,
+            FileName = "Chapter 2.cbz",
+            RelativePath = Path.Combine("Series", "Chapter 2.cbz"),
+        };
+        context.AddRange(library, manga, chapter);
+        await context.SaveChangesAsync();
+
+        var task = new PersistedTask
+        {
+            Data = new RepairUpscaleTask
+            {
+                ChapterId = chapter.Id,
+                UpscalerProfileId = _profile.Id,
+            },
+            Status = PersistedTaskStatus.Pending,
+        };
+        context.PersistedTasks.Add(task);
+        await context.SaveChangesAsync();
+        return task.Id;
     }
 
     private async Task<PersistedTask> LoadTaskAsync(int taskId)

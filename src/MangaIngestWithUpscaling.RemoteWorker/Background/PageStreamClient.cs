@@ -273,6 +273,7 @@ public sealed class PageStreamClient(
             );
 
             int current = completed.Count;
+            bool releasedUpscalerGpu = false;
             foreach (int pageIndex in missing)
             {
                 stoppingToken.ThrowIfCancellationRequested();
@@ -295,8 +296,10 @@ public sealed class PageStreamClient(
                 List<SplitDetectionResult> results = await detection.DetectSplitsAsync(
                     path,
                     progressReporter.Progress,
-                    stoppingToken
+                    stoppingToken,
+                    releaseUpscalerGpu: !releasedUpscalerGpu
                 );
+                releasedUpscalerGpu = true;
 
                 // The detector echoes the temp file path it was given; report the chapter's own page
                 // name instead, or the server keys the finding to the temp name and the split can
@@ -448,6 +451,7 @@ public sealed class PageStreamClient(
         int currentIndex = -1;
         string currentName = string.Empty;
         string currentPath = string.Empty;
+        var yielded = new HashSet<int>();
         try
         {
             await foreach (PageChunk chunk in call.ResponseStream.ReadAllAsync(cancellationToken))
@@ -484,6 +488,7 @@ public sealed class PageStreamClient(
                 {
                     await file!.DisposeAsync();
                     file = null;
+                    yielded.Add(currentIndex);
                     yield return new ChapterPage(currentIndex, currentName, currentPath);
                 }
             }
@@ -494,6 +499,16 @@ public sealed class PageStreamClient(
             {
                 await file.DisposeAsync();
             }
+        }
+
+        // The server silently skips a page it cannot find; if any requested page never arrived the
+        // chapter can never complete, so fail loudly instead of leaving the task in Processing.
+        if (yielded.Count < missingPages.Count)
+        {
+            IEnumerable<int> absent = missingPages.Where(index => !yielded.Contains(index));
+            throw new InvalidOperationException(
+                $"The server did not send page(s) {string.Join(", ", absent)} of task {taskId}."
+            );
         }
     }
 

@@ -26,15 +26,20 @@ public class SplitDetectionService(
     public async Task<List<SplitDetectionResult>> DetectSplitsAsync(
         string inputPath,
         IProgress<UpscaleProgress>? progress = null,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        bool releaseUpscalerGpu = true
     )
     {
         // The persistent upscaling worker keeps its models and the PyTorch caching
         // allocator resident on the GPU, which can starve the per-image detection
         // process of VRAM on smaller GPUs. By default we ask it to release its cached
         // VRAM (it stays warm and is reused by the next upscale job); when configured,
-        // it is shut down entirely for maximum free VRAM.
-        await ReleaseUpscalerGpuResourcesAsync();
+        // it is shut down entirely for maximum free VRAM. Callers that detect many images
+        // in a row (the page-streaming worker) release once and pass false afterwards.
+        if (releaseUpscalerGpu)
+        {
+            await ReleaseUpscalerGpuResourcesAsync();
+        }
 
         var results = new List<SplitDetectionResult>();
 

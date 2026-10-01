@@ -225,6 +225,8 @@ public sealed class PageStreamSpool
         using ZipArchive source = ZipFile.OpenRead(sourcePath);
         using ZipArchive output = ZipFile.Open(destinationPath, ZipArchiveMode.Create);
 
+        // A malformed archive can repeat an entry name; keep only the first output entry per name.
+        var written = new HashSet<string>(StringComparer.Ordinal);
         foreach (ZipArchiveEntry entry in source.Entries)
         {
             // Skip directory entries (zip stores them with an empty name).
@@ -244,6 +246,11 @@ public sealed class PageStreamSpool
                     );
                 }
 
+                if (!written.Add(page.OutputName))
+                {
+                    continue;
+                }
+
                 ZipArchiveEntry outputEntry = output.CreateEntry(page.OutputName);
                 using Stream input = File.OpenRead(pagePath);
                 using Stream target = outputEntry.Open();
@@ -251,6 +258,11 @@ public sealed class PageStreamSpool
             }
             else
             {
+                if (!written.Add(entry.FullName))
+                {
+                    continue;
+                }
+
                 ZipArchiveEntry outputEntry = output.CreateEntry(entry.FullName);
                 using Stream input = entry.Open();
                 using Stream target = outputEntry.Open();

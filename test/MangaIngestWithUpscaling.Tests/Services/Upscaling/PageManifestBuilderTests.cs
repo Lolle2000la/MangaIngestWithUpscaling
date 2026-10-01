@@ -104,6 +104,38 @@ public class PageManifestBuilderTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void BuildRepairPageDescriptors_FlattensNestedOutputNames()
+    {
+        string directory = Directory.CreateTempSubdirectory("manifest_repair_nested").FullName;
+        try
+        {
+            string source = CreateCbz(
+                directory,
+                ("ch1/001.jpg", new byte[] { 1 }),
+                ("ch1/002.jpg", new byte[] { 2 })
+            );
+
+            List<SpoolPageDescriptor> pages =
+                UpscalingDistributionService.BuildRepairPageDescriptors(
+                    source,
+                    new[] { "002" },
+                    Profile()
+                );
+
+            // The source entry keeps its folder so it can be fetched, but the output name is flat:
+            // the repair merge copies top-level files by name and the whole-CBZ repair path flattens.
+            Assert.Single(pages);
+            Assert.Equal("ch1/002.jpg", pages[0].SourceName);
+            Assert.Equal("002.webp", pages[0].OutputName);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void BuildRepairPageDescriptors_ListsOnlyTheMissingPages()
     {
         string directory = Directory.CreateTempSubdirectory("manifest_repair").FullName;

@@ -33,7 +33,7 @@ public partial class UpscalingDistributionService
     private const long MaxPageBytes = 512L * 1024 * 1024;
 
     /// <summary>Upper bound on a detection result payload, so the lifted gRPC body cap cannot be abused.</summary>
-    private const int MaxDetectionResultBytes = 1024 * 1024;
+    private const int MaxDetectionResultBytes = 16 * 1024 * 1024;
 
     public override async Task<PageManifestResponse> GetPageManifest(
         PageManifestRequest request,
@@ -201,6 +201,11 @@ public partial class UpscalingDistributionService
                 || !entries.TryGetValue(page.SourceName, out ZipArchiveEntry? entry)
             )
             {
+                _logger.LogWarning(
+                    "Requested page {PageIndex} of task {TaskId} is not present in the source archive.",
+                    pageIndex,
+                    request.TaskId
+                );
                 continue;
             }
 
@@ -1089,13 +1094,10 @@ public partial class UpscalingDistributionService
         {
             if (byStem.TryGetValue(stem, out string? sourceName))
             {
-                pages.Add(
-                    new SpoolPageDescriptor(
-                        index,
-                        sourceName,
-                        ReplaceExtension(sourceName, extension)
-                    )
-                );
+                // Repair flattens to the stem: the merge (RepairService.MergeRepairResults) copies
+                // top-level files by name, and the whole-CBZ repair path flattens too. Preserving
+                // the source folder here would make the merged page invisible and silently no-op.
+                pages.Add(new SpoolPageDescriptor(index, sourceName, $"{stem}.{extension}"));
                 index++;
             }
         }
