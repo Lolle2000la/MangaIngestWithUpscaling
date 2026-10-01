@@ -8,6 +8,7 @@ using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Services.RepairServices;
+using MangaIngestWithUpscaling.Services.Upscaling;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
@@ -1057,6 +1058,22 @@ public class DistributedUpscaleTaskProcessor(
                     "Task {taskId} failed on remote worker: {errorMessage}",
                     taskId,
                     errorMessage
+                );
+            }
+
+            // Drop any partial page spool/cache for the failed task so its temp bytes do not linger
+            // until the retention sweep.
+            try
+            {
+                scope.ServiceProvider.GetRequiredService<PageStreamSpool>().Remove(taskId);
+                scope.ServiceProvider.GetRequiredService<PageContextCache>().Remove(taskId);
+            }
+            catch (Exception ex)
+            {
+                logger.LogDebug(
+                    ex,
+                    "Failed to drop the page spool for failed task {TaskId}.",
+                    taskId
                 );
             }
         }

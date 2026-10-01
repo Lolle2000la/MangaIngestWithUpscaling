@@ -9,6 +9,7 @@ namespace MangaIngestWithUpscaling.RemoteWorker.Tests.Background;
 internal sealed class FakeWorkerClient : IMangaJaNaiWorkerClient
 {
     public int? DropAfterPages { get; init; }
+    public string PageStatus { get; init; } = "upscaled";
     public int ProcessedPages { get; private set; }
 
     public async Task<UpscaleJobResult> RunChapterAsync(
@@ -34,7 +35,7 @@ internal sealed class FakeWorkerClient : IMangaJaNaiWorkerClient
                 cancellationToken
             );
 
-            var file = new UpscaleJobFile(page.Name, outputPath, "upscaled");
+            var file = new UpscaleJobFile(page.Name, outputPath, PageStatus);
             files.Add(file);
             onPageDone(file);
             ProcessedPages++;

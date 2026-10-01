@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.IO.Compression;
+using MangaIngestWithUpscaling.Shared.Constants;
 
 namespace MangaIngestWithUpscaling.Services.Upscaling;
 
@@ -135,7 +136,8 @@ public sealed class PageStreamSpool
         PageStreamSession session,
         string expectedIdentity,
         int pageIndex,
-        string tempPath
+        string tempPath,
+        long size = 0
     )
     {
         lock (session.Gate)
@@ -147,6 +149,7 @@ public sealed class PageStreamSpool
 
             File.Move(tempPath, session.PagePath(pageIndex), overwrite: true);
             session.Completed.Add(pageIndex);
+            session.TotalBytes += size;
             session.LastTouchedUtc = DateTime.UtcNow;
             return true;
         }
@@ -154,7 +157,22 @@ public sealed class PageStreamSpool
 
     /// <summary>Atomically moves a completed page into place and records it as done.</summary>
     public void CommitPage(PageStreamSession session, int pageIndex, string tempPath) =>
-        TryCommitPage(session, session.Identity, pageIndex, tempPath);
+        TryCommitPage(
+            session,
+            session.Identity,
+            pageIndex,
+            tempPath,
+            new FileInfo(tempPath).Length
+        );
+
+    /// <summary>Bytes committed to the session so far, for the per-task spool budget.</summary>
+    public long GetTotalBytes(PageStreamSession session)
+    {
+        lock (session.Gate)
+        {
+            return session.TotalBytes;
+        }
+    }
 
     public bool IsComplete(PageStreamSession session)
     {
@@ -223,6 +241,29 @@ public sealed class PageStreamSpool
         }
 
         using ZipArchive source = ZipFile.OpenRead(sourcePath);
+
+        // Guard against a source archive that changed since the descriptors were resolved (e.g. an
+        // equal-size/mtime edit): assembling a different image set would silently mix stale spooled
+        // bytes with new un-upscaled pages.
+        var archiveImages = new HashSet<string>(StringComparer.Ordinal);
+        foreach (ZipArchiveEntry entry in source.Entries)
+        {
+            if (
+                !string.IsNullOrEmpty(entry.Name)
+                && ImageConstants.IsSupportedImageExtension(Path.GetExtension(entry.FullName))
+            )
+            {
+                archiveImages.Add(entry.FullName);
+            }
+        }
+
+        if (!archiveImages.SetEquals(bySource.Keys))
+        {
+            throw new InvalidOperationException(
+                $"The source archive for task {session.TaskId} no longer matches the resolved pages; restart the chapter."
+            );
+        }
+
         using ZipArchive output = ZipFile.Open(destinationPath, ZipArchiveMode.Create);
 
         // A malformed archive can repeat an entry name; keep only the first output entry per name.
@@ -418,6 +459,9 @@ public sealed class PageStreamSession
     public Lock Gate { get; } = new();
     public DateTime LastTouchedUtc { get; set; } = DateTime.UtcNow;
 
+    /// <summary>Bytes committed to this session, for the per-task spool budget.</summary>
+    public long TotalBytes { get; set; }
+
     /// <summary>Set while a caller is finalizing (assembling) this session.</summary>
     public bool Assembling { get; set; }
 
@@ -430,6 +474,7 @@ public sealed class PageStreamSession
         PageCount = pageCount;
         Directory = directory;
         Completed.Clear();
+        TotalBytes = 0;
     }
 
     public void DeleteDirectory(ILogger? logger = null)

@@ -217,6 +217,55 @@ public class PageStreamClientTests
         }
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunAsync_FailsWhenAPageCannotBeUpscaled()
+    {
+        string directory = Directory.CreateTempSubdirectory("page_stream_error").FullName;
+        try
+        {
+            string source = CreateSourceCbz(directory);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination);
+            var client = server.CreateClient();
+            var sut = CreateClient(new FakeWorkerClient { PageStatus = "error" });
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                sut.RunAsync(client, 1, Profile, CancellationToken.None)
+            );
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunAsync_FailsWhenTheServerOmitsARequestedPage()
+    {
+        string directory = Directory.CreateTempSubdirectory("page_stream_omit").FullName;
+        try
+        {
+            string source = CreateSourceCbz(directory);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination);
+            server.OmitFromFetch.Add(1);
+            var client = server.CreateClient();
+            var sut = CreateClient(new FakeWorkerClient());
+
+            // The server silently skips a page it cannot find; the client must fail the chapter
+            // rather than let it hang in Processing.
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                sut.RunAsync(client, 1, Profile, CancellationToken.None)
+            );
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
     private static PageStreamClient CreateClient(FakeWorkerClient worker) =>
         new(
             worker,
@@ -291,6 +340,7 @@ public class PageStreamClientTests
         public List<PageDescriptor> Pages { get; } = new();
         public HashSet<int> Completed { get; } = new();
         public List<int> RequestedPages { get; } = new();
+        public HashSet<int> OmitFromFetch { get; } = new();
         public Dictionary<int, byte[]> Uploaded { get; } = new();
         public bool OmitPagesWhenComplete { get; set; }
 
@@ -353,6 +403,11 @@ public class PageStreamClientTests
             foreach (int index in request.PageIndexes)
             {
                 RequestedPages.Add(index);
+                if (OmitFromFetch.Contains(index))
+                {
+                    continue;
+                }
+
                 PageDescriptor page = Pages.First(p => p.Index == index);
                 using Stream stream = entries[page.SourceName].Open();
                 using var buffer = new MemoryStream();

@@ -24,7 +24,11 @@ public sealed class PageContextCache
     private sealed class CachedEntry(Entry value)
     {
         public Entry Value { get; } = value;
-        public DateTime LastUsedUtc { get; set; } = DateTime.UtcNow;
+        private long _lastUsedTicks = DateTime.UtcNow.Ticks;
+
+        public void Touch() => Interlocked.Exchange(ref _lastUsedTicks, DateTime.UtcNow.Ticks);
+
+        public DateTime LastUsedUtc => new(Volatile.Read(ref _lastUsedTicks), DateTimeKind.Utc);
     }
 
     private readonly ConcurrentDictionary<int, CachedEntry> _entries = new();
@@ -33,7 +37,7 @@ public sealed class PageContextCache
     {
         if (_entries.TryGetValue(taskId, out CachedEntry? cached))
         {
-            cached.LastUsedUtc = DateTime.UtcNow;
+            cached.Touch();
             entry = cached.Value;
             return true;
         }

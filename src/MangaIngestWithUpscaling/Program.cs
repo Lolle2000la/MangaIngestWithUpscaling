@@ -126,7 +126,7 @@ builder.Services.AddControllers();
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddMemoryCache();
 
-builder.Services.AddGrpc();
+builder.Services.AddGrpc(options => options.MaxReceiveMessageSize = 32 * 1024 * 1024);
 builder.Services.AddHealthChecks();
 
 builder.Services.AddMudServices();
@@ -420,35 +420,11 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
-// gRPC uploads stream a whole page (or CBZ) in one request, which can exceed Kestrel's ~28.6 MB
-// default request-body cap. Raise it to a generous finite ceiling for gRPC requests only, so the
-// slowloris protection and body limits for the rest of the app are unaffected while an
-// authenticated-but-hostile worker still cannot stream an unbounded body. This middleware only
-// adjusts the limit; the body is read later by the handler, which the API-key authentication has
-// already gated, and the page upload handler additionally bounds each uploaded page.
-const long GrpcMaxRequestBodyBytes = 8L * 1024 * 1024 * 1024;
-app.Use(
-    async (context, next) =>
-    {
-        if (
-            context.Request.ContentType?.StartsWith(
-                "application/grpc",
-                StringComparison.OrdinalIgnoreCase
-            ) == true
-        )
-        {
-            var bodySizeFeature =
-                context.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>();
-            if (bodySizeFeature is { IsReadOnly: false })
-            {
-                bodySizeFeature.MaxRequestBodySize = GrpcMaxRequestBodyBytes;
-            }
-        }
-
-        await next();
-    }
-);
-
+// gRPC streaming calls (UploadPage, UploadUpscaledCbzFile) disable Kestrel's request-body cap
+// themselves (Grpc.AspNetCore.Server sets MaxRequestBodySize = null for client/duplex streaming), so
+// there is nothing useful to raise here; the handlers bound their own input instead. The per-message
+// receive limit below is the real per-call ceiling (default 4 MB), raised so a whole-chapter
+// detection result is not rejected before the handler's own cap applies.
 app.UseAuthentication();
 app.UseAuthorization();
 

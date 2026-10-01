@@ -117,6 +117,9 @@ message PageManifestResponse {
   // True when every page was already spooled; the server assembled the chapter and the worker has
   // nothing to do.
   bool complete = 7;
+  // Largest page (in pixels) in the source archive, so the worker can scale its inactivity timeout
+  // the same way the whole-CBZ path does. 0 when unknown.
+  int64 max_page_pixels = 8;
 }
 
 message GetPagesRequest {

@@ -29,7 +29,22 @@ public class RemoteTaskProcessor(
     private readonly PrefetchCoordinator _coordinator = new();
 
     // State tracking for task lifecycle coordination and exclusion.
-    private int? _currentTaskId;
+    private int _currentTaskIdValue = -1;
+
+    /// <summary>
+    /// Id of the task a loop is currently processing, or <c>null</c>. Backed by a single
+    /// <see cref="int"/> so reads/writes from the fetch and upscale/streaming loops are atomic.
+    /// </summary>
+    private int? CurrentTaskId
+    {
+        get
+        {
+            int value = Volatile.Read(ref _currentTaskIdValue);
+            return value < 0 ? null : value;
+        }
+        set => Volatile.Write(ref _currentTaskIdValue, value ?? -1);
+    }
+
     private volatile bool _fetchInProgress;
     private bool _pageStreamingAvailable;
 
@@ -232,7 +247,7 @@ public class RemoteTaskProcessor(
                 // a task whose download is fast enough to fit inside the current job's remaining
                 // work. Deferring keeps the task available to faster workers until our GPU is
                 // closer to idle. This only makes sense while a job is actually being upscaled
-                // (_currentTaskId is set): once the GPU is idle we must claim immediately, and the
+                // (CurrentTaskId is set): once the GPU is idle we must claim immediately, and the
                 // coordinator's remaining-page estimate is stale between jobs. Peek is advisory:
                 // on failure we fall through and claim.
                 try
@@ -243,7 +258,7 @@ public class RemoteTaskProcessor(
                         cancellationToken: stoppingToken
                     );
                     if (
-                        _currentTaskId.HasValue
+                        CurrentTaskId.HasValue
                         && peek.TaskId != -1
                         && peek.HasInputSizeBytes
                         && !_coordinator.ShouldClaim(peek.InputSizeBytes)
@@ -299,7 +314,7 @@ public class RemoteTaskProcessor(
                     }
 
                     if (
-                        (_currentTaskId.HasValue && resp.TaskId == _currentTaskId.Value)
+                        (CurrentTaskId.HasValue && resp.TaskId == CurrentTaskId.Value)
                         || (
                             _uploadInProgressTaskId.HasValue
                             && resp.TaskId == _uploadInProgressTaskId.Value
@@ -475,7 +490,7 @@ public class RemoteTaskProcessor(
                 break;
             }
 
-            _currentTaskId = item.TaskId;
+            CurrentTaskId = item.TaskId;
             var profile = item.Profile;
 
             if (item.PersistentKeepAliveCts.IsCancellationRequested)
@@ -493,7 +508,9 @@ public class RemoteTaskProcessor(
                 catch { }
                 item.PersistentKeepAliveCts.Dispose();
 
-                _currentTaskId = null;
+                CurrentTaskId = null;
+                // Re-signal the fetch loop so it does not block on _fetchSignals.
+                _fetchSignals?.Writer.TryWrite(true);
                 continue;
             }
 
@@ -842,7 +859,7 @@ public class RemoteTaskProcessor(
                     SafeDelete(upscaledFile);
                 if (tempExtractDir != null && Directory.Exists(tempExtractDir))
                     Directory.Delete(tempExtractDir, true);
-                _currentTaskId = null;
+                CurrentTaskId = null;
                 await item.PersistentKeepAliveCts.CancelAsync();
                 try
                 {
@@ -887,7 +904,7 @@ public class RemoteTaskProcessor(
                 if (tempExtractDir != null && Directory.Exists(tempExtractDir))
                     Directory.Delete(tempExtractDir, true);
 
-                _currentTaskId = null;
+                CurrentTaskId = null;
                 await item.PersistentKeepAliveCts.CancelAsync();
                 try
                 {
@@ -943,7 +960,7 @@ public class RemoteTaskProcessor(
                 ),
                 stoppingToken
             );
-            _currentTaskId = null;
+            CurrentTaskId = null;
         }
     }
 
@@ -1106,7 +1123,7 @@ public class RemoteTaskProcessor(
                 break;
             }
 
-            _currentTaskId = item.TaskId;
+            CurrentTaskId = item.TaskId;
 
             if (item.PersistentKeepAliveCts.IsCancellationRequested)
             {
@@ -1121,7 +1138,10 @@ public class RemoteTaskProcessor(
                 }
                 catch { }
                 item.PersistentKeepAliveCts.Dispose();
-                _currentTaskId = null;
+                CurrentTaskId = null;
+                // Re-signal the fetch loop, or it would block on _fetchSignals forever and the
+                // worker would stop claiming tasks.
+                _fetchSignals?.Writer.TryWrite(true);
                 continue;
             }
 
@@ -1188,7 +1208,7 @@ public class RemoteTaskProcessor(
                 }
                 catch { }
                 item.PersistentKeepAliveCts.Dispose();
-                _currentTaskId = null;
+                CurrentTaskId = null;
                 _fetchSignals?.Writer.TryWrite(true);
             }
         }

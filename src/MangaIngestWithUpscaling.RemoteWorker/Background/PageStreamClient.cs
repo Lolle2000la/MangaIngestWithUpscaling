@@ -32,18 +32,16 @@ public sealed class PageStreamClient(
     private static readonly TimeSpan PageTimeout = TimeSpan.FromMinutes(10);
 
     /// <summary>
-    /// Inactivity allowance for a streamed chapter. <see cref="UpscalerConfig.UpscaleTimeout"/> is a
-    /// per-million-pixel allowance, so a chapter's slowest single page is a small multiple of it; the
-    /// floor keeps slow hardware working while still letting the monitor kill a wedged worker.
+    /// Inactivity allowance for a streamed chapter, scaled by the largest page exactly like the
+    /// whole-CBZ path (<c>UpscaleTimeout × max(1, maxPixels / 1e6)</c>), with a floor so slow
+    /// hardware still finishes a page while a wedged worker is eventually killed.
     /// </summary>
-    private TimeSpan ChapterInactivityTimeout
+    private TimeSpan ChapterInactivityTimeout(long maxPagePixels)
     {
-        get
-        {
-            TimeSpan scaled = upscalerConfig.Value.UpscaleTimeout * 4;
-            TimeSpan floor = TimeSpan.FromMinutes(15);
-            return scaled > floor ? scaled : floor;
-        }
+        double scaling = Math.Max(1.0, maxPagePixels / 1_000_000.0);
+        TimeSpan scaled = upscalerConfig.Value.UpscaleTimeout * scaling;
+        TimeSpan floor = TimeSpan.FromMinutes(15);
+        return scaled > floor ? scaled : floor;
     }
 
     public async Task RunAsync(
@@ -125,6 +123,29 @@ public sealed class PageStreamClient(
 
             void OnPageDone(UpscaleJobFile file)
             {
+                if (indexByName.TryGetValue(file.Input, out int doneIndex))
+                {
+                    // The worker has finished this page, so its fetched source copy can go; this
+                    // keeps the source directory from growing to a second copy of the chapter.
+                    try
+                    {
+                        File.Delete(
+                            Path.Combine(
+                                sourceDirectory,
+                                WorkerPageName(doneIndex, nameByIndex[doneIndex])
+                            )
+                        );
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogDebug(
+                            ex,
+                            "Failed to delete the fetched source page {Index}.",
+                            doneIndex
+                        );
+                    }
+                }
+
                 if (
                     file.Status == "upscaled"
                     && !string.IsNullOrEmpty(file.Output)
@@ -172,7 +193,7 @@ public sealed class PageStreamClient(
                 progressReporter.Progress,
                 OnPageDone,
                 stoppingToken,
-                timeout: ChapterInactivityTimeout
+                timeout: ChapterInactivityTimeout(manifest.MaxPagePixels)
             );
 
             try

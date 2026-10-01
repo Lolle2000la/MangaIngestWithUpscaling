@@ -90,10 +90,6 @@ else
 }
 #endif
 
-builder.Services.Configure<WorkerConfig>(
-    builder.Configuration.GetSection(WorkerConfig.SectionName)
-);
-
 // Add services to the container.
 builder.Services.AddGrpc();
 builder.Services.AddHealthChecks();

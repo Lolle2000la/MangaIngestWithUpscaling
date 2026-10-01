@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -90,7 +91,28 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
                     _ = RequestCancelAsync(id)
                 );
 
-                return await job.Completion.Task.WaitAsync(cancellationToken);
+                TimeSpan timeout = _config.Value.DetectServerRequestTimeout;
+                try
+                {
+                    return timeout > TimeSpan.Zero
+                        ? await job.Completion.Task.WaitAsync(timeout, cancellationToken)
+                        : await job.Completion.Task.WaitAsync(cancellationToken);
+                }
+                catch (TimeoutException)
+                {
+                    // A wedged detector (CUDA hang, blocked I/O) must not hang the task forever, and
+                    // holding _submitLock would also block the idle watchdog. Kill the process and
+                    // surface "unavailable" so the caller falls back to the per-image CLI.
+                    _logger.LogError(
+                        "Detection request {Id} timed out after {Timeout}; killing the detection server.",
+                        id,
+                        timeout
+                    );
+                    await KillServerAsync();
+                    throw new DetectServerUnavailableException(
+                        $"The detection server timed out after {timeout}."
+                    );
+                }
             }
             finally
             {
@@ -310,10 +332,20 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
         var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         var readyTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        if (!process.Start())
+        try
+        {
+            if (!process.Start())
+            {
+                throw new DetectServerUnavailableException(
+                    "Failed to start the resident detection server process."
+                );
+            }
+        }
+        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
         {
             throw new DetectServerUnavailableException(
-                "Failed to start the resident detection server process."
+                "Failed to start the resident detection server process.",
+                ex
             );
         }
 
@@ -540,6 +572,21 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
         {
             await stdin.WriteLineAsync(line.AsMemory(), cancellationToken);
             await stdin.FlushAsync(cancellationToken);
+        }
+        catch (Exception ex)
+            when (ex
+                    is IOException
+                        or ObjectDisposedException
+                        or Win32Exception
+                        or InvalidOperationException
+            )
+        {
+            // A broken pipe or a dead writer means the resident server is unusable; surface it as
+            // "unavailable" so the caller falls back to the per-image CLI instead of failing.
+            throw new DetectServerUnavailableException(
+                "The detection server's stdin is not writable.",
+                ex
+            );
         }
         finally
         {

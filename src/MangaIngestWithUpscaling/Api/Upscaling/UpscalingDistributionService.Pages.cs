@@ -30,6 +30,9 @@ public partial class UpscalingDistributionService
     /// <summary>Upper bound on a single uploaded page, so a malformed or hostile upload cannot fill the spool.</summary>
     private const long MaxPageBytes = 512L * 1024 * 1024;
 
+    /// <summary>Upper bound on the total bytes spooled for one task, so a chapter cannot fill the disk.</summary>
+    private const long MaxTaskBytes = 8L * 1024 * 1024 * 1024;
+
     /// <summary>Upper bound on a detection result payload, so the lifted gRPC body cap cannot be abused.</summary>
     private const int MaxDetectionResultBytes = 16 * 1024 * 1024;
 
@@ -131,6 +134,7 @@ public partial class UpscalingDistributionService
             UpscalerProfile = pageContext.Profile is null
                 ? null
                 : ToProtoProfile(pageContext.Profile),
+            MaxPagePixels = await ComputeMaxPagePixelsAsync(pageContext.SourcePath),
         };
         response.Pages.AddRange(
             pageContext.Pages.Select(p => new PageDescriptor
@@ -290,6 +294,18 @@ public partial class UpscalingDistributionService
                         };
                     }
 
+                    if (pageContext.Kind == PageContextKind.Detect)
+                    {
+                        return new UploadPageResponse
+                        {
+                            Success = false,
+                            Message = "This task is not a page-streamed upscale task.",
+                            TaskId = taskId,
+                            PageIndex = pageIndex,
+                            Terminal = true,
+                        };
+                    }
+
                     if (!string.Equals(pageContext.Identity, identity, StringComparison.Ordinal))
                     {
                         return new UploadPageResponse
@@ -358,12 +374,25 @@ public partial class UpscalingDistributionService
             {
                 await pageFile!.DisposeAsync();
                 pageFile = null;
+                if (pageStreamSpool.GetTotalBytes(session) + written > MaxTaskBytes)
+                {
+                    return new UploadPageResponse
+                    {
+                        Success = false,
+                        Message = $"Task {taskId} exceeds the maximum spooled size.",
+                        TaskId = taskId,
+                        PageIndex = pageIndex,
+                        Terminal = true,
+                    };
+                }
+
                 if (
                     !pageStreamSpool.TryCommitPage(
                         session,
                         pageContext!.Identity,
                         pageIndex,
-                        tempPath!
+                        tempPath!,
+                        written
                     )
                 )
                 {
@@ -970,6 +999,23 @@ public partial class UpscalingDistributionService
         }
 
         return null;
+    }
+
+    /// <summary>Largest page in the source archive, for the worker's inactivity timeout; 0 if unknown.</summary>
+    private async Task<long> ComputeMaxPagePixelsAsync(string sourcePath)
+    {
+        try
+        {
+            return await imageResizeService.GetMaxPixelCountFromCbzAsync(
+                sourcePath,
+                CancellationToken.None
+            );
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not compute the max page size for {Source}.", sourcePath);
+            return 0;
+        }
     }
 
     /// <summary>Marks a task failed, swallowing and logging any failure to do so.</summary>

@@ -21,6 +21,7 @@ using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
+using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
@@ -110,6 +111,7 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         builder.Services.AddSingleton<IFileSystem>(new GenericFileSystem());
         _metadata = Substitute.For<IMetadataHandlingService>();
         builder.Services.AddSingleton(_metadata);
+        builder.Services.AddSingleton(Substitute.For<IImageResizeService>());
         builder.Services.AddScoped<IRepairService, RepairService>();
         builder.Services.AddSingleton(Substitute.For<IMangaMetadataChanger>());
         builder.Services.AddSingleton(Substitute.For<IChapterChangedNotifier>());

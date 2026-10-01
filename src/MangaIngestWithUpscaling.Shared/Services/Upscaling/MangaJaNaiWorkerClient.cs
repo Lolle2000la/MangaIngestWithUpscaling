@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Python;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -498,6 +499,26 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         if (existing is not null)
         {
             await CleanupAsync(existing);
+        }
+
+        // Free the resident detection server's VRAM before the upscaler claims the GPU, so two warm
+        // models do not fight over a small card. Best-effort; the upscaler can still run.
+        try
+        {
+            using IServiceScope detectorScope = _scopeFactory.CreateScope();
+            IDetectServerClient? detector =
+                detectorScope.ServiceProvider.GetService<IDetectServerClient>();
+            if (detector is not null)
+            {
+                await detector.ReleaseGpuCacheAsync(CancellationToken.None);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(
+                ex,
+                "Failed to release the detection server's GPU cache before upscaling."
+            );
         }
 
         // Start a fresh stderr buffer for the new worker so a timeout/crash report doesn't

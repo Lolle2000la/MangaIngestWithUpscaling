@@ -15,24 +15,33 @@ public sealed class PageSpoolSweepService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Sweep once at startup so roots left by a previous process are removed promptly, not an
+        // hour later.
+        Sweep();
+
         try
         {
             using var timer = new PeriodicTimer(Interval);
             while (await timer.WaitForNextTickAsync(stoppingToken))
             {
-                try
-                {
-                    spool.SweepStale(Retention);
-                    cache.Sweep(Retention);
-                }
-                catch (Exception ex)
-                {
-                    logger.LogDebug(ex, "Page spool sweep failed.");
-                }
+                Sweep();
             }
         }
         catch (OperationCanceledException)
         { /* shutting down */
+        }
+    }
+
+    private void Sweep()
+    {
+        try
+        {
+            spool.SweepStale(Retention);
+            cache.Sweep(Retention);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Page spool sweep failed.");
         }
     }
 }

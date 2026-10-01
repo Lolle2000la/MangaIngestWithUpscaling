@@ -128,6 +128,13 @@ public record UpscalerConfig
     public TimeSpan WorkerIdleTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
+    ///     Inactivity timeout for a single request to the resident detection server. The request is
+    ///     cancelled and the server process killed when it fires, and the caller falls back to the
+    ///     per-image CLI, so a wedged detector cannot hang a task forever. Zero disables the guard.
+    /// </summary>
+    public TimeSpan DetectServerRequestTimeout { get; set; } = TimeSpan.FromMinutes(10);
+
+    /// <summary>
     ///     Maximum number of jobs the persistent upscale worker may have in flight plus queued
     ///     at once. Upscaling is processed sequentially, so this is normally 1.
     /// </summary>

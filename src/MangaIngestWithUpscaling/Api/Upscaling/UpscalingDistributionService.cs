@@ -14,6 +14,7 @@ using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.Upscaling;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
+using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.AspNetCore.Authorization;
@@ -33,6 +34,7 @@ public partial class UpscalingDistributionService(
     PageContextCache pageContextCache,
     IUpscalerJsonHandlingService upscalerJsonHandlingService,
     IMetadataHandlingService metadataHandling,
+    IImageResizeService imageResizeService,
     ILogger<UpscalingDistributionService> logger
 ) : UpscalingService.UpscalingServiceBase
 {
@@ -649,11 +651,29 @@ public partial class UpscalingDistributionService(
     )
     {
         var taskChunks = new Dictionary<int, List<int>>();
+        // Streaming uploads are not bounded by Kestrel (gRPC disables the request-body cap), so bound
+        // the total here to keep an authenticated-but-hostile worker from filling the disk.
+        const long MaxCbzUploadBytes = 8L * 1024 * 1024 * 1024;
+        long totalBytes = 0;
 
         await foreach (
             CbzFileChunk request in requestStream.ReadAllAsync(context.CancellationToken)
         )
         {
+            totalBytes += request.Chunk.Length;
+            if (totalBytes > MaxCbzUploadBytes)
+            {
+                await responseStream.WriteAsync(
+                    new UploadUpscaledCbzResponse
+                    {
+                        Success = false,
+                        Message = "The uploaded CBZ exceeds the maximum size.",
+                        TaskId = request.TaskId,
+                    }
+                );
+                return;
+            }
+
             if (!taskChunks.ContainsKey(request.TaskId))
             {
                 taskChunks[request.TaskId] = new List<int>();
