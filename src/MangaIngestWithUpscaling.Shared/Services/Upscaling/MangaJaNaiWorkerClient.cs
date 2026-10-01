@@ -246,6 +246,10 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                                 producerCts.Token
                             );
                         }
+                        catch (OperationCanceledException)
+                        {
+                            // Cancelled by us (the chapter settled) or by the caller; not an error.
+                        }
                         catch (Exception ex)
                         {
                             producerError = ex;
@@ -1064,9 +1068,23 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             return;
         }
 
-        job.OnPageDone?.Invoke(
-            new UpscaleJobFile(pageDone.Input ?? "", pageDone.Output ?? "", pageDone.Status ?? "")
-        );
+        try
+        {
+            job.OnPageDone?.Invoke(
+                new UpscaleJobFile(
+                    pageDone.Input ?? "",
+                    pageDone.Output ?? "",
+                    pageDone.Status ?? ""
+                )
+            );
+        }
+        catch (Exception ex)
+        {
+            // A throwing callback must not tear down the stdout reader (which would fault every
+            // in-flight job); fail just this job instead.
+            _logger.LogError(ex, "Page-done callback failed for job {JobId}.", pageDone.Id);
+            job.Fail($"Page-done callback failed: {ex.Message}");
+        }
     }
 
     private void DispatchError(WorkerErrorEvent error)
