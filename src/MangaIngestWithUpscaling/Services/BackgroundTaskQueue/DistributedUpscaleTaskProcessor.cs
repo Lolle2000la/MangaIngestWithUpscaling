@@ -1214,7 +1214,9 @@ public class DistributedUpscaleTaskProcessor(
 
             if (differences.MissingPages.Count > 0)
             {
-                // Create and store remote repair state
+                // Create and store remote repair state. PreparedMissingPagesCbzPath is only used by
+                // the whole-CBZ fallback (page streaming reads the missing pages from the original
+                // source) and as the delegation transfer-size hint.
                 var repairState = new RemoteRepairState
                 {
                     PreparedMissingPagesCbzPath = repairContext.MissingPagesCbz,

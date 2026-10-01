@@ -5,7 +5,8 @@ namespace MangaIngestWithUpscaling.Services.Upscaling;
 /// <summary>
 /// Process-local cache of resolved page contexts. Resolving a context scans the source archive and,
 /// for repairs, diffs it against the upscaled chapter; because every page RPC resolves the context,
-/// an N-page chapter would otherwise rescan its archive O(N) times.
+/// an N-page chapter would otherwise rescan its archive O(N) times. The cache removes those scans
+/// (not the per-RPC entity loads or the identity computation).
 ///
 /// Entries hold only derived, plain data (never EF entities), so each call still loads and tracks
 /// its own entities from its own scope. An entry is only reused while the caller's freshly computed
@@ -16,12 +17,7 @@ public sealed class PageContextCache
     /// <summary>Derived, entity-free data for one resolved task context.</summary>
     public sealed record Entry(
         string Identity,
-        string SourcePath,
         IReadOnlyList<SpoolPageDescriptor> Pages,
-        int DetectorVersion,
-        int ChapterId,
-        int ProfileId,
-        string? UpscaledFullPath,
         IReadOnlyList<string> MissingPages
     );
 

@@ -125,16 +125,36 @@ public sealed class PageStreamSpool
         );
     }
 
-    /// <summary>Atomically moves a completed page into place and records it as done.</summary>
-    public void CommitPage(PageStreamSession session, int pageIndex, string tempPath)
+    /// <summary>
+    /// Atomically moves a completed page into place and records it as done, but only while the
+    /// session still holds <paramref name="expectedIdentity"/>. A session whose identity was reset
+    /// by a concurrent manifest is stale, so the page is dropped instead of being mixed into the
+    /// new identity. Returns <c>false</c> when the page was not committed.
+    /// </summary>
+    public bool TryCommitPage(
+        PageStreamSession session,
+        string expectedIdentity,
+        int pageIndex,
+        string tempPath
+    )
     {
-        File.Move(tempPath, session.PagePath(pageIndex), overwrite: true);
         lock (session.Gate)
         {
+            if (!string.Equals(session.Identity, expectedIdentity, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            File.Move(tempPath, session.PagePath(pageIndex), overwrite: true);
             session.Completed.Add(pageIndex);
             session.LastTouchedUtc = DateTime.UtcNow;
+            return true;
         }
     }
+
+    /// <summary>Atomically moves a completed page into place and records it as done.</summary>
+    public void CommitPage(PageStreamSession session, int pageIndex, string tempPath) =>
+        TryCommitPage(session, session.Identity, pageIndex, tempPath);
 
     public bool IsComplete(PageStreamSession session)
     {
@@ -146,13 +166,18 @@ public sealed class PageStreamSpool
 
     /// <summary>
     /// Claims the one-shot finalize for a session, so two workers that both see the chapter as
-    /// complete cannot assemble (or finalize detection) concurrently.
+    /// complete cannot assemble (or finalize detection) concurrently. Also refuses when the
+    /// session's identity no longer matches the caller's, so a stale worker cannot finalize the
+    /// new identity's chapter.
     /// </summary>
-    public bool TryBeginAssembly(PageStreamSession session)
+    public bool TryBeginAssembly(PageStreamSession session, string expectedIdentity)
     {
         lock (session.Gate)
         {
-            if (session.Assembling)
+            if (
+                session.Assembling
+                || !string.Equals(session.Identity, expectedIdentity, StringComparison.Ordinal)
+            )
             {
                 return false;
             }
@@ -161,6 +186,9 @@ public sealed class PageStreamSpool
             return true;
         }
     }
+
+    public bool TryBeginAssembly(PageStreamSession session) =>
+        TryBeginAssembly(session, session.Identity);
 
     public void EndAssembly(PageStreamSession session)
     {

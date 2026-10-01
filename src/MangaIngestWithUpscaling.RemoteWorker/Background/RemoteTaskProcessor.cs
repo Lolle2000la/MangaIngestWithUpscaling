@@ -129,16 +129,38 @@ public class RemoteTaskProcessor(
                 );
                 return false;
             }
+            catch (RpcException ex)
+                when (IsTransient(ex.StatusCode)
+                    && attempt < attempts
+                    && !stoppingToken.IsCancellationRequested
+                )
+            {
+                // The server was unreachable (e.g. a restart blip); retry before deciding, since a
+                // wrong "unavailable" would disable streaming for the worker's whole lifetime.
+                logger.LogDebug(
+                    ex,
+                    "Page-streaming probe failed (attempt {Attempt}/{Attempts}); retrying.",
+                    attempt,
+                    attempts
+                );
+                await Task.Delay(TimeSpan.FromSeconds(2 * attempt), stoppingToken);
+            }
+            catch (RpcException ex) when (IsTransient(ex.StatusCode))
+            {
+                logger.LogWarning(
+                    ex,
+                    "The server was unreachable while probing page-streaming support; falling back to whole-CBZ transfers."
+                );
+                return false;
+            }
             catch (RpcException)
             {
-                // NotFound / InvalidArgument / Unavailable: the RPC exists, or the server is only
-                // momentarily unreachable; prefer streaming.
+                // NotFound / InvalidArgument / PermissionDenied / Unauthenticated: the RPC exists
+                // and the server answered.
                 return true;
             }
             catch (Exception ex) when (attempt < attempts && !stoppingToken.IsCancellationRequested)
             {
-                // A transient transport error (e.g. connection refused during a restart) must not
-                // disable streaming for the worker's whole lifetime; retry before giving up.
                 logger.LogDebug(
                     ex,
                     "Page-streaming probe failed (attempt {Attempt}/{Attempts}); retrying.",
@@ -158,6 +180,9 @@ public class RemoteTaskProcessor(
             }
         }
     }
+
+    private static bool IsTransient(StatusCode code) =>
+        code is StatusCode.Unavailable or StatusCode.DeadlineExceeded;
 
     /// <summary>
     ///     Handles task reservation, file downloading, and coordination with the upscale pipeline.

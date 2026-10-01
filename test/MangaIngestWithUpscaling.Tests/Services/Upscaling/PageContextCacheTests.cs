@@ -45,12 +45,7 @@ public class PageContextCacheTests
     private static PageContextCache.Entry Entry() =>
         new(
             "identity",
-            "/source.cbz",
             new[] { new SpoolPageDescriptor(0, "001.jpg", "001.webp") },
-            0,
-            1,
-            2,
-            "/upscaled.cbz",
             Array.Empty<string>()
         );
 }

@@ -62,7 +62,7 @@ public partial class UpscalingDistributionService
         // finish the chapter instead of asking the worker to produce it again.
         if (pageStreamSpool.IsComplete(session))
         {
-            if (!pageStreamSpool.TryBeginAssembly(session))
+            if (!pageStreamSpool.TryBeginAssembly(session, pageContext.Identity))
             {
                 // Another request is already finalizing; report complete without redoing the work.
                 return new PageManifestResponse
@@ -360,7 +360,26 @@ public partial class UpscalingDistributionService
             {
                 await pageFile!.DisposeAsync();
                 pageFile = null;
-                pageStreamSpool.CommitPage(session, pageIndex, tempPath!);
+                if (
+                    !pageStreamSpool.TryCommitPage(
+                        session,
+                        pageContext!.Identity,
+                        pageIndex,
+                        tempPath!
+                    )
+                )
+                {
+                    // The chapter or profile changed while this page was in flight; drop it and let
+                    // the worker restart against the new identity.
+                    return new UploadPageResponse
+                    {
+                        Success = false,
+                        Message = "The chapter or profile changed; restart the chapter",
+                        TaskId = taskId,
+                        PageIndex = pageIndex,
+                    };
+                }
+
                 committed = true;
             }
             catch (Exception ex)
@@ -415,7 +434,18 @@ public partial class UpscalingDistributionService
             };
         }
 
-        if (!pageStreamSpool.TryBeginAssembly(session))
+        if (!string.Equals(session.Identity, pageContext!.Identity, StringComparison.Ordinal))
+        {
+            return new UploadPageResponse
+            {
+                Success = false,
+                Message = "The chapter or profile changed; restart the chapter",
+                TaskId = taskId,
+                PageIndex = pageIndex,
+            };
+        }
+
+        if (!pageStreamSpool.TryBeginAssembly(session, pageContext.Identity))
         {
             // Another worker is already assembling the completed chapter.
             return new UploadPageResponse
@@ -515,19 +545,67 @@ public partial class UpscalingDistributionService
             };
         }
 
-        await pageStreamSpool.WritePageAsync(
+        if (
+            JsonSerializer.Deserialize(
+                request.ResultJson,
+                SharedJsonContext.Default.SplitDetectionResult
+            )
+            is null
+        )
+        {
+            return new UploadDetectionResultResponse
+            {
+                Success = false,
+                Message =
+                    $"The detection result for page {request.PageIndex} of task {request.TaskId} is not valid.",
+            };
+        }
+
+        FileStream resultFile = pageStreamSpool.BeginPageWrite(
             session,
             request.PageIndex,
-            new MemoryStream(resultBytes),
-            context.CancellationToken
+            out string resultTemp
         );
+        await using (resultFile)
+        {
+            await resultFile.WriteAsync(resultBytes, context.CancellationToken);
+        }
+
+        if (
+            !pageStreamSpool.TryCommitPage(
+                session,
+                pageContext.Identity,
+                request.PageIndex,
+                resultTemp
+            )
+        )
+        {
+            try
+            {
+                File.Delete(resultTemp);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(
+                    ex,
+                    "Failed to delete a stale detection temp file {Temp}.",
+                    resultTemp
+                );
+            }
+
+            return new UploadDetectionResultResponse
+            {
+                Success = false,
+                Message = "The chapter changed; request a new manifest",
+            };
+        }
 
         if (!pageStreamSpool.IsComplete(session))
         {
             return new UploadDetectionResultResponse { Success = true, Message = "Result stored" };
         }
 
-        if (!pageStreamSpool.TryBeginAssembly(session))
+        if (!pageStreamSpool.TryBeginAssembly(session, pageContext.Identity))
         {
             return new UploadDetectionResultResponse
             {
@@ -576,7 +654,9 @@ public partial class UpscalingDistributionService
             string path = session.PagePath(page.Index);
             if (!File.Exists(path))
             {
-                continue;
+                throw new InvalidOperationException(
+                    $"Spooled detection result {page.Index} for task {pageContext.Task.Id} is missing."
+                );
             }
 
             string json = await File.ReadAllTextAsync(path, CancellationToken.None);
@@ -584,10 +664,14 @@ public partial class UpscalingDistributionService
                 json,
                 SharedJsonContext.Default.SplitDetectionResult
             );
-            if (result is not null)
+            if (result is null)
             {
-                results.Add(result);
+                throw new InvalidOperationException(
+                    $"Spooled detection result {page.Index} for task {pageContext.Task.Id} is invalid."
+                );
             }
+
+            results.Add(result);
         }
 
         await splitProcessingService.ProcessDetectionResultsAsync(
@@ -707,16 +791,7 @@ public partial class UpscalingDistributionService
 
                 pageContextCache.Set(
                     task.Id,
-                    new PageContextCache.Entry(
-                        identity,
-                        sourcePath,
-                        pages,
-                        0,
-                        chapter.Id,
-                        profile.Id,
-                        chapter.UpscaledFullPath,
-                        Array.Empty<string>()
-                    )
+                    new PageContextCache.Entry(identity, pages, Array.Empty<string>())
                 );
             }
 
@@ -739,6 +814,9 @@ public partial class UpscalingDistributionService
                 return null;
             }
 
+            // The worker's engine profile comes from the delegation response
+            // (repairTask.UpscalerProfileId); this context's profile drives the page descriptors and
+            // identity. They normally agree; if they ever diverge, output naming/scale could drift.
             SharedUpscalerProfile? profile =
                 chapter.UpscalerProfile ?? await LoadProfileAsync(repairTask.UpscalerProfileId, ct);
             if (profile is null)
@@ -809,16 +887,7 @@ public partial class UpscalingDistributionService
             );
             pageContextCache.Set(
                 task.Id,
-                new PageContextCache.Entry(
-                    repairIdentity,
-                    sourcePath,
-                    pages,
-                    0,
-                    chapter.Id,
-                    profile.Id,
-                    chapter.UpscaledFullPath,
-                    differences.MissingPages.ToList()
-                )
+                new PageContextCache.Entry(repairIdentity, pages, differences.MissingPages.ToList())
             );
 
             return new PageContext(
@@ -857,16 +926,7 @@ public partial class UpscalingDistributionService
 
                 pageContextCache.Set(
                     task.Id,
-                    new PageContextCache.Entry(
-                        identity,
-                        sourcePath,
-                        pages,
-                        detectTask.DetectorVersion,
-                        chapter.Id,
-                        0,
-                        null,
-                        Array.Empty<string>()
-                    )
+                    new PageContextCache.Entry(identity, pages, Array.Empty<string>())
                 );
             }
 

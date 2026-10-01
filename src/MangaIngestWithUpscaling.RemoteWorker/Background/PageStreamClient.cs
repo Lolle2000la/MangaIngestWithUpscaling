@@ -412,6 +412,12 @@ public sealed class PageStreamClient(
         }
     }
 
+    /// <summary>
+    /// Fetches all still-missing pages over one <see cref="UpscalingService.UpscalingServiceClient.GetPages"/>
+    /// stream, splitting it into per-page files and yielding each page as its terminating chunk
+    /// arrives. One long-lived stream keeps the server from reopening and re-enumerating the source
+    /// archive once per page, while the consumer's pace still applies backpressure.
+    /// </summary>
     private async IAsyncEnumerable<ChapterPage> FetchPagesAsync(
         UpscalingService.UpscalingServiceClient client,
         int taskId,
@@ -422,24 +428,84 @@ public sealed class PageStreamClient(
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken
     )
     {
-        foreach (int pageIndex in missingPages)
+        if (missingPages.Count == 0)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            string sourceName = nameByIndex[pageIndex];
-            string path = Path.Combine(sourceDirectory, WorkerPageName(pageIndex, sourceName));
-
-            await FetchPageToFileAsync(
-                client,
-                taskId,
-                identity,
-                pageIndex,
-                path,
-                cancellationToken
-            );
-
-            yield return new ChapterPage(pageIndex, WorkerPageName(pageIndex, sourceName), path);
+            yield break;
         }
+
+        using AsyncServerStreamingCall<PageChunk> call = client.GetPages(
+            new GetPagesRequest
+            {
+                TaskId = taskId,
+                TaskIdentity = identity,
+                PageIndexes = { missingPages },
+            },
+            deadline: DateTime.UtcNow.Add(FetchDeadline(missingPages.Count)),
+            cancellationToken: cancellationToken
+        );
+
+        FileStream? file = null;
+        int currentIndex = -1;
+        string currentName = string.Empty;
+        string currentPath = string.Empty;
+        try
+        {
+            await foreach (PageChunk chunk in call.ResponseStream.ReadAllAsync(cancellationToken))
+            {
+                if (chunk.PageIndex != currentIndex)
+                {
+                    // The server always terminates a page with IsLast; a truncated page is dropped.
+                    if (file is not null)
+                    {
+                        await file.DisposeAsync();
+                        file = null;
+                    }
+
+                    currentIndex = chunk.PageIndex;
+                    string sourceName = nameByIndex[currentIndex];
+                    currentName = WorkerPageName(currentIndex, sourceName);
+                    currentPath = Path.Combine(sourceDirectory, currentName);
+                    file = new FileStream(
+                        currentPath,
+                        FileMode.Create,
+                        FileAccess.Write,
+                        FileShare.None,
+                        81920,
+                        FileOptions.Asynchronous
+                    );
+                }
+
+                if (!chunk.Chunk.IsEmpty)
+                {
+                    await file!.WriteAsync(chunk.Chunk.Memory, cancellationToken);
+                }
+
+                if (chunk.IsLast)
+                {
+                    await file!.DisposeAsync();
+                    file = null;
+                    yield return new ChapterPage(currentIndex, currentName, currentPath);
+                }
+            }
+        }
+        finally
+        {
+            if (file is not null)
+            {
+                await file.DisposeAsync();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Deadline for the single whole-chapter fetch: generously more than one page, but bounded so a
+    /// stalled transfer eventually fails and is retried (resuming at the first missing page).
+    /// </summary>
+    private static TimeSpan FetchDeadline(int pageCount)
+    {
+        TimeSpan total = PageTimeout * Math.Max(1, pageCount);
+        TimeSpan cap = TimeSpan.FromHours(12);
+        return total < cap ? total : cap;
     }
 
     private async Task UploadLoopAsync(

@@ -421,11 +421,12 @@ using (var scope = app.Services.CreateScope())
 }
 
 // gRPC uploads stream a whole page (or CBZ) in one request, which can exceed Kestrel's ~28.6 MB
-// default request-body cap. Lift the cap for gRPC requests only, so the slowloris protection and
-// body limits for the rest of the app are unaffected. This middleware only adjusts the limit; the
-// body is read later by the handler, which the API-key authentication has already gated, and the
-// page upload handler additionally bounds each uploaded page. The trust boundary is therefore the
-// authenticated worker set: an unauthenticated request is rejected before its body is read.
+// default request-body cap. Raise it to a generous finite ceiling for gRPC requests only, so the
+// slowloris protection and body limits for the rest of the app are unaffected while an
+// authenticated-but-hostile worker still cannot stream an unbounded body. This middleware only
+// adjusts the limit; the body is read later by the handler, which the API-key authentication has
+// already gated, and the page upload handler additionally bounds each uploaded page.
+const long GrpcMaxRequestBodyBytes = 8L * 1024 * 1024 * 1024;
 app.Use(
     async (context, next) =>
     {
@@ -440,7 +441,7 @@ app.Use(
                 context.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>();
             if (bodySizeFeature is { IsReadOnly: false })
             {
-                bodySizeFeature.MaxRequestBodySize = null;
+                bodySizeFeature.MaxRequestBodySize = GrpcMaxRequestBodyBytes;
             }
         }
 

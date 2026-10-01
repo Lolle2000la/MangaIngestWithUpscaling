@@ -37,6 +37,33 @@ public class PageStreamSpoolTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void TryCommitPage_RejectsAStaleIdentity()
+    {
+        PageStreamSession session = _spool.GetOrCreateSession(11, "old", 1);
+        FileStream output = _spool.BeginPageWrite(session, 0, out string temp);
+        output.Dispose();
+
+        // A concurrent manifest changes the identity, resetting the shared session in place.
+        _spool.GetOrCreateSession(11, "new", 1);
+
+        Assert.False(_spool.TryCommitPage(session, "old", 0, temp));
+        Assert.False(_spool.IsComplete(session));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void TryBeginAssembly_RejectsAStaleIdentity()
+    {
+        PageStreamSession session = _spool.GetOrCreateSession(12, "old", 1);
+
+        _spool.GetOrCreateSession(12, "new", 1);
+
+        Assert.False(_spool.TryBeginAssembly(session, "old"));
+        Assert.True(_spool.TryBeginAssembly(session, "new"));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void TryBeginAssembly_IsExclusiveUntilEnded()
     {
         PageStreamSession session = _spool.GetOrCreateSession(9, "identity", 1);
