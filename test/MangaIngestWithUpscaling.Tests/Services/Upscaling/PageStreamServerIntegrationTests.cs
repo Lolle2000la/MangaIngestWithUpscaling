@@ -1,7 +1,6 @@
 extern alias remote;
 
 using System.IO.Compression;
-using System.Reflection;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -437,29 +436,20 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
             .Returns(new PageDifferenceResult(new[] { "001" }, Array.Empty<string>()));
 
         // Prepare the real remote repair state (extracts the archives, builds the missing-pages
-        // CBZ); the private preparation method is invoked directly to avoid driving the whole
+        // CBZ); the internal preparation method is invoked directly to avoid driving the whole
         // dispatch loop.
         var processor = _app.Services.GetRequiredService<DistributedUpscaleTaskProcessor>();
-        MethodInfo prepare = typeof(DistributedUpscaleTaskProcessor).GetMethod(
-            "PrepareRepairTaskForRemote",
-            BindingFlags.NonPublic | BindingFlags.Instance
-        )!;
         using (IServiceScope scope = _app.Services.CreateScope())
         {
             PersistedTask repairTask = await LoadTaskAsync(_repairTaskId);
-            var prepared =
-                (Task<bool>)
-                    prepare.Invoke(
-                        processor,
-                        new object[]
-                        {
-                            repairTask.Data,
-                            repairTask,
-                            scope.ServiceProvider,
-                            CancellationToken.None,
-                        }
-                    )!;
-            Assert.True(await prepared);
+            Assert.True(
+                await processor.PrepareRepairTaskForRemote(
+                    (RepairUpscaleTask)repairTask.Data,
+                    repairTask,
+                    scope.ServiceProvider,
+                    CancellationToken.None
+                )
+            );
         }
 
         var client = new RemoteUpscalingServiceClient(_channel);
@@ -517,26 +507,17 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
             .Returns(new PageDifferenceResult(new[] { "002" }, Array.Empty<string>()));
 
         var processor = _app.Services.GetRequiredService<DistributedUpscaleTaskProcessor>();
-        MethodInfo prepare = typeof(DistributedUpscaleTaskProcessor).GetMethod(
-            "PrepareRepairTaskForRemote",
-            BindingFlags.NonPublic | BindingFlags.Instance
-        )!;
         using (IServiceScope scope = _app.Services.CreateScope())
         {
             PersistedTask repairTask = await LoadTaskAsync(nestedTaskId);
-            var prepared =
-                (Task<bool>)
-                    prepare.Invoke(
-                        processor,
-                        new object[]
-                        {
-                            repairTask.Data,
-                            repairTask,
-                            scope.ServiceProvider,
-                            CancellationToken.None,
-                        }
-                    )!;
-            Assert.True(await prepared);
+            Assert.True(
+                await processor.PrepareRepairTaskForRemote(
+                    (RepairUpscaleTask)repairTask.Data,
+                    repairTask,
+                    scope.ServiceProvider,
+                    CancellationToken.None
+                )
+            );
         }
 
         var client = new RemoteUpscalingServiceClient(_channel);

@@ -106,6 +106,10 @@ public sealed class PageStreamClient(
                 manifest.Pages.Count
             );
 
+            // Unbounded on purpose: OnPageDone is a synchronous worker callback, so it cannot apply
+            // backpressure without blocking the worker's event reader. The records are tiny, but the
+            // upscaled output files they point at accumulate on disk until the chapter ends, so a
+            // fast GPU with a slow upload link needs temp-directory headroom.
             var uploads = Channel.CreateUnbounded<PageUpload>(
                 new UnboundedChannelOptions { SingleReader = true, SingleWriter = false }
             );

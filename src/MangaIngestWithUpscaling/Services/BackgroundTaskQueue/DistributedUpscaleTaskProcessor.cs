@@ -1101,7 +1101,7 @@ public class DistributedUpscaleTaskProcessor(
     /// Prepares a RepairUpscaleTask for remote processing by analyzing differences and preparing missing pages CBZ.
     /// Returns true if the task was successfully prepared and should be delegated to remote workers.
     /// </summary>
-    private async Task<bool> PrepareRepairTaskForRemote(
+    internal async Task<bool> PrepareRepairTaskForRemote(
         RepairUpscaleTask repairTask,
         PersistedTask persistedTask,
         IServiceProvider services,

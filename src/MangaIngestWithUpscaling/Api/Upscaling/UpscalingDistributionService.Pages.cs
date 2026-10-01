@@ -27,8 +27,6 @@ namespace MangaIngestWithUpscaling.Api.Upscaling;
 /// </summary>
 public partial class UpscalingDistributionService
 {
-    private static readonly TimeSpan SpoolRetention = TimeSpan.FromHours(24);
-
     /// <summary>Upper bound on a single uploaded page, so a malformed or hostile upload cannot fill the spool.</summary>
     private const long MaxPageBytes = 512L * 1024 * 1024;
 
@@ -50,8 +48,6 @@ public partial class UpscalingDistributionService
             return new PageManifestResponse { TaskId = request.TaskId };
         }
 
-        pageStreamSpool.SweepStale(SpoolRetention);
-        pageContextCache.Sweep(SpoolRetention);
         PageStreamSession session = pageStreamSpool.GetOrCreateSession(
             pageContext.Task.Id,
             pageContext.Identity,
@@ -97,21 +93,10 @@ public partial class UpscalingDistributionService
                     "Failed to finalize an already-complete page stream for task {TaskId}.",
                     pageContext.Task.Id
                 );
-                try
-                {
-                    await taskProcessor.TaskFailed(
-                        pageContext.Task.Id,
-                        $"Finalizing the chapter failed: {ex.Message}"
-                    );
-                }
-                catch (Exception failEx)
-                {
-                    _logger.LogWarning(
-                        failEx,
-                        "Failed to mark task {TaskId} as failed after a finalization error.",
-                        pageContext.Task.Id
-                    );
-                }
+                await MarkTaskFailedQuietlyAsync(
+                    pageContext.Task.Id,
+                    $"Finalizing the chapter failed: {ex.Message}"
+                );
 
                 context.Status = new Status(
                     StatusCode.Internal,
@@ -273,18 +258,26 @@ public partial class UpscalingDistributionService
                 UploadPageChunk chunk in requestStream.ReadAllAsync(context.CancellationToken)
             )
             {
-                taskId = chunk.TaskId;
-                pageIndex = chunk.PageIndex;
-                if (!string.IsNullOrEmpty(chunk.ContentIdentity))
+                if (sawChunk && (chunk.TaskId != taskId || chunk.PageIndex != pageIndex))
                 {
-                    identity = chunk.ContentIdentity;
+                    return new UploadPageResponse
+                    {
+                        Success = false,
+                        Message = "The page stream changed task or page mid-upload.",
+                        TaskId = taskId,
+                        PageIndex = pageIndex,
+                        Terminal = true,
+                    };
                 }
 
                 if (!sawChunk)
                 {
                     sawChunk = true;
+                    taskId = chunk.TaskId;
+                    pageIndex = chunk.PageIndex;
+                    identity = chunk.ContentIdentity;
 
-                    pageContext = await ResolvePageContextAsync(taskId, CancellationToken.None);
+                    pageContext = await ResolvePageContextAsync(taskId, context.CancellationToken);
                     if (pageContext is null)
                     {
                         return new UploadPageResponse
@@ -469,6 +462,12 @@ public partial class UpscalingDistributionService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to assemble upscaled chapter for task {TaskId}", taskId);
+            // Mirror the manifest complete-path: mark the task failed rather than relying solely on
+            // the worker to report it, which may never arrive if the connection dropped.
+            await MarkTaskFailedQuietlyAsync(
+                taskId,
+                $"Assembling the chapter failed: {ex.Message}"
+            );
             return new UploadPageResponse
             {
                 Success = false,
@@ -500,7 +499,7 @@ public partial class UpscalingDistributionService
     {
         PageContext? pageContext = await ResolvePageContextAsync(
             request.TaskId,
-            CancellationToken.None
+            context.CancellationToken
         );
         if (pageContext is null || pageContext.Kind != PageContextKind.Detect)
         {
@@ -550,19 +549,38 @@ public partial class UpscalingDistributionService
             };
         }
 
-        if (
-            JsonSerializer.Deserialize(
-                request.ResultJson,
-                SharedJsonContext.Default.SplitDetectionResult
-            )
-            is null
-        )
+        SplitDetectionResult? detectionResult = JsonSerializer.Deserialize(
+            request.ResultJson,
+            SharedJsonContext.Default.SplitDetectionResult
+        );
+        if (detectionResult is null)
         {
             return new UploadDetectionResultResponse
             {
                 Success = false,
                 Message =
                     $"The detection result for page {request.PageIndex} of task {request.TaskId} is not valid.",
+            };
+        }
+
+        // The stored finding is keyed by the image's stem, so a result that names a different image
+        // would be misattributed.
+        string expectedStem = Path.GetFileNameWithoutExtension(
+            pageContext.Pages[request.PageIndex].SourceName
+        );
+        if (
+            !string.Equals(
+                Path.GetFileNameWithoutExtension(detectionResult.ImagePath),
+                expectedStem,
+                StringComparison.OrdinalIgnoreCase
+            )
+        )
+        {
+            return new UploadDetectionResultResponse
+            {
+                Success = false,
+                Message =
+                    $"The detection result for page {request.PageIndex} of task {request.TaskId} names a different image.",
             };
         }
 
@@ -638,6 +656,10 @@ public partial class UpscalingDistributionService
                 ex,
                 "Failed to process page-streamed detection results for task {TaskId}",
                 request.TaskId
+            );
+            await MarkTaskFailedQuietlyAsync(
+                request.TaskId,
+                $"Finalizing detection failed: {ex.Message}"
             );
             return new UploadDetectionResultResponse { Success = false, Message = ex.Message };
         }
@@ -819,11 +841,11 @@ public partial class UpscalingDistributionService
                 return null;
             }
 
-            // The worker's engine profile comes from the delegation response
-            // (repairTask.UpscalerProfileId); this context's profile drives the page descriptors and
-            // identity. They normally agree; if they ever diverge, output naming/scale could drift.
+            // Prefer the task's profile, which is also what the delegation response hands the worker
+            // as its engine profile, so the page descriptors/identity and the produced output agree.
+            // The chapter's profile is only a fallback if the task's profile was removed.
             SharedUpscalerProfile? profile =
-                chapter.UpscalerProfile ?? await LoadProfileAsync(repairTask.UpscalerProfileId, ct);
+                await LoadProfileAsync(repairTask.UpscalerProfileId, ct) ?? chapter.UpscalerProfile;
             if (profile is null)
             {
                 return null;
@@ -948,6 +970,19 @@ public partial class UpscalingDistributionService
         }
 
         return null;
+    }
+
+    /// <summary>Marks a task failed, swallowing and logging any failure to do so.</summary>
+    private async Task MarkTaskFailedQuietlyAsync(int taskId, string errorMessage)
+    {
+        try
+        {
+            await taskProcessor.TaskFailed(taskId, errorMessage);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to mark task {TaskId} as failed.", taskId);
+        }
     }
 
     private bool TryGetCachedPages(int taskId, string identity, out List<SpoolPageDescriptor> pages)
