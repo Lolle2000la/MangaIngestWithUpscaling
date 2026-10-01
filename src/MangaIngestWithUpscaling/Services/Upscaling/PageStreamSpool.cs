@@ -309,7 +309,7 @@ public sealed class PageStreamSpool
 
                     try
                     {
-                        if (Directory.GetLastWriteTimeUtc(directory) < cutoff)
+                        if (GetLatestWriteUtc(directory) < cutoff)
                         {
                             Directory.Delete(directory, recursive: true);
                             _logger.LogInformation(
@@ -337,6 +337,26 @@ public sealed class PageStreamSpool
 
     private static string SpoolParent =>
         Path.Combine(Path.GetTempPath(), "mangaingestwithupscaling", "page_spool");
+
+    /// <summary>
+    /// Newest write time among a spool root and its immediate task directories. Page writes land in
+    /// a task subdirectory, which does not update the root's own mtime, so the root alone is a poor
+    /// liveness proxy.
+    /// </summary>
+    private static DateTime GetLatestWriteUtc(string directory)
+    {
+        DateTime latest = Directory.GetLastWriteTimeUtc(directory);
+        foreach (string sub in Directory.EnumerateDirectories(directory))
+        {
+            DateTime subTime = Directory.GetLastWriteTimeUtc(sub);
+            if (subTime > latest)
+            {
+                latest = subTime;
+            }
+        }
+
+        return latest;
+    }
 }
 
 /// <summary>Mutable per-task spool state, guarded by <see cref="Gate"/>.</summary>

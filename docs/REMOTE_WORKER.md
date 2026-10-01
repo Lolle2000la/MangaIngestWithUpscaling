@@ -36,7 +36,7 @@ Upscaling a chapter is streamed **page by page** by default. The worker fetches 
 
 If the server does not implement the page-streaming RPCs, the worker detects this at startup and falls back to whole-CBZ transfers automatically. To force the old whole-CBZ behaviour (for example while diagnosing a problem), set `WorkerConfig:UsePageStreaming` (or `Ingest_WorkerConfig__UsePageStreaming`) to `false`.
 
-Partial page state lives in the server's temp directory and is bounded by a 24-hour retention sweep. It is process-local, so a server restart (or a different replica behind a load balancer) safely restarts the affected chapter from the beginning rather than mixing bytes.
+Partial page state lives in the server's temp directory and is bounded by a 24-hour retention sweep. It is process-local: a different replica (or a restarted server) has no spool, so the chapter restarts from the beginning there rather than mixing bytes. The worker manifests once per attempt, so a transport failure that aborts the attempt makes the task fail and be retried (and re-manifested); a load balancer that can silently move an in-flight stream to a replica without the partial spool is not supported — gRPC is normally connection-affine, so a reconnect aborts the in-flight RPCs.
 
 ## Running the Remote Worker
 

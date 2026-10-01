@@ -80,7 +80,7 @@ public sealed class PageStreamClient(
         var indexByName = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var page in manifest.Pages)
         {
-            indexByName.TryAdd(page.SourceName, page.Index);
+            indexByName.TryAdd(WorkerPageName(page.Index, page.SourceName), page.Index);
         }
         HashSet<int> completed = manifest.CompletedPages.ToHashSet();
         List<int> missing = manifest
@@ -154,29 +154,39 @@ public sealed class PageStreamClient(
                 logger
             );
 
+            Task chapterTask = workerClient.RunChapterAsync(
+                chapterRequest,
+                FetchPagesAsync(
+                    client,
+                    taskId,
+                    manifest.TaskIdentity,
+                    missing,
+                    nameByIndex,
+                    sourceDirectory,
+                    stoppingToken
+                ),
+                progressReporter.Progress,
+                OnPageDone,
+                stoppingToken,
+                timeout: ChapterInactivityTimeout
+            );
+
             try
             {
-                await workerClient.RunChapterAsync(
-                    chapterRequest,
-                    FetchPagesAsync(
-                        client,
-                        taskId,
-                        manifest.TaskIdentity,
-                        missing,
-                        nameByIndex,
-                        sourceDirectory,
-                        stoppingToken
-                    ),
-                    progressReporter.Progress,
-                    OnPageDone,
-                    stoppingToken,
-                    timeout: ChapterInactivityTimeout
-                );
+                await chapterTask;
             }
             finally
             {
                 uploads.Writer.TryComplete();
-                await uploadTask;
+                try
+                {
+                    await uploadTask;
+                }
+                catch (Exception) when (chapterTask.IsFaulted || chapterTask.IsCanceled)
+                {
+                    // The chapter already failed; surface that error rather than the upload loop's
+                    // (usually consequential) failure.
+                }
             }
 
             if (!pageErrors.IsEmpty)
@@ -346,6 +356,15 @@ public sealed class PageStreamClient(
         }
     }
 
+    /// <summary>
+    /// Name handed to the local worker for a page. The worker writes "&lt;stem&gt;.&lt;format&gt;" into a
+    /// single folder, so the name must be unique per page: two pages whose source names share a
+    /// stem (e.g. "ch1/001.jpg" and "ch2/001.jpg") would otherwise overwrite each other's output
+    /// before it is uploaded, storing the wrong bytes under each page's server-side output name.
+    /// </summary>
+    private static string WorkerPageName(int pageIndex, string sourceName) =>
+        $"{pageIndex:D5}_{Path.GetFileName(sourceName)}";
+
     private static async Task FetchPageToFileAsync(
         UpscalingService.UpscalingServiceClient client,
         int taskId,
@@ -408,10 +427,7 @@ public sealed class PageStreamClient(
             cancellationToken.ThrowIfCancellationRequested();
 
             string sourceName = nameByIndex[pageIndex];
-            string path = Path.Combine(
-                sourceDirectory,
-                $"{pageIndex:D5}_{Path.GetFileName(sourceName)}"
-            );
+            string path = Path.Combine(sourceDirectory, WorkerPageName(pageIndex, sourceName));
 
             await FetchPageToFileAsync(
                 client,
@@ -422,7 +438,7 @@ public sealed class PageStreamClient(
                 cancellationToken
             );
 
-            yield return new ChapterPage(pageIndex, sourceName, path);
+            yield return new ChapterPage(pageIndex, WorkerPageName(pageIndex, sourceName), path);
         }
     }
 

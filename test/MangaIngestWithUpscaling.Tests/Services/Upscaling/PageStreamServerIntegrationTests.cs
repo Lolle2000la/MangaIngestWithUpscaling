@@ -1,6 +1,7 @@
 extern alias remote;
 
 using System.IO.Compression;
+using System.Reflection;
 using System.Security.Claims;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -14,6 +15,8 @@ using MangaIngestWithUpscaling.Services.Analysis;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.Integrations;
+using MangaIngestWithUpscaling.Services.MetadataHandling;
+using MangaIngestWithUpscaling.Services.RepairServices;
 using MangaIngestWithUpscaling.Services.Upscaling;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
@@ -108,6 +111,8 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         builder.Services.AddSingleton<IFileSystem>(new GenericFileSystem());
         _metadata = Substitute.For<IMetadataHandlingService>();
         builder.Services.AddSingleton(_metadata);
+        builder.Services.AddScoped<IRepairService, RepairService>();
+        builder.Services.AddSingleton(Substitute.For<IMangaMetadataChanger>());
         builder.Services.AddSingleton(Substitute.For<IChapterChangedNotifier>());
         _splitProcessing = Substitute.For<ISplitProcessingService>();
         builder.Services.AddSingleton(_splitProcessing);
@@ -413,6 +418,77 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         await _metadata
             .Received(1)
             .AnalyzePageDifferencesAsync(Arg.Any<string?>(), Arg.Any<string?>());
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task RepairsAMissingPageOverRealGrpcAndMergesIt()
+    {
+        // The upscaled chapter is missing "001"; the source still has it.
+        Directory.CreateDirectory(Path.GetDirectoryName(_upscaledPath)!);
+        using (ZipArchive zip = ZipFile.Open(_upscaledPath, ZipArchiveMode.Create))
+        {
+            WriteEntry(zip, "002.webp", new byte[] { 6, 5, 4 });
+        }
+
+        _metadata
+            .AnalyzePageDifferencesAsync(Arg.Any<string?>(), Arg.Any<string?>())
+            .Returns(new PageDifferenceResult(new[] { "001" }, Array.Empty<string>()));
+
+        // Prepare the real remote repair state (extracts the archives, builds the missing-pages
+        // CBZ); the private preparation method is invoked directly to avoid driving the whole
+        // dispatch loop.
+        var processor = _app.Services.GetRequiredService<DistributedUpscaleTaskProcessor>();
+        MethodInfo prepare = typeof(DistributedUpscaleTaskProcessor).GetMethod(
+            "PrepareRepairTaskForRemote",
+            BindingFlags.NonPublic | BindingFlags.Instance
+        )!;
+        using (IServiceScope scope = _app.Services.CreateScope())
+        {
+            PersistedTask repairTask = await LoadTaskAsync(_repairTaskId);
+            var prepared =
+                (Task<bool>)
+                    prepare.Invoke(
+                        processor,
+                        new object[]
+                        {
+                            repairTask.Data,
+                            repairTask,
+                            scope.ServiceProvider,
+                            CancellationToken.None,
+                        }
+                    )!;
+            Assert.True(await prepared);
+        }
+
+        var client = new RemoteUpscalingServiceClient(_channel);
+        var sut = new RemotePageStreamClient(
+            new FakeWorkerClient(),
+            Substitute.For<IServiceScopeFactory>(),
+            Options.Create(new UpscalerConfig()),
+            Substitute.For<ILogger<RemotePageStreamClient>>()
+        );
+
+        await sut.RunAsync(client, _repairTaskId, _profile, TestContext.Current.CancellationToken);
+
+        using ZipArchive result = ZipFile.OpenRead(_upscaledPath);
+        Assert.Equal(new byte[] { 3, 2, 1 }, ReadEntry(result, "001.webp"));
+        Assert.Equal(new byte[] { 6, 5, 4 }, ReadEntry(result, "002.webp"));
+
+        await using ApplicationDbContext context = await _database.CreateContextAsync(
+            TestContext.Current.CancellationToken
+        );
+        PersistedTask task = await context.PersistedTasks.FirstAsync(
+            t => t.Id == _repairTaskId,
+            TestContext.Current.CancellationToken
+        );
+        Assert.Equal(PersistedTaskStatus.Completed, task.Status);
+    }
+
+    private async Task<PersistedTask> LoadTaskAsync(int taskId)
+    {
+        await using ApplicationDbContext context = await _database.CreateContextAsync();
+        return await context.PersistedTasks.FirstAsync(t => t.Id == taskId);
     }
 
     private async Task SeedAsync(string notUpscaledDir, string upscaledDir)

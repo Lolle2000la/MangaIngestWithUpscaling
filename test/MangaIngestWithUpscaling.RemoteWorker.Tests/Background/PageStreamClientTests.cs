@@ -185,6 +185,38 @@ public class PageStreamClientTests
         }
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunAsync_KeepsSameStemmedPagesInDifferentFoldersDistinct()
+    {
+        string directory = Directory.CreateTempSubdirectory("page_stream_nested").FullName;
+        try
+        {
+            string source = Path.Combine(directory, "source.cbz");
+            using (ZipArchive zip = ZipFile.Open(source, ZipArchiveMode.Create))
+            {
+                WriteEntry(zip, "ch1/001.jpg", new byte[] { 1, 2, 3 });
+                WriteEntry(zip, "ch2/001.jpg", new byte[] { 4, 5, 6 });
+            }
+
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination);
+            var client = server.CreateClient();
+            var sut = CreateClient(new FakeWorkerClient());
+
+            await sut.RunAsync(client, 1, Profile, CancellationToken.None);
+
+            // Both pages share the stem "001" and the local worker reverses each page's bytes. A
+            // flattened local output name would upload the same (last-written) file for both.
+            Assert.Equal(new byte[] { 3, 2, 1 }, server.Uploaded[0]);
+            Assert.Equal(new byte[] { 6, 5, 4 }, server.Uploaded[1]);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
     private static PageStreamClient CreateClient(FakeWorkerClient worker) =>
         new(
             worker,

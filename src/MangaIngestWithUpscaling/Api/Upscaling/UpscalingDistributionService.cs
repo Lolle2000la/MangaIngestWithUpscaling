@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Google.Protobuf;
 using Google.Protobuf.WellKnownTypes;
@@ -590,6 +591,15 @@ public partial class UpscalingDistributionService(
                 {
                     Success = false,
                     Message = "Invalid task type",
+                };
+            }
+
+            if (Encoding.UTF8.GetByteCount(request.ResultJson) > MaxDetectionResultBytes)
+            {
+                return new UploadDetectionResultResponse
+                {
+                    Success = false,
+                    Message = "The detection result is too large.",
                 };
             }
 

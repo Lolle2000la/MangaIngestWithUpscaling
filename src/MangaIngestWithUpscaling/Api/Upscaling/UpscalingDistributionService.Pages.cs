@@ -32,6 +32,9 @@ public partial class UpscalingDistributionService
     /// <summary>Upper bound on a single uploaded page, so a malformed or hostile upload cannot fill the spool.</summary>
     private const long MaxPageBytes = 512L * 1024 * 1024;
 
+    /// <summary>Upper bound on a detection result payload, so the lifted gRPC body cap cannot be abused.</summary>
+    private const int MaxDetectionResultBytes = 1024 * 1024;
+
     public override async Task<PageManifestResponse> GetPageManifest(
         PageManifestRequest request,
         ServerCallContext context
@@ -501,10 +504,21 @@ public partial class UpscalingDistributionService
             };
         }
 
+        byte[] resultBytes = Encoding.UTF8.GetBytes(request.ResultJson);
+        if (resultBytes.Length > MaxDetectionResultBytes)
+        {
+            return new UploadDetectionResultResponse
+            {
+                Success = false,
+                Message =
+                    $"The detection result for page {request.PageIndex} of task {request.TaskId} is too large.",
+            };
+        }
+
         await pageStreamSpool.WritePageAsync(
             session,
             request.PageIndex,
-            new MemoryStream(Encoding.UTF8.GetBytes(request.ResultJson)),
+            new MemoryStream(resultBytes),
             context.CancellationToken
         );
 
