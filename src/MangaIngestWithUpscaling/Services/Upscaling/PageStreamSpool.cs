@@ -91,6 +91,22 @@ public sealed class PageStreamSpool
         CancellationToken cancellationToken = default
     )
     {
+        FileStream output = BeginPageWrite(session, pageIndex, out string temp);
+        await using (output)
+        {
+            await content.CopyToAsync(output, cancellationToken);
+        }
+
+        CommitPage(session, pageIndex, temp);
+    }
+
+    /// <summary>
+    /// Opens a unique temp file for a page so a caller can stream bytes straight to disk instead of
+    /// buffering the whole page in memory. The page is only recorded as done once
+    /// <see cref="CommitPage"/> moves the temp file into place.
+    /// </summary>
+    public FileStream BeginPageWrite(PageStreamSession session, int pageIndex, out string tempPath)
+    {
         lock (session.Gate)
         {
             Directory.CreateDirectory(session.Directory);
@@ -98,23 +114,21 @@ public sealed class PageStreamSpool
 
         string path = session.PagePath(pageIndex);
         // Unique per write so two workers racing on the same page cannot corrupt each other's temp.
-        string temp = $"{path}.{Guid.NewGuid():N}.tmp";
-        await using (
-            FileStream output = new(
-                temp,
-                FileMode.Create,
-                FileAccess.Write,
-                FileShare.None,
-                81920,
-                FileOptions.Asynchronous
-            )
-        )
-        {
-            await content.CopyToAsync(output, cancellationToken);
-        }
+        tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
+        return new FileStream(
+            tempPath,
+            FileMode.Create,
+            FileAccess.Write,
+            FileShare.None,
+            81920,
+            FileOptions.Asynchronous
+        );
+    }
 
-        File.Move(temp, path, overwrite: true);
-
+    /// <summary>Atomically moves a completed page into place and records it as done.</summary>
+    public void CommitPage(PageStreamSession session, int pageIndex, string tempPath)
+    {
+        File.Move(tempPath, session.PagePath(pageIndex), overwrite: true);
         lock (session.Gate)
         {
             session.Completed.Add(pageIndex);
@@ -131,6 +145,32 @@ public sealed class PageStreamSpool
     }
 
     /// <summary>
+    /// Claims the one-shot finalize for a session, so two workers that both see the chapter as
+    /// complete cannot assemble (or finalize detection) concurrently.
+    /// </summary>
+    public bool TryBeginAssembly(PageStreamSession session)
+    {
+        lock (session.Gate)
+        {
+            if (session.Assembling)
+            {
+                return false;
+            }
+
+            session.Assembling = true;
+            return true;
+        }
+    }
+
+    public void EndAssembly(PageStreamSession session)
+    {
+        lock (session.Gate)
+        {
+            session.Assembling = false;
+        }
+    }
+
+    /// <summary>
     /// Builds the final CBZ at <paramref name="destinationPath"/> from the source archive: every
     /// non-image entry is copied unchanged and every image entry is replaced by its spooled page,
     /// written under the page's output name. Source order is preserved.
@@ -142,10 +182,11 @@ public sealed class PageStreamSpool
         string destinationPath
     )
     {
-        Dictionary<string, SpoolPageDescriptor> bySource = pages.ToDictionary(
-            p => p.SourceName,
-            StringComparer.Ordinal
-        );
+        var bySource = new Dictionary<string, SpoolPageDescriptor>(StringComparer.Ordinal);
+        foreach (SpoolPageDescriptor page in pages)
+        {
+            bySource.TryAdd(page.SourceName, page);
+        }
 
         string? destinationDirectory = Path.GetDirectoryName(destinationPath);
         if (destinationDirectory is not null)
@@ -316,6 +357,9 @@ public sealed class PageStreamSession
     public HashSet<int> Completed { get; } = new();
     public Lock Gate { get; } = new();
     public DateTime LastTouchedUtc { get; set; } = DateTime.UtcNow;
+
+    /// <summary>Set while a caller is finalizing (assembling) this session.</summary>
+    public bool Assembling { get; set; }
 
     public string PagePath(int pageIndex) => Path.Combine(Directory, $"page_{pageIndex:D5}.bin");
 

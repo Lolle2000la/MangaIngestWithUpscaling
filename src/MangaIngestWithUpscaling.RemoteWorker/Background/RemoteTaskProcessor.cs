@@ -109,31 +109,53 @@ public class RemoteTaskProcessor(
         using var scope = serviceScopeFactory.CreateScope();
         var client =
             scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
-        try
+
+        const int attempts = 3;
+        for (int attempt = 1; ; attempt++)
         {
-            await client.GetPageManifestAsync(
-                new PageManifestRequest { TaskId = 0 },
-                deadline: DateTime.UtcNow.AddSeconds(15),
-                cancellationToken: stoppingToken
-            );
-            return true;
-        }
-        catch (RpcException ex) when (ex.StatusCode == StatusCode.Unimplemented)
-        {
-            logger.LogWarning(
-                "The server does not support page streaming; falling back to whole-CBZ transfers."
-            );
-            return false;
-        }
-        catch (RpcException)
-        {
-            // NotFound / InvalidArgument: the RPC exists.
-            return true;
-        }
-        catch (Exception ex)
-        {
-            logger.LogDebug(ex, "Could not probe page-streaming support; assuming unavailable.");
-            return false;
+            try
+            {
+                await client.GetPageManifestAsync(
+                    new PageManifestRequest { TaskId = 0 },
+                    deadline: DateTime.UtcNow.AddSeconds(15),
+                    cancellationToken: stoppingToken
+                );
+                return true;
+            }
+            catch (RpcException ex) when (ex.StatusCode == StatusCode.Unimplemented)
+            {
+                logger.LogWarning(
+                    "The server does not support page streaming; falling back to whole-CBZ transfers."
+                );
+                return false;
+            }
+            catch (RpcException)
+            {
+                // NotFound / InvalidArgument / Unavailable: the RPC exists, or the server is only
+                // momentarily unreachable; prefer streaming.
+                return true;
+            }
+            catch (Exception ex) when (attempt < attempts && !stoppingToken.IsCancellationRequested)
+            {
+                // A transient transport error (e.g. connection refused during a restart) must not
+                // disable streaming for the worker's whole lifetime; retry before giving up.
+                logger.LogDebug(
+                    ex,
+                    "Page-streaming probe failed (attempt {Attempt}/{Attempts}); retrying.",
+                    attempt,
+                    attempts
+                );
+                await Task.Delay(TimeSpan.FromSeconds(2 * attempt), stoppingToken);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(
+                    ex,
+                    "Could not probe page-streaming support after {Attempts} attempt(s); falling back to whole-CBZ transfers.",
+                    attempts
+                );
+                return false;
+            }
         }
     }
 

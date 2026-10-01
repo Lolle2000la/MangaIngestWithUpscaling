@@ -37,6 +37,57 @@ public class PageStreamSpoolTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void TryBeginAssembly_IsExclusiveUntilEnded()
+    {
+        PageStreamSession session = _spool.GetOrCreateSession(9, "identity", 1);
+
+        Assert.True(_spool.TryBeginAssembly(session));
+        Assert.False(_spool.TryBeginAssembly(session));
+
+        _spool.EndAssembly(session);
+
+        Assert.True(_spool.TryBeginAssembly(session));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void Assemble_PreservesNestedOutputPaths()
+    {
+        string directory = Directory.CreateTempSubdirectory("spool_nested").FullName;
+        try
+        {
+            string path = Path.Combine(directory, "source.cbz");
+            using (ZipArchive zip = ZipFile.Open(path, ZipArchiveMode.Create))
+            {
+                WriteEntry(zip, "ch1/001.jpg", new byte[] { 1, 2, 3 });
+                WriteEntry(zip, "ComicInfo.xml", "<ComicInfo/>"u8.ToArray());
+            }
+
+            var pages = new List<SpoolPageDescriptor> { new(0, "ch1/001.jpg", "ch1/001.webp") };
+            PageStreamSession session = _spool.GetOrCreateSession(4, "identity", pages.Count);
+            string temp;
+            using (FileStream page = _spool.BeginPageWrite(session, 0, out temp))
+            {
+                page.Write(new byte[] { 7, 8, 9 });
+            }
+
+            _spool.CommitPage(session, 0, temp);
+
+            string destination = Path.Combine(directory, "out.cbz");
+            _spool.Assemble(session, path, pages, destination);
+
+            using ZipArchive output = ZipFile.OpenRead(destination);
+            Assert.Equal(new byte[] { 7, 8, 9 }, ReadEntry(output, "ch1/001.webp"));
+            Assert.NotNull(output.GetEntry("ComicInfo.xml"));
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task WritePage_Assemble_ReplacesImagesAndCopiesOtherEntries()
     {
         string directory = Directory.CreateTempSubdirectory("spool_test").FullName;

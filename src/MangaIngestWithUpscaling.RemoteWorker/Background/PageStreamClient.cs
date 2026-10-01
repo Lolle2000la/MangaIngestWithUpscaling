@@ -147,7 +147,7 @@ public sealed class PageStreamClient(
                 TotalPages = manifest.Pages.Count,
             };
 
-            using var progressReporter = new StreamingProgressReporter(
+            await using var progressReporter = new StreamingProgressReporter(
                 client,
                 taskId,
                 stoppingToken,
@@ -255,7 +255,7 @@ public sealed class PageStreamClient(
         {
             using IServiceScope scope = scopeFactory.CreateScope();
             var detection = scope.ServiceProvider.GetRequiredService<ISplitDetectionService>();
-            using var progressReporter = new StreamingProgressReporter(
+            await using var progressReporter = new StreamingProgressReporter(
                 client,
                 taskId,
                 stoppingToken,
@@ -287,36 +287,37 @@ public sealed class PageStreamClient(
                     progressReporter.Progress,
                     stoppingToken
                 );
-                if (results.Count == 0)
-                {
-                    // Report at least one result per page: the server only finalizes once every
-                    // page has a result, so a page that yields none would stall the task.
-                    results.Add(new SplitDetectionResult { ImagePath = sourceName });
-                }
 
-                foreach (SplitDetectionResult result in results)
-                {
-                    string json = JsonSerializer.Serialize(
-                        result,
-                        SharedJsonContext.Default.SplitDetectionResult
-                    );
-                    UploadDetectionResultResponse response = await client.UploadPageDetectionAsync(
-                        new UploadPageDetectionRequest
-                        {
-                            TaskId = taskId,
-                            PageIndex = pageIndex,
-                            ResultJson = json,
-                            TaskIdentity = manifest.TaskIdentity,
-                        },
-                        deadline: DateTime.UtcNow.Add(PageTimeout),
-                        cancellationToken: stoppingToken
-                    );
-                    if (!response.Success)
+                // The detector echoes the temp file path it was given; report the chapter's own page
+                // name instead, or the server keys the finding to the temp name and the split can
+                // never be matched back to the page. Also merge any extra results for the page, since
+                // the server stores exactly one result per page.
+                SplitDetectionResult pageResult =
+                    results.Count == 0
+                        ? new SplitDetectionResult()
+                        : results.Aggregate(SplitDetectionResultHelper.Merge);
+                pageResult.ImagePath = sourceName;
+
+                string json = JsonSerializer.Serialize(
+                    pageResult,
+                    SharedJsonContext.Default.SplitDetectionResult
+                );
+                UploadDetectionResultResponse response = await client.UploadPageDetectionAsync(
+                    new UploadPageDetectionRequest
                     {
-                        throw new IOException(
-                            $"Uploading the detection result for page {pageIndex} of task {taskId} failed: {response.Message}"
-                        );
-                    }
+                        TaskId = taskId,
+                        PageIndex = pageIndex,
+                        ResultJson = json,
+                        TaskIdentity = manifest.TaskIdentity,
+                    },
+                    deadline: DateTime.UtcNow.Add(PageTimeout),
+                    cancellationToken: stoppingToken
+                );
+                if (!response.Success)
+                {
+                    throw new IOException(
+                        $"Uploading the detection result for page {pageIndex} of task {taskId} failed: {response.Message}"
+                    );
                 }
 
                 current++;
@@ -485,7 +486,7 @@ public sealed class PageStreamClient(
     /// <summary>
     /// Forwards upscale progress as keep-alives without blocking the worker's event reader thread.
     /// </summary>
-    private sealed class StreamingProgressReporter : IDisposable
+    private sealed class StreamingProgressReporter : IAsyncDisposable
     {
         private readonly Channel<UpscaleProgress> _channel = Channel.CreateBounded<UpscaleProgress>(
             new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropOldest }
@@ -557,10 +558,19 @@ public sealed class PageStreamClient(
 
         public IProgress<UpscaleProgress> Progress { get; }
 
-        public void Dispose()
+        public async ValueTask DisposeAsync()
         {
             _channel.Writer.TryComplete();
             _cts.Cancel();
+            try
+            {
+                // Await the sender so it cannot observe a disposed token source.
+                await _sender;
+            }
+            catch (Exception)
+            { /* the sender stops on cancellation */
+            }
+
             _cts.Dispose();
         }
     }

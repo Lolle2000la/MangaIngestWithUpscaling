@@ -29,7 +29,7 @@ public partial class UpscalingDistributionService
 {
     private static readonly TimeSpan SpoolRetention = TimeSpan.FromHours(24);
 
-    /// <summary>Upper bound on a single uploaded page, to keep the in-memory upload buffer bounded.</summary>
+    /// <summary>Upper bound on a single uploaded page, so a malformed or hostile upload cannot fill the spool.</summary>
     private const long MaxPageBytes = 512L * 1024 * 1024;
 
     public override async Task<PageManifestResponse> GetPageManifest(
@@ -59,6 +59,18 @@ public partial class UpscalingDistributionService
         // finish the chapter instead of asking the worker to produce it again.
         if (pageStreamSpool.IsComplete(session))
         {
+            if (!pageStreamSpool.TryBeginAssembly(session))
+            {
+                // Another request is already finalizing; report complete without redoing the work.
+                return new PageManifestResponse
+                {
+                    TaskId = pageContext.Task.Id,
+                    TaskIdentity = pageContext.Identity,
+                    TaskType = ToProtoTaskType(pageContext.Kind),
+                    Complete = true,
+                };
+            }
+
             try
             {
                 if (pageContext.Kind == PageContextKind.Detect)
@@ -108,6 +120,10 @@ public partial class UpscalingDistributionService
                     TaskIdentity = pageContext.Identity,
                     TaskType = ToProtoTaskType(pageContext.Kind),
                 };
+            }
+            finally
+            {
+                pageStreamSpool.EndAssembly(session);
             }
 
             return new PageManifestResponse
@@ -235,119 +251,154 @@ public partial class UpscalingDistributionService
         int taskId = 0;
         int pageIndex = 0;
         string identity = string.Empty;
-        using var buffer = new MemoryStream();
-
-        await foreach (
-            UploadPageChunk chunk in requestStream.ReadAllAsync(context.CancellationToken)
-        )
-        {
-            taskId = chunk.TaskId;
-            pageIndex = chunk.PageIndex;
-            if (!string.IsNullOrEmpty(chunk.ContentIdentity))
-            {
-                identity = chunk.ContentIdentity;
-            }
-
-            if (!chunk.Chunk.IsEmpty)
-            {
-                // Bound the in-memory page buffer: the gRPC body cap is lifted for uploads, so a
-                // buggy or compromised worker could otherwise drive unbounded allocation here.
-                if (buffer.Length + chunk.Chunk.Length > MaxPageBytes)
-                {
-                    return new UploadPageResponse
-                    {
-                        Success = false,
-                        Message =
-                            $"Page {pageIndex} of task {taskId} exceeds the maximum page size.",
-                        TaskId = taskId,
-                        PageIndex = pageIndex,
-                        Terminal = true,
-                    };
-                }
-
-                buffer.Write(chunk.Chunk.Span);
-            }
-        }
-
-        if (taskId == 0)
-        {
-            return new UploadPageResponse
-            {
-                Success = false,
-                Message = "No page data received",
-                Terminal = true,
-            };
-        }
-
-        // Use the service token for the terminal/assembly work so a worker disconnect cannot
-        // cancel it once the final page has been received.
-        PageContext? pageContext = await ResolvePageContextAsync(taskId, CancellationToken.None);
-        if (pageContext is null)
-        {
-            return new UploadPageResponse
-            {
-                Success = false,
-                Message = "Task, chapter or profile not found",
-                TaskId = taskId,
-                PageIndex = pageIndex,
-                Terminal = true,
-            };
-        }
-
-        if (!string.Equals(pageContext.Identity, identity, StringComparison.Ordinal))
-        {
-            return new UploadPageResponse
-            {
-                Success = false,
-                Message = "The chapter or profile changed; restart the chapter",
-                TaskId = taskId,
-                PageIndex = pageIndex,
-            };
-        }
-
-        if (pageIndex < 0 || pageIndex >= pageContext.Pages.Count)
-        {
-            return new UploadPageResponse
-            {
-                Success = false,
-                Message = $"Page index {pageIndex} is out of range for task {taskId}",
-                TaskId = taskId,
-                PageIndex = pageIndex,
-                Terminal = true,
-            };
-        }
-
-        PageStreamSession session = pageStreamSpool.GetOrCreateSession(
-            taskId,
-            pageContext.Identity,
-            pageContext.Pages.Count
-        );
+        PageContext? pageContext = null;
+        PageStreamSession session = null!;
+        string? tempPath = null;
+        FileStream? pageFile = null;
+        long written = 0;
+        bool sawChunk = false;
+        bool committed = false;
 
         try
         {
-            buffer.Position = 0;
-            await pageStreamSpool.WritePageAsync(
-                session,
-                pageIndex,
-                buffer,
-                context.CancellationToken
-            );
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(
-                ex,
-                "Failed to store page {PageIndex} for task {TaskId}",
-                pageIndex,
-                taskId
-            );
-            return new UploadPageResponse
+            await foreach (
+                UploadPageChunk chunk in requestStream.ReadAllAsync(context.CancellationToken)
+            )
             {
-                Success = false,
-                Message = ex.Message,
-                TaskId = taskId,
-                PageIndex = pageIndex,
-            };
+                taskId = chunk.TaskId;
+                pageIndex = chunk.PageIndex;
+                if (!string.IsNullOrEmpty(chunk.ContentIdentity))
+                {
+                    identity = chunk.ContentIdentity;
+                }
+
+                if (!sawChunk)
+                {
+                    sawChunk = true;
+
+                    pageContext = await ResolvePageContextAsync(taskId, CancellationToken.None);
+                    if (pageContext is null)
+                    {
+                        return new UploadPageResponse
+                        {
+                            Success = false,
+                            Message = "Task, chapter or profile not found",
+                            TaskId = taskId,
+                            PageIndex = pageIndex,
+                            Terminal = true,
+                        };
+                    }
+
+                    if (!string.Equals(pageContext.Identity, identity, StringComparison.Ordinal))
+                    {
+                        return new UploadPageResponse
+                        {
+                            Success = false,
+                            Message = "The chapter or profile changed; restart the chapter",
+                            TaskId = taskId,
+                            PageIndex = pageIndex,
+                        };
+                    }
+
+                    if (pageIndex < 0 || pageIndex >= pageContext.Pages.Count)
+                    {
+                        return new UploadPageResponse
+                        {
+                            Success = false,
+                            Message = $"Page index {pageIndex} is out of range for task {taskId}",
+                            TaskId = taskId,
+                            PageIndex = pageIndex,
+                            Terminal = true,
+                        };
+                    }
+
+                    session = pageStreamSpool.GetOrCreateSession(
+                        taskId,
+                        pageContext.Identity,
+                        pageContext.Pages.Count
+                    );
+                    // Stream straight to the spool file rather than buffering the whole page in
+                    // memory: the gRPC body cap is lifted for uploads, so a large or hostile page
+                    // must not drive unbounded allocation.
+                    pageFile = pageStreamSpool.BeginPageWrite(session, pageIndex, out tempPath);
+                }
+
+                if (!chunk.Chunk.IsEmpty)
+                {
+                    written += chunk.Chunk.Length;
+                    if (written > MaxPageBytes)
+                    {
+                        return new UploadPageResponse
+                        {
+                            Success = false,
+                            Message =
+                                $"Page {pageIndex} of task {taskId} exceeds the maximum page size.",
+                            TaskId = taskId,
+                            PageIndex = pageIndex,
+                            Terminal = true,
+                        };
+                    }
+
+                    await pageFile!.WriteAsync(chunk.Chunk.Memory, context.CancellationToken);
+                }
+            }
+
+            if (!sawChunk || taskId == 0)
+            {
+                return new UploadPageResponse
+                {
+                    Success = false,
+                    Message = "No page data received",
+                    Terminal = true,
+                };
+            }
+
+            try
+            {
+                await pageFile!.DisposeAsync();
+                pageFile = null;
+                pageStreamSpool.CommitPage(session, pageIndex, tempPath!);
+                committed = true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Failed to store page {PageIndex} for task {TaskId}",
+                    pageIndex,
+                    taskId
+                );
+                return new UploadPageResponse
+                {
+                    Success = false,
+                    Message = ex.Message,
+                    TaskId = taskId,
+                    PageIndex = pageIndex,
+                };
+            }
+        }
+        finally
+        {
+            if (pageFile is not null)
+            {
+                await pageFile.DisposeAsync();
+            }
+
+            if (!committed && tempPath is not null)
+            {
+                try
+                {
+                    File.Delete(tempPath);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(
+                        ex,
+                        "Failed to delete incomplete page temp file {Temp}.",
+                        tempPath
+                    );
+                }
+            }
         }
 
         if (!pageStreamSpool.IsComplete(session))
@@ -361,9 +412,21 @@ public partial class UpscalingDistributionService
             };
         }
 
+        if (!pageStreamSpool.TryBeginAssembly(session))
+        {
+            // Another worker is already assembling the completed chapter.
+            return new UploadPageResponse
+            {
+                Success = true,
+                Message = "Another worker is assembling the chapter",
+                TaskId = taskId,
+                PageIndex = pageIndex,
+            };
+        }
+
         try
         {
-            await AssembleUpscaledChapterAsync(pageContext, session);
+            await AssembleUpscaledChapterAsync(pageContext!, session);
         }
         catch (Exception ex)
         {
@@ -375,6 +438,10 @@ public partial class UpscalingDistributionService
                 TaskId = taskId,
                 PageIndex = pageIndex,
             };
+        }
+        finally
+        {
+            pageStreamSpool.EndAssembly(session);
         }
 
         pageStreamSpool.Remove(taskId);
@@ -446,6 +513,15 @@ public partial class UpscalingDistributionService
             return new UploadDetectionResultResponse { Success = true, Message = "Result stored" };
         }
 
+        if (!pageStreamSpool.TryBeginAssembly(session))
+        {
+            return new UploadDetectionResultResponse
+            {
+                Success = true,
+                Message = "Detection results are already being finalized",
+            };
+        }
+
         // Every page reported: finalize the chapter's findings.
         try
         {
@@ -467,6 +543,10 @@ public partial class UpscalingDistributionService
                 request.TaskId
             );
             return new UploadDetectionResultResponse { Success = false, Message = ex.Message };
+        }
+        finally
+        {
+            pageStreamSpool.EndAssembly(session);
         }
     }
 
@@ -855,6 +935,7 @@ public partial class UpscalingDistributionService
         string extension = FormatExtension(profile.CompressionFormat);
         var pages = new List<SpoolPageDescriptor>();
         using ZipArchive archive = ZipFile.OpenRead(sourcePath);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         int index = 0;
         foreach (ZipArchiveEntry entry in archive.Entries)
         {
@@ -868,12 +949,38 @@ public partial class UpscalingDistributionService
                 continue;
             }
 
-            string stem = Path.GetFileNameWithoutExtension(entry.FullName);
-            pages.Add(new SpoolPageDescriptor(index, entry.FullName, $"{stem}.{extension}"));
+            // A malformed archive can repeat an entry name; keep the first so the spool's
+            // source-name mapping stays unique.
+            if (!seen.Add(entry.FullName))
+            {
+                continue;
+            }
+
+            // Preserve the entry's folder (matching the whole-CBZ worker) so nested pages are not
+            // flattened and same-stemmed pages in different folders do not collide.
+            pages.Add(
+                new SpoolPageDescriptor(
+                    index,
+                    entry.FullName,
+                    ReplaceExtension(entry.FullName, extension)
+                )
+            );
             index++;
         }
 
         return pages;
+    }
+
+    /// <summary>
+    /// Replaces an archive entry's extension while preserving its folder prefix, e.g.
+    /// "ch/005.jpg" with "webp" becomes "ch/005.webp".
+    /// </summary>
+    private static string ReplaceExtension(string entryName, string extension)
+    {
+        string current = Path.GetExtension(entryName);
+        return current.Length == 0
+            ? $"{entryName}.{extension}"
+            : entryName[..^current.Length] + "." + extension;
     }
 
     internal static List<SpoolPageDescriptor> BuildRepairPageDescriptors(
@@ -908,7 +1015,13 @@ public partial class UpscalingDistributionService
         {
             if (byStem.TryGetValue(stem, out string? sourceName))
             {
-                pages.Add(new SpoolPageDescriptor(index, sourceName, $"{stem}.{extension}"));
+                pages.Add(
+                    new SpoolPageDescriptor(
+                        index,
+                        sourceName,
+                        ReplaceExtension(sourceName, extension)
+                    )
+                );
                 index++;
             }
         }
@@ -947,6 +1060,7 @@ public partial class UpscalingDistributionService
     {
         var pages = new List<SpoolPageDescriptor>();
         using ZipArchive archive = ZipFile.OpenRead(sourcePath);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         int index = 0;
         foreach (ZipArchiveEntry entry in archive.Entries)
         {
@@ -956,6 +1070,11 @@ public partial class UpscalingDistributionService
             }
 
             if (!ImageConstants.IsSupportedImageExtension(Path.GetExtension(entry.FullName)))
+            {
+                continue;
+            }
+
+            if (!seen.Add(entry.FullName))
             {
                 continue;
             }

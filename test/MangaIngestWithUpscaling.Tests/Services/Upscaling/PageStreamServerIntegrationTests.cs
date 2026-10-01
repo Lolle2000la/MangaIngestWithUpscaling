@@ -273,7 +273,12 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
             .Received(1)
             .ProcessDetectionResultsAsync(
                 _chapterId,
-                Arg.Is<List<SplitDetectionResult>>(r => r.Count == 2),
+                Arg.Is<List<SplitDetectionResult>>(r =>
+                    r.Count == 2
+                    && r.Select(x => Path.GetFileNameWithoutExtension(x.ImagePath))
+                        .OrderBy(x => x)
+                        .SequenceEqual(new[] { "001", "002" })
+                ),
                 1,
                 Arg.Any<CancellationToken>()
             );
@@ -367,7 +372,12 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
             .Received(1)
             .ProcessDetectionResultsAsync(
                 _chapterId,
-                Arg.Is<List<SplitDetectionResult>>(r => r.Count == 2),
+                Arg.Is<List<SplitDetectionResult>>(r =>
+                    r.Count == 2
+                    && r.Select(x => Path.GetFileNameWithoutExtension(x.ImagePath))
+                        .OrderBy(x => x)
+                        .SequenceEqual(new[] { "001", "002" })
+                ),
                 1,
                 Arg.Any<CancellationToken>()
             );

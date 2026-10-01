@@ -48,6 +48,40 @@ public class PageManifestBuilderTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void BuildPageDescriptors_PreservesFoldersAndDedupesRepeatedEntries()
+    {
+        string directory = Directory.CreateTempSubdirectory("manifest_nested").FullName;
+        try
+        {
+            string source = CreateCbz(
+                directory,
+                ("ch1/001.jpg", new byte[] { 1 }),
+                ("ch2/001.jpg", new byte[] { 2 }),
+                ("ch1/001.jpg", new byte[] { 3 }) // duplicate entry name
+            );
+
+            List<SpoolPageDescriptor> pages = UpscalingDistributionService.BuildPageDescriptors(
+                source,
+                Profile()
+            );
+
+            // The duplicate is dropped, and same-stemmed pages in different folders stay distinct
+            // (matching the whole-CBZ worker, which preserves entry paths).
+            Assert.Equal(2, pages.Count);
+            Assert.Equal(new[] { 0, 1 }, pages.Select(p => p.Index));
+            Assert.Equal("ch1/001.jpg", pages[0].SourceName);
+            Assert.Equal("ch1/001.webp", pages[0].OutputName);
+            Assert.Equal("ch2/001.jpg", pages[1].SourceName);
+            Assert.Equal("ch2/001.webp", pages[1].OutputName);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void BuildPageDescriptors_MapsJpgToJpegExtension()
     {
         string directory = Directory.CreateTempSubdirectory("manifest_ext").FullName;

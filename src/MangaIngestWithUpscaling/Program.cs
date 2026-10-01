@@ -420,11 +420,12 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
-// gRPC page uploads stream a whole page in one request, which can exceed Kestrel's ~28.6 MB
-// default request-body cap on large upscaled pages. Lift the cap for gRPC requests only, so the
-// slowloris protection and body limits for the rest of the app are unaffected. This middleware only
-// adjusts the limit; the body is read later by the handler, which authentication has already gated,
-// and the handler additionally bounds each uploaded page.
+// gRPC uploads stream a whole page (or CBZ) in one request, which can exceed Kestrel's ~28.6 MB
+// default request-body cap. Lift the cap for gRPC requests only, so the slowloris protection and
+// body limits for the rest of the app are unaffected. This middleware only adjusts the limit; the
+// body is read later by the handler, which the API-key authentication has already gated, and the
+// page upload handler additionally bounds each uploaded page. The trust boundary is therefore the
+// authenticated worker set: an unauthenticated request is rejected before its body is read.
 app.Use(
     async (context, next) =>
     {
