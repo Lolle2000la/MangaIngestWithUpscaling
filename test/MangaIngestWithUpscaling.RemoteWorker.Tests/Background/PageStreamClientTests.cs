@@ -4,10 +4,12 @@ using Google.Protobuf;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.RemoteWorker.Background;
+using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 using Xunit;
 using SharedCompressionFormat = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat;
@@ -187,6 +189,7 @@ public class PageStreamClientTests
         new(
             worker,
             Substitute.For<IServiceScopeFactory>(),
+            Options.Create(new UpscalerConfig()),
             Substitute.For<ILogger<PageStreamClient>>()
         );
 

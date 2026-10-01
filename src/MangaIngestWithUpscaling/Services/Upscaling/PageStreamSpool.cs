@@ -117,22 +117,7 @@ public sealed class PageStreamSpool
 
         lock (session.Gate)
         {
-            session.FailedPages.Remove(pageIndex);
             session.Completed.Add(pageIndex);
-            session.LastTouchedUtc = DateTime.UtcNow;
-        }
-    }
-
-    /// <summary>
-    /// Records that a page could not be produced. The page counts as done (so the chapter can
-    /// finish) and is copied through from the source archive during assembly.
-    /// </summary>
-    public void MarkPageFailed(PageStreamSession session, int pageIndex)
-    {
-        lock (session.Gate)
-        {
-            session.Completed.Remove(pageIndex);
-            session.FailedPages.Add(pageIndex);
             session.LastTouchedUtc = DateTime.UtcNow;
         }
     }
@@ -141,8 +126,7 @@ public sealed class PageStreamSpool
     {
         lock (session.Gate)
         {
-            return session.PageCount > 0
-                && session.Completed.Count + session.FailedPages.Count >= session.PageCount;
+            return session.PageCount > 0 && session.Completed.Count >= session.PageCount;
         }
     }
 
@@ -162,11 +146,6 @@ public sealed class PageStreamSpool
             p => p.SourceName,
             StringComparer.Ordinal
         );
-        HashSet<int> failed;
-        lock (session.Gate)
-        {
-            failed = new HashSet<int>(session.FailedPages);
-        }
 
         string? destinationDirectory = Path.GetDirectoryName(destinationPath);
         if (destinationDirectory is not null)
@@ -185,10 +164,7 @@ public sealed class PageStreamSpool
                 continue;
             }
 
-            if (
-                bySource.TryGetValue(entry.FullName, out SpoolPageDescriptor? page)
-                && !failed.Contains(page.Index)
-            )
+            if (bySource.TryGetValue(entry.FullName, out SpoolPageDescriptor? page))
             {
                 string pagePath = session.PagePath(page.Index);
                 if (!File.Exists(pagePath))
@@ -231,20 +207,9 @@ public sealed class PageStreamSpool
             Directory.CreateDirectory(destinationDirectory);
         }
 
-        HashSet<int> failed;
-        lock (session.Gate)
-        {
-            failed = new HashSet<int>(session.FailedPages);
-        }
-
         using ZipArchive output = ZipFile.Open(destinationPath, ZipArchiveMode.Create);
         foreach (SpoolPageDescriptor page in pages)
         {
-            if (failed.Contains(page.Index))
-            {
-                continue;
-            }
-
             string pagePath = session.PagePath(page.Index);
             if (!File.Exists(pagePath))
             {
@@ -349,9 +314,6 @@ public sealed class PageStreamSession
     public int PageCount { get; set; }
     public string Directory { get; private set; }
     public HashSet<int> Completed { get; } = new();
-
-    /// <summary>Pages the worker reported as failed; they are copied through during assembly.</summary>
-    public HashSet<int> FailedPages { get; } = new();
     public Lock Gate { get; } = new();
     public DateTime LastTouchedUtc { get; set; } = DateTime.UtcNow;
 
@@ -364,7 +326,6 @@ public sealed class PageStreamSession
         PageCount = pageCount;
         Directory = directory;
         Completed.Clear();
-        FailedPages.Clear();
     }
 
     public void DeleteDirectory(ILogger? logger = null)

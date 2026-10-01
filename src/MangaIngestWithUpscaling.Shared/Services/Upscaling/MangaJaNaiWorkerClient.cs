@@ -275,6 +275,18 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
                 Task completed = await Task.WhenAny(waiters);
 
+                // Stop feeding pages as soon as the chapter settles (finished, cancelled or timed
+                // out). On the timeout path the cancellation token is not signalled, so this is the
+                // only thing that stops the producer.
+                await producerCts.CancelAsync();
+                try
+                {
+                    await producer.WaitAsync(CancelGracePeriod, CancellationToken.None);
+                }
+                catch (Exception)
+                { /* the producer stops with the chapter */
+                }
+
                 if (completed == cancelSignal.Task)
                 {
                     try
@@ -302,17 +314,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
                 if (monitor is not null && completed == monitor)
                 {
-                    await monitor;
-                }
-
-                // Stop feeding pages once the chapter has finished (or failed).
-                await producerCts.CancelAsync();
-                try
-                {
-                    await producer.WaitAsync(CancelGracePeriod, CancellationToken.None);
-                }
-                catch (Exception)
-                { /* the producer stops with the chapter */
+                    await monitor; // throws TimeoutException after escalating cancel/kill
                 }
 
                 if (producerError is not null)
@@ -344,6 +346,17 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         StreamWriter? stdin;
         lock (_stateLock)
         {
+            // Never tear down the worker while a job is in flight: a streamed chapter (or a
+            // whole-CBZ job) holds it, and killing it would fail that task. The next detection
+            // attempt after the job finishes shuts it down instead.
+            if (_currentJobId is not null || !_jobs.IsEmpty)
+            {
+                _logger.LogDebug(
+                    "Not shutting down the upscale worker: a job is in flight or queued."
+                );
+                return;
+            }
+
             process = _process;
             stdin = _stdin;
             _shuttingDown = true;

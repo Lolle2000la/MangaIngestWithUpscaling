@@ -29,6 +29,9 @@ public partial class UpscalingDistributionService
 {
     private static readonly TimeSpan SpoolRetention = TimeSpan.FromHours(24);
 
+    /// <summary>Upper bound on a single uploaded page, to keep the in-memory upload buffer bounded.</summary>
+    private const long MaxPageBytes = 512L * 1024 * 1024;
+
     public override async Task<PageManifestResponse> GetPageManifest(
         PageManifestRequest request,
         ServerCallContext context
@@ -45,6 +48,7 @@ public partial class UpscalingDistributionService
         }
 
         pageStreamSpool.SweepStale(SpoolRetention);
+        pageContextCache.Sweep(SpoolRetention);
         PageStreamSession session = pageStreamSpool.GetOrCreateSession(
             pageContext.Task.Id,
             pageContext.Identity,
@@ -67,14 +71,43 @@ public partial class UpscalingDistributionService
                 }
 
                 pageStreamSpool.Remove(pageContext.Task.Id);
+                pageContextCache.Remove(pageContext.Task.Id);
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(
+                // Do not report success: the worker would return cleanly and the task would linger
+                // in Processing. Mark it failed so it is retried or surfaced, and tell the worker.
+                _logger.LogError(
                     ex,
                     "Failed to finalize an already-complete page stream for task {TaskId}.",
                     pageContext.Task.Id
                 );
+                try
+                {
+                    await taskProcessor.TaskFailed(
+                        pageContext.Task.Id,
+                        $"Finalizing the chapter failed: {ex.Message}"
+                    );
+                }
+                catch (Exception failEx)
+                {
+                    _logger.LogWarning(
+                        failEx,
+                        "Failed to mark task {TaskId} as failed after a finalization error.",
+                        pageContext.Task.Id
+                    );
+                }
+
+                context.Status = new Status(
+                    StatusCode.Internal,
+                    "Finalizing the already-complete chapter failed; the task was marked failed"
+                );
+                return new PageManifestResponse
+                {
+                    TaskId = pageContext.Task.Id,
+                    TaskIdentity = pageContext.Identity,
+                    TaskType = ToProtoTaskType(pageContext.Kind),
+                };
             }
 
             return new PageManifestResponse
@@ -134,10 +167,13 @@ public partial class UpscalingDistributionService
 
         Dictionary<int, SpoolPageDescriptor> byIndex = pageContext.Pages.ToDictionary(p => p.Index);
         using ZipArchive archive = ZipFile.OpenRead(pageContext.SourcePath);
-        Dictionary<string, ZipArchiveEntry> entries = archive.Entries.ToDictionary(
-            e => e.FullName,
-            StringComparer.Ordinal
-        );
+        // A malformed archive can contain duplicate entry names; keep the first of each instead of
+        // throwing, so one bad entry cannot fail the whole stream.
+        var entries = new Dictionary<string, ZipArchiveEntry>(StringComparer.Ordinal);
+        foreach (ZipArchiveEntry entry in archive.Entries)
+        {
+            entries.TryAdd(entry.FullName, entry);
+        }
 
         foreach (int pageIndex in request.PageIndexes)
         {
@@ -198,7 +234,6 @@ public partial class UpscalingDistributionService
     {
         int taskId = 0;
         int pageIndex = 0;
-        bool failed = false;
         string identity = string.Empty;
         using var buffer = new MemoryStream();
 
@@ -213,13 +248,23 @@ public partial class UpscalingDistributionService
                 identity = chunk.ContentIdentity;
             }
 
-            if (chunk.Failed)
-            {
-                failed = true;
-            }
-
             if (!chunk.Chunk.IsEmpty)
             {
+                // Bound the in-memory page buffer: the gRPC body cap is lifted for uploads, so a
+                // buggy or compromised worker could otherwise drive unbounded allocation here.
+                if (buffer.Length + chunk.Chunk.Length > MaxPageBytes)
+                {
+                    return new UploadPageResponse
+                    {
+                        Success = false,
+                        Message =
+                            $"Page {pageIndex} of task {taskId} exceeds the maximum page size.",
+                        TaskId = taskId,
+                        PageIndex = pageIndex,
+                        Terminal = true,
+                    };
+                }
+
                 buffer.Write(chunk.Chunk.Span);
             }
         }
@@ -280,20 +325,13 @@ public partial class UpscalingDistributionService
 
         try
         {
-            if (failed)
-            {
-                pageStreamSpool.MarkPageFailed(session, pageIndex);
-            }
-            else
-            {
-                buffer.Position = 0;
-                await pageStreamSpool.WritePageAsync(
-                    session,
-                    pageIndex,
-                    buffer,
-                    context.CancellationToken
-                );
-            }
+            buffer.Position = 0;
+            await pageStreamSpool.WritePageAsync(
+                session,
+                pageIndex,
+                buffer,
+                context.CancellationToken
+            );
         }
         catch (Exception ex)
         {
@@ -340,6 +378,7 @@ public partial class UpscalingDistributionService
         }
 
         pageStreamSpool.Remove(taskId);
+        pageContextCache.Remove(taskId);
         return new UploadPageResponse
         {
             Success = true,
@@ -364,6 +403,18 @@ public partial class UpscalingDistributionService
             {
                 Success = false,
                 Message = "Task is not a page-streamed detection task",
+            };
+        }
+
+        if (
+            !string.IsNullOrEmpty(request.TaskIdentity)
+            && !string.Equals(pageContext.Identity, request.TaskIdentity, StringComparison.Ordinal)
+        )
+        {
+            return new UploadDetectionResultResponse
+            {
+                Success = false,
+                Message = "The chapter changed; request a new manifest",
             };
         }
 
@@ -400,6 +451,7 @@ public partial class UpscalingDistributionService
         {
             await FinalizeDetectionAsync(pageContext, session);
             pageStreamSpool.Remove(request.TaskId);
+            pageContextCache.Remove(request.TaskId);
 
             return new UploadDetectionResultResponse
             {
@@ -523,6 +575,7 @@ public partial class UpscalingDistributionService
             || task.Status is PersistedTaskStatus.Canceled or PersistedTaskStatus.Completed
         )
         {
+            pageContextCache.Remove(taskId);
             return null;
         }
 
@@ -549,10 +602,28 @@ public partial class UpscalingDistributionService
                 return null;
             }
 
-            List<SpoolPageDescriptor> pages = BuildPageDescriptors(sourcePath, profile);
-            if (pages.Count == 0)
+            string identity = ComputeIdentity(sourcePath, profile);
+            if (!TryGetCachedPages(task.Id, identity, out List<SpoolPageDescriptor> pages))
             {
-                return null;
+                pages = BuildPageDescriptors(sourcePath, profile);
+                if (pages.Count == 0)
+                {
+                    return null;
+                }
+
+                pageContextCache.Set(
+                    task.Id,
+                    new PageContextCache.Entry(
+                        identity,
+                        sourcePath,
+                        pages,
+                        0,
+                        chapter.Id,
+                        profile.Id,
+                        chapter.UpscaledFullPath,
+                        Array.Empty<string>()
+                    )
+                );
             }
 
             return new PageContext(
@@ -560,7 +631,7 @@ public partial class UpscalingDistributionService
                 chapter,
                 profile,
                 pages,
-                ComputeIdentity(sourcePath, profile),
+                identity,
                 sourcePath,
                 Kind: PageContextKind.Upscale
             );
@@ -587,12 +658,42 @@ public partial class UpscalingDistributionService
                 return null;
             }
 
+            // The repair identity covers both files' size/mtime, the profile and the missing set, so
+            // re-deriving it from the cached missing set is enough to decide whether the cached
+            // context is still valid without re-running the (expensive) archive diff.
+            if (
+                pageContextCache.TryGet(task.Id, out PageContextCache.Entry cached)
+                && cached.MissingPages.Count > 0
+                && string.Equals(
+                    ComputeRepairIdentity(
+                        sourcePath,
+                        chapter.UpscaledFullPath,
+                        profile,
+                        cached.MissingPages
+                    ),
+                    cached.Identity,
+                    StringComparison.Ordinal
+                )
+            )
+            {
+                return new PageContext(
+                    task,
+                    chapter,
+                    profile,
+                    cached.Pages.ToList(),
+                    cached.Identity,
+                    sourcePath,
+                    Kind: PageContextKind.Repair
+                );
+            }
+
             var differences = await metadataHandling.AnalyzePageDifferencesAsync(
                 sourcePath,
                 chapter.UpscaledFullPath
             );
             if (differences.MissingPages.Count == 0)
             {
+                pageContextCache.Remove(task.Id);
                 return null;
             }
 
@@ -606,17 +707,32 @@ public partial class UpscalingDistributionService
                 return null;
             }
 
+            string repairIdentity = ComputeRepairIdentity(
+                sourcePath,
+                chapter.UpscaledFullPath,
+                profile,
+                differences.MissingPages
+            );
+            pageContextCache.Set(
+                task.Id,
+                new PageContextCache.Entry(
+                    repairIdentity,
+                    sourcePath,
+                    pages,
+                    0,
+                    chapter.Id,
+                    profile.Id,
+                    chapter.UpscaledFullPath,
+                    differences.MissingPages.ToList()
+                )
+            );
+
             return new PageContext(
                 task,
                 chapter,
                 profile,
                 pages,
-                ComputeRepairIdentity(
-                    sourcePath,
-                    chapter.UpscaledFullPath,
-                    profile,
-                    differences.MissingPages
-                ),
+                repairIdentity,
                 sourcePath,
                 Kind: PageContextKind.Repair
             );
@@ -636,10 +752,28 @@ public partial class UpscalingDistributionService
                 return null;
             }
 
-            List<SpoolPageDescriptor> pages = BuildDetectionPageDescriptors(sourcePath);
-            if (pages.Count == 0)
+            string identity = ComputeDetectionIdentity(sourcePath, detectTask.DetectorVersion);
+            if (!TryGetCachedPages(task.Id, identity, out List<SpoolPageDescriptor> pages))
             {
-                return null;
+                pages = BuildDetectionPageDescriptors(sourcePath);
+                if (pages.Count == 0)
+                {
+                    return null;
+                }
+
+                pageContextCache.Set(
+                    task.Id,
+                    new PageContextCache.Entry(
+                        identity,
+                        sourcePath,
+                        pages,
+                        detectTask.DetectorVersion,
+                        chapter.Id,
+                        0,
+                        null,
+                        Array.Empty<string>()
+                    )
+                );
             }
 
             return new PageContext(
@@ -647,7 +781,7 @@ public partial class UpscalingDistributionService
                 chapter,
                 Profile: null,
                 pages,
-                ComputeDetectionIdentity(sourcePath, detectTask.DetectorVersion),
+                identity,
                 sourcePath,
                 Kind: PageContextKind.Detect,
                 DetectorVersion: detectTask.DetectorVersion
@@ -655,6 +789,21 @@ public partial class UpscalingDistributionService
         }
 
         return null;
+    }
+
+    private bool TryGetCachedPages(int taskId, string identity, out List<SpoolPageDescriptor> pages)
+    {
+        if (
+            pageContextCache.TryGet(taskId, out PageContextCache.Entry cached)
+            && string.Equals(cached.Identity, identity, StringComparison.Ordinal)
+        )
+        {
+            pages = cached.Pages.ToList();
+            return true;
+        }
+
+        pages = null!;
+        return false;
     }
 
     /// <summary>

@@ -29,6 +29,7 @@ public partial class UpscalingDistributionService(
     ISplitProcessingService splitProcessingService,
     ISplitProcessingCoordinator splitProcessingCoordinator,
     PageStreamSpool pageStreamSpool,
+    PageContextCache pageContextCache,
     IUpscalerJsonHandlingService upscalerJsonHandlingService,
     IMetadataHandlingService metadataHandling,
     ILogger<UpscalingDistributionService> logger

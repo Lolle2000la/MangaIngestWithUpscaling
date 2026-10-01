@@ -9,6 +9,7 @@ using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using UpscalerProfile = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.UpscalerProfile;
 
 namespace MangaIngestWithUpscaling.RemoteWorker.Background;
@@ -22,12 +23,28 @@ namespace MangaIngestWithUpscaling.RemoteWorker.Background;
 public sealed class PageStreamClient(
     IMangaJaNaiWorkerClient workerClient,
     IServiceScopeFactory scopeFactory,
+    IOptions<UpscalerConfig> upscalerConfig,
     ILogger<PageStreamClient> logger
 )
 {
     private const int ChunkSizeBytes = 1024 * 1024;
     private static readonly TimeSpan ManifestTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan PageTimeout = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// Inactivity allowance for a streamed chapter. <see cref="UpscalerConfig.UpscaleTimeout"/> is a
+    /// per-million-pixel allowance, so a chapter's slowest single page is a small multiple of it; the
+    /// floor keeps slow hardware working while still letting the monitor kill a wedged worker.
+    /// </summary>
+    private TimeSpan ChapterInactivityTimeout
+    {
+        get
+        {
+            TimeSpan scaled = upscalerConfig.Value.UpscaleTimeout * 4;
+            TimeSpan floor = TimeSpan.FromMinutes(15);
+            return scaled > floor ? scaled : floor;
+        }
+    }
 
     public async Task RunAsync(
         UpscalingService.UpscalingServiceClient client,
@@ -60,10 +77,11 @@ public sealed class PageStreamClient(
             p => p.Index,
             p => p.SourceName
         );
-        Dictionary<string, int> indexByName = manifest.Pages.ToDictionary(
-            p => p.SourceName,
-            p => p.Index
-        );
+        var indexByName = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var page in manifest.Pages)
+        {
+            indexByName.TryAdd(page.SourceName, page.Index);
+        }
         HashSet<int> completed = manifest.CompletedPages.ToHashSet();
         List<int> missing = manifest
             .Pages.Where(p => !completed.Contains(p.Index))
@@ -109,27 +127,13 @@ public sealed class PageStreamClient(
                     && indexByName.TryGetValue(file.Input, out int pageIndex)
                 )
                 {
-                    uploads.Writer.TryWrite(new PageUpload(pageIndex, file.Output, Failed: false));
-                    return;
-                }
-
-                if (indexByName.TryGetValue(file.Input, out int failedIndex))
-                {
-                    // The engine could not upscale this page. Report it so the server copies the
-                    // source page through, matching the whole-CBZ path, rather than failing the
-                    // whole chapter.
-                    logger.LogWarning(
-                        "Page {Page} of task {TaskId} failed to upscale ({Status}); copying the source page through.",
-                        file.Input,
-                        taskId,
-                        file.Status
-                    );
-                    uploads.Writer.TryWrite(
-                        new PageUpload(failedIndex, string.Empty, Failed: true)
-                    );
+                    uploads.Writer.TryWrite(new PageUpload(pageIndex, file.Output));
                 }
                 else
                 {
+                    // The whole-CBZ path fails the chapter when the engine reports an error
+                    // ("DispatchDone"), so streaming does the same: record it and fail the task
+                    // once the chapter unwinds, instead of silently producing a mixed chapter.
                     pageErrors.Add($"{file.Input}: {file.Status}");
                 }
             }
@@ -166,7 +170,7 @@ public sealed class PageStreamClient(
                     progressReporter.Progress,
                     OnPageDone,
                     stoppingToken,
-                    timeout: null
+                    timeout: ChapterInactivityTimeout
                 );
             }
             finally
@@ -283,6 +287,12 @@ public sealed class PageStreamClient(
                     progressReporter.Progress,
                     stoppingToken
                 );
+                if (results.Count == 0)
+                {
+                    // Report at least one result per page: the server only finalizes once every
+                    // page has a result, so a page that yields none would stall the task.
+                    results.Add(new SplitDetectionResult { ImagePath = sourceName });
+                }
 
                 foreach (SplitDetectionResult result in results)
                 {
@@ -296,6 +306,7 @@ public sealed class PageStreamClient(
                             TaskId = taskId,
                             PageIndex = pageIndex,
                             ResultJson = json,
+                            TaskIdentity = manifest.TaskIdentity,
                         },
                         deadline: DateTime.UtcNow.Add(PageTimeout),
                         cancellationToken: stoppingToken
@@ -430,26 +441,8 @@ public sealed class PageStreamClient(
                     cancellationToken: stoppingToken
                 );
 
-            if (upload.Failed)
+            await using (FileStream file = File.OpenRead(upload.Path))
             {
-                // A single terminating chunk with no payload: the server copies the source page
-                // through instead of replacing it.
-                await call.RequestStream.WriteAsync(
-                    new UploadPageChunk
-                    {
-                        TaskId = taskId,
-                        PageIndex = upload.PageIndex,
-                        ChunkNumber = 0,
-                        IsLast = true,
-                        ContentIdentity = identity,
-                        Failed = true,
-                    },
-                    stoppingToken
-                );
-            }
-            else
-            {
-                await using FileStream file = File.OpenRead(upload.Path);
                 byte[] buffer = new byte[ChunkSizeBytes];
                 int chunkNumber = 0;
                 int bytesRead;
@@ -487,7 +480,7 @@ public sealed class PageStreamClient(
         }
     }
 
-    private sealed record PageUpload(int PageIndex, string Path, bool Failed);
+    private sealed record PageUpload(int PageIndex, string Path);
 
     /// <summary>
     /// Forwards upscale progress as keep-alives without blocking the worker's event reader thread.

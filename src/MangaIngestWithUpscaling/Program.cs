@@ -422,8 +422,9 @@ using (var scope = app.Services.CreateScope())
 
 // gRPC page uploads stream a whole page in one request, which can exceed Kestrel's ~28.6 MB
 // default request-body cap on large upscaled pages. Lift the cap for gRPC requests only, so the
-// slowloris protection and body limits for the rest of the app are unaffected. Authentication (the
-// API key) runs before the handler reads the body, so it still applies to uploads.
+// slowloris protection and body limits for the rest of the app are unaffected. This middleware only
+// adjusts the limit; the body is read later by the handler, which authentication has already gated,
+// and the handler additionally bounds each uploaded page.
 app.Use(
     async (context, next) =>
     {

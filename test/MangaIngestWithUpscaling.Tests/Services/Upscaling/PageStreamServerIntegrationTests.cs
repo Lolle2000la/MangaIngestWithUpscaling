@@ -61,9 +61,11 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
     private string _upscaledPath = null!;
     private int _taskId;
     private int _detectTaskId;
+    private int _repairTaskId;
     private int _chapterId;
     private SharedUpscalerProfile _profile = null!;
     private ISplitProcessingService _splitProcessing = null!;
+    private IMetadataHandlingService _metadata = null!;
 
     public async ValueTask InitializeAsync()
     {
@@ -99,13 +101,13 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         builder.Services.AddSingleton<ITaskPersistenceService, TaskPersistenceService>();
         builder.Services.AddSingleton<DistributedUpscaleTaskProcessor>();
         builder.Services.AddSingleton<PageStreamSpool>();
+        builder.Services.AddSingleton<PageContextCache>();
         builder.Services.AddSingleton<IUpscalerJsonHandlingService>(
             new UpscalerJsonHandlingService(Substitute.For<ILogger<UpscalerJsonHandlingService>>())
         );
         builder.Services.AddSingleton<IFileSystem>(new GenericFileSystem());
-        builder.Services.AddSingleton<IMetadataHandlingService>(
-            new MetadataHandlingService(Substitute.For<ILogger<MetadataHandlingService>>())
-        );
+        _metadata = Substitute.For<IMetadataHandlingService>();
+        builder.Services.AddSingleton(_metadata);
         builder.Services.AddSingleton(Substitute.For<IChapterChangedNotifier>());
         _splitProcessing = Substitute.For<ISplitProcessingService>();
         builder.Services.AddSingleton(_splitProcessing);
@@ -155,6 +157,7 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         var sut = new RemotePageStreamClient(
             worker,
             Substitute.For<IServiceScopeFactory>(),
+            Options.Create(new UpscalerConfig()),
             Substitute.For<ILogger<RemotePageStreamClient>>()
         );
 
@@ -200,6 +203,7 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         var dropping = new RemotePageStreamClient(
             droppingWorker,
             Substitute.For<IServiceScopeFactory>(),
+            Options.Create(new UpscalerConfig()),
             Substitute.For<ILogger<RemotePageStreamClient>>()
         );
         await Assert.ThrowsAnyAsync<Exception>(() =>
@@ -213,6 +217,7 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         var recovering = new RemotePageStreamClient(
             recoveringWorker,
             Substitute.For<IServiceScopeFactory>(),
+            Options.Create(new UpscalerConfig()),
             Substitute.For<ILogger<RemotePageStreamClient>>()
         );
         await recovering.RunAsync(client, _taskId, _profile, TestContext.Current.CancellationToken);
@@ -258,6 +263,7 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         var sut = new RemotePageStreamClient(
             Substitute.For<IMangaJaNaiWorkerClient>(),
             scopeFactory,
+            Options.Create(new UpscalerConfig()),
             Substitute.For<ILogger<RemotePageStreamClient>>()
         );
 
@@ -367,6 +373,38 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
             );
     }
 
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task GetPageManifest_ResolvesAndCachesTheRepairContext()
+    {
+        // Repair resolves its context by diffing the source against the upscaled chapter; that must
+        // happen once per identity, not on every manifest/page RPC.
+        Directory.CreateDirectory(Path.GetDirectoryName(_upscaledPath)!);
+        CreateSourceCbz(_upscaledPath);
+        _metadata
+            .AnalyzePageDifferencesAsync(Arg.Any<string?>(), Arg.Any<string?>())
+            .Returns(new PageDifferenceResult(new[] { "001" }, Array.Empty<string>()));
+
+        var client = new RemoteUpscalingServiceClient(_channel);
+        for (int i = 0; i < 3; i++)
+        {
+            RemotePageManifestResponse manifest = await client.GetPageManifestAsync(
+                new RemotePageManifestRequest { TaskId = _repairTaskId },
+                deadline: DateTime.UtcNow.AddSeconds(30),
+                cancellationToken: TestContext.Current.CancellationToken
+            );
+
+            Assert.False(manifest.Complete);
+            Assert.Single(manifest.Pages);
+            Assert.Equal("001.jpg", manifest.Pages[0].SourceName);
+            Assert.Equal("001.webp", manifest.Pages[0].OutputName);
+        }
+
+        await _metadata
+            .Received(1)
+            .AnalyzePageDifferencesAsync(Arg.Any<string?>(), Arg.Any<string?>());
+    }
+
     private async Task SeedAsync(string notUpscaledDir, string upscaledDir)
     {
         await using ApplicationDbContext context = await _database.CreateContextAsync();
@@ -403,9 +441,22 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         context.PersistedTasks.Add(detectTask);
         await context.SaveChangesAsync();
 
+        var repairTask = new PersistedTask
+        {
+            Data = new RepairUpscaleTask
+            {
+                ChapterId = chapter.Id,
+                UpscalerProfileId = _profile.Id,
+            },
+            Status = PersistedTaskStatus.Pending,
+        };
+        context.PersistedTasks.Add(repairTask);
+        await context.SaveChangesAsync();
+
         _chapterId = chapter.Id;
         _taskId = task.Id;
         _detectTaskId = detectTask.Id;
+        _repairTaskId = repairTask.Id;
     }
 
     private static void CreateSourceCbz(string path)

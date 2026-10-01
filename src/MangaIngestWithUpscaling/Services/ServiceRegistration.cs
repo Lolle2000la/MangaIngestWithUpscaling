@@ -27,6 +27,7 @@ public static class ServiceRegistration
         services.AddSingleton<DistributedUpscaleTaskProcessor>();
         services.AddHostedService(sp => sp.GetRequiredService<DistributedUpscaleTaskProcessor>());
         services.AddSingleton<PageStreamSpool>();
+        services.AddSingleton<PageContextCache>();
         services.AddSingleton<PeriodicIngestWatcher>();
         services.AddHostedService(sp => sp.GetRequiredService<PeriodicIngestWatcher>());
         services.AddSingleton<LibraryIngestWatcher>();
