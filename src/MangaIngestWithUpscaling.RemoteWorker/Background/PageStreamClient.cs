@@ -25,6 +25,7 @@ public sealed class PageStreamClient(
     IMangaJaNaiWorkerClient workerClient,
     IServiceScopeFactory scopeFactory,
     IOptions<UpscalerConfig> upscalerConfig,
+    IEngineIdentityProvider engineIdentity,
     ILogger<PageStreamClient> logger
 )
 {
@@ -53,7 +54,7 @@ public sealed class PageStreamClient(
     )
     {
         PageManifestResponse manifest = await client.GetPageManifestAsync(
-            new PageManifestRequest { TaskId = taskId },
+            new PageManifestRequest { TaskId = taskId, EngineIdentity = engineIdentity.Upscaler },
             deadline: DateTime.UtcNow.Add(ManifestTimeout),
             cancellationToken: stoppingToken
         );
@@ -295,7 +296,7 @@ public sealed class PageStreamClient(
     )
     {
         PageManifestResponse manifest = await client.GetPageManifestAsync(
-            new PageManifestRequest { TaskId = taskId },
+            new PageManifestRequest { TaskId = taskId, EngineIdentity = engineIdentity.Detector },
             deadline: DateTime.UtcNow.Add(ManifestTimeout),
             cancellationToken: stoppingToken
         );
@@ -389,6 +390,7 @@ public sealed class PageStreamClient(
                         PageIndex = pageIndex,
                         ResultJson = json,
                         TaskIdentity = manifest.TaskIdentity,
+                        EngineIdentity = engineIdentity.Detector,
                     },
                     deadline: DateTime.UtcNow.Add(PageTimeout),
                     cancellationToken: stoppingToken
@@ -642,6 +644,7 @@ public sealed class PageStreamClient(
                             ChunkNumber = chunkNumber++,
                             Chunk = ByteString.CopyFrom(buffer, 0, bytesRead),
                             ContentIdentity = identity,
+                            EngineIdentity = engineIdentity.Upscaler,
                         },
                         stoppingToken
                     );
@@ -659,6 +662,7 @@ public sealed class PageStreamClient(
                     Chunk = ByteString.Empty,
                     IsLast = true,
                     ContentIdentity = identity,
+                    EngineIdentity = engineIdentity.Upscaler,
                 },
                 stoppingToken
             );

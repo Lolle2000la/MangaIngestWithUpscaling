@@ -104,11 +104,15 @@ message PageDescriptor {
 
 message PageManifestRequest {
   int32 task_id = 1;
+  // Opaque identity of the engine (models + preprocessing) that will produce the pages. The server
+  // records it and refuses to mix pages produced by different engines into one chapter.
+  string engine_identity = 2;
 }
 
 message PageManifestResponse {
   int32 task_id = 1;
-  // Identity of (source + profile + preprocessing). Changes invalidate spooled pages.
+  // Identity of (source + profile). Changes invalidate spooled pages. The engine identity is sent
+  // separately and validated against it.
   string task_identity = 2;
   TaskType task_type = 3;
   repeated PageDescriptor pages = 4;
@@ -144,6 +148,9 @@ message UploadPageChunk {
   bytes chunk = 4;
   bool is_last = 5;
   string content_identity = 6;
+  // Engine that produced the page; the server rejects a page whose engine differs from the one the
+  // chapter is being spooled with.
+  string engine_identity = 7;
 }
 
 message UploadPageResponse {
@@ -160,6 +167,8 @@ message UploadPageDetectionRequest {
   string result_json = 3; // JSON of one SplitDetectionResult for the page.
   // Identity the results were produced against; the server rejects results for a stale identity.
   string task_identity = 4;
+  // Detector engine that produced the result; the server rejects results from a different engine.
+  string engine_identity = 5;
 }
 
 service UpscalingService {

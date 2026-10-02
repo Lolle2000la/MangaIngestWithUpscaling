@@ -13,8 +13,11 @@ public enum CommitPageResult
     /// <summary>The page was moved into place and recorded.</summary>
     Committed,
 
-    /// <summary>The session's identity no longer matches the caller's; the page was dropped.</summary>
+    /// <summary>The session's content identity no longer matches the caller's; the page was dropped.</summary>
     IdentityMismatch,
+
+    /// <summary>The session's engine identity differs from the caller's; the page was dropped.</summary>
+    EngineMismatch,
 
     /// <summary>Committing the page would exceed <see cref="PageStreamSpool.MaxTaskBytes"/>.</summary>
     OverBudget,
@@ -29,9 +32,10 @@ public enum CommitPageResult
 /// The spool is keyed by a content identity; a task re-dispatched with a different identity (source
 /// or profile changed) has its spool discarded so old and new bytes are never mixed.
 ///
-/// The identity covers the source file and the upscaler profile, not the engine: every worker that
-/// may be handed a chapter's pages must run byte-identical models and preprocessing, or the
-/// assembled CBZ can contain a visible seam where the workers changed.
+/// The identity covers the source file and the upscaler profile; the worker additionally supplies an
+/// opaque engine identity (its models and preprocessing). A manifest whose content or engine identity
+/// differs resets the spool, and a page produced by a different engine is rejected, so pages from
+/// different engines are never mixed into one chapter.
 /// </summary>
 public sealed class PageStreamSpool
 {
@@ -57,27 +61,40 @@ public sealed class PageStreamSpool
         );
 
     /// <summary>
-    /// Returns the session for a task, creating it or resetting it when the identity changed.
+    /// Returns the session for a task, creating it or resetting it when the content identity or the
+    /// engine identity changed. A reset discards the spool so pages produced by different engines are
+    /// never mixed into one chapter.
     /// </summary>
-    public PageStreamSession GetOrCreateSession(int taskId, string identity, int pageCount)
+    public PageStreamSession GetOrCreateSession(
+        int taskId,
+        string identity,
+        string engineIdentity,
+        int pageCount
+    )
     {
         PageStreamSession session = _sessions.GetOrAdd(
             taskId,
-            _ => new PageStreamSession(taskId, identity, pageCount, NewSessionDirectory(taskId))
+            _ => new PageStreamSession(
+                taskId,
+                identity,
+                engineIdentity,
+                pageCount,
+                NewSessionDirectory(taskId)
+            )
         );
 
         lock (session.Gate)
         {
-            if (session.Identity != identity)
+            if (session.Identity != identity || session.EngineIdentity != engineIdentity)
             {
                 _logger.LogInformation(
-                    "Page spool identity changed for task {TaskId}; discarding {Count} spooled page(s).",
+                    "Page spool identity changed for task {TaskId} (content or engine); discarding {Count} spooled page(s).",
                     taskId,
                     session.Completed.Count
                 );
                 // A fresh directory per reset: the discarded session's directory is unique, so a
                 // stale finalizer deleting it can never wipe the new session's files.
-                session.Reset(identity, pageCount, NewSessionDirectory(taskId));
+                session.Reset(identity, engineIdentity, pageCount, NewSessionDirectory(taskId));
             }
             else
             {
@@ -96,6 +113,38 @@ public sealed class PageStreamSpool
     /// </summary>
     private string NewSessionDirectory(int taskId) =>
         Path.Combine(SpoolRoot, $"{taskId}_{Guid.NewGuid():N}");
+
+    /// <summary>
+    /// Returns the existing session for a task without resetting it, creating one if none exists.
+    /// Used by uploads: the manifest is the authoritative place where a changed content or engine
+    /// identity resets the spool, so a stale in-flight upload must be rejected (see
+    /// <see cref="TryCommitPage"/>) rather than reset the chapter out from under the current engine.
+    /// </summary>
+    public PageStreamSession GetOrCreateSessionForUpload(
+        int taskId,
+        string identity,
+        string engineIdentity,
+        int pageCount
+    )
+    {
+        PageStreamSession session = _sessions.GetOrAdd(
+            taskId,
+            _ => new PageStreamSession(
+                taskId,
+                identity,
+                engineIdentity,
+                pageCount,
+                NewSessionDirectory(taskId)
+            )
+        );
+
+        lock (session.Gate)
+        {
+            session.LastTouchedUtc = DateTime.UtcNow;
+        }
+
+        return session;
+    }
 
     public IReadOnlyCollection<int> GetCompletedPages(PageStreamSession session)
     {
@@ -152,14 +201,16 @@ public sealed class PageStreamSpool
 
     /// <summary>
     /// Atomically moves a completed page into place and records it as done, but only while the
-    /// session still holds <paramref name="expectedIdentity"/>. A session whose identity was reset
-    /// by a concurrent manifest is stale, so the page is dropped instead of being mixed into the
-    /// new identity. The per-task byte budget is checked here, under the gate, so two concurrent
-    /// uploads cannot jointly exceed it.
+    /// session still holds <paramref name="expectedIdentity"/> and
+    /// <paramref name="expectedEngineIdentity"/>. A session reset by a concurrent manifest (content
+    /// or engine changed) is stale, so the page is dropped instead of being mixed into the new
+    /// chapter. The per-task byte budget is checked here, under the gate, so two concurrent uploads
+    /// cannot jointly exceed it.
     /// </summary>
     public CommitPageResult TryCommitPage(
         PageStreamSession session,
         string expectedIdentity,
+        string expectedEngineIdentity,
         int pageIndex,
         string tempPath,
         long size = 0
@@ -170,6 +221,17 @@ public sealed class PageStreamSpool
             if (!string.Equals(session.Identity, expectedIdentity, StringComparison.Ordinal))
             {
                 return CommitPageResult.IdentityMismatch;
+            }
+
+            if (
+                !string.Equals(
+                    session.EngineIdentity,
+                    expectedEngineIdentity,
+                    StringComparison.Ordinal
+                )
+            )
+            {
+                return CommitPageResult.EngineMismatch;
             }
 
             // Re-uploading a page replaces its bytes; adjust by the delta so legitimate retries do
@@ -195,6 +257,7 @@ public sealed class PageStreamSpool
         CommitPageResult result = TryCommitPage(
             session,
             session.Identity,
+            session.EngineIdentity,
             pageIndex,
             tempPath,
             new FileInfo(tempPath).Length
@@ -530,16 +593,27 @@ public sealed class PageStreamSpool
 /// <summary>Mutable per-task spool state, guarded by <see cref="Gate"/>.</summary>
 public sealed class PageStreamSession
 {
-    public PageStreamSession(int taskId, string identity, int pageCount, string directory)
+    public PageStreamSession(
+        int taskId,
+        string identity,
+        string engineIdentity,
+        int pageCount,
+        string directory
+    )
     {
         TaskId = taskId;
         Identity = identity;
+        EngineIdentity = engineIdentity;
         PageCount = pageCount;
         Directory = directory;
     }
 
     public int TaskId { get; }
     public string Identity { get; private set; }
+
+    /// <summary>Opaque identity of the engine that produced the spooled pages.</summary>
+    public string EngineIdentity { get; private set; }
+
     public int PageCount { get; set; }
     public string Directory { get; private set; }
     public HashSet<int> Completed { get; } = new();
@@ -563,10 +637,11 @@ public sealed class PageStreamSession
 
     public string PagePath(int pageIndex) => Path.Combine(Directory, $"page_{pageIndex:D5}.bin");
 
-    public void Reset(string identity, int pageCount, string directory)
+    public void Reset(string identity, string engineIdentity, int pageCount, string directory)
     {
         DeleteDirectory();
         Identity = identity;
+        EngineIdentity = engineIdentity;
         PageCount = pageCount;
         Directory = directory;
         Completed.Clear();

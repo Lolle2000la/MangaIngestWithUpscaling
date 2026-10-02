@@ -51,6 +51,7 @@ public partial class UpscalingDistributionService
         PageStreamSession session = pageStreamSpool.GetOrCreateSession(
             pageContext.Task.Id,
             pageContext.Identity,
+            request.EngineIdentity,
             pageContext.Pages.Count
         );
 
@@ -251,6 +252,7 @@ public partial class UpscalingDistributionService
         int taskId = 0;
         int pageIndex = 0;
         string identity = string.Empty;
+        string engineIdentity = string.Empty;
         PageContext? pageContext = null;
         PageStreamSession session = null!;
         string? tempPath = null;
@@ -266,12 +268,23 @@ public partial class UpscalingDistributionService
                 UploadPageChunk chunk in requestStream.ReadAllAsync(context.CancellationToken)
             )
             {
-                if (sawChunk && (chunk.TaskId != taskId || chunk.PageIndex != pageIndex))
+                if (
+                    sawChunk
+                    && (
+                        chunk.TaskId != taskId
+                        || chunk.PageIndex != pageIndex
+                        || !string.Equals(
+                            chunk.EngineIdentity,
+                            engineIdentity,
+                            StringComparison.Ordinal
+                        )
+                    )
+                )
                 {
                     return new UploadPageResponse
                     {
                         Success = false,
-                        Message = "The page stream changed task or page mid-upload.",
+                        Message = "The page stream changed task, page or engine mid-upload.",
                         TaskId = taskId,
                         PageIndex = pageIndex,
                         Terminal = true,
@@ -284,6 +297,7 @@ public partial class UpscalingDistributionService
                     taskId = chunk.TaskId;
                     pageIndex = chunk.PageIndex;
                     identity = chunk.ContentIdentity;
+                    engineIdentity = chunk.EngineIdentity;
 
                     pageContext = await ResolvePageContextAsync(taskId, context.CancellationToken);
                     if (pageContext is null)
@@ -333,9 +347,10 @@ public partial class UpscalingDistributionService
                         };
                     }
 
-                    session = pageStreamSpool.GetOrCreateSession(
+                    session = pageStreamSpool.GetOrCreateSessionForUpload(
                         taskId,
                         pageContext.Identity,
+                        engineIdentity,
                         pageContext.Pages.Count
                     );
                     // Stream straight to the spool file rather than buffering the whole page in
@@ -412,6 +427,7 @@ public partial class UpscalingDistributionService
                 CommitPageResult commitResult = pageStreamSpool.TryCommitPage(
                     session,
                     pageContext!.Identity,
+                    engineIdentity,
                     pageIndex,
                     tempPath!,
                     written
@@ -428,14 +444,17 @@ public partial class UpscalingDistributionService
                     };
                 }
 
-                if (commitResult == CommitPageResult.IdentityMismatch)
+                if (commitResult != CommitPageResult.Committed)
                 {
-                    // The chapter or profile changed while this page was in flight; drop it and let
-                    // the worker restart against the new identity.
+                    // The chapter, profile or engine changed while this page was in flight; drop it
+                    // and let the worker restart against the new identity.
                     return new UploadPageResponse
                     {
                         Success = false,
-                        Message = "The chapter or profile changed; restart the chapter",
+                        Message =
+                            commitResult == CommitPageResult.EngineMismatch
+                                ? "The upscaling engine changed; restart the chapter"
+                                : "The chapter or profile changed; restart the chapter",
                         TaskId = taskId,
                         PageIndex = pageIndex,
                     };
@@ -582,9 +601,10 @@ public partial class UpscalingDistributionService
             };
         }
 
-        PageStreamSession session = pageStreamSpool.GetOrCreateSession(
+        PageStreamSession session = pageStreamSpool.GetOrCreateSessionForUpload(
             request.TaskId,
             pageContext.Identity,
+            request.EngineIdentity,
             pageContext.Pages.Count
         );
 
@@ -685,6 +705,7 @@ public partial class UpscalingDistributionService
         CommitPageResult commitResult = pageStreamSpool.TryCommitPage(
             session,
             pageContext.Identity,
+            request.EngineIdentity,
             request.PageIndex,
             resultTemp,
             resultBytes.Length
@@ -696,10 +717,14 @@ public partial class UpscalingDistributionService
             return new UploadDetectionResultResponse
             {
                 Success = false,
-                Message =
-                    commitResult == CommitPageResult.OverBudget
-                        ? $"Task {request.TaskId} exceeds the maximum spooled size."
-                        : "The chapter changed; request a new manifest",
+                Message = commitResult switch
+                {
+                    CommitPageResult.OverBudget =>
+                        $"Task {request.TaskId} exceeds the maximum spooled size.",
+                    CommitPageResult.EngineMismatch =>
+                        "The detector changed; request a new manifest",
+                    _ => "The chapter changed; request a new manifest",
+                },
             };
         }
 

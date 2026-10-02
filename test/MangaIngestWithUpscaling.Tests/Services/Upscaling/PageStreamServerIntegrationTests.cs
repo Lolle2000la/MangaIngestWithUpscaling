@@ -36,6 +36,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using Xunit;
+using RemoteEngineIdentityProvider = remote::MangaIngestWithUpscaling.RemoteWorker.Background.IEngineIdentityProvider;
 using RemotePageManifestRequest = remote::MangaIngestWithUpscaling.Api.Upscaling.PageManifestRequest;
 using RemotePageManifestResponse = remote::MangaIngestWithUpscaling.Api.Upscaling.PageManifestResponse;
 using RemotePageStreamClient = remote::MangaIngestWithUpscaling.RemoteWorker.Background.PageStreamClient;
@@ -72,6 +73,30 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
     private SharedUpscalerProfile _profile = null!;
     private ISplitProcessingService _splitProcessing = null!;
     private IMetadataHandlingService _metadata = null!;
+
+    // Fixed engine identities so the raw-RPC manifest requests, the manual spool seeding and the
+    // real PageStreamClient all agree on the engine.
+    private const string UpscalerEngineIdentity = "test-upscaler-engine";
+    private const string DetectorEngineIdentity = "test-detector-engine";
+
+    private static RemoteEngineIdentityProvider StubEngineIdentity() =>
+        new StubEngineIdentityProvider(UpscalerEngineIdentity, DetectorEngineIdentity);
+
+    private static RemotePageStreamClient CreatePageStreamClient(FakeWorkerClient worker) =>
+        new(
+            worker,
+            Substitute.For<IServiceScopeFactory>(),
+            Options.Create(new UpscalerConfig()),
+            StubEngineIdentity(),
+            Substitute.For<ILogger<RemotePageStreamClient>>()
+        );
+
+    private sealed class StubEngineIdentityProvider(string upscaler, string detector)
+        : RemoteEngineIdentityProvider
+    {
+        public string Upscaler { get; } = upscaler;
+        public string Detector { get; } = detector;
+    }
 
     public async ValueTask InitializeAsync()
     {
@@ -163,12 +188,7 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
     {
         var client = new RemoteUpscalingServiceClient(_channel);
         var worker = new FakeWorkerClient();
-        var sut = new RemotePageStreamClient(
-            worker,
-            Substitute.For<IServiceScopeFactory>(),
-            Options.Create(new UpscalerConfig()),
-            Substitute.For<ILogger<RemotePageStreamClient>>()
-        );
+        var sut = CreatePageStreamClient(worker);
 
         await sut.RunAsync(client, _taskId, _profile, TestContext.Current.CancellationToken);
 
@@ -207,7 +227,11 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
     {
         var client = new RemoteUpscalingServiceClient(_channel);
         RemotePageManifestResponse manifest = await client.GetPageManifestAsync(
-            new RemotePageManifestRequest { TaskId = _taskId },
+            new RemotePageManifestRequest
+            {
+                TaskId = _taskId,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
             cancellationToken: TestContext.Current.CancellationToken
         );
 
@@ -275,18 +299,94 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
 
     [Fact]
     [Trait("Category", "Integration")]
+    public async Task UploadPage_RejectsAnUploadFromADifferentEngine()
+    {
+        var client = new RemoteUpscalingServiceClient(_channel);
+        RemotePageManifestResponse manifest = await client.GetPageManifestAsync(
+            new RemotePageManifestRequest
+            {
+                TaskId = _taskId,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        // The chapter is spooled with UpscalerEngineIdentity; a page from another engine must not be
+        // committed (it would mix engines in one CBZ).
+        using var call = client.UploadPage(
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = _taskId,
+                PageIndex = 0,
+                ChunkNumber = 0,
+                Chunk = ByteString.CopyFrom(new byte[] { 1, 2, 3 }),
+                ContentIdentity = manifest.TaskIdentity,
+                EngineIdentity = "another-engine",
+            },
+            TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = _taskId,
+                PageIndex = 0,
+                ChunkNumber = 1,
+                Chunk = ByteString.Empty,
+                IsLast = true,
+                ContentIdentity = manifest.TaskIdentity,
+                EngineIdentity = "another-engine",
+            },
+            TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.CompleteAsync();
+        RemoteUploadPageResponse response = await call.ResponseAsync;
+
+        Assert.False(response.Success);
+        Assert.Contains("engine", response.Message);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task GetPageManifest_ResetsTheSpoolWhenTheEngineChanges()
+    {
+        var client = new RemoteUpscalingServiceClient(_channel);
+
+        // Spool one page under the test engine (the worker drops after it).
+        var dropping = CreatePageStreamClient(new FakeWorkerClient { DropAfterPages = 1 });
+        await Assert.ThrowsAnyAsync<Exception>(() =>
+            dropping.RunAsync(client, _taskId, _profile, TestContext.Current.CancellationToken)
+        );
+
+        RemotePageManifestResponse withSameEngine = await client.GetPageManifestAsync(
+            new RemotePageManifestRequest
+            {
+                TaskId = _taskId,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+        Assert.Single(withSameEngine.CompletedPages);
+
+        // A manifest from a different engine must discard the spool so the two engines never mix.
+        RemotePageManifestResponse withOtherEngine = await client.GetPageManifestAsync(
+            new RemotePageManifestRequest { TaskId = _taskId, EngineIdentity = "another-engine" },
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+        Assert.Empty(withOtherEngine.CompletedPages);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
     public async Task ResumesAnInterruptedChapterOverRealGrpc()
     {
         var client = new RemoteUpscalingServiceClient(_channel);
 
         // The first worker drops after the first page, which the real server already spooled.
         var droppingWorker = new FakeWorkerClient { DropAfterPages = 1 };
-        var dropping = new RemotePageStreamClient(
-            droppingWorker,
-            Substitute.For<IServiceScopeFactory>(),
-            Options.Create(new UpscalerConfig()),
-            Substitute.For<ILogger<RemotePageStreamClient>>()
-        );
+        var dropping = CreatePageStreamClient(droppingWorker);
         await Assert.ThrowsAnyAsync<Exception>(() =>
             dropping.RunAsync(client, _taskId, _profile, TestContext.Current.CancellationToken)
         );
@@ -295,12 +395,7 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         // The retry resumes: the server reports the first page as already spooled and the worker
         // only has to produce the second.
         var recoveringWorker = new FakeWorkerClient();
-        var recovering = new RemotePageStreamClient(
-            recoveringWorker,
-            Substitute.For<IServiceScopeFactory>(),
-            Options.Create(new UpscalerConfig()),
-            Substitute.For<ILogger<RemotePageStreamClient>>()
-        );
+        var recovering = CreatePageStreamClient(recoveringWorker);
         await recovering.RunAsync(client, _taskId, _profile, TestContext.Current.CancellationToken);
 
         Assert.Equal(1, recoveringWorker.ProcessedPages);
@@ -346,6 +441,7 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
             Substitute.For<IMangaJaNaiWorkerClient>(),
             scopeFactory,
             Options.Create(new UpscalerConfig()),
+            StubEngineIdentity(),
             Substitute.For<ILogger<RemotePageStreamClient>>()
         );
 
@@ -372,7 +468,11 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
     {
         var client = new RemoteUpscalingServiceClient(_channel);
         RemotePageManifestResponse manifest = await client.GetPageManifestAsync(
-            new RemotePageManifestRequest { TaskId = _taskId },
+            new RemotePageManifestRequest
+            {
+                TaskId = _taskId,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
             deadline: DateTime.UtcNow.AddSeconds(30),
             cancellationToken: TestContext.Current.CancellationToken
         );
@@ -382,6 +482,7 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         PageStreamSession session = spool.GetOrCreateSession(
             _taskId,
             manifest.TaskIdentity,
+            UpscalerEngineIdentity,
             manifest.Pages.Count
         );
         foreach (var page in manifest.Pages)
@@ -395,7 +496,11 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         }
 
         RemotePageManifestResponse second = await client.GetPageManifestAsync(
-            new RemotePageManifestRequest { TaskId = _taskId },
+            new RemotePageManifestRequest
+            {
+                TaskId = _taskId,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
             deadline: DateTime.UtcNow.AddSeconds(30),
             cancellationToken: TestContext.Current.CancellationToken
         );
@@ -418,7 +523,11 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
     {
         var client = new RemoteUpscalingServiceClient(_channel);
         RemotePageManifestResponse manifest = await client.GetPageManifestAsync(
-            new RemotePageManifestRequest { TaskId = _detectTaskId },
+            new RemotePageManifestRequest
+            {
+                TaskId = _detectTaskId,
+                EngineIdentity = DetectorEngineIdentity,
+            },
             deadline: DateTime.UtcNow.AddSeconds(30),
             cancellationToken: TestContext.Current.CancellationToken
         );
@@ -427,6 +536,7 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         PageStreamSession session = spool.GetOrCreateSession(
             _detectTaskId,
             manifest.TaskIdentity,
+            DetectorEngineIdentity,
             manifest.Pages.Count
         );
         foreach (var page in manifest.Pages)
@@ -444,7 +554,11 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         }
 
         RemotePageManifestResponse second = await client.GetPageManifestAsync(
-            new RemotePageManifestRequest { TaskId = _detectTaskId },
+            new RemotePageManifestRequest
+            {
+                TaskId = _detectTaskId,
+                EngineIdentity = DetectorEngineIdentity,
+            },
             deadline: DateTime.UtcNow.AddSeconds(30),
             cancellationToken: TestContext.Current.CancellationToken
         );
@@ -481,7 +595,11 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         for (int i = 0; i < 3; i++)
         {
             RemotePageManifestResponse manifest = await client.GetPageManifestAsync(
-                new RemotePageManifestRequest { TaskId = _repairTaskId },
+                new RemotePageManifestRequest
+                {
+                    TaskId = _repairTaskId,
+                    EngineIdentity = UpscalerEngineIdentity,
+                },
                 deadline: DateTime.UtcNow.AddSeconds(30),
                 cancellationToken: TestContext.Current.CancellationToken
             );
@@ -530,12 +648,7 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         }
 
         var client = new RemoteUpscalingServiceClient(_channel);
-        var sut = new RemotePageStreamClient(
-            new FakeWorkerClient(),
-            Substitute.For<IServiceScopeFactory>(),
-            Options.Create(new UpscalerConfig()),
-            Substitute.For<ILogger<RemotePageStreamClient>>()
-        );
+        var sut = CreatePageStreamClient(new FakeWorkerClient());
 
         await sut.RunAsync(client, _repairTaskId, _profile, TestContext.Current.CancellationToken);
 
@@ -598,12 +711,7 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         }
 
         var client = new RemoteUpscalingServiceClient(_channel);
-        var sut = new RemotePageStreamClient(
-            new FakeWorkerClient(),
-            Substitute.For<IServiceScopeFactory>(),
-            Options.Create(new UpscalerConfig()),
-            Substitute.For<ILogger<RemotePageStreamClient>>()
-        );
+        var sut = CreatePageStreamClient(new FakeWorkerClient());
 
         await sut.RunAsync(client, nestedTaskId, _profile, TestContext.Current.CancellationToken);
 

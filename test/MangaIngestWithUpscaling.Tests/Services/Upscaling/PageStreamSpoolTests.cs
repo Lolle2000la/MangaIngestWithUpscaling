@@ -39,16 +39,16 @@ public class PageStreamSpoolTests
     [Trait("Category", "Unit")]
     public void TryCommitPage_RejectsAStaleIdentity()
     {
-        PageStreamSession session = _spool.GetOrCreateSession(11, "old", 1);
+        PageStreamSession session = _spool.GetOrCreateSession(11, "old", "engine", 1);
         FileStream output = _spool.BeginPageWrite(session, 0, out string temp);
         output.Dispose();
 
         // A concurrent manifest changes the identity, resetting the shared session in place.
-        _spool.GetOrCreateSession(11, "new", 1);
+        _spool.GetOrCreateSession(11, "new", "engine", 1);
 
         Assert.Equal(
             CommitPageResult.IdentityMismatch,
-            _spool.TryCommitPage(session, "old", 0, temp)
+            _spool.TryCommitPage(session, "old", "engine", 0, temp)
         );
         Assert.False(_spool.IsComplete(session));
     }
@@ -57,20 +57,27 @@ public class PageStreamSpoolTests
     [Trait("Category", "Unit")]
     public void TryCommitPage_RejectsWhenOverBudget()
     {
-        PageStreamSession session = _spool.GetOrCreateSession(13, "identity", 2);
+        PageStreamSession session = _spool.GetOrCreateSession(13, "identity", "engine", 2);
 
         FileStream first = _spool.BeginPageWrite(session, 0, out string firstTemp);
         first.Dispose();
         Assert.Equal(
             CommitPageResult.Committed,
-            _spool.TryCommitPage(session, "identity", 0, firstTemp, PageStreamSpool.MaxTaskBytes)
+            _spool.TryCommitPage(
+                session,
+                "identity",
+                "engine",
+                0,
+                firstTemp,
+                PageStreamSpool.MaxTaskBytes
+            )
         );
 
         FileStream second = _spool.BeginPageWrite(session, 1, out string secondTemp);
         second.Dispose();
         Assert.Equal(
             CommitPageResult.OverBudget,
-            _spool.TryCommitPage(session, "identity", 1, secondTemp, 1)
+            _spool.TryCommitPage(session, "identity", "engine", 1, secondTemp, 1)
         );
     }
 
@@ -78,7 +85,7 @@ public class PageStreamSpoolTests
     [Trait("Category", "Unit")]
     public void TryBeginAssembly_RejectsAfterRemoval()
     {
-        PageStreamSession session = _spool.GetOrCreateSession(14, "identity", 1);
+        PageStreamSession session = _spool.GetOrCreateSession(14, "identity", "engine", 1);
         Assert.True(_spool.TryBeginAssembly(session));
 
         _spool.Remove(14);
@@ -92,9 +99,9 @@ public class PageStreamSpoolTests
     [Trait("Category", "Unit")]
     public void TryBeginAssembly_RejectsAStaleIdentity()
     {
-        PageStreamSession session = _spool.GetOrCreateSession(12, "old", 1);
+        PageStreamSession session = _spool.GetOrCreateSession(12, "old", "engine", 1);
 
-        _spool.GetOrCreateSession(12, "new", 1);
+        _spool.GetOrCreateSession(12, "new", "engine", 1);
 
         Assert.False(_spool.TryBeginAssembly(session, "old"));
         Assert.True(_spool.TryBeginAssembly(session, "new"));
@@ -104,7 +111,7 @@ public class PageStreamSpoolTests
     [Trait("Category", "Unit")]
     public void TryBeginAssembly_IsExclusiveUntilEnded()
     {
-        PageStreamSession session = _spool.GetOrCreateSession(9, "identity", 1);
+        PageStreamSession session = _spool.GetOrCreateSession(9, "identity", "engine", 1);
 
         Assert.True(_spool.TryBeginAssembly(session));
         Assert.False(_spool.TryBeginAssembly(session));
@@ -129,7 +136,12 @@ public class PageStreamSpoolTests
             }
 
             var pages = new List<SpoolPageDescriptor> { new(0, "ch1/001.jpg", "ch1/001.webp") };
-            PageStreamSession session = _spool.GetOrCreateSession(4, "identity", pages.Count);
+            PageStreamSession session = _spool.GetOrCreateSession(
+                4,
+                "identity",
+                "engine",
+                pages.Count
+            );
             string temp;
             using (FileStream page = _spool.BeginPageWrite(session, 0, out temp))
             {
@@ -168,7 +180,7 @@ public class PageStreamSpoolTests
 
             // BuildPageDescriptors keeps only the first of a repeated entry name.
             var pages = new List<SpoolPageDescriptor> { new(0, "001.jpg", "001.webp") };
-            PageStreamSession session = _spool.GetOrCreateSession(20, "identity", 1);
+            PageStreamSession session = _spool.GetOrCreateSession(20, "identity", "engine", 1);
             string temp;
             using (FileStream page = _spool.BeginPageWrite(session, 0, out temp))
             {
@@ -204,7 +216,12 @@ public class PageStreamSpoolTests
                 new(0, "001.jpg", "001.webp"),
                 new(1, "002.jpg", "002.webp"),
             };
-            PageStreamSession session = _spool.GetOrCreateSession(1, "identity", pages.Count);
+            PageStreamSession session = _spool.GetOrCreateSession(
+                1,
+                "identity",
+                "engine",
+                pages.Count
+            );
 
             await _spool.WritePageAsync(
                 session,
@@ -245,7 +262,7 @@ public class PageStreamSpoolTests
     [Trait("Category", "Unit")]
     public async Task GetOrCreateSession_ResetsCompletedPagesWhenIdentityChanges()
     {
-        PageStreamSession session = _spool.GetOrCreateSession(2, "identity-a", 2);
+        PageStreamSession session = _spool.GetOrCreateSession(2, "identity-a", "engine", 2);
         await _spool.WritePageAsync(
             session,
             0,
@@ -254,8 +271,28 @@ public class PageStreamSpoolTests
         );
         Assert.Single(_spool.GetCompletedPages(session));
 
-        PageStreamSession same = _spool.GetOrCreateSession(2, "identity-b", 2);
+        PageStreamSession same = _spool.GetOrCreateSession(2, "identity-b", "engine", 2);
 
+        Assert.Same(session, same);
+        Assert.Empty(_spool.GetCompletedPages(session));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task GetOrCreateSession_ResetsWhenTheEngineChanges()
+    {
+        PageStreamSession session = _spool.GetOrCreateSession(30, "identity", "engine-a", 2);
+        await _spool.WritePageAsync(
+            session,
+            0,
+            new MemoryStream(new byte[] { 1 }),
+            TestContext.Current.CancellationToken
+        );
+        Assert.Single(_spool.GetCompletedPages(session));
+
+        PageStreamSession same = _spool.GetOrCreateSession(30, "identity", "engine-b", 2);
+
+        // A different engine must discard the spool so pages from two engines are never mixed.
         Assert.Same(session, same);
         Assert.Empty(_spool.GetCompletedPages(session));
     }
@@ -264,7 +301,7 @@ public class PageStreamSpoolTests
     [Trait("Category", "Unit")]
     public async Task WritePage_IsIdempotent()
     {
-        PageStreamSession session = _spool.GetOrCreateSession(3, "identity", 1);
+        PageStreamSession session = _spool.GetOrCreateSession(3, "identity", "engine", 1);
 
         await _spool.WritePageAsync(
             session,
@@ -289,7 +326,7 @@ public class PageStreamSpoolTests
     [Trait("Category", "Unit")]
     public void Remove_DeletesSpoolDirectory()
     {
-        PageStreamSession session = _spool.GetOrCreateSession(4, "identity", 1);
+        PageStreamSession session = _spool.GetOrCreateSession(4, "identity", "engine", 1);
         Directory.CreateDirectory(session.Directory);
         File.WriteAllBytes(session.PagePath(0), new byte[] { 1 });
 

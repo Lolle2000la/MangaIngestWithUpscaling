@@ -299,11 +299,20 @@ public class PageStreamClientTests
         }
     }
 
+    private const string EngineIdentityValue = "test-engine";
+
+    private sealed class StubEngineIdentityProvider : IEngineIdentityProvider
+    {
+        public string Upscaler => EngineIdentityValue;
+        public string Detector => EngineIdentityValue;
+    }
+
     private static PageStreamClient CreateClient(FakeWorkerClient worker) =>
         new(
             worker,
             Substitute.For<IServiceScopeFactory>(),
             Options.Create(new UpscalerConfig()),
+            new StubEngineIdentityProvider(),
             Substitute.For<ILogger<PageStreamClient>>()
         );
 
