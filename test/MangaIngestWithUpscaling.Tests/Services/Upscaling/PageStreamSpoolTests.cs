@@ -441,6 +441,85 @@ public class PageStreamSpoolTests
         Assert.Equal(0, _spool.GetTotalBytes(session));
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void SweepStale_RemovesAnIdleSessionAndKeepsAFreshOne()
+    {
+        PageStreamSession stale = _spool.GetOrCreateSession(60, "identity", "engine", 1);
+        string temp;
+        using (FileStream page = _spool.BeginPageWrite(stale, 0, out temp))
+        {
+            page.Write(new byte[] { 1 });
+        }
+
+        _spool.CommitPage(stale, 0, temp);
+        // Age the session past the retention window.
+        stale.LastTouchedUtc = DateTime.UtcNow - TimeSpan.FromHours(48);
+
+        PageStreamSession fresh = _spool.GetOrCreateSession(61, "identity", "engine", 1);
+        Directory.CreateDirectory(fresh.Directory);
+
+        _spool.SweepStale(TimeSpan.FromHours(24));
+
+        Assert.Null(_spool.TryGetSession(60));
+        Assert.False(Directory.Exists(stale.Directory));
+        // A live session must survive the sweep.
+        Assert.Same(fresh, _spool.TryGetSession(61));
+        Assert.True(Directory.Exists(fresh.Directory));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task PageSpoolSweepService_SweepsStaleSessionsOnStartup()
+    {
+        var spool = new PageStreamSpool(Substitute.For<ILogger<PageStreamSpool>>());
+        var cache = new PageContextCache();
+        PageStreamSession session = spool.GetOrCreateSession(70, "identity", "engine", 1);
+        session.LastTouchedUtc = DateTime.UtcNow - TimeSpan.FromDays(2);
+
+        var service = new PageSpoolSweepService(
+            spool,
+            cache,
+            Substitute.For<ILogger<PageSpoolSweepService>>()
+        );
+
+        // The startup sweep runs synchronously before the timer awaits, so a stale session left by a
+        // previous process is removed promptly rather than an hour later.
+        await service.StartAsync(CancellationToken.None);
+        try
+        {
+            // The startup sweep may run on the background task rather than inline; wait briefly for
+            // it so the test is not order-dependent.
+            DateTime deadline = DateTime.UtcNow.AddSeconds(5);
+            while (spool.TryGetSession(70) is not null && DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(20, TestContext.Current.CancellationToken);
+            }
+
+            Assert.Null(spool.TryGetSession(70));
+            Assert.False(Directory.Exists(session.Directory));
+        }
+        finally
+        {
+            await service.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void TryReserveInFlight_RejectsConcurrentReservationsThatExceedTheBudget()
+    {
+        PageStreamSession session = _spool.GetOrCreateSession(62, "identity", "engine", 2);
+
+        // Neither page is committed yet, so both reservations must count against the budget.
+        Assert.True(_spool.TryReserveInFlight(session, 0, PageStreamSpool.MaxTaskBytes - 1, out _));
+        Assert.False(_spool.TryReserveInFlight(session, 1, 2, out _));
+
+        // Releasing the first reservation frees the budget for the second.
+        _spool.ReleaseInFlight(session, session.Generation, PageStreamSpool.MaxTaskBytes - 1);
+        Assert.True(_spool.TryReserveInFlight(session, 1, 2, out _));
+    }
+
     private static byte[] ReadAll(Stream stream)
     {
         using var buffer = new MemoryStream();

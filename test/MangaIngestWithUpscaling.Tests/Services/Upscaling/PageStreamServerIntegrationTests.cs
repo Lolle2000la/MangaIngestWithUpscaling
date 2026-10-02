@@ -353,6 +353,60 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
 
     [Fact]
     [Trait("Category", "Integration")]
+    public async Task UploadPage_RejectsAnUploadWithNoSpoolNonTerminally()
+    {
+        var client = new RemoteUpscalingServiceClient(_channel);
+        RemotePageManifestResponse manifest = await client.GetPageManifestAsync(
+            new RemotePageManifestRequest
+            {
+                TaskId = _taskId,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        // Simulate a finalize landing on a replica that never answered the manifest (the documented
+        // single-replica constraint): this instance has no spool for the task.
+        _app.Services.GetRequiredService<PageStreamSpool>().Remove(_taskId);
+
+        using var call = client.UploadPage(
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = _taskId,
+                PageIndex = 0,
+                ChunkNumber = 0,
+                Chunk = ByteString.CopyFrom(new byte[] { 1, 2, 3 }),
+                ContentIdentity = manifest.TaskIdentity,
+            },
+            TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = _taskId,
+                PageIndex = 0,
+                ChunkNumber = 1,
+                Chunk = ByteString.Empty,
+                IsLast = true,
+                ContentIdentity = manifest.TaskIdentity,
+            },
+            TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.CompleteAsync();
+        RemoteUploadPageResponse response = await call.ResponseAsync;
+
+        // No spool means "wrong replica / skipped manifest": the worker must requeue, not fail the
+        // task, so the chapter can still complete once it reaches the right replica.
+        Assert.False(response.Success);
+        Assert.False(response.Terminal);
+        Assert.Contains("spool", response.Message);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
     public async Task GetPageManifest_ResetsTheSpoolWhenTheEngineChanges()
     {
         var client = new RemoteUpscalingServiceClient(_channel);

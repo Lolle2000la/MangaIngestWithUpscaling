@@ -1,3 +1,4 @@
+using System.Text.Json;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
@@ -95,6 +96,65 @@ public class SplitDetectionServerTests
         finally
         {
             File.Delete(image);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_FallsBackToTheCliWhenTheServerIsUnavailable()
+    {
+        string image = CreateTempImage();
+
+        // The CLI fallback resolves its script/model/config from the app base directory; create
+        // placeholders so it reaches the Python invocation rather than failing on a missing script.
+        string script = SplitDetectionLayout.ScriptPath;
+        string checkpoint = SplitDetectionLayout.CheckpointPath;
+        string config = SplitDetectionLayout.ConfigPath;
+        Directory.CreateDirectory(Path.GetDirectoryName(script)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(checkpoint)!);
+        File.WriteAllText(script, "pass");
+        File.WriteAllText(checkpoint, "model");
+        File.WriteAllText(config, "{}");
+
+        try
+        {
+            _detectServer
+                .DetectAsync(image, Arg.Any<CancellationToken>())
+                .Returns<SplitDetectionResult>(_ =>
+                    throw new DetectServerUnavailableException("no server")
+                );
+            _pythonService
+                .RunPythonScript(
+                    Arg.Any<string>(),
+                    Arg.Any<string>(),
+                    Arg.Any<CancellationToken?>(),
+                    Arg.Any<TimeSpan?>()
+                )
+                .Returns($"{{\"image\":{JsonSerializer.Serialize(image)},\"count\":0}}");
+
+            var results = await _service.DetectSplitsAsync(
+                image,
+                cancellationToken: TestContext.Current.CancellationToken
+            );
+
+            Assert.Single(results);
+            Assert.Equal(image, results[0].ImagePath);
+            // The unavailable resident server must have driven the per-image CLI, not been swallowed.
+            await _pythonService
+                .Received(1)
+                .RunPythonScript(
+                    script,
+                    Arg.Any<string>(),
+                    Arg.Any<CancellationToken?>(),
+                    Arg.Any<TimeSpan?>()
+                );
+        }
+        finally
+        {
+            File.Delete(image);
+            File.Delete(script);
+            File.Delete(checkpoint);
+            File.Delete(config);
         }
     }
 }
