@@ -36,7 +36,11 @@ Upscaling a chapter is streamed **page by page** by default. The worker fetches 
 
 If the server does not implement the page-streaming RPCs, the worker detects this at startup and falls back to whole-CBZ transfers automatically. To force the old whole-CBZ behaviour (for example while diagnosing a problem), set `WorkerConfig:UsePageStreaming` (or `Ingest_WorkerConfig__UsePageStreaming`) to `false`.
 
-Partial page state lives in the server's temp directory and is bounded by a 24-hour retention sweep. It is process-local: a different replica (or a restarted server) has no spool, so the chapter restarts from the beginning there rather than mixing bytes. The worker manifests once per attempt, so a transport failure that aborts the attempt makes the task fail and be retried (and re-manifested).
+Partial page state lives in the server's temp directory and is bounded by a 24-hour retention sweep. It is process-local: a different replica (or a restarted server) has no spool, so the chapter restarts from the beginning there rather than mixing bytes. The worker manifests once per attempt.
+
+A transient transport failure (the server being briefly unreachable, or a request deadline) does **not** fail the task: the worker stops sending keep-alives and the server requeues the chapter with its spool intact, so the worker resumes at the first missing page. Only a deterministic failure — a page the engine cannot decode, a chapter that changed mid-stream, or a page the server does not have — is reported as a task failure and clears the spool.
+
+Because the identity covers the source file and the upscaler profile but not the engine, every worker that may receive a chapter's pages must run byte-identical models and preprocessing; otherwise a chapter can be assembled from pages produced by different engines, leaving a visible seam.
 
 Because the spool is per-replica, **all of a chapter's page RPCs must reach the same server instance**: the manifest, the page fetches and the page uploads have to share one replica. Do not put page streaming behind a load balancer that spreads individual RPCs across replicas — that makes a chapter never complete. Keep each worker pinned to one replica (sticky sessions, a direct connection, or a single-replica deployment), or set `WorkerConfig:UsePageStreaming=false` for the whole-CBZ path, which is replica-agnostic.
 

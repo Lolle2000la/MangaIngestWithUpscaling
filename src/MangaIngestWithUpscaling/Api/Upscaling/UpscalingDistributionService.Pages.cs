@@ -30,9 +30,6 @@ public partial class UpscalingDistributionService
     /// <summary>Upper bound on a single uploaded page, so a malformed or hostile upload cannot fill the spool.</summary>
     private const long MaxPageBytes = 512L * 1024 * 1024;
 
-    /// <summary>Upper bound on the total bytes spooled for one task, so a chapter cannot fill the disk.</summary>
-    private const long MaxTaskBytes = 8L * 1024 * 1024 * 1024;
-
     /// <summary>Upper bound on a detection result payload, so the lifted gRPC body cap cannot be abused.</summary>
     private const int MaxDetectionResultBytes = 16 * 1024 * 1024;
 
@@ -396,11 +393,30 @@ public partial class UpscalingDistributionService
                 };
             }
 
+            if (written == 0)
+            {
+                return new UploadPageResponse
+                {
+                    Success = false,
+                    Message = "The page upload contained no data.",
+                    TaskId = taskId,
+                    PageIndex = pageIndex,
+                    Terminal = true,
+                };
+            }
+
             try
             {
                 await pageFile!.DisposeAsync();
                 pageFile = null;
-                if (pageStreamSpool.GetTotalBytes(session) + written > MaxTaskBytes)
+                CommitPageResult commitResult = pageStreamSpool.TryCommitPage(
+                    session,
+                    pageContext!.Identity,
+                    pageIndex,
+                    tempPath!,
+                    written
+                );
+                if (commitResult == CommitPageResult.OverBudget)
                 {
                     return new UploadPageResponse
                     {
@@ -412,15 +428,7 @@ public partial class UpscalingDistributionService
                     };
                 }
 
-                if (
-                    !pageStreamSpool.TryCommitPage(
-                        session,
-                        pageContext!.Identity,
-                        pageIndex,
-                        tempPath!,
-                        written
-                    )
-                )
+                if (commitResult == CommitPageResult.IdentityMismatch)
                 {
                     // The chapter or profile changed while this page was in flight; drop it and let
                     // the worker restart against the new identity.
@@ -674,21 +682,24 @@ public partial class UpscalingDistributionService
             throw;
         }
 
-        if (
-            !pageStreamSpool.TryCommitPage(
-                session,
-                pageContext.Identity,
-                request.PageIndex,
-                resultTemp
-            )
-        )
+        CommitPageResult commitResult = pageStreamSpool.TryCommitPage(
+            session,
+            pageContext.Identity,
+            request.PageIndex,
+            resultTemp,
+            resultBytes.Length
+        );
+        if (commitResult != CommitPageResult.Committed)
         {
             DeleteTempQuietly(resultTemp);
 
             return new UploadDetectionResultResponse
             {
                 Success = false,
-                Message = "The chapter changed; request a new manifest",
+                Message =
+                    commitResult == CommitPageResult.OverBudget
+                        ? $"Task {request.TaskId} exceeds the maximum spooled size."
+                        : "The chapter changed; request a new manifest",
             };
         }
 
@@ -846,7 +857,10 @@ public partial class UpscalingDistributionService
         );
         if (
             task is null
-            || task.Status is PersistedTaskStatus.Canceled or PersistedTaskStatus.Completed
+            || task.Status
+                is PersistedTaskStatus.Canceled
+                    or PersistedTaskStatus.Completed
+                    or PersistedTaskStatus.Failed
         )
         {
             pageContextCache.Remove(taskId);

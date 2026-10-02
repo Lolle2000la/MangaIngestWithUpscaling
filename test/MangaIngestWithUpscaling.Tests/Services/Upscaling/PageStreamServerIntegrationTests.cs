@@ -5,6 +5,7 @@ using System.Security.Claims;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using Google.Protobuf;
 using Grpc.Net.Client;
 using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.Data;
@@ -38,6 +39,8 @@ using Xunit;
 using RemotePageManifestRequest = remote::MangaIngestWithUpscaling.Api.Upscaling.PageManifestRequest;
 using RemotePageManifestResponse = remote::MangaIngestWithUpscaling.Api.Upscaling.PageManifestResponse;
 using RemotePageStreamClient = remote::MangaIngestWithUpscaling.RemoteWorker.Background.PageStreamClient;
+using RemoteUploadPageChunk = remote::MangaIngestWithUpscaling.Api.Upscaling.UploadPageChunk;
+using RemoteUploadPageResponse = remote::MangaIngestWithUpscaling.Api.Upscaling.UploadPageResponse;
 using RemoteUpscalingServiceClient = remote::MangaIngestWithUpscaling.Api.Upscaling.UpscalingService.UpscalingServiceClient;
 using SharedCompressionFormat = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat;
 using SharedScaleFactor = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.ScaleFactor;
@@ -196,6 +199,75 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
             TestContext.Current.CancellationToken
         );
         Assert.Equal(PersistedTaskStatus.Completed, task.Status);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task UploadPage_RejectsATruncatedStreamWithoutTheFinalChunk()
+    {
+        var client = new RemoteUpscalingServiceClient(_channel);
+        RemotePageManifestResponse manifest = await client.GetPageManifestAsync(
+            new RemotePageManifestRequest { TaskId = _taskId },
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        using var call = client.UploadPage(
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = _taskId,
+                PageIndex = 0,
+                ChunkNumber = 0,
+                Chunk = ByteString.CopyFrom(new byte[] { 1, 2, 3 }),
+                ContentIdentity = manifest.TaskIdentity,
+            }
+        );
+        // No IsLast terminator: a gracefully-closed but truncated stream must be rejected rather
+        // than committed as a whole page.
+        await call.RequestStream.CompleteAsync();
+        RemoteUploadPageResponse response = await call.ResponseAsync;
+
+        Assert.False(response.Success);
+        Assert.Contains("final chunk", response.Message);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task UploadPage_RejectsAStaleIdentityOverTheRpcBoundary()
+    {
+        var client = new RemoteUpscalingServiceClient(_channel);
+
+        using var call = client.UploadPage(
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = _taskId,
+                PageIndex = 0,
+                ChunkNumber = 0,
+                Chunk = ByteString.CopyFrom(new byte[] { 1, 2, 3 }),
+                ContentIdentity = "not-the-current-identity",
+            }
+        );
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = _taskId,
+                PageIndex = 0,
+                ChunkNumber = 1,
+                Chunk = ByteString.Empty,
+                IsLast = true,
+                ContentIdentity = "not-the-current-identity",
+            }
+        );
+        await call.RequestStream.CompleteAsync();
+        RemoteUploadPageResponse response = await call.ResponseAsync;
+
+        Assert.False(response.Success);
+        Assert.Contains("changed", response.Message);
     }
 
     [Fact]

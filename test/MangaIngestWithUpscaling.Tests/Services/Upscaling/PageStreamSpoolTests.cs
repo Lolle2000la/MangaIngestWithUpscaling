@@ -46,8 +46,46 @@ public class PageStreamSpoolTests
         // A concurrent manifest changes the identity, resetting the shared session in place.
         _spool.GetOrCreateSession(11, "new", 1);
 
-        Assert.False(_spool.TryCommitPage(session, "old", 0, temp));
+        Assert.Equal(
+            CommitPageResult.IdentityMismatch,
+            _spool.TryCommitPage(session, "old", 0, temp)
+        );
         Assert.False(_spool.IsComplete(session));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void TryCommitPage_RejectsWhenOverBudget()
+    {
+        PageStreamSession session = _spool.GetOrCreateSession(13, "identity", 2);
+
+        FileStream first = _spool.BeginPageWrite(session, 0, out string firstTemp);
+        first.Dispose();
+        Assert.Equal(
+            CommitPageResult.Committed,
+            _spool.TryCommitPage(session, "identity", 0, firstTemp, PageStreamSpool.MaxTaskBytes)
+        );
+
+        FileStream second = _spool.BeginPageWrite(session, 1, out string secondTemp);
+        second.Dispose();
+        Assert.Equal(
+            CommitPageResult.OverBudget,
+            _spool.TryCommitPage(session, "identity", 1, secondTemp, 1)
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void TryBeginAssembly_RejectsAfterRemoval()
+    {
+        PageStreamSession session = _spool.GetOrCreateSession(14, "identity", 1);
+        Assert.True(_spool.TryBeginAssembly(session));
+
+        _spool.Remove(14);
+        _spool.EndAssembly(session);
+
+        // Removal is terminal: a late upload must not re-run assembly on the deleted spool.
+        Assert.False(_spool.TryBeginAssembly(session));
     }
 
     [Fact]
@@ -105,6 +143,46 @@ public class PageStreamSpoolTests
 
             using ZipArchive output = ZipFile.OpenRead(destination);
             Assert.Equal(new byte[] { 7, 8, 9 }, ReadEntry(output, "ch1/001.webp"));
+            Assert.NotNull(output.GetEntry("ComicInfo.xml"));
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void Assemble_SkipsDuplicateSourceEntries()
+    {
+        string directory = Directory.CreateTempSubdirectory("spool_dup").FullName;
+        try
+        {
+            string path = Path.Combine(directory, "source.cbz");
+            using (ZipArchive zip = ZipFile.Open(path, ZipArchiveMode.Create))
+            {
+                WriteEntry(zip, "001.jpg", new byte[] { 1, 2, 3 });
+                WriteEntry(zip, "001.jpg", new byte[] { 9, 9, 9 }); // duplicate entry name
+                WriteEntry(zip, "ComicInfo.xml", "<ComicInfo/>"u8.ToArray());
+            }
+
+            // BuildPageDescriptors keeps only the first of a repeated entry name.
+            var pages = new List<SpoolPageDescriptor> { new(0, "001.jpg", "001.webp") };
+            PageStreamSession session = _spool.GetOrCreateSession(20, "identity", 1);
+            string temp;
+            using (FileStream page = _spool.BeginPageWrite(session, 0, out temp))
+            {
+                page.Write(new byte[] { 7, 8, 9 });
+            }
+
+            _spool.CommitPage(session, 0, temp);
+
+            string destination = Path.Combine(directory, "out.cbz");
+            // The duplicate source entry must be skipped, not treated as an output-name collision.
+            _spool.Assemble(session, path, pages, destination);
+
+            using ZipArchive output = ZipFile.OpenRead(destination);
+            Assert.Equal(new byte[] { 7, 8, 9 }, ReadEntry(output, "001.webp"));
             Assert.NotNull(output.GetEntry("ComicInfo.xml"));
         }
         finally

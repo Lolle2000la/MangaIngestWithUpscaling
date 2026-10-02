@@ -122,13 +122,17 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                     _ = RequestCancelAsync(request.Id);
                 });
 
-                Task monitor = MonitorTimeoutAsync(job, timeout);
+                // Only monitor inactivity when a timeout was supplied; a null timeout would
+                // otherwise leave an infinite, never-completing task alive for the process.
+                Task? monitor = timeout is null ? null : MonitorTimeoutAsync(job, timeout);
 
-                Task completed = await Task.WhenAny(
-                    job.Completion.Task,
-                    monitor,
-                    cancelSignal.Task
-                );
+                List<Task> waiters = [job.Completion.Task, cancelSignal.Task];
+                if (monitor is not null)
+                {
+                    waiters.Add(monitor);
+                }
+
+                Task completed = await Task.WhenAny(waiters);
 
                 if (completed == cancelSignal.Task)
                 {
@@ -158,7 +162,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                     throw new OperationCanceledException(cancellationToken);
                 }
 
-                if (completed == monitor)
+                if (monitor is not null && completed == monitor)
                 {
                     await monitor; // throws TimeoutException after escalating cancel/kill
                 }
@@ -322,17 +326,16 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                     await monitor; // throws TimeoutException after escalating cancel/kill
                 }
 
-                // Surface the worker job's own outcome first: when the process dies mid-chapter the
-                // producer fails consequentially (broken pipe after the process died), and the job's
-                // fault carries the exit code and captured stderr that identify the crash. Only when
-                // the job did not fault is the producer error the real cause.
-                if (job.Completion.Task.IsFaulted)
+                // Surface a worker *crash* (exit code + captured stderr) rather than the producer's
+                // consequential broken-pipe error. A producer failure that merely induced a
+                // "cancelled" done is not a crash, so the producer error is the real cause there.
+                if (job.WorkerExited)
                 {
                     if (producerError is not null)
                     {
                         _logger.LogWarning(
                             producerError,
-                            "Streaming chapter {JobId} failed while the worker job also faulted; surfacing the worker error.",
+                            "Streaming chapter {JobId} failed while the worker process exited; surfacing the worker error.",
                             request.Id
                         );
                     }
@@ -455,19 +458,22 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
         try
         {
-            await SendLineAsync(
-                JsonSerializer.Serialize(new WorkerCommand("release_cache"), WorkerJson.Options),
-                cancellationToken
-            );
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Failed to send the GPU cache release request to the worker.");
-            return false;
-        }
+            try
+            {
+                await SendLineAsync(
+                    JsonSerializer.Serialize(
+                        new WorkerCommand("release_cache"),
+                        WorkerJson.Options
+                    ),
+                    cancellationToken
+                );
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Failed to send the GPU cache release request to the worker.");
+                return false;
+            }
 
-        try
-        {
             // A healthy idle worker answers immediately; the timeout only guards against a
             // wedged process. The worker may legitimately answer "busy" (job started in the
             // meantime), which still counts as an acknowledged reply.
@@ -485,6 +491,8 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         }
         finally
         {
+            // Clear on every exit path: a failed send must not leave the in-flight guard set for the
+            // singleton's lifetime, which would silently disable all later releases.
             lock (_stateLock)
             {
                 if (_cacheReleaseTcs == tcs)
@@ -682,11 +690,16 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     private async Task KillWorkerAsync()
     {
         Process? process;
+        TaskCompletionSource? cacheRelease;
         lock (_stateLock)
         {
             process = _process;
             _shuttingDown = true;
+            cacheRelease = _cacheReleaseTcs;
+            _cacheReleaseTcs = null;
         }
+
+        cacheRelease?.TrySetCanceled();
 
         if (process is null)
         {
@@ -1165,6 +1178,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
         TaskCompletionSource? readyTcs;
         StreamWriter? stdin;
+        TaskCompletionSource? cacheRelease;
         lock (_stateLock)
         {
             // A stale process (already replaced by a newer spawn) must not fault the new
@@ -1179,12 +1193,17 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             _readyTcs = null;
             stdin = _stdin;
             _stdin = null;
+            cacheRelease = _cacheReleaseTcs;
+            _cacheReleaseTcs = null;
         }
 
         TryDispose(stdin);
+        // Unblock a pending GPU-cache release so its in-flight guard is not left set.
+        cacheRelease?.TrySetCanceled();
 
         foreach (WorkerJob job in _jobs.Values.ToArray())
         {
+            job.MarkWorkerExited();
             job.Fail(
                 $"Upscale worker process exited unexpectedly (exit code {detail}).{stderrSection}"
             );
@@ -1282,6 +1301,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     {
         private long _lastEventTicks;
         private volatile bool _allPagesProcessed;
+        private volatile bool _workerExited;
 
         public WorkerJob(
             string id,
@@ -1306,6 +1326,11 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         public bool AllPagesProcessed => _allPagesProcessed;
 
         public void MarkAllPagesProcessed() => _allPagesProcessed = true;
+
+        /// <summary>True once the worker process has exited (as opposed to a job-level error).</summary>
+        public bool WorkerExited => _workerExited;
+
+        public void MarkWorkerExited() => _workerExited = true;
 
         public DateTime LastEventUtc =>
             new(Interlocked.Read(ref _lastEventTicks), DateTimeKind.Utc);

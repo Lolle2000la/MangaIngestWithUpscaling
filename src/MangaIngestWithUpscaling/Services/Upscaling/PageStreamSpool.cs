@@ -7,6 +7,19 @@ namespace MangaIngestWithUpscaling.Services.Upscaling;
 /// <summary>A page of a streamed chapter, in source-archive order.</summary>
 public sealed record SpoolPageDescriptor(int Index, string SourceName, string OutputName);
 
+/// <summary>Outcome of committing a spooled page.</summary>
+public enum CommitPageResult
+{
+    /// <summary>The page was moved into place and recorded.</summary>
+    Committed,
+
+    /// <summary>The session's identity no longer matches the caller's; the page was dropped.</summary>
+    IdentityMismatch,
+
+    /// <summary>Committing the page would exceed <see cref="PageStreamSpool.MaxTaskBytes"/>.</summary>
+    OverBudget,
+}
+
 /// <summary>
 /// Process-local spool of upscaled pages for page-streamed tasks. Pages are written atomically as
 /// they arrive and the final CBZ is assembled from the source archive plus the spooled pages, so a
@@ -15,9 +28,16 @@ public sealed record SpoolPageDescriptor(int Index, string SourceName, string Ou
 ///
 /// The spool is keyed by a content identity; a task re-dispatched with a different identity (source
 /// or profile changed) has its spool discarded so old and new bytes are never mixed.
+///
+/// The identity covers the source file and the upscaler profile, not the engine: every worker that
+/// may be handed a chapter's pages must run byte-identical models and preprocessing, or the
+/// assembled CBZ can contain a visible seam where the workers changed.
 /// </summary>
 public sealed class PageStreamSpool
 {
+    /// <summary>Upper bound on the total bytes spooled for one task, so a chapter cannot fill the disk.</summary>
+    public const long MaxTaskBytes = 8L * 1024 * 1024 * 1024;
+
     private readonly ConcurrentDictionary<int, PageStreamSession> _sessions = new();
     private readonly ILogger<PageStreamSpool> _logger;
 
@@ -43,12 +63,7 @@ public sealed class PageStreamSpool
     {
         PageStreamSession session = _sessions.GetOrAdd(
             taskId,
-            _ => new PageStreamSession(
-                taskId,
-                identity,
-                pageCount,
-                Path.Combine(SpoolRoot, taskId.ToString())
-            )
+            _ => new PageStreamSession(taskId, identity, pageCount, NewSessionDirectory(taskId))
         );
 
         lock (session.Gate)
@@ -60,7 +75,9 @@ public sealed class PageStreamSpool
                     taskId,
                     session.Completed.Count
                 );
-                session.Reset(identity, pageCount, Path.Combine(SpoolRoot, taskId.ToString()));
+                // A fresh directory per reset: the discarded session's directory is unique, so a
+                // stale finalizer deleting it can never wipe the new session's files.
+                session.Reset(identity, pageCount, NewSessionDirectory(taskId));
             }
             else
             {
@@ -72,6 +89,13 @@ public sealed class PageStreamSpool
 
         return session;
     }
+
+    /// <summary>
+    /// A directory unique to one session instance, so deleting a removed or swept session can never
+    /// wipe a freshly created session for the same task id.
+    /// </summary>
+    private string NewSessionDirectory(int taskId) =>
+        Path.Combine(SpoolRoot, $"{taskId}_{Guid.NewGuid():N}");
 
     public IReadOnlyCollection<int> GetCompletedPages(PageStreamSession session)
     {
@@ -130,9 +154,10 @@ public sealed class PageStreamSpool
     /// Atomically moves a completed page into place and records it as done, but only while the
     /// session still holds <paramref name="expectedIdentity"/>. A session whose identity was reset
     /// by a concurrent manifest is stale, so the page is dropped instead of being mixed into the
-    /// new identity. Returns <c>false</c> when the page was not committed.
+    /// new identity. The per-task byte budget is checked here, under the gate, so two concurrent
+    /// uploads cannot jointly exceed it.
     /// </summary>
-    public bool TryCommitPage(
+    public CommitPageResult TryCommitPage(
         PageStreamSession session,
         string expectedIdentity,
         int pageIndex,
@@ -144,30 +169,43 @@ public sealed class PageStreamSpool
         {
             if (!string.Equals(session.Identity, expectedIdentity, StringComparison.Ordinal))
             {
-                return false;
+                return CommitPageResult.IdentityMismatch;
+            }
+
+            // Re-uploading a page replaces its bytes; adjust by the delta so legitimate retries do
+            // not spuriously trip the per-task budget.
+            long previous = session.PageSizes.TryGetValue(pageIndex, out long prev) ? prev : 0;
+            if (session.TotalBytes - previous + size > MaxTaskBytes)
+            {
+                return CommitPageResult.OverBudget;
             }
 
             File.Move(tempPath, session.PagePath(pageIndex), overwrite: true);
             session.Completed.Add(pageIndex);
-            // Re-uploading a page replaces its bytes; adjust by the delta so legitimate retries do
-            // not spuriously trip the per-task budget.
-            long previous = session.PageSizes.TryGetValue(pageIndex, out long prev) ? prev : 0;
             session.PageSizes[pageIndex] = size;
             session.TotalBytes += size - previous;
             session.LastTouchedUtc = DateTime.UtcNow;
-            return true;
+            return CommitPageResult.Committed;
         }
     }
 
     /// <summary>Atomically moves a completed page into place and records it as done.</summary>
-    public void CommitPage(PageStreamSession session, int pageIndex, string tempPath) =>
-        TryCommitPage(
+    public void CommitPage(PageStreamSession session, int pageIndex, string tempPath)
+    {
+        CommitPageResult result = TryCommitPage(
             session,
             session.Identity,
             pageIndex,
             tempPath,
             new FileInfo(tempPath).Length
         );
+        if (result != CommitPageResult.Committed)
+        {
+            throw new InvalidOperationException(
+                $"Failed to commit page {pageIndex} for task {session.TaskId}: {result}."
+            );
+        }
+    }
 
     /// <summary>Bytes committed to the session so far, for the per-task spool budget.</summary>
     public long GetTotalBytes(PageStreamSession session)
@@ -197,7 +235,8 @@ public sealed class PageStreamSpool
         lock (session.Gate)
         {
             if (
-                session.Assembling
+                session.Finalized
+                || session.Assembling
                 || !string.Equals(session.Identity, expectedIdentity, StringComparison.Ordinal)
             )
             {
@@ -285,12 +324,19 @@ public sealed class PageStreamSpool
 
         using ZipArchive output = ZipFile.Open(destinationPath, ZipArchiveMode.Create);
 
-        // A malformed archive can repeat an entry name; keep only the first output entry per name.
+        // A malformed archive can repeat an entry name; the first occurrence wins, matching
+        // BuildPageDescriptors and GetPages, so a duplicate is skipped here instead of colliding.
+        var handledSources = new HashSet<string>(StringComparer.Ordinal);
         var written = new HashSet<string>(StringComparer.Ordinal);
         foreach (ZipArchiveEntry entry in source.Entries)
         {
             // Skip directory entries (zip stores them with an empty name).
             if (string.IsNullOrEmpty(entry.Name))
+            {
+                continue;
+            }
+
+            if (!handledSources.Add(entry.FullName))
             {
                 continue;
             }
@@ -306,6 +352,8 @@ public sealed class PageStreamSpool
                     );
                 }
 
+                // BuildPageDescriptors disambiguates distinct sources, so this only fires if that
+                // invariant is ever broken; fail loudly rather than silently dropping a page.
                 if (!written.Add(page.OutputName))
                 {
                     throw new InvalidOperationException(
@@ -320,11 +368,6 @@ public sealed class PageStreamSpool
             }
             else
             {
-                if (!written.Add(entry.FullName))
-                {
-                    continue;
-                }
-
                 ZipArchiveEntry outputEntry = output.CreateEntry(entry.FullName);
                 using Stream input = entry.Open();
                 using Stream target = outputEntry.Open();
@@ -386,7 +429,13 @@ public sealed class PageStreamSpool
     {
         if (_sessions.TryRemove(taskId, out PageStreamSession? session))
         {
-            session.DeleteDirectory(_logger);
+            lock (session.Gate)
+            {
+                // Terminal under the gate: a concurrent TryBeginAssembly must not re-run assembly on
+                // a session whose directory is being deleted.
+                session.Finalized = true;
+                session.DeleteDirectory(_logger);
+            }
         }
     }
 
@@ -405,7 +454,11 @@ public sealed class PageStreamSpool
             if (stale && _sessions.TryRemove(taskId, out PageStreamSession? removed))
             {
                 _logger.LogInformation("Removing stale page spool for task {TaskId}.", taskId);
-                removed.DeleteDirectory(_logger);
+                lock (removed.Gate)
+                {
+                    removed.Finalized = true;
+                    removed.DeleteDirectory(_logger);
+                }
             }
         }
 
@@ -502,6 +555,12 @@ public sealed class PageStreamSession
     /// <summary>Set while a caller is finalizing (assembling) this session.</summary>
     public bool Assembling { get; set; }
 
+    /// <summary>
+    /// Set once the session has been removed (finalized). Blocks any further assembly, so a
+    /// concurrent upload that observed completion cannot re-run assembly on a deleted spool.
+    /// </summary>
+    public bool Finalized { get; set; }
+
     public string PagePath(int pageIndex) => Path.Combine(Directory, $"page_{pageIndex:D5}.bin");
 
     public void Reset(string identity, int pageCount, string directory)
@@ -516,6 +575,7 @@ public sealed class PageStreamSession
         // Clear a stale flag from an assembly that was interrupted before EndAssembly, or the new
         // identity could never finalize.
         Assembling = false;
+        Finalized = false;
     }
 
     public void DeleteDirectory(ILogger? logger = null)

@@ -53,7 +53,21 @@ public class RemoteTaskProcessor(
     private Channel<ProcessedItem>? _toUpload;
     private Channel<FetchedItem>? _toUpscale;
     private Channel<StreamingItem>? _toStream;
-    private int? _uploadInProgressTaskId;
+    private int _uploadTaskIdValue = -1;
+
+    /// <summary>
+    /// Id of the task whose upscaled CBZ is currently being uploaded (whole-CBZ path), or
+    /// <c>null</c>. Backed by a single <see cref="int"/> so reads/writes across the loops are atomic.
+    /// </summary>
+    private int? UploadInProgressTaskId
+    {
+        get
+        {
+            int value = Volatile.Read(ref _uploadTaskIdValue);
+            return value < 0 ? null : value;
+        }
+        set => Volatile.Write(ref _uploadTaskIdValue, value ?? -1);
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -316,8 +330,8 @@ public class RemoteTaskProcessor(
                     if (
                         (CurrentTaskId.HasValue && resp.TaskId == CurrentTaskId.Value)
                         || (
-                            _uploadInProgressTaskId.HasValue
-                            && resp.TaskId == _uploadInProgressTaskId.Value
+                            UploadInProgressTaskId.HasValue
+                            && resp.TaskId == UploadInProgressTaskId.Value
                         )
                     )
                     {
@@ -990,7 +1004,7 @@ public class RemoteTaskProcessor(
                 break;
             }
 
-            _uploadInProgressTaskId = item.TaskId;
+            UploadInProgressTaskId = item.TaskId;
 
             if (item.PersistentKeepAliveCts.IsCancellationRequested)
             {
@@ -1012,7 +1026,7 @@ public class RemoteTaskProcessor(
                 catch { }
                 item.PersistentKeepAliveCts.Dispose();
 
-                _uploadInProgressTaskId = null;
+                UploadInProgressTaskId = null;
                 continue;
             }
 
@@ -1093,7 +1107,7 @@ public class RemoteTaskProcessor(
                 catch { }
                 item.PersistentKeepAliveCts.Dispose();
 
-                _uploadInProgressTaskId = null;
+                UploadInProgressTaskId = null;
             }
         }
     }
@@ -1174,6 +1188,18 @@ public class RemoteTaskProcessor(
             catch (OperationCanceledException)
             {
                 // Normal user interruption or task cancellation.
+            }
+            catch (Exception ex) when (ex is RpcException rpc && IsTransient(rpc.StatusCode))
+            {
+                // A transport blip (unavailable/deadline exceeded) must not consume the retry budget
+                // or drop the spool: reporting a failure makes the server delete the already-upscaled
+                // pages. Let the keep-alive lapse instead, so the server requeues the task with the
+                // spool intact and the worker resumes from the first missing page.
+                logger.LogWarning(
+                    ex,
+                    "Task {TaskId} lost its connection during page streaming; letting the server requeue it.",
+                    item.TaskId
+                );
             }
             catch (Exception ex)
             {
