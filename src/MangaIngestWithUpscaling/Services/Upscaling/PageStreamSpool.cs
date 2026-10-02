@@ -115,36 +115,12 @@ public sealed class PageStreamSpool
         Path.Combine(SpoolRoot, $"{taskId}_{Guid.NewGuid():N}");
 
     /// <summary>
-    /// Returns the existing session for a task without resetting it, creating one if none exists.
-    /// Used by uploads: the manifest is the authoritative place where a changed content or engine
-    /// identity resets the spool, so a stale in-flight upload must be rejected (see
-    /// <see cref="TryCommitPage"/>) rather than reset the chapter out from under the current engine.
+    /// Returns the session for a task if the manifest for this replica created one. An upload that
+    /// finds no session is on the wrong replica (or skipped the manifest); that must be surfaced
+    /// rather than silently spooled into a session that will never finalize.
     /// </summary>
-    public PageStreamSession GetOrCreateSessionForUpload(
-        int taskId,
-        string identity,
-        string engineIdentity,
-        int pageCount
-    )
-    {
-        PageStreamSession session = _sessions.GetOrAdd(
-            taskId,
-            _ => new PageStreamSession(
-                taskId,
-                identity,
-                engineIdentity,
-                pageCount,
-                NewSessionDirectory(taskId)
-            )
-        );
-
-        lock (session.Gate)
-        {
-            session.LastTouchedUtc = DateTime.UtcNow;
-        }
-
-        return session;
-    }
+    public PageStreamSession? TryGetSession(int taskId) =>
+        _sessions.TryGetValue(taskId, out PageStreamSession? session) ? session : null;
 
     public IReadOnlyCollection<int> GetCompletedPages(PageStreamSession session)
     {
@@ -276,6 +252,38 @@ public sealed class PageStreamSpool
         lock (session.Gate)
         {
             return session.TotalBytes;
+        }
+    }
+
+    /// <summary>
+    /// Reserves in-flight bytes for a page that is still streaming, so many concurrent uploads
+    /// cannot each write up to <c>MaxPageBytes</c> to temp before any committed-byte check runs.
+    /// Returns false when the reservation would exceed <see cref="MaxTaskBytes"/>.
+    /// </summary>
+    public bool TryReserveInFlight(PageStreamSession session, long bytes)
+    {
+        lock (session.Gate)
+        {
+            if (session.TotalBytes + session.InFlightBytes + bytes > MaxTaskBytes)
+            {
+                return false;
+            }
+
+            session.InFlightBytes += bytes;
+            return true;
+        }
+    }
+
+    /// <summary>Releases a reservation made by <see cref="TryReserveInFlight"/>.</summary>
+    public void ReleaseInFlight(PageStreamSession session, long bytes)
+    {
+        lock (session.Gate)
+        {
+            session.InFlightBytes -= bytes;
+            if (session.InFlightBytes < 0)
+            {
+                session.InFlightBytes = 0;
+            }
         }
     }
 
@@ -623,6 +631,9 @@ public sealed class PageStreamSession
     /// <summary>Bytes committed to this session, for the per-task spool budget.</summary>
     public long TotalBytes { get; set; }
 
+    /// <summary>Bytes reserved by uploads that are still streaming, counted against the budget.</summary>
+    public long InFlightBytes { get; set; }
+
     /// <summary>Committed byte count per page index, so a re-upload replaces rather than adds.</summary>
     public Dictionary<int, long> PageSizes { get; } = new();
 
@@ -647,6 +658,7 @@ public sealed class PageStreamSession
         Completed.Clear();
         PageSizes.Clear();
         TotalBytes = 0;
+        InFlightBytes = 0;
         // Clear a stale flag from an assembly that was interrupted before EndAssembly, or the new
         // identity could never finalize.
         Assembling = false;

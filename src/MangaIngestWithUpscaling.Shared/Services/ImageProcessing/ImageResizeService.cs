@@ -138,6 +138,54 @@ public class ImageResizeService(
         }
     }
 
+    public async Task PreprocessImageInPlaceAsync(
+        string imagePath,
+        ImagePreprocessingOptions options,
+        CancellationToken cancellationToken
+    )
+    {
+        // Reuse the directory pipeline (which owns the per-image logic) on a private copy, then move
+        // the single result back over the original so the caller keeps the same path.
+        string tempDir = Path.Combine(
+            Path.GetTempPath(),
+            $"manga_preprocess_page_{Guid.NewGuid()}"
+        );
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            string workingPath = Path.Combine(tempDir, Path.GetFileName(imagePath));
+            File.Copy(imagePath, workingPath, overwrite: true);
+
+            await ProcessImagesInDirectory(tempDir, options, cancellationToken);
+
+            string[] results = Directory.GetFiles(tempDir, "*", SearchOption.AllDirectories);
+            if (results.Length == 1)
+            {
+                File.Move(results[0], imagePath, overwrite: true);
+            }
+            else if (results.Length == 0)
+            {
+                logger.LogWarning(
+                    "Preprocessing {ImagePath} produced no output; keeping the original.",
+                    imagePath
+                );
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    $"Preprocessing {imagePath} produced {results.Length} files for one image."
+                );
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, true);
+            }
+        }
+    }
+
     public Task<long> GetMaxPixelCountFromCbzAsync(
         string cbzPath,
         CancellationToken cancellationToken

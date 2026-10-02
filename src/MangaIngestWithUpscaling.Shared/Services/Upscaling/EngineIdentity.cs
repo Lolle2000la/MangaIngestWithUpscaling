@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using MangaIngestWithUpscaling.Shared.Configuration;
@@ -15,10 +16,12 @@ namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 public static class EngineIdentity
 {
     /// <summary>
-    /// Identity of the upscaler: the preprocessing configuration plus the model files under
-    /// <see cref="UpscalerConfig.ModelsDirectory"/>. Models are fingerprinted by relative path and
-    /// size — stable across workers with identical models and far cheaper than hashing the ~gigabytes
-    /// of weights, which a same-length but different-content model would rarely evade.
+    /// Identity of the upscaler: the preprocessing configuration, the app/engine build, the resolved
+    /// workflow (appstate2.json) and the model files under <see cref="UpscalerConfig.ModelsDirectory"/>.
+    /// Device selection is deliberately excluded: a CUDA box and a ROCm box with the same models and
+    /// preprocessing produce the same pixels, so a cross-device hand-off must not discard the spool.
+    /// Models are fingerprinted by relative path and size — stable across workers with identical
+    /// models and far cheaper than hashing the ~gigabytes of weights.
     /// </summary>
     public static string ForUpscaler(UpscalerConfig config)
     {
@@ -37,10 +40,6 @@ public static class EngineIdentity
             .Append(config.UseFp16)
             .Append('|')
             .Append(config.UseCPU)
-            .Append('|')
-            .Append((int)config.PreferredGpuBackend)
-            .Append('|')
-            .Append(config.SelectedDeviceIndex)
             .Append('|');
 
         foreach (ImageFormatConversionRule rule in config.ImageFormatConversionRules)
@@ -53,6 +52,9 @@ public static class EngineIdentity
                 .Append(rule.Quality?.ToString(CultureInfo.InvariantCulture) ?? "-")
                 .Append(',');
         }
+
+        material.Append('|').Append(BuildVersion()).Append('|');
+        AppendFileContentHash(material, Path.Combine(AppContext.BaseDirectory, "appstate2.json"));
 
         material.Append('|');
         AppendDirectoryFingerprint(material, config.ModelsDirectory);
@@ -113,4 +115,12 @@ public static class EngineIdentity
 
     private static string Hash(string material) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
+
+    /// <summary>The build of the converter, so a changed build invalidates a chapter's spool.</summary>
+    private static string BuildVersion() =>
+        typeof(EngineIdentity)
+            .Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion
+        ?? typeof(EngineIdentity).Assembly.GetName().Version?.ToString()
+        ?? "unknown";
 }

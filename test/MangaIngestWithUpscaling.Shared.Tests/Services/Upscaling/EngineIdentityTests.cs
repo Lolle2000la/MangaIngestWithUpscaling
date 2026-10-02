@@ -51,5 +51,19 @@ public class EngineIdentityTests
         }
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ForUpscaler_IgnoresDeviceSelection()
+    {
+        // A CUDA box and a ROCm box with the same models/preprocessing produce the same pixels, so
+        // device selection must not invalidate a chapter's spool on a cross-device hand-off.
+        UpscalerConfig cuda = Config();
+        UpscalerConfig rocm = Config();
+        rocm.PreferredGpuBackend = GpuBackend.ROCm;
+        rocm.SelectedDeviceIndex = 3;
+
+        Assert.Equal(EngineIdentity.ForUpscaler(cuda), EngineIdentity.ForUpscaler(rocm));
+    }
+
     private static UpscalerConfig Config() => new() { ModelsDirectory = "/nonexistent/models" };
 }

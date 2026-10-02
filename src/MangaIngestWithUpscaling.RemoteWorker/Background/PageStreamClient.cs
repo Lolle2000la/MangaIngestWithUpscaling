@@ -8,6 +8,7 @@ using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
+using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -530,6 +531,20 @@ public sealed class PageStreamClient(
             cancellationToken: cancellationToken
         );
 
+        // Preprocess each page in place so a streamed chapter matches the whole-CBZ path, which
+        // preprocesses the archive before upscaling (max dimension, format conversion, smart
+        // downscale). A no-op when preprocessing is disabled.
+        IServiceScope? preprocessingScope = null;
+        IImageResizeService? resizeService = null;
+        ImagePreprocessingOptions? preprocessingOptions = null;
+        if (ImagePreprocessingOptions.IsEnabled(upscalerConfig.Value))
+        {
+            preprocessingScope = scopeFactory.CreateScope();
+            resizeService =
+                preprocessingScope.ServiceProvider.GetRequiredService<IImageResizeService>();
+            preprocessingOptions = ImagePreprocessingOptions.FromConfig(upscalerConfig.Value);
+        }
+
         FileStream? file = null;
         int currentIndex = -1;
         string currentName = string.Empty;
@@ -572,6 +587,16 @@ public sealed class PageStreamClient(
                     await file!.DisposeAsync();
                     file = null;
                     yielded.Add(currentIndex);
+
+                    if (resizeService is not null)
+                    {
+                        await resizeService.PreprocessImageInPlaceAsync(
+                            currentPath,
+                            preprocessingOptions!,
+                            cancellationToken
+                        );
+                    }
+
                     yield return new ChapterPage(currentIndex, currentName, currentPath);
                 }
             }
@@ -582,6 +607,8 @@ public sealed class PageStreamClient(
             {
                 await file.DisposeAsync();
             }
+
+            preprocessingScope?.Dispose();
         }
 
         // The server silently skips a page it cannot find; if any requested page never arrived the
@@ -671,6 +698,16 @@ public sealed class PageStreamClient(
             UploadPageResponse response = await call.ResponseAsync;
             if (!response.Success)
             {
+                // A non-terminal rejection means "restart the chapter" (content/engine changed, or
+                // the request hit a replica without the spool); reporting a failure would delete the
+                // spool. Only a terminal rejection is a hard failure.
+                if (!response.Terminal)
+                {
+                    throw new PageStreamRestartException(
+                        $"Page {upload.PageIndex} of task {taskId} was rejected non-terminally: {response.Message}"
+                    );
+                }
+
                 throw new IOException(
                     $"Uploading page {upload.PageIndex} of task {taskId} failed: {response.Message}"
                 );

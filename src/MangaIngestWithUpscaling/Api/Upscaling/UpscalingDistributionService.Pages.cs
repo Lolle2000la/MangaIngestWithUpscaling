@@ -258,6 +258,7 @@ public partial class UpscalingDistributionService
         string? tempPath = null;
         FileStream? pageFile = null;
         long written = 0;
+        long reserved = 0;
         bool sawChunk = false;
         bool sawLast = false;
         bool committed = false;
@@ -347,12 +348,28 @@ public partial class UpscalingDistributionService
                         };
                     }
 
-                    session = pageStreamSpool.GetOrCreateSessionForUpload(
-                        taskId,
-                        pageContext.Identity,
-                        engineIdentity,
-                        pageContext.Pages.Count
-                    );
+                    PageStreamSession? existing = pageStreamSpool.TryGetSession(taskId);
+                    if (existing is null)
+                    {
+                        // The manifest for this chapter was answered by another replica (or was
+                        // never made). Spooling here would never finalize, so reject it loudly and
+                        // non-terminally instead of silently looping forever.
+                        _logger.LogWarning(
+                            "Rejecting an upload for task {TaskId}: no page spool on this server instance. Page streaming requires all of a chapter's RPCs to reach one replica.",
+                            taskId
+                        );
+                        return new UploadPageResponse
+                        {
+                            Success = false,
+                            Message =
+                                "No page spool for this task on this server instance; the chapter must be pinned to one replica",
+                            TaskId = taskId,
+                            PageIndex = pageIndex,
+                            Terminal = false,
+                        };
+                    }
+
+                    session = existing;
                     // Stream straight to the spool file rather than buffering the whole page in
                     // memory: the gRPC body cap is lifted for uploads, so a large or hostile page
                     // must not drive unbounded allocation.
@@ -361,8 +378,8 @@ public partial class UpscalingDistributionService
 
                 if (!chunk.Chunk.IsEmpty)
                 {
-                    written += chunk.Chunk.Length;
-                    if (written > MaxPageBytes)
+                    long length = chunk.Chunk.Length;
+                    if (written + length > MaxPageBytes)
                     {
                         return new UploadPageResponse
                         {
@@ -375,6 +392,22 @@ public partial class UpscalingDistributionService
                         };
                     }
 
+                    // Reserve against the per-task budget before writing, so concurrent uploads
+                    // cannot each fill temp before any committed-byte check runs.
+                    if (!pageStreamSpool.TryReserveInFlight(session, length))
+                    {
+                        return new UploadPageResponse
+                        {
+                            Success = false,
+                            Message = $"Task {taskId} exceeds the maximum spooled size.",
+                            TaskId = taskId,
+                            PageIndex = pageIndex,
+                            Terminal = true,
+                        };
+                    }
+
+                    reserved += length;
+                    written += length;
                     await pageFile!.WriteAsync(chunk.Chunk.Memory, context.CancellationToken);
                 }
 
@@ -484,6 +517,12 @@ public partial class UpscalingDistributionService
             if (pageFile is not null)
             {
                 await pageFile.DisposeAsync();
+            }
+
+            // Release the bytes this upload reserved; the committed page is counted in TotalBytes.
+            if (reserved > 0)
+            {
+                pageStreamSpool.ReleaseInFlight(session, reserved);
             }
 
             if (!committed && tempPath is not null)
@@ -601,12 +640,20 @@ public partial class UpscalingDistributionService
             };
         }
 
-        PageStreamSession session = pageStreamSpool.GetOrCreateSessionForUpload(
-            request.TaskId,
-            pageContext.Identity,
-            request.EngineIdentity,
-            pageContext.Pages.Count
-        );
+        PageStreamSession? session = pageStreamSpool.TryGetSession(request.TaskId);
+        if (session is null)
+        {
+            _logger.LogWarning(
+                "Rejecting a detection result for task {TaskId}: no page spool on this server instance. Page streaming requires all of a chapter's RPCs to reach one replica.",
+                request.TaskId
+            );
+            return new UploadDetectionResultResponse
+            {
+                Success = false,
+                Message =
+                    "No page spool for this task on this server instance; the chapter must be pinned to one replica",
+            };
+        }
 
         if (request.PageIndex < 0 || request.PageIndex >= pageContext.Pages.Count)
         {
@@ -618,8 +665,8 @@ public partial class UpscalingDistributionService
             };
         }
 
-        byte[] resultBytes = Encoding.UTF8.GetBytes(request.ResultJson);
-        if (resultBytes.Length > MaxDetectionResultBytes)
+        // Size-check before allocating the byte array, matching the legacy path.
+        if (Encoding.UTF8.GetByteCount(request.ResultJson) > MaxDetectionResultBytes)
         {
             return new UploadDetectionResultResponse
             {
@@ -628,6 +675,8 @@ public partial class UpscalingDistributionService
                     $"The detection result for page {request.PageIndex} of task {request.TaskId} is too large.",
             };
         }
+
+        byte[] resultBytes = Encoding.UTF8.GetBytes(request.ResultJson);
 
         SplitDetectionResult? detectionResult;
         try

@@ -45,4 +45,19 @@ public interface IImageResizeService
     /// <param name="cbzPath">Path to the CBZ file</param>
     /// <param name="cancellationToken">Cancellation token</param>
     Task<long> GetMaxPixelCountFromCbzAsync(string cbzPath, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Applies the same per-image preprocessing as <see cref="CreatePreprocessedTempCbzAsync"/>
+    /// (max dimension, format conversion, smart downscale) to a single image file, overwriting it
+    /// in place. Used by the page-streaming path so a streamed chapter matches the whole-CBZ path,
+    /// which preprocesses the whole archive before upscaling.
+    /// </summary>
+    /// <param name="imagePath">Path to the image to preprocess (overwritten with the result)</param>
+    /// <param name="options">Preprocessing options to apply</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    Task PreprocessImageInPlaceAsync(
+        string imagePath,
+        ImagePreprocessingOptions options,
+        CancellationToken cancellationToken
+    );
 }

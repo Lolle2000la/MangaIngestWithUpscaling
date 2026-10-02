@@ -86,7 +86,7 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         new(
             worker,
             Substitute.For<IServiceScopeFactory>(),
-            Options.Create(new UpscalerConfig()),
+            Options.Create(new UpscalerConfig { ImageFormatConversionRules = [] }),
             StubEngineIdentity(),
             Substitute.For<ILogger<RemotePageStreamClient>>()
         );

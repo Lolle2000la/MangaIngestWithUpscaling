@@ -259,32 +259,14 @@ public class MangaJaNaiUpscaler(
             throw new FileNotFoundException(localizer["Error_InputFileNotFound"], inputPath);
         }
 
-        bool needsPreprocessing =
-            (
-                sharedConfig.Value.MaxDimensionBeforeUpscaling.HasValue
-                && sharedConfig.Value.MaxDimensionBeforeUpscaling.Value > 0
-            )
-            || (
-                sharedConfig.Value.ImageFormatConversionRules != null
-                && sharedConfig.Value.ImageFormatConversionRules.Count > 0
-            )
-            || sharedConfig.Value.EnableSmartDownscale;
-
-        if (!needsPreprocessing)
+        if (!ImagePreprocessingOptions.IsEnabled(sharedConfig.Value))
         {
             return new PassThroughPreprocessedInput(inputPath);
         }
 
-        var preprocessingOptions = new ImagePreprocessingOptions
-        {
-            MaxDimension = sharedConfig.Value.MaxDimensionBeforeUpscaling,
-            FormatConversionRules =
-                sharedConfig.Value.ImageFormatConversionRules
-                ?? new List<ImageFormatConversionRule>(),
-            EnableSmartDownscale = sharedConfig.Value.EnableSmartDownscale,
-            SmartDownscaleThreshold = sharedConfig.Value.SmartDownscaleThreshold,
-            SmartDownscaleFactor = sharedConfig.Value.SmartDownscaleFactor,
-        };
+        ImagePreprocessingOptions preprocessingOptions = ImagePreprocessingOptions.FromConfig(
+            sharedConfig.Value
+        );
 
         logger.LogInformation(
             "Creating temporary preprocessed CBZ (max dimension: {MaxDimension}, conversion rules: {RuleCount}, smart downscale: {SmartDownscale}) for {InputPath}",

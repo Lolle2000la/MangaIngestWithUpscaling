@@ -817,6 +817,13 @@ public class DistributedUpscaleTaskProcessor(
         }
 
         using IServiceScope scope = scopeFactory.CreateScope();
+        var completionLogger = scope.ServiceProvider.GetRequiredService<
+            ILogger<DistributedUpscaleTaskProcessor>
+        >();
+        // A task that completed through the whole-CBZ path (e.g. after a runtime page-streaming
+        // fallback) may still have a partial page spool; drop it now that the task is terminal.
+        DropPageSpool(taskId, completionLogger);
+
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         PersistedTask? dbTask = await dbContext.PersistedTasks.FirstOrDefaultAsync(t =>
             t.Id == taskId

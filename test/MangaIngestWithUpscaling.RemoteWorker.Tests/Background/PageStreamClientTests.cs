@@ -6,6 +6,7 @@ using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.RemoteWorker.Background;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Constants;
+using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -299,6 +300,32 @@ public class PageStreamClientTests
         }
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunAsync_ThrowsARestartExceptionForANonTerminalUploadRejection()
+    {
+        string directory = Directory.CreateTempSubdirectory("page_stream_restart").FullName;
+        try
+        {
+            string source = CreateManyPageSourceCbz(directory, pageCount: 50);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination);
+            server.RestartUploadForPage.Add(0);
+            var client = server.CreateClient();
+            var sut = CreateClient(new FakeWorkerClient());
+
+            // A non-terminal rejection means "restart the chapter", not "fail": the worker surfaces
+            // a restart exception so the caller requeues without dropping the spool.
+            await Assert.ThrowsAsync<PageStreamRestartException>(() =>
+                sut.RunAsync(client, 1, Profile, CancellationToken.None)
+            );
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
     private const string EngineIdentityValue = "test-engine";
 
     private sealed class StubEngineIdentityProvider : IEngineIdentityProvider
@@ -307,14 +334,66 @@ public class PageStreamClientTests
         public string Detector => EngineIdentityValue;
     }
 
-    private static PageStreamClient CreateClient(FakeWorkerClient worker) =>
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunAsync_PreprocessesFetchedPagesWhenEnabled()
+    {
+        string directory = Directory.CreateTempSubdirectory("page_stream_preprocess").FullName;
+        try
+        {
+            string source = CreateSourceCbz(directory);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination);
+            var client = server.CreateClient();
+            var resize = Substitute.For<IImageResizeService>();
+            var sut = CreateClient(
+                new FakeWorkerClient(),
+                CreateScopeFactory(resize),
+                new UpscalerConfig()
+            );
+
+            await sut.RunAsync(client, 1, Profile, CancellationToken.None);
+
+            // Both fetched pages must be preprocessed so a streamed chapter matches the whole-CBZ
+            // path, which preprocesses the archive before upscaling.
+            await resize
+                .Received(2)
+                .PreprocessImageInPlaceAsync(
+                    Arg.Any<string>(),
+                    Arg.Any<ImagePreprocessingOptions>(),
+                    Arg.Any<CancellationToken>()
+                );
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    private static PageStreamClient CreateClient(
+        FakeWorkerClient worker,
+        IServiceScopeFactory? scopeFactory = null,
+        UpscalerConfig? config = null
+    ) =>
         new(
             worker,
-            Substitute.For<IServiceScopeFactory>(),
-            Options.Create(new UpscalerConfig()),
+            scopeFactory ?? CreateScopeFactory(),
+            Options.Create(config ?? new UpscalerConfig { ImageFormatConversionRules = [] }),
             new StubEngineIdentityProvider(),
             Substitute.For<ILogger<PageStreamClient>>()
         );
+
+    private static IServiceScopeFactory CreateScopeFactory(IImageResizeService? resize = null)
+    {
+        resize ??= Substitute.For<IImageResizeService>();
+        var provider = Substitute.For<IServiceProvider>();
+        provider.GetService(typeof(IImageResizeService)).Returns(resize);
+        var scope = Substitute.For<IServiceScope>();
+        scope.ServiceProvider.Returns(provider);
+        var factory = Substitute.For<IServiceScopeFactory>();
+        factory.CreateScope().Returns(scope);
+        return factory;
+    }
 
     private static string CreateSourceCbz(string directory)
     {
@@ -396,6 +475,7 @@ public class PageStreamClientTests
         public List<int> RequestedPages { get; } = new();
         public HashSet<int> OmitFromFetch { get; } = new();
         public HashSet<int> FailUploadForPage { get; } = new();
+        public HashSet<int> RestartUploadForPage { get; } = new();
         public Dictionary<int, byte[]> Uploaded { get; } = new();
         public bool OmitPagesWhenComplete { get; set; }
 
@@ -509,7 +589,25 @@ public class PageStreamClientTests
                 if (FailUploadForPage.Contains(pageIndex))
                 {
                     response.TrySetResult(
-                        new UploadPageResponse { Success = false, Message = "simulated rejection" }
+                        new UploadPageResponse
+                        {
+                            Success = false,
+                            Message = "simulated rejection",
+                            Terminal = true,
+                        }
+                    );
+                    return;
+                }
+
+                if (RestartUploadForPage.Contains(pageIndex))
+                {
+                    response.TrySetResult(
+                        new UploadPageResponse
+                        {
+                            Success = false,
+                            Message = "simulated restart",
+                            Terminal = false,
+                        }
                     );
                     return;
                 }

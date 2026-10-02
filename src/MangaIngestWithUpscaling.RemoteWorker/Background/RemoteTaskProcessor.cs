@@ -32,8 +32,8 @@ public class RemoteTaskProcessor(
     private int _currentTaskIdValue = -1;
 
     /// <summary>
-    /// Id of the task a loop is currently processing, or <c>null</c>. Backed by a single
-    /// <see cref="int"/> so reads/writes from the fetch and upscale/streaming loops are atomic.
+    /// Id of the task the whole-CBZ upscale/apply-splits loop is currently processing, or
+    /// <c>null</c>. Backed by a single <see cref="int"/> so reads/writes across loops are atomic.
     /// </summary>
     private int? CurrentTaskId
     {
@@ -44,6 +44,29 @@ public class RemoteTaskProcessor(
         }
         set => Volatile.Write(ref _currentTaskIdValue, value ?? -1);
     }
+
+    private int _streamingTaskIdValue = -1;
+
+    /// <summary>
+    /// Id of the task the streaming loop is currently processing, or <c>null</c>. Kept separate from
+    /// <see cref="CurrentTaskId"/> so the two loops cannot clear each other's in-flight marker (which
+    /// would make the fetch loop believe the GPU is idle).
+    /// </summary>
+    private int? StreamingTaskId
+    {
+        get
+        {
+            int value = Volatile.Read(ref _streamingTaskIdValue);
+            return value < 0 ? null : value;
+        }
+        set => Volatile.Write(ref _streamingTaskIdValue, value ?? -1);
+    }
+
+    /// <summary>True while any loop is processing a task.</summary>
+    private bool HasInFlightTask => CurrentTaskId.HasValue || StreamingTaskId.HasValue;
+
+    /// <summary>True while any loop is processing <paramref name="taskId"/>.</summary>
+    private bool IsInFlight(int taskId) => CurrentTaskId == taskId || StreamingTaskId == taskId;
 
     private volatile bool _fetchInProgress;
     private bool _pageStreamingAvailable;
@@ -213,6 +236,51 @@ public class RemoteTaskProcessor(
     private static bool IsTransient(StatusCode code) =>
         code is StatusCode.Unavailable or StatusCode.DeadlineExceeded;
 
+    /// <summary>How a page-streaming failure should be handled.</summary>
+    public enum StreamingFailureKind
+    {
+        /// <summary>A transport blip; requeue without reporting (the spool is preserved).</summary>
+        Transient,
+
+        /// <summary>A non-terminal rejection; restart the chapter without reporting.</summary>
+        Restart,
+
+        /// <summary>The server does not implement the page-streaming RPCs; fall back to whole-CBZ.</summary>
+        StreamingUnsupported,
+
+        /// <summary>A deterministic failure; report it (which clears the spool).</summary>
+        Permanent,
+    }
+
+    /// <summary>
+    /// Classifies a page-streaming failure. <see cref="Exception.GetBaseException"/> unwraps the
+    /// producer's "failed to stream" wrapper so a transient fetch failure is not misreported as a
+    /// hard failure, which would delete the spool.
+    /// </summary>
+    public static StreamingFailureKind ClassifyStreamingFailure(Exception ex)
+    {
+        Exception baseEx = ex.GetBaseException();
+        if (baseEx is PageStreamRestartException)
+        {
+            return StreamingFailureKind.Restart;
+        }
+
+        if (baseEx is RpcException rpc)
+        {
+            if (rpc.StatusCode == StatusCode.Unimplemented)
+            {
+                return StreamingFailureKind.StreamingUnsupported;
+            }
+
+            if (IsTransient(rpc.StatusCode))
+            {
+                return StreamingFailureKind.Transient;
+            }
+        }
+
+        return StreamingFailureKind.Permanent;
+    }
+
     /// <summary>
     ///     Handles task reservation, file downloading, and coordination with the upscale pipeline.
     ///     Waits for fetch signals, reserves tasks with prefetch hints, downloads CBZ files,
@@ -272,7 +340,7 @@ public class RemoteTaskProcessor(
                         cancellationToken: stoppingToken
                     );
                     if (
-                        CurrentTaskId.HasValue
+                        HasInFlightTask
                         && peek.TaskId != -1
                         && peek.HasInputSizeBytes
                         && !_coordinator.ShouldClaim(peek.InputSizeBytes)
@@ -327,13 +395,7 @@ public class RemoteTaskProcessor(
                         throw;
                     }
 
-                    if (
-                        (CurrentTaskId.HasValue && resp.TaskId == CurrentTaskId.Value)
-                        || (
-                            UploadInProgressTaskId.HasValue
-                            && resp.TaskId == UploadInProgressTaskId.Value
-                        )
-                    )
+                    if (IsInFlight(resp.TaskId) || UploadInProgressTaskId == resp.TaskId)
                     {
                         logger.LogDebug(
                             "FetchLoop: got in-flight task {taskId}; retrying shortly",
@@ -1137,7 +1199,7 @@ public class RemoteTaskProcessor(
                 break;
             }
 
-            CurrentTaskId = item.TaskId;
+            StreamingTaskId = item.TaskId;
 
             if (item.PersistentKeepAliveCts.IsCancellationRequested)
             {
@@ -1152,7 +1214,7 @@ public class RemoteTaskProcessor(
                 }
                 catch { }
                 item.PersistentKeepAliveCts.Dispose();
-                CurrentTaskId = null;
+                StreamingTaskId = null;
                 // Re-signal the fetch loop, or it would block on _fetchSignals forever and the
                 // worker would stop claiming tasks.
                 _fetchSignals?.Writer.TryWrite(true);
@@ -1189,16 +1251,32 @@ public class RemoteTaskProcessor(
             {
                 // Normal user interruption or task cancellation.
             }
-            catch (Exception ex) when (ex is RpcException rpc && IsTransient(rpc.StatusCode))
+            catch (Exception ex)
+                when (ClassifyStreamingFailure(ex)
+                        is StreamingFailureKind.Transient
+                            or StreamingFailureKind.Restart
+                )
             {
-                // A transport blip (unavailable/deadline exceeded) must not consume the retry budget
-                // or drop the spool: reporting a failure makes the server delete the already-upscaled
+                // A transport blip or a non-terminal rejection must not consume the retry budget or
+                // drop the spool: reporting a failure makes the server delete the already-upscaled
                 // pages. Let the keep-alive lapse instead, so the server requeues the task with the
                 // spool intact and the worker resumes from the first missing page.
                 logger.LogWarning(
                     ex,
-                    "Task {TaskId} lost its connection during page streaming; letting the server requeue it.",
+                    "Task {TaskId} was interrupted during page streaming; letting the server requeue it with the spool intact.",
                     item.TaskId
+                );
+            }
+            catch (Exception ex)
+                when (ClassifyStreamingFailure(ex) is StreamingFailureKind.StreamingUnsupported)
+            {
+                // The server lost the page-streaming RPCs (rollback or a mixed-version rolling
+                // deploy). Fall back to whole-CBZ for the rest of this worker's lifetime and requeue
+                // the task instead of failing every task forever.
+                _pageStreamingAvailable = false;
+                logger.LogWarning(
+                    ex,
+                    "The server no longer supports page streaming; falling back to whole-CBZ transfers."
                 );
             }
             catch (Exception ex)
@@ -1234,7 +1312,7 @@ public class RemoteTaskProcessor(
                 }
                 catch { }
                 item.PersistentKeepAliveCts.Dispose();
-                CurrentTaskId = null;
+                StreamingTaskId = null;
                 _fetchSignals?.Writer.TryWrite(true);
             }
         }

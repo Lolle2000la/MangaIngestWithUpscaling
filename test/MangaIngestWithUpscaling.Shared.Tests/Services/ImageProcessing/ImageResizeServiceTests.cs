@@ -441,4 +441,47 @@ public class ImageResizeServiceTests
         Assert.Equal(512, result.Width);
         Assert.Equal(512, result.Height);
     }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task PreprocessImageInPlaceAsync_ConvertsAMatchingFormatInPlace()
+    {
+        string directory = Directory.CreateTempSubdirectory("preprocess_page").FullName;
+        try
+        {
+            string path = Path.Combine(directory, "page.png");
+            using (Image image = Image.Black(8, 8))
+            {
+                image.WriteToFile(path);
+            }
+
+            await _service.PreprocessImageInPlaceAsync(
+                path,
+                new ImagePreprocessingOptions
+                {
+                    FormatConversionRules =
+                    [
+                        new MangaIngestWithUpscaling.Shared.Configuration.ImageFormatConversionRule
+                        {
+                            FromFormat = ".png",
+                            ToFormat = ".jpg",
+                            Quality = 90,
+                        },
+                    ],
+                },
+                TestContext.Current.CancellationToken
+            );
+
+            // The result replaces the file in place; libvips sniffs the content, and a JPEG starts
+            // with the SOI marker 0xFF 0xD8.
+            Assert.True(File.Exists(path));
+            byte[] bytes = File.ReadAllBytes(path);
+            Assert.Equal(0xFF, bytes[0]);
+            Assert.Equal(0xD8, bytes[1]);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
 }
