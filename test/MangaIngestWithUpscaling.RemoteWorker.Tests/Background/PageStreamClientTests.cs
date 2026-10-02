@@ -294,9 +294,11 @@ public class PageStreamClientTests
             // The upload loop's rejection must be surfaced (not masked by the consequential
             // cancellation) and must stop the local worker instead of upscaling the whole chapter.
             Assert.Contains("simulated rejection", error.Message);
+            // Assert on the cancellation signal rather than a page count: a synchronous fake can race
+            // through many tiny pages before the cancellation is observed.
             Assert.True(
-                worker.ProcessedPages < server.Pages.Count,
-                $"Expected the chapter to stop early, but {worker.ProcessedPages} of {server.Pages.Count} pages were processed."
+                worker.Canceled,
+                "Expected the upload rejection to cancel the local worker."
             );
         }
         finally

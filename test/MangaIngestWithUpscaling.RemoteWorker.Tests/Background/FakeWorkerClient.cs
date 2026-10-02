@@ -13,6 +13,9 @@ internal sealed class FakeWorkerClient : IMangaJaNaiWorkerClient
     /// <summary>Exception thrown at the drop point; defaults to a simulated I/O drop.</summary>
     public Exception? DropException { get; init; }
     public string PageStatus { get; init; } = "upscaled";
+
+    /// <summary>True once the page enumeration was cancelled (the chapter was stopped mid-stream).</summary>
+    public bool Canceled { get; private set; }
     public int ProcessedPages { get; private set; }
 
     public async Task<UpscaleJobResult> RunChapterAsync(
@@ -25,28 +28,36 @@ internal sealed class FakeWorkerClient : IMangaJaNaiWorkerClient
     )
     {
         var files = new List<UpscaleJobFile>();
-        await foreach (ChapterPage page in pages.WithCancellation(cancellationToken))
+        try
         {
-            byte[] source = await File.ReadAllBytesAsync(page.Path, cancellationToken);
-            string outputPath = Path.Combine(
-                request.OutputFolder,
-                $"{Path.GetFileNameWithoutExtension(page.Name)}.webp"
-            );
-            await File.WriteAllBytesAsync(
-                outputPath,
-                source.Reverse().ToArray(),
-                cancellationToken
-            );
-
-            var file = new UpscaleJobFile(page.Name, outputPath, PageStatus);
-            files.Add(file);
-            onPageDone(file);
-            ProcessedPages++;
-
-            if (DropAfterPages is int dropAt && ProcessedPages >= dropAt)
+            await foreach (ChapterPage page in pages.WithCancellation(cancellationToken))
             {
-                throw DropException ?? new IOException("simulated drop");
+                byte[] source = await File.ReadAllBytesAsync(page.Path, cancellationToken);
+                string outputPath = Path.Combine(
+                    request.OutputFolder,
+                    $"{Path.GetFileNameWithoutExtension(page.Name)}.webp"
+                );
+                await File.WriteAllBytesAsync(
+                    outputPath,
+                    source.Reverse().ToArray(),
+                    cancellationToken
+                );
+
+                var file = new UpscaleJobFile(page.Name, outputPath, PageStatus);
+                files.Add(file);
+                onPageDone(file);
+                ProcessedPages++;
+
+                if (DropAfterPages is int dropAt && ProcessedPages >= dropAt)
+                {
+                    throw DropException ?? new IOException("simulated drop");
+                }
             }
+        }
+        catch (OperationCanceledException)
+        {
+            Canceled = true;
+            throw;
         }
 
         return new UpscaleJobResult(request.Id, "ok", files, 0);

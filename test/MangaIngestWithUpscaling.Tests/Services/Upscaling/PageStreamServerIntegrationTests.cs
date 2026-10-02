@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using Google.Protobuf;
+using Grpc.Core;
 using Grpc.Net.Client;
 using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.Data;
@@ -37,6 +38,8 @@ using Microsoft.Extensions.Options;
 using NSubstitute;
 using Xunit;
 using RemoteEngineIdentityProvider = remote::MangaIngestWithUpscaling.RemoteWorker.Background.IEngineIdentityProvider;
+using RemoteGetPagesRequest = remote::MangaIngestWithUpscaling.Api.Upscaling.GetPagesRequest;
+using RemotePageChunk = remote::MangaIngestWithUpscaling.Api.Upscaling.PageChunk;
 using RemotePageManifestRequest = remote::MangaIngestWithUpscaling.Api.Upscaling.PageManifestRequest;
 using RemotePageManifestResponse = remote::MangaIngestWithUpscaling.Api.Upscaling.PageManifestResponse;
 using RemotePageStreamClient = remote::MangaIngestWithUpscaling.RemoteWorker.Background.PageStreamClient;
@@ -403,6 +406,230 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         Assert.False(response.Success);
         Assert.False(response.Terminal);
         Assert.Contains("spool", response.Message);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task UploadPage_RejectsAnEmptyUploadTerminally()
+    {
+        var client = new RemoteUpscalingServiceClient(_channel);
+        RemotePageManifestResponse manifest = await client.GetPageManifestAsync(
+            new RemotePageManifestRequest
+            {
+                TaskId = _taskId,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        using var call = client.UploadPage(
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = _taskId,
+                PageIndex = 0,
+                ChunkNumber = 1,
+                Chunk = ByteString.Empty,
+                IsLast = true,
+                ContentIdentity = manifest.TaskIdentity,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.CompleteAsync();
+        RemoteUploadPageResponse response = await call.ResponseAsync;
+
+        Assert.False(response.Success);
+        Assert.True(response.Terminal);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task UploadPage_RejectsAnOutOfRangePageTerminally()
+    {
+        var client = new RemoteUpscalingServiceClient(_channel);
+        RemotePageManifestResponse manifest = await client.GetPageManifestAsync(
+            new RemotePageManifestRequest
+            {
+                TaskId = _taskId,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        using var call = client.UploadPage(
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = _taskId,
+                PageIndex = 999,
+                ChunkNumber = 0,
+                Chunk = ByteString.CopyFrom(new byte[] { 1, 2, 3 }),
+                ContentIdentity = manifest.TaskIdentity,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = _taskId,
+                PageIndex = 999,
+                ChunkNumber = 1,
+                Chunk = ByteString.Empty,
+                IsLast = true,
+                ContentIdentity = manifest.TaskIdentity,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.CompleteAsync();
+        RemoteUploadPageResponse response = await call.ResponseAsync;
+
+        Assert.False(response.Success);
+        Assert.True(response.Terminal);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task UploadPage_RejectsADetectionTaskTerminally()
+    {
+        var client = new RemoteUpscalingServiceClient(_channel);
+        RemotePageManifestResponse manifest = await client.GetPageManifestAsync(
+            new RemotePageManifestRequest
+            {
+                TaskId = _detectTaskId,
+                EngineIdentity = DetectorEngineIdentity,
+            },
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        using var call = client.UploadPage(
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = _detectTaskId,
+                PageIndex = 0,
+                ChunkNumber = 0,
+                Chunk = ByteString.CopyFrom(new byte[] { 1, 2, 3 }),
+                ContentIdentity = manifest.TaskIdentity,
+                EngineIdentity = DetectorEngineIdentity,
+            },
+            TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = _detectTaskId,
+                PageIndex = 0,
+                ChunkNumber = 1,
+                Chunk = ByteString.Empty,
+                IsLast = true,
+                ContentIdentity = manifest.TaskIdentity,
+                EngineIdentity = DetectorEngineIdentity,
+            },
+            TestContext.Current.CancellationToken
+        );
+        await call.RequestStream.CompleteAsync();
+        RemoteUploadPageResponse response = await call.ResponseAsync;
+
+        Assert.False(response.Success);
+        Assert.True(response.Terminal);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task UploadPageDetection_RejectsADifferentImageTerminally()
+    {
+        var client = new RemoteUpscalingServiceClient(_channel);
+        RemotePageManifestResponse manifest = await client.GetPageManifestAsync(
+            new RemotePageManifestRequest
+            {
+                TaskId = _detectTaskId,
+                EngineIdentity = DetectorEngineIdentity,
+            },
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        RemoteUploadDetectionResultResponse response = await client.UploadPageDetectionAsync(
+            new RemoteUploadPageDetectionRequest
+            {
+                TaskId = _detectTaskId,
+                PageIndex = 0,
+                // Names an image whose stem is not the page's, so the finding would be misattributed.
+                ResultJson = "{\"image\":\"some-other-image.png\",\"count\":0}",
+                TaskIdentity = manifest.TaskIdentity,
+                EngineIdentity = DetectorEngineIdentity,
+            },
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        Assert.False(response.Success);
+        Assert.True(response.Terminal);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task UploadPageDetection_RejectsAnUploadWithNoSpoolNonTerminally()
+    {
+        var client = new RemoteUpscalingServiceClient(_channel);
+        RemotePageManifestResponse manifest = await client.GetPageManifestAsync(
+            new RemotePageManifestRequest
+            {
+                TaskId = _detectTaskId,
+                EngineIdentity = DetectorEngineIdentity,
+            },
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+        _app.Services.GetRequiredService<PageStreamSpool>().Remove(_detectTaskId);
+
+        RemoteUploadDetectionResultResponse response = await client.UploadPageDetectionAsync(
+            new RemoteUploadPageDetectionRequest
+            {
+                TaskId = _detectTaskId,
+                PageIndex = 0,
+                ResultJson = "{}",
+                TaskIdentity = manifest.TaskIdentity,
+                EngineIdentity = DetectorEngineIdentity,
+            },
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        Assert.False(response.Success);
+        Assert.False(response.Terminal);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task GetPages_RejectsAStaleIdentity()
+    {
+        var client = new RemoteUpscalingServiceClient(_channel);
+
+        using var call = client.GetPages(
+            new RemoteGetPagesRequest
+            {
+                TaskId = _taskId,
+                TaskIdentity = "not-the-current-identity",
+                PageIndexes = { 0 },
+            },
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        RpcException ex = await Assert.ThrowsAsync<RpcException>(async () =>
+        {
+            await foreach (
+                RemotePageChunk _ in call.ResponseStream.ReadAllAsync(
+                    TestContext.Current.CancellationToken
+                )
+            ) { }
+        });
+        Assert.Equal(StatusCode.FailedPrecondition, ex.StatusCode);
     }
 
     [Fact]

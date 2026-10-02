@@ -14,15 +14,17 @@ public static class SplitDetectionLayout
     public const string ConfigRelativePath =
         "models/BCE Only (v8)/final_deployment/model_config.json";
 
-    public static string ScriptPath =>
-        Path.Combine(AppContext.BaseDirectory, SubmodulePath, ScriptName);
+    /// <summary>
+    /// Root the bundled detector files resolve under. Defaults to the application base directory; a
+    /// test can point it at a temp directory so it does not write into the real install layout.
+    /// </summary>
+    public static string Root { get; set; } = AppContext.BaseDirectory;
 
-    public static string ServerScriptPath =>
-        Path.Combine(AppContext.BaseDirectory, SubmodulePath, ServerScriptName);
+    public static string ScriptPath => Path.Combine(Root, SubmodulePath, ScriptName);
 
-    public static string CheckpointPath =>
-        Path.Combine(AppContext.BaseDirectory, SubmodulePath, ModelRelativePath);
+    public static string ServerScriptPath => Path.Combine(Root, SubmodulePath, ServerScriptName);
 
-    public static string ConfigPath =>
-        Path.Combine(AppContext.BaseDirectory, SubmodulePath, ConfigRelativePath);
+    public static string CheckpointPath => Path.Combine(Root, SubmodulePath, ModelRelativePath);
+
+    public static string ConfigPath => Path.Combine(Root, SubmodulePath, ConfigRelativePath);
 }

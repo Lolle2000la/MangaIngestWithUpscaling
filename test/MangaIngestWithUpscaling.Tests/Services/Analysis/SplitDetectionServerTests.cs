@@ -105,8 +105,10 @@ public class SplitDetectionServerTests
     {
         string image = CreateTempImage();
 
-        // The CLI fallback resolves its script/model/config from the app base directory; create
-        // placeholders so it reaches the Python invocation rather than failing on a missing script.
+        // Point the layout at a temp root so the test does not write into the real install layout.
+        string previousRoot = SplitDetectionLayout.Root;
+        string root = Directory.CreateTempSubdirectory("detect_layout").FullName;
+        SplitDetectionLayout.Root = root;
         string script = SplitDetectionLayout.ScriptPath;
         string checkpoint = SplitDetectionLayout.CheckpointPath;
         string config = SplitDetectionLayout.ConfigPath;
@@ -151,10 +153,9 @@ public class SplitDetectionServerTests
         }
         finally
         {
+            SplitDetectionLayout.Root = previousRoot;
             File.Delete(image);
-            File.Delete(script);
-            File.Delete(checkpoint);
-            File.Delete(config);
+            Directory.Delete(root, true);
         }
     }
 }

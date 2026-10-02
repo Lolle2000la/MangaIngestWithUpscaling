@@ -79,6 +79,10 @@ public partial class UpscalingDistributionService
                 };
             }
 
+            // The winning session: the ResetSpool restart below reassigns `session` to a fresh one,
+            // and EndAssembly must clear the flag on the session that actually won TryBeginAssembly.
+            PageStreamSession assemblySession = session;
+
             try
             {
                 if (pageContext.Kind == PageContextKind.Detect)
@@ -149,7 +153,7 @@ public partial class UpscalingDistributionService
             }
             finally
             {
-                pageStreamSpool.EndAssembly(session);
+                pageStreamSpool.EndAssembly(assemblySession);
             }
 
             return new PageManifestResponse
@@ -229,7 +233,10 @@ public partial class UpscalingDistributionService
             entries.TryAdd(entry.FullName, entry);
         }
 
-        foreach (int pageIndex in request.PageIndexes)
+        // Distinct + an explicit range check bound the work: a request can carry millions of ints
+        // within the message cap, and duplicates would otherwise force repeated re-reads.
+        int requestedPageCount = pageContext.Pages.Count;
+        foreach (int pageIndex in request.PageIndexes.Distinct())
         {
             // Stop early when the client has gone away instead of streaming the rest of the archive.
             if (context.CancellationToken.IsCancellationRequested)
@@ -238,7 +245,9 @@ public partial class UpscalingDistributionService
             }
 
             if (
-                !byIndex.TryGetValue(pageIndex, out SpoolPageDescriptor? page)
+                pageIndex < 0
+                || pageIndex >= requestedPageCount
+                || !byIndex.TryGetValue(pageIndex, out SpoolPageDescriptor? page)
                 || !entries.TryGetValue(page.SourceName, out ZipArchiveEntry? entry)
             )
             {
@@ -856,40 +865,67 @@ public partial class UpscalingDistributionService
             };
         }
 
-        FileStream resultFile = pageStreamSpool.BeginPageWrite(
-            session,
-            request.PageIndex,
-            out string resultTemp
-        );
-        try
+        // Mirror the upscale path's budget reservation: several detection uploads in flight could
+        // otherwise each write a full result before any committed-byte check runs.
+        if (
+            !pageStreamSpool.TryReserveInFlight(
+                session,
+                request.PageIndex,
+                resultBytes.Length,
+                out long reservationGeneration
+            )
+        )
         {
-            await using (resultFile)
+            return new UploadDetectionResultResponse
             {
-                await resultFile.WriteAsync(resultBytes, context.CancellationToken);
-            }
-        }
-        catch
-        {
-            DeleteTempQuietly(resultTemp);
-            throw;
+                Success = false,
+                Message = $"Task {request.TaskId} exceeds the maximum spooled size.",
+                Terminal = true,
+            };
         }
 
         CommitPageResult commitResult;
+        string resultTemp = string.Empty;
         try
         {
-            commitResult = pageStreamSpool.TryCommitPage(
+            FileStream resultFile = pageStreamSpool.BeginPageWrite(
                 session,
-                pageContext.Identity,
-                request.EngineIdentity,
                 request.PageIndex,
-                resultTemp,
-                resultBytes.Length
+                out resultTemp
             );
+            try
+            {
+                await using (resultFile)
+                {
+                    await resultFile.WriteAsync(resultBytes, context.CancellationToken);
+                }
+            }
+            catch
+            {
+                DeleteTempQuietly(resultTemp);
+                throw;
+            }
+
+            try
+            {
+                commitResult = pageStreamSpool.TryCommitPage(
+                    session,
+                    pageContext.Identity,
+                    request.EngineIdentity,
+                    request.PageIndex,
+                    resultTemp,
+                    resultBytes.Length
+                );
+            }
+            catch
+            {
+                DeleteTempQuietly(resultTemp);
+                throw;
+            }
         }
-        catch
+        finally
         {
-            DeleteTempQuietly(resultTemp);
-            throw;
+            pageStreamSpool.ReleaseInFlight(session, reservationGeneration, resultBytes.Length);
         }
 
         if (commitResult != CommitPageResult.Committed)
@@ -1411,10 +1447,14 @@ public partial class UpscalingDistributionService
         if (repairState is null || string.IsNullOrEmpty(repairState.UpscaledMissingPagesCbzPath))
         {
             // The repair was prepared by the replica that answered the manifest; a finalize landing
-            // elsewhere (or after a requeue cleaned the repair files) has no state. That is
-            // recoverable: restart the chapter rather than failing it terminally.
+            // elsewhere (or after a requeue cleaned the repair files) has no state. Reset the spool so
+            // the manifest re-creates it and the worker actually re-streams: a plain restart would
+            // leave the completed set intact, so the manifest would report every page complete and the
+            // worker would do nothing. The requeue then re-dispatches the task, which re-prepares the
+            // repair state via PrepareRepairTaskForRemote.
             throw new PageStreamRestartException(
-                $"No prepared repair state for task {pageContext.Task.Id}."
+                $"No prepared repair state for task {pageContext.Task.Id}.",
+                resetSpool: true
             );
         }
 

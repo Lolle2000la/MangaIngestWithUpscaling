@@ -20,10 +20,33 @@ public interface IEngineIdentityProvider
 public sealed class EngineIdentityProvider(IOptions<UpscalerConfig> config)
     : IEngineIdentityProvider
 {
-    private readonly Lazy<string> _upscaler = new(() => EngineIdentity.ForUpscaler(config.Value));
-    private readonly Lazy<string> _detector = new(EngineIdentity.ForDetector);
+    private readonly Lock _lock = new();
+    private string? _upscaler;
+    private string? _detector;
 
-    public string Upscaler => _upscaler.Value;
+    // Compute once, but do not cache a failure: EngineIdentity does blocking file I/O (a directory
+    // walk and a hash), and a transient IOException/UnauthorizedAccessException must not poison the
+    // singleton for the process lifetime — every manifest and upload would then throw and be
+    // classified Permanent, dropping the server spool for all tasks.
+    public string Upscaler
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _upscaler ??= EngineIdentity.ForUpscaler(config.Value);
+            }
+        }
+    }
 
-    public string Detector => _detector.Value;
+    public string Detector
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _detector ??= EngineIdentity.ForDetector();
+            }
+        }
+    }
 }

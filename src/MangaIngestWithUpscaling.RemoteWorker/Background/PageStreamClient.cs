@@ -48,8 +48,14 @@ public sealed class PageStreamClient(
     /// whole-CBZ path (<c>UpscaleTimeout × max(1, maxPixels / 1e6)</c>), with a floor so slow
     /// hardware still finishes a page while a wedged worker is eventually killed.
     /// </summary>
-    private TimeSpan ChapterInactivityTimeout(long maxPagePixels)
+    private TimeSpan? ChapterInactivityTimeout(long maxPagePixels)
     {
+        // Match the whole-CBZ path: a non-positive UpscaleTimeout disables the inactivity kill.
+        if (upscalerConfig.Value.UpscaleTimeout <= TimeSpan.Zero)
+        {
+            return null;
+        }
+
         double scaling = Math.Max(1.0, maxPagePixels / 1_000_000.0);
         TimeSpan scaled = upscalerConfig.Value.UpscaleTimeout * scaling;
         TimeSpan floor = TimeSpan.FromMinutes(15);
