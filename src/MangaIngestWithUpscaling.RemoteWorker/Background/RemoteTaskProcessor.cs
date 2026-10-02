@@ -90,6 +90,13 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
     /// </summary>
     private const int MaxConsecutiveSoftFailures = 5;
 
+    /// <summary>
+    /// A restart is the "no spool on this replica / identity changed" signal, which a misconfigured
+    /// deployment can produce indefinitely; use a much larger cap so it eventually surfaces without
+    /// turning a transient infrastructure issue into data loss.
+    /// </summary>
+    private const int MaxConsecutiveRestarts = 100;
+
     /// <summary>How a page-streaming failure should be handled.</summary>
     public enum StreamingFailureKind
     {
@@ -169,13 +176,14 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
         int consecutiveSoftFailures = 1
     )
     {
-        if (
-            ClassifyStreamingFailure(ex)
-            is StreamingFailureKind.Transient
-                or StreamingFailureKind.Restart
-        )
+        StreamingFailureKind kind = ClassifyStreamingFailure(ex);
+        if (kind is StreamingFailureKind.Transient or StreamingFailureKind.Restart)
         {
-            if (consecutiveSoftFailures < MaxConsecutiveSoftFailures)
+            int cap =
+                kind == StreamingFailureKind.Restart
+                    ? MaxConsecutiveRestarts
+                    : MaxConsecutiveSoftFailures;
+            if (consecutiveSoftFailures < cap)
             {
                 // A transport blip or a non-terminal rejection must not consume the retry budget or
                 // drop the spool: reporting a failure makes the server delete the already-upscaled
@@ -225,7 +233,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
     /// </summary>
     private async Task FetchLoop(CancellationToken stoppingToken)
     {
-        var dispatcherTimer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+        using var dispatcherTimer = new PeriodicTimer(TimeSpan.FromSeconds(5));
         bool serverAvailable = true;
 
         while (!stoppingToken.IsCancellationRequested)
@@ -330,13 +338,17 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 
                 if (resp.TaskType is not (TaskType.Upscale or TaskType.SplitDetection))
                 {
-                    // Only upscale and split-detection tasks are delegated to workers.
+                    // Only upscale and split-detection tasks are delegated to workers. The task was
+                    // already claimed by RequestUpscaleTaskWithHint, so let its keep-alive lapse
+                    // (the reaper requeues it) and back off instead of spinning as fast as the
+                    // server answers.
                     logger.LogWarning(
                         "Ignoring task {TaskId} of unsupported type {TaskType}.",
                         taskId,
                         resp.TaskType
                     );
                     _fetchInProgress = false;
+                    await dispatcherTimer.WaitForNextTickAsync(stoppingToken);
                     _fetchSignals.Writer.TryWrite(true);
                     continue;
                 }

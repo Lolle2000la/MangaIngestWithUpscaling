@@ -484,4 +484,25 @@ public class ImageResizeServiceTests
             Directory.Delete(directory, true);
         }
     }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task PreprocessImageInPlaceAsync_InvalidSmartDownscale_ShouldThrow()
+    {
+        // The streamed in-place path must validate like the whole-CBZ path, or a bad smart-downscale
+        // configuration is silently swallowed per image and the page is upscaled without the
+        // downscale the engine identity claims.
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            _service.PreprocessImageInPlaceAsync(
+                "unused.png",
+                new ImagePreprocessingOptions
+                {
+                    EnableSmartDownscale = true,
+                    SmartDownscaleThreshold = 1.0,
+                    SmartDownscaleFactor = 0,
+                },
+                TestContext.Current.CancellationToken
+            )
+        );
+    }
 }

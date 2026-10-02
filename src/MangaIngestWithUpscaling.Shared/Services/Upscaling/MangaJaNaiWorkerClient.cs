@@ -705,7 +705,9 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         {
             string stderrSection = BuildStderrSection();
             await KillWorkerAsync();
-            throw new InvalidOperationException(
+            // TimeoutException (not InvalidOperationException) so the streaming classifier treats a
+            // slow cold start as recoverable rather than dropping the already-spooled pages.
+            throw new TimeoutException(
                 $"Timed out waiting for the upscale worker to become ready.{stderrSection}"
             );
         }

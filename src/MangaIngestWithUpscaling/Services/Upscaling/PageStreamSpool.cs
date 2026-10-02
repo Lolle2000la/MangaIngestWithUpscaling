@@ -184,9 +184,20 @@ public sealed class PageStreamSpool
     {
         lock (session.Gate)
         {
+            if (session.Finalized)
+            {
+                // The session was detached/swept after the caller resolved it; refuse rather than
+                // recreate the deleted directory (which would leak an empty orphan dir that the
+                // parent-only sweep never reclaims).
+                throw new PageStreamRestartException(
+                    $"The page spool for task {session.TaskId} was finalized; restart the chapter.",
+                    resetSpool: true
+                );
+            }
+
             // Build the path and open the temp file under the gate: a concurrent Reset/Detach can
             // delete the session directory, which would otherwise turn a clean identity rejection into
-            // an unhandled DirectoryNotFoundException (or recreate a finalized session's directory).
+            // an unhandled DirectoryNotFoundException.
             Directory.CreateDirectory(session.Directory);
             string path = session.PagePath(pageIndex);
             // Unique per write so two workers racing on the same page cannot corrupt each other's temp.

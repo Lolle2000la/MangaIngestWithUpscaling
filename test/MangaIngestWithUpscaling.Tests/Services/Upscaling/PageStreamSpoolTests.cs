@@ -598,6 +598,21 @@ public class PageStreamSpoolTests
         Assert.False(session.Finalized);
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void BeginPageWrite_RejectsAFinalizedSession()
+    {
+        PageStreamSession session = _spool.GetOrCreateSession(95, "identity", "engine", 1);
+        _spool.Remove(95);
+        Assert.True(session.Finalized);
+
+        // Refuse rather than recreate the deleted directory (which would leak an orphan dir).
+        PageStreamRestartException ex = Assert.Throws<PageStreamRestartException>(() =>
+            _spool.BeginPageWrite(session, 0, out _)
+        );
+        Assert.True(ex.ResetSpool);
+    }
+
     private static byte[] ReadAll(Stream stream)
     {
         using var buffer = new MemoryStream();

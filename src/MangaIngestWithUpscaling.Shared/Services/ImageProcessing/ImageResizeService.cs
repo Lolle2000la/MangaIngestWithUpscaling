@@ -74,32 +74,7 @@ public class ImageResizeService(
             throw new FileNotFoundException(localizer["Error_InputCbzFileNotFound", inputCbzPath]);
         }
 
-        if (options.MaxDimension.HasValue && options.MaxDimension.Value < 0)
-        {
-            throw new ArgumentException(
-                localizer["Error_MaxDimensionMustBePositive"],
-                nameof(options)
-            );
-        }
-
-        if (options.EnableSmartDownscale)
-        {
-            if (options.SmartDownscaleThreshold <= 0)
-            {
-                throw new ArgumentException(
-                    localizer["Error_SmartDownscaleThresholdMustBePositive"],
-                    nameof(options)
-                );
-            }
-
-            if (options.SmartDownscaleFactor <= 0 || options.SmartDownscaleFactor >= 1)
-            {
-                throw new ArgumentException(
-                    localizer["Error_SmartDownscaleFactorOutOfRange"],
-                    nameof(options)
-                );
-            }
-        }
+        Validate(options);
 
         string tempDir = Path.Combine(Path.GetTempPath(), $"manga_preprocess_{Guid.NewGuid()}");
         string tempCbzPath = Path.Combine(
@@ -144,6 +119,11 @@ public class ImageResizeService(
         CancellationToken cancellationToken
     )
     {
+        // Validate like the whole-CBZ path: the per-image pipeline swallows a per-image failure, so a
+        // bad smart-downscale configuration would otherwise be silently ignored and the page upscaled
+        // without the downscale the engine identity claims.
+        Validate(options);
+
         // Reuse the directory pipeline (which owns the per-image logic) on a private copy, then move
         // the single result back over the original so the caller keeps the same path.
         string tempDir = Path.Combine(
@@ -259,6 +239,41 @@ public class ImageResizeService(
                 "Failed to clean up temporary file: {TempFilePath}",
                 tempFilePath
             );
+        }
+    }
+
+    /// <summary>
+    /// Validates the preprocessing options. Shared by the whole-CBZ and the in-place (streamed) paths
+    /// so a bad smart-downscale configuration fails fast in both instead of being silently swallowed
+    /// per image.
+    /// </summary>
+    private void Validate(ImagePreprocessingOptions options)
+    {
+        if (options.MaxDimension.HasValue && options.MaxDimension.Value < 0)
+        {
+            throw new ArgumentException(
+                localizer["Error_MaxDimensionMustBePositive"],
+                nameof(options)
+            );
+        }
+
+        if (options.EnableSmartDownscale)
+        {
+            if (options.SmartDownscaleThreshold <= 0)
+            {
+                throw new ArgumentException(
+                    localizer["Error_SmartDownscaleThresholdMustBePositive"],
+                    nameof(options)
+                );
+            }
+
+            if (options.SmartDownscaleFactor <= 0 || options.SmartDownscaleFactor >= 1)
+            {
+                throw new ArgumentException(
+                    localizer["Error_SmartDownscaleFactorOutOfRange"],
+                    nameof(options)
+                );
+            }
         }
     }
 

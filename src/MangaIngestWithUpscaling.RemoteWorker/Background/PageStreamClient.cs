@@ -825,7 +825,7 @@ public sealed class PageStreamClient(
             _sender = Task.Run(
                 async () =>
                 {
-                    var debounce = new PeriodicTimer(TimeSpan.FromMilliseconds(500));
+                    using var debounce = new PeriodicTimer(TimeSpan.FromMilliseconds(500));
                     UpscaleProgress? pending = null;
                     try
                     {
@@ -851,6 +851,8 @@ public sealed class PageStreamClient(
                                         deadline: DateTime.UtcNow.AddSeconds(10),
                                         cancellationToken: _cts.Token
                                     );
+                                    // Sent; do not re-send the same value every tick.
+                                    pending = null;
                                 }
                                 catch (Exception ex)
                                 {

@@ -459,7 +459,23 @@ public partial class UpscalingDistributionService
                     // Stream straight to the spool file rather than buffering the whole page in
                     // memory: the gRPC body cap is lifted for uploads, so a large or hostile page
                     // must not drive unbounded allocation.
-                    pageFile = pageStreamSpool.BeginPageWrite(session, pageIndex, out tempPath);
+                    try
+                    {
+                        pageFile = pageStreamSpool.BeginPageWrite(session, pageIndex, out tempPath);
+                    }
+                    catch (PageStreamRestartException ex)
+                    {
+                        // The session was finalized between TryGetSession and here; restart rather
+                        // than surface an opaque gRPC Unknown.
+                        return new UploadPageResponse
+                        {
+                            Success = false,
+                            Message = ex.Message,
+                            TaskId = taskId,
+                            PageIndex = pageIndex,
+                            Terminal = false,
+                        };
+                    }
                 }
 
                 if (!chunk.Chunk.IsEmpty)
@@ -1416,7 +1432,10 @@ public partial class UpscalingDistributionService
     /// </summary>
     private async Task<long> GetOrComputeMaxPagePixelsAsync(PageContext pageContext)
     {
-        if (pageContextCache.TryGet(pageContext.Task.Id, out PageContextCache.Entry entry))
+        if (
+            pageContextCache.TryGet(pageContext.Task.Id, out PageContextCache.Entry entry)
+            && string.Equals(entry.Identity, pageContext.Identity, StringComparison.Ordinal)
+        )
         {
             if (entry.MaxPagePixels > 0)
             {

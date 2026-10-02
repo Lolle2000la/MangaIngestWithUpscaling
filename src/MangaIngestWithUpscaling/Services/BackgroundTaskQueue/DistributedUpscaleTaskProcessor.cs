@@ -1037,9 +1037,6 @@ public class DistributedUpscaleTaskProcessor(
     }
 
     /// <summary>
-    ///     Cleans up temporary files created during repair processing.
-    /// </summary>
-    /// <summary>
     /// Drops any partial page spool/cache for a task so its temp bytes do not linger until the
     /// retention sweep. Best-effort.
     /// </summary>

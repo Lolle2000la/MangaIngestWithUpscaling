@@ -215,6 +215,26 @@ public class RemoteTaskProcessorTests
             );
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task HandleStreamingFailure_DoesNotReportARestartBelowTheRestartCap()
+    {
+        var client = Substitute.For<UpscalingService.UpscalingServiceClient>();
+
+        // A restart (no spool on this replica / identity changed) can recur under a misconfiguration;
+        // it must not be terminalised at the small soft-failure cap.
+        await RemoteTaskProcessor.HandleStreamingFailureAsync(
+            client,
+            11,
+            new PageStreamRestartException("no spool on this replica"),
+            Substitute.For<ILogger>(),
+            CancellationToken.None,
+            consecutiveSoftFailures: 6
+        );
+
+        AssertNoFailureReported(client);
+    }
+
     private static void AssertNoFailureReported(UpscalingService.UpscalingServiceClient client) =>
         Assert.DoesNotContain(
             client.ReceivedCalls(),
