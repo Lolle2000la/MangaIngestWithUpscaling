@@ -182,26 +182,24 @@ public sealed class PageStreamSpool
     /// </summary>
     public FileStream BeginPageWrite(PageStreamSession session, int pageIndex, out string tempPath)
     {
-        string path;
         lock (session.Gate)
         {
-            // Build the path under the gate: a concurrent Reset can swap the session's directory,
-            // which would otherwise turn a clean identity rejection into an unhandled
-            // DirectoryNotFoundException.
+            // Build the path and open the temp file under the gate: a concurrent Reset/Detach can
+            // delete the session directory, which would otherwise turn a clean identity rejection into
+            // an unhandled DirectoryNotFoundException (or recreate a finalized session's directory).
             Directory.CreateDirectory(session.Directory);
-            path = session.PagePath(pageIndex);
+            string path = session.PagePath(pageIndex);
+            // Unique per write so two workers racing on the same page cannot corrupt each other's temp.
+            tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
+            return new FileStream(
+                tempPath,
+                FileMode.Create,
+                FileAccess.Write,
+                FileShare.None,
+                81920,
+                FileOptions.Asynchronous
+            );
         }
-
-        // Unique per write so two workers racing on the same page cannot corrupt each other's temp.
-        tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
-        return new FileStream(
-            tempPath,
-            FileMode.Create,
-            FileAccess.Write,
-            FileShare.None,
-            81920,
-            FileOptions.Asynchronous
-        );
     }
 
     /// <summary>
@@ -671,16 +669,18 @@ public sealed class PageStreamSpool
         DateTime cutoff = DateTime.UtcNow - retention;
         foreach ((int taskId, PageStreamSession session) in _sessions)
         {
-            // Check and finalize under the same gate: a manifest/upload that refreshed
-            // LastTouchedUtc between a separate check and remove would otherwise have its live
-            // session swept (and its directory deleted) out from under it.
+            // Check and remove atomically under the gate: a manifest/upload that refreshed
+            // LastTouchedUtc, or a finalize/reset that replaced the session, must not be swept. The
+            // compare-and-remove overload removes only this exact instance, so a newer live session is
+            // left alone.
             lock (session.Gate)
             {
                 if (
                     session.LastTouchedUtc >= cutoff
                     || session.Assembling
-                    || !_sessions.TryRemove(taskId, out PageStreamSession? removed)
-                    || !ReferenceEquals(removed, session)
+                    || !_sessions.TryRemove(
+                        new KeyValuePair<int, PageStreamSession>(taskId, session)
+                    )
                 )
                 {
                     continue;

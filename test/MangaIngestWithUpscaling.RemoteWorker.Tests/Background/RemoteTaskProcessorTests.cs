@@ -18,7 +18,7 @@ public class RemoteTaskProcessorTests
     [InlineData(StatusCode.DeadlineExceeded, RemoteTaskProcessor.StreamingFailureKind.Transient)]
     [InlineData(StatusCode.Cancelled, RemoteTaskProcessor.StreamingFailureKind.Transient)]
     [InlineData(StatusCode.FailedPrecondition, RemoteTaskProcessor.StreamingFailureKind.Restart)]
-    [InlineData(StatusCode.Unimplemented, RemoteTaskProcessor.StreamingFailureKind.Permanent)]
+    [InlineData(StatusCode.Unimplemented, RemoteTaskProcessor.StreamingFailureKind.Transient)]
     [InlineData(StatusCode.Internal, RemoteTaskProcessor.StreamingFailureKind.Permanent)]
     [InlineData(StatusCode.InvalidArgument, RemoteTaskProcessor.StreamingFailureKind.Permanent)]
     public void ClassifyStreamingFailure_ClassifiesRpcStatusCodes(

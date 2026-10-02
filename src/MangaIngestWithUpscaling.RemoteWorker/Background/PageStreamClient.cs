@@ -204,7 +204,10 @@ public sealed class PageStreamClient(
                 OutputFolder = outputDirectory,
                 Format = effectiveProfile.CompressionFormat,
                 Scale = effectiveProfile.ScalingFactor,
-                TotalPages = manifest.Pages.Count,
+                // Only the missing pages are streamed, so the worker's archive_total must match, or
+                // AllPagesProcessed never becomes true on a resume and the postprocess grace period is
+                // never applied.
+                TotalPages = missing.Count,
             };
 
             await using var progressReporter = new StreamingProgressReporter(

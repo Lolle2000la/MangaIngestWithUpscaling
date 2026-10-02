@@ -142,16 +142,15 @@ using (var scope = app.Services.CreateScope())
         scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
 
-    while (true)
+    CheckConnectionResponse? connection = null;
+    while (connection is null)
     {
         try
         {
-            var testResponse = client.CheckConnection(
+            connection = client.CheckConnection(
                 new Empty(),
                 deadline: DateTime.UtcNow.AddSeconds(5)
             );
-            logger.LogDebug("Connection test response: {Response}", testResponse);
-            break;
         }
         catch (RpcException ex)
         {
@@ -170,6 +169,24 @@ using (var scope = app.Services.CreateScope())
             await Task.Delay(5000);
         }
     }
+
+    // Fail fast on version skew: an unsupported server would otherwise surface as opaque
+    // Unimplemented failures for every task, dropping spools and burning retries.
+    if (!UpscalingProtocolVersion.IsSupported(connection.ProtocolVersion))
+    {
+        logger.LogError(
+            "The server speaks upscaling protocol version {ServerVersion}, but this worker (version {WorkerVersion}) supports {Min}-{Max}. Upgrade the worker and server together.",
+            connection.ProtocolVersion,
+            UpscalingProtocolVersion.Current,
+            UpscalingProtocolVersion.MinSupported,
+            UpscalingProtocolVersion.Current
+        );
+        throw new InvalidOperationException(
+            $"Incompatible upscaling protocol version {connection.ProtocolVersion}; this worker supports {UpscalingProtocolVersion.MinSupported}-{UpscalingProtocolVersion.Current}."
+        );
+    }
+
+    logger.LogDebug("Connection test response: {Response}", connection);
 
     var pythonService = scope.ServiceProvider.GetRequiredService<IPythonService>();
     var upscalerConfig = scope.ServiceProvider.GetRequiredService<IOptions<UpscalerConfig>>();

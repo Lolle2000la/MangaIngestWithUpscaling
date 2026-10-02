@@ -208,7 +208,7 @@ public class SplitApplicationServiceTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task ApplySplitsAsync_RemoteOnly_EnqueuesAWorkerUpscaleInsteadOfUpscalingInline()
+    public async Task ApplySplitsAsync_RemoteOnly_EnqueuesARepairInsteadOfUpscalingInline()
     {
         // Arrange: an upscaled chapter with a split finding (a remote-only server has no ML backend).
         var library = new Library
@@ -298,7 +298,8 @@ public class SplitApplicationServiceTests : IAsyncDisposable
         // Act
         await service.ApplySplitsAsync(chapter.Id, 1, TestContext.Current.CancellationToken);
 
-        // Assert: no local ML backend call; the worker is asked to re-upscale the split chapter.
+        // Assert: no local ML backend call; the worker is asked to repair the split chapter (a plain
+        // UpscaleTask would be skipped because the chapter is already upscaled).
         await _upscaler
             .DidNotReceiveWithAnyArgs()
             .Upscale(
@@ -307,7 +308,7 @@ public class SplitApplicationServiceTests : IAsyncDisposable
                 Arg.Any<UpscalerProfile>(),
                 Arg.Any<CancellationToken>()
             );
-        await _taskQueue.Received(1).EnqueueAsync(Arg.Any<UpscaleTask>());
+        await _taskQueue.Received(1).EnqueueAsync(Arg.Any<RepairUpscaleTask>());
         await _coordinator
             .Received(1)
             .OnSplitsAppliedAsync(chapter.Id, 1, Arg.Any<CancellationToken>());

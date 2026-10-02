@@ -18,10 +18,10 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 {
     private volatile bool _fetchInProgress;
 
-    // Consecutive soft (transient/restart) failures for the task currently being retried, so a
-    // deterministically-failing task is escalated to a reported failure instead of cycling forever.
-    private int _softFailureTaskId = -1;
-    private int _softFailureCount;
+    // Consecutive soft (transient/restart) failures per task, so a deterministically-failing task is
+    // escalated to a reported failure instead of cycling forever — even if other tasks fail in
+    // between (a single "last task" counter could be reset by an interleaved task).
+    private readonly Dictionary<int, int> _softFailureCounts = new();
 
     private int _streamingTaskIdValue = -1;
 
@@ -75,7 +75,13 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
     }
 
     private static bool IsTransient(StatusCode code) =>
-        code is StatusCode.Unavailable or StatusCode.DeadlineExceeded or StatusCode.Cancelled;
+        code
+            is StatusCode.Unavailable
+                or StatusCode.DeadlineExceeded
+                or StatusCode.Cancelled
+                // Unimplemented is a version-skew signal (a removed/changed RPC), not a deterministic
+                // failure: treat it as transient so it does not burn the retry budget.
+                or StatusCode.Unimplemented;
 
     /// <summary>
     /// How many consecutive soft (transient/restart) failures a task may accumulate before the worker
@@ -466,9 +472,8 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     );
                 }
 
-                // Completed without a soft failure; clear the consecutive counter.
-                _softFailureTaskId = -1;
-                _softFailureCount = 0;
+                // Completed without a soft failure; clear this task's counter.
+                _softFailureCounts.Remove(item.TaskId);
             }
             catch (OperationCanceledException)
             {
@@ -476,15 +481,9 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
             }
             catch (Exception ex)
             {
-                if (item.TaskId == _softFailureTaskId)
-                {
-                    _softFailureCount++;
-                }
-                else
-                {
-                    _softFailureTaskId = item.TaskId;
-                    _softFailureCount = 1;
-                }
+                _softFailureCounts.TryGetValue(item.TaskId, out int softFailures);
+                softFailures++;
+                _softFailureCounts[item.TaskId] = softFailures;
 
                 await HandleStreamingFailureAsync(
                     client,
@@ -492,7 +491,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     ex,
                     logger,
                     stoppingToken,
-                    _softFailureCount
+                    softFailures
                 );
             }
             finally

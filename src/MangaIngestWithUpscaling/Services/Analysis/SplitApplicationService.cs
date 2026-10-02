@@ -159,13 +159,28 @@ public class SplitApplicationService(
                 if (upscalerConfig.Value.RemoteOnly)
                 {
                     // A remote-only server has no local ML backend, so it cannot upscale the new
-                    // split pages inline. Enqueue a normal upscale task: the worker re-upscales the
-                    // (now-split) chapter, and its mismatch check makes it a no-op when unchanged.
-                    logger.LogInformation(
-                        "Remote-only mode: deferring the split-chapter upscale for {ChapterId} to a worker.",
-                        chapterId
-                    );
-                    await taskQueue.EnqueueAsync(new UpscaleTask(chapter, chapter.UpscalerProfile));
+                    // split pages inline. Enqueue a repair task: the worker upscales only the pages
+                    // that differ (the new split pages) and merges them into the existing upscaled
+                    // CBZ. A plain UpscaleTask would be skipped because the chapter is already
+                    // upscaled, leaving the stale upscaled CBZ in place.
+                    //
+                    // OnSplitsAppliedAsync (below) enqueues a repair of its own when the library
+                    // upscales on ingest; only enqueue one here when it will not, so the upscaled CBZ
+                    // is never left stale (the inline path always updates it).
+                    bool repairedOnApplied =
+                        chapter.Manga?.Library?.UpscaleOnIngest == true
+                        && chapter.Manga.ShouldUpscale != false
+                        && chapter.Manga.Library.UpscalerProfileId != null;
+                    if (!repairedOnApplied)
+                    {
+                        logger.LogInformation(
+                            "Remote-only mode: deferring the split-chapter repair for {ChapterId} to a worker.",
+                            chapterId
+                        );
+                        await taskQueue.EnqueueAsync(
+                            new RepairUpscaleTask(chapter, chapter.UpscalerProfile)
+                        );
+                    }
                 }
                 else
                 {

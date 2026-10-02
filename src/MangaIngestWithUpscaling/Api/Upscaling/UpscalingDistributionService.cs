@@ -46,7 +46,12 @@ public partial class UpscalingDistributionService(
     {
         context.Status = new Status(StatusCode.OK, "Connection established");
         return Task.FromResult(
-            new CheckConnectionResponse { Message = "Connection established", Success = true }
+            new CheckConnectionResponse
+            {
+                Message = "Connection established",
+                Success = true,
+                ProtocolVersion = UpscalingProtocolVersion.Current,
+            }
         );
     }
 

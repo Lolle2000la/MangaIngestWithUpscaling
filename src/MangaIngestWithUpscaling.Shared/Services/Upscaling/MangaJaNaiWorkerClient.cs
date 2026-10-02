@@ -383,7 +383,15 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         }
     }
 
-    public async Task ShutdownWorkerAsync(CancellationToken cancellationToken)
+    public Task ShutdownWorkerAsync(CancellationToken cancellationToken) =>
+        ShutdownWorkerAsync(force: false, cancellationToken);
+
+    /// <summary>
+    /// Tears down the worker. <paramref name="force"/> skips the in-flight guard: host shutdown uses
+    /// it, since a job that has not yet observed ApplicationStopping must not keep the Python worker
+    /// (and its GPU memory) alive.
+    /// </summary>
+    public async Task ShutdownWorkerAsync(bool force, CancellationToken cancellationToken)
     {
         Process? process;
         StreamWriter? stdin;
@@ -392,7 +400,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             // Never tear down the worker while a job is in flight: a streamed chapter (or a
             // whole-CBZ job) holds it, and killing it would fail that task. The next detection
             // attempt after the job finishes shuts it down instead.
-            if (_currentJobId is not null || !_jobs.IsEmpty)
+            if (!force && (_currentJobId is not null || !_jobs.IsEmpty))
             {
                 _logger.LogDebug(
                     "Not shutting down the upscale worker: a job is in flight or queued."
@@ -527,9 +535,10 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     }
 
     public Task StopAsync(CancellationToken cancellationToken) =>
-        ShutdownWorkerAsync(cancellationToken);
+        ShutdownWorkerAsync(force: true, cancellationToken);
 
-    public async ValueTask DisposeAsync() => await ShutdownWorkerAsync(CancellationToken.None);
+    public async ValueTask DisposeAsync() =>
+        await ShutdownWorkerAsync(force: true, CancellationToken.None);
 
     /// <summary>
     /// Asks the resident detection server to return its cached VRAM before the upscaler claims the

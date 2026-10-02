@@ -58,6 +58,7 @@ message KeepAliveResponse {
 message CheckConnectionResponse {
   bool success = 1; // True if the connection is successful
   string message = 2; // Message from the server
+  int32 protocol_version = 3; // The server's gRPC protocol version (see UpscalingProtocolVersion)
 }
 
 message ReportTaskFailedRequest {

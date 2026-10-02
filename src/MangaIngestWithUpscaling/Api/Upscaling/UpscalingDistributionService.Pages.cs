@@ -69,6 +69,15 @@ public partial class UpscalingDistributionService
         {
             if (!pageStreamSpool.TryBeginAssembly(session, pageContext.Identity))
             {
+                if (
+                    !string.Equals(session.Identity, pageContext.Identity, StringComparison.Ordinal)
+                )
+                {
+                    // An identity reset raced the finalize; tell the worker to restart rather than
+                    // claim the chapter is done when it was never assembled.
+                    return await BuildManifestAsync(pageContext, session);
+                }
+
                 // Another request is already finalizing; report complete without redoing the work.
                 return new PageManifestResponse
                 {
@@ -1060,10 +1069,23 @@ public partial class UpscalingDistributionService
     {
         // Read the spooled results under the session gate: a concurrent manifest with a changed
         // identity resets (and deletes) the session directory under the gate, so reading outside it
-        // could turn a recoverable restart into an IOException. The files are small JSON.
+        // could turn a recoverable restart into an IOException. The files are small JSON. Re-validate
+        // the identity under the gate too, so a reset between TryBeginAssembly and here cannot
+        // attribute the new identity's results to the old detector version.
         var jsonByPage = new List<string>(pageContext.Pages.Count);
         lock (session.Gate)
         {
+            if (
+                session.Finalized
+                || !string.Equals(session.Identity, pageContext.Identity, StringComparison.Ordinal)
+            )
+            {
+                throw new PageStreamRestartException(
+                    $"The spool for task {pageContext.Task.Id} was reset while finalizing; restart the chapter.",
+                    resetSpool: true
+                );
+            }
+
             foreach (SpoolPageDescriptor page in pageContext.Pages)
             {
                 string path = session.PagePath(page.Index);
