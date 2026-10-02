@@ -259,6 +259,7 @@ public partial class UpscalingDistributionService
         FileStream? pageFile = null;
         long written = 0;
         long reserved = 0;
+        long reservationGeneration = -1;
         bool sawChunk = false;
         bool sawLast = false;
         bool committed = false;
@@ -394,7 +395,7 @@ public partial class UpscalingDistributionService
 
                     // Reserve against the per-task budget before writing, so concurrent uploads
                     // cannot each fill temp before any committed-byte check runs.
-                    if (!pageStreamSpool.TryReserveInFlight(session, length))
+                    if (!pageStreamSpool.TryReserveInFlight(session, length, out long generation))
                     {
                         return new UploadPageResponse
                         {
@@ -406,6 +407,7 @@ public partial class UpscalingDistributionService
                         };
                     }
 
+                    reservationGeneration = generation;
                     reserved += length;
                     written += length;
                     await pageFile!.WriteAsync(chunk.Chunk.Memory, context.CancellationToken);
@@ -509,6 +511,10 @@ public partial class UpscalingDistributionService
                     Message = ex.Message,
                     TaskId = taskId,
                     PageIndex = pageIndex,
+                    // A local commit/storage failure is not going to fix itself by requeuing; fail
+                    // the task rather than spinning forever (dead-worker requeues do not increment
+                    // the retry count).
+                    Terminal = true,
                 };
             }
         }
@@ -520,9 +526,10 @@ public partial class UpscalingDistributionService
             }
 
             // Release the bytes this upload reserved; the committed page is counted in TotalBytes.
-            if (reserved > 0)
+            // A generation mismatch means an identity reset already discarded the reservation.
+            if (reserved > 0 && reservationGeneration >= 0)
             {
-                pageStreamSpool.ReleaseInFlight(session, reserved);
+                pageStreamSpool.ReleaseInFlight(session, reservationGeneration, reserved);
             }
 
             if (!committed && tempPath is not null)
@@ -595,6 +602,8 @@ public partial class UpscalingDistributionService
                 Message = ex.Message,
                 TaskId = taskId,
                 PageIndex = pageIndex,
+                // The task was already terminalised above; the worker must not requeue it.
+                Terminal = true,
             };
         }
         finally
@@ -628,6 +637,7 @@ public partial class UpscalingDistributionService
             {
                 Success = false,
                 Message = "Task is not a page-streamed detection task",
+                Terminal = true,
             };
         }
 
@@ -662,6 +672,7 @@ public partial class UpscalingDistributionService
                 Success = false,
                 Message =
                     $"Page index {request.PageIndex} is out of range for task {request.TaskId}",
+                Terminal = true,
             };
         }
 
@@ -673,6 +684,7 @@ public partial class UpscalingDistributionService
                 Success = false,
                 Message =
                     $"The detection result for page {request.PageIndex} of task {request.TaskId} is too large.",
+                Terminal = true,
             };
         }
 
@@ -699,6 +711,7 @@ public partial class UpscalingDistributionService
                 Success = false,
                 Message =
                     $"The detection result for page {request.PageIndex} of task {request.TaskId} is not valid JSON.",
+                Terminal = true,
             };
         }
 
@@ -709,6 +722,7 @@ public partial class UpscalingDistributionService
                 Success = false,
                 Message =
                     $"The detection result for page {request.PageIndex} of task {request.TaskId} is not valid.",
+                Terminal = true,
             };
         }
 
@@ -730,6 +744,7 @@ public partial class UpscalingDistributionService
                 Success = false,
                 Message =
                     $"The detection result for page {request.PageIndex} of task {request.TaskId} names a different image.",
+                Terminal = true,
             };
         }
 
@@ -774,6 +789,8 @@ public partial class UpscalingDistributionService
                         "The detector changed; request a new manifest",
                     _ => "The chapter changed; request a new manifest",
                 },
+                // Over-budget is deterministic; an identity/engine change should restart.
+                Terminal = commitResult == CommitPageResult.OverBudget,
             };
         }
 
@@ -815,7 +832,13 @@ public partial class UpscalingDistributionService
                 request.TaskId,
                 $"Finalizing detection failed: {ex.Message}"
             );
-            return new UploadDetectionResultResponse { Success = false, Message = ex.Message };
+            // The task was already terminalised; the worker must not try to requeue it.
+            return new UploadDetectionResultResponse
+            {
+                Success = false,
+                Message = ex.Message,
+                Terminal = true,
+            };
         }
         finally
         {
@@ -1251,6 +1274,12 @@ public partial class UpscalingDistributionService
                 continue;
             }
 
+            // Reject names that could escape the output archive on extraction.
+            if (!IsSafeEntryName(entry.FullName))
+            {
+                continue;
+            }
+
             // A malformed archive can repeat an entry name; keep the first so the spool's
             // source-name mapping stays unique.
             if (!seen.Add(entry.FullName))
@@ -1283,6 +1312,13 @@ public partial class UpscalingDistributionService
 
         return pages;
     }
+
+    /// <summary>
+    /// Rejects archive entry names that could escape the output archive on extraction (absolute or
+    /// parent-traversing paths), so a hostile source archive cannot write outside the chapter.
+    /// </summary>
+    private static bool IsSafeEntryName(string name) =>
+        !Path.IsPathRooted(name) && !name.Split('/', '\\').Any(segment => segment == "..");
 
     /// <summary>
     /// Replaces an archive entry's extension while preserving its folder prefix, e.g.

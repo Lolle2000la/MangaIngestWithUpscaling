@@ -65,5 +65,28 @@ public class EngineIdentityTests
         Assert.Equal(EngineIdentity.ForUpscaler(cuda), EngineIdentity.ForUpscaler(rocm));
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ForUpscaler_DistinguishesCpuFromGpu()
+    {
+        // Device 0 is the CPU switch (the worker maps UseCPU to SelectedDeviceIndex = 0), so a CPU
+        // run must not hash the same as a GPU run — otherwise CPU and GPU pages could mix.
+        UpscalerConfig gpu = Config();
+        gpu.SelectedDeviceIndex = 1;
+        UpscalerConfig cpuViaIndex = Config();
+        cpuViaIndex.SelectedDeviceIndex = 0;
+        UpscalerConfig cpuViaFlag = Config();
+        cpuViaFlag.SelectedDeviceIndex = 1;
+        cpuViaFlag.UseCPU = true;
+
+        Assert.NotEqual(EngineIdentity.ForUpscaler(gpu), EngineIdentity.ForUpscaler(cpuViaIndex));
+        Assert.NotEqual(EngineIdentity.ForUpscaler(gpu), EngineIdentity.ForUpscaler(cpuViaFlag));
+        // Both CPU spellings must agree.
+        Assert.Equal(
+            EngineIdentity.ForUpscaler(cpuViaIndex),
+            EngineIdentity.ForUpscaler(cpuViaFlag)
+        );
+    }
+
     private static UpscalerConfig Config() => new() { ModelsDirectory = "/nonexistent/models" };
 }

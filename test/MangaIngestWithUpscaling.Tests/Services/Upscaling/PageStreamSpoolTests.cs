@@ -335,6 +335,54 @@ public class PageStreamSpoolTests
         Assert.False(Directory.Exists(session.Directory));
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ReleaseInFlight_IgnoresAReservationFromAStaleGeneration()
+    {
+        PageStreamSession session = _spool.GetOrCreateSession(40, "identity-a", "engine", 1);
+        Assert.True(_spool.TryReserveInFlight(session, 100, out long staleGeneration));
+
+        // The identity changes and resets the session (generation bumps, in-flight zeroed).
+        _spool.GetOrCreateSession(40, "identity-b", "engine", 1);
+        Assert.True(_spool.TryReserveInFlight(session, 50, out _));
+
+        // The stale release must not subtract from the new identity's in-flight accounting.
+        _spool.ReleaseInFlight(session, staleGeneration, 100);
+        Assert.Equal(50, session.InFlightBytes);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void AssemblePagesOnly_OverwritesAnExistingDestination()
+    {
+        string directory = Directory.CreateTempSubdirectory("spool_repair").FullName;
+        try
+        {
+            var pages = new List<SpoolPageDescriptor> { new(0, "001.jpg", "001.webp") };
+            PageStreamSession session = _spool.GetOrCreateSession(41, "identity", "engine", 1);
+            string temp;
+            using (FileStream page = _spool.BeginPageWrite(session, 0, out temp))
+            {
+                page.Write(new byte[] { 7, 8, 9 });
+            }
+
+            _spool.CommitPage(session, 0, temp);
+
+            string destination = Path.Combine(directory, "missing.cbz");
+            File.WriteAllBytes(destination, new byte[] { 1 });
+            _spool.AssemblePagesOnly(session, pages, destination);
+            // A re-finalize into the same prepared repair target must not throw.
+            _spool.AssemblePagesOnly(session, pages, destination);
+
+            using ZipArchive output = ZipFile.OpenRead(destination);
+            Assert.Equal(new byte[] { 7, 8, 9 }, ReadEntry(output, "001.webp"));
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
     private static byte[] ReadAll(Stream stream)
     {
         using var buffer = new MemoryStream();

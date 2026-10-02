@@ -144,43 +144,34 @@ public sealed class PageStreamClient(
 
             void OnPageDone(UpscaleJobFile file)
             {
-                if (indexByName.TryGetValue(file.Input, out int doneIndex))
+                if (!indexByName.TryGetValue(file.Input, out int doneIndex))
                 {
-                    // The worker has finished this page, so its fetched source copy can go; this
-                    // keeps the source directory from growing to a second copy of the chapter.
-                    try
-                    {
-                        File.Delete(
-                            Path.Combine(
-                                sourceDirectory,
-                                WorkerPageName(doneIndex, nameByIndex[doneIndex])
-                            )
-                        );
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.LogDebug(
-                            ex,
-                            "Failed to delete the fetched source page {Index}.",
-                            doneIndex
-                        );
-                    }
+                    pageErrors.Add($"{file.Input}: {file.Status}");
+                    return;
                 }
 
-                if (
-                    file.Status == "upscaled"
-                    && !string.IsNullOrEmpty(file.Output)
-                    && indexByName.TryGetValue(file.Input, out int pageIndex)
-                )
+                string sourcePagePath = Path.Combine(
+                    sourceDirectory,
+                    WorkerPageName(doneIndex, nameByIndex[doneIndex])
+                );
+
+                if (file.Status == "upscaled" && !string.IsNullOrEmpty(file.Output))
                 {
-                    uploads.Writer.TryWrite(new PageUpload(pageIndex, file.Output));
+                    uploads.Writer.TryWrite(
+                        new PageUpload(doneIndex, file.Output, DeleteAfterUpload: false)
+                    );
+                    // The worker has finished this page, so its fetched source copy can go; this
+                    // keeps the source directory from growing to a second copy of the chapter.
+                    TryDeleteFile(sourcePagePath, doneIndex);
                 }
                 else
                 {
-                    // The whole-CBZ path fails the chapter when the engine reports an error
-                    // ("DispatchDone"), so streaming does the same: record it and fail the task
-                    // once the chapter unwinds, instead of silently producing a mixed chapter.
-                    pageErrors.Add($"{file.Input}: {file.Status}");
+                    // Match the whole-CBZ path, which copies a page the engine could not decode (or
+                    // upscale) through unchanged rather than failing the chapter: upload the fetched
+                    // source bytes and let the upload loop delete the file once it is sent.
+                    uploads.Writer.TryWrite(
+                        new PageUpload(doneIndex, sourcePagePath, DeleteAfterUpload: true)
+                    );
                 }
             }
 
@@ -398,6 +389,14 @@ public sealed class PageStreamClient(
                 );
                 if (!response.Success)
                 {
+                    // Mirror the upscale path: a non-terminal rejection means "restart", not "fail".
+                    if (!response.Terminal)
+                    {
+                        throw new PageStreamRestartException(
+                            $"The detection result for page {pageIndex} of task {taskId} was rejected non-terminally: {response.Message}"
+                        );
+                    }
+
                     throw new IOException(
                         $"Uploading the detection result for page {pageIndex} of task {taskId} failed: {response.Message}"
                     );
@@ -712,10 +711,28 @@ public sealed class PageStreamClient(
                     $"Uploading page {upload.PageIndex} of task {taskId} failed: {response.Message}"
                 );
             }
+
+            if (upload.DeleteAfterUpload)
+            {
+                TryDeleteFile(upload.Path, upload.PageIndex);
+            }
         }
     }
 
-    private sealed record PageUpload(int PageIndex, string Path);
+    private sealed record PageUpload(int PageIndex, string Path, bool DeleteAfterUpload);
+
+    /// <summary>Deletes a temp file, logging (not throwing) any failure.</summary>
+    private void TryDeleteFile(string path, int pageIndex)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Failed to delete the fetched source page {Index}.", pageIndex);
+        }
+    }
 
     /// <summary>
     /// Forwards upscale progress as keep-alives without blocking the worker's event reader thread.

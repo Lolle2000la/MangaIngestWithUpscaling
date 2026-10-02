@@ -16,12 +16,13 @@ namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 public static class EngineIdentity
 {
     /// <summary>
-    /// Identity of the upscaler: the preprocessing configuration, the app/engine build, the resolved
-    /// workflow (appstate2.json) and the model files under <see cref="UpscalerConfig.ModelsDirectory"/>.
-    /// Device selection is deliberately excluded: a CUDA box and a ROCm box with the same models and
-    /// preprocessing produce the same pixels, so a cross-device hand-off must not discard the spool.
-    /// Models are fingerprinted by relative path and size — stable across workers with identical
-    /// models and far cheaper than hashing the ~gigabytes of weights.
+    /// Identity of the upscaler: the preprocessing configuration, the effective compute mode (CPU vs
+    /// GPU), the app/engine build, the resolved workflow (appstate2.json) and the model files under
+    /// <see cref="UpscalerConfig.ModelsDirectory"/>. Which GPU is selected is deliberately excluded:
+    /// a CUDA box and a ROCm box with the same models and preprocessing produce the same pixels, so a
+    /// cross-device hand-off must not discard the spool. Models are fingerprinted by relative path and
+    /// size — stable across workers with identical models and far cheaper than hashing the
+    /// ~gigabytes of weights.
     /// </summary>
     public static string ForUpscaler(UpscalerConfig config)
     {
@@ -39,7 +40,11 @@ public static class EngineIdentity
             .Append('|')
             .Append(config.UseFp16)
             .Append('|')
-            .Append(config.UseCPU)
+            // The effective compute mode, not just UseCPU: the worker maps
+            // SelectedDeviceIndex = UseCPU ? 0 : SelectedDeviceIndex, and device 0 is the CPU switch.
+            // So UseCPU=true and (UseCPU=false, SelectedDeviceIndex=0) must hash the same and differ
+            // from a GPU run (SelectedDeviceIndex > 0).
+            .Append(config.UseCPU || config.SelectedDeviceIndex == 0)
             .Append('|');
 
         foreach (ImageFormatConversionRule rule in config.ImageFormatConversionRules)

@@ -33,6 +33,9 @@ message UploadDetectionResultRequest {
 message UploadDetectionResultResponse {
   bool success = 1;
   string message = 2;
+  // True for a deterministic failure that should fail the task; false means "restart the chapter"
+  // (for example the content or engine changed, or the request hit a replica without the spool).
+  bool terminal = 3;
 }
 
 // Backward-compatible request with optional hints

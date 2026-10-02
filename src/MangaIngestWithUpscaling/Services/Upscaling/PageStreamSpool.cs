@@ -157,12 +157,16 @@ public sealed class PageStreamSpool
     /// </summary>
     public FileStream BeginPageWrite(PageStreamSession session, int pageIndex, out string tempPath)
     {
+        string path;
         lock (session.Gate)
         {
+            // Build the path under the gate: a concurrent Reset can swap the session's directory,
+            // which would otherwise turn a clean identity rejection into an unhandled
+            // DirectoryNotFoundException.
             Directory.CreateDirectory(session.Directory);
+            path = session.PagePath(pageIndex);
         }
 
-        string path = session.PagePath(pageIndex);
         // Unique per write so two workers racing on the same page cannot corrupt each other's temp.
         tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
         return new FileStream(
@@ -194,6 +198,13 @@ public sealed class PageStreamSpool
     {
         lock (session.Gate)
         {
+            // A removed/finalized session is terminal; committing into it would recreate the
+            // directory that Remove just deleted.
+            if (session.Finalized)
+            {
+                return CommitPageResult.IdentityMismatch;
+            }
+
             if (!string.Equals(session.Identity, expectedIdentity, StringComparison.Ordinal))
             {
                 return CommitPageResult.IdentityMismatch;
@@ -258,12 +269,15 @@ public sealed class PageStreamSpool
     /// <summary>
     /// Reserves in-flight bytes for a page that is still streaming, so many concurrent uploads
     /// cannot each write up to <c>MaxPageBytes</c> to temp before any committed-byte check runs.
-    /// Returns false when the reservation would exceed <see cref="MaxTaskBytes"/>.
+    /// Returns false when the reservation would exceed <see cref="MaxTaskBytes"/>. The returned
+    /// <paramref name="generation"/> must be passed to <see cref="ReleaseInFlight"/> so a reservation
+    /// made under an identity that was since reset cannot corrupt the new identity's accounting.
     /// </summary>
-    public bool TryReserveInFlight(PageStreamSession session, long bytes)
+    public bool TryReserveInFlight(PageStreamSession session, long bytes, out long generation)
     {
         lock (session.Gate)
         {
+            generation = session.Generation;
             if (session.TotalBytes + session.InFlightBytes + bytes > MaxTaskBytes)
             {
                 return false;
@@ -275,10 +289,17 @@ public sealed class PageStreamSpool
     }
 
     /// <summary>Releases a reservation made by <see cref="TryReserveInFlight"/>.</summary>
-    public void ReleaseInFlight(PageStreamSession session, long bytes)
+    public void ReleaseInFlight(PageStreamSession session, long generation, long bytes)
     {
         lock (session.Gate)
         {
+            // A reset (identity change) already discarded the reservation; releasing it here would
+            // subtract from the new identity's in-flight accounting.
+            if (session.Generation != generation)
+            {
+                return;
+            }
+
             session.InFlightBytes -= bytes;
             if (session.InFlightBytes < 0)
             {
@@ -477,6 +498,10 @@ public sealed class PageStreamSpool
             Directory.CreateDirectory(destinationDirectory);
         }
 
+        // ZipArchiveMode.Create uses FileMode.CreateNew; a re-finalize into the same prepared repair
+        // target would otherwise throw an opaque IOException.
+        File.Delete(destinationPath);
+
         using ZipArchive output = ZipFile.Open(destinationPath, ZipArchiveMode.Create);
         foreach (SpoolPageDescriptor page in pages)
         {
@@ -634,6 +659,12 @@ public sealed class PageStreamSession
     /// <summary>Bytes reserved by uploads that are still streaming, counted against the budget.</summary>
     public long InFlightBytes { get; set; }
 
+    /// <summary>
+    /// Bumped on every reset. A reservation or release tagged with a stale generation is ignored, so
+    /// an in-flight upload under a discarded identity cannot corrupt the new identity's accounting.
+    /// </summary>
+    public long Generation { get; private set; }
+
     /// <summary>Committed byte count per page index, so a re-upload replaces rather than adds.</summary>
     public Dictionary<int, long> PageSizes { get; } = new();
 
@@ -659,6 +690,7 @@ public sealed class PageStreamSession
         PageSizes.Clear();
         TotalBytes = 0;
         InFlightBytes = 0;
+        Generation++;
         // Clear a stale flag from an assembly that was interrupted before EndAssembly, or the new
         // identity could never finalize.
         Assembling = false;

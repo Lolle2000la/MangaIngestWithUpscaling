@@ -220,7 +220,7 @@ public class PageStreamClientTests
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task RunAsync_FailsWhenAPageCannotBeUpscaled()
+    public async Task RunAsync_CopiesAPageTheEngineCouldNotProcessThroughUnchanged()
     {
         string directory = Directory.CreateTempSubdirectory("page_stream_error").FullName;
         try
@@ -231,9 +231,14 @@ public class PageStreamClientTests
             var client = server.CreateClient();
             var sut = CreateClient(new FakeWorkerClient { PageStatus = "error" });
 
-            await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                sut.RunAsync(client, 1, Profile, CancellationToken.None)
-            );
+            // Matching the whole-CBZ path, a page the engine cannot process is copied through
+            // unchanged rather than failing the whole chapter.
+            await sut.RunAsync(client, 1, Profile, CancellationToken.None);
+
+            Assert.True(File.Exists(destination));
+            using ZipArchive zip = ZipFile.OpenRead(destination);
+            Assert.Equal(new byte[] { 1, 2, 3 }, ReadEntry(zip, "001.webp"));
+            Assert.Equal(new byte[] { 4, 5, 6 }, ReadEntry(zip, "002.webp"));
         }
         finally
         {

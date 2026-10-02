@@ -40,7 +40,9 @@ using RemoteEngineIdentityProvider = remote::MangaIngestWithUpscaling.RemoteWork
 using RemotePageManifestRequest = remote::MangaIngestWithUpscaling.Api.Upscaling.PageManifestRequest;
 using RemotePageManifestResponse = remote::MangaIngestWithUpscaling.Api.Upscaling.PageManifestResponse;
 using RemotePageStreamClient = remote::MangaIngestWithUpscaling.RemoteWorker.Background.PageStreamClient;
+using RemoteUploadDetectionResultResponse = remote::MangaIngestWithUpscaling.Api.Upscaling.UploadDetectionResultResponse;
 using RemoteUploadPageChunk = remote::MangaIngestWithUpscaling.Api.Upscaling.UploadPageChunk;
+using RemoteUploadPageDetectionRequest = remote::MangaIngestWithUpscaling.Api.Upscaling.UploadPageDetectionRequest;
 using RemoteUploadPageResponse = remote::MangaIngestWithUpscaling.Api.Upscaling.UploadPageResponse;
 using RemoteUpscalingServiceClient = remote::MangaIngestWithUpscaling.Api.Upscaling.UpscalingService.UpscalingServiceClient;
 using SharedCompressionFormat = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat;
@@ -376,6 +378,70 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
             cancellationToken: TestContext.Current.CancellationToken
         );
         Assert.Empty(withOtherEngine.CompletedPages);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task UploadPageDetection_RejectsAStaleIdentityNonTerminally()
+    {
+        var client = new RemoteUpscalingServiceClient(_channel);
+
+        // Create the session via the manifest so the rejection is about the identity, not the spool.
+        await client.GetPageManifestAsync(
+            new RemotePageManifestRequest
+            {
+                TaskId = _detectTaskId,
+                EngineIdentity = DetectorEngineIdentity,
+            },
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        RemoteUploadDetectionResultResponse response = await client.UploadPageDetectionAsync(
+            new RemoteUploadPageDetectionRequest
+            {
+                TaskId = _detectTaskId,
+                PageIndex = 0,
+                ResultJson = "{}",
+                TaskIdentity = "not-the-current-identity",
+                EngineIdentity = DetectorEngineIdentity,
+            },
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        // A stale identity means "restart", not "fail", so the worker must not report a failure
+        // that would discard every already-detected page.
+        Assert.False(response.Success);
+        Assert.False(response.Terminal);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task UploadPageDetection_RejectsMalformedJsonTerminally()
+    {
+        var client = new RemoteUpscalingServiceClient(_channel);
+        RemotePageManifestResponse manifest = await client.GetPageManifestAsync(
+            new RemotePageManifestRequest
+            {
+                TaskId = _detectTaskId,
+                EngineIdentity = DetectorEngineIdentity,
+            },
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        RemoteUploadDetectionResultResponse response = await client.UploadPageDetectionAsync(
+            new RemoteUploadPageDetectionRequest
+            {
+                TaskId = _detectTaskId,
+                PageIndex = 0,
+                ResultJson = "not json",
+                TaskIdentity = manifest.TaskIdentity,
+                EngineIdentity = DetectorEngineIdentity,
+            },
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        Assert.False(response.Success);
+        Assert.True(response.Terminal);
     }
 
     [Fact]
