@@ -266,6 +266,39 @@ public class PageStreamClientTests
         }
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunAsync_StopsTheChapterWhenAnUploadIsRejected()
+    {
+        string directory = Directory.CreateTempSubdirectory("page_stream_reject").FullName;
+        try
+        {
+            string source = CreateManyPageSourceCbz(directory, pageCount: 100);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination);
+            server.FailUploadForPage.Add(0);
+            var client = server.CreateClient();
+            var worker = new FakeWorkerClient();
+            var sut = CreateClient(worker);
+
+            var error = await Assert.ThrowsAsync<IOException>(() =>
+                sut.RunAsync(client, 1, Profile, CancellationToken.None)
+            );
+
+            // The upload loop's rejection must be surfaced (not masked by the consequential
+            // cancellation) and must stop the local worker instead of upscaling the whole chapter.
+            Assert.Contains("simulated rejection", error.Message);
+            Assert.True(
+                worker.ProcessedPages < server.Pages.Count,
+                $"Expected the chapter to stop early, but {worker.ProcessedPages} of {server.Pages.Count} pages were processed."
+            );
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
     private static PageStreamClient CreateClient(FakeWorkerClient worker) =>
         new(
             worker,
@@ -281,6 +314,18 @@ public class PageStreamClientTests
         WriteEntry(zip, "001.jpg", new byte[] { 1, 2, 3 });
         WriteEntry(zip, "002.jpg", new byte[] { 4, 5, 6 });
         WriteEntry(zip, "ComicInfo.xml", "<ComicInfo/>"u8.ToArray());
+        return path;
+    }
+
+    private static string CreateManyPageSourceCbz(string directory, int pageCount)
+    {
+        string path = Path.Combine(directory, "source.cbz");
+        using ZipArchive zip = ZipFile.Open(path, ZipArchiveMode.Create);
+        for (int i = 1; i <= pageCount; i++)
+        {
+            WriteEntry(zip, $"{i:D3}.jpg", new byte[] { 1, 2, 3 });
+        }
+
         return path;
     }
 
@@ -341,6 +386,7 @@ public class PageStreamClientTests
         public HashSet<int> Completed { get; } = new();
         public List<int> RequestedPages { get; } = new();
         public HashSet<int> OmitFromFetch { get; } = new();
+        public HashSet<int> FailUploadForPage { get; } = new();
         public Dictionary<int, byte[]> Uploaded { get; } = new();
         public bool OmitPagesWhenComplete { get; set; }
 
@@ -439,14 +485,26 @@ public class PageStreamClientTests
 
         private AsyncClientStreamingCall<UploadPageChunk, UploadPageResponse> ClientStream()
         {
+            var response = new TaskCompletionSource<UploadPageResponse>(
+                TaskCreationOptions.RunContinuationsAsynchronously
+            );
             var writer = new FakeClientStreamWriter<UploadPageChunk>(chunks =>
             {
                 if (chunks.Count == 0)
                 {
+                    response.TrySetResult(new UploadPageResponse { Success = true });
                     return;
                 }
 
                 int pageIndex = chunks[0].PageIndex;
+                if (FailUploadForPage.Contains(pageIndex))
+                {
+                    response.TrySetResult(
+                        new UploadPageResponse { Success = false, Message = "simulated rejection" }
+                    );
+                    return;
+                }
+
                 Uploaded[pageIndex] = chunks
                     .Where(c => !c.Chunk.IsEmpty)
                     .SelectMany(c => c.Chunk.ToByteArray())
@@ -456,11 +514,13 @@ public class PageStreamClientTests
                 {
                     Assemble();
                 }
+
+                response.TrySetResult(new UploadPageResponse { Success = true });
             });
 
             return new AsyncClientStreamingCall<UploadPageChunk, UploadPageResponse>(
                 writer,
-                Task.FromResult(new UploadPageResponse { Success = true }),
+                response.Task,
                 Task.FromResult(new Metadata()),
                 () => Status.DefaultSuccess,
                 () => new Metadata(),
@@ -556,6 +616,14 @@ public class PageStreamClientTests
         {
             _items.Add(message);
             return Task.CompletedTask;
+        }
+
+        Task IAsyncStreamWriter<T>.WriteAsync(T message, CancellationToken cancellationToken)
+        {
+            // The real grpc-dotnet writer implements the token overload; mirror it so the test
+            // exercises the same path instead of the default interface method that throws.
+            cancellationToken.ThrowIfCancellationRequested();
+            return WriteAsync(message);
         }
 
         public Task CompleteAsync()

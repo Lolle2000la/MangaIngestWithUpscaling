@@ -185,6 +185,12 @@ public partial class UpscalingDistributionService
 
         foreach (int pageIndex in request.PageIndexes)
         {
+            // Stop early when the client has gone away instead of streaming the rest of the archive.
+            if (context.CancellationToken.IsCancellationRequested)
+            {
+                break;
+            }
+
             if (
                 !byIndex.TryGetValue(pageIndex, out SpoolPageDescriptor? page)
                 || !entries.TryGetValue(page.SourceName, out ZipArchiveEntry? entry)
@@ -254,6 +260,7 @@ public partial class UpscalingDistributionService
         FileStream? pageFile = null;
         long written = 0;
         bool sawChunk = false;
+        bool sawLast = false;
         bool committed = false;
 
         try
@@ -358,6 +365,11 @@ public partial class UpscalingDistributionService
 
                     await pageFile!.WriteAsync(chunk.Chunk.Memory, context.CancellationToken);
                 }
+
+                if (chunk.IsLast)
+                {
+                    sawLast = true;
+                }
             }
 
             if (!sawChunk || taskId == 0)
@@ -366,6 +378,20 @@ public partial class UpscalingDistributionService
                 {
                     Success = false,
                     Message = "No page data received",
+                    Terminal = true,
+                };
+            }
+
+            // A gracefully-closed but incomplete stream would otherwise be committed as a whole
+            // page; require the explicit terminator the worker sends after the last data chunk.
+            if (!sawLast)
+            {
+                return new UploadPageResponse
+                {
+                    Success = false,
+                    Message = "The page upload ended before the final chunk.",
+                    TaskId = taskId,
+                    PageIndex = pageIndex,
                     Terminal = true,
                 };
             }
@@ -539,10 +565,7 @@ public partial class UpscalingDistributionService
             };
         }
 
-        if (
-            !string.IsNullOrEmpty(request.TaskIdentity)
-            && !string.Equals(pageContext.Identity, request.TaskIdentity, StringComparison.Ordinal)
-        )
+        if (!string.Equals(pageContext.Identity, request.TaskIdentity, StringComparison.Ordinal))
         {
             return new UploadDetectionResultResponse
             {
@@ -578,10 +601,30 @@ public partial class UpscalingDistributionService
             };
         }
 
-        SplitDetectionResult? detectionResult = JsonSerializer.Deserialize(
-            request.ResultJson,
-            SharedJsonContext.Default.SplitDetectionResult
-        );
+        SplitDetectionResult? detectionResult;
+        try
+        {
+            detectionResult = JsonSerializer.Deserialize(
+                request.ResultJson,
+                SharedJsonContext.Default.SplitDetectionResult
+            );
+        }
+        catch (JsonException ex)
+        {
+            _logger.LogDebug(
+                ex,
+                "Rejected malformed detection JSON for page {PageIndex} of task {TaskId}.",
+                request.PageIndex,
+                request.TaskId
+            );
+            return new UploadDetectionResultResponse
+            {
+                Success = false,
+                Message =
+                    $"The detection result for page {request.PageIndex} of task {request.TaskId} is not valid JSON.",
+            };
+        }
+
         if (detectionResult is null)
         {
             return new UploadDetectionResultResponse
@@ -618,9 +661,17 @@ public partial class UpscalingDistributionService
             request.PageIndex,
             out string resultTemp
         );
-        await using (resultFile)
+        try
         {
-            await resultFile.WriteAsync(resultBytes, context.CancellationToken);
+            await using (resultFile)
+            {
+                await resultFile.WriteAsync(resultBytes, context.CancellationToken);
+            }
+        }
+        catch
+        {
+            DeleteTempQuietly(resultTemp);
+            throw;
         }
 
         if (
@@ -632,18 +683,7 @@ public partial class UpscalingDistributionService
             )
         )
         {
-            try
-            {
-                File.Delete(resultTemp);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(
-                    ex,
-                    "Failed to delete a stale detection temp file {Temp}.",
-                    resultTemp
-                );
-            }
+            DeleteTempQuietly(resultTemp);
 
             return new UploadDetectionResultResponse
             {
@@ -1001,6 +1041,19 @@ public partial class UpscalingDistributionService
         return null;
     }
 
+    /// <summary>Deletes a temp file, ignoring and logging any failure to do so.</summary>
+    private void DeleteTempQuietly(string tempPath)
+    {
+        try
+        {
+            File.Delete(tempPath);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to delete a page temp file {Temp}.", tempPath);
+        }
+    }
+
     /// <summary>Largest page in the source archive, for the worker's inactivity timeout; 0 if unknown.</summary>
     private async Task<long> ComputeMaxPagePixelsAsync(string sourcePath)
     {
@@ -1096,6 +1149,7 @@ public partial class UpscalingDistributionService
         var pages = new List<SpoolPageDescriptor>();
         using ZipArchive archive = ZipFile.OpenRead(sourcePath);
         var seen = new HashSet<string>(StringComparer.Ordinal);
+        var outputNames = new HashSet<string>(StringComparer.Ordinal);
         int index = 0;
         foreach (ZipArchiveEntry entry in archive.Entries)
         {
@@ -1118,13 +1172,24 @@ public partial class UpscalingDistributionService
 
             // Preserve the entry's folder (matching the whole-CBZ worker) so nested pages are not
             // flattened and same-stemmed pages in different folders do not collide.
-            pages.Add(
-                new SpoolPageDescriptor(
-                    index,
-                    entry.FullName,
-                    ReplaceExtension(entry.FullName, extension)
-                )
-            );
+            string outputName = ReplaceExtension(entry.FullName, extension);
+
+            // Two entries in one folder can share a stem (001.jpg + 001.png) and thus an output
+            // name; the whole-CBZ path silently overwrites one, so disambiguate and keep both pages.
+            if (!outputNames.Add(outputName))
+            {
+                string suffix = $".{extension}";
+                string stem = outputName[..^suffix.Length];
+                int n = 1;
+                string candidate;
+                do
+                {
+                    candidate = $"{stem}_{n++}{suffix}";
+                } while (!outputNames.Add(candidate));
+                outputName = candidate;
+            }
+
+            pages.Add(new SpoolPageDescriptor(index, entry.FullName, outputName));
             index++;
         }
 

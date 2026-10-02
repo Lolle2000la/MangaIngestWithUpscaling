@@ -122,6 +122,7 @@ public class DistributedUpscaleTaskProcessor(
         }
 
         CleanupRepairFiles(checkAgainst.Id, logger);
+        DropPageSpool(checkAgainst.Id, logger);
 
         // Raise the event after releasing _lock: a subscriber that re-enters the processor (e.g. to
         // query running state) must never be able to deadlock the processor by calling back in.
@@ -1018,6 +1019,24 @@ public class DistributedUpscaleTaskProcessor(
     /// <summary>
     ///     Cleans up temporary files created during repair processing.
     /// </summary>
+    /// <summary>
+    /// Drops any partial page spool/cache for a task so its temp bytes do not linger until the
+    /// retention sweep. Best-effort.
+    /// </summary>
+    private void DropPageSpool(int taskId, ILogger logger)
+    {
+        try
+        {
+            using IServiceScope scope = scopeFactory.CreateScope();
+            scope.ServiceProvider.GetRequiredService<PageStreamSpool>().Remove(taskId);
+            scope.ServiceProvider.GetRequiredService<PageContextCache>().Remove(taskId);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Failed to drop the page spool for task {TaskId}.", taskId);
+        }
+    }
+
     private void CleanupRepairFiles(int taskId, ILogger logger)
     {
         try
@@ -1063,19 +1082,7 @@ public class DistributedUpscaleTaskProcessor(
 
             // Drop any partial page spool/cache for the failed task so its temp bytes do not linger
             // until the retention sweep.
-            try
-            {
-                scope.ServiceProvider.GetRequiredService<PageStreamSpool>().Remove(taskId);
-                scope.ServiceProvider.GetRequiredService<PageContextCache>().Remove(taskId);
-            }
-            catch (Exception ex)
-            {
-                logger.LogDebug(
-                    ex,
-                    "Failed to drop the page spool for failed task {TaskId}.",
-                    taskId
-                );
-            }
+            DropPageSpool(taskId, logger);
         }
 
         PersistedTask? failedTask = null;

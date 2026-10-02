@@ -322,6 +322,24 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                     await monitor; // throws TimeoutException after escalating cancel/kill
                 }
 
+                // Surface the worker job's own outcome first: when the process dies mid-chapter the
+                // producer fails consequentially (broken pipe after the process died), and the job's
+                // fault carries the exit code and captured stderr that identify the crash. Only when
+                // the job did not fault is the producer error the real cause.
+                if (job.Completion.Task.IsFaulted)
+                {
+                    if (producerError is not null)
+                    {
+                        _logger.LogWarning(
+                            producerError,
+                            "Streaming chapter {JobId} failed while the worker job also faulted; surfacing the worker error.",
+                            request.Id
+                        );
+                    }
+
+                    return await job.Completion.Task;
+                }
+
                 if (producerError is not null)
                 {
                     throw new InvalidOperationException(
@@ -422,6 +440,12 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             if (_currentJobId is not null || !_jobs.IsEmpty)
             {
                 _logger.LogDebug("Not releasing worker GPU cache: a job is in flight or queued.");
+                return false;
+            }
+
+            if (_cacheReleaseTcs is not null)
+            {
+                _logger.LogDebug("Not releasing worker GPU cache: a release is already in flight.");
                 return false;
             }
 
@@ -1068,14 +1092,28 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             return;
         }
 
+        if (!string.IsNullOrEmpty(pageDone.Error))
+        {
+            _logger.LogWarning(
+                "Upscale worker reported an error for page {Input} of job {JobId}: {Error}",
+                pageDone.Input,
+                pageDone.Id,
+                pageDone.Error
+            );
+        }
+
+        // Carry the engine's per-page message into the status so it reaches the task's persisted
+        // error instead of the caller only being able to report "<input>: error".
+        string status = pageDone.Status ?? "";
+        if (status == "error" && !string.IsNullOrEmpty(pageDone.Error))
+        {
+            status = $"error: {pageDone.Error}";
+        }
+
         try
         {
             job.OnPageDone?.Invoke(
-                new UpscaleJobFile(
-                    pageDone.Input ?? "",
-                    pageDone.Output ?? "",
-                    pageDone.Status ?? ""
-                )
+                new UpscaleJobFile(pageDone.Input ?? "", pageDone.Output ?? "", status)
             );
         }
         catch (Exception ex)

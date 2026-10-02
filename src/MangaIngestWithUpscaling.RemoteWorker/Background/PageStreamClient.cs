@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using System.Text.Json;
 using System.Threading.Channels;
 using Google.Protobuf;
@@ -113,12 +114,30 @@ public sealed class PageStreamClient(
             );
             var pageErrors = new System.Collections.Concurrent.ConcurrentBag<string>();
 
+            // The upload loop and the chapter share a token so a rejected or dropped upload stops
+            // the local worker instead of letting it upscale the whole remaining chapter (and fill
+            // temp disk) only to fail at the end.
+            using var uploadFailureCts = CancellationTokenSource.CreateLinkedTokenSource(
+                stoppingToken
+            );
             Task uploadTask = UploadLoopAsync(
                 client,
                 taskId,
                 manifest.TaskIdentity,
                 uploads.Reader,
-                stoppingToken
+                uploadFailureCts.Token
+            );
+            _ = uploadTask.ContinueWith(
+                t =>
+                {
+                    if (t.IsFaulted)
+                    {
+                        uploadFailureCts.Cancel();
+                    }
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default
             );
 
             void OnPageDone(UpscaleJobFile file)
@@ -188,30 +207,53 @@ public sealed class PageStreamClient(
                     missing,
                     nameByIndex,
                     sourceDirectory,
-                    stoppingToken
+                    uploadFailureCts.Token
                 ),
                 progressReporter.Progress,
                 OnPageDone,
-                stoppingToken,
+                uploadFailureCts.Token,
                 timeout: ChapterInactivityTimeout(manifest.MaxPagePixels)
             );
 
+            Exception? chapterError = null;
             try
             {
                 await chapterTask;
             }
+            catch (Exception ex)
+            {
+                chapterError = ex;
+            }
             finally
             {
                 uploads.Writer.TryComplete();
-                try
-                {
-                    await uploadTask;
-                }
-                catch (Exception) when (chapterTask.IsFaulted || chapterTask.IsCanceled)
-                {
-                    // The chapter already failed; surface that error rather than the upload loop's
-                    // (usually consequential) failure.
-                }
+            }
+
+            Exception? uploadError = null;
+            try
+            {
+                await uploadTask;
+            }
+            catch (Exception ex)
+            {
+                uploadError = ex;
+            }
+
+            // A failed upload cancels the chapter, so the chapter's error is then a consequential
+            // cancellation; surface the real (non-cancellation) error first.
+            if (chapterError is not null && chapterError is not OperationCanceledException)
+            {
+                ExceptionDispatchInfo.Capture(chapterError).Throw();
+            }
+
+            if (uploadError is not null)
+            {
+                ExceptionDispatchInfo.Capture(uploadError).Throw();
+            }
+
+            if (chapterError is not null)
+            {
+                ExceptionDispatchInfo.Capture(chapterError).Throw();
             }
 
             if (!pageErrors.IsEmpty)
@@ -421,6 +463,8 @@ public sealed class PageStreamClient(
             81920,
             FileOptions.Asynchronous
         );
+        long written = 0;
+        bool sawLast = false;
         await foreach (PageChunk chunk in call.ResponseStream.ReadAllAsync(cancellationToken))
         {
             if (chunk.PageIndex != pageIndex)
@@ -431,12 +475,24 @@ public sealed class PageStreamClient(
             if (!chunk.Chunk.IsEmpty)
             {
                 await file.WriteAsync(chunk.Chunk.Memory, cancellationToken);
+                written += chunk.Chunk.Length;
             }
 
             if (chunk.IsLast)
             {
+                sawLast = true;
                 break;
             }
+        }
+
+        // The server silently skips a page it cannot find; without this the 0-byte file would be
+        // "detected", its error result accepted, and the chapter finalized without the page ever
+        // having been inspected. Mirror the upscale path's completeness guard.
+        if (!sawLast || written == 0)
+        {
+            throw new InvalidOperationException(
+                $"The server did not send page {pageIndex} of task {taskId}."
+            );
         }
     }
 
@@ -564,10 +620,10 @@ public sealed class PageStreamClient(
                     cancellationToken: stoppingToken
                 );
 
+            int chunkNumber = 0;
             await using (FileStream file = File.OpenRead(upload.Path))
             {
                 byte[] buffer = new byte[ChunkSizeBytes];
-                int chunkNumber = 0;
                 int bytesRead;
                 while (
                     (
@@ -591,6 +647,21 @@ public sealed class PageStreamClient(
                     );
                 }
             }
+
+            // Mark the end of the page so the server can reject a truncated upload (e.g. the worker
+            // died mid-page) instead of committing a partial page as if it were whole.
+            await call.RequestStream.WriteAsync(
+                new UploadPageChunk
+                {
+                    TaskId = taskId,
+                    PageIndex = upload.PageIndex,
+                    ChunkNumber = chunkNumber,
+                    Chunk = ByteString.Empty,
+                    IsLast = true,
+                    ContentIdentity = identity,
+                },
+                stoppingToken
+            );
 
             await call.RequestStream.CompleteAsync();
             UploadPageResponse response = await call.ResponseAsync;

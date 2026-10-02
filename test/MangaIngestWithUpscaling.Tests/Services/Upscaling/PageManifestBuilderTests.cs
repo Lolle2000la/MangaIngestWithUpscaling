@@ -104,6 +104,37 @@ public class PageManifestBuilderTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void BuildPageDescriptors_DisambiguatesCollidingOutputNames()
+    {
+        string directory = Directory.CreateTempSubdirectory("manifest_collision").FullName;
+        try
+        {
+            string source = CreateCbz(
+                directory,
+                ("001.jpg", new byte[] { 1 }),
+                ("001.png", new byte[] { 2 })
+            );
+
+            List<SpoolPageDescriptor> pages = UpscalingDistributionService.BuildPageDescriptors(
+                source,
+                Profile()
+            );
+
+            // Two entries share a stem, so both would map to 001.webp; the second must be renamed
+            // rather than silently dropped during assembly.
+            Assert.Equal(2, pages.Count);
+            Assert.Equal("001.webp", pages[0].OutputName);
+            Assert.Equal("001_1.webp", pages[1].OutputName);
+            Assert.NotEqual(pages[0].OutputName, pages[1].OutputName);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void BuildRepairPageDescriptors_FlattensNestedOutputNames()
     {
         string directory = Directory.CreateTempSubdirectory("manifest_repair_nested").FullName;

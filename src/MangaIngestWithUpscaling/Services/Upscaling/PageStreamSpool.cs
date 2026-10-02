@@ -149,7 +149,11 @@ public sealed class PageStreamSpool
 
             File.Move(tempPath, session.PagePath(pageIndex), overwrite: true);
             session.Completed.Add(pageIndex);
-            session.TotalBytes += size;
+            // Re-uploading a page replaces its bytes; adjust by the delta so legitimate retries do
+            // not spuriously trip the per-task budget.
+            long previous = session.PageSizes.TryGetValue(pageIndex, out long prev) ? prev : 0;
+            session.PageSizes[pageIndex] = size;
+            session.TotalBytes += size - previous;
             session.LastTouchedUtc = DateTime.UtcNow;
             return true;
         }
@@ -228,6 +232,21 @@ public sealed class PageStreamSpool
         string destinationPath
     )
     {
+        // Hold the session gate for the whole read so a concurrent manifest that changes the
+        // identity cannot Reset (delete) the spool out from under the assembler.
+        lock (session.Gate)
+        {
+            AssembleCore(session, sourcePath, pages, destinationPath);
+        }
+    }
+
+    private void AssembleCore(
+        PageStreamSession session,
+        string sourcePath,
+        IReadOnlyList<SpoolPageDescriptor> pages,
+        string destinationPath
+    )
+    {
         var bySource = new Dictionary<string, SpoolPageDescriptor>(StringComparer.Ordinal);
         foreach (SpoolPageDescriptor page in pages)
         {
@@ -289,7 +308,9 @@ public sealed class PageStreamSpool
 
                 if (!written.Add(page.OutputName))
                 {
-                    continue;
+                    throw new InvalidOperationException(
+                        $"Two pages of task {session.TaskId} resolve to the same output name '{page.OutputName}'."
+                    );
                 }
 
                 ZipArchiveEntry outputEntry = output.CreateEntry(page.OutputName);
@@ -318,6 +339,19 @@ public sealed class PageStreamSpool
     /// it.
     /// </summary>
     public void AssemblePagesOnly(
+        PageStreamSession session,
+        IReadOnlyList<SpoolPageDescriptor> pages,
+        string destinationPath
+    )
+    {
+        // See Assemble: keep a concurrent Reset from deleting the spool mid-read.
+        lock (session.Gate)
+        {
+            AssemblePagesOnlyCore(session, pages, destinationPath);
+        }
+    }
+
+    private void AssemblePagesOnlyCore(
         PageStreamSession session,
         IReadOnlyList<SpoolPageDescriptor> pages,
         string destinationPath
@@ -462,6 +496,9 @@ public sealed class PageStreamSession
     /// <summary>Bytes committed to this session, for the per-task spool budget.</summary>
     public long TotalBytes { get; set; }
 
+    /// <summary>Committed byte count per page index, so a re-upload replaces rather than adds.</summary>
+    public Dictionary<int, long> PageSizes { get; } = new();
+
     /// <summary>Set while a caller is finalizing (assembling) this session.</summary>
     public bool Assembling { get; set; }
 
@@ -474,7 +511,11 @@ public sealed class PageStreamSession
         PageCount = pageCount;
         Directory = directory;
         Completed.Clear();
+        PageSizes.Clear();
         TotalBytes = 0;
+        // Clear a stale flag from an assembly that was interrupted before EndAssembly, or the new
+        // identity could never finalize.
+        Assembling = false;
     }
 
     public void DeleteDirectory(ILogger? logger = null)

@@ -128,9 +128,9 @@ public record UpscalerConfig
     public TimeSpan WorkerIdleTimeout { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
-    ///     Inactivity timeout for a single request to the resident detection server. The request is
-    ///     cancelled and the server process killed when it fires, and the caller falls back to the
-    ///     per-image CLI, so a wedged detector cannot hang a task forever. Zero disables the guard.
+    ///     Maximum time a single request to the resident detection server may run before the request
+    ///     is cancelled and the server process killed; the caller then falls back to the per-image
+    ///     CLI, so a wedged detector cannot hang a task forever. Zero disables the guard.
     /// </summary>
     public TimeSpan DetectServerRequestTimeout { get; set; } = TimeSpan.FromMinutes(10);
 

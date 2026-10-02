@@ -202,16 +202,16 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
             process = _process;
             stdin = _stdin;
             _shuttingDown = true;
-            if (process is null || process.HasExited)
-            {
-                _process = null;
-                return;
-            }
+        }
+
+        if (process is null)
+        {
+            return;
         }
 
         try
         {
-            if (stdin is not null)
+            if (!process.HasExited && stdin is not null)
             {
                 await SendLineAsync(
                     stdin,
@@ -223,19 +223,26 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
                 );
             }
 
-            using var grace = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            grace.CancelAfter(TimeSpan.FromSeconds(10));
-            try
+            if (!process.HasExited)
             {
-                await process.WaitForExitAsync(grace.Token);
+                using var grace = CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken
+                );
+                grace.CancelAfter(TimeSpan.FromSeconds(10));
+                try
+                {
+                    await process.WaitForExitAsync(grace.Token);
+                }
+                catch (OperationCanceledException) { }
             }
-            catch (OperationCanceledException) { }
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Error while shutting down the detection server.");
         }
 
+        // Always dispose, even when the process had already exited; CleanupAsync clears _process
+        // and _stdin when they still point at this process.
         await CleanupAsync(process);
     }
 
@@ -306,6 +313,7 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
+            StandardInputEncoding = Encoding.UTF8,
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };
