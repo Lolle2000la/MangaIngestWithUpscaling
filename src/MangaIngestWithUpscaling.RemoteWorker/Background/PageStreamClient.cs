@@ -31,7 +31,10 @@ public sealed class PageStreamClient(
 )
 {
     private const int ChunkSizeBytes = 1024 * 1024;
-    private static readonly TimeSpan ManifestTimeout = TimeSpan.FromSeconds(30);
+
+    // The manifest normally returns immediately, but when the chapter is already fully spooled the
+    // server assembles the CBZ inline before answering, so allow for a large chapter's build.
+    private static readonly TimeSpan ManifestTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan PageTimeout = TimeSpan.FromMinutes(10);
 
     /// <summary>
@@ -270,7 +273,19 @@ public sealed class PageStreamClient(
             }
 
             // A failed upload cancels the chapter, so the chapter's error is then a consequential
-            // cancellation; surface the real (non-cancellation) error first.
+            // cancellation; surface the real (non-cancellation) error first. A *permanent* upload
+            // failure must win over a transient chapter error (for example a worker crash), or the
+            // transient error would be reported instead and the task would requeue forever with the
+            // spool intact instead of failing.
+            if (
+                uploadError is not null
+                && RemoteTaskProcessor.ClassifyStreamingFailure(uploadError)
+                    is RemoteTaskProcessor.StreamingFailureKind.Permanent
+            )
+            {
+                ExceptionDispatchInfo.Capture(uploadError).Throw();
+            }
+
             if (chapterError is not null && chapterError is not OperationCanceledException)
             {
                 ExceptionDispatchInfo.Capture(chapterError).Throw();

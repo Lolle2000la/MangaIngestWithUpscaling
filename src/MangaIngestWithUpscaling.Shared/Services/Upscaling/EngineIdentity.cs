@@ -88,23 +88,29 @@ public static class EngineIdentity
             return;
         }
 
-        // Sorted so the fingerprint is deterministic regardless of enumeration order.
-        IEnumerable<string> files = Directory
+        // Normalize separators and casing so the fingerprint agrees across operating systems (a CUDA
+        // box and a ROCm box, or Windows and Linux, with the same models must not discard the spool),
+        // and sort by the normalized relative path so enumeration order does not matter.
+        IEnumerable<(string Relative, long Length)> files = Directory
             .EnumerateFiles(directory, "*", SearchOption.AllDirectories)
-            .OrderBy(f => f, StringComparer.Ordinal);
-        foreach (string file in files)
+            .Select(file =>
+                (
+                    Relative: Path.GetRelativePath(directory, file)
+                        .Replace('\\', '/')
+                        .ToLowerInvariant(),
+                    Length: new FileInfo(file).Length
+                )
+            )
+            .OrderBy(entry => entry.Relative, StringComparer.Ordinal);
+        foreach ((string relative, long length) in files)
         {
-            material
-                .Append(Path.GetRelativePath(directory, file))
-                .Append(':')
-                .Append(new FileInfo(file).Length)
-                .Append(';');
+            material.Append(relative).Append(':').Append(length).Append(';');
         }
     }
 
     private static void AppendFileContentHash(StringBuilder material, string path)
     {
-        material.Append(Path.GetFileName(path)).Append(':');
+        material.Append(Path.GetFileName(path).ToLowerInvariant()).Append(':');
         if (File.Exists(path))
         {
             using FileStream stream = File.OpenRead(path);

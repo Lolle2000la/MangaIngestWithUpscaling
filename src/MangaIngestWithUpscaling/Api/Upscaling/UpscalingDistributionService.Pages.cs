@@ -48,6 +48,14 @@ public partial class UpscalingDistributionService
             return new PageManifestResponse { TaskId = request.TaskId };
         }
 
+        if (string.IsNullOrEmpty(request.EngineIdentity))
+        {
+            // An empty engine identity would be recorded as "" and silently void the engine-mixing
+            // guard, so reject it.
+            context.Status = new Status(StatusCode.InvalidArgument, "engine_identity is required");
+            return new PageManifestResponse { TaskId = request.TaskId };
+        }
+
         PageStreamSession session = pageStreamSpool.GetOrCreateSession(
             pageContext.Task.Id,
             pageContext.Identity,
@@ -97,6 +105,15 @@ public partial class UpscalingDistributionService
                 {
                     pageStreamSpool.Remove(pageContext.Task.Id);
                     pageContextCache.Remove(pageContext.Task.Id);
+                    // Remove finalized (and deleted) the old session; a manifest built from it would
+                    // report every page as completed against a dead spool, so the worker would do
+                    // nothing. Re-create a fresh session so the chapter actually re-streams.
+                    session = pageStreamSpool.GetOrCreateSession(
+                        pageContext.Task.Id,
+                        pageContext.Identity,
+                        session.EngineIdentity,
+                        pageContext.Pages.Count
+                    );
                 }
                 else
                 {
@@ -902,6 +919,18 @@ public partial class UpscalingDistributionService
 
         if (!pageStreamSpool.TryBeginAssembly(session, pageContext.Identity))
         {
+            // False also covers a concurrent identity reset, which the worker must retry rather than
+            // treat as "someone else is finalizing".
+            if (!string.Equals(session.Identity, pageContext.Identity, StringComparison.Ordinal))
+            {
+                return new UploadDetectionResultResponse
+                {
+                    Success = false,
+                    Message = "The chapter or profile changed; restart the chapter",
+                    Terminal = false,
+                };
+            }
+
             return new UploadDetectionResultResponse
             {
                 Success = true,
@@ -1619,7 +1648,8 @@ public partial class UpscalingDistributionService
             profile.Id,
             (int)profile.CompressionFormat,
             (int)profile.ScalingFactor,
-            profile.Quality
+            profile.Quality,
+            (int)profile.UpscalerMethod
         );
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
     }

@@ -155,6 +155,14 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
                 return false;
             }
 
+            if (_cacheReleaseTcs is not null)
+            {
+                _logger.LogDebug(
+                    "Not releasing detection server GPU cache: a release is already in flight."
+                );
+                return false;
+            }
+
             tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             _cacheReleaseTcs = tcs;
         }
@@ -483,6 +491,7 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
         }
 
         StreamWriter? stdin;
+        TaskCompletionSource? cacheRelease;
         lock (_stateLock)
         {
             if (_process == process)
@@ -491,14 +500,19 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
                 _readyTcs = null;
                 stdin = _stdin;
                 _stdin = null;
+                cacheRelease = _cacheReleaseTcs;
+                _cacheReleaseTcs = null;
             }
             else
             {
                 stdin = null;
+                cacheRelease = null;
             }
         }
 
         TryDispose(stdin);
+        // Unblock a pending GPU-cache release so its caller does not wait the full timeout.
+        cacheRelease?.TrySetCanceled();
         TryKillAndDispose(process);
 
         _logger.LogInformation("Resident detection server process stopped.");
@@ -731,8 +745,23 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
                         cancelledJob.Completion.TrySetCanceled();
                     }
                     break;
-                case DetectServerCacheReleasedEvent:
-                    _cacheReleaseTcs?.TrySetResult();
+                case DetectServerCacheReleasedEvent cacheReleased:
+                    // "ok" released the cache; "busy" (a detection is running) did not, so the caller
+                    // must not be told the release succeeded.
+                    if (
+                        string.Equals(
+                            cacheReleased.Status,
+                            "ok",
+                            StringComparison.OrdinalIgnoreCase
+                        )
+                    )
+                    {
+                        _cacheReleaseTcs?.TrySetResult();
+                    }
+                    else
+                    {
+                        _cacheReleaseTcs?.TrySetCanceled();
+                    }
                     break;
                 case DetectServerPongEvent:
                     break;
@@ -770,6 +799,7 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
 
         TaskCompletionSource? readyTcs;
         StreamWriter? stdin;
+        TaskCompletionSource? cacheRelease;
         lock (_stateLock)
         {
             if (_process != process)
@@ -782,9 +812,13 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
             _readyTcs = null;
             stdin = _stdin;
             _stdin = null;
+            cacheRelease = _cacheReleaseTcs;
+            _cacheReleaseTcs = null;
         }
 
         TryDispose(stdin);
+        // Unblock a pending GPU-cache release so its caller does not wait the full timeout.
+        cacheRelease?.TrySetCanceled();
 
         foreach (DetectJob job in _jobs.Values.ToArray())
         {

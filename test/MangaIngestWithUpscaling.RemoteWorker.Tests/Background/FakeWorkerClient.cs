@@ -9,6 +9,9 @@ namespace MangaIngestWithUpscaling.RemoteWorker.Tests.Background;
 internal sealed class FakeWorkerClient : IMangaJaNaiWorkerClient
 {
     public int? DropAfterPages { get; init; }
+
+    /// <summary>Exception thrown at the drop point; defaults to a simulated I/O drop.</summary>
+    public Exception? DropException { get; init; }
     public string PageStatus { get; init; } = "upscaled";
     public int ProcessedPages { get; private set; }
 
@@ -42,7 +45,7 @@ internal sealed class FakeWorkerClient : IMangaJaNaiWorkerClient
 
             if (DropAfterPages is int dropAt && ProcessedPages >= dropAt)
             {
-                throw new IOException("simulated drop");
+                throw DropException ?? new IOException("simulated drop");
             }
         }
 

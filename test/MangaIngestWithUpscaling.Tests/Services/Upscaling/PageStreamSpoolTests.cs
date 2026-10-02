@@ -520,6 +520,22 @@ public class PageStreamSpoolTests
         Assert.True(_spool.TryReserveInFlight(session, 1, 2, out _));
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void GetOrCreateSession_ReplacesAFinalizedSession()
+    {
+        PageStreamSession first = _spool.GetOrCreateSession(80, "identity", "engine", 1);
+        // A finalized session's directory is gone; a later manifest must get a usable session, not
+        // one whose BeginPageWrite would recreate the deleted directory.
+        _spool.Remove(80);
+        Assert.True(first.Finalized);
+
+        PageStreamSession second = _spool.GetOrCreateSession(80, "identity", "engine", 1);
+
+        Assert.NotSame(first, second);
+        Assert.False(second.Finalized);
+    }
+
     private static byte[] ReadAll(Stream stream)
     {
         using var buffer = new MemoryStream();

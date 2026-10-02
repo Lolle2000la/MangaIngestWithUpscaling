@@ -1048,8 +1048,15 @@ public class DistributedUpscaleTaskProcessor(
         try
         {
             using IServiceScope scope = scopeFactory.CreateScope();
-            scope.ServiceProvider.GetRequiredService<PageStreamSpool>().Remove(taskId);
+            var spool = scope.ServiceProvider.GetRequiredService<PageStreamSpool>();
+            // Detach (cheap) while the caller may hold the queue's enqueue semaphore; the recursive
+            // delete can be many gigabytes, so run it off the hot path instead of stalling enqueue.
+            string? directory = spool.Detach(taskId);
             scope.ServiceProvider.GetRequiredService<PageContextCache>().Remove(taskId);
+            if (directory is not null)
+            {
+                _ = Task.Run(() => spool.DeleteDirectory(directory));
+            }
         }
         catch (Exception ex)
         {

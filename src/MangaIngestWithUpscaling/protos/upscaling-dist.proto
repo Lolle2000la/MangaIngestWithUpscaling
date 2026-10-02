@@ -8,7 +8,7 @@ message UpscaleTaskDelegationResponse {
   int32 task_id = 1; // Task ID of the upscaling task, -1 if none available
   optional UpscalerProfile upscaler_profile = 2; // JSON string of the upscaling configuration used by MangaJaNaiUpscalerGui-cli tool, needs editing.
   TaskType task_type = 3;
-  optional int64 input_size_bytes = 5; // Size of the source CBZ, for bandwidth-aware prefetch timing (the worker streams pages, not the whole CBZ)
+  optional int64 input_size_bytes = 5; // Size of the input the worker will transfer (the source CBZ, or the prepared repair CBZ), for bandwidth-aware prefetch timing
 }
 
 // Non-claiming peek at the head of the upscale queue, so a worker can decide whether to claim

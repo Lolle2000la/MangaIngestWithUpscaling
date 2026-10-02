@@ -200,10 +200,6 @@ public partial class UpscalingDistributionService(
                 detectTask.ChapterId,
                 ct
             ),
-            ApplySplitsTask applySplitsTask => await GetChapterFilePathAsync(
-                applySplitsTask.ChapterId,
-                ct
-            ),
             RepairUpscaleTask => taskProcessor
                 .GetRemoteRepairState(task.Id)
                 ?.PreparedMissingPagesCbzPath,

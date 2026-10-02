@@ -70,7 +70,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
     }
 
     private static bool IsTransient(StatusCode code) =>
-        code is StatusCode.Unavailable or StatusCode.DeadlineExceeded;
+        code is StatusCode.Unavailable or StatusCode.DeadlineExceeded or StatusCode.Cancelled;
 
     /// <summary>How a page-streaming failure should be handled.</summary>
     public enum StreamingFailureKind
@@ -105,9 +105,19 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
             return StreamingFailureKind.Transient;
         }
 
-        if (baseEx is RpcException rpc && IsTransient(rpc.StatusCode))
+        if (baseEx is RpcException rpc)
         {
-            return StreamingFailureKind.Transient;
+            // The server signals "the chapter/profile/engine changed, restart" with FailedPrecondition
+            // (e.g. GetPages after a manifest). That is a restart, not a failure.
+            if (rpc.StatusCode == StatusCode.FailedPrecondition)
+            {
+                return StreamingFailureKind.Restart;
+            }
+
+            if (IsTransient(rpc.StatusCode))
+            {
+                return StreamingFailureKind.Transient;
+            }
         }
 
         return StreamingFailureKind.Permanent;
@@ -496,7 +506,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 using IServiceScope scope = serviceScopeFactory.CreateScope();
                 var client =
                     scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
-                var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
+                using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
                 while (!cts.IsCancellationRequested)
                 {
                     try

@@ -113,9 +113,12 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                         "Upscale worker crashed during submission; respawning and retrying once."
                     );
                     _jobs.TryRemove(request.Id, out _);
+                    // Publish the replacement process before registering the replacement job: the
+                    // dead process's OnWorkerExited faults the jobs it snapshots, and it must not see
+                    // (and fault) a job that belongs to the new worker.
+                    await EnsureWorkerAsync(cancellationToken);
                     job = new WorkerJob(request.Id, progress);
                     _jobs.TryAdd(request.Id, job);
-                    await EnsureWorkerAsync(cancellationToken);
                     await SendLineAsync(BuildJobLine(request), cancellationToken);
                 }
 
@@ -231,9 +234,12 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                         "Upscale worker crashed during chapter submission; respawning and retrying once."
                     );
                     _jobs.TryRemove(request.Id, out _);
+                    // Publish the replacement process before registering the replacement job: the
+                    // dead process's OnWorkerExited faults the jobs it snapshots, and it must not see
+                    // (and fault) a job that belongs to the new worker.
+                    await EnsureWorkerAsync(cancellationToken);
                     job = new WorkerJob(request.Id, progress, onPageDone, failOnPageErrors: false);
                     _jobs.TryAdd(request.Id, job);
-                    await EnsureWorkerAsync(cancellationToken);
                     await SendLineAsync(BuildChapterLine(request), cancellationToken);
                 }
 
@@ -1061,8 +1067,23 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                     // Acknowledge the cancel; the job completes via the subsequent done event.
                     TouchJob(cancelled.Id);
                     break;
-                case WorkerCacheReleasedEvent:
-                    _cacheReleaseTcs?.TrySetResult();
+                case WorkerCacheReleasedEvent cacheReleased:
+                    // "ok" released the cache; "busy" (a job is running) did not, so the caller must
+                    // not be told the release succeeded.
+                    if (
+                        string.Equals(
+                            cacheReleased.Status,
+                            "ok",
+                            StringComparison.OrdinalIgnoreCase
+                        )
+                    )
+                    {
+                        _cacheReleaseTcs?.TrySetResult();
+                    }
+                    else
+                    {
+                        _cacheReleaseTcs?.TrySetCanceled();
+                    }
                     break;
             }
         }

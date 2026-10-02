@@ -80,40 +80,57 @@ public sealed class PageStreamSpool
         int pageCount
     )
     {
-        PageStreamSession session = _sessions.GetOrAdd(
-            taskId,
-            _ => new PageStreamSession(
-                taskId,
-                identity,
-                engineIdentity,
-                pageCount,
-                NewSessionDirectory(taskId)
-            )
-        );
-
-        lock (session.Gate)
+        while (true)
         {
-            if (session.Identity != identity || session.EngineIdentity != engineIdentity)
-            {
-                _logger.LogInformation(
-                    "Page spool identity changed for task {TaskId} (content or engine); discarding {Count} spooled page(s).",
-                    taskId,
-                    session.Completed.Count
-                );
-                // A fresh directory per reset: the discarded session's directory is unique, so a
-                // stale finalizer deleting it can never wipe the new session's files.
-                session.Reset(identity, engineIdentity, pageCount, NewSessionDirectory(taskId));
-            }
-            else
-            {
-                session.PageCount = pageCount;
-            }
+            PageStreamSession session = _sessions.GetOrAdd(
+                taskId,
+                _ => NewSession(taskId, identity, engineIdentity, pageCount)
+            );
 
-            session.LastTouchedUtc = DateTime.UtcNow;
+            lock (session.Gate)
+            {
+                if (session.Finalized)
+                {
+                    // A concurrent Remove/SweepStale finalized this instance after GetOrAdd read it:
+                    // its directory is gone, so replace it with a fresh session rather than hand back
+                    // a dead one (BeginPageWrite would otherwise recreate the deleted directory).
+                    var replacement = NewSession(taskId, identity, engineIdentity, pageCount);
+                    if (_sessions.TryUpdate(taskId, replacement, session))
+                    {
+                        return replacement;
+                    }
+
+                    continue;
+                }
+
+                if (session.Identity != identity || session.EngineIdentity != engineIdentity)
+                {
+                    _logger.LogInformation(
+                        "Page spool identity changed for task {TaskId} (content or engine); discarding {Count} spooled page(s).",
+                        taskId,
+                        session.Completed.Count
+                    );
+                    // A fresh directory per reset: the discarded session's directory is unique, so a
+                    // stale finalizer deleting it can never wipe the new session's files.
+                    session.Reset(identity, engineIdentity, pageCount, NewSessionDirectory(taskId));
+                }
+                else
+                {
+                    session.PageCount = pageCount;
+                }
+
+                session.LastTouchedUtc = DateTime.UtcNow;
+                return session;
+            }
         }
-
-        return session;
     }
+
+    private PageStreamSession NewSession(
+        int taskId,
+        string identity,
+        string engineIdentity,
+        int pageCount
+    ) => new(taskId, identity, engineIdentity, pageCount, NewSessionDirectory(taskId));
 
     /// <summary>
     /// A directory unique to one session instance, so deleting a removed or swept session can never
@@ -577,7 +594,12 @@ public sealed class PageStreamSpool
         }
     }
 
-    public void Remove(int taskId)
+    /// <summary>
+    /// Removes a session from the spool and finalizes it (cheap, in-memory), returning its directory
+    /// for the caller to delete. The recursive delete can be many gigabytes, so a caller on a hot path
+    /// should schedule <see cref="DeleteDirectory"/> rather than block on it.
+    /// </summary>
+    public string? Detach(int taskId)
     {
         if (_sessions.TryRemove(taskId, out PageStreamSession? session))
         {
@@ -586,8 +608,35 @@ public sealed class PageStreamSpool
                 // Terminal under the gate: a concurrent TryBeginAssembly must not re-run assembly on
                 // a session whose directory is being deleted.
                 session.Finalized = true;
-                session.DeleteDirectory(_logger);
+                return session.Directory;
             }
+        }
+
+        return null;
+    }
+
+    /// <summary>Deletes a detached session's directory. Best-effort.</summary>
+    public void DeleteDirectory(string directory)
+    {
+        try
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to delete page spool directory {Directory}.", directory);
+        }
+    }
+
+    public void Remove(int taskId)
+    {
+        string? directory = Detach(taskId);
+        if (directory is not null)
+        {
+            DeleteDirectory(directory);
         }
     }
 

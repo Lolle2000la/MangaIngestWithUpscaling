@@ -331,6 +331,40 @@ public class PageStreamClientTests
         }
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunAsync_SurfacesATerminalUploadFailureOverATransientChapterCrash()
+    {
+        string directory = Directory.CreateTempSubdirectory("page_stream_precedence").FullName;
+        try
+        {
+            string source = CreateManyPageSourceCbz(directory, pageCount: 50);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination);
+            server.FailUploadForPage.Add(0);
+            var client = server.CreateClient();
+            // The worker crashes right after page 0 while that page's upload is rejected terminally.
+            var worker = new FakeWorkerClient
+            {
+                DropAfterPages = 1,
+                DropException = new UpscaleWorkerCrashedException("simulated crash"),
+            };
+            var sut = CreateClient(worker);
+
+            var error = await Assert.ThrowsAsync<IOException>(() =>
+                sut.RunAsync(client, 1, Profile, CancellationToken.None)
+            );
+
+            // The permanent upload rejection must win over the (transient) crash, or the task would
+            // requeue forever with the spool intact instead of being reported.
+            Assert.Contains("simulated rejection", error.Message);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
     private const string EngineIdentityValue = "test-engine";
 
     private sealed class StubEngineIdentityProvider : IEngineIdentityProvider
