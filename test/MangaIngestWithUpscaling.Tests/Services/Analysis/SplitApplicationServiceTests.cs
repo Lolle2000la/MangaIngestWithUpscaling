@@ -9,6 +9,9 @@ using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.Analysis;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.Analysis;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
@@ -17,6 +20,7 @@ using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 using Xunit;
 
@@ -29,6 +33,7 @@ public class SplitApplicationServiceTests : IAsyncDisposable
     private readonly ISplitProcessingCoordinator _coordinator;
     private readonly ISplitApplier _splitApplier;
     private readonly IUpscaler _upscaler;
+    private readonly ITaskQueue _taskQueue;
     private readonly ILogger<SplitApplicationService> _logger;
     private readonly SplitApplicationService _service;
     private readonly string _tempDir;
@@ -41,20 +46,26 @@ public class SplitApplicationServiceTests : IAsyncDisposable
         _coordinator = Substitute.For<ISplitProcessingCoordinator>();
         _splitApplier = Substitute.For<ISplitApplier>();
         _upscaler = Substitute.For<IUpscaler>();
+        _taskQueue = Substitute.For<ITaskQueue>();
         _logger = Substitute.For<ILogger<SplitApplicationService>>();
 
-        _service = new SplitApplicationService(
-            _dbContext,
-            _coordinator,
-            _splitApplier,
-            _upscaler,
-            _logger,
-            Substitute.For<IStringLocalizer<SplitApplicationService>>()
-        );
+        _service = CreateService(remoteOnly: false);
 
         _tempDir = Path.Combine(Path.GetTempPath(), $"split_test_{Guid.NewGuid()}");
         Directory.CreateDirectory(_tempDir);
     }
+
+    private SplitApplicationService CreateService(bool remoteOnly) =>
+        new(
+            _dbContext,
+            _coordinator,
+            _splitApplier,
+            _upscaler,
+            _taskQueue,
+            Options.Create(new UpscalerConfig { RemoteOnly = remoteOnly }),
+            _logger,
+            Substitute.For<IStringLocalizer<SplitApplicationService>>()
+        );
 
     public async ValueTask DisposeAsync()
     {
@@ -191,6 +202,112 @@ public class SplitApplicationServiceTests : IAsyncDisposable
         Assert.Equal(profile.Id, chapter.UpscalerProfileId);
 
         // Verify coordinator was notified
+        await _coordinator
+            .Received(1)
+            .OnSplitsAppliedAsync(chapter.Id, 1, Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ApplySplitsAsync_RemoteOnly_EnqueuesAWorkerUpscaleInsteadOfUpscalingInline()
+    {
+        // Arrange: an upscaled chapter with a split finding (a remote-only server has no ML backend).
+        var library = new Library
+        {
+            Name = "Test Library",
+            NotUpscaledLibraryPath = Path.Combine(_tempDir, "original_remote"),
+            UpscaledLibraryPath = Path.Combine(_tempDir, "upscaled_remote"),
+        };
+        _dbContext.Libraries.Add(library);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        Directory.CreateDirectory(library.NotUpscaledLibraryPath);
+        Directory.CreateDirectory(library.UpscaledLibraryPath);
+
+        var profile = new UpscalerProfile
+        {
+            Name = "Test Profile",
+            ScalingFactor = ScaleFactor.TwoX,
+            CompressionFormat = CompressionFormat.Png,
+            Quality = 90,
+        };
+        _dbContext.UpscalerProfiles.Add(profile);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var manga = new Manga
+        {
+            PrimaryTitle = "Test Manga",
+            LibraryId = library.Id,
+            Library = library,
+        };
+        _dbContext.MangaSeries.Add(manga);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var chapter = new Chapter
+        {
+            FileName = "chapter1.cbz",
+            RelativePath = "manga/chapter1.cbz",
+            MangaId = manga.Id,
+            Manga = manga,
+            IsUpscaled = true,
+            UpscalerProfileId = profile.Id,
+            UpscalerProfile = profile,
+        };
+        _dbContext.Chapters.Add(chapter);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var originalCbzPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(originalCbzPath)!);
+        CreateTestCbz(originalCbzPath, "page1.png", "page2.png");
+
+        var upscaledCbzPath = chapter.UpscaledFullPath!;
+        CreateTestCbz(upscaledCbzPath, "page1.png", "page2.png");
+
+        _dbContext.StripSplitFindings.Add(
+            new StripSplitFinding
+            {
+                ChapterId = chapter.Id,
+                DetectorVersion = 1,
+                PageFileName = "page1",
+                SplitJson = JsonSerializer.Serialize(
+                    new SplitDetectionResult
+                    {
+                        OriginalHeight = 1000,
+                        Splits = [new DetectedSplit { YOriginal = 500, Confidence = 0.9 }],
+                    }
+                ),
+            }
+        );
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        _splitApplier
+            .ApplySplitsToImage(
+                Arg.Any<string>(),
+                Arg.Any<List<DetectedSplit>>(),
+                Arg.Any<string>()
+            )
+            .Returns(callInfo =>
+            {
+                var outputDir = callInfo.ArgAt<string>(2);
+                var part1 = Path.Combine(outputDir, "page1_part1.png");
+                File.WriteAllText(part1, "dummy part1");
+                return new List<string> { part1 };
+            });
+
+        var service = CreateService(remoteOnly: true);
+
+        // Act
+        await service.ApplySplitsAsync(chapter.Id, 1, TestContext.Current.CancellationToken);
+
+        // Assert: no local ML backend call; the worker is asked to re-upscale the split chapter.
+        await _upscaler
+            .DidNotReceiveWithAnyArgs()
+            .Upscale(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<UpscalerProfile>(),
+                Arg.Any<CancellationToken>()
+            );
+        await _taskQueue.Received(1).EnqueueAsync(Arg.Any<UpscaleTask>());
         await _coordinator
             .Received(1)
             .OnSplitsAppliedAsync(chapter.Id, 1, Arg.Any<CancellationToken>());
