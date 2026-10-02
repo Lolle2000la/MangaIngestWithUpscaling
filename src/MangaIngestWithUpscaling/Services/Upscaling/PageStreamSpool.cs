@@ -275,6 +275,31 @@ public sealed class PageStreamSpool
     }
 
     /// <summary>
+    /// Removes pages whose spooled file is missing from the completed set, so a restarted chapter
+    /// re-fetches them instead of failing assembly again. Recomputes the committed byte total.
+    /// </summary>
+    public void ForgetMissingPages(PageStreamSession session)
+    {
+        lock (session.Gate)
+        {
+            long total = 0;
+            foreach (int index in session.Completed.ToArray())
+            {
+                if (File.Exists(session.PagePath(index)))
+                {
+                    total += session.PageSizes.TryGetValue(index, out long size) ? size : 0;
+                    continue;
+                }
+
+                session.Completed.Remove(index);
+                session.PageSizes.Remove(index);
+            }
+
+            session.TotalBytes = total;
+        }
+    }
+
+    /// <summary>
     /// Reserves in-flight bytes for a page that is still streaming, so many concurrent uploads
     /// cannot each write up to <c>MaxPageBytes</c> to temp before any committed-byte check runs.
     /// Returns false when the reservation would exceed <see cref="MaxTaskBytes"/>. The returned
@@ -418,8 +443,9 @@ public sealed class PageStreamSpool
 
         if (!archiveImages.SetEquals(bySource.Keys))
         {
-            throw new InvalidOperationException(
-                $"The source archive for task {session.TaskId} no longer matches the resolved pages; restart the chapter."
+            throw new PageStreamRestartException(
+                $"The source archive for task {session.TaskId} no longer matches the resolved pages; restart the chapter.",
+                resetSpool: true
             );
         }
 
@@ -453,9 +479,8 @@ public sealed class PageStreamSpool
                 string pagePath = session.PagePath(page.Index);
                 if (!File.Exists(pagePath))
                 {
-                    throw new FileNotFoundException(
-                        $"Spooled page {page.Index} for task {session.TaskId} is missing.",
-                        pagePath
+                    throw new PageStreamRestartException(
+                        $"Spooled page {page.Index} for task {session.TaskId} is missing."
                     );
                 }
 
@@ -523,9 +548,8 @@ public sealed class PageStreamSpool
             string pagePath = session.PagePath(page.Index);
             if (!File.Exists(pagePath))
             {
-                throw new FileNotFoundException(
-                    $"Spooled page {page.Index} for task {session.TaskId} is missing.",
-                    pagePath
+                throw new PageStreamRestartException(
+                    $"Spooled page {page.Index} for task {session.TaskId} is missing."
                 );
             }
 

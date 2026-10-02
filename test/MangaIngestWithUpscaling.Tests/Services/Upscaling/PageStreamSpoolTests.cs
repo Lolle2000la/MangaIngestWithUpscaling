@@ -383,6 +383,64 @@ public class PageStreamSpoolTests
         }
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void Assemble_ThrowsARestartExceptionWhenTheSourceArchiveChanged()
+    {
+        string directory = Directory.CreateTempSubdirectory("spool_changed").FullName;
+        try
+        {
+            string path = Path.Combine(directory, "source.cbz");
+            using (ZipArchive zip = ZipFile.Open(path, ZipArchiveMode.Create))
+            {
+                WriteEntry(zip, "001.jpg", new byte[] { 1, 2, 3 });
+                WriteEntry(zip, "002.jpg", new byte[] { 4, 5, 6 });
+            }
+
+            // Descriptors only cover 001.jpg, so the archive no longer matches.
+            var pages = new List<SpoolPageDescriptor> { new(0, "001.jpg", "001.webp") };
+            PageStreamSession session = _spool.GetOrCreateSession(51, "identity", "engine", 1);
+            string temp;
+            using (FileStream page = _spool.BeginPageWrite(session, 0, out temp))
+            {
+                page.Write(new byte[] { 7, 8, 9 });
+            }
+
+            _spool.CommitPage(session, 0, temp);
+
+            // Recoverable: the caller restarts the chapter instead of failing it terminally.
+            PageStreamRestartException ex = Assert.Throws<PageStreamRestartException>(() =>
+                _spool.Assemble(session, path, pages, Path.Combine(directory, "out.cbz"))
+            );
+            Assert.True(ex.ResetSpool);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ForgetMissingPages_DropsPagesWhoseFileIsGone()
+    {
+        PageStreamSession session = _spool.GetOrCreateSession(52, "identity", "engine", 2);
+        string temp;
+        using (FileStream page = _spool.BeginPageWrite(session, 0, out temp))
+        {
+            page.Write(new byte[] { 1 });
+        }
+
+        _spool.CommitPage(session, 0, temp);
+        Assert.Single(_spool.GetCompletedPages(session));
+
+        File.Delete(session.PagePath(0));
+        _spool.ForgetMissingPages(session);
+
+        Assert.Empty(_spool.GetCompletedPages(session));
+        Assert.Equal(0, _spool.GetTotalBytes(session));
+    }
+
     private static byte[] ReadAll(Stream stream)
     {
         using var buffer = new MemoryStream();

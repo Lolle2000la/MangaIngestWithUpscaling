@@ -418,7 +418,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
         }
     }
 
-    private static UpscalerProfile GetProfileFromResponse(
+    internal static UpscalerProfile GetProfileFromResponse(
         Api.Upscaling.UpscalerProfile? upscalerProfile
     )
     {

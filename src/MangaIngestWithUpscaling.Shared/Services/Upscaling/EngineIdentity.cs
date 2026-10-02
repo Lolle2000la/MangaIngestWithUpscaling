@@ -47,7 +47,7 @@ public static class EngineIdentity
             .Append(config.UseCPU || config.SelectedDeviceIndex == 0)
             .Append('|');
 
-        foreach (ImageFormatConversionRule rule in config.ImageFormatConversionRules)
+        foreach (ImageFormatConversionRule rule in config.ImageFormatConversionRules ?? [])
         {
             material
                 .Append(rule.FromFormat)

@@ -35,6 +35,12 @@ public sealed class PageStreamClient(
     private static readonly TimeSpan PageTimeout = TimeSpan.FromMinutes(10);
 
     /// <summary>
+    /// How long a failed chapter's upload loop may keep draining already-produced pages before it is
+    /// cancelled, so a stuck upload cannot wedge the worker.
+    /// </summary>
+    private static readonly TimeSpan UploadDrainGrace = TimeSpan.FromMinutes(2);
+
+    /// <summary>
     /// Inactivity allowance for a streamed chapter, scaled by the largest page exactly like the
     /// whole-CBZ path (<c>UpscaleTimeout × max(1, maxPixels / 1e6)</c>), with a floor so slow
     /// hardware still finishes a page while a wedged worker is eventually killed.
@@ -175,12 +181,19 @@ public sealed class PageStreamClient(
                 }
             }
 
+            // Prefer the manifest's profile: the server computes the page output names and the
+            // content/engine identity from the profile resolved at manifest time, so the worker must
+            // produce bytes for the same profile.
+            UpscalerProfile effectiveProfile = manifest.UpscalerProfile is null
+                ? profile
+                : RemoteTaskProcessor.GetProfileFromResponse(manifest.UpscalerProfile);
+
             var chapterRequest = new ChapterJobRequest
             {
                 Id = $"task-{taskId}-{Guid.NewGuid():N}",
                 OutputFolder = outputDirectory,
-                Format = profile.CompressionFormat,
-                Scale = profile.ScalingFactor,
+                Format = effectiveProfile.CompressionFormat,
+                Scale = effectiveProfile.ScalingFactor,
                 TotalPages = manifest.Pages.Count,
             };
 
@@ -225,7 +238,21 @@ public sealed class PageStreamClient(
             Exception? uploadError = null;
             try
             {
-                await uploadTask;
+                if (chapterError is null)
+                {
+                    await uploadTask;
+                }
+                else
+                {
+                    // The chapter already failed: let already-produced pages upload so a resume has
+                    // them, but bound the drain so a stuck upload cannot wedge the worker with the
+                    // keep-alive still running.
+                    await uploadTask.WaitAsync(UploadDrainGrace, CancellationToken.None);
+                }
+            }
+            catch (TimeoutException)
+            {
+                await uploadFailureCts.CancelAsync();
             }
             catch (Exception ex)
             {
@@ -401,6 +428,10 @@ public sealed class PageStreamClient(
                         $"Uploading the detection result for page {pageIndex} of task {taskId} failed: {response.Message}"
                     );
                 }
+
+                // The detection is done with this page; delete its fetched copy so the detection work
+                // directory does not hold the whole chapter.
+                TryDeleteFile(path, pageIndex);
 
                 current++;
                 progressReporter.Progress.Report(

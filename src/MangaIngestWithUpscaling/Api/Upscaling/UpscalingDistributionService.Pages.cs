@@ -85,6 +85,26 @@ public partial class UpscalingDistributionService
                 pageStreamSpool.Remove(pageContext.Task.Id);
                 pageContextCache.Remove(pageContext.Task.Id);
             }
+            catch (PageStreamRestartException ex)
+            {
+                // Recoverable: tell the worker to stream the chapter again instead of failing it.
+                _logger.LogWarning(
+                    ex,
+                    "Restarting an already-complete page stream for task {TaskId}.",
+                    pageContext.Task.Id
+                );
+                if (ex.ResetSpool)
+                {
+                    pageStreamSpool.Remove(pageContext.Task.Id);
+                    pageContextCache.Remove(pageContext.Task.Id);
+                }
+                else
+                {
+                    pageStreamSpool.ForgetMissingPages(session);
+                }
+
+                return await BuildManifestAsync(pageContext, session);
+            }
             catch (Exception ex)
             {
                 // Do not report success: the worker would return cleanly and the task would linger
@@ -124,6 +144,17 @@ public partial class UpscalingDistributionService
             };
         }
 
+        return await BuildManifestAsync(pageContext, session);
+    }
+
+    /// <summary>
+    /// Builds the (non-complete) manifest the worker streams against.
+    /// </summary>
+    private async Task<PageManifestResponse> BuildManifestAsync(
+        PageContext pageContext,
+        PageStreamSession session
+    )
+    {
         var response = new PageManifestResponse
         {
             TaskId = pageContext.Task.Id,
@@ -603,6 +634,30 @@ public partial class UpscalingDistributionService
         {
             await AssembleUpscaledChapterAsync(pageContext!, session);
         }
+        catch (PageStreamRestartException ex)
+        {
+            // Recoverable (source changed, a spooled page is missing, or a reset): tell the worker to
+            // restart the chapter rather than failing it terminally.
+            _logger.LogWarning(ex, "Assembly of task {TaskId} must restart.", taskId);
+            if (ex.ResetSpool)
+            {
+                pageStreamSpool.Remove(taskId);
+                pageContextCache.Remove(taskId);
+            }
+            else
+            {
+                pageStreamSpool.ForgetMissingPages(session);
+            }
+
+            return new UploadPageResponse
+            {
+                Success = false,
+                Message = ex.Message,
+                TaskId = taskId,
+                PageIndex = pageIndex,
+                Terminal = false,
+            };
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to assemble upscaled chapter for task {TaskId}", taskId);
@@ -747,6 +802,17 @@ public partial class UpscalingDistributionService
         string expectedStem = Path.GetFileNameWithoutExtension(
             pageContext.Pages[request.PageIndex].SourceName
         );
+        if (string.IsNullOrEmpty(detectionResult.ImagePath))
+        {
+            return new UploadDetectionResultResponse
+            {
+                Success = false,
+                Message =
+                    $"The detection result for page {request.PageIndex} of task {request.TaskId} names a different image.",
+                Terminal = true,
+            };
+        }
+
         if (
             !string.Equals(
                 Path.GetFileNameWithoutExtension(detectionResult.ImagePath),
@@ -847,6 +913,31 @@ public partial class UpscalingDistributionService
                 Message = "Detection results processed",
             };
         }
+        catch (PageStreamRestartException ex)
+        {
+            // Recoverable (source changed, a spooled result is missing, or a reset): restart.
+            _logger.LogWarning(
+                ex,
+                "Detection finalize for task {TaskId} must restart.",
+                request.TaskId
+            );
+            if (ex.ResetSpool)
+            {
+                pageStreamSpool.Remove(request.TaskId);
+                pageContextCache.Remove(request.TaskId);
+            }
+            else
+            {
+                pageStreamSpool.ForgetMissingPages(session);
+            }
+
+            return new UploadDetectionResultResponse
+            {
+                Success = false,
+                Message = ex.Message,
+                Terminal = false,
+            };
+        }
         catch (Exception ex)
         {
             _logger.LogError(
@@ -878,26 +969,37 @@ public partial class UpscalingDistributionService
     /// </summary>
     private async Task FinalizeDetectionAsync(PageContext pageContext, PageStreamSession session)
     {
-        var results = new List<SplitDetectionResult>();
-        foreach (SpoolPageDescriptor page in pageContext.Pages)
+        // Read the spooled results under the session gate: a concurrent manifest with a changed
+        // identity resets (and deletes) the session directory under the gate, so reading outside it
+        // could turn a recoverable restart into an IOException. The files are small JSON.
+        var jsonByPage = new List<string>(pageContext.Pages.Count);
+        lock (session.Gate)
         {
-            string path = session.PagePath(page.Index);
-            if (!File.Exists(path))
+            foreach (SpoolPageDescriptor page in pageContext.Pages)
             {
-                throw new InvalidOperationException(
-                    $"Spooled detection result {page.Index} for task {pageContext.Task.Id} is missing."
-                );
-            }
+                string path = session.PagePath(page.Index);
+                if (!File.Exists(path))
+                {
+                    throw new PageStreamRestartException(
+                        $"Spooled detection result {page.Index} for task {pageContext.Task.Id} is missing."
+                    );
+                }
 
-            string json = await File.ReadAllTextAsync(path, CancellationToken.None);
+                jsonByPage.Add(File.ReadAllText(path));
+            }
+        }
+
+        var results = new List<SplitDetectionResult>(jsonByPage.Count);
+        for (int i = 0; i < jsonByPage.Count; i++)
+        {
             SplitDetectionResult? result = JsonSerializer.Deserialize(
-                json,
+                jsonByPage[i],
                 SharedJsonContext.Default.SplitDetectionResult
             );
             if (result is null)
             {
                 throw new InvalidOperationException(
-                    $"Spooled detection result {page.Index} for task {pageContext.Task.Id} is invalid."
+                    $"Spooled detection result {pageContext.Pages[i].Index} for task {pageContext.Task.Id} is invalid."
                 );
             }
 

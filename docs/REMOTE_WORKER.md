@@ -32,7 +32,7 @@ The remote worker communicates with the main application exclusively over HTTPS.
 
 ## Page streaming
 
-Upscaling a chapter is streamed **page by page**. The worker fetches only the source pages the server is still missing, feeds them to the local upscaler as they arrive, and uploads each upscaled page as soon as it is written. The server spools the pages and assembles the final CBZ, so a dropped connection resumes at the first missing page instead of re-downloading and re-upscaling the whole chapter. Page streaming is the only transfer mode: whole-CBZ transfers are no longer supported by the worker or the server API.
+Upscaling a chapter is streamed **page by page**. The worker fetches only the source pages the server is still missing, feeds them to the local upscaler as they arrive, and uploads each upscaled page as soon as it is written. The server spools the pages and assembles the final CBZ, so a dropped connection resumes at the first missing page instead of re-downloading and re-upscaling the whole chapter. Page streaming is the only transfer mode: whole-CBZ transfers are no longer supported by the worker or the server API, so **the worker and server must be upgraded together**.
 
 Partial page state lives in the server's temp directory and is bounded by a 24-hour retention sweep. It is process-local: a different replica (or a restarted server) has no spool, so the chapter restarts from the beginning there rather than mixing bytes. The worker manifests once per attempt.
 

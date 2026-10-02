@@ -98,11 +98,17 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                 {
                     await SendLineAsync(BuildJobLine(request), cancellationToken);
                 }
-                catch (InvalidOperationException)
-                    when (_stdin is null && !cancellationToken.IsCancellationRequested)
+                catch (Exception ex)
+                    when (!cancellationToken.IsCancellationRequested
+                        && (
+                            (ex is IOException or ObjectDisposedException)
+                            || (ex is InvalidOperationException && _stdin is null)
+                        )
+                    )
                 {
                     // The worker crashed between the ready check and submission; respawn once
-                    // with a fresh job and retry.
+                    // with a fresh job and retry. A broken pipe surfaces as IOException/
+                    // ObjectDisposedException rather than InvalidOperationException.
                     _logger.LogWarning(
                         "Upscale worker crashed during submission; respawning and retrying once."
                     );
@@ -213,8 +219,13 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                 {
                     await SendLineAsync(BuildChapterLine(request), cancellationToken);
                 }
-                catch (InvalidOperationException)
-                    when (_stdin is null && !cancellationToken.IsCancellationRequested)
+                catch (Exception ex)
+                    when (!cancellationToken.IsCancellationRequested
+                        && (
+                            (ex is IOException or ObjectDisposedException)
+                            || (ex is InvalidOperationException && _stdin is null)
+                        )
+                    )
                 {
                     _logger.LogWarning(
                         "Upscale worker crashed during chapter submission; respawning and retrying once."
