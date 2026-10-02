@@ -48,7 +48,14 @@ public sealed class PageStreamSpool
     /// assembled archive agree.
     /// </summary>
     public static bool IsSafeEntryName(string name) =>
-        !Path.IsPathRooted(name) && !name.Split('/', '\\').Any(segment => segment == "..");
+        !string.IsNullOrEmpty(name)
+        && !Path.IsPathRooted(name)
+        // Reject Windows drive/UNC forms independent of the host OS: on Linux Path.IsPathRooted
+        // returns false for "C:\evil.jpg" and "\\server\share\evil.jpg".
+        && !name.StartsWith('/')
+        && !name.StartsWith('\\')
+        && !name.Contains(':')
+        && !name.Split('/', '\\').Any(segment => segment == "..");
 
     private readonly ConcurrentDictionary<int, PageStreamSession> _sessions = new();
     private readonly ILogger<PageStreamSpool> _logger;

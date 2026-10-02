@@ -235,6 +235,23 @@ public class RemoteTaskProcessorTests
         AssertNoFailureReported(client);
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ClassifyStreamingFailure_ReadsTheRpcStatusFromTheInnerException()
+    {
+        // grpc-dotnet keeps the transport error in InnerException, so GetBaseException() returns the
+        // SocketException/HttpRequestException and misses the RpcException. The classifier must walk
+        // the chain, or a routine Unavailable would be reported as Permanent and delete the spool.
+        var ex = new RpcException(
+            new Status(StatusCode.Unavailable, "blip", new HttpRequestException("connection down"))
+        );
+
+        Assert.Equal(
+            RemoteTaskProcessor.StreamingFailureKind.Transient,
+            RemoteTaskProcessor.ClassifyStreamingFailure(ex)
+        );
+    }
+
     private static void AssertNoFailureReported(UpscalingService.UpscalingServiceClient client) =>
         Assert.DoesNotContain(
             client.ReceivedCalls(),

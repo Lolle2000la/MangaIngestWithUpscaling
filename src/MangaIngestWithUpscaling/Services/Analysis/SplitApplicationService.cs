@@ -148,12 +148,17 @@ public class SplitApplicationService(
             // Replace Original
             File.Move(tempOriginalCbz, originalCbzPath, true);
 
-            // 2. Process Upscaled if exists
+            // 2. Process Upscaled if exists. Resolve the effective profile: a chapter can be upscaled
+            // with an inherited library/manga profile and no explicit FK (e.g. LibraryIntegrityChecker
+            // sets IsUpscaled without one), so the explicit FK alone would skip the rebuild and leave
+            // a stale upscaled CBZ in RemoteOnly.
+            var effectiveProfile =
+                chapter.UpscalerProfile ?? chapter.Manga?.EffectiveUpscalerProfile;
             if (
                 chapter.IsUpscaled
                 && chapter.UpscaledFullPath != null
                 && File.Exists(chapter.UpscaledFullPath)
-                && chapter.UpscalerProfile != null
+                && effectiveProfile != null
             )
             {
                 if (upscalerConfig.Value.RemoteOnly)
@@ -178,7 +183,7 @@ public class SplitApplicationService(
                             chapterId
                         );
                         await taskQueue.EnqueueAsync(
-                            new RepairUpscaleTask(chapter, chapter.UpscalerProfile)
+                            new RepairUpscaleTask(chapter, effectiveProfile)
                         );
                     }
                 }
@@ -265,7 +270,7 @@ public class SplitApplicationService(
                         await upscaler.Upscale(
                             splitPagesCbz,
                             upscaledSplitPagesCbz,
-                            chapter.UpscalerProfile,
+                            effectiveProfile,
                             cancellationToken
                         );
 

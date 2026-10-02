@@ -414,6 +414,8 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             if (process is null || process.HasExited)
             {
                 _process = null;
+                // The process already exited; dispose the captured stdin rather than leak it.
+                TryDispose(stdin);
                 return;
             }
         }
@@ -797,6 +799,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         }
 
         StreamWriter? stdin;
+        WorkerJob[] jobs;
         lock (_stateLock)
         {
             if (_process == process)
@@ -805,15 +808,26 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                 _readyTcs = null;
                 stdin = _stdin;
                 _stdin = null;
+                // Fault any in-flight jobs here too: a forced shutdown can null _process before the
+                // stdout reader observes EOF, so OnWorkerExited would early-return and leave a job's
+                // Completion uncompleted, hanging its caller forever.
+                jobs = _jobs.Values.ToArray();
             }
             else
             {
-                // A newer worker has already replaced this one; leave its stdin alone.
+                // A newer worker has already replaced this one; leave its stdin and jobs alone.
                 stdin = null;
+                jobs = [];
             }
         }
 
         TryDispose(stdin);
+        foreach (WorkerJob job in jobs)
+        {
+            job.MarkWorkerExited();
+            job.FailCrashed("Upscale worker was shut down while the job was in flight.");
+        }
+
         TryKillAndDispose(process);
 
         _logger.LogInformation("Upscale worker process stopped.");

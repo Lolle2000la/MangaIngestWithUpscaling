@@ -928,11 +928,27 @@ public partial class UpscalingDistributionService
         string resultTemp = string.Empty;
         try
         {
-            FileStream resultFile = pageStreamSpool.BeginPageWrite(
-                session,
-                request.PageIndex,
-                out resultTemp
-            );
+            FileStream resultFile;
+            try
+            {
+                resultFile = pageStreamSpool.BeginPageWrite(
+                    session,
+                    request.PageIndex,
+                    out resultTemp
+                );
+            }
+            catch (PageStreamRestartException ex)
+            {
+                // The session was finalized between TryGetSession and here; restart rather than
+                // surface an opaque gRPC Unknown.
+                return new UploadDetectionResultResponse
+                {
+                    Success = false,
+                    Message = ex.Message,
+                    Terminal = false,
+                };
+            }
+
             try
             {
                 await using (resultFile)

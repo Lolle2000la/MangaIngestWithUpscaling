@@ -136,7 +136,7 @@ public class ImageResizeService(
             string workingPath = Path.Combine(tempDir, Path.GetFileName(imagePath));
             File.Copy(imagePath, workingPath, overwrite: true);
 
-            await ProcessImagesInDirectory(tempDir, options, cancellationToken);
+            await ProcessImagesInDirectory(tempDir, options, cancellationToken, throwOnError: true);
 
             string[] results = Directory.GetFiles(tempDir, "*", SearchOption.AllDirectories);
             if (results.Length == 1)
@@ -280,7 +280,8 @@ public class ImageResizeService(
     private async Task ProcessImagesInDirectory(
         string directory,
         ImagePreprocessingOptions options,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        bool throwOnError = false
     )
     {
         var imageFiles = Directory
@@ -309,6 +310,13 @@ public class ImageResizeService(
                     if (ex is OperationCanceledException)
                         throw;
                     logger.LogWarning(ex, "Failed to process image: {ImagePath}", imagePath);
+                    if (throwOnError)
+                    {
+                        // The in-place path moves the single result over the original; swallowing a
+                        // mid-write failure would replace it with a truncated file.
+                        throw;
+                    }
+
                     return ValueTask.CompletedTask; // Continue processing other images even if one fails
                 }
             }

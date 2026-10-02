@@ -120,19 +120,14 @@ public static class EngineIdentity
 
     private static void AppendFilePrefixHash(StringBuilder material, string file)
     {
-        try
-        {
-            using FileStream stream = File.OpenRead(file);
-            int toRead = (int)Math.Min(FingerprintPrefixBytes, stream.Length);
-            byte[] buffer = new byte[toRead];
-            int read = stream.ReadAtLeast(buffer, toRead, throwOnEndOfStream: false);
-            material.Append(Convert.ToHexStringLower(SHA256.HashData(buffer.AsSpan(0, read))));
-        }
-        catch (Exception)
-        {
-            // Best-effort: an unreadable file still contributes its path and size above.
-            material.Append("unreadable");
-        }
+        // Let an unreadable file throw: the identity provider only caches a successful computation, so
+        // a transient lock/ACL error is retried on the next access instead of becoming a stable-but-
+        // wrong identity that rejects every page forever.
+        using FileStream stream = File.OpenRead(file);
+        int toRead = (int)Math.Min(FingerprintPrefixBytes, stream.Length);
+        byte[] buffer = new byte[toRead];
+        int read = stream.ReadAtLeast(buffer, toRead, throwOnEndOfStream: false);
+        material.Append(Convert.ToHexStringLower(SHA256.HashData(buffer.AsSpan(0, read))));
     }
 
     private static void AppendFileContentHash(StringBuilder material, string path)

@@ -81,7 +81,13 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 or StatusCode.Cancelled
                 // Unimplemented is a version-skew signal (a removed/changed RPC), not a deterministic
                 // failure: treat it as transient so it does not burn the retry budget.
-                or StatusCode.Unimplemented;
+                or StatusCode.Unimplemented
+                // Aborted/ResourceExhausted are retryable transport/backpressure conditions, and
+                // Unknown is what an unhandled server-side exception produces — treating it as
+                // transient avoids turning a recoverable handler error into spool deletion.
+                or StatusCode.Aborted
+                or StatusCode.ResourceExhausted
+                or StatusCode.Unknown;
 
     /// <summary>
     /// How many consecutive soft (transient/restart) failures a task may accumulate before the worker
@@ -111,45 +117,50 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
     }
 
     /// <summary>
-    /// Classifies a page-streaming failure. <see cref="Exception.GetBaseException"/> unwraps the
-    /// producer's "failed to stream" wrapper so a transient fetch failure is not misreported as a
-    /// hard failure, which would delete the spool.
+    /// Classifies a page-streaming failure. The whole exception chain is inspected, not just the
+    /// innermost: grpc-dotnet keeps the transport error in <see cref="Exception.InnerException"/>, so
+    /// <see cref="Exception.GetBaseException"/> would return (for example) a SocketException and miss
+    /// the <see cref="RpcException"/> carrying the status code. A restart or transient signal anywhere
+    /// in the chain wins over a permanent classification.
     /// </summary>
     public static StreamingFailureKind ClassifyStreamingFailure(Exception ex)
     {
-        Exception baseEx = ex.GetBaseException();
-        if (baseEx is PageStreamRestartException)
+        for (Exception? current = ex; current is not null; current = current.InnerException)
         {
-            return StreamingFailureKind.Restart;
-        }
-
-        if (baseEx is UpscaleWorkerCrashedException)
-        {
-            // A crash (OOM/CUDA fault) is recoverable: respawn the worker and resume. Reporting it
-            // would drop the already-spooled pages and consume the retry budget.
-            return StreamingFailureKind.Transient;
-        }
-
-        if (baseEx is TimeoutException)
-        {
-            // A wedged/hung worker (a cold model load or a transient CUDA stall past the scaled
-            // inactivity timeout) is as recoverable as a crash: respawn and resume rather than
-            // discarding the already-upscaled pages.
-            return StreamingFailureKind.Transient;
-        }
-
-        if (baseEx is RpcException rpc)
-        {
-            // The server signals "the chapter/profile/engine changed, restart" with FailedPrecondition
-            // (e.g. GetPages after a manifest). That is a restart, not a failure.
-            if (rpc.StatusCode == StatusCode.FailedPrecondition)
+            if (current is PageStreamRestartException)
             {
                 return StreamingFailureKind.Restart;
             }
 
-            if (IsTransient(rpc.StatusCode))
+            if (current is UpscaleWorkerCrashedException)
             {
+                // A crash (OOM/CUDA fault) is recoverable: respawn the worker and resume. Reporting it
+                // would drop the already-spooled pages and consume the retry budget.
                 return StreamingFailureKind.Transient;
+            }
+
+            if (current is TimeoutException)
+            {
+                // A wedged/hung worker (a cold model load or a transient CUDA stall past the scaled
+                // inactivity timeout) is as recoverable as a crash: respawn and resume rather than
+                // discarding the already-upscaled pages.
+                return StreamingFailureKind.Transient;
+            }
+
+            if (current is RpcException rpc)
+            {
+                // The server signals "the chapter/profile/engine changed, restart" with
+                // FailedPrecondition (e.g. GetPages after a manifest). That is a restart, not a
+                // failure.
+                if (rpc.StatusCode == StatusCode.FailedPrecondition)
+                {
+                    return StreamingFailureKind.Restart;
+                }
+
+                if (IsTransient(rpc.StatusCode))
+                {
+                    return StreamingFailureKind.Transient;
+                }
             }
         }
 
@@ -495,7 +506,16 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
             {
                 _softFailureCounts.TryGetValue(item.TaskId, out int softFailures);
                 softFailures++;
-                _softFailureCounts[item.TaskId] = softFailures;
+                // Bound the map: once a task has reached the largest cap it is being reported, so its
+                // count no longer matters.
+                if (softFailures >= MaxConsecutiveRestarts)
+                {
+                    _softFailureCounts.Remove(item.TaskId);
+                }
+                else
+                {
+                    _softFailureCounts[item.TaskId] = softFailures;
+                }
 
                 await HandleStreamingFailureAsync(
                     client,
