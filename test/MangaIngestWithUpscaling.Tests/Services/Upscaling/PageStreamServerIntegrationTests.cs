@@ -222,7 +222,8 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
                 ChunkNumber = 0,
                 Chunk = ByteString.CopyFrom(new byte[] { 1, 2, 3 }),
                 ContentIdentity = manifest.TaskIdentity,
-            }
+            },
+            TestContext.Current.CancellationToken
         );
         // No IsLast terminator: a gracefully-closed but truncated stream must be rejected rather
         // than committed as a whole page.
@@ -250,7 +251,8 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
                 ChunkNumber = 0,
                 Chunk = ByteString.CopyFrom(new byte[] { 1, 2, 3 }),
                 ContentIdentity = "not-the-current-identity",
-            }
+            },
+            TestContext.Current.CancellationToken
         );
         await call.RequestStream.WriteAsync(
             new RemoteUploadPageChunk
@@ -261,7 +263,8 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
                 Chunk = ByteString.Empty,
                 IsLast = true,
                 ContentIdentity = "not-the-current-identity",
-            }
+            },
+            TestContext.Current.CancellationToken
         );
         await call.RequestStream.CompleteAsync();
         RemoteUploadPageResponse response = await call.ResponseAsync;
