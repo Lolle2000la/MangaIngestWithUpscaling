@@ -340,15 +340,15 @@ public class PageStreamSpoolTests
     public void ReleaseInFlight_IgnoresAReservationFromAStaleGeneration()
     {
         PageStreamSession session = _spool.GetOrCreateSession(40, "identity-a", "engine", 1);
-        Assert.True(_spool.TryReserveInFlight(session, 100, out long staleGeneration));
+        Assert.True(_spool.TryReserveInFlight(session, 0, 100, out long staleGeneration));
 
         // The identity changes and resets the session (generation bumps, in-flight zeroed).
         _spool.GetOrCreateSession(40, "identity-b", "engine", 1);
-        Assert.True(_spool.TryReserveInFlight(session, 50, out _));
+        Assert.True(_spool.TryReserveInFlight(session, 0, 50, out _));
 
         // The stale release must not subtract from the new identity's in-flight accounting.
         _spool.ReleaseInFlight(session, staleGeneration, 100);
-        Assert.Equal(50, session.InFlightBytes);
+        Assert.Equal(50, session.InFlightByGeneration.Values.Single());
     }
 
     [Fact]

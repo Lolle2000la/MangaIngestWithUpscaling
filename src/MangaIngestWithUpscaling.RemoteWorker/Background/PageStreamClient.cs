@@ -252,7 +252,17 @@ public sealed class PageStreamClient(
             }
             catch (TimeoutException)
             {
+                // Cancel the stuck upload loop and observe its fault before the work directory is
+                // torn down, so the discarded continuation cannot throw unobserved.
                 await uploadFailureCts.CancelAsync();
+                try
+                {
+                    await uploadTask;
+                }
+                catch (Exception)
+                {
+                    // The chapter error is surfaced below; the cancelled drain's fault is secondary.
+                }
             }
             catch (Exception ex)
             {

@@ -98,12 +98,70 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
             return StreamingFailureKind.Restart;
         }
 
+        if (baseEx is UpscaleWorkerCrashedException)
+        {
+            // A crash (OOM/CUDA fault) is recoverable: respawn the worker and resume. Reporting it
+            // would drop the already-spooled pages and consume the retry budget.
+            return StreamingFailureKind.Transient;
+        }
+
         if (baseEx is RpcException rpc && IsTransient(rpc.StatusCode))
         {
             return StreamingFailureKind.Transient;
         }
 
         return StreamingFailureKind.Permanent;
+    }
+
+    /// <summary>
+    /// Surfaces a page-streaming failure. A transient or restart failure is only logged: the worker
+    /// lets the keep-alive lapse so the server requeues the task with its spool intact. A permanent
+    /// one is reported, which makes the server clear the spool. Extracted from the streaming loop so
+    /// the spool-preservation property can be asserted without running the loop.
+    /// </summary>
+    public static async Task HandleStreamingFailureAsync(
+        UpscalingService.UpscalingServiceClient client,
+        int taskId,
+        Exception ex,
+        ILogger logger,
+        CancellationToken stoppingToken
+    )
+    {
+        if (
+            ClassifyStreamingFailure(ex)
+            is StreamingFailureKind.Transient
+                or StreamingFailureKind.Restart
+        )
+        {
+            // A transport blip or a non-terminal rejection must not consume the retry budget or
+            // drop the spool: reporting a failure makes the server delete the already-upscaled
+            // pages. Let the keep-alive lapse instead, so the server requeues the task with the
+            // spool intact and the worker resumes from the first missing page.
+            logger.LogWarning(
+                ex,
+                "Task {TaskId} was interrupted during page streaming; letting the server requeue it with the spool intact.",
+                taskId
+            );
+            return;
+        }
+
+        logger.LogError(ex, "Task {TaskId} failed during page streaming.", taskId);
+        try
+        {
+            await client.ReportTaskFailedAsync(
+                new ReportTaskFailedRequest { TaskId = taskId, ErrorMessage = ex.Message },
+                deadline: DateTime.UtcNow.AddSeconds(15),
+                cancellationToken: stoppingToken
+            );
+        }
+        catch (Exception rpcEx)
+        {
+            logger.LogWarning(
+                rpcEx,
+                "Failed to report page-streaming failure for {TaskId}",
+                taskId
+            );
+        }
     }
 
     /// <summary>
@@ -364,44 +422,8 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 // Normal user interruption or task cancellation.
             }
             catch (Exception ex)
-                when (ClassifyStreamingFailure(ex)
-                        is StreamingFailureKind.Transient
-                            or StreamingFailureKind.Restart
-                )
             {
-                // A transport blip or a non-terminal rejection must not consume the retry budget or
-                // drop the spool: reporting a failure makes the server delete the already-upscaled
-                // pages. Let the keep-alive lapse instead, so the server requeues the task with the
-                // spool intact and the worker resumes from the first missing page.
-                logger.LogWarning(
-                    ex,
-                    "Task {TaskId} was interrupted during page streaming; letting the server requeue it with the spool intact.",
-                    item.TaskId
-                );
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Task {TaskId} failed during page streaming.", item.TaskId);
-                try
-                {
-                    await client.ReportTaskFailedAsync(
-                        new ReportTaskFailedRequest
-                        {
-                            TaskId = item.TaskId,
-                            ErrorMessage = ex.Message,
-                        },
-                        deadline: DateTime.UtcNow.AddSeconds(15),
-                        cancellationToken: stoppingToken
-                    );
-                }
-                catch (Exception rpcEx)
-                {
-                    logger.LogWarning(
-                        rpcEx,
-                        "Failed to report page-streaming failure for {TaskId}",
-                        item.TaskId
-                    );
-                }
+                await HandleStreamingFailureAsync(client, item.TaskId, ex, logger, stoppingToken);
             }
             finally
             {

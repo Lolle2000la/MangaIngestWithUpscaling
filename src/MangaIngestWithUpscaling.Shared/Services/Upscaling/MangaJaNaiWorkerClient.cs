@@ -1202,6 +1202,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         TaskCompletionSource? readyTcs;
         StreamWriter? stdin;
         TaskCompletionSource? cacheRelease;
+        WorkerJob[] jobs;
         lock (_stateLock)
         {
             // A stale process (already replaced by a newer spawn) must not fault the new
@@ -1218,22 +1219,26 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             _stdin = null;
             cacheRelease = _cacheReleaseTcs;
             _cacheReleaseTcs = null;
+            // Snapshot the jobs while the exiting process is still current: a crash-retry that
+            // respawns the worker and adds a replacement job after this point must not have its new
+            // job faulted by the dead process's exit.
+            jobs = _jobs.Values.ToArray();
         }
 
         TryDispose(stdin);
         // Unblock a pending GPU-cache release so its in-flight guard is not left set.
         cacheRelease?.TrySetCanceled();
 
-        foreach (WorkerJob job in _jobs.Values.ToArray())
+        foreach (WorkerJob job in jobs)
         {
             job.MarkWorkerExited();
-            job.Fail(
+            job.FailCrashed(
                 $"Upscale worker process exited unexpectedly (exit code {detail}).{stderrSection}"
             );
         }
 
         readyTcs?.TrySetException(
-            new InvalidOperationException("Upscale worker exited before becoming ready.")
+            new UpscaleWorkerCrashedException("Upscale worker exited before becoming ready.")
         );
 
         // The stdout reader only reaches here on EOF, but if the process is somehow still
@@ -1377,6 +1382,13 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
         public void Fail(string message) =>
             Completion.TrySetException(new InvalidOperationException(message));
+
+        /// <summary>
+        /// Fails the job with a crash exception so the caller can tell a worker crash (recoverable,
+        /// the spool is preserved) from a deterministic job error (terminal).
+        /// </summary>
+        public void FailCrashed(string message) =>
+            Completion.TrySetException(new UpscaleWorkerCrashedException(message));
     }
 
     private sealed class StderrTailBuffer

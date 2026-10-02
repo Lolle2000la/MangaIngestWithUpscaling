@@ -8,14 +8,14 @@ message UpscaleTaskDelegationResponse {
   int32 task_id = 1; // Task ID of the upscaling task, -1 if none available
   optional UpscalerProfile upscaler_profile = 2; // JSON string of the upscaling configuration used by MangaJaNaiUpscalerGui-cli tool, needs editing.
   TaskType task_type = 3;
-  optional int64 input_size_bytes = 5; // Size of the CBZ the worker will download, for bandwidth-aware prefetch timing
+  optional int64 input_size_bytes = 5; // Size of the source CBZ, for bandwidth-aware prefetch timing (the worker streams pages, not the whole CBZ)
 }
 
 // Non-claiming peek at the head of the upscale queue, so a worker can decide whether to claim
 // (and start downloading) based on the transfer size before it commits to the task.
 message PeekNextTaskResponse {
   int32 task_id = 1; // Task ID of the next upscale task, -1 if none available
-  optional int64 input_size_bytes = 2; // Size of the CBZ to download
+  optional int64 input_size_bytes = 2; // Size of the source CBZ
 }
 
 enum TaskType {

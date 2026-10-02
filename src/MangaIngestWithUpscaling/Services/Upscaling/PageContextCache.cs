@@ -19,7 +19,15 @@ public sealed class PageContextCache
         string Identity,
         IReadOnlyList<SpoolPageDescriptor> Pages,
         IReadOnlyList<string> MissingPages
-    );
+    )
+    {
+        /// <summary>
+        /// Largest page (in pixels) in the source archive, computed once and reused by later
+        /// manifests. The value is derived from the immutable source archive, so re-decoding the
+        /// whole archive on every manifest (a resume re-manifests each attempt) is wasted work.
+        /// </summary>
+        public long MaxPagePixels { get; set; }
+    }
 
     private sealed class CachedEntry(Entry value)
     {

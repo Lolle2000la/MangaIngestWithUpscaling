@@ -302,21 +302,34 @@ public sealed class PageStreamSpool
     /// <summary>
     /// Reserves in-flight bytes for a page that is still streaming, so many concurrent uploads
     /// cannot each write up to <c>MaxPageBytes</c> to temp before any committed-byte check runs.
-    /// Returns false when the reservation would exceed <see cref="MaxTaskBytes"/>. The returned
+    /// Returns false when the reservation would exceed <see cref="MaxTaskBytes"/>. A re-upload of a
+    /// page that is already committed is measured against the bytes it replaces. The returned
     /// <paramref name="generation"/> must be passed to <see cref="ReleaseInFlight"/> so a reservation
     /// made under an identity that was since reset cannot corrupt the new identity's accounting.
     /// </summary>
-    public bool TryReserveInFlight(PageStreamSession session, long bytes, out long generation)
+    public bool TryReserveInFlight(
+        PageStreamSession session,
+        int pageIndex,
+        long bytes,
+        out long generation
+    )
     {
         lock (session.Gate)
         {
             generation = session.Generation;
-            if (session.TotalBytes + session.InFlightBytes + bytes > MaxTaskBytes)
+            // A re-upload replaces the page's committed bytes, so account for the replaced page
+            // rather than double-counting it against the budget.
+            long previous = session.PageSizes.TryGetValue(pageIndex, out long prev) ? prev : 0;
+            if (
+                session.TotalBytes - previous + session.InFlightByGeneration.Values.Sum() + bytes
+                > MaxTaskBytes
+            )
             {
                 return false;
             }
 
-            session.InFlightBytes += bytes;
+            session.InFlightByGeneration[generation] =
+                session.InFlightByGeneration.GetValueOrDefault(generation) + bytes;
             return true;
         }
     }
@@ -328,15 +341,19 @@ public sealed class PageStreamSpool
         {
             // A reset (identity change) already discarded the reservation; releasing it here would
             // subtract from the new identity's in-flight accounting.
-            if (session.Generation != generation)
+            if (!session.InFlightByGeneration.TryGetValue(generation, out long reserved))
             {
                 return;
             }
 
-            session.InFlightBytes -= bytes;
-            if (session.InFlightBytes < 0)
+            long remaining = reserved - bytes;
+            if (remaining > 0)
             {
-                session.InFlightBytes = 0;
+                session.InFlightByGeneration[generation] = remaining;
+            }
+            else
+            {
+                session.InFlightByGeneration.Remove(generation);
             }
         }
     }
@@ -695,8 +712,12 @@ public sealed class PageStreamSession
     /// <summary>Bytes committed to this session, for the per-task spool budget.</summary>
     public long TotalBytes { get; set; }
 
-    /// <summary>Bytes reserved by uploads that are still streaming, counted against the budget.</summary>
-    public long InFlightBytes { get; set; }
+    /// <summary>
+    /// Bytes reserved by uploads that are still streaming, counted against the budget. Tracked per
+    /// generation so a reservation made under a discarded identity cannot be released against (or
+    /// leak into) the new identity's accounting.
+    /// </summary>
+    public Dictionary<long, long> InFlightByGeneration { get; } = new();
 
     /// <summary>
     /// Bumped on every reset. A reservation or release tagged with a stale generation is ignored, so
@@ -728,7 +749,7 @@ public sealed class PageStreamSession
         Completed.Clear();
         PageSizes.Clear();
         TotalBytes = 0;
-        InFlightBytes = 0;
+        InFlightByGeneration.Clear();
         Generation++;
         // Clear a stale flag from an assembly that was interrupted before EndAssembly, or the new
         // identity could never finalize.

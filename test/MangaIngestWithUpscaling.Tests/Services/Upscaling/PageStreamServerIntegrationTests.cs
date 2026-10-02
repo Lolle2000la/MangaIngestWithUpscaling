@@ -40,6 +40,7 @@ using RemoteEngineIdentityProvider = remote::MangaIngestWithUpscaling.RemoteWork
 using RemotePageManifestRequest = remote::MangaIngestWithUpscaling.Api.Upscaling.PageManifestRequest;
 using RemotePageManifestResponse = remote::MangaIngestWithUpscaling.Api.Upscaling.PageManifestResponse;
 using RemotePageStreamClient = remote::MangaIngestWithUpscaling.RemoteWorker.Background.PageStreamClient;
+using RemotePageStreamRestartException = remote::MangaIngestWithUpscaling.RemoteWorker.Background.PageStreamRestartException;
 using RemoteUploadDetectionResultResponse = remote::MangaIngestWithUpscaling.Api.Upscaling.UploadDetectionResultResponse;
 using RemoteUploadPageChunk = remote::MangaIngestWithUpscaling.Api.Upscaling.UploadPageChunk;
 using RemoteUploadPageDetectionRequest = remote::MangaIngestWithUpscaling.Api.Upscaling.UploadPageDetectionRequest;
@@ -730,6 +731,40 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
             TestContext.Current.CancellationToken
         );
         Assert.Equal(PersistedTaskStatus.Completed, task.Status);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task RepairFinalizeWithoutPreparedStateRestartsNonTerminally()
+    {
+        // The upscaled chapter is missing "001"; the source still has it.
+        Directory.CreateDirectory(Path.GetDirectoryName(_upscaledPath)!);
+        using (ZipArchive zip = ZipFile.Open(_upscaledPath, ZipArchiveMode.Create))
+        {
+            WriteEntry(zip, "002.webp", new byte[] { 6, 5, 4 });
+        }
+
+        _metadata
+            .AnalyzePageDifferencesAsync(Arg.Any<string?>(), Arg.Any<string?>())
+            .Returns(new PageDifferenceResult(new[] { "001" }, Array.Empty<string>()));
+
+        // Deliberately do NOT prepare the remote repair state: a finalize that lands on a replica
+        // without it (or after a requeue cleaned it) must restart the chapter, not fail it terminally.
+        var client = new RemoteUpscalingServiceClient(_channel);
+        var sut = CreatePageStreamClient(new FakeWorkerClient());
+
+        await Assert.ThrowsAsync<RemotePageStreamRestartException>(() =>
+            sut.RunAsync(client, _repairTaskId, _profile, TestContext.Current.CancellationToken)
+        );
+
+        await using ApplicationDbContext context = await _database.CreateContextAsync(
+            TestContext.Current.CancellationToken
+        );
+        PersistedTask task = await context.PersistedTasks.FirstAsync(
+            t => t.Id == _repairTaskId,
+            TestContext.Current.CancellationToken
+        );
+        Assert.NotEqual(PersistedTaskStatus.Completed, task.Status);
     }
 
     [Fact]

@@ -163,7 +163,7 @@ public partial class UpscalingDistributionService
             UpscalerProfile = pageContext.Profile is null
                 ? null
                 : ToProtoProfile(pageContext.Profile),
-            MaxPagePixels = await ComputeMaxPagePixelsAsync(pageContext.SourcePath),
+            MaxPagePixels = await GetOrComputeMaxPagePixelsAsync(pageContext),
         };
         response.Pages.AddRange(
             pageContext.Pages.Select(p => new PageDescriptor
@@ -289,8 +289,10 @@ public partial class UpscalingDistributionService
         string? tempPath = null;
         FileStream? pageFile = null;
         long written = 0;
-        long reserved = 0;
-        long reservationGeneration = -1;
+        // In-flight reservations, tracked per generation: an identity reset mid-upload discards the
+        // old generation's reservation, so releasing the whole amount against the latest generation
+        // would under-count the new one.
+        var reservedByGeneration = new Dictionary<long, long>();
         bool sawChunk = false;
         bool sawLast = false;
         bool committed = false;
@@ -428,7 +430,14 @@ public partial class UpscalingDistributionService
 
                     // Reserve against the per-task budget before writing, so concurrent uploads
                     // cannot each fill temp before any committed-byte check runs.
-                    if (!pageStreamSpool.TryReserveInFlight(session, length, out long generation))
+                    if (
+                        !pageStreamSpool.TryReserveInFlight(
+                            session,
+                            pageIndex,
+                            length,
+                            out long generation
+                        )
+                    )
                     {
                         return new UploadPageResponse
                         {
@@ -440,8 +449,8 @@ public partial class UpscalingDistributionService
                         };
                     }
 
-                    reservationGeneration = generation;
-                    reserved += length;
+                    reservedByGeneration[generation] =
+                        reservedByGeneration.GetValueOrDefault(generation) + length;
                     written += length;
                     await pageFile!.WriteAsync(chunk.Chunk.Memory, context.CancellationToken);
                 }
@@ -560,9 +569,9 @@ public partial class UpscalingDistributionService
 
             // Release the bytes this upload reserved; the committed page is counted in TotalBytes.
             // A generation mismatch means an identity reset already discarded the reservation.
-            if (reserved > 0 && reservationGeneration >= 0)
+            foreach ((long generation, long reserved) in reservedByGeneration)
             {
-                pageStreamSpool.ReleaseInFlight(session, reservationGeneration, reserved);
+                pageStreamSpool.ReleaseInFlight(session, generation, reserved);
             }
 
             if (!committed && tempPath is not null)
@@ -1293,6 +1302,27 @@ public partial class UpscalingDistributionService
         }
     }
 
+    /// <summary>
+    /// Largest page in the source archive for the worker's inactivity timeout, cached with the page
+    /// context so a resume does not re-decode the whole archive on every manifest.
+    /// </summary>
+    private async Task<long> GetOrComputeMaxPagePixelsAsync(PageContext pageContext)
+    {
+        if (pageContextCache.TryGet(pageContext.Task.Id, out PageContextCache.Entry entry))
+        {
+            if (entry.MaxPagePixels > 0)
+            {
+                return entry.MaxPagePixels;
+            }
+
+            long computed = await ComputeMaxPagePixelsAsync(pageContext.SourcePath);
+            entry.MaxPagePixels = computed;
+            return computed;
+        }
+
+        return await ComputeMaxPagePixelsAsync(pageContext.SourcePath);
+    }
+
     /// <summary>Largest page in the source archive, for the worker's inactivity timeout; 0 if unknown.</summary>
     private async Task<long> ComputeMaxPagePixelsAsync(string sourcePath)
     {
@@ -1351,7 +1381,10 @@ public partial class UpscalingDistributionService
         var repairState = taskProcessor.GetRemoteRepairState(pageContext.Task.Id);
         if (repairState is null || string.IsNullOrEmpty(repairState.UpscaledMissingPagesCbzPath))
         {
-            throw new InvalidOperationException(
+            // The repair was prepared by the replica that answered the manifest; a finalize landing
+            // elsewhere (or after a requeue cleaned the repair files) has no state. That is
+            // recoverable: restart the chapter rather than failing it terminally.
+            throw new PageStreamRestartException(
                 $"No prepared repair state for task {pageContext.Task.Id}."
             );
         }
@@ -1537,6 +1570,11 @@ public partial class UpscalingDistributionService
             }
 
             if (!ImageConstants.IsSupportedImageExtension(Path.GetExtension(entry.FullName)))
+            {
+                continue;
+            }
+
+            if (!PageStreamSpool.IsSafeEntryName(entry.FullName))
             {
                 continue;
             }

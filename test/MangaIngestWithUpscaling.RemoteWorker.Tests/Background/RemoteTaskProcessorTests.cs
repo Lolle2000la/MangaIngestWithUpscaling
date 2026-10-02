@@ -1,5 +1,11 @@
+using Google.Protobuf;
+using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
+using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.RemoteWorker.Background;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
+using Microsoft.Extensions.Logging;
+using NSubstitute;
 using Xunit;
 
 namespace MangaIngestWithUpscaling.RemoteWorker.Tests.Background;
@@ -62,4 +68,101 @@ public class RemoteTaskProcessorTests
             )
         );
     }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ClassifyStreamingFailure_TreatsAWorkerCrashAsTransient()
+    {
+        // A crashed worker (OOM/CUDA fault) must not drop the already-spooled pages: respawn and
+        // resume instead of reporting a permanent failure.
+        Assert.Equal(
+            RemoteTaskProcessor.StreamingFailureKind.Transient,
+            RemoteTaskProcessor.ClassifyStreamingFailure(
+                new UpscaleWorkerCrashedException("Upscale worker process exited unexpectedly.")
+            )
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task HandleStreamingFailure_DoesNotReportATransientFailure()
+    {
+        var client = Substitute.For<UpscalingService.UpscalingServiceClient>();
+
+        await RemoteTaskProcessor.HandleStreamingFailureAsync(
+            client,
+            1,
+            new RpcException(new Status(StatusCode.Unavailable, "blip")),
+            Substitute.For<ILogger>(),
+            CancellationToken.None
+        );
+
+        // Reporting a failure makes the server delete the spool; a transient failure must not.
+        AssertNoFailureReported(client);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task HandleStreamingFailure_DoesNotReportARestartFailure()
+    {
+        var client = Substitute.For<UpscalingService.UpscalingServiceClient>();
+
+        await RemoteTaskProcessor.HandleStreamingFailureAsync(
+            client,
+            1,
+            new PageStreamRestartException("restart"),
+            Substitute.For<ILogger>(),
+            CancellationToken.None
+        );
+
+        AssertNoFailureReported(client);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task HandleStreamingFailure_ReportsAPermanentFailure()
+    {
+        var client = Substitute.For<UpscalingService.UpscalingServiceClient>();
+        client
+            .ReportTaskFailedAsync(
+                Arg.Any<ReportTaskFailedRequest>(),
+                Arg.Any<Metadata>(),
+                Arg.Any<DateTime?>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(
+                new AsyncUnaryCall<Empty>(
+                    Task.FromResult(new Empty()),
+                    Task.FromResult(new Metadata()),
+                    () => Status.DefaultSuccess,
+                    () => new Metadata(),
+                    () => { }
+                )
+            );
+
+        await RemoteTaskProcessor.HandleStreamingFailureAsync(
+            client,
+            7,
+            new InvalidOperationException("deterministic"),
+            Substitute.For<ILogger>(),
+            CancellationToken.None
+        );
+
+        _ = client
+            .Received(1)
+            .ReportTaskFailedAsync(
+                Arg.Is<ReportTaskFailedRequest>(r => r.TaskId == 7),
+                Arg.Any<Metadata>(),
+                Arg.Any<DateTime?>(),
+                Arg.Any<CancellationToken>()
+            );
+    }
+
+    private static void AssertNoFailureReported(UpscalingService.UpscalingServiceClient client) =>
+        Assert.DoesNotContain(
+            client.ReceivedCalls(),
+            call =>
+                call.GetMethodInfo().Name
+                == nameof(UpscalingService.UpscalingServiceClient.ReportTaskFailedAsync)
+        );
 }
