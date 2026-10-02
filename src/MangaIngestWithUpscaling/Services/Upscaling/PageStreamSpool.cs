@@ -425,16 +425,38 @@ public sealed class PageStreamSpool
     /// </summary>
     public void Assemble(
         PageStreamSession session,
+        string expectedIdentity,
         string sourcePath,
         IReadOnlyList<SpoolPageDescriptor> pages,
         string destinationPath
     )
     {
         // Hold the session gate for the whole read so a concurrent manifest that changes the
-        // identity cannot Reset (delete) the spool out from under the assembler.
+        // identity cannot Reset (delete) the spool out from under the assembler, and re-validate the
+        // identity under the gate: TryBeginAssembly ran earlier and released the gate, so a Reset in
+        // between could otherwise mix two identities' page bytes into one archive.
         lock (session.Gate)
         {
+            EnsureAssemblyIdentity(session, expectedIdentity);
             AssembleCore(session, sourcePath, pages, destinationPath);
+        }
+    }
+
+    /// <summary>
+    /// Throws a restart if the session was finalized or its identity changed since the caller won
+    /// <see cref="TryBeginAssembly"/>. Must be called under the session gate.
+    /// </summary>
+    private static void EnsureAssemblyIdentity(PageStreamSession session, string expectedIdentity)
+    {
+        if (
+            session.Finalized
+            || !string.Equals(session.Identity, expectedIdentity, StringComparison.Ordinal)
+        )
+        {
+            throw new PageStreamRestartException(
+                $"The spool for task {session.TaskId} was reset while assembling; restart the chapter.",
+                resetSpool: true
+            );
         }
     }
 
@@ -549,13 +571,16 @@ public sealed class PageStreamSpool
     /// </summary>
     public void AssemblePagesOnly(
         PageStreamSession session,
+        string expectedIdentity,
         IReadOnlyList<SpoolPageDescriptor> pages,
         string destinationPath
     )
     {
-        // See Assemble: keep a concurrent Reset from deleting the spool mid-read.
+        // See Assemble: keep a concurrent Reset from deleting the spool mid-read, and re-validate the
+        // identity under the gate.
         lock (session.Gate)
         {
+            EnsureAssemblyIdentity(session, expectedIdentity);
             AssemblePagesOnlyCore(session, pages, destinationPath);
         }
     }
@@ -646,20 +671,24 @@ public sealed class PageStreamSpool
         DateTime cutoff = DateTime.UtcNow - retention;
         foreach ((int taskId, PageStreamSession session) in _sessions)
         {
-            bool stale;
+            // Check and finalize under the same gate: a manifest/upload that refreshed
+            // LastTouchedUtc between a separate check and remove would otherwise have its live
+            // session swept (and its directory deleted) out from under it.
             lock (session.Gate)
             {
-                stale = session.LastTouchedUtc < cutoff;
-            }
-
-            if (stale && _sessions.TryRemove(taskId, out PageStreamSession? removed))
-            {
-                _logger.LogInformation("Removing stale page spool for task {TaskId}.", taskId);
-                lock (removed.Gate)
+                if (
+                    session.LastTouchedUtc >= cutoff
+                    || session.Assembling
+                    || !_sessions.TryRemove(taskId, out PageStreamSession? removed)
+                    || !ReferenceEquals(removed, session)
+                )
                 {
-                    removed.Finalized = true;
-                    removed.DeleteDirectory(_logger);
+                    continue;
                 }
+
+                _logger.LogInformation("Removing stale page spool for task {TaskId}.", taskId);
+                session.Finalized = true;
+                session.DeleteDirectory(_logger);
             }
         }
 

@@ -800,6 +800,7 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
         TaskCompletionSource? readyTcs;
         StreamWriter? stdin;
         TaskCompletionSource? cacheRelease;
+        DetectJob[] jobs;
         lock (_stateLock)
         {
             if (_process != process)
@@ -814,13 +815,17 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
             _stdin = null;
             cacheRelease = _cacheReleaseTcs;
             _cacheReleaseTcs = null;
+            // Snapshot the jobs while the exiting process is still current, so a concurrent
+            // DetectAsync that respawns the server and registers a job is not faulted by this stale
+            // exit handler.
+            jobs = _jobs.Values.ToArray();
         }
 
         TryDispose(stdin);
         // Unblock a pending GPU-cache release so its caller does not wait the full timeout.
         cacheRelease?.TrySetCanceled();
 
-        foreach (DetectJob job in _jobs.Values.ToArray())
+        foreach (DetectJob job in jobs)
         {
             job.Completion.TrySetException(
                 new DetectServerUnavailableException(

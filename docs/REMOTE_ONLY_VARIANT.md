@@ -75,7 +75,7 @@ Remote-only mode is ideal for:
 
 - **Separate Compute Resources**: Running the web interface on a lightweight server while having dedicated GPU machines for processing
 - **NAS Deployments**: Running on NAS devices or low-power servers that do not support heavy ML workloads (e.g., Raspberry Pi, Synology NAS)
-- **Scalable Architecture**: Multiple remote workers can connect to a single server instance, allowing you to take advantage of your existing hardware resources without sacrificing it to your server
+- **Scalable Architecture**: Multiple remote workers can connect to a single server instance, allowing you to take advantage of your existing hardware resources without sacrificing it to your server. Page streaming is process-local, so all of a chapter's page RPCs must reach the same server replica — with a single server instance that is automatic; with several behind a load balancer, pin each worker to one replica (see the replica-affinity note in [Remote Worker](REMOTE_WORKER.md)).
 - **Development/Testing**: Testing the server component without needing local GPU resources
 
 ## Troubleshooting

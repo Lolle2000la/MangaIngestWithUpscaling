@@ -18,6 +18,11 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 {
     private volatile bool _fetchInProgress;
 
+    // Consecutive soft (transient/restart) failures for the task currently being retried, so a
+    // deterministically-failing task is escalated to a reported failure instead of cycling forever.
+    private int _softFailureTaskId = -1;
+    private int _softFailureCount;
+
     private int _streamingTaskIdValue = -1;
 
     /// <summary>
@@ -72,6 +77,13 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
     private static bool IsTransient(StatusCode code) =>
         code is StatusCode.Unavailable or StatusCode.DeadlineExceeded or StatusCode.Cancelled;
 
+    /// <summary>
+    /// How many consecutive soft (transient/restart) failures a task may accumulate before the worker
+    /// reports it as a hard failure. The server's dead-task reaper requeues without consuming the
+    /// retry budget, so without a cap a deterministically-failing task would cycle forever.
+    /// </summary>
+    private const int MaxConsecutiveSoftFailures = 5;
+
     /// <summary>How a page-streaming failure should be handled.</summary>
     public enum StreamingFailureKind
     {
@@ -105,6 +117,14 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
             return StreamingFailureKind.Transient;
         }
 
+        if (baseEx is TimeoutException)
+        {
+            // A wedged/hung worker (a cold model load or a transient CUDA stall past the scaled
+            // inactivity timeout) is as recoverable as a crash: respawn and resume rather than
+            // discarding the already-upscaled pages.
+            return StreamingFailureKind.Transient;
+        }
+
         if (baseEx is RpcException rpc)
         {
             // The server signals "the chapter/profile/engine changed, restart" with FailedPrecondition
@@ -128,13 +148,19 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
     /// lets the keep-alive lapse so the server requeues the task with its spool intact. A permanent
     /// one is reported, which makes the server clear the spool. Extracted from the streaming loop so
     /// the spool-preservation property can be asserted without running the loop.
+    ///
+    /// <paramref name="consecutiveSoftFailures"/> caps how long a deterministically-failing task can
+    /// cycle: the server's dead-task reaper requeues without consuming the retry budget, so a failure
+    /// that is permanently bad but classifies soft would otherwise loop forever. Once the cap is
+    /// reached the failure is reported (terminal), surfacing the task.
     /// </summary>
     public static async Task HandleStreamingFailureAsync(
         UpscalingService.UpscalingServiceClient client,
         int taskId,
         Exception ex,
         ILogger logger,
-        CancellationToken stoppingToken
+        CancellationToken stoppingToken,
+        int consecutiveSoftFailures = 1
     )
     {
         if (
@@ -143,19 +169,32 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 or StreamingFailureKind.Restart
         )
         {
-            // A transport blip or a non-terminal rejection must not consume the retry budget or
-            // drop the spool: reporting a failure makes the server delete the already-upscaled
-            // pages. Let the keep-alive lapse instead, so the server requeues the task with the
-            // spool intact and the worker resumes from the first missing page.
-            logger.LogWarning(
+            if (consecutiveSoftFailures < MaxConsecutiveSoftFailures)
+            {
+                // A transport blip or a non-terminal rejection must not consume the retry budget or
+                // drop the spool: reporting a failure makes the server delete the already-upscaled
+                // pages. Let the keep-alive lapse instead, so the server requeues the task with the
+                // spool intact and the worker resumes from the first missing page.
+                logger.LogWarning(
+                    ex,
+                    "Task {TaskId} was interrupted during page streaming; letting the server requeue it with the spool intact.",
+                    taskId
+                );
+                return;
+            }
+
+            logger.LogError(
                 ex,
-                "Task {TaskId} was interrupted during page streaming; letting the server requeue it with the spool intact.",
-                taskId
+                "Task {TaskId} failed after {Count} consecutive soft failures; reporting it as terminal.",
+                taskId,
+                consecutiveSoftFailures
             );
-            return;
+        }
+        else
+        {
+            logger.LogError(ex, "Task {TaskId} failed during page streaming.", taskId);
         }
 
-        logger.LogError(ex, "Task {TaskId} failed during page streaming.", taskId);
         try
         {
             await client.ReportTaskFailedAsync(
@@ -426,6 +465,10 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                         streamCts.Token
                     );
                 }
+
+                // Completed without a soft failure; clear the consecutive counter.
+                _softFailureTaskId = -1;
+                _softFailureCount = 0;
             }
             catch (OperationCanceledException)
             {
@@ -433,7 +476,24 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
             }
             catch (Exception ex)
             {
-                await HandleStreamingFailureAsync(client, item.TaskId, ex, logger, stoppingToken);
+                if (item.TaskId == _softFailureTaskId)
+                {
+                    _softFailureCount++;
+                }
+                else
+                {
+                    _softFailureTaskId = item.TaskId;
+                    _softFailureCount = 1;
+                }
+
+                await HandleStreamingFailureAsync(
+                    client,
+                    item.TaskId,
+                    ex,
+                    logger,
+                    stoppingToken,
+                    _softFailureCount
+                );
             }
             finally
             {

@@ -160,6 +160,61 @@ public class RemoteTaskProcessorTests
             );
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ClassifyStreamingFailure_TreatsAWorkerTimeoutAsTransient()
+    {
+        // A wedged worker (a cold model load or a CUDA stall past the scaled inactivity timeout) is
+        // as recoverable as a crash: respawn and resume rather than discarding the spool.
+        Assert.Equal(
+            RemoteTaskProcessor.StreamingFailureKind.Transient,
+            RemoteTaskProcessor.ClassifyStreamingFailure(new TimeoutException("inactivity"))
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task HandleStreamingFailure_ReportsAfterTheConsecutiveSoftFailureCap()
+    {
+        var client = Substitute.For<UpscalingService.UpscalingServiceClient>();
+        client
+            .ReportTaskFailedAsync(
+                Arg.Any<ReportTaskFailedRequest>(),
+                Arg.Any<Metadata>(),
+                Arg.Any<DateTime?>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(
+                new AsyncUnaryCall<Empty>(
+                    Task.FromResult(new Empty()),
+                    Task.FromResult(new Metadata()),
+                    () => Status.DefaultSuccess,
+                    () => new Metadata(),
+                    () => { }
+                )
+            );
+
+        // A soft failure that keeps recurring is deterministic in practice; past the cap it must be
+        // reported, or the server's dead-task reaper would requeue it forever without a budget.
+        await RemoteTaskProcessor.HandleStreamingFailureAsync(
+            client,
+            9,
+            new RpcException(new Status(StatusCode.Unavailable, "blip")),
+            Substitute.For<ILogger>(),
+            CancellationToken.None,
+            consecutiveSoftFailures: 1000
+        );
+
+        _ = client
+            .Received(1)
+            .ReportTaskFailedAsync(
+                Arg.Is<ReportTaskFailedRequest>(r => r.TaskId == 9),
+                Arg.Any<Metadata>(),
+                Arg.Any<DateTime?>(),
+                Arg.Any<CancellationToken>()
+            );
+    }
+
     private static void AssertNoFailureReported(UpscalingService.UpscalingServiceClient client) =>
         Assert.DoesNotContain(
             client.ReceivedCalls(),

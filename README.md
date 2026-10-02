@@ -262,6 +262,9 @@ proxy_buffers              4 256k;
 proxy_busy_buffers_size    256k;
 
 # The following lines are necessary for the remote worker to work correctly with gRPC.
+# Page streaming is process-local: if you run more than one server instance behind this proxy, a
+# chapter's page RPCs (manifest, fetch, upload) must all reach the same instance. Pin a worker to one
+# upstream (e.g. ip_hash, or a dedicated upstream per worker) rather than round-robining requests.
 location / {
     # Detect gRPC traffic
     if ($http_content_type = "application/grpc") {

@@ -20,9 +20,9 @@ public static class EngineIdentity
     /// GPU), the app/engine build, the resolved workflow (appstate2.json) and the model files under
     /// <see cref="UpscalerConfig.ModelsDirectory"/>. Which GPU is selected is deliberately excluded:
     /// a CUDA box and a ROCm box with the same models and preprocessing produce the same pixels, so a
-    /// cross-device hand-off must not discard the spool. Models are fingerprinted by relative path and
-    /// size — stable across workers with identical models and far cheaper than hashing the
-    /// ~gigabytes of weights.
+    /// cross-device hand-off must not discard the spool. Models are fingerprinted by relative path,
+    /// size and a content prefix — stable across workers with identical models and far cheaper than
+    /// hashing the ~gigabytes of weights, while still distinguishing a same-size fine-tune.
     /// </summary>
     public static string ForUpscaler(UpscalerConfig config)
     {
@@ -91,20 +91,47 @@ public static class EngineIdentity
         // Normalize separators and casing so the fingerprint agrees across operating systems (a CUDA
         // box and a ROCm box, or Windows and Linux, with the same models must not discard the spool),
         // and sort by the normalized relative path so enumeration order does not matter.
-        IEnumerable<(string Relative, long Length)> files = Directory
+        IEnumerable<(string Relative, long Length, string File)> files = Directory
             .EnumerateFiles(directory, "*", SearchOption.AllDirectories)
             .Select(file =>
                 (
                     Relative: Path.GetRelativePath(directory, file)
                         .Replace('\\', '/')
                         .ToLowerInvariant(),
-                    Length: new FileInfo(file).Length
+                    Length: new FileInfo(file).Length,
+                    File: file
                 )
             )
             .OrderBy(entry => entry.Relative, StringComparer.Ordinal);
-        foreach ((string relative, long length) in files)
+        foreach ((string relative, long length, string file) in files)
         {
-            material.Append(relative).Append(':').Append(length).Append(';');
+            material.Append(relative).Append(':').Append(length).Append(':');
+            AppendFilePrefixHash(material, file);
+            material.Append(';');
+        }
+    }
+
+    /// <summary>
+    /// Bytes of each model file hashed into the fingerprint. A full content hash of multi-gigabyte
+    /// weights is too slow, but path + size alone collide for a same-size fine-tune; a prefix hash
+    /// distinguishes those cheaply (the result is cached per process by the provider).
+    /// </summary>
+    private const int FingerprintPrefixBytes = 64 * 1024;
+
+    private static void AppendFilePrefixHash(StringBuilder material, string file)
+    {
+        try
+        {
+            using FileStream stream = File.OpenRead(file);
+            int toRead = (int)Math.Min(FingerprintPrefixBytes, stream.Length);
+            byte[] buffer = new byte[toRead];
+            int read = stream.ReadAtLeast(buffer, toRead, throwOnEndOfStream: false);
+            material.Append(Convert.ToHexStringLower(SHA256.HashData(buffer.AsSpan(0, read))));
+        }
+        catch (Exception)
+        {
+            // Best-effort: an unreadable file still contributes its path and size above.
+            material.Append("unreadable");
         }
     }
 

@@ -151,7 +151,7 @@ public class PageStreamSpoolTests
             _spool.CommitPage(session, 0, temp);
 
             string destination = Path.Combine(directory, "out.cbz");
-            _spool.Assemble(session, path, pages, destination);
+            _spool.Assemble(session, session.Identity, path, pages, destination);
 
             using ZipArchive output = ZipFile.OpenRead(destination);
             Assert.Equal(new byte[] { 7, 8, 9 }, ReadEntry(output, "ch1/001.webp"));
@@ -191,7 +191,7 @@ public class PageStreamSpoolTests
 
             string destination = Path.Combine(directory, "out.cbz");
             // The duplicate source entry must be skipped, not treated as an output-name collision.
-            _spool.Assemble(session, path, pages, destination);
+            _spool.Assemble(session, session.Identity, path, pages, destination);
 
             using ZipArchive output = ZipFile.OpenRead(destination);
             Assert.Equal(new byte[] { 7, 8, 9 }, ReadEntry(output, "001.webp"));
@@ -241,7 +241,7 @@ public class PageStreamSpoolTests
             Assert.Equal(new[] { 0, 1 }, _spool.GetCompletedPages(session).OrderBy(i => i));
 
             string destination = Path.Combine(directory, "out.cbz");
-            _spool.Assemble(session, source, pages, destination);
+            _spool.Assemble(session, session.Identity, source, pages, destination);
 
             using ZipArchive zip = ZipFile.OpenRead(destination);
             Assert.Equal(
@@ -370,9 +370,9 @@ public class PageStreamSpoolTests
 
             string destination = Path.Combine(directory, "missing.cbz");
             File.WriteAllBytes(destination, new byte[] { 1 });
-            _spool.AssemblePagesOnly(session, pages, destination);
+            _spool.AssemblePagesOnly(session, session.Identity, pages, destination);
             // A re-finalize into the same prepared repair target must not throw.
-            _spool.AssemblePagesOnly(session, pages, destination);
+            _spool.AssemblePagesOnly(session, session.Identity, pages, destination);
 
             using ZipArchive output = ZipFile.OpenRead(destination);
             Assert.Equal(new byte[] { 7, 8, 9 }, ReadEntry(output, "001.webp"));
@@ -410,7 +410,13 @@ public class PageStreamSpoolTests
 
             // Recoverable: the caller restarts the chapter instead of failing it terminally.
             PageStreamRestartException ex = Assert.Throws<PageStreamRestartException>(() =>
-                _spool.Assemble(session, path, pages, Path.Combine(directory, "out.cbz"))
+                _spool.Assemble(
+                    session,
+                    session.Identity,
+                    path,
+                    pages,
+                    Path.Combine(directory, "out.cbz")
+                )
             );
             Assert.True(ex.ResetSpool);
         }
@@ -534,6 +540,62 @@ public class PageStreamSpoolTests
 
         Assert.NotSame(first, second);
         Assert.False(second.Finalized);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void Assemble_ThrowsARestartExceptionWhenTheIdentityChanged()
+    {
+        string directory = Directory.CreateTempSubdirectory("spool_identity").FullName;
+        try
+        {
+            string path = CreateSourceCbz(directory);
+            var pages = new List<SpoolPageDescriptor>
+            {
+                new(0, "001.jpg", "001.webp"),
+                new(1, "002.jpg", "002.webp"),
+            };
+            PageStreamSession session = _spool.GetOrCreateSession(90, "identity", "engine", 2);
+            string temp;
+            using (FileStream page = _spool.BeginPageWrite(session, 0, out temp))
+            {
+                page.Write(new byte[] { 1 });
+            }
+
+            _spool.CommitPage(session, 0, temp);
+
+            // TryBeginAssembly validated the identity earlier; a reset in between must be caught here
+            // rather than mixing two identities' page bytes into one archive.
+            PageStreamRestartException ex = Assert.Throws<PageStreamRestartException>(() =>
+                _spool.Assemble(
+                    session,
+                    "a-different-identity",
+                    path,
+                    pages,
+                    Path.Combine(directory, "out.cbz")
+                )
+            );
+            Assert.True(ex.ResetSpool);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void SweepStale_KeepsAnAssemblingSession()
+    {
+        PageStreamSession session = _spool.GetOrCreateSession(91, "identity", "engine", 1);
+        session.LastTouchedUtc = DateTime.UtcNow - TimeSpan.FromHours(48);
+        Assert.True(_spool.TryBeginAssembly(session, session.Identity));
+
+        _spool.SweepStale(TimeSpan.FromHours(24));
+
+        // An in-progress assembly must not be swept, even when it looks idle.
+        Assert.Same(session, _spool.TryGetSession(91));
+        Assert.False(session.Finalized);
     }
 
     private static byte[] ReadAll(Stream stream)

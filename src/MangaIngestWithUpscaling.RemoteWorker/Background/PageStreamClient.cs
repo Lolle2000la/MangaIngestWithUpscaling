@@ -123,9 +123,10 @@ public sealed class PageStreamClient(
             );
 
             // Unbounded on purpose: OnPageDone is a synchronous worker callback, so it cannot apply
-            // backpressure without blocking the worker's event reader. The records are tiny, but the
-            // upscaled output files they point at accumulate on disk until the chapter ends, so a
-            // fast GPU with a slow upload link needs temp-directory headroom.
+            // backpressure without blocking the worker's event reader. The records are tiny; the
+            // upscaled output files they point at are deleted once uploaded, so the temp footprint is
+            // bounded by the upload backlog (a fast GPU with a slow link) rather than the whole
+            // chapter.
             var uploads = Channel.CreateUnbounded<PageUpload>(
                 new UnboundedChannelOptions { SingleReader = true, SingleWriter = false }
             );
@@ -173,7 +174,7 @@ public sealed class PageStreamClient(
                 if (file.Status == "upscaled" && !string.IsNullOrEmpty(file.Output))
                 {
                     uploads.Writer.TryWrite(
-                        new PageUpload(doneIndex, file.Output, DeleteAfterUpload: false)
+                        new PageUpload(doneIndex, file.Output, DeleteAfterUpload: true)
                     );
                     // The worker has finished this page, so its fetched source copy can go; this
                     // keeps the source directory from growing to a second copy of the chapter.

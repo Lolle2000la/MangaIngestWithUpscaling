@@ -233,9 +233,19 @@ public partial class UpscalingDistributionService
             entries.TryAdd(entry.FullName, entry);
         }
 
-        // Distinct + an explicit range check bound the work: a request can carry millions of ints
-        // within the message cap, and duplicates would otherwise force repeated re-reads.
+        // Bound the request: the receive cap allows millions of ints, and duplicates would otherwise
+        // force repeated re-reads.
         int requestedPageCount = pageContext.Pages.Count;
+        if (request.PageIndexes.Count > requestedPageCount)
+        {
+            context.Status = new Status(
+                StatusCode.InvalidArgument,
+                "Too many page indexes requested"
+            );
+            return;
+        }
+
+        bool loggedMissing = false;
         foreach (int pageIndex in request.PageIndexes.Distinct())
         {
             // Stop early when the client has gone away instead of streaming the rest of the archive.
@@ -251,11 +261,16 @@ public partial class UpscalingDistributionService
                 || !entries.TryGetValue(page.SourceName, out ZipArchiveEntry? entry)
             )
             {
-                _logger.LogWarning(
-                    "Requested page {PageIndex} of task {TaskId} is not present in the source archive.",
-                    pageIndex,
-                    request.TaskId
-                );
+                if (!loggedMissing)
+                {
+                    // Log once per request: a hostile/duplicate list would otherwise flood the sink.
+                    _logger.LogWarning(
+                        "Requested page {PageIndex} of task {TaskId} is not present in the source archive.",
+                        pageIndex,
+                        request.TaskId
+                    );
+                    loggedMissing = true;
+                }
                 continue;
             }
 
@@ -1109,7 +1124,13 @@ public partial class UpscalingDistributionService
 
         try
         {
-            pageStreamSpool.Assemble(session, pageContext.SourcePath, pageContext.Pages, tempCbz);
+            pageStreamSpool.Assemble(
+                session,
+                pageContext.Identity,
+                pageContext.SourcePath,
+                pageContext.Pages,
+                tempCbz
+            );
             await upscalerJsonHandlingService.WriteUpscalerJsonAsync(
                 tempCbz,
                 pageContext.Profile!,
@@ -1460,6 +1481,7 @@ public partial class UpscalingDistributionService
 
         pageStreamSpool.AssemblePagesOnly(
             session,
+            pageContext.Identity,
             pageContext.Pages,
             repairState.UpscaledMissingPagesCbzPath
         );
