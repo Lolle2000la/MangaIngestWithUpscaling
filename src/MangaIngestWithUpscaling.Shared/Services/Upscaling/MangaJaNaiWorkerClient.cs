@@ -197,7 +197,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             TouchActivity();
             await EnsureWorkerAsync(cancellationToken);
 
-            WorkerJob job = new(request.Id, progress, onPageDone);
+            WorkerJob job = new(request.Id, progress, onPageDone, failOnPageErrors: false);
             if (!_jobs.TryAdd(request.Id, job))
             {
                 throw new InvalidOperationException(
@@ -220,7 +220,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                         "Upscale worker crashed during chapter submission; respawning and retrying once."
                     );
                     _jobs.TryRemove(request.Id, out _);
-                    job = new WorkerJob(request.Id, progress, onPageDone);
+                    job = new WorkerJob(request.Id, progress, onPageDone, failOnPageErrors: false);
                     _jobs.TryAdd(request.Id, job);
                     await EnsureWorkerAsync(cancellationToken);
                     await SendLineAsync(BuildChapterLine(request), cancellationToken);
@@ -514,8 +514,38 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
     public async ValueTask DisposeAsync() => await ShutdownWorkerAsync(CancellationToken.None);
 
+    /// <summary>
+    /// Asks the resident detection server to return its cached VRAM before the upscaler claims the
+    /// GPU, so two warm models do not fight over a small card. Best-effort.
+    /// </summary>
+    private async Task ReleaseDetectorGpuAsync()
+    {
+        try
+        {
+            using IServiceScope detectorScope = _scopeFactory.CreateScope();
+            IDetectServerClient? detector =
+                detectorScope.ServiceProvider.GetService<IDetectServerClient>();
+            if (detector is not null)
+            {
+                await detector.ReleaseGpuCacheAsync(CancellationToken.None);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(
+                ex,
+                "Failed to release the detection server's GPU cache before upscaling."
+            );
+        }
+    }
+
     private async Task EnsureWorkerAsync(CancellationToken cancellationToken)
     {
+        // Free the resident detection server's VRAM before the upscaler claims the GPU, so two warm
+        // models do not fight over a small card. Done before the warm-worker early return, so a
+        // detection run between two upscale jobs still releases the detector. Best-effort.
+        await ReleaseDetectorGpuAsync();
+
         Process? existing;
         lock (_stateLock)
         {
@@ -535,26 +565,6 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         if (existing is not null)
         {
             await CleanupAsync(existing);
-        }
-
-        // Free the resident detection server's VRAM before the upscaler claims the GPU, so two warm
-        // models do not fight over a small card. Best-effort; the upscaler can still run.
-        try
-        {
-            using IServiceScope detectorScope = _scopeFactory.CreateScope();
-            IDetectServerClient? detector =
-                detectorScope.ServiceProvider.GetService<IDetectServerClient>();
-            if (detector is not null)
-            {
-                await detector.ReleaseGpuCacheAsync(CancellationToken.None);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(
-                ex,
-                "Failed to release the detection server's GPU cache before upscaling."
-            );
         }
 
         // Start a fresh stderr buffer for the new worker so a timeout/crash report doesn't
@@ -589,6 +599,8 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
+            // Explicit no-BOM UTF-8 so the first JSON line is not prefixed with a BOM.
+            StandardInputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };
@@ -1087,7 +1099,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         }
 
         string[] failed = files.Where(f => f.Status == "error").Select(f => f.Input).ToArray();
-        if (failed.Length > 0)
+        if (job.FailOnPageErrors && failed.Length > 0)
         {
             job.Fail(
                 $"Upscale worker failed to process {failed.Length} file(s): {string.Join(", ", failed)}"
@@ -1306,12 +1318,14 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         public WorkerJob(
             string id,
             IProgress<UpscaleProgress>? progress,
-            Action<UpscaleJobFile>? onPageDone = null
+            Action<UpscaleJobFile>? onPageDone = null,
+            bool failOnPageErrors = true
         )
         {
             Id = id;
             Progress = progress;
             OnPageDone = onPageDone;
+            FailOnPageErrors = failOnPageErrors;
             Completion = new TaskCompletionSource<UpscaleJobResult>(
                 TaskCreationOptions.RunContinuationsAsynchronously
             );
@@ -1321,6 +1335,14 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         public string Id { get; }
         public IProgress<UpscaleProgress>? Progress { get; }
         public Action<UpscaleJobFile>? OnPageDone { get; }
+
+        /// <summary>
+        /// Whether a per-file "error" entry should fail the job. The chapter/streaming flow copies a
+        /// page the engine could not process through instead (see <see cref="PageStreamClient"/>), so
+        /// it must not fail the whole chapter.
+        /// </summary>
+        public bool FailOnPageErrors { get; }
+
         public TaskCompletionSource<UpscaleJobResult> Completion { get; }
 
         public bool AllPagesProcessed => _allPagesProcessed;

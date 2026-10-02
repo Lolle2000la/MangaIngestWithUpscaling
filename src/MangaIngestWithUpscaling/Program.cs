@@ -420,8 +420,8 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
-// gRPC streaming calls (UploadPage, UploadUpscaledCbzFile) disable Kestrel's request-body cap
-// themselves (Grpc.AspNetCore.Server sets MaxRequestBodySize = null for client/duplex streaming), so
+// gRPC streaming calls (UploadPage) disable Kestrel's request-body cap themselves
+// (Grpc.AspNetCore.Server sets MaxRequestBodySize = null for client/duplex streaming), so
 // there is nothing useful to raise here; the handlers bound their own input instead. The per-message
 // receive limit below is the real per-call ceiling (default 4 MB), raised so a whole-chapter
 // detection result is not rejected before the handler's own cap applies.

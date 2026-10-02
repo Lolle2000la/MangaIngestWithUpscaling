@@ -275,6 +275,7 @@ public partial class UpscalingDistributionService
                     && (
                         chunk.TaskId != taskId
                         || chunk.PageIndex != pageIndex
+                        || !string.Equals(chunk.ContentIdentity, identity, StringComparison.Ordinal)
                         || !string.Equals(
                             chunk.EngineIdentity,
                             engineIdentity,
@@ -286,7 +287,8 @@ public partial class UpscalingDistributionService
                     return new UploadPageResponse
                     {
                         Success = false,
-                        Message = "The page stream changed task, page or engine mid-upload.",
+                        Message =
+                            "The page stream changed task, page, content or engine mid-upload.",
                         TaskId = taskId,
                         PageIndex = pageIndex,
                         Terminal = true,
@@ -573,6 +575,20 @@ public partial class UpscalingDistributionService
 
         if (!pageStreamSpool.TryBeginAssembly(session, pageContext.Identity))
         {
+            // False also covers a concurrent identity reset, which the worker must retry rather than
+            // treat as "someone else is finalizing".
+            if (!string.Equals(session.Identity, pageContext.Identity, StringComparison.Ordinal))
+            {
+                return new UploadPageResponse
+                {
+                    Success = false,
+                    Message = "The chapter or profile changed; restart the chapter",
+                    TaskId = taskId,
+                    PageIndex = pageIndex,
+                    Terminal = false,
+                };
+            }
+
             // Another worker is already assembling the completed chapter.
             return new UploadPageResponse
             {
@@ -766,14 +782,24 @@ public partial class UpscalingDistributionService
             throw;
         }
 
-        CommitPageResult commitResult = pageStreamSpool.TryCommitPage(
-            session,
-            pageContext.Identity,
-            request.EngineIdentity,
-            request.PageIndex,
-            resultTemp,
-            resultBytes.Length
-        );
+        CommitPageResult commitResult;
+        try
+        {
+            commitResult = pageStreamSpool.TryCommitPage(
+                session,
+                pageContext.Identity,
+                request.EngineIdentity,
+                request.PageIndex,
+                resultTemp,
+                resultBytes.Length
+            );
+        }
+        catch
+        {
+            DeleteTempQuietly(resultTemp);
+            throw;
+        }
+
         if (commitResult != CommitPageResult.Committed)
         {
             DeleteTempQuietly(resultTemp);
@@ -1275,7 +1301,7 @@ public partial class UpscalingDistributionService
             }
 
             // Reject names that could escape the output archive on extraction.
-            if (!IsSafeEntryName(entry.FullName))
+            if (!PageStreamSpool.IsSafeEntryName(entry.FullName))
             {
                 continue;
             }
@@ -1312,13 +1338,6 @@ public partial class UpscalingDistributionService
 
         return pages;
     }
-
-    /// <summary>
-    /// Rejects archive entry names that could escape the output archive on extraction (absolute or
-    /// parent-traversing paths), so a hostile source archive cannot write outside the chapter.
-    /// </summary>
-    private static bool IsSafeEntryName(string name) =>
-        !Path.IsPathRooted(name) && !name.Split('/', '\\').Any(segment => segment == "..");
 
     /// <summary>
     /// Replaces an archive entry's extension while preserving its folder prefix, e.g.

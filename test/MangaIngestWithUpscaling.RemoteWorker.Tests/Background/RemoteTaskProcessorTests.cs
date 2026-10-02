@@ -10,10 +10,7 @@ public class RemoteTaskProcessorTests
     [Trait("Category", "Unit")]
     [InlineData(StatusCode.Unavailable, RemoteTaskProcessor.StreamingFailureKind.Transient)]
     [InlineData(StatusCode.DeadlineExceeded, RemoteTaskProcessor.StreamingFailureKind.Transient)]
-    [InlineData(
-        StatusCode.Unimplemented,
-        RemoteTaskProcessor.StreamingFailureKind.StreamingUnsupported
-    )]
+    [InlineData(StatusCode.Unimplemented, RemoteTaskProcessor.StreamingFailureKind.Permanent)]
     [InlineData(StatusCode.Internal, RemoteTaskProcessor.StreamingFailureKind.Permanent)]
     [InlineData(StatusCode.InvalidArgument, RemoteTaskProcessor.StreamingFailureKind.Permanent)]
     public void ClassifyStreamingFailure_ClassifiesRpcStatusCodes(

@@ -23,6 +23,14 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
 {
     private static readonly TimeSpan ReadyTimeout = TimeSpan.FromMinutes(2);
 
+    /// <summary>
+    /// Encoding for the detection server's stdin. Must not emit a UTF-8 BOM: the server does
+    /// <c>json.loads(line)</c>, which rejects a leading BOM, so a BOM would make every request fail
+    /// to parse and stall for the full request timeout.
+    /// </summary>
+    public static Encoding StdinEncoding { get; } =
+        new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IOptions<UpscalerConfig> _config;
     private readonly ILogger<DetectServerClient> _logger;
@@ -313,7 +321,8 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
-            StandardInputEncoding = Encoding.UTF8,
+            // A BOM would be written before the first JSON line and break the server's json.loads.
+            StandardInputEncoding = StdinEncoding,
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };

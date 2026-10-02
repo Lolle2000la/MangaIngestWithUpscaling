@@ -148,6 +148,9 @@ public class DistributedUpscaleTaskProcessor(
     /// </summary>
     public void ForgetTask(int taskId)
     {
+        // The row is gone, so any page spool for it is orphaned.
+        DropPageSpool(taskId, logger);
+
         using (_lock.EnterScope())
         {
             if (!runningTasks.Remove(taskId))
@@ -425,7 +428,8 @@ public class DistributedUpscaleTaskProcessor(
 
                     if (task.Data is ApplySplitsTask applySplitsTask)
                     {
-                        // Check if the chapter exists
+                        // Split application runs server-side, but keep the missing-chapter guard so a
+                        // task for a chapter that no longer exists is failed instead of looping.
                         using IServiceScope scope = scopeFactory.CreateScope();
                         var logger = scope.ServiceProvider.GetRequiredService<
                             ILogger<DistributedUpscaleTaskProcessor>
@@ -454,6 +458,15 @@ public class DistributedUpscaleTaskProcessor(
                             );
                             continue;
                         }
+
+                        logger.LogDebug(
+                            "Rerouting ApplySplitsTask {taskId} to the local processor.",
+                            task.Id
+                        );
+                        await taskQueue.SendToLocalUpscaleAsync(task, linkedCts.Token);
+                        // Handed off to the local processor; it owns the task from here.
+                        claimedTask = null;
+                        continue;
                     }
 
                     if (task.Data is UpscaleTask upscaleData)
@@ -820,8 +833,8 @@ public class DistributedUpscaleTaskProcessor(
         var completionLogger = scope.ServiceProvider.GetRequiredService<
             ILogger<DistributedUpscaleTaskProcessor>
         >();
-        // A task that completed through the whole-CBZ path (e.g. after a runtime page-streaming
-        // fallback) may still have a partial page spool; drop it now that the task is terminal.
+        // A completed task may still have a partial page spool; drop it now that the task is
+        // terminal.
         DropPageSpool(taskId, completionLogger);
 
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -1245,9 +1258,9 @@ public class DistributedUpscaleTaskProcessor(
 
             if (differences.MissingPages.Count > 0)
             {
-                // Create and store remote repair state. PreparedMissingPagesCbzPath is only used by
-                // the whole-CBZ fallback (page streaming reads the missing pages from the original
-                // source) and as the delegation transfer-size hint.
+                // Create and store remote repair state. PreparedMissingPagesCbzPath is used as the
+                // delegation transfer-size hint; page streaming reads the missing pages from the
+                // original source.
                 var repairState = new RemoteRepairState
                 {
                     PreparedMissingPagesCbzPath = repairContext.MissingPagesCbz,

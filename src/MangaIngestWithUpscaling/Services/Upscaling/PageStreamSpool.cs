@@ -42,6 +42,14 @@ public sealed class PageStreamSpool
     /// <summary>Upper bound on the total bytes spooled for one task, so a chapter cannot fill the disk.</summary>
     public const long MaxTaskBytes = 8L * 1024 * 1024 * 1024;
 
+    /// <summary>
+    /// Rejects archive entry names that could escape the output archive on extraction (absolute or
+    /// parent-traversing paths). Shared with the manifest builder so the descriptor set and the
+    /// assembled archive agree.
+    /// </summary>
+    public static bool IsSafeEntryName(string name) =>
+        !Path.IsPathRooted(name) && !name.Split('/', '\\').Any(segment => segment == "..");
+
     private readonly ConcurrentDictionary<int, PageStreamSession> _sessions = new();
     private readonly ILogger<PageStreamSpool> _logger;
 
@@ -401,6 +409,7 @@ public sealed class PageStreamSpool
             if (
                 !string.IsNullOrEmpty(entry.Name)
                 && ImageConstants.IsSupportedImageExtension(Path.GetExtension(entry.FullName))
+                && IsSafeEntryName(entry.FullName)
             )
             {
                 archiveImages.Add(entry.FullName);
@@ -429,6 +438,12 @@ public sealed class PageStreamSpool
             }
 
             if (!handledSources.Add(entry.FullName))
+            {
+                continue;
+            }
+
+            // Do not propagate a parent-traversing name into the output archive.
+            if (!IsSafeEntryName(entry.FullName))
             {
                 continue;
             }
