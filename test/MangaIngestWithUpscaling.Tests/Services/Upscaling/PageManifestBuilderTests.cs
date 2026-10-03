@@ -48,6 +48,35 @@ public class PageManifestBuilderTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void BuildPageDescriptors_KeepsPagesWithAColonInTheName()
+    {
+        string directory = Directory.CreateTempSubdirectory("manifest_colon").FullName;
+        try
+        {
+            string source = CreateCbz(
+                directory,
+                ("Chapter 1: Intro/001.jpg", new byte[] { 1 }),
+                ("002.jpg", new byte[] { 2 })
+            );
+
+            List<SpoolPageDescriptor> pages = UpscalingDistributionService.BuildPageDescriptors(
+                source,
+                Profile()
+            );
+
+            // A colon is legal on Linux; rejecting it silently dropped the page while the chapter was
+            // still reported upscaled.
+            Assert.Equal(2, pages.Count);
+            Assert.Equal("Chapter 1: Intro/001.jpg", pages[0].SourceName);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void BuildPageDescriptors_PreservesFoldersAndDedupesRepeatedEntries()
     {
         string directory = Directory.CreateTempSubdirectory("manifest_nested").FullName;

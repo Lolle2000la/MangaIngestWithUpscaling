@@ -54,11 +54,20 @@ public sealed class PageStreamSpool
         !string.IsNullOrEmpty(name)
         && !Path.IsPathRooted(name)
         // Reject Windows drive/UNC forms independent of the host OS: on Linux Path.IsPathRooted
-        // returns false for "C:\evil.jpg" and "\\server\share\evil.jpg".
+        // returns false for "C:\evil.jpg" and "\\server\share\evil.jpg". Only a drive prefix is
+        // rejected, not a colon anywhere: a colon is legal on Linux and rejecting it silently dropped
+        // legitimate pages (the chapter was still reported upscaled).
         && !name.StartsWith('/')
         && !name.StartsWith('\\')
-        && !name.Contains(':')
+        && !IsWindowsDriveForm(name)
         && !name.Split('/', '\\').Any(IsUnsafeSegment);
+
+    /// <summary>
+    ///     True for a Windows drive-relative or absolute prefix ("C:", "C:\", "C:evil"), which must not
+    ///     be interpreted as a drive path even when the host is Linux.
+    /// </summary>
+    private static bool IsWindowsDriveForm(string name) =>
+        name.Length >= 2 && char.IsAsciiLetter(name[0]) && name[1] == ':';
 
     /// <summary>
     /// True for a path component that is a traversal or empty after Windows' trailing space/dot

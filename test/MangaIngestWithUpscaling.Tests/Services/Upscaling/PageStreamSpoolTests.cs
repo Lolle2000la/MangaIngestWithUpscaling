@@ -700,6 +700,9 @@ public class PageStreamSpoolTests
     [InlineData("ch/001.jpg", true)]
     [InlineData("ch\\001.jpg", true)]
     [InlineData("page1..jpg", true)]
+    // A colon is legal on Linux and must not silently drop the page; only a drive prefix is unsafe.
+    [InlineData("Chapter 1: Intro/001.jpg", true)]
+    [InlineData("a:b.jpg", false)]
     [InlineData("../evil.jpg", false)]
     [InlineData("..\\evil.jpg", false)]
     [InlineData(".. /evil.jpg", false)]
