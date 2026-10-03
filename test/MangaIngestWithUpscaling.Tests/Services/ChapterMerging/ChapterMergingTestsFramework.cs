@@ -2618,11 +2618,19 @@ public class PartialUpscalingMergeTests : IAsyncDisposable
             taskPersistenceService
         );
 
+        var distributedProcessor = new DistributedUpscaleTaskProcessor(
+            realQueueForProcessor,
+            scopeFactory,
+            upscalerOptions,
+            Substitute.For<ILogger<DistributedUpscaleTaskProcessor>>(),
+            taskPersistenceService
+        );
         var splitCoordinator = Substitute.For<ISplitProcessingCoordinator>();
         var realTaskManager = new ChapterMergeUpscaleTaskManager(
             context,
             taskQueue,
             processor,
+            distributedProcessor,
             standardProcessor,
             splitCoordinator,
             taskManagerLogger
@@ -2737,10 +2745,18 @@ public class PartialUpscalingMergeTests : IAsyncDisposable
             taskPersistenceService
         );
 
+        var distributedProcessor = new DistributedUpscaleTaskProcessor(
+            realQueueForProcessor,
+            scopeFactory,
+            upscalerOptions,
+            Substitute.For<ILogger<DistributedUpscaleTaskProcessor>>(),
+            taskPersistenceService
+        );
         var taskManager = new ChapterMergeUpscaleTaskManager(
             context,
             taskQueue,
             upscaleTaskProcessor,
+            distributedProcessor,
             standardProcessor,
             splitCoordinator,
             taskManagerLogger
@@ -2835,10 +2851,18 @@ public class PartialUpscalingMergeTests : IAsyncDisposable
             taskPersistenceService
         );
 
+        var distributedProcessor = new DistributedUpscaleTaskProcessor(
+            realQueueForProcessor,
+            scopeFactory,
+            upscalerOptions,
+            Substitute.For<ILogger<DistributedUpscaleTaskProcessor>>(),
+            taskPersistenceService
+        );
         var taskManager = new ChapterMergeUpscaleTaskManager(
             context,
             taskQueue,
             upscaleTaskProcessor,
+            distributedProcessor,
             standardProcessor,
             splitCoordinator,
             taskManagerLogger

@@ -15,6 +15,7 @@ public class ChapterMergeUpscaleTaskManager(
     ApplicationDbContext dbContext,
     ITaskQueue taskQueue,
     UpscaleTaskProcessor upscaleTaskProcessor,
+    DistributedUpscaleTaskProcessor distributedUpscaleTaskProcessor,
     StandardTaskProcessor standardTaskProcessor,
     ISplitProcessingCoordinator splitProcessingCoordinator,
     ILogger<ChapterMergeUpscaleTaskManager> logger
@@ -33,13 +34,16 @@ public class ChapterMergeUpscaleTaskManager(
     ///     Cancels a running chapter-scoped task on whichever processor owns its queue.
     ///     <see cref="ApplySplitsTask"/> is no longer an upscale-family task, so it runs on the standard
     ///     processor: asking the upscale processor to cancel it did nothing at all, which let a live
-    ///     apply keep rewriting the chapter this merge was manipulating.
+    ///     apply keep rewriting the chapter this merge was manipulating. A genuine upscale is owned by
+    ///     the distributed processor in RemoteOnly (the local upscale processor only drains rerouted
+    ///     tasks there), so an upscale-family task is cancelled on both.
     /// </summary>
-    private void CancelRunningTask(PersistedTask task)
+    private async Task CancelRunningTaskAsync(PersistedTask task)
     {
         if (TaskQueue.IsUpscaleTask(task.Data))
         {
             upscaleTaskProcessor.CancelCurrent(task);
+            await distributedUpscaleTaskProcessor.CancelCurrent(task);
         }
         else
         {
@@ -76,7 +80,7 @@ public class ChapterMergeUpscaleTaskManager(
             {
                 case PersistedTaskStatus.Pending:
                     // Remove pending tasks from the queue
-                    CancelRunningTask(task);
+                    await CancelRunningTaskAsync(task);
                     await taskQueue.RemoveTaskAsync(task);
                     logger.LogInformation(
                         "Removed pending {TaskType} task for chapter {ChapterId} due to chapter merging",
@@ -87,7 +91,7 @@ public class ChapterMergeUpscaleTaskManager(
 
                 case PersistedTaskStatus.Processing:
                     // Cancel running tasks using the processor's cancellation mechanism
-                    CancelRunningTask(task);
+                    await CancelRunningTaskAsync(task);
                     tasksToCancel.Add(task);
                     logger.LogInformation(
                         "Canceled processing {TaskType} task for chapter {ChapterId} due to chapter merging",
@@ -173,7 +177,7 @@ public class ChapterMergeUpscaleTaskManager(
                 else
                 {
                     // Still processing or pending after wait, try to cancel again but don't remove yet
-                    CancelRunningTask(canceledTask);
+                    await CancelRunningTaskAsync(canceledTask);
                     logger.LogWarning(
                         "Task {TaskType} for chapter {ChapterId} still has status {Status} after cancellation wait. Skipping removal to avoid interrupting active processing.",
                         canceledTask.Data.GetType().Name,

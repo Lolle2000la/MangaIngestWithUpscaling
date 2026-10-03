@@ -99,11 +99,19 @@ public class ChapterMergeTaskCancellationTests : IAsyncDisposable
             NullLogger<StandardTaskProcessor>.Instance,
             persistence
         );
+        var distributedProcessor = Substitute.For<DistributedUpscaleTaskProcessor>(
+            queue,
+            scopeFactory,
+            Options.Create(new UpscalerConfig()),
+            NullLogger<DistributedUpscaleTaskProcessor>.Instance,
+            persistence
+        );
 
         var manager = new ChapterMergeUpscaleTaskManager(
             context,
             Substitute.For<ITaskQueue>(),
             upscaleProcessor,
+            distributedProcessor,
             standardProcessor,
             Substitute.For<ISplitProcessingCoordinator>(),
             NullLogger<ChapterMergeUpscaleTaskManager>.Instance
@@ -130,6 +138,11 @@ public class ChapterMergeTaskCancellationTests : IAsyncDisposable
         // Processing, so the exact count is not the point — which processor was asked is.
         upscaleProcessor.Received().CancelCurrent(Arg.Is<PersistedTask>(t => t.Id == upscale.Id));
         standardProcessor.Received().CancelCurrent(Arg.Is<PersistedTask>(t => t.Id == apply.Id));
+        // RemoteOnly owns genuine upscales in the distributed processor, so the upscale must be
+        // cancelled there too or the merge proceeds while a worker is still writing the chapter.
+        await distributedProcessor
+            .Received()
+            .CancelCurrent(Arg.Is<PersistedTask>(t => t.Id == upscale.Id));
 
         // Regression guard: the apply used to be cancelled through the upscale processor, and the
         // upscale-family task is never cancelled through the standard one.
@@ -139,5 +152,8 @@ public class ChapterMergeTaskCancellationTests : IAsyncDisposable
         standardProcessor
             .DidNotReceive()
             .CancelCurrent(Arg.Is<PersistedTask>(t => t.Id == upscale.Id));
+        await distributedProcessor
+            .DidNotReceive()
+            .CancelCurrent(Arg.Is<PersistedTask>(t => t.Id == apply.Id));
     }
 }

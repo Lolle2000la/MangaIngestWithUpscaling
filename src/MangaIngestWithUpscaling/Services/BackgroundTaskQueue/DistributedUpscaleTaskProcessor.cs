@@ -54,7 +54,7 @@ public class DistributedUpscaleTaskProcessor(
     /// Otherwise, consistency issues may arise.
     /// </summary>
     /// <param name="checkAgainst">The task to check against if it is still the current task. Does so by using the Id.</param>
-    public async Task CancelCurrent(PersistedTask checkAgainst)
+    public virtual async Task CancelCurrent(PersistedTask checkAgainst)
     {
         PersistedTask? currentTask;
         using (_lock.EnterScope())
