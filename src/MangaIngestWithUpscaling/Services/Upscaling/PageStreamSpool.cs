@@ -13,7 +13,10 @@ public enum CommitPageResult
     /// <summary>The page was moved into place and recorded.</summary>
     Committed,
 
-    /// <summary>The session's content identity no longer matches the caller's; the page was dropped.</summary>
+    /// <summary>
+    /// The page cannot be committed into this session: its content identity no longer matches the
+    /// caller's, or the spool was reset and discarded the page's temp file. The page was dropped.
+    /// </summary>
     IdentityMismatch,
 
     /// <summary>The session's engine identity differs from the caller's; the page was dropped.</summary>
@@ -277,6 +280,15 @@ public sealed class PageStreamSpool
             )
             {
                 return CommitPageResult.EngineMismatch;
+            }
+
+            // The temp file sits in the directory this session had when the page was opened, and any
+            // reset deletes that directory — including a reset that lands back on this same identity,
+            // which passes the checks above with a temp file that no longer exists. Drop such a stale
+            // page here instead of letting File.Move throw out of the commit.
+            if (!File.Exists(tempPath))
+            {
+                return CommitPageResult.IdentityMismatch;
             }
 
             // Re-uploading a page replaces its bytes; adjust by the delta so legitimate retries do

@@ -55,6 +55,27 @@ public class PageStreamSpoolTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void TryCommitPage_DropsAPageWhoseTempFileWasDiscardedByAReset()
+    {
+        PageStreamSession session = _spool.GetOrCreateSession(103, "identity-a", "engine", 1);
+        FileStream output = _spool.BeginPageWrite(session, 0, out string temp);
+        output.Dispose();
+
+        // Resetting to another identity deletes the directory holding the temp file; resetting back to
+        // this identity makes the identity checks pass again, so the page must be dropped explicitly
+        // rather than letting File.Move throw out of the commit.
+        _spool.GetOrCreateSession(103, "identity-b", "engine", 1);
+        _spool.GetOrCreateSession(103, "identity-a", "engine", 1);
+
+        Assert.Equal(
+            CommitPageResult.IdentityMismatch,
+            _spool.TryCommitPage(session, "identity-a", "engine", 0, temp)
+        );
+        Assert.False(_spool.IsComplete(session));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void TryCommitPage_RejectsWhenOverBudget()
     {
         PageStreamSession session = _spool.GetOrCreateSession(13, "identity", "engine", 2);
