@@ -1039,6 +1039,15 @@ public class DistributedUpscaleTaskProcessor(
             // Both are singletons, so they outlive this scope.
             var spool = scope.ServiceProvider.GetRequiredService<PageStreamSpool>();
             scope.ServiceProvider.GetRequiredService<PageContextCache>().Remove(taskId);
+            // Capture the current session now and compare-and-remove that exact instance later, so a
+            // task that is re-dispatched before the offloaded detach runs does not have its fresh
+            // session (and directory) removed.
+            PageStreamSession? session = spool.TryGetSession(taskId);
+            if (session is null)
+            {
+                return;
+            }
+
             // Detach + delete off the caller's path. Detach acquires the session gate, which an
             // in-flight assembly can hold for the whole (multi-GB) archive write, and this runs under
             // the queue's enqueue semaphore; the recursive delete can also be many gigabytes.
@@ -1046,7 +1055,7 @@ public class DistributedUpscaleTaskProcessor(
             {
                 try
                 {
-                    string? directory = spool.Detach(taskId);
+                    string? directory = spool.Detach(session);
                     if (directory is not null)
                     {
                         spool.DeleteDirectory(directory);

@@ -374,7 +374,27 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     continue;
                 }
 
-                UpscalerProfile profile = GetProfileFromResponse(resp.UpscalerProfile);
+                UpscalerProfile profile;
+                try
+                {
+                    profile = GetProfileFromResponse(resp.UpscalerProfile);
+                }
+                catch (Exception ex)
+                {
+                    // An unmappable profile (an unrecognized enum the server mapped to Unspecified) is
+                    // deterministic. The task is already claimed and has no keep-alive, so back off
+                    // like the unsupported-type branch instead of spinning in the generic catch, which
+                    // would re-claim it every 500 ms forever.
+                    logger.LogError(
+                        ex,
+                        "Ignoring task {TaskId}: its upscaler profile could not be resolved.",
+                        taskId
+                    );
+                    _fetchInProgress = false;
+                    await dispatcherTimer.WaitForNextTickAsync(stoppingToken);
+                    _fetchSignals.Writer.TryWrite(true);
+                    continue;
+                }
 
                 var persistentKeepAliveCts = CancellationTokenSource.CreateLinkedTokenSource(
                     stoppingToken

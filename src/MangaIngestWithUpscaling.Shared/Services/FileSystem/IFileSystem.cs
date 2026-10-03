@@ -10,6 +10,12 @@ public interface IFileSystem
     void Move(string sourceFileName, string destFileName);
 
     /// <summary>
+    /// Moves a file, replacing the destination if it exists, applying the necessary permissions. On
+    /// one filesystem this is an atomic rename, so a failed move cannot leave the destination gone.
+    /// </summary>
+    void Move(string sourceFileName, string destFileName, bool overwrite);
+
+    /// <summary>
     /// Creates a directory at the specified path with the necessary permissions.
     /// </summary>
     /// <param name="path">The path to the directory(s) to create.</param>

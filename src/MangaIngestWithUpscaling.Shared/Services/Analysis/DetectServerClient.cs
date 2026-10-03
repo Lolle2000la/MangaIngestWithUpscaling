@@ -514,6 +514,28 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
     }
 
     /// <summary>
+    /// Disposes a captured stdin under the stdin lock, so a concurrent <see cref="SendLineAsync(string, CancellationToken)"/>
+    /// cannot write to a disposed writer (which would silently drop the line).
+    /// </summary>
+    private async Task DisposeStdinAsync(StreamWriter? stdin)
+    {
+        if (stdin is null)
+        {
+            return;
+        }
+
+        await _stdinLock.WaitAsync();
+        try
+        {
+            TryDispose(stdin);
+        }
+        finally
+        {
+            _stdinLock.Release();
+        }
+    }
+
+    /// <summary>
     /// Kills the process (if alive) and waits briefly for it to exit before disposing, so a respawn
     /// does not race the dead process's GPU context (a CUDA context can still hold VRAM after a kill,
     /// causing an OOM on the new server's model load).
@@ -552,12 +574,14 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
 
         StreamWriter? stdin;
         TaskCompletionSource? cacheRelease;
+        TaskCompletionSource? readyTcs;
         DetectJob[] jobs;
         lock (_stateLock)
         {
             if (_process == process)
             {
                 _process = null;
+                readyTcs = _readyTcs;
                 _readyTcs = null;
                 stdin = _stdin;
                 _stdin = null;
@@ -572,13 +596,22 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
             {
                 stdin = null;
                 cacheRelease = null;
+                readyTcs = null;
                 jobs = [];
             }
         }
 
-        TryDispose(stdin);
+        await DisposeStdinAsync(stdin);
         // Unblock a pending GPU-cache release so its caller does not wait the full timeout.
         cacheRelease?.TrySetCanceled();
+        // Unblock a startup wait: EnsureServerAsync awaits this TCS, and OnServerExited will not fault
+        // it once _process has been cleared, so a shutdown during startup would otherwise stall for
+        // the full ReadyTimeout.
+        readyTcs?.TrySetException(
+            new DetectServerUnavailableException(
+                "The detection server was shut down before becoming ready."
+            )
+        );
 
         foreach (DetectJob job in jobs)
         {
@@ -913,7 +946,7 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
             jobs = _jobs.Values.ToArray();
         }
 
-        TryDispose(stdin);
+        await DisposeStdinAsync(stdin);
         // Unblock a pending GPU-cache release so its caller does not wait the full timeout.
         cacheRelease?.TrySetCanceled();
 

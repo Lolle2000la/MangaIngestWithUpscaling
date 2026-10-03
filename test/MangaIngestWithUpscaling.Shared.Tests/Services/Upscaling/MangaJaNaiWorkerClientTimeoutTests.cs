@@ -59,9 +59,75 @@ public class MangaJaNaiWorkerClientTimeoutTests
                 break
         """;
 
+    private const string FakeWorkerCancels = """
+        import json
+        import sys
+
+        def emit(obj):
+            sys.stdout.write(json.dumps(obj) + "\n")
+            sys.stdout.flush()
+
+        emit({"type": "ready", "capacity": 1})
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                continue
+            kind = msg.get("type")
+            job_id = msg.get("id")
+            if kind == "open_chapter":
+                # Report a cancellation without being asked: a caller cancellation must surface as
+                # OperationCanceledException, not a permanent failure.
+                emit({"type": "accepted", "id": job_id, "capacity": 1})
+                emit({"type": "cancelled", "id": job_id})
+                emit(
+                    {
+                        "type": "done",
+                        "id": job_id,
+                        "status": "cancelled",
+                        "elapsed_seconds": 0.0,
+                        "files": [],
+                    }
+                )
+            elif kind == "shutdown":
+                break
+        """;
+
     [Fact]
     [Trait("Category", "Unit")]
     public async Task RunChapterAsync_WhenTheWorkerHonorsAnInactivityCancel_ThrowsTimeout()
+    {
+        // A short inactivity timeout: the fake worker never reports progress, so the monitor fires,
+        // cancels, and must surface the timeout.
+        Exception error = await RunChapterAsync(
+            FakeWorker,
+            TimeSpan.FromMilliseconds(500),
+            "chap-timeout"
+        );
+
+        Assert.IsType<TimeoutException>(error);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunChapterAsync_WhenTheWorkerReportsCancelled_ThrowsOperationCanceled()
+    {
+        // A worker-reported cancellation must be an OperationCanceledException, not a job error that
+        // the streaming classifier would treat as permanent and delete the spool for.
+        Exception error = await RunChapterAsync(FakeWorkerCancels, timeout: null, "chap-cancel");
+
+        Assert.IsAssignableFrom<OperationCanceledException>(error);
+    }
+
+    private static async Task<Exception> RunChapterAsync(
+        string script,
+        TimeSpan? timeout,
+        string requestId
+    )
     {
         string? python = FindPython();
         Assert.SkipWhen(python is null, "Python 3 is not available on this machine.");
@@ -73,7 +139,7 @@ public class MangaJaNaiWorkerClientTimeoutTests
         Directory.CreateDirectory(workDir);
         await File.WriteAllTextAsync(
             Path.Combine(workDir, "worker.py"),
-            FakeWorker,
+            script,
             TestContext.Current.CancellationToken
         );
 
@@ -104,27 +170,23 @@ public class MangaJaNaiWorkerClientTimeoutTests
         {
             var request = new ChapterJobRequest
             {
-                Id = "chap-timeout",
+                Id = requestId,
                 OutputFolder = workDir,
                 Format = CompressionFormat.Webp,
                 Scale = ScaleFactor.TwoX,
                 TotalPages = 1,
             };
 
-            // A short inactivity timeout: the fake worker never reports progress, so the monitor
-            // fires, cancels, and must surface the timeout.
-            TimeSpan timeout = TimeSpan.FromMilliseconds(500);
-
-            await Assert.ThrowsAsync<TimeoutException>(() =>
-                client.RunChapterAsync(
-                    request,
-                    SinglePage(new ChapterPage(0, "page0.png", pagePath)),
-                    progress: null,
-                    onPageDone: _ => { },
-                    CancellationToken.None,
-                    timeout
-                )
-            );
+            return await Record.ExceptionAsync(() =>
+                    client.RunChapterAsync(
+                        request,
+                        SinglePage(new ChapterPage(0, "page0.png", pagePath)),
+                        progress: null,
+                        onPageDone: _ => { },
+                        CancellationToken.None,
+                        timeout
+                    )
+                ) ?? throw new InvalidOperationException("Expected the chapter to fail.");
         }
         finally
         {

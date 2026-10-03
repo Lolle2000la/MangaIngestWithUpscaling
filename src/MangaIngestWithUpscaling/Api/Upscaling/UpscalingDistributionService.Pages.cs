@@ -38,13 +38,22 @@ public partial class UpscalingDistributionService
         ServerCallContext context
     )
     {
+        var resolution = new PageContextResolution();
         PageContext? pageContext = await ResolvePageContextAsync(
             request.TaskId,
-            context.CancellationToken
+            context.CancellationToken,
+            resolution
         );
         if (pageContext is null)
         {
-            context.Status = new Status(StatusCode.NotFound, "Task, chapter or profile not found");
+            // A terminal task is a genuine not-found; a non-terminal one whose source is momentarily
+            // unavailable is a restart, so a flaky mount resumes instead of failing the chapter.
+            context.Status = resolution.TaskTerminal
+                ? new Status(StatusCode.NotFound, "Task, chapter or profile not found")
+                : new Status(
+                    StatusCode.Unavailable,
+                    "The chapter's source is not currently available; retry the chapter"
+                );
             return new PageManifestResponse { TaskId = request.TaskId };
         }
 
@@ -86,7 +95,7 @@ public partial class UpscalingDistributionService
                     session = pageStreamSpool.GetOrCreateSession(
                         pageContext.Task.Id,
                         pageContext.Identity,
-                        session.EngineIdentity,
+                        request.EngineIdentity,
                         pageContext.Pages.Count
                     );
                     return await BuildManifestAsync(pageContext, session);
@@ -136,7 +145,7 @@ public partial class UpscalingDistributionService
                     session = pageStreamSpool.GetOrCreateSession(
                         pageContext.Task.Id,
                         pageContext.Identity,
-                        session.EngineIdentity,
+                        request.EngineIdentity,
                         pageContext.Pages.Count
                     );
                 }
@@ -225,13 +234,20 @@ public partial class UpscalingDistributionService
         ServerCallContext context
     )
     {
+        var resolution = new PageContextResolution();
         PageContext? pageContext = await ResolvePageContextAsync(
             request.TaskId,
-            context.CancellationToken
+            context.CancellationToken,
+            resolution
         );
         if (pageContext is null)
         {
-            context.Status = new Status(StatusCode.NotFound, "Task, chapter or profile not found");
+            context.Status = resolution.TaskTerminal
+                ? new Status(StatusCode.NotFound, "Task, chapter or profile not found")
+                : new Status(
+                    StatusCode.Unavailable,
+                    "The chapter's source is not currently available; retry the chapter"
+                );
             return;
         }
 
@@ -442,19 +458,25 @@ public partial class UpscalingDistributionService
                         identity = chunk.ContentIdentity;
                         engineIdentity = chunk.EngineIdentity;
 
+                        var uploadResolution = new PageContextResolution();
                         pageContext = await ResolvePageContextAsync(
                             taskId,
-                            context.CancellationToken
+                            context.CancellationToken,
+                            uploadResolution
                         );
                         if (pageContext is null)
                         {
                             return new UploadPageResponse
                             {
                                 Success = false,
-                                Message = "Task, chapter or profile not found",
+                                Message = uploadResolution.TaskTerminal
+                                    ? "Task, chapter or profile not found"
+                                    : "The chapter's source is not currently available; restart the chapter",
                                 TaskId = taskId,
                                 PageIndex = pageIndex,
-                                Terminal = true,
+                                // A terminal task is a hard failure; a transiently-unavailable source
+                                // is a restart (the soft-failure cap bounds a persistent failure).
+                                Terminal = uploadResolution.TaskTerminal,
                             };
                         }
 
@@ -687,16 +709,18 @@ public partial class UpscalingDistributionService
                     pageIndex,
                     taskId
                 );
+                // A local storage failure (a full disk, a flaky mount) is transient: restart the
+                // chapter so the already-upscaled pages are preserved. The soft-failure cap bounds a
+                // persistent failure, so it cannot spin forever. A non-I/O failure is a bug and stays
+                // terminal.
+                bool terminal = ex is not (IOException or UnauthorizedAccessException);
                 return new UploadPageResponse
                 {
                     Success = false,
                     Message = ex.Message,
                     TaskId = taskId,
                     PageIndex = pageIndex,
-                    // A local commit/storage failure is not going to fix itself by requeuing; fail
-                    // the task rather than spinning forever (dead-worker requeues do not increment
-                    // the retry count).
-                    Terminal = true,
+                    Terminal = terminal,
                 };
             }
         }
@@ -910,11 +934,25 @@ public partial class UpscalingDistributionService
         ServerCallContext context
     )
     {
+        var resolution = new PageContextResolution();
         PageContext? pageContext = await ResolvePageContextAsync(
             request.TaskId,
-            context.CancellationToken
+            context.CancellationToken,
+            resolution
         );
-        if (pageContext is null || pageContext.Kind != PageContextKind.Detect)
+        if (pageContext is null)
+        {
+            return new UploadDetectionResultResponse
+            {
+                Success = false,
+                Message = resolution.TaskTerminal
+                    ? "Task, chapter or profile not found"
+                    : "The chapter's source is not currently available; restart the chapter",
+                Terminal = resolution.TaskTerminal,
+            };
+        }
+
+        if (pageContext.Kind != PageContextKind.Detect)
         {
             return new UploadDetectionResultResponse
             {
@@ -1316,11 +1354,19 @@ public partial class UpscalingDistributionService
             return;
         }
 
-        string tempDir = Path.Combine(Path.GetTempPath(), "mangaingestwithupscaling");
-        fileSystem.CreateDirectory(tempDir);
+        string destination = pageContext.Chapter.UpscaledFullPath!;
+        string? destinationDirectory = Path.GetDirectoryName(destination);
+        if (destinationDirectory is not null)
+        {
+            fileSystem.CreateDirectory(destinationDirectory);
+        }
+
+        // Build the CBZ in the destination directory so the final move is a same-filesystem rename
+        // (atomic on Unix); deleting the old CBZ before a cross-volume move could lose it if the move
+        // failed.
         string tempCbz = Path.Combine(
-            tempDir,
-            $"upscaled_{pageContext.Task.Id}_{Guid.NewGuid():N}.cbz"
+            destinationDirectory ?? Path.GetTempPath(),
+            $".upscaled_{pageContext.Task.Id}_{Guid.NewGuid():N}.tmp"
         );
 
         try
@@ -1339,19 +1385,7 @@ public partial class UpscalingDistributionService
             );
             fileSystem.ApplyPermissions(tempCbz);
 
-            string destination = pageContext.Chapter.UpscaledFullPath!;
-            if (File.Exists(destination))
-            {
-                File.Delete(destination);
-            }
-
-            string? destinationDirectory = Path.GetDirectoryName(destination);
-            if (destinationDirectory is not null)
-            {
-                fileSystem.CreateDirectory(destinationDirectory);
-            }
-
-            fileSystem.Move(tempCbz, destination);
+            fileSystem.Move(tempCbz, destination, overwrite: true);
 
             pageContext.Chapter.IsUpscaled = true;
             pageContext.Chapter.UpscalerProfileId = pageContext.Profile!.Id;
@@ -1370,7 +1404,21 @@ public partial class UpscalingDistributionService
         }
     }
 
-    private async Task<PageContext?> ResolvePageContextAsync(int taskId, CancellationToken ct)
+    /// <summary>
+    /// Carries the non-obvious part of a page-context resolution: whether the task itself was missing
+    /// or terminal (a genuine not-found) as opposed to the chapter's source being transiently
+    /// unavailable (a restart).
+    /// </summary>
+    private sealed class PageContextResolution
+    {
+        public bool TaskTerminal { get; set; }
+    }
+
+    private async Task<PageContext?> ResolvePageContextAsync(
+        int taskId,
+        CancellationToken ct,
+        PageContextResolution resolution
+    )
     {
         PersistedTask? task = await dbContext.PersistedTasks.FirstOrDefaultAsync(
             t => t.Id == taskId,
@@ -1384,6 +1432,8 @@ public partial class UpscalingDistributionService
                     or PersistedTaskStatus.Failed
         )
         {
+            // The task itself is gone or terminal: a genuine not-found, not a transient source blip.
+            resolution.TaskTerminal = true;
             pageContextCache.Remove(taskId);
             return null;
         }

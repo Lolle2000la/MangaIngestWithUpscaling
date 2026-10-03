@@ -123,5 +123,69 @@ public class EngineIdentityTests
         }
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ForUpscaler_DistinguishesASameSizeFineTunePastTheFirstWindow()
+    {
+        // The sample covers the head, middle and tail, so a same-size file that diverges only past the
+        // first 64 KiB window is still distinguished.
+        string first = Directory.CreateTempSubdirectory("engine_models_head").FullName;
+        string second = Directory.CreateTempSubdirectory("engine_models_tail").FullName;
+        try
+        {
+            const int size = 512 * 1024;
+            byte[] a = new byte[size];
+            byte[] b = new byte[size];
+            a[size - 1] = 1;
+            b[size - 1] = 2;
+            File.WriteAllBytes(Path.Combine(first, "model.pth"), a);
+            File.WriteAllBytes(Path.Combine(second, "model.pth"), b);
+
+            UpscalerConfig firstConfig = Config();
+            firstConfig.ModelsDirectory = first;
+            UpscalerConfig secondConfig = Config();
+            secondConfig.ModelsDirectory = second;
+
+            Assert.NotEqual(
+                EngineIdentity.ForUpscaler(firstConfig),
+                EngineIdentity.ForUpscaler(secondConfig)
+            );
+        }
+        finally
+        {
+            Directory.Delete(first, true);
+            Directory.Delete(second, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ForUpscaler_IgnoresInactivePreprocessingKnobs()
+    {
+        // null and 0 both mean "no max dimension", and the smart-downscale knobs only matter when the
+        // feature is enabled; changing an inactive setting must not invalidate a spool.
+        UpscalerConfig nullMax = Config();
+        UpscalerConfig zeroMax = Config();
+        zeroMax.MaxDimensionBeforeUpscaling = 0;
+        Assert.Equal(EngineIdentity.ForUpscaler(nullMax), EngineIdentity.ForUpscaler(zeroMax));
+
+        UpscalerConfig baseline = Config();
+        UpscalerConfig changedKnob = Config();
+        changedKnob.SmartDownscaleThreshold = 99.0;
+        changedKnob.SmartDownscaleFactor = 0.5;
+        Assert.Equal(EngineIdentity.ForUpscaler(baseline), EngineIdentity.ForUpscaler(changedKnob));
+
+        // Once enabled, the knobs are part of the identity.
+        UpscalerConfig enabled = Config();
+        enabled.EnableSmartDownscale = true;
+        UpscalerConfig enabledDifferent = Config();
+        enabledDifferent.EnableSmartDownscale = true;
+        enabledDifferent.SmartDownscaleThreshold = 99.0;
+        Assert.NotEqual(
+            EngineIdentity.ForUpscaler(enabled),
+            EngineIdentity.ForUpscaler(enabledDifferent)
+        );
+    }
+
     private static UpscalerConfig Config() => new() { ModelsDirectory = "/nonexistent/models" };
 }

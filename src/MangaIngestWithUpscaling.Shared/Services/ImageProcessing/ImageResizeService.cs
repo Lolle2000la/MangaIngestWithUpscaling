@@ -136,7 +136,32 @@ public class ImageResizeService(
             string workingPath = Path.Combine(tempDir, Path.GetFileName(imagePath));
             File.Copy(imagePath, workingPath, overwrite: true);
 
-            await ProcessImagesInDirectory(tempDir, options, cancellationToken, throwOnError: true);
+            try
+            {
+                await ProcessImagesInDirectory(
+                    tempDir,
+                    options,
+                    cancellationToken,
+                    throwOnError: true
+                );
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // Match the whole-CBZ path, which copies a page it cannot preprocess through: keep the
+                // original so the page is still upscaled (the engine handles its own decode failure)
+                // rather than failing the whole chapter over one bad page. The original is only
+                // replaced on success, so a mid-write failure cannot truncate it either.
+                logger.LogWarning(
+                    ex,
+                    "Preprocessing {ImagePath} failed; keeping the original.",
+                    imagePath
+                );
+                return;
+            }
 
             string[] results = Directory.GetFiles(tempDir, "*", SearchOption.AllDirectories);
             if (results.Length == 1)

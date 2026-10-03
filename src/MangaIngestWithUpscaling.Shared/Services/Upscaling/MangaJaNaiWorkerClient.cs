@@ -407,6 +407,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     {
         Process? process;
         StreamWriter? stdin;
+        bool alreadyExited;
         lock (_stateLock)
         {
             // Never tear down the worker while a job is in flight: a streamed chapter (or a
@@ -423,13 +424,18 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             process = _process;
             stdin = _stdin;
             _shuttingDown = true;
-            if (process is null || process.HasExited)
+            alreadyExited = process is null || process.HasExited;
+            if (alreadyExited)
             {
                 _process = null;
-                // The process already exited; dispose the captured stdin rather than leak it.
-                TryDispose(stdin);
-                return;
             }
+        }
+
+        if (alreadyExited)
+        {
+            // The process already exited; dispose the captured stdin rather than leak it.
+            await DisposeStdinAsync(stdin);
+            return;
         }
 
         try
@@ -449,7 +455,8 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             grace.CancelAfter(TimeSpan.FromSeconds(10));
             try
             {
-                await process.WaitForExitAsync(grace.Token);
+                // alreadyExited is false here, so process is non-null.
+                await process!.WaitForExitAsync(grace.Token);
             }
             catch (OperationCanceledException) { }
         }
@@ -811,6 +818,28 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     }
 
     /// <summary>
+    /// Disposes a captured stdin under the stdin lock, so a concurrent <see cref="SendLineAsync(string, CancellationToken)"/>
+    /// cannot write to a disposed writer (which would silently drop the line).
+    /// </summary>
+    private async Task DisposeStdinAsync(StreamWriter? stdin)
+    {
+        if (stdin is null)
+        {
+            return;
+        }
+
+        await _stdinLock.WaitAsync();
+        try
+        {
+            TryDispose(stdin);
+        }
+        finally
+        {
+            _stdinLock.Release();
+        }
+    }
+
+    /// <summary>
     /// Kills the process (if alive) and waits briefly for it to exit before disposing, so a respawn
     /// does not race the dead process's GPU context (a CUDA context can still hold VRAM after a kill,
     /// causing an OOM on the new worker's model load).
@@ -870,7 +899,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             }
         }
 
-        TryDispose(stdin);
+        await DisposeStdinAsync(stdin);
         foreach (WorkerJob job in jobs)
         {
             job.MarkWorkerExited();
@@ -1200,6 +1229,14 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             .Select(f => new UpscaleJobFile(f.Input ?? "", f.Output ?? "", f.Status ?? ""))
             .ToList();
 
+        if (string.Equals(status, "cancelled", StringComparison.OrdinalIgnoreCase))
+        {
+            // A cancel the worker honored is a caller cancellation, not a failure: surface it as a
+            // cancellation so it is not classified permanent and does not drop the spool.
+            job.Cancel();
+            return;
+        }
+
         if (status != "ok")
         {
             job.Fail($"Upscale worker reported status '{status}'.");
@@ -1325,7 +1362,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             jobs = _jobs.Values.ToArray();
         }
 
-        TryDispose(stdin);
+        await DisposeStdinAsync(stdin);
         // Unblock a pending GPU-cache release so its in-flight guard is not left set.
         cacheRelease?.TrySetCanceled();
 
@@ -1495,6 +1532,13 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
         public void Fail(string message) =>
             Completion.TrySetException(new InvalidOperationException(message));
+
+        /// <summary>
+        /// Cancels the job. Used when the worker honors a cancel, so the caller sees an
+        /// <see cref="OperationCanceledException"/> rather than a failure that would be classified
+        /// permanent and drop the spool.
+        /// </summary>
+        public void Cancel() => Completion.TrySetCanceled();
 
         /// <summary>
         /// Fails the job with a crash exception so the caller can tell a worker crash (recoverable,

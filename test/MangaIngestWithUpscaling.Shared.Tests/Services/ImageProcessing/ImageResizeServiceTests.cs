@@ -505,4 +505,32 @@ public class ImageResizeServiceTests
             )
         );
     }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task PreprocessImageInPlaceAsync_KeepsTheOriginalWhenTheImageCannotBeDecoded()
+    {
+        // A corrupt page must be copied through (the whole-CBZ path tolerated a bad image) rather than
+        // failing the whole chapter, and the original must be left untouched.
+        string imagePath = Path.Combine(Path.GetTempPath(), $"corrupt_{Guid.NewGuid():N}.png");
+        byte[] original = [1, 2, 3, 4, 5];
+        await File.WriteAllBytesAsync(imagePath, original, TestContext.Current.CancellationToken);
+        try
+        {
+            await _service.PreprocessImageInPlaceAsync(
+                imagePath,
+                new ImagePreprocessingOptions { MaxDimension = 100, FormatConversionRules = [] },
+                TestContext.Current.CancellationToken
+            );
+
+            Assert.Equal(
+                original,
+                await File.ReadAllBytesAsync(imagePath, TestContext.Current.CancellationToken)
+            );
+        }
+        finally
+        {
+            File.Delete(imagePath);
+        }
+    }
 }

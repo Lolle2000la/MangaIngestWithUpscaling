@@ -29,17 +29,30 @@ public static class EngineIdentity
     public static string ForUpscaler(UpscalerConfig config)
     {
         var material = new StringBuilder("upscaler|");
+        // Normalize "disabled" spellings so an inactive setting does not needlessly invalidate every
+        // spool: null and 0 both mean "no max dimension", and the smart-downscale knobs only matter
+        // when the feature is enabled.
         material
             .Append(
-                config.MaxDimensionBeforeUpscaling?.ToString(CultureInfo.InvariantCulture) ?? "-"
+                config.MaxDimensionBeforeUpscaling is null or 0
+                    ? "-"
+                    : config.MaxDimensionBeforeUpscaling.Value.ToString(
+                        CultureInfo.InvariantCulture
+                    )
             )
             .Append('|')
             .Append(config.EnableSmartDownscale)
-            .Append('|')
-            .Append(config.SmartDownscaleThreshold.ToString("R", CultureInfo.InvariantCulture))
-            .Append('|')
-            .Append(config.SmartDownscaleFactor.ToString("R", CultureInfo.InvariantCulture))
-            .Append('|')
+            .Append('|');
+        if (config.EnableSmartDownscale)
+        {
+            material
+                .Append(config.SmartDownscaleThreshold.ToString("R", CultureInfo.InvariantCulture))
+                .Append('|')
+                .Append(config.SmartDownscaleFactor.ToString("R", CultureInfo.InvariantCulture))
+                .Append('|');
+        }
+
+        material
             .Append(config.UseFp16)
             .Append('|')
             // The effective compute mode, not just UseCPU: the worker maps
@@ -114,11 +127,12 @@ public static class EngineIdentity
     }
 
     /// <summary>
-    /// Bytes of each model file hashed into the fingerprint. A full content hash of multi-gigabyte
-    /// weights is too slow, but path + size alone collide for a same-size fine-tune; a prefix hash
-    /// distinguishes those cheaply (the result is cached per process by the provider).
+    /// Bytes sampled from each of the head, middle and tail of a model file for the fingerprint. A
+    /// full content hash of multi-gigabyte weights is too slow, but path + size alone collide for a
+    /// same-size fine-tune; sampling three windows distinguishes those cheaply (the result is cached
+    /// per process by the provider).
     /// </summary>
-    private const int FingerprintPrefixBytes = 64 * 1024;
+    private const int FingerprintSampleBytes = 64 * 1024;
 
     private static void AppendFilePrefixHash(StringBuilder material, string file)
     {
@@ -126,10 +140,31 @@ public static class EngineIdentity
         // a transient lock/ACL error is retried on the next access instead of becoming a stable-but-
         // wrong identity that rejects every page forever.
         using FileStream stream = File.OpenRead(file);
-        int toRead = (int)Math.Min(FingerprintPrefixBytes, stream.Length);
-        byte[] buffer = new byte[toRead];
-        int read = stream.ReadAtLeast(buffer, toRead, throwOnEndOfStream: false);
-        material.Append(Convert.ToHexStringLower(SHA256.HashData(buffer.AsSpan(0, read))));
+        long length = stream.Length;
+
+        // Sample the head, middle and tail, skipping duplicates for a file shorter than one window, so
+        // a same-size fine-tune that diverges past the first window is still distinguished.
+        var offsets = new List<long> { 0 };
+        if (length > FingerprintSampleBytes)
+        {
+            offsets.Add((length - FingerprintSampleBytes) / 2);
+        }
+
+        if (length > FingerprintSampleBytes * 2)
+        {
+            offsets.Add(length - FingerprintSampleBytes);
+        }
+
+        using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        byte[] buffer = new byte[FingerprintSampleBytes];
+        foreach (long offset in offsets)
+        {
+            stream.Position = offset;
+            int read = stream.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
+            hasher.AppendData(buffer, 0, read);
+        }
+
+        material.Append(Convert.ToHexStringLower(hasher.GetHashAndReset()));
     }
 
     private static void AppendFileContentHash(StringBuilder material, string path)
