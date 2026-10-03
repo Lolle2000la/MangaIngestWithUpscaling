@@ -150,6 +150,55 @@ public class StandardTaskProcessorGuardTests : IAsyncDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task ChapterGate_SerializesTheSameChapterAndAllowsDifferentChapters()
+    {
+        // The gate makes the guard-then-claim atomic across the standard and upscale processors; this
+        // pins that the same chapter is mutually exclusive while a different chapter is not.
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<ApplicationDbContext>(options => _database.Configure(options));
+        var cleanup = Substitute.For<IQueueCleanup>();
+        cleanup.CleanupAsync().Returns(Task.FromResult<IReadOnlyList<int>>(Array.Empty<int>()));
+        services.AddScoped<IQueueCleanup>(_ => cleanup);
+        using ServiceProvider provider = services.BuildServiceProvider();
+
+        var taskQueue = new TaskQueue(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            provider.GetRequiredService<ILogger<TaskQueue>>()
+        );
+
+        IDisposable first = await taskQueue.AcquireChapterGateAsync(
+            7,
+            TestContext.Current.CancellationToken
+        );
+
+        Task<IDisposable> blocked = taskQueue.AcquireChapterGateAsync(
+            7,
+            TestContext.Current.CancellationToken
+        );
+        // The same chapter cannot proceed while the gate is held (no timing dependency).
+        Assert.False(blocked.IsCompleted);
+
+        // A different chapter is not serialized behind it.
+        using (
+            IDisposable other = await taskQueue.AcquireChapterGateAsync(
+                8,
+                TestContext.Current.CancellationToken
+            )
+        )
+        {
+            Assert.NotNull(other);
+        }
+
+        first.Dispose();
+        using IDisposable second = await blocked.WaitAsync(
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task UpscaleProcessor_DefersAnUpscaleWhileASameChapterApplyIsProcessing()
     {
         var services = new ServiceCollection();

@@ -332,26 +332,9 @@ public class DistributedUpscaleTaskProcessor(
                         continue;
                     }
 
-                    // A same-chapter apply rewrites the CBZ this task will stream from. Leave the
-                    // task Pending (the standard processor's guard keeps the apply off an in-flight
-                    // upscale) and answer the worker with no task so it retries shortly, instead of
-                    // claiming it and racing the apply.
-                    if (
-                        task.Data is IChapterTask chapterTask
-                        && await HasSameChapterApplyTaskAsync(
-                            chapterTask.ChapterId,
-                            linkedCts.Token
-                        )
-                    )
-                    {
-                        taskQueue.ReEnqueue(task);
-                        tcs.TrySetCanceled(linkedCts.Token);
-                        break;
-                    }
-
-                    // Track the task before the claim. ClaimTaskAsync can throw after the row was
-                    // already committed to Processing, so the outer catch must recover the claim
-                    // itself; assigning only after a successful claim left such a row stranded.
+                    // Track the task before the claim and before the guard: the guard awaits the DB
+                    // with the request token, so a worker disconnect there must still requeue the task
+                    // rather than strand it outside every in-memory queue.
                     claimedTask = task;
 
                     using (IServiceScope scope = scopeFactory.CreateScope())
@@ -360,19 +343,59 @@ public class DistributedUpscaleTaskProcessor(
                             ILogger<DistributedUpscaleTaskProcessor>
                         >();
 
-                        if (await taskPersistenceService.ClaimTaskAsync(task.Id, linkedCts.Token))
+                        // The guard and the claim must be atomic against the standard processor's
+                        // apply guard, or both can pass their read-then-claim and run together.
+                        IDisposable? chapterGate = null;
+                        if (task.Data is IChapterTask chapterTask)
                         {
-                            task.Status = PersistedTaskStatus.Processing;
-                        }
-                        else
-                        {
-                            logger.LogInformation(
-                                "Task {taskId} could not be claimed (already processed or concurrency conflict).",
-                                task.Id
+                            chapterGate = await taskQueue.AcquireChapterGateAsync(
+                                chapterTask.ChapterId,
+                                linkedCts.Token
                             );
-                            // Not ours to recover: it is already claimed elsewhere or terminal.
-                            claimedTask = null;
-                            continue;
+                        }
+
+                        try
+                        {
+                            if (
+                                task.Data is IChapterTask guarded
+                                && await HasSameChapterApplyTaskAsync(
+                                    guarded.ChapterId,
+                                    linkedCts.Token
+                                )
+                            )
+                            {
+                                // A same-chapter apply is rewriting the CBZ this task will stream
+                                // from. Leave the task Pending and answer the worker with no task so
+                                // it retries shortly, instead of claiming it and racing the apply.
+                                taskQueue.ReEnqueue(task);
+                                claimedTask = null;
+                                tcs.TrySetCanceled(linkedCts.Token);
+                                break;
+                            }
+
+                            if (
+                                await taskPersistenceService.ClaimTaskAsync(
+                                    task.Id,
+                                    linkedCts.Token
+                                )
+                            )
+                            {
+                                task.Status = PersistedTaskStatus.Processing;
+                            }
+                            else
+                            {
+                                logger.LogInformation(
+                                    "Task {taskId} could not be claimed (already processed or concurrency conflict).",
+                                    task.Id
+                                );
+                                // Not ours to recover: it is already claimed elsewhere or terminal.
+                                claimedTask = null;
+                                continue;
+                            }
+                        }
+                        finally
+                        {
+                            chapterGate?.Dispose();
                         }
                     }
 
@@ -1212,6 +1235,20 @@ public class DistributedUpscaleTaskProcessor(
                 currentStoragePath,
                 upscaleTargetPath
             );
+
+            if (differences.Corrupt)
+            {
+                // A malformed archive reports no missing pages; completing the task here would mark a
+                // corrupt source as successfully repaired and leave a stale upscaled CBZ. Fail it
+                // terminally instead.
+                logger.LogError(
+                    "The source archive for repair task {TaskId} of chapter \"{chapterFileName}\" is corrupt; failing it.",
+                    persistedTask.Id,
+                    chapter.FileName
+                );
+                await PersistFailedAsync(persistedTask, serviceStoppingToken);
+                return false;
+            }
 
             if (differences.AreEqual)
             {

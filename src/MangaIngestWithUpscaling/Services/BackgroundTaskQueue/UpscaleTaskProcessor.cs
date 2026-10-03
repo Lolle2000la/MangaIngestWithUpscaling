@@ -161,17 +161,24 @@ public class UpscaleTaskProcessor(
         {
             // A same-chapter apply rewrites the original (and upscaled) CBZ this task streams from.
             // StandardTaskProcessor defers the apply under an upscale; this is the symmetric half, so
-            // the two never run together.
-            if (
-                task.Data is IChapterTask chapterTask
-                && await HasSameChapterApplyTaskAsync(chapterTask.ChapterId, stoppingToken)
-            )
+            // the two never run together. The chapter gate makes the guard and the claim atomic against
+            // the apply side's guard.
+            if (task.Data is IChapterTask chapterTask)
             {
-                DeferTask(
-                    task,
-                    "a same-chapter ApplySplitsTask is in flight and is rewriting the chapter"
+                using IDisposable gate = await TaskQueue.AcquireChapterGateAsync(
+                    chapterTask.ChapterId,
+                    stoppingToken
                 );
-                return false;
+                if (await HasSameChapterApplyTaskAsync(chapterTask.ChapterId, stoppingToken))
+                {
+                    DeferTask(
+                        task,
+                        "a same-chapter ApplySplitsTask is in flight and is rewriting the chapter"
+                    );
+                    return false;
+                }
+
+                return await ClaimAsync(task, stoppingToken);
             }
 
             return await ClaimAsync(task, stoppingToken);

@@ -115,6 +115,15 @@ public class RepairUpscaleTask : BaseTask, IChapterTask
             upscaleTargetPath
         );
 
+        if (differences.Corrupt)
+        {
+            // A malformed archive reports no missing pages; returning here would mark a corrupt source
+            // as successfully repaired. Fail terminally instead.
+            throw new InvalidDataException(
+                $"The source archive for chapter \"{chapter.FileName}\" is corrupt."
+            );
+        }
+
         if (differences.AreEqual)
         {
             logger.LogInformation(

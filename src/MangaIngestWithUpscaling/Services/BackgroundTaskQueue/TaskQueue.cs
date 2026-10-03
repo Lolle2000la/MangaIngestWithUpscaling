@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Threading.Channels;
 using AutoRegisterInject;
 using MangaIngestWithUpscaling.Data;
@@ -48,6 +49,11 @@ public class TaskQueue : ITaskQueue, IHostedService
     private readonly Channel<object> _upscaleChannel;
     private readonly SortedSet<PersistedTask> _upscaleTasks;
     private readonly object _upscaleTasksLock = new();
+
+    // One gate per chapter, used to make the "check the same-chapter conflict, then claim" sequence
+    // atomic across the standard and upscale processors. A slow leak (one SemaphoreSlim per chapter
+    // ever seen) is acceptable; chapters are bounded by the library.
+    private readonly ConcurrentDictionary<int, SemaphoreSlim> _chapterGates = new();
 
     public TaskQueue(IServiceScopeFactory scopeFactory, ILogger<TaskQueue> logger)
     {
@@ -794,5 +800,27 @@ public class TaskQueue : ITaskQueue, IHostedService
         }
 
         return _chapterNameComparer.Compare(a, b);
+    }
+
+    /// <summary>
+    ///     Serializes the "check the same-chapter conflict, then claim" sequence for one chapter across
+    ///     the standard and upscale processors. Without it the two guards are separate read-then-claim
+    ///     pairs and can both pass, letting an apply and an upscale run together. The gate is held only
+    ///     for the check-and-claim, not for the task's run. Process-local: the DB guards remain the
+    ///     cross-instance check.
+    /// </summary>
+    public async Task<IDisposable> AcquireChapterGateAsync(
+        int chapterId,
+        CancellationToken cancellationToken
+    )
+    {
+        SemaphoreSlim gate = _chapterGates.GetOrAdd(chapterId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken);
+        return new ChapterGateLease(gate);
+    }
+
+    private sealed class ChapterGateLease(SemaphoreSlim gate) : IDisposable
+    {
+        public void Dispose() => gate.Release();
     }
 }

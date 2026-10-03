@@ -1119,6 +1119,47 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
 
     [Fact]
     [Trait("Category", "Integration")]
+    public async Task PrepareRepairTaskForRemote_WithACorruptArchive_FailsTheTask()
+    {
+        // In RemoteOnly the repair is prepared server-side before delegation, so a corrupt source must
+        // fail here rather than be completed as "no longer needs repair".
+        Directory.CreateDirectory(Path.GetDirectoryName(_upscaledPath)!);
+        CreateSourceCbz(_upscaledPath);
+        _metadata
+            .AnalyzePageDifferencesAsync(Arg.Any<string?>(), Arg.Any<string?>())
+            .Returns(
+                new PageDifferenceResult(Array.Empty<string>(), Array.Empty<string>())
+                {
+                    Corrupt = true,
+                }
+            );
+
+        var processor = _app.Services.GetRequiredService<DistributedUpscaleTaskProcessor>();
+        using (IServiceScope scope = _app.Services.CreateScope())
+        {
+            PersistedTask repairTask = await LoadTaskAsync(_repairTaskId);
+            bool prepared = await processor.PrepareRepairTaskForRemote(
+                (RepairUpscaleTask)repairTask.Data,
+                repairTask,
+                scope.ServiceProvider,
+                TestContext.Current.CancellationToken
+            );
+
+            Assert.False(prepared);
+        }
+
+        await using ApplicationDbContext context = await _database.CreateContextAsync(
+            TestContext.Current.CancellationToken
+        );
+        PersistedTask task = await context.PersistedTasks.FirstAsync(
+            t => t.Id == _repairTaskId,
+            TestContext.Current.CancellationToken
+        );
+        Assert.Equal(PersistedTaskStatus.Failed, task.Status);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
     public async Task RepairsAMissingPageOverRealGrpcAndMergesIt()
     {
         // The upscaled chapter is missing "001"; the source still has it.

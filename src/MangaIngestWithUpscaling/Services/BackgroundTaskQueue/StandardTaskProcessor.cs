@@ -49,6 +49,12 @@ public class StandardTaskProcessor(
     {
         if (task.Data is ApplySplitsTask applySplits)
         {
+            // Hold the chapter gate across the guard and the claim, so the symmetric guard on the
+            // upscale side cannot interleave (both passing their read-then-claim and running together).
+            using IDisposable gate = await TaskQueue.AcquireChapterGateAsync(
+                applySplits.ChapterId,
+                stoppingToken
+            );
             using IServiceScope scope = ScopeFactory.CreateScope();
             var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
             if (
@@ -70,6 +76,8 @@ public class StandardTaskProcessor(
                 );
                 return false;
             }
+
+            return await ClaimAsync(task, stoppingToken);
         }
 
         return await ClaimAsync(task, stoppingToken);
