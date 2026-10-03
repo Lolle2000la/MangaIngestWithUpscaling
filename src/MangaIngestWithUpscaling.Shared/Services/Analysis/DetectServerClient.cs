@@ -137,6 +137,23 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
                         $"The detection server timed out after {timeout}."
                     );
                 }
+                catch (OperationCanceledException)
+                {
+                    // The caller gave up while the detector was still busy. It answers requests one at a
+                    // time, so leaving it running would park the next detection behind work nobody wants
+                    // (until that request's own timeout) and lock out the idle watchdog. Kill it unless it
+                    // already answered, and let the next request start from a responsive server.
+                    if (!job.Completion.Task.IsCompleted)
+                    {
+                        _logger.LogWarning(
+                            "Detection request {Id} was cancelled while the server was busy; killing the detection server.",
+                            id
+                        );
+                        await KillServerAsync();
+                    }
+
+                    throw;
+                }
             }
             finally
             {

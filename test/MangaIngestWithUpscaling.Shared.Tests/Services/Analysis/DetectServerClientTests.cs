@@ -182,7 +182,94 @@ public class DetectServerClientTests
             sys.exit(1)
             """;
 
-    private static ServiceProvider BuildClient(string python, out DetectServerClient client)
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task DetectAsync_KillsAWedgedServerWhenTheRequestIsCancelled()
+    {
+        string? python = FindPython();
+        Assert.SkipWhen(python is null, "Python 3 is not available on this machine.");
+
+        string blockFlag = Path.Combine(Path.GetTempPath(), $"detect_block_{Guid.NewGuid():N}");
+        File.WriteAllText(blockFlag, "block");
+        using var layout = new LayoutScope(BlockingServer(blockFlag));
+        using var host = BuildClient(
+            python!,
+            out DetectServerClient client,
+            TimeSpan.FromSeconds(5)
+        );
+        string image = CreateTempImage();
+        try
+        {
+            using var cancelled = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                client.DetectAsync(image, cancelled.Token)
+            );
+
+            // The detector answers one request at a time and the first one is wedged for good, so the
+            // next request can only succeed if the cancel killed that server and this call spawned a
+            // fresh one (the stand-in consumes the marker when it wedges).
+            SplitDetectionResult result = await client.DetectAsync(
+                image,
+                TestContext.Current.CancellationToken
+            );
+
+            Assert.Equal(image, result.ImagePath);
+        }
+        finally
+        {
+            await client.ShutdownServerAsync(TestContext.Current.CancellationToken);
+            File.Delete(image);
+            File.Delete(blockFlag);
+        }
+    }
+
+    /// <summary>
+    ///     Stand-in server that wedges on a detection while <paramref name="blockFlagPath" /> exists, so the
+    ///     cancel arrives while it cannot even read stdin — the case that used to lock the next detection
+    ///     out until its own request timeout.
+    /// </summary>
+    private static string BlockingServer(string blockFlagPath) =>
+        $$"""
+            import json
+            import os
+            import sys
+            import time
+
+            def emit(obj):
+                sys.stdout.write(json.dumps(obj) + "\n")
+                sys.stdout.flush()
+
+            emit({"type": "ready", "device": "cpu"})
+
+            for line in sys.stdin:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line)
+                except ValueError:
+                    continue
+                if msg.get("type") != "detect":
+                    continue
+                if os.path.exists(r"{{blockFlagPath}}"):
+                    # Wedge this process for good, and consume the marker so a replacement server answers.
+                    os.remove(r"{{blockFlagPath}}")
+                    while True:
+                        time.sleep(1)
+                emit(
+                    {
+                        "type": "result",
+                        "id": msg.get("id"),
+                        "result": {"image": msg.get("path") or "", "splits": [], "count": 0},
+                    }
+                )
+            """;
+
+    private static ServiceProvider BuildClient(
+        string python,
+        out DetectServerClient client,
+        TimeSpan? requestTimeout = null
+    )
     {
         string workDir = Directory.CreateTempSubdirectory("detect_server_work").FullName;
         var pythonService = Substitute.For<IPythonService>();
@@ -195,7 +282,10 @@ public class DetectServerClientTests
         client = new DetectServerClient(
             provider.GetRequiredService<IServiceScopeFactory>(),
             Options.Create(
-                new UpscalerConfig { DetectServerRequestTimeout = TimeSpan.FromMinutes(1) }
+                new UpscalerConfig
+                {
+                    DetectServerRequestTimeout = requestTimeout ?? TimeSpan.FromMinutes(1),
+                }
             ),
             NullLogger<DetectServerClient>.Instance,
             Substitute.For<IHostApplicationLifetime>()
