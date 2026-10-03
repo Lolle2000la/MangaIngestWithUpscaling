@@ -234,7 +234,9 @@ public class MetadataHandlingService(ILogger<MetadataHandlingService> logger)
                 originalFile,
                 upscaledFile
             );
-            return new PageDifferenceResult([], []);
+            // Not "no differences": a repair must not be finalized as successful when the archives
+            // could not be read. Flagged separately from Corrupt so a caller can retry rather than fail.
+            return new PageDifferenceResult([], []) { ReadFailed = true };
         }
     }
 

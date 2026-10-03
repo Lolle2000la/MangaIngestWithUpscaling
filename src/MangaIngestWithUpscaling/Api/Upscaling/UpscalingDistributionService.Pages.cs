@@ -226,7 +226,11 @@ public partial class UpscalingDistributionService
         var response = new PageManifestResponse
         {
             TaskId = pageContext.Task.Id,
-            TaskIdentity = pageContext.Identity,
+            // Use the session's identity, not the freshly resolved one: when an identity change races an
+            // in-progress assembly, GetOrCreateSession keeps the old session (so the completed set
+            // below is the old identity's), and reporting the new identity with that set would make the
+            // worker stream a full pass the commit will reject.
+            TaskIdentity = session.Identity,
             TaskType = ToProtoTaskType(pageContext.Kind),
             UpscalerProfile = pageContext.Profile is null
                 ? null
@@ -1654,6 +1658,17 @@ public partial class UpscalingDistributionService
                         taskId
                     );
                     resolution.Corrupt = true;
+                    return null;
+                }
+
+                if (differences.ReadFailed)
+                {
+                    // A transient read failure is not "no differences": restart (return null without
+                    // Corrupt) rather than completing the repair as successful.
+                    _logger.LogWarning(
+                        "Could not read a source archive for repair task {TaskId}; restarting.",
+                        taskId
+                    );
                     return null;
                 }
 

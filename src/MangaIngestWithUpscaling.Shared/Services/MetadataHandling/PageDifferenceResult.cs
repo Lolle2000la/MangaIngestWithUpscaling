@@ -32,6 +32,13 @@ public class PageDifferenceResult
     /// </summary>
     public bool Corrupt { get; init; }
 
+    /// <summary>
+    /// True when the analysis could not read one of the archives for a reason that may be transient
+    /// (an I/O failure, a lock, a truncated stream) rather than because the page sets match. Callers
+    /// must not treat this as "no differences" and silently complete the work.
+    /// </summary>
+    public bool ReadFailed { get; init; }
+
     public PageDifferenceResult(IEnumerable<string> missingPages, IEnumerable<string> extraPages)
     {
         MissingPages = missingPages.ToList().AsReadOnly();

@@ -124,6 +124,14 @@ public class RepairUpscaleTask : BaseTask, IChapterTask
             );
         }
 
+        if (differences.ReadFailed)
+        {
+            // The local path has no requeue signal; fail rather than silently completing the repair.
+            throw new IOException(
+                $"Could not read the source archive for chapter \"{chapter.FileName}\"."
+            );
+        }
+
         if (differences.AreEqual)
         {
             logger.LogInformation(
