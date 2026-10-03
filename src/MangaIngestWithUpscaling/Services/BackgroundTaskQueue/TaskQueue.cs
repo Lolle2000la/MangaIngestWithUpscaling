@@ -114,8 +114,7 @@ public class TaskQueue : ITaskQueue, IHostedService
             is UpscaleTask
                 or RenameUpscaledChaptersSeriesTask
                 or RepairUpscaleTask
-                or DetectSplitCandidatesTask
-                or ApplySplitsTask;
+                or DetectSplitCandidatesTask;
 
     public async Task EnqueueAsync<T>(T taskData)
         where T : BaseTask

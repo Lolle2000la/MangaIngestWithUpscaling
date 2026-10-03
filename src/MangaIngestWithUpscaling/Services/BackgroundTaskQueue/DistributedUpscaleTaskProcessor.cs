@@ -426,49 +426,6 @@ public class DistributedUpscaleTaskProcessor(
                         continue;
                     }
 
-                    if (task.Data is ApplySplitsTask applySplitsTask)
-                    {
-                        // Split application runs server-side, but keep the missing-chapter guard so a
-                        // task for a chapter that no longer exists is failed instead of looping.
-                        using IServiceScope scope = scopeFactory.CreateScope();
-                        var logger = scope.ServiceProvider.GetRequiredService<
-                            ILogger<DistributedUpscaleTaskProcessor>
-                        >();
-                        var dbContext =
-                            scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-                        Chapter? chapter = await dbContext
-                            .Chapters.Include(t => t.Manga)
-                                .ThenInclude(t => t.Library)
-                            .FirstOrDefaultAsync(
-                                c => c.Id == applySplitsTask.ChapterId,
-                                linkedCts.Token
-                            );
-
-                        if (chapter == null || !File.Exists(chapter.NotUpscaledFullPath))
-                        {
-                            // Chapter no longer exists, mark task as failed (and persist it so a
-                            // restart does not replay a task that is already terminal). The terminal
-                            // write uses the service token so a worker disconnect cannot cancel it.
-                            await PersistFailedAsync(task, serviceStoppingToken);
-                            claimedTask = null;
-
-                            logger.LogWarning(
-                                "Skipping ApplySplitsTask {taskId} because chapter file is missing.",
-                                task.Id
-                            );
-                            continue;
-                        }
-
-                        logger.LogDebug(
-                            "Rerouting ApplySplitsTask {taskId} to the local processor.",
-                            task.Id
-                        );
-                        await taskQueue.SendToLocalUpscaleAsync(task, linkedCts.Token);
-                        // Handed off to the local processor; it owns the task from here.
-                        claimedTask = null;
-                        continue;
-                    }
-
                     if (task.Data is UpscaleTask upscaleData)
                     {
                         // Check if the target chapter file still exists before giving the task to the worker

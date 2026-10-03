@@ -76,36 +76,6 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task GetTask_ApplySplitsTaskForMissingChapter_PersistsFailedStatus()
-    {
-        // Regression guard: the skip branch used to only set the in-memory status, leaving the
-        // database row stuck in Processing (and replaying on restart).
-        var cts = new CancellationTokenSource();
-        await _taskQueue.EnqueueAsync(new ApplySplitsTask(999_999, 1));
-        await _taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(1, 1));
-
-        int failingTaskId = _taskQueue
-            .GetUpscaleSnapshot()
-            .Single(t => t.Data is ApplySplitsTask)
-            .Id;
-
-        Task runTask = _processor.StartAsync(cts.Token);
-        PersistedTask? handedToRemote = await _processor.GetTask(cts.Token);
-
-        Assert.NotNull(handedToRemote);
-        Assert.IsType<DetectSplitCandidatesTask>(handedToRemote!.Data);
-        Assert.Equal(PersistedTaskStatus.Failed, await GetStatusAsync(failingTaskId));
-
-        await cts.CancelAsync();
-        try
-        {
-            await runTask;
-        }
-        catch (OperationCanceledException) { }
-    }
-
-    [Fact]
-    [Trait("Category", "Unit")]
     public async Task GetTask_RepairTaskForMissingChapter_PersistsFailedStatus()
     {
         var cts = new CancellationTokenSource();
@@ -685,9 +655,16 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
             persistence
         );
 
-        // ApplySplits performs a chapter query after the claim, which observes the cancelled token.
-        // A disconnect is an infrastructure event, so it is requeued regardless of RetryFor.
-        await _taskQueue.EnqueueAsync(new ApplySplitsTask(999_999, 1) { RetryFor = 1 });
+        // The upscale branch performs a chapter query after the claim, which observes the cancelled
+        // token. A disconnect is an infrastructure event, so it is requeued regardless of RetryFor.
+        await _taskQueue.EnqueueAsync(
+            new UpscaleTask
+            {
+                ChapterId = 999_999,
+                UpscalerProfileId = 999_999,
+                RetryFor = 1,
+            }
+        );
         int taskId = _taskQueue.GetUpscaleSnapshot().Single().Id;
 
         await processor.StartAsync(serviceCts.Token);
@@ -869,11 +846,18 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
             persistence
         );
 
-        // ApplySplits performs a chapter query after the claim; when the recovered task is
+        // The upscale branch performs a chapter query after the claim; when the recovered task is
         // re-claimed it fails on its missing chapter before the next task is handed to the worker.
         // A post-commit claim failure is an infrastructure event and is requeued regardless of the
         // task's RetryFor budget.
-        await _taskQueue.EnqueueAsync(new ApplySplitsTask(999_999, 1) { RetryFor = 1 });
+        await _taskQueue.EnqueueAsync(
+            new UpscaleTask
+            {
+                ChapterId = 999_999,
+                UpscalerProfileId = 999_999,
+                RetryFor = 1,
+            }
+        );
         int taskId = _taskQueue.GetUpscaleSnapshot().Single().Id;
 
         await processor.StartAsync(serviceCts.Token);
