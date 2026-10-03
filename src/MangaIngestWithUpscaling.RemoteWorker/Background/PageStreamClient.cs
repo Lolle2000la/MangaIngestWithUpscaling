@@ -122,7 +122,7 @@ public sealed class PageStreamClient(
 
         // Reclaim directories an earlier run left behind: a worker killed mid-chapter never reaches its
         // own cleanup, and nothing else owns these directories.
-        DeleteStaleStreamDirectories();
+        DeleteStaleWorkDirectories();
 
         string workDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -309,9 +309,12 @@ public sealed class PageStreamClient(
             // cancellation; surface the real (non-cancellation) error first. A *permanent* upload
             // failure must win over a transient chapter error (for example a worker crash), or the
             // transient error would be reported instead and the task would requeue forever with the
-            // spool intact instead of failing.
+            // spool intact instead of failing. A cancellation is never "permanent": treating it as
+            // such here would rethrow the consequential cancellation and mask the real chapter error,
+            // which the streaming loop then swallows as a normal interruption.
             if (
                 uploadError is not null
+                && uploadError is not OperationCanceledException
                 && RemoteTaskProcessor.ClassifyStreamingFailure(uploadError)
                     is RemoteTaskProcessor.StreamingFailureKind.Permanent
             )
@@ -395,6 +398,9 @@ public sealed class PageStreamClient(
         {
             throw new InvalidOperationException($"Task {taskId} has no pages to detect.");
         }
+
+        // Reclaim detection directories an earlier killed run left behind.
+        DeleteStaleWorkDirectories();
 
         Dictionary<int, string> nameByIndex = manifest.Pages.ToDictionary(
             p => p.Index,
@@ -776,45 +782,47 @@ public sealed class PageStreamClient(
     }
 
     /// <summary>
-    ///     Removes stream directories left behind by a worker that died mid-chapter. Only the name this
-    ///     client creates is considered, so no other temp content is touched.
+    ///     Removes work directories left behind by a worker that died mid-chapter. Only the two names
+    ///     this client creates are considered, so no other temp content is touched.
     /// </summary>
-    private void DeleteStaleStreamDirectories()
+    private void DeleteStaleWorkDirectories()
     {
         DateTime cutoff = DateTime.UtcNow - StaleStreamDirectoryRetention;
-        try
+        foreach (
+            string pattern in new[] { "mangaingest_page_stream_*", "mangaingest_page_detect_*" }
+        )
         {
-            foreach (
-                string directory in Directory.EnumerateDirectories(
-                    Path.GetTempPath(),
-                    "mangaingest_page_stream_*"
-                )
-            )
+            try
             {
-                try
+                foreach (
+                    string directory in Directory.EnumerateDirectories(Path.GetTempPath(), pattern)
+                )
                 {
-                    if (Directory.GetLastWriteTimeUtc(directory) < cutoff)
+                    try
                     {
-                        Directory.Delete(directory, recursive: true);
-                        logger.LogInformation(
-                            "Removed the stale page stream directory {Directory}.",
+                        if (Directory.GetLastWriteTimeUtc(directory) < cutoff)
+                        {
+                            Directory.Delete(directory, recursive: true);
+                            logger.LogInformation(
+                                "Removed the stale page-stream directory {Directory}.",
+                                directory
+                            );
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogDebug(
+                            ex,
+                            "Failed to remove the stale page-stream directory {Directory}.",
                             directory
                         );
                     }
                 }
-                catch (Exception ex)
-                {
-                    logger.LogDebug(
-                        ex,
-                        "Failed to remove the stale page stream directory {Directory}.",
-                        directory
-                    );
-                }
             }
-        }
-        catch (Exception ex)
-        {
-            logger.LogDebug(ex, "Failed to sweep stale page stream directories.");
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex, "Failed to sweep stale page-stream directories.");
+            }
         }
     }
 

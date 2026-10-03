@@ -313,20 +313,36 @@ public partial class UpscalingDistributionService
                     pageIndex < 0
                     || pageIndex >= requestedPageCount
                     || !byIndex.TryGetValue(pageIndex, out SpoolPageDescriptor? page)
-                    || !entries.TryGetValue(page.SourceName, out ZipArchiveEntry? entry)
                 )
                 {
+                    context.Status = new Status(
+                        StatusCode.InvalidArgument,
+                        $"Page index {pageIndex} is not part of task {request.TaskId}'s manifest."
+                    );
+                    return;
+                }
+
+                if (!entries.TryGetValue(page.SourceName, out ZipArchiveEntry? entry))
+                {
+                    // The manifest promised this entry but the archive no longer has it (a changed or
+                    // partially-written source). Returning OK with the page silently skipped would make
+                    // the worker classify "the requested page never arrived" as permanent and drop every
+                    // already-spooled page; an Unavailable restart preserves the spool and re-resolves
+                    // the source, matching how an unreadable archive is treated below.
                     if (!loggedMissing)
                     {
-                        // Log once per request: a hostile/duplicate list would otherwise flood the sink.
                         _logger.LogWarning(
-                            "Requested page {PageIndex} of task {TaskId} is not present in the source archive.",
+                            "Requested page {PageIndex} of task {TaskId} is not present in the source archive; asking the worker to restart.",
                             pageIndex,
                             request.TaskId
                         );
                         loggedMissing = true;
                     }
-                    continue;
+                    context.Status = new Status(
+                        StatusCode.Unavailable,
+                        "A requested page is missing from the source archive; restart the chapter."
+                    );
+                    return;
                 }
 
                 await using Stream input = entry.Open();

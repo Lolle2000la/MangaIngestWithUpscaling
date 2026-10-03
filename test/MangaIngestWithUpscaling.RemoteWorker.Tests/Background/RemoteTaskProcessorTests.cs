@@ -162,6 +162,36 @@ public class RemoteTaskProcessorTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task HandleStreamingFailure_ReportsFalseWhenTheReportRpcFails()
+    {
+        var client = Substitute.For<UpscalingService.UpscalingServiceClient>();
+        client
+            .ReportTaskFailedAsync(
+                Arg.Any<ReportTaskFailedRequest>(),
+                Arg.Any<Metadata>(),
+                Arg.Any<DateTime?>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns<AsyncUnaryCall<Empty>>(_ =>
+                throw new RpcException(new Status(StatusCode.Unavailable, "report failed"))
+            );
+
+        // The report did not land, so the task was not terminalized: the caller must keep the
+        // soft-failure counter, or a deterministic failure whose report keeps failing would reset it
+        // and cycle forever.
+        bool reported = await RemoteTaskProcessor.HandleStreamingFailureAsync(
+            client,
+            7,
+            new InvalidOperationException("deterministic"),
+            Substitute.For<ILogger>(),
+            CancellationToken.None
+        );
+
+        Assert.False(reported);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void ClassifyStreamingFailure_TreatsAWorkerTimeoutAsTransient()
     {
         // A wedged worker (a cold model load or a CUDA stall past the scaled inactivity timeout) is

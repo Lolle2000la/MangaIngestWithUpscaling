@@ -74,6 +74,7 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
     private GrpcChannel _channel = null!;
     private string _root = null!;
     private string _upscaledPath = null!;
+    private string _sourcePath = null!;
     private int _taskId;
     private int _detectTaskId;
     private int _repairTaskId;
@@ -115,6 +116,7 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         Directory.CreateDirectory(upscaledDir);
 
         string sourcePath = Path.Combine(notUpscaledDir, "Series", "Chapter 1.cbz");
+        _sourcePath = sourcePath;
         _upscaledPath = Path.Combine(upscaledDir, "Series", "Chapter 1.cbz");
         Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
         CreateSourceCbz(sourcePath);
@@ -673,6 +675,50 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
             ) { }
         });
         Assert.Equal(StatusCode.FailedPrecondition, ex.StatusCode);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task GetPages_RestartsWhenARequestedEntryLeftTheSourceArchive()
+    {
+        var client = new RemoteUpscalingServiceClient(_channel);
+
+        RemotePageManifestResponse manifest = await client.GetPageManifestAsync(
+            new RemotePageManifestRequest
+            {
+                TaskId = _taskId,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        // Replace "001.jpg" with a same-length non-image entry and restore the mtime, so the archive's
+        // identity is unchanged (the cached manifest still lists "001.jpg" at index 0) while the entry
+        // itself is gone. The server must ask the worker to restart rather than answer OK with the page
+        // silently skipped, which the worker would treat as a permanent failure and drop the spool for.
+        DateTime lastWrite = File.GetLastWriteTimeUtc(_sourcePath);
+        RewriteSourceWithoutFirstPage(_sourcePath);
+        File.SetLastWriteTimeUtc(_sourcePath, lastWrite);
+
+        using var call = client.GetPages(
+            new RemoteGetPagesRequest
+            {
+                TaskId = _taskId,
+                TaskIdentity = manifest.TaskIdentity,
+                PageIndexes = { 0 },
+            },
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        RpcException ex = await Assert.ThrowsAsync<RpcException>(async () =>
+        {
+            await foreach (
+                RemotePageChunk _ in call.ResponseStream.ReadAllAsync(
+                    TestContext.Current.CancellationToken
+                )
+            ) { }
+        });
+        Assert.Equal(StatusCode.Unavailable, ex.StatusCode);
     }
 
     [Fact]
@@ -1278,6 +1324,20 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
     {
         using ZipArchive zip = ZipFile.Open(path, ZipArchiveMode.Create);
         WriteEntry(zip, "001.jpg", new byte[] { 1, 2, 3 });
+        WriteEntry(zip, "002.jpg", new byte[] { 4, 5, 6 });
+        WriteEntry(zip, "ComicInfo.xml", "<ComicInfo/>"u8.ToArray());
+    }
+
+    /// <summary>
+    /// Rewrites the source archive with the first image entry renamed to a same-length non-image name
+    /// and the same data, so the file size is identical and only the entry name differs.
+    /// </summary>
+    private static void RewriteSourceWithoutFirstPage(string path)
+    {
+        // ZipFile.Open(..., Create) refuses an existing file.
+        File.Delete(path);
+        using ZipArchive zip = ZipFile.Open(path, ZipArchiveMode.Create);
+        WriteEntry(zip, "001.jp2", new byte[] { 1, 2, 3 });
         WriteEntry(zip, "002.jpg", new byte[] { 4, 5, 6 });
         WriteEntry(zip, "ComicInfo.xml", "<ComicInfo/>"u8.ToArray());
     }

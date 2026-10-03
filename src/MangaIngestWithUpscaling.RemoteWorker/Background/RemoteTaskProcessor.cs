@@ -253,6 +253,12 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
     /// that is permanently bad but classifies soft would otherwise loop forever. Once the cap is
     /// reached the failure is reported (terminal), surfacing the task.
     /// </summary>
+    /// <returns>
+    /// <see langword="true" /> when the failure was terminalized, so the caller may clear its
+    /// soft-failure counter; <see langword="false" /> when the task should be left to requeue —
+    /// including a terminal report that could not be delivered, in which case the counter must be
+    /// kept so the cap is still reached.
+    /// </returns>
     public static async Task<bool> HandleStreamingFailureAsync(
         UpscalingService.UpscalingServiceClient client,
         int taskId,
@@ -324,11 +330,15 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
         }
         catch (Exception rpcEx)
         {
+            // The task was not actually terminalized, so report "not handled": the caller keeps the
+            // soft-failure counter, and a deterministic failure whose report keeps failing still
+            // reaches the cap instead of resetting and cycling forever.
             logger.LogWarning(
                 rpcEx,
                 "Failed to report page-streaming failure for {TaskId}",
                 taskId
             );
+            return false;
         }
 
         return true;
