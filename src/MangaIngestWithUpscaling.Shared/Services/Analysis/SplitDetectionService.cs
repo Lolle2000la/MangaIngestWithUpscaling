@@ -219,6 +219,12 @@ public class SplitDetectionService(
                 throw;
             }
         }
+        catch (OperationCanceledException)
+        {
+            // Cancellation is not a per-image detection failure: swallowing it here would upload a
+            // spurious "detection failed" result for the page instead of stopping the chapter.
+            throw;
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "Error running split detection for {ImagePath}", imagePath);
