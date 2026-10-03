@@ -1431,7 +1431,13 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                 // Mark the timeout before cancelling: the worker may acknowledge the cancel with a
                 // "cancelled" done, and the caller must surface the timeout rather than that done.
                 job.MarkTimeoutRequested();
-                await RequestCancelAsync(job.Id);
+                // Fire-and-forget: the cancel must not be awaited on the stdin lock. A worker that
+                // stopped reading stdin (the exact wedge this monitor exists to catch) leaves the page
+                // producer blocked mid-write while holding that lock, so awaiting the cancel here would
+                // block this monitor too and the kill below would never be reached. The grace period
+                // below is the worker's whole budget to acknowledge the cancel; the kill then closes
+                // the pipe and releases the producer.
+                _ = RequestCancelAsync(job.Id);
 
                 Task finished = await Task.WhenAny(
                     job.Completion.Task,

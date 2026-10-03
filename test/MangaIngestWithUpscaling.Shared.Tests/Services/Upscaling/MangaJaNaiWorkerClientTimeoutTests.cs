@@ -97,6 +97,43 @@ public class MangaJaNaiWorkerClientTimeoutTests
                 break
         """;
 
+    /// <summary>
+    /// Accepts the chapter and then stops reading stdin, the way a wedged worker does. The page
+    /// producer keeps writing until the OS pipe fills and blocks while holding the client's stdin
+    /// lock, so the inactivity monitor must be able to kill the worker without needing that lock.
+    /// </summary>
+    private const string FakeWorkerStopsReading = """
+        import json
+        import sys
+        import time
+
+        def emit(obj):
+            sys.stdout.write(json.dumps(obj) + "\n")
+            sys.stdout.flush()
+
+        emit({"type": "ready", "capacity": 1})
+
+        while True:
+            line = sys.stdin.readline()
+            if not line:
+                break
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                continue
+            kind = msg.get("type")
+            job_id = msg.get("id")
+            if kind == "open_chapter":
+                emit({"type": "accepted", "id": job_id, "capacity": 1})
+                emit({"type": "started", "id": job_id})
+                time.sleep(3600)
+            elif kind == "shutdown":
+                break
+        """;
+
     [Fact]
     [Trait("Category", "Unit")]
     public async Task RunChapterAsync_WhenTheWorkerHonorsAnInactivityCancel_ThrowsTimeout()
@@ -123,10 +160,31 @@ public class MangaJaNaiWorkerClientTimeoutTests
         Assert.IsAssignableFrom<OperationCanceledException>(error);
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunChapterAsync_WhenTheWorkerStopsReadingStdin_StillKillsItAndThrowsTimeout()
+    {
+        // The worker stops reading stdin, so the page producer fills the OS pipe and blocks while
+        // holding the stdin lock. The monitor must not wait on that same lock: if it did, it could
+        // never reach the kill and the chapter would hang until host shutdown. Bound the call so a
+        // regression fails the test instead of hanging the suite.
+        Exception error = await RunChapterAsync(
+                FakeWorkerStopsReading,
+                TimeSpan.FromMilliseconds(500),
+                "chap-wedged",
+                pageCount: 32
+            )
+            .WaitAsync(TimeSpan.FromSeconds(30));
+
+        Assert.IsType<TimeoutException>(error);
+        Assert.Contains("Upscaling timed out", error.Message);
+    }
+
     private static async Task<Exception> RunChapterAsync(
         string script,
         TimeSpan? timeout,
-        string requestId
+        string requestId,
+        int pageCount = 1
     )
     {
         string? python = FindPython();
@@ -174,13 +232,13 @@ public class MangaJaNaiWorkerClientTimeoutTests
                 OutputFolder = workDir,
                 Format = CompressionFormat.Webp,
                 Scale = ScaleFactor.TwoX,
-                TotalPages = 1,
+                TotalPages = pageCount,
             };
 
             return await Record.ExceptionAsync(() =>
                     client.RunChapterAsync(
                         request,
-                        SinglePage(new ChapterPage(0, "page0.png", pagePath)),
+                        Pages(pageCount, pagePath),
                         progress: null,
                         onPageDone: _ => { },
                         CancellationToken.None,
@@ -199,10 +257,17 @@ public class MangaJaNaiWorkerClientTimeoutTests
         }
     }
 
-    private static async IAsyncEnumerable<ChapterPage> SinglePage(ChapterPage page)
+    private static async IAsyncEnumerable<ChapterPage> Pages(int count, string firstPath)
     {
         await Task.Yield();
-        yield return page;
+        for (int index = 0; index < count; index++)
+        {
+            // Long paths for the trailing pages so a handful of page lines fill the OS pipe (~64 KiB)
+            // and the producer blocks holding the stdin lock, which is what the wedged-worker test
+            // needs. They are never opened by the fake worker.
+            string path = index == 0 ? firstPath : new string('p', 16 * 1024) + index;
+            yield return new ChapterPage(index, $"page{index}.png", path);
+        }
     }
 
     private static string? FindPython()
