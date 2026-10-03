@@ -174,7 +174,7 @@ public class MangaJaNaiWorkerClientTimeoutTests
                 "chap-wedged",
                 pageCount: 32
             )
-            .WaitAsync(TimeSpan.FromSeconds(30));
+            .WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
 
         Assert.IsType<TimeoutException>(error);
         Assert.Contains("Upscaling timed out", error.Message);
