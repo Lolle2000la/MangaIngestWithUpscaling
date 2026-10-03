@@ -50,6 +50,25 @@ public record UpscalerConfig
             "Models"
         );
 
+    /// <summary>
+    /// The models directory as an absolute path. A relative configured value is resolved against the
+    /// process CWD so the engine identity and the spawned Python worker agree on one directory.
+    /// </summary>
+    public string ResolvedModelsDirectory
+    {
+        get
+        {
+            try
+            {
+                return Path.GetFullPath(ModelsDirectory);
+            }
+            catch (Exception)
+            {
+                return ModelsDirectory;
+            }
+        }
+    }
+
     public string PythonEnvironmentDirectory { get; set; } =
         Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

@@ -1186,7 +1186,6 @@ public class TaskQueueTests : IDisposable
                                 case 1:
                                     _taskQueue.DequeueStandard();
                                     _taskQueue.DequeueUpscale();
-                                    _taskQueue.PeekUpscale();
                                     break;
                                 default:
                                     _ = _taskQueue.GetStandardSnapshot().Count;

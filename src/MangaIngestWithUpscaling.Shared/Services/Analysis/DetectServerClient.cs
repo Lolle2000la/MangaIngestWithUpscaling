@@ -34,6 +34,7 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IOptions<UpscalerConfig> _config;
     private readonly ILogger<DetectServerClient> _logger;
+    private readonly IHostApplicationLifetime _lifetime;
 
     private readonly SemaphoreSlim _submitLock = new(1, 1);
     private readonly SemaphoreSlim _stdinLock = new(1, 1);
@@ -46,20 +47,27 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
     private TaskCompletionSource? _cacheReleaseTcs;
     private string? _currentJobId;
     private bool _shuttingDown;
+    private CancellationTokenSource? _watchdogCts;
 
     private long _lastActivityTicks = DateTime.UtcNow.Ticks;
 
     private readonly StderrTailBuffer _stderr = new();
 
+    // Non-JSON lines the server prints to stdout (e.g. a model-load traceback before it becomes
+    // ready). They are not protocol events, but they carry the failure cause, so keep a tail.
+    private readonly StderrTailBuffer _stdoutNoise = new();
+
     public DetectServerClient(
         IServiceScopeFactory scopeFactory,
         IOptions<UpscalerConfig> config,
-        ILogger<DetectServerClient> logger
+        ILogger<DetectServerClient> logger,
+        IHostApplicationLifetime lifetime
     )
     {
         _scopeFactory = scopeFactory;
         _config = config;
         _logger = logger;
+        _lifetime = lifetime;
     }
 
     private void TouchActivity() =>
@@ -200,14 +208,29 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        _ = WatchdogLoopAsync(cancellationToken);
+        // Link the host's startup token with ApplicationStopping: StartAsync's token only fires when
+        // startup is aborted, so without the link the watchdog would keep polling after shutdown.
+        _watchdogCts = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _lifetime.ApplicationStopping
+        );
+        _ = WatchdogLoopAsync(_watchdogCts.Token);
         return Task.CompletedTask;
     }
 
-    public Task StopAsync(CancellationToken cancellationToken) =>
-        ShutdownServerAsync(cancellationToken);
+    public async Task StopAsync(CancellationToken cancellationToken)
+    {
+        _watchdogCts?.Cancel();
+        await ShutdownServerAsync(cancellationToken);
+    }
 
-    public async ValueTask DisposeAsync() => await ShutdownServerAsync(CancellationToken.None);
+    public async ValueTask DisposeAsync()
+    {
+        _watchdogCts?.Cancel();
+        _watchdogCts?.Dispose();
+        _watchdogCts = null;
+        await ShutdownServerAsync(CancellationToken.None);
+    }
 
     public async Task ShutdownServerAsync(CancellationToken cancellationToken)
     {
@@ -285,6 +308,7 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
         }
 
         _stderr.Clear();
+        _stdoutNoise.Clear();
 
         string serverScript = SplitDetectionLayout.ServerScriptPath;
         if (!File.Exists(serverScript))
@@ -353,6 +377,12 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
         {
             startInfo.EnvironmentVariables["USER"] = "mangaingest";
         }
+
+        // Pin Python's stdio to UTF-8. The C# side writes BOM-less UTF-8, but Python reads stdin with
+        // the locale encoding unless told otherwise, so a non-ASCII page path would be mangled on
+        // Windows/ANSI or a bare C locale.
+        startInfo.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
+        startInfo.EnvironmentVariables["PYTHONUTF8"] = "1";
 
         var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         var readyTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -464,7 +494,12 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
         catch { }
     }
 
-    private static void TryKillAndDispose(Process? process)
+    /// <summary>
+    /// Kills the process (if alive) and waits briefly for it to exit before disposing, so a respawn
+    /// does not race the dead process's GPU context (a CUDA context can still hold VRAM after a kill,
+    /// causing an OOM on the new server's model load).
+    /// </summary>
+    private static async Task KillAndDisposeAsync(Process? process)
     {
         if (process is null)
         {
@@ -476,6 +511,12 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
             if (!process.HasExited)
             {
                 process.Kill(true);
+                using var exitCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                try
+                {
+                    await process.WaitForExitAsync(exitCts.Token);
+                }
+                catch (OperationCanceledException) { }
             }
         }
         catch { }
@@ -483,11 +524,11 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
         TryDispose(process);
     }
 
-    private Task CleanupAsync(Process? process)
+    private async Task CleanupAsync(Process? process)
     {
         if (process is null)
         {
-            return Task.CompletedTask;
+            return;
         }
 
         StreamWriter? stdin;
@@ -513,10 +554,9 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
         TryDispose(stdin);
         // Unblock a pending GPU-cache release so its caller does not wait the full timeout.
         cacheRelease?.TrySetCanceled();
-        TryKillAndDispose(process);
+        await KillAndDisposeAsync(process);
 
         _logger.LogInformation("Resident detection server process stopped.");
-        return Task.CompletedTask;
     }
 
     private async Task WatchdogLoopAsync(CancellationToken cancellationToken)
@@ -660,7 +700,7 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
         }
         finally
         {
-            OnServerExited(process);
+            await OnServerExited(process);
         }
     }
 
@@ -689,7 +729,21 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
     private string BuildStderrSection()
     {
         string stderr = _stderr.GetTail();
-        return stderr.Length > 0 ? $"\n\nDetection server stderr (tail):\n{stderr}" : "";
+        string stdoutNoise = _stdoutNoise.GetTail();
+        var builder = new StringBuilder();
+        if (stderr.Length > 0)
+        {
+            builder.Append("\n\nDetection server stderr (tail):\n").Append(stderr);
+        }
+
+        if (stdoutNoise.Length > 0)
+        {
+            builder
+                .Append("\n\nDetection server stdout (non-protocol, tail):\n")
+                .Append(stdoutNoise);
+        }
+
+        return builder.ToString();
     }
 
     private void HandleEvent(string line)
@@ -770,6 +824,9 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Failed to parse detection server event: {Line}", line);
+            // A model-load failure is printed to stdout as a plain traceback, which is not a protocol
+            // event; keep it so the "exited before becoming ready" error is not cause-less.
+            _stdoutNoise.Append(line);
         }
     }
 
@@ -782,7 +839,7 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
         return id is not null && _jobs.TryGetValue(id, out job);
     }
 
-    private void OnServerExited(Process process)
+    private async Task OnServerExited(Process process)
     {
         int? exitCode = null;
         try
@@ -836,11 +893,11 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
 
         readyTcs?.TrySetException(
             new DetectServerUnavailableException(
-                "The detection server exited before becoming ready."
+                $"The detection server exited before becoming ready.{stderrSection}"
             )
         );
 
-        TryKillAndDispose(process);
+        await KillAndDisposeAsync(process);
     }
 
     private sealed class DetectJob

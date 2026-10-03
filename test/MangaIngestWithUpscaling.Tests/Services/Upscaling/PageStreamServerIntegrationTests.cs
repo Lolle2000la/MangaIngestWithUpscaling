@@ -37,6 +37,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;
 using Xunit;
+using RemoteCheckConnectionRequest = remote::MangaIngestWithUpscaling.Api.Upscaling.CheckConnectionRequest;
+using RemoteCheckConnectionResponse = remote::MangaIngestWithUpscaling.Api.Upscaling.CheckConnectionResponse;
 using RemoteEngineIdentityProvider = remote::MangaIngestWithUpscaling.RemoteWorker.Background.IEngineIdentityProvider;
 using RemoteGetPagesRequest = remote::MangaIngestWithUpscaling.Api.Upscaling.GetPagesRequest;
 using RemotePageChunk = remote::MangaIngestWithUpscaling.Api.Upscaling.PageChunk;
@@ -808,6 +810,38 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
                 1,
                 Arg.Any<CancellationToken>()
             );
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task CheckConnection_RejectsAnUnsupportedWorkerVersion()
+    {
+        var client = new RemoteUpscalingServiceClient(_channel);
+
+        // The current version is accepted and the server reports its own range back.
+        RemoteCheckConnectionResponse ok = await client.CheckConnectionAsync(
+            new RemoteCheckConnectionRequest
+            {
+                ProtocolVersion = UpscalingProtocolVersion.Current,
+                MinSupportedProtocolVersion = UpscalingProtocolVersion.MinSupported,
+            },
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+        Assert.True(ok.Success);
+        Assert.Equal(UpscalingProtocolVersion.Current, ok.ProtocolVersion);
+        Assert.Equal(UpscalingProtocolVersion.MinSupported, ok.MinSupportedProtocolVersion);
+
+        // An out-of-range worker (an old one that sent no version arrives as 0) is rejected clearly
+        // rather than being left to fail with Unimplemented on every task.
+        RpcException ex = await Assert.ThrowsAsync<RpcException>(() =>
+            client
+                .CheckConnectionAsync(
+                    new RemoteCheckConnectionRequest { ProtocolVersion = 0 },
+                    cancellationToken: TestContext.Current.CancellationToken
+                )
+                .ResponseAsync
+        );
+        Assert.Equal(StatusCode.FailedPrecondition, ex.StatusCode);
     }
 
     [Fact]

@@ -148,9 +148,19 @@ using (var scope = app.Services.CreateScope())
         try
         {
             connection = client.CheckConnection(
-                new Empty(),
+                new CheckConnectionRequest
+                {
+                    ProtocolVersion = UpscalingProtocolVersion.Current,
+                    MinSupportedProtocolVersion = UpscalingProtocolVersion.MinSupported,
+                },
                 deadline: DateTime.UtcNow.AddSeconds(5)
             );
+        }
+        catch (RpcException ex) when (ex.StatusCode == StatusCode.FailedPrecondition)
+        {
+            // The server rejected our version outright; retrying cannot help.
+            logger.LogError("The server rejected this worker: {Detail}", ex.Status.Detail);
+            throw;
         }
         catch (RpcException ex)
         {
@@ -171,11 +181,14 @@ using (var scope = app.Services.CreateScope())
     }
 
     // Fail fast on version skew: an unsupported server would otherwise surface as opaque
-    // Unimplemented failures for every task, dropping spools and burning retries.
+    // Unimplemented failures for every task, dropping spools and burning retries. The server performs
+    // the mirror-image check on the version we sent above.
     if (!UpscalingProtocolVersion.IsSupported(connection.ProtocolVersion))
     {
         logger.LogError(
-            "The server speaks upscaling protocol version {ServerVersion}, but this worker (version {WorkerVersion}) supports {Min}-{Max}. Upgrade the worker and server together.",
+            "The server speaks upscaling protocol version {ServerVersion} (supports {ServerMin}-{ServerVersion}), but this worker (version {WorkerVersion}) supports {Min}-{Max}. Upgrade the worker and server together.",
+            connection.ProtocolVersion,
+            connection.MinSupportedProtocolVersion,
             connection.ProtocolVersion,
             UpscalingProtocolVersion.Current,
             UpscalingProtocolVersion.MinSupported,

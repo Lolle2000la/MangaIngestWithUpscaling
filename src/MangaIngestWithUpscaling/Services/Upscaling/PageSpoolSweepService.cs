@@ -32,6 +32,22 @@ public sealed class PageSpoolSweepService(
         }
     }
 
+    public override async Task StopAsync(CancellationToken cancellationToken)
+    {
+        await base.StopAsync(cancellationToken);
+
+        // Reclaim this process's own root: SweepStale deliberately skips the live process's root, so
+        // without this an empty (or leftover) root lingers until another process ages it out.
+        try
+        {
+            spool.DeleteDirectory(spool.SpoolRoot);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Failed to remove the page spool root on shutdown.");
+        }
+    }
+
     private void Sweep()
     {
         try

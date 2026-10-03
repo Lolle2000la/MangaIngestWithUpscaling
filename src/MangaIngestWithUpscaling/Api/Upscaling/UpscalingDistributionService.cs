@@ -40,10 +40,36 @@ public partial class UpscalingDistributionService(
     private readonly ILogger<UpscalingDistributionService> _logger = logger;
 
     public override Task<CheckConnectionResponse> CheckConnection(
-        Empty request,
+        CheckConnectionRequest request,
         ServerCallContext context
     )
     {
+        // Validate the worker's version against this server's range. An old worker that still sends
+        // the former Empty request arrives as version 0, so it is rejected here with a clear message
+        // instead of failing with an opaque Unimplemented on every removed RPC.
+        if (!UpscalingProtocolVersion.IsSupported(request.ProtocolVersion))
+        {
+            _logger.LogWarning(
+                "Rejecting a worker speaking upscaling protocol version {WorkerVersion} (this server supports {Min}-{Max}).",
+                request.ProtocolVersion,
+                UpscalingProtocolVersion.MinSupported,
+                UpscalingProtocolVersion.Current
+            );
+            context.Status = new Status(
+                StatusCode.FailedPrecondition,
+                $"Incompatible upscaling protocol version {request.ProtocolVersion}; this server supports {UpscalingProtocolVersion.MinSupported}-{UpscalingProtocolVersion.Current}. Upgrade the worker and server together."
+            );
+            return Task.FromResult(
+                new CheckConnectionResponse
+                {
+                    Message = "Incompatible upscaling protocol version",
+                    Success = false,
+                    ProtocolVersion = UpscalingProtocolVersion.Current,
+                    MinSupportedProtocolVersion = UpscalingProtocolVersion.MinSupported,
+                }
+            );
+        }
+
         context.Status = new Status(StatusCode.OK, "Connection established");
         return Task.FromResult(
             new CheckConnectionResponse
@@ -51,6 +77,7 @@ public partial class UpscalingDistributionService(
                 Message = "Connection established",
                 Success = true,
                 ProtocolVersion = UpscalingProtocolVersion.Current,
+                MinSupportedProtocolVersion = UpscalingProtocolVersion.MinSupported,
             }
         );
     }
@@ -153,72 +180,7 @@ public partial class UpscalingDistributionService(
             },
         };
 
-        if (await GetTaskFileSizeAsync(task, context.CancellationToken) is { } bytes)
-        {
-            response.InputSizeBytes = bytes;
-        }
-
         return response;
-    }
-
-    public override async Task<PeekNextTaskResponse> PeekNextTask(
-        Empty request,
-        ServerCallContext context
-    )
-    {
-        PersistedTask? task = taskProcessor.PeekTask();
-        if (task == null)
-        {
-            return new PeekNextTaskResponse { TaskId = -1 };
-        }
-
-        var response = new PeekNextTaskResponse { TaskId = task.Id };
-        if (await GetTaskFileSizeAsync(task, context.CancellationToken) is { } bytes)
-        {
-            response.InputSizeBytes = bytes;
-        }
-
-        return response;
-    }
-
-    /// <summary>
-    /// Resolves the size of the input CBZ for a task, or null when the task has no single input
-    /// file or its referenced data is missing.
-    /// </summary>
-    private async Task<long?> GetTaskFileSizeAsync(PersistedTask task, CancellationToken ct)
-    {
-        string? filePath = await ResolveTaskFilePathAsync(task, ct);
-        if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
-        {
-            return null;
-        }
-
-        return new FileInfo(filePath).Length;
-    }
-
-    private async Task<string?> ResolveTaskFilePathAsync(PersistedTask task, CancellationToken ct)
-    {
-        return task.Data switch
-        {
-            UpscaleTask upscaleTask => await GetChapterFilePathAsync(upscaleTask.ChapterId, ct),
-            DetectSplitCandidatesTask detectTask => await GetChapterFilePathAsync(
-                detectTask.ChapterId,
-                ct
-            ),
-            RepairUpscaleTask => taskProcessor
-                .GetRemoteRepairState(task.Id)
-                ?.PreparedMissingPagesCbzPath,
-            _ => null,
-        };
-    }
-
-    private async Task<string?> GetChapterFilePathAsync(int chapterId, CancellationToken ct)
-    {
-        Chapter? chapter = await dbContext
-            .Chapters.Include(chapter => chapter.Manga)
-                .ThenInclude(manga => manga.Library)
-            .FirstOrDefaultAsync(c => c.Id == chapterId, ct);
-        return chapter?.NotUpscaledFullPath;
     }
 
     public override Task<KeepAliveResponse> KeepAlive(

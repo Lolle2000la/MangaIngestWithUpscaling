@@ -33,6 +33,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IOptions<UpscalerConfig> _config;
     private readonly ILogger<MangaJaNaiWorkerClient> _logger;
+    private readonly IHostApplicationLifetime _lifetime;
 
     private readonly SemaphoreSlim _submitLock = new(1, 1);
     private readonly SemaphoreSlim _stdinLock = new(1, 1);
@@ -45,6 +46,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     private TaskCompletionSource? _cacheReleaseTcs;
     private string? _currentJobId;
     private bool _shuttingDown;
+    private CancellationTokenSource? _watchdogCts;
 
     // Stored as ticks so the stdout reader, watchdog, and job loop can update/read it
     // without torn reads on a DateTime struct.
@@ -55,12 +57,14 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     public MangaJaNaiWorkerClient(
         IServiceScopeFactory scopeFactory,
         IOptions<UpscalerConfig> config,
-        ILogger<MangaJaNaiWorkerClient> logger
+        ILogger<MangaJaNaiWorkerClient> logger,
+        IHostApplicationLifetime lifetime
     )
     {
         _scopeFactory = scopeFactory;
         _config = config;
         _logger = logger;
+        _lifetime = lifetime;
     }
 
     private void TouchActivity() =>
@@ -540,15 +544,29 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        _ = WatchdogLoopAsync(cancellationToken);
+        // Link the host's startup token with ApplicationStopping: StartAsync's token only fires when
+        // startup is aborted, so without the link the watchdog would keep polling after shutdown.
+        _watchdogCts = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _lifetime.ApplicationStopping
+        );
+        _ = WatchdogLoopAsync(_watchdogCts.Token);
         return Task.CompletedTask;
     }
 
-    public Task StopAsync(CancellationToken cancellationToken) =>
-        ShutdownWorkerAsync(force: true, cancellationToken);
+    public async Task StopAsync(CancellationToken cancellationToken)
+    {
+        _watchdogCts?.Cancel();
+        await ShutdownWorkerAsync(force: true, cancellationToken);
+    }
 
-    public async ValueTask DisposeAsync() =>
+    public async ValueTask DisposeAsync()
+    {
+        _watchdogCts?.Cancel();
+        _watchdogCts?.Dispose();
+        _watchdogCts = null;
         await ShutdownWorkerAsync(force: true, CancellationToken.None);
+    }
 
     /// <summary>
     /// Asks the resident detection server to return its cached VRAM before the upscaler claims the
@@ -663,6 +681,12 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         {
             startInfo.EnvironmentVariables["USER"] = "mangaingest";
         }
+
+        // Pin Python's stdio to UTF-8. The C# side writes BOM-less UTF-8, but Python reads stdin with
+        // the locale encoding unless told otherwise, so a non-ASCII page path would be mangled on
+        // Windows/ANSI or a bare C locale.
+        startInfo.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
+        startInfo.EnvironmentVariables["PYTHONUTF8"] = "1";
 
         var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         var readyTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -780,7 +804,12 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         catch { }
     }
 
-    private static void TryKillAndDispose(Process? process)
+    /// <summary>
+    /// Kills the process (if alive) and waits briefly for it to exit before disposing, so a respawn
+    /// does not race the dead process's GPU context (a CUDA context can still hold VRAM after a kill,
+    /// causing an OOM on the new worker's model load).
+    /// </summary>
+    private static async Task KillAndDisposeAsync(Process? process)
     {
         if (process is null)
         {
@@ -792,6 +821,12 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             if (!process.HasExited)
             {
                 process.Kill(true);
+                using var exitCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                try
+                {
+                    await process.WaitForExitAsync(exitCts.Token);
+                }
+                catch (OperationCanceledException) { }
             }
         }
         catch { }
@@ -836,7 +871,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             job.FailCrashed("Upscale worker was shut down while the job was in flight.");
         }
 
-        TryKillAndDispose(process);
+        await KillAndDisposeAsync(process);
 
         _logger.LogInformation("Upscale worker process stopped.");
     }
@@ -1029,7 +1064,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         }
         finally
         {
-            OnWorkerExited(process);
+            await OnWorkerExited(process);
         }
     }
 
@@ -1238,7 +1273,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         }
     }
 
-    private void OnWorkerExited(Process process)
+    private async Task OnWorkerExited(Process process)
     {
         int? exitCode = null;
         try
@@ -1297,7 +1332,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
         // The stdout reader only reaches here on EOF, but if the process is somehow still
         // alive (e.g. it closed stdout without exiting), kill it so it isn't orphaned.
-        TryKillAndDispose(process);
+        await KillAndDisposeAsync(process);
     }
 
     private bool TryGetJob(string? id, [NotNullWhen(true)] out WorkerJob? job)

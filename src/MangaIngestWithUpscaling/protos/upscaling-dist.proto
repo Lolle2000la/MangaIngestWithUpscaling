@@ -8,16 +8,8 @@ message UpscaleTaskDelegationResponse {
   int32 task_id = 1; // Task ID of the upscaling task, -1 if none available
   optional UpscalerProfile upscaler_profile = 2; // JSON string of the upscaling configuration used by MangaJaNaiUpscalerGui-cli tool, needs editing.
   TaskType task_type = 3;
-  optional int64 input_size_bytes = 5; // Size of the input the worker will transfer (the source CBZ, or the prepared repair CBZ), for bandwidth-aware prefetch timing
-  reserved 4; // removed split_findings_json
-  reserved "split_findings_json";
-}
-
-// Non-claiming peek at the head of the upscale queue, so a worker can decide whether to claim
-// (and start downloading) based on the transfer size before it commits to the task.
-message PeekNextTaskResponse {
-  int32 task_id = 1; // Task ID of the next upscale task, -1 if none available
-  optional int64 input_size_bytes = 2; // Size of the source CBZ
+  reserved 4, 5; // removed split_findings_json, input_size_bytes
+  reserved "split_findings_json", "input_size_bytes";
 }
 
 enum TaskType {
@@ -55,10 +47,20 @@ message KeepAliveResponse {
   bool is_alive = 1; // True if the connection is still alive
 }
 
+message CheckConnectionRequest {
+  // The worker's gRPC protocol version (see UpscalingProtocolVersion). An older worker that still
+  // sends the former google.protobuf.Empty request arrives as 0 and is rejected clearly here.
+  int32 protocol_version = 1;
+  // The oldest protocol version the worker can interoperate with, so the server can compute the
+  // intersection of the two supported ranges.
+  int32 min_supported_protocol_version = 2;
+}
+
 message CheckConnectionResponse {
   bool success = 1; // True if the connection is successful
   string message = 2; // Message from the server
-  int32 protocol_version = 3; // The server's gRPC protocol version (see UpscalingProtocolVersion)
+  int32 protocol_version = 3; // The server's current gRPC protocol version (see UpscalingProtocolVersion)
+  int32 min_supported_protocol_version = 4; // The oldest version the server can interoperate with
 }
 
 message ReportTaskFailedRequest {
@@ -155,10 +157,8 @@ service UpscalingService {
   rpc RequestUpscaleTask(google.protobuf.Empty) returns (UpscaleTaskDelegationResponse);
   // New method accepting hints (e.g., prefetch). Older clients use RequestUpscaleTask.
   rpc RequestUpscaleTaskWithHint(RequestTaskRequest) returns (UpscaleTaskDelegationResponse);
-  // Peek at the next upscale task without claiming it, so workers can time their claim.
-  rpc PeekNextTask(google.protobuf.Empty) returns (PeekNextTaskResponse);
   rpc KeepAlive(KeepAliveRequest) returns (KeepAliveResponse);
-  rpc CheckConnection(google.protobuf.Empty) returns (CheckConnectionResponse);
+  rpc CheckConnection(CheckConnectionRequest) returns (CheckConnectionResponse);
   rpc ReportTaskFailed(ReportTaskFailedRequest) returns (google.protobuf.Empty);
   // Page streaming: manifest, source pages, and per-page result uploads.
   rpc GetPageManifest(PageManifestRequest) returns (PageManifestResponse);

@@ -1085,18 +1085,9 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
             taskId = task.Id;
         }
 
-        string preparedCbz = Path.Combine(
-            Path.GetTempPath(),
-            $"repair-prepared-{Guid.NewGuid():N}.cbz"
-        );
         string upscaledCbz = Path.Combine(
             Path.GetTempPath(),
             $"repair-upscaled-{Guid.NewGuid():N}.cbz"
-        );
-        await File.WriteAllTextAsync(
-            preparedCbz,
-            "prepared",
-            TestContext.Current.CancellationToken
         );
         await File.WriteAllTextAsync(
             upscaledCbz,
@@ -1109,7 +1100,6 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
         >(_processor, "remoteRepairStates");
         states[taskId] = new DistributedUpscaleTaskProcessor.RemoteRepairState
         {
-            PreparedMissingPagesCbzPath = preparedCbz,
             UpscaledMissingPagesCbzPath = upscaledCbz,
         };
 
@@ -1134,7 +1124,6 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
 
         Assert.Equal(PersistedTaskStatus.Pending, await GetStatusAsync(taskId));
         Assert.False(states.ContainsKey(taskId));
-        Assert.False(File.Exists(preparedCbz));
         Assert.False(File.Exists(upscaledCbz));
     }
 

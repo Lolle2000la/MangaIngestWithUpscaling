@@ -596,6 +596,9 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 using IServiceScope scope = serviceScopeFactory.CreateScope();
                 var client =
                     scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
+                var logger = scope.ServiceProvider.GetRequiredService<
+                    ILogger<RemoteTaskProcessor>
+                >();
                 using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
                 while (!cts.IsCancellationRequested)
                 {
@@ -623,7 +626,12 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                         await cts.CancelAsync();
                         break;
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        // A keep-alive lapse past the server's deadline requeues the task; log it so a
+                        // persistent failure is diagnosable instead of silent.
+                        logger.LogDebug(ex, "Keep-alive for the in-flight task failed.");
+                    }
 
                     try
                     {

@@ -64,7 +64,7 @@ public static class EngineIdentity
         AppendFileContentHash(material, Path.Combine(AppContext.BaseDirectory, "appstate2.json"));
 
         material.Append('|');
-        AppendDirectoryFingerprint(material, config.ModelsDirectory);
+        AppendDirectoryFingerprint(material, config.ResolvedModelsDirectory);
 
         return Hash(material.ToString());
     }

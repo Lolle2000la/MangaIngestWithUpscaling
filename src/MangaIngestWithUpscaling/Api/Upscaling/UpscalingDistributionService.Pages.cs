@@ -117,8 +117,7 @@ public partial class UpscalingDistributionService
                     await AssembleUpscaledChapterAsync(pageContext, session);
                 }
 
-                pageStreamSpool.Remove(pageContext.Task.Id);
-                pageContextCache.Remove(pageContext.Task.Id);
+                DropPageSpool(pageContext.Task.Id);
             }
             catch (PageStreamRestartException ex)
             {
@@ -130,8 +129,7 @@ public partial class UpscalingDistributionService
                 );
                 if (ex.ResetSpool)
                 {
-                    pageStreamSpool.Remove(pageContext.Task.Id);
-                    pageContextCache.Remove(pageContext.Task.Id);
+                    DropPageSpool(pageContext.Task.Id);
                     // Remove finalized (and deleted) the old session; a manifest built from it would
                     // report every page as completed against a dead spool, so the worker would do
                     // nothing. Re-create a fresh session so the chapter actually re-streams.
@@ -247,96 +245,117 @@ public partial class UpscalingDistributionService
         }
 
         Dictionary<int, SpoolPageDescriptor> byIndex = pageContext.Pages.ToDictionary(p => p.Index);
-        using ZipArchive archive = ZipFile.OpenRead(pageContext.SourcePath);
-        // A malformed archive can contain duplicate entry names; keep the first of each instead of
-        // throwing, so one bad entry cannot fail the whole stream.
-        var entries = new Dictionary<string, ZipArchiveEntry>(StringComparer.Ordinal);
-        foreach (ZipArchiveEntry entry in archive.Entries)
+        try
         {
-            entries.TryAdd(entry.FullName, entry);
-        }
-
-        // Bound the request: the receive cap allows millions of ints, and duplicates would otherwise
-        // force repeated re-reads.
-        int requestedPageCount = pageContext.Pages.Count;
-        if (request.PageIndexes.Count > requestedPageCount)
-        {
-            context.Status = new Status(
-                StatusCode.InvalidArgument,
-                "Too many page indexes requested"
-            );
-            return;
-        }
-
-        bool loggedMissing = false;
-        foreach (int pageIndex in request.PageIndexes.Distinct())
-        {
-            // Stop early when the client has gone away instead of streaming the rest of the archive.
-            if (context.CancellationToken.IsCancellationRequested)
+            using ZipArchive archive = ZipFile.OpenRead(pageContext.SourcePath);
+            // A malformed archive can contain duplicate entry names; keep the first of each instead of
+            // throwing, so one bad entry cannot fail the whole stream.
+            var entries = new Dictionary<string, ZipArchiveEntry>(StringComparer.Ordinal);
+            foreach (ZipArchiveEntry entry in archive.Entries)
             {
-                break;
+                entries.TryAdd(entry.FullName, entry);
             }
 
-            if (
-                pageIndex < 0
-                || pageIndex >= requestedPageCount
-                || !byIndex.TryGetValue(pageIndex, out SpoolPageDescriptor? page)
-                || !entries.TryGetValue(page.SourceName, out ZipArchiveEntry? entry)
-            )
+            // Bound the request: the receive cap allows millions of ints, and duplicates would otherwise
+            // force repeated re-reads.
+            int requestedPageCount = pageContext.Pages.Count;
+            if (request.PageIndexes.Count > requestedPageCount)
             {
-                if (!loggedMissing)
+                context.Status = new Status(
+                    StatusCode.InvalidArgument,
+                    "Too many page indexes requested"
+                );
+                return;
+            }
+
+            bool loggedMissing = false;
+            foreach (int pageIndex in request.PageIndexes.Distinct())
+            {
+                // Stop early when the client has gone away instead of streaming the rest of the archive.
+                if (context.CancellationToken.IsCancellationRequested)
                 {
-                    // Log once per request: a hostile/duplicate list would otherwise flood the sink.
-                    _logger.LogWarning(
-                        "Requested page {PageIndex} of task {TaskId} is not present in the source archive.",
-                        pageIndex,
-                        request.TaskId
-                    );
-                    loggedMissing = true;
+                    break;
                 }
-                continue;
-            }
 
-            await using Stream input = entry.Open();
-            byte[] buffer = new byte[1024 * 1024];
-            int chunkNumber = 0;
-            int bytesRead;
-            while (
-                (
-                    bytesRead = await input.ReadAsync(
-                        buffer.AsMemory(0, buffer.Length),
-                        context.CancellationToken
-                    )
-                ) > 0
-            )
-            {
+                if (
+                    pageIndex < 0
+                    || pageIndex >= requestedPageCount
+                    || !byIndex.TryGetValue(pageIndex, out SpoolPageDescriptor? page)
+                    || !entries.TryGetValue(page.SourceName, out ZipArchiveEntry? entry)
+                )
+                {
+                    if (!loggedMissing)
+                    {
+                        // Log once per request: a hostile/duplicate list would otherwise flood the sink.
+                        _logger.LogWarning(
+                            "Requested page {PageIndex} of task {TaskId} is not present in the source archive.",
+                            pageIndex,
+                            request.TaskId
+                        );
+                        loggedMissing = true;
+                    }
+                    continue;
+                }
+
+                await using Stream input = entry.Open();
+                byte[] buffer = new byte[1024 * 1024];
+                int chunkNumber = 0;
+                int bytesRead;
+                while (
+                    (
+                        bytesRead = await input.ReadAsync(
+                            buffer.AsMemory(0, buffer.Length),
+                            context.CancellationToken
+                        )
+                    ) > 0
+                )
+                {
+                    await responseStream.WriteAsync(
+                        new PageChunk
+                        {
+                            TaskId = request.TaskId,
+                            PageIndex = pageIndex,
+                            ChunkNumber = chunkNumber++,
+                            Chunk = ByteString.CopyFrom(buffer, 0, bytesRead),
+                            ContentIdentity = pageContext.Identity,
+                        }
+                    );
+                }
+
+                // Empty terminating chunk so the worker knows the page ended.
                 await responseStream.WriteAsync(
                     new PageChunk
                     {
                         TaskId = request.TaskId,
                         PageIndex = pageIndex,
-                        ChunkNumber = chunkNumber++,
-                        Chunk = ByteString.CopyFrom(buffer, 0, bytesRead),
+                        ChunkNumber = chunkNumber,
+                        Chunk = ByteString.Empty,
+                        IsLast = true,
                         ContentIdentity = pageContext.Identity,
                     }
                 );
             }
 
-            // Empty terminating chunk so the worker knows the page ended.
-            await responseStream.WriteAsync(
-                new PageChunk
-                {
-                    TaskId = request.TaskId,
-                    PageIndex = pageIndex,
-                    ChunkNumber = chunkNumber,
-                    Chunk = ByteString.Empty,
-                    IsLast = true,
-                    ContentIdentity = pageContext.Identity,
-                }
-            );
+            context.Status = new Status(StatusCode.OK, "Pages sent");
         }
-
-        context.Status = new Status(StatusCode.OK, "Pages sent");
+        catch (Exception ex) when (ex is IOException or InvalidDataException)
+        {
+            // A source archive that cannot be read must not surface as gRPC Unknown (which the worker
+            // treats as transient and retries until the soft-failure cap). A corrupt archive is
+            // deterministic, so fail it promptly; a locked/unavailable file is a restart.
+            _logger.LogWarning(
+                ex,
+                "Failed to read the source archive for task {TaskId}.",
+                request.TaskId
+            );
+            context.Status =
+                ex is InvalidDataException
+                    ? new Status(StatusCode.DataLoss, "The source archive is corrupt.")
+                    : new Status(
+                        StatusCode.Unavailable,
+                        "The source archive could not be read; retry the chapter."
+                    );
+        }
     }
 
     public override async Task<UploadPageResponse> UploadPage(
@@ -767,8 +786,7 @@ public partial class UpscalingDistributionService
             _logger.LogWarning(ex, "Assembly of task {TaskId} must restart.", taskId);
             if (ex.ResetSpool)
             {
-                pageStreamSpool.Remove(taskId);
-                pageContextCache.Remove(taskId);
+                DropPageSpool(taskId);
             }
             else
             {
@@ -808,8 +826,7 @@ public partial class UpscalingDistributionService
             pageStreamSpool.EndAssembly(session);
         }
 
-        pageStreamSpool.Remove(taskId);
-        pageContextCache.Remove(taskId);
+        DropPageSpool(taskId);
         return new UploadPageResponse
         {
             Success = true,
@@ -850,6 +867,21 @@ public partial class UpscalingDistributionService
         catch (Exception)
         {
             // The client aborted, timed out, or the stream is already closed; nothing left to drain.
+        }
+    }
+
+    /// <summary>
+    /// Drops a task's page spool and cached context. Detaches (cheap) on the caller's path and runs
+    /// the potentially multi-gigabyte recursive delete off it, so a gRPC hot path does not block on
+    /// I/O.
+    /// </summary>
+    private void DropPageSpool(int taskId)
+    {
+        string? directory = pageStreamSpool.Detach(taskId);
+        pageContextCache.Remove(taskId);
+        if (directory is not null)
+        {
+            _ = Task.Run(() => pageStreamSpool.DeleteDirectory(directory));
         }
     }
 
@@ -1119,8 +1151,7 @@ public partial class UpscalingDistributionService
         try
         {
             await FinalizeDetectionAsync(pageContext, session);
-            pageStreamSpool.Remove(request.TaskId);
-            pageContextCache.Remove(request.TaskId);
+            DropPageSpool(request.TaskId);
 
             return new UploadDetectionResultResponse
             {
@@ -1138,8 +1169,7 @@ public partial class UpscalingDistributionService
             );
             if (ex.ResetSpool)
             {
-                pageStreamSpool.Remove(request.TaskId);
-                pageContextCache.Remove(request.TaskId);
+                DropPageSpool(request.TaskId);
             }
             else
             {

@@ -3,6 +3,7 @@ using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.Python;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NSubstitute;
@@ -95,7 +96,8 @@ public class MangaJaNaiWorkerClientTimeoutTests
         var client = new MangaJaNaiWorkerClient(
             provider.GetRequiredService<IServiceScopeFactory>(),
             Options.Create(new UpscalerConfig()),
-            NullLogger<MangaJaNaiWorkerClient>.Instance
+            NullLogger<MangaJaNaiWorkerClient>.Instance,
+            Substitute.For<IHostApplicationLifetime>()
         );
 
         try
