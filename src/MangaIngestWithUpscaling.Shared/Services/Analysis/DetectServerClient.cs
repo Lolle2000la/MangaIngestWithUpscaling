@@ -31,6 +31,14 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
     private static readonly TimeSpan UnavailableCooldown = TimeSpan.FromMinutes(5);
 
     /// <summary>
+    ///     How long a runtime failure (a request timeout or a post-ready crash) is remembered. Shorter
+    ///     than <see cref="UnavailableCooldown" /> because, unlike a model that never loads, a respawn may
+    ///     well succeed; but a detector that fails on every page must not pay a fresh spawn (plus up to
+    ///     the ready and request timeouts) per page.
+    /// </summary>
+    private static readonly TimeSpan RuntimeFailureCooldown = TimeSpan.FromMinutes(1);
+
+    /// <summary>
     /// Encoding for the detection server's stdin. Must not emit a UTF-8 BOM: the server does
     /// <c>json.loads(line)</c>, which rejects a leading BOM, so a BOM would make every request fail
     /// to parse and stall for the full request timeout.
@@ -133,6 +141,7 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
                         timeout
                     );
                     await KillServerAsync();
+                    ArmRuntimeFailureCooldown();
                     throw new DetectServerUnavailableException(
                         $"The detection server timed out after {timeout}."
                     );
@@ -355,6 +364,23 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
                 until
             );
             throw;
+        }
+    }
+
+    /// <summary>
+    ///     Remembers a runtime failure (a request timeout or a post-ready crash) so the next request
+    ///     takes the cheap CLI path instead of paying another spawn plus timeout. Never shortens an
+    ///     existing cooldown.
+    /// </summary>
+    private void ArmRuntimeFailureCooldown()
+    {
+        DateTime until = DateTime.UtcNow + RuntimeFailureCooldown;
+        lock (_stateLock)
+        {
+            if (until > _unavailableUntilUtc)
+            {
+                _unavailableUntilUtc = until;
+            }
         }
     }
 
@@ -1005,6 +1031,16 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
             _stdin = null;
             cacheRelease = _cacheReleaseTcs;
             _cacheReleaseTcs = null;
+            // A post-ready crash (a deliberate kill sets _shuttingDown) is remembered so a detector that
+            // dies on every page does not pay a fresh spawn per page. The timeout path arms its own.
+            if (!_shuttingDown)
+            {
+                DateTime until = DateTime.UtcNow + RuntimeFailureCooldown;
+                if (until > _unavailableUntilUtc)
+                {
+                    _unavailableUntilUtc = until;
+                }
+            }
             // Snapshot the jobs while the exiting process is still current, so a concurrent
             // DetectAsync that respawns the server and registers a job is not faulted by this stale
             // exit handler.

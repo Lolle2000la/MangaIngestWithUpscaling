@@ -184,6 +184,121 @@ public class DetectServerClientTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task DetectAsync_RemembersARequestTimeoutInsteadOfRespawningPerPage()
+    {
+        string? python = FindPython();
+        Assert.SkipWhen(python is null, "Python 3 is not available on this machine.");
+
+        string starts = Path.Combine(Path.GetTempPath(), $"detect_starts_{Guid.NewGuid():N}.txt");
+        using var layout = new LayoutScope(CountingBlockingServer(starts));
+        using var host = BuildClient(
+            python!,
+            out DetectServerClient client,
+            TimeSpan.FromSeconds(1)
+        );
+        string image = CreateTempImage();
+        try
+        {
+            DetectServerUnavailableException first =
+                await Assert.ThrowsAsync<DetectServerUnavailableException>(() =>
+                    client.DetectAsync(image, TestContext.Current.CancellationToken)
+                );
+            Assert.Contains("timed out", first.Message);
+
+            // A detector that hangs on every page must not pay a fresh spawn plus a full request
+            // timeout per page: the timeout is remembered, so the next request answers from it.
+            DetectServerUnavailableException second =
+                await Assert.ThrowsAsync<DetectServerUnavailableException>(() =>
+                    client.DetectAsync(image, TestContext.Current.CancellationToken)
+                );
+            Assert.Contains("not retried until", second.Message);
+            Assert.Single(File.ReadAllLines(starts));
+        }
+        finally
+        {
+            File.Delete(image);
+            File.Delete(starts);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task DetectAsync_RemembersAPostReadyCrashInsteadOfRespawningPerPage()
+    {
+        string? python = FindPython();
+        Assert.SkipWhen(python is null, "Python 3 is not available on this machine.");
+
+        string starts = Path.Combine(Path.GetTempPath(), $"detect_starts_{Guid.NewGuid():N}.txt");
+        using var layout = new LayoutScope(CountingCrashingServer(starts));
+        using var host = BuildClient(python!, out DetectServerClient client);
+        string image = CreateTempImage();
+        try
+        {
+            await Assert.ThrowsAsync<DetectServerUnavailableException>(() =>
+                client.DetectAsync(image, TestContext.Current.CancellationToken)
+            );
+
+            // The crash is remembered, so a detector that dies on every page does not pay a fresh
+            // spawn per page.
+            DetectServerUnavailableException second =
+                await Assert.ThrowsAsync<DetectServerUnavailableException>(() =>
+                    client.DetectAsync(image, TestContext.Current.CancellationToken)
+                );
+            Assert.Contains("not retried until", second.Message);
+            Assert.Single(File.ReadAllLines(starts));
+        }
+        finally
+        {
+            File.Delete(image);
+            File.Delete(starts);
+        }
+    }
+
+    /// <summary>Server that records every start and then wedges on every detection.</summary>
+    private static string CountingBlockingServer(string startsPath) =>
+        $$"""
+            import json
+            import sys
+            import time
+
+            with open(r"{{startsPath}}", "a", encoding="utf-8") as handle:
+                handle.write("start\n")
+
+            def emit(obj):
+                sys.stdout.write(json.dumps(obj) + "\n")
+                sys.stdout.flush()
+
+            emit({"type": "ready", "device": "cpu"})
+
+            for line in sys.stdin:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line)
+                except ValueError:
+                    continue
+                if msg.get("type") == "detect":
+                    while True:
+                        time.sleep(1)
+            """;
+
+    /// <summary>Server that records every start, becomes ready, and then exits immediately.</summary>
+    private static string CountingCrashingServer(string startsPath) =>
+        $$"""
+            import json
+            import sys
+
+            with open(r"{{startsPath}}", "a", encoding="utf-8") as handle:
+                handle.write("start\n")
+
+            sys.stdout.write(json.dumps({"type": "ready", "device": "cpu"}) + "\n")
+            sys.stdout.flush()
+            sys.exit(1)
+            """;
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task DetectAsync_KillsAWedgedServerWhenTheRequestIsCancelled()
     {
         string? python = FindPython();
