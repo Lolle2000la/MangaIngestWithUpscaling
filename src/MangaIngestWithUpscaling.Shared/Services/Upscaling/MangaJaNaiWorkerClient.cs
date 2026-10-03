@@ -171,7 +171,11 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                     throw new OperationCanceledException(cancellationToken);
                 }
 
-                if (monitor is not null && completed == monitor)
+                // Prefer the monitor when it requested the timeout, even if the job's own completion
+                // won the race: a worker that honors the cancel emits a "cancelled" done, which
+                // faults the job with a non-timeout error that would otherwise classify as a hard
+                // failure and delete the spool. The timeout is the authoritative outcome.
+                if (monitor is not null && (completed == monitor || job.TimeoutRequested))
                 {
                     await monitor; // throws TimeoutException after escalating cancel/kill
                 }
@@ -338,7 +342,11 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                     throw new OperationCanceledException(cancellationToken);
                 }
 
-                if (monitor is not null && completed == monitor)
+                // Prefer the monitor when it requested the timeout, even if the job's own completion
+                // won the race: a worker that honors the cancel emits a "cancelled" done, which
+                // faults the job with a non-timeout error that would otherwise classify as a hard
+                // failure and delete the spool. The timeout is the authoritative outcome.
+                if (monitor is not null && (completed == monitor || job.TimeoutRequested))
                 {
                     await monitor; // throws TimeoutException after escalating cancel/kill
                 }
@@ -1337,6 +1345,9 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                     effectiveTimeout
                 );
 
+                // Mark the timeout before cancelling: the worker may acknowledge the cancel with a
+                // "cancelled" done, and the caller must surface the timeout rather than that done.
+                job.MarkTimeoutRequested();
                 await RequestCancelAsync(job.Id);
 
                 Task finished = await Task.WhenAny(
@@ -1376,6 +1387,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         private long _lastEventTicks;
         private volatile bool _allPagesProcessed;
         private volatile bool _workerExited;
+        private volatile bool _timeoutRequested;
 
         public WorkerJob(
             string id,
@@ -1415,6 +1427,15 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         public bool WorkerExited => _workerExited;
 
         public void MarkWorkerExited() => _workerExited = true;
+
+        /// <summary>
+        /// Set by the inactivity monitor just before it cancels a wedged job. The worker may then
+        /// acknowledge with a "cancelled" done that faults the job; the timeout, not that done, is
+        /// the outcome the caller must surface.
+        /// </summary>
+        public bool TimeoutRequested => _timeoutRequested;
+
+        public void MarkTimeoutRequested() => _timeoutRequested = true;
 
         public DateTime LastEventUtc =>
             new(Interlocked.Read(ref _lastEventTicks), DateTimeKind.Utc);

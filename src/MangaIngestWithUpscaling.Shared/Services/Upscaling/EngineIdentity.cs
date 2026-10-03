@@ -18,11 +18,13 @@ public static class EngineIdentity
     /// <summary>
     /// Identity of the upscaler: the preprocessing configuration, the effective compute mode (CPU vs
     /// GPU), the app/engine build, the resolved workflow (appstate2.json) and the model files under
-    /// <see cref="UpscalerConfig.ModelsDirectory"/>. Which GPU is selected is deliberately excluded:
-    /// a CUDA box and a ROCm box with the same models and preprocessing produce the same pixels, so a
-    /// cross-device hand-off must not discard the spool. Models are fingerprinted by relative path,
-    /// size and a content prefix — stable across workers with identical models and far cheaper than
-    /// hashing the ~gigabytes of weights, while still distinguishing a same-size fine-tune.
+    /// <see cref="UpscalerConfig.ModelsDirectory"/>. The accelerator backend (CUDA/ROCm) is
+    /// deliberately excluded so a cross-device hand-off keeps the spool; that assumes the same models
+    /// and preprocessing produce the same pixels on every backend. This holds for the bundled models
+    /// in practice, but it is an assumption rather than a guarantee — a backend that diverges must not
+    /// have its pages mixed into another's chapter. Models are fingerprinted by relative path, size
+    /// and a content prefix — stable across workers with identical models and far cheaper than hashing
+    /// the ~gigabytes of weights, while still distinguishing a same-size fine-tune.
     /// </summary>
     public static string ForUpscaler(UpscalerConfig config)
     {
@@ -88,9 +90,9 @@ public static class EngineIdentity
             return;
         }
 
-        // Normalize separators and casing so the fingerprint agrees across operating systems (a CUDA
-        // box and a ROCm box, or Windows and Linux, with the same models must not discard the spool),
-        // and sort by the normalized relative path so enumeration order does not matter.
+        // Normalize separators and casing so the fingerprint agrees across operating systems (two
+        // workers with the same models must not discard the spool), and sort by the normalized
+        // relative path so enumeration order does not matter.
         IEnumerable<(string Relative, long Length, string File)> files = Directory
             .EnumerateFiles(directory, "*", SearchOption.AllDirectories)
             .Select(file =>

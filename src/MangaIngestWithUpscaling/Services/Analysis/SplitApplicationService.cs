@@ -41,6 +41,9 @@ public class SplitApplicationService(
         var chapter = await dbContext
             .Chapters.Include(c => c.Manga)
                 .ThenInclude(m => m.Library)
+                    .ThenInclude(l => l.UpscalerProfile)
+            .Include(c => c.Manga)
+                .ThenInclude(m => m.UpscalerProfilePreference)
             .Include(c => c.UpscalerProfile)
             .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
 

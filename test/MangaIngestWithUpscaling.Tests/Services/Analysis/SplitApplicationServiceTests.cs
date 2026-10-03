@@ -315,6 +315,112 @@ public class SplitApplicationServiceTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task ApplySplitsAsync_RemoteOnly_WithInheritedProfile_StillEnqueuesARepair()
+    {
+        // Arrange: the chapter is upscaled but has no explicit profile FK; the profile is inherited
+        // from the library. The repair enqueue must still happen, which requires the query to load
+        // Manga.Library.UpscalerProfile (and Manga.UpscalerProfilePreference).
+        var profile = new UpscalerProfile
+        {
+            Name = "Inherited Profile",
+            ScalingFactor = ScaleFactor.TwoX,
+            CompressionFormat = CompressionFormat.Png,
+            Quality = 90,
+        };
+        _dbContext.UpscalerProfiles.Add(profile);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var library = new Library
+        {
+            Name = "Inherited Library",
+            NotUpscaledLibraryPath = Path.Combine(_tempDir, "original_inherited"),
+            UpscaledLibraryPath = Path.Combine(_tempDir, "upscaled_inherited"),
+            UpscaleOnIngest = false,
+            UpscalerProfileId = profile.Id,
+        };
+        _dbContext.Libraries.Add(library);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        Directory.CreateDirectory(library.NotUpscaledLibraryPath);
+        Directory.CreateDirectory(library.UpscaledLibraryPath);
+
+        var manga = new Manga
+        {
+            PrimaryTitle = "Inherited Manga",
+            LibraryId = library.Id,
+            Library = library,
+        };
+        _dbContext.MangaSeries.Add(manga);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var chapter = new Chapter
+        {
+            FileName = "chapter1.cbz",
+            RelativePath = "manga/chapter1.cbz",
+            MangaId = manga.Id,
+            Manga = manga,
+            IsUpscaled = true,
+            // No explicit profile: it is inherited from the library.
+        };
+        _dbContext.Chapters.Add(chapter);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var originalCbzPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(originalCbzPath)!);
+        CreateTestCbz(originalCbzPath, "page1.png", "page2.png");
+        CreateTestCbz(chapter.UpscaledFullPath!, "page1.png", "page2.png");
+
+        _dbContext.StripSplitFindings.Add(
+            new StripSplitFinding
+            {
+                ChapterId = chapter.Id,
+                DetectorVersion = 1,
+                PageFileName = "page1",
+                SplitJson = JsonSerializer.Serialize(
+                    new SplitDetectionResult
+                    {
+                        OriginalHeight = 1000,
+                        Splits = [new DetectedSplit { YOriginal = 500, Confidence = 0.9 }],
+                    }
+                ),
+            }
+        );
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        _splitApplier
+            .ApplySplitsToImage(
+                Arg.Any<string>(),
+                Arg.Any<List<DetectedSplit>>(),
+                Arg.Any<string>()
+            )
+            .Returns(callInfo =>
+            {
+                var outputDir = callInfo.ArgAt<string>(2);
+                var part1 = Path.Combine(outputDir, "page1_part1.png");
+                File.WriteAllText(part1, "dummy part1");
+                return new List<string> { part1 };
+            });
+
+        // Drop the tracked graph so the service's own query (with its Includes) must resolve the
+        // inherited profile from the database rather than reusing an already-populated navigation.
+        _dbContext.ChangeTracker.Clear();
+
+        var service = CreateService(remoteOnly: true);
+
+        // Act
+        await service.ApplySplitsAsync(chapter.Id, 1, TestContext.Current.CancellationToken);
+
+        // Assert: the inherited profile is resolved and a repair is enqueued.
+        await _taskQueue
+            .Received(1)
+            .EnqueueAsync(
+                Arg.Is<RepairUpscaleTask>(t =>
+                    t.ChapterId == chapter.Id && t.UpscalerProfileId == profile.Id
+                )
+            );
+    }
+
+    [Fact]
     public async Task ApplySplitsAsync_WhenChapterIsNotUpscaled_DoesNotAttemptToDeleteUpscaled()
     {
         // Arrange

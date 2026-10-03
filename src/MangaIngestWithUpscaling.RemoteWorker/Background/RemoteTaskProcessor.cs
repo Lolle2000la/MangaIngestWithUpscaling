@@ -178,7 +178,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
     /// that is permanently bad but classifies soft would otherwise loop forever. Once the cap is
     /// reached the failure is reported (terminal), surfacing the task.
     /// </summary>
-    public static async Task HandleStreamingFailureAsync(
+    public static async Task<bool> HandleStreamingFailureAsync(
         UpscalingService.UpscalingServiceClient client,
         int taskId,
         Exception ex,
@@ -205,7 +205,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     "Task {TaskId} was interrupted during page streaming; letting the server requeue it with the spool intact.",
                     taskId
                 );
-                return;
+                return false;
             }
 
             logger.LogError(
@@ -236,6 +236,8 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 taskId
             );
         }
+
+        return true;
     }
 
     /// <summary>
@@ -506,18 +508,9 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
             {
                 _softFailureCounts.TryGetValue(item.TaskId, out int softFailures);
                 softFailures++;
-                // Bound the map: once a task has reached the largest cap it is being reported, so its
-                // count no longer matters.
-                if (softFailures >= MaxConsecutiveRestarts)
-                {
-                    _softFailureCounts.Remove(item.TaskId);
-                }
-                else
-                {
-                    _softFailureCounts[item.TaskId] = softFailures;
-                }
+                _softFailureCounts[item.TaskId] = softFailures;
 
-                await HandleStreamingFailureAsync(
+                bool reported = await HandleStreamingFailureAsync(
                     client,
                     item.TaskId,
                     ex,
@@ -525,6 +518,12 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     stoppingToken,
                     softFailures
                 );
+                if (reported)
+                {
+                    // The task is terminal, so its counter will never be read again; drop it rather
+                    // than letting the map grow one entry per permanently-failed task.
+                    _softFailureCounts.Remove(item.TaskId);
+                }
             }
             finally
             {

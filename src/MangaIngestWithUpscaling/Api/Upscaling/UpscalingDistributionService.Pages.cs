@@ -78,6 +78,20 @@ public partial class UpscalingDistributionService
                     return await BuildManifestAsync(pageContext, session);
                 }
 
+                if (pageStreamSpool.IsFinalized(session))
+                {
+                    // The session was finalized between the manifest lookup and here while its
+                    // identity still matched. Reporting complete would tell the worker the discarded
+                    // chapter is done; re-create a fresh session so it re-streams.
+                    session = pageStreamSpool.GetOrCreateSession(
+                        pageContext.Task.Id,
+                        pageContext.Identity,
+                        session.EngineIdentity,
+                        pageContext.Pages.Count
+                    );
+                    return await BuildManifestAsync(pageContext, session);
+                }
+
                 // Another request is already finalizing; report complete without redoing the work.
                 return new PageManifestResponse
                 {
@@ -349,182 +363,205 @@ public partial class UpscalingDistributionService
 
         try
         {
-            await foreach (
-                UploadPageChunk chunk in requestStream.ReadAllAsync(context.CancellationToken)
-            )
+            try
             {
-                if (
-                    sawChunk
-                    && (
-                        chunk.TaskId != taskId
-                        || chunk.PageIndex != pageIndex
-                        || !string.Equals(chunk.ContentIdentity, identity, StringComparison.Ordinal)
-                        || !string.Equals(
-                            chunk.EngineIdentity,
-                            engineIdentity,
-                            StringComparison.Ordinal
-                        )
-                    )
-                )
+                while (await requestStream.MoveNext(context.CancellationToken))
                 {
-                    return new UploadPageResponse
-                    {
-                        Success = false,
-                        Message =
-                            "The page stream changed task, page, content or engine mid-upload.",
-                        TaskId = taskId,
-                        PageIndex = pageIndex,
-                        Terminal = true,
-                    };
-                }
-
-                if (!sawChunk)
-                {
-                    sawChunk = true;
-                    taskId = chunk.TaskId;
-                    pageIndex = chunk.PageIndex;
-                    identity = chunk.ContentIdentity;
-                    engineIdentity = chunk.EngineIdentity;
-
-                    pageContext = await ResolvePageContextAsync(taskId, context.CancellationToken);
-                    if (pageContext is null)
-                    {
-                        return new UploadPageResponse
-                        {
-                            Success = false,
-                            Message = "Task, chapter or profile not found",
-                            TaskId = taskId,
-                            PageIndex = pageIndex,
-                            Terminal = true,
-                        };
-                    }
-
-                    if (pageContext.Kind == PageContextKind.Detect)
-                    {
-                        return new UploadPageResponse
-                        {
-                            Success = false,
-                            Message = "This task is not a page-streamed upscale task.",
-                            TaskId = taskId,
-                            PageIndex = pageIndex,
-                            Terminal = true,
-                        };
-                    }
-
-                    if (!string.Equals(pageContext.Identity, identity, StringComparison.Ordinal))
-                    {
-                        return new UploadPageResponse
-                        {
-                            Success = false,
-                            Message = "The chapter or profile changed; restart the chapter",
-                            TaskId = taskId,
-                            PageIndex = pageIndex,
-                        };
-                    }
-
-                    if (pageIndex < 0 || pageIndex >= pageContext.Pages.Count)
-                    {
-                        return new UploadPageResponse
-                        {
-                            Success = false,
-                            Message = $"Page index {pageIndex} is out of range for task {taskId}",
-                            TaskId = taskId,
-                            PageIndex = pageIndex,
-                            Terminal = true,
-                        };
-                    }
-
-                    PageStreamSession? existing = pageStreamSpool.TryGetSession(taskId);
-                    if (existing is null)
-                    {
-                        // The manifest for this chapter was answered by another replica (or was
-                        // never made). Spooling here would never finalize, so reject it loudly and
-                        // non-terminally instead of silently looping forever.
-                        _logger.LogWarning(
-                            "Rejecting an upload for task {TaskId}: no page spool on this server instance. Page streaming requires all of a chapter's RPCs to reach one replica.",
-                            taskId
-                        );
-                        return new UploadPageResponse
-                        {
-                            Success = false,
-                            Message =
-                                "No page spool for this task on this server instance; the chapter must be pinned to one replica",
-                            TaskId = taskId,
-                            PageIndex = pageIndex,
-                            Terminal = false,
-                        };
-                    }
-
-                    session = existing;
-                    // Stream straight to the spool file rather than buffering the whole page in
-                    // memory: the gRPC body cap is lifted for uploads, so a large or hostile page
-                    // must not drive unbounded allocation.
-                    try
-                    {
-                        pageFile = pageStreamSpool.BeginPageWrite(session, pageIndex, out tempPath);
-                    }
-                    catch (PageStreamRestartException ex)
-                    {
-                        // The session was finalized between TryGetSession and here; restart rather
-                        // than surface an opaque gRPC Unknown.
-                        return new UploadPageResponse
-                        {
-                            Success = false,
-                            Message = ex.Message,
-                            TaskId = taskId,
-                            PageIndex = pageIndex,
-                            Terminal = false,
-                        };
-                    }
-                }
-
-                if (!chunk.Chunk.IsEmpty)
-                {
-                    long length = chunk.Chunk.Length;
-                    if (written + length > MaxPageBytes)
-                    {
-                        return new UploadPageResponse
-                        {
-                            Success = false,
-                            Message =
-                                $"Page {pageIndex} of task {taskId} exceeds the maximum page size.",
-                            TaskId = taskId,
-                            PageIndex = pageIndex,
-                            Terminal = true,
-                        };
-                    }
-
-                    // Reserve against the per-task budget before writing, so concurrent uploads
-                    // cannot each fill temp before any committed-byte check runs.
+                    UploadPageChunk chunk = requestStream.Current;
                     if (
-                        !pageStreamSpool.TryReserveInFlight(
-                            session,
-                            pageIndex,
-                            length,
-                            out long generation
+                        sawChunk
+                        && (
+                            chunk.TaskId != taskId
+                            || chunk.PageIndex != pageIndex
+                            || !string.Equals(
+                                chunk.ContentIdentity,
+                                identity,
+                                StringComparison.Ordinal
+                            )
+                            || !string.Equals(
+                                chunk.EngineIdentity,
+                                engineIdentity,
+                                StringComparison.Ordinal
+                            )
                         )
                     )
                     {
                         return new UploadPageResponse
                         {
                             Success = false,
-                            Message = $"Task {taskId} exceeds the maximum spooled size.",
+                            Message =
+                                "The page stream changed task, page, content or engine mid-upload.",
                             TaskId = taskId,
                             PageIndex = pageIndex,
                             Terminal = true,
                         };
                     }
 
-                    reservedByGeneration[generation] =
-                        reservedByGeneration.GetValueOrDefault(generation) + length;
-                    written += length;
-                    await pageFile!.WriteAsync(chunk.Chunk.Memory, context.CancellationToken);
-                }
+                    if (!sawChunk)
+                    {
+                        sawChunk = true;
+                        taskId = chunk.TaskId;
+                        pageIndex = chunk.PageIndex;
+                        identity = chunk.ContentIdentity;
+                        engineIdentity = chunk.EngineIdentity;
 
-                if (chunk.IsLast)
-                {
-                    sawLast = true;
+                        pageContext = await ResolvePageContextAsync(
+                            taskId,
+                            context.CancellationToken
+                        );
+                        if (pageContext is null)
+                        {
+                            return new UploadPageResponse
+                            {
+                                Success = false,
+                                Message = "Task, chapter or profile not found",
+                                TaskId = taskId,
+                                PageIndex = pageIndex,
+                                Terminal = true,
+                            };
+                        }
+
+                        if (pageContext.Kind == PageContextKind.Detect)
+                        {
+                            return new UploadPageResponse
+                            {
+                                Success = false,
+                                Message = "This task is not a page-streamed upscale task.",
+                                TaskId = taskId,
+                                PageIndex = pageIndex,
+                                Terminal = true,
+                            };
+                        }
+
+                        if (
+                            !string.Equals(pageContext.Identity, identity, StringComparison.Ordinal)
+                        )
+                        {
+                            return new UploadPageResponse
+                            {
+                                Success = false,
+                                Message = "The chapter or profile changed; restart the chapter",
+                                TaskId = taskId,
+                                PageIndex = pageIndex,
+                            };
+                        }
+
+                        if (pageIndex < 0 || pageIndex >= pageContext.Pages.Count)
+                        {
+                            return new UploadPageResponse
+                            {
+                                Success = false,
+                                Message =
+                                    $"Page index {pageIndex} is out of range for task {taskId}",
+                                TaskId = taskId,
+                                PageIndex = pageIndex,
+                                Terminal = true,
+                            };
+                        }
+
+                        PageStreamSession? existing = pageStreamSpool.TryGetSession(taskId);
+                        if (existing is null)
+                        {
+                            // The manifest for this chapter was answered by another replica (or was
+                            // never made). Spooling here would never finalize, so reject it loudly and
+                            // non-terminally instead of silently looping forever.
+                            _logger.LogWarning(
+                                "Rejecting an upload for task {TaskId}: no page spool on this server instance. Page streaming requires all of a chapter's RPCs to reach one replica.",
+                                taskId
+                            );
+                            return new UploadPageResponse
+                            {
+                                Success = false,
+                                Message =
+                                    "No page spool for this task on this server instance; the chapter must be pinned to one replica",
+                                TaskId = taskId,
+                                PageIndex = pageIndex,
+                                Terminal = false,
+                            };
+                        }
+
+                        session = existing;
+                        // Stream straight to the spool file rather than buffering the whole page in
+                        // memory: the gRPC body cap is lifted for uploads, so a large or hostile page
+                        // must not drive unbounded allocation.
+                        try
+                        {
+                            pageFile = pageStreamSpool.BeginPageWrite(
+                                session,
+                                pageIndex,
+                                out tempPath
+                            );
+                        }
+                        catch (PageStreamRestartException ex)
+                        {
+                            // The session was finalized between TryGetSession and here; restart rather
+                            // than surface an opaque gRPC Unknown.
+                            return new UploadPageResponse
+                            {
+                                Success = false,
+                                Message = ex.Message,
+                                TaskId = taskId,
+                                PageIndex = pageIndex,
+                                Terminal = false,
+                            };
+                        }
+                    }
+
+                    if (!chunk.Chunk.IsEmpty)
+                    {
+                        long length = chunk.Chunk.Length;
+                        if (written + length > MaxPageBytes)
+                        {
+                            return new UploadPageResponse
+                            {
+                                Success = false,
+                                Message =
+                                    $"Page {pageIndex} of task {taskId} exceeds the maximum page size.",
+                                TaskId = taskId,
+                                PageIndex = pageIndex,
+                                Terminal = true,
+                            };
+                        }
+
+                        // Reserve against the per-task budget before writing, so concurrent uploads
+                        // cannot each fill temp before any committed-byte check runs.
+                        if (
+                            !pageStreamSpool.TryReserveInFlight(
+                                session,
+                                pageIndex,
+                                length,
+                                out long generation
+                            )
+                        )
+                        {
+                            return new UploadPageResponse
+                            {
+                                Success = false,
+                                Message = $"Task {taskId} exceeds the maximum spooled size.",
+                                TaskId = taskId,
+                                PageIndex = pageIndex,
+                                Terminal = true,
+                            };
+                        }
+
+                        reservedByGeneration[generation] =
+                            reservedByGeneration.GetValueOrDefault(generation) + length;
+                        written += length;
+                        await pageFile!.WriteAsync(chunk.Chunk.Memory, context.CancellationToken);
+                    }
+
+                    if (chunk.IsLast)
+                    {
+                        sawLast = true;
+                    }
                 }
+            }
+            finally
+            {
+                // Drain any remaining chunks before returning: the client is still writing the page
+                // and may otherwise fault on a write before it can read our (often non-terminal)
+                // response, which it would misclassify as a permanent failure and delete the spool.
+                await DrainRequestStreamAsync(requestStream, context.CancellationToken);
             }
 
             if (!sawChunk || taskId == 0)
@@ -695,6 +732,20 @@ public partial class UpscalingDistributionService
                 };
             }
 
+            if (pageStreamSpool.IsFinalized(session))
+            {
+                // The spool was finalized/removed while this upload was in flight. Reporting success
+                // would tell the worker the chapter is assembled when it was discarded; restart.
+                return new UploadPageResponse
+                {
+                    Success = false,
+                    Message = "The chapter was finalized while uploading; restart the chapter",
+                    TaskId = taskId,
+                    PageIndex = pageIndex,
+                    Terminal = false,
+                };
+            }
+
             // Another worker is already assembling the completed chapter.
             return new UploadPageResponse
             {
@@ -766,6 +817,40 @@ public partial class UpscalingDistributionService
             TaskId = taskId,
             PageIndex = pageIndex,
         };
+    }
+
+    /// <summary>
+    /// Reads and discards the rest of a rejected client-streaming upload. A client-streaming handler
+    /// that returns before the client half-closes can make the client's remaining writes fault, so
+    /// the client never reads the (non-terminal) response and misclassifies it as a hard failure.
+    /// Draining lets the client finish and read the response. Bounded and best-effort.
+    /// </summary>
+    private static async Task DrainRequestStreamAsync(
+        IAsyncStreamReader<UploadPageChunk> requestStream,
+        CancellationToken cancellationToken
+    )
+    {
+        using var drainCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        drainCts.CancelAfter(TimeSpan.FromSeconds(30));
+        long drained = 0;
+        try
+        {
+            while (await requestStream.MoveNext(drainCts.Token))
+            {
+                // Read to end-of-stream (not just the terminator) so the client has half-closed
+                // before we return, then discard the chunk.
+                drained += requestStream.Current.Chunk.Length;
+                if (drained > MaxPageBytes)
+                {
+                    // A rejected upload is not trusted to stay small; stop rather than read forever.
+                    break;
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // The client aborted, timed out, or the stream is already closed; nothing left to drain.
+        }
     }
 
     public override async Task<UploadDetectionResultResponse> UploadPageDetection(
@@ -1656,6 +1741,11 @@ public partial class UpscalingDistributionService
                     continue;
                 }
 
+                if (!PageStreamSpool.IsSafeEntryName(entry.FullName))
+                {
+                    continue;
+                }
+
                 byStem.TryAdd(Path.GetFileNameWithoutExtension(entry.FullName), entry.FullName);
             }
         }
@@ -1699,6 +1789,7 @@ public partial class UpscalingDistributionService
             (int)profile.CompressionFormat,
             (int)profile.ScalingFactor,
             profile.Quality,
+            (int)profile.UpscalerMethod,
             string.Join(',', missingPages.OrderBy(p => p, StringComparer.Ordinal))
         );
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(material)));

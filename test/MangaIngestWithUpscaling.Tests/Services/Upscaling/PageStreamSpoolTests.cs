@@ -613,6 +613,42 @@ public class PageStreamSpoolTests
         Assert.True(ex.ResetSpool);
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void GetOrCreateSession_DoesNotResetASessionThatIsAssembling()
+    {
+        PageStreamSession session = _spool.GetOrCreateSession(100, "identity-a", "engine-a", 1);
+        Assert.True(_spool.TryBeginAssembly(session, "identity-a"));
+
+        // A competing manifest with a different content/engine identity must not reset (and delete)
+        // the spool while the finalizer is running; it gets the in-progress session back instead, and
+        // its worker restarts rather than corrupting the finalize.
+        PageStreamSession competing = _spool.GetOrCreateSession(100, "identity-b", "engine-b", 1);
+
+        Assert.Same(session, competing);
+        Assert.Equal("identity-a", session.Identity);
+        Assert.Equal("engine-a", session.EngineIdentity);
+
+        // Once assembly ends, a reset is allowed again.
+        _spool.EndAssembly(session);
+        PageStreamSession reset = _spool.GetOrCreateSession(100, "identity-b", "engine-b", 1);
+
+        Assert.Same(session, reset);
+        Assert.Equal("identity-b", session.Identity);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void IsFinalized_IsTrueAfterRemove()
+    {
+        PageStreamSession session = _spool.GetOrCreateSession(101, "identity", "engine", 1);
+        Assert.False(_spool.IsFinalized(session));
+
+        _spool.Remove(101);
+
+        Assert.True(_spool.IsFinalized(session));
+    }
+
     private static byte[] ReadAll(Stream stream)
     {
         using var buffer = new MemoryStream();

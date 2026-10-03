@@ -112,6 +112,17 @@ public sealed class PageStreamSpool
 
                 if (session.Identity != identity || session.EngineIdentity != engineIdentity)
                 {
+                    if (session.Assembling)
+                    {
+                        // A finalize/assembly is in progress. Resetting now would delete the spool out
+                        // from under the finalizer, which would then commit a superseded identity's
+                        // results. Leave the session alone: the caller sees the old identity and
+                        // restarts its worker, and once assembly finishes (and removes the session) a
+                        // later manifest creates a fresh one.
+                        session.LastTouchedUtc = DateTime.UtcNow;
+                        return session;
+                    }
+
                     _logger.LogInformation(
                         "Page spool identity changed for task {TaskId} (content or engine); discarding {Count} spooled page(s).",
                         taskId,
@@ -425,6 +436,18 @@ public sealed class PageStreamSpool
 
     public bool TryBeginAssembly(PageStreamSession session) =>
         TryBeginAssembly(session, session.Identity);
+
+    /// <summary>
+    /// True once the session has been finalized (removed or swept). A caller that held the session
+    /// across a concurrent finalize must restart rather than report the discarded chapter as done.
+    /// </summary>
+    public bool IsFinalized(PageStreamSession session)
+    {
+        lock (session.Gate)
+        {
+            return session.Finalized;
+        }
+    }
 
     public void EndAssembly(PageStreamSession session)
     {
