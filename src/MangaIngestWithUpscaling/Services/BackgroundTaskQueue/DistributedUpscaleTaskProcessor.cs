@@ -332,6 +332,23 @@ public class DistributedUpscaleTaskProcessor(
                         continue;
                     }
 
+                    // A same-chapter apply rewrites the CBZ this task will stream from. Leave the
+                    // task Pending (the standard processor's guard keeps the apply off an in-flight
+                    // upscale) and answer the worker with no task so it retries shortly, instead of
+                    // claiming it and racing the apply.
+                    if (
+                        task.Data is IChapterTask chapterTask
+                        && await HasSameChapterApplyTaskAsync(
+                            chapterTask.ChapterId,
+                            linkedCts.Token
+                        )
+                    )
+                    {
+                        taskQueue.ReEnqueue(task);
+                        tcs.TrySetCanceled(linkedCts.Token);
+                        break;
+                    }
+
                     // Track the task before the claim. ClaimTaskAsync can throw after the row was
                     // already committed to Processing, so the outer catch must recover the claim
                     // itself; assigning only after a successful claim left such a row stranded.
@@ -647,6 +664,13 @@ public class DistributedUpscaleTaskProcessor(
                 }
             }
         }
+    }
+
+    private async Task<bool> HasSameChapterApplyTaskAsync(int chapterId, CancellationToken ct)
+    {
+        using IServiceScope scope = scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        return await StandardTaskProcessor.HasSameChapterApplyTaskAsync(dbContext, chapterId, ct);
     }
 
     public async Task<PersistedTask?> GetTask(CancellationToken stoppingToken)

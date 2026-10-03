@@ -2,10 +2,12 @@ using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
+using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 
 namespace MangaIngestWithUpscaling.Tests.Services.BackgroundTaskQueue;
@@ -82,6 +84,139 @@ public class StandardTaskProcessorGuardTests : IAsyncDisposable
                 TestContext.Current.CancellationToken
             )
         );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task HasSameChapterApplyTaskAsync_BlocksOnlyForAProcessingSameChapterApply()
+    {
+        await using ApplicationDbContext context = await _database.CreateContextAsync(
+            TestContext.Current.CancellationToken
+        );
+
+        var pendingApply = new PersistedTask
+        {
+            Data = new ApplySplitsTask(7, 1),
+            Status = PersistedTaskStatus.Pending,
+            Order = 1,
+        };
+        context.PersistedTasks.AddRange(
+            pendingApply,
+            new PersistedTask
+            {
+                Data = new ApplySplitsTask(8, 1),
+                Status = PersistedTaskStatus.Processing,
+                Order = 2,
+            }
+        );
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        // A Pending apply does not block: the apply side already defers under a same-chapter upscale,
+        // so treating a Pending apply as a blocker here would deadlock the two.
+        Assert.False(
+            await StandardTaskProcessor.HasSameChapterApplyTaskAsync(
+                context,
+                7,
+                TestContext.Current.CancellationToken
+            )
+        );
+        // A Processing same-chapter apply blocks an upscale...
+        Assert.True(
+            await StandardTaskProcessor.HasSameChapterApplyTaskAsync(
+                context,
+                8,
+                TestContext.Current.CancellationToken
+            )
+        );
+        // ...but a different chapter is unaffected.
+        Assert.False(
+            await StandardTaskProcessor.HasSameChapterApplyTaskAsync(
+                context,
+                9,
+                TestContext.Current.CancellationToken
+            )
+        );
+
+        pendingApply.Status = PersistedTaskStatus.Processing;
+        await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+        Assert.True(
+            await StandardTaskProcessor.HasSameChapterApplyTaskAsync(
+                context,
+                7,
+                TestContext.Current.CancellationToken
+            )
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task UpscaleProcessor_DefersAnUpscaleWhileASameChapterApplyIsProcessing()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<ApplicationDbContext>(options => _database.Configure(options));
+        var cleanup = Substitute.For<IQueueCleanup>();
+        cleanup.CleanupAsync().Returns(Task.FromResult<IReadOnlyList<int>>(Array.Empty<int>()));
+        services.AddScoped<IQueueCleanup>(_ => cleanup);
+        using ServiceProvider provider = services.BuildServiceProvider();
+
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+        var taskQueue = new TaskQueue(
+            scopeFactory,
+            provider.GetRequiredService<ILogger<TaskQueue>>()
+        );
+        var processor = new UpscaleTaskProcessor(
+            taskQueue,
+            scopeFactory,
+            Options.Create(new UpscalerConfig { RemoteOnly = false }),
+            provider.GetRequiredService<ILogger<UpscaleTaskProcessor>>(),
+            new TaskPersistenceService(scopeFactory),
+            new PreprocessedInputCache()
+        );
+
+        // A same-chapter apply is already in flight (rewriting the CBZ the upscale would stream from).
+        await using (
+            ApplicationDbContext seed = await _database.CreateContextAsync(
+                TestContext.Current.CancellationToken
+            )
+        )
+        {
+            seed.PersistedTasks.Add(
+                new PersistedTask
+                {
+                    Data = new ApplySplitsTask(7, 1),
+                    Status = PersistedTaskStatus.Processing,
+                    Order = 0,
+                }
+            );
+            await seed.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await taskQueue.EnqueueAsync(new UpscaleTask { ChapterId = 7, UpscalerProfileId = 1 });
+        int upscaleId = taskQueue.GetUpscaleSnapshot().Single().Id;
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+        await processor.StartAsync(cts.Token);
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
+
+            await using ApplicationDbContext context = await _database.CreateContextAsync(
+                TestContext.Current.CancellationToken
+            );
+            PersistedTask upscale = await context
+                .PersistedTasks.AsNoTracking()
+                .SingleAsync(t => t.Id == upscaleId, TestContext.Current.CancellationToken);
+
+            // Deferred, not claimed: it stays Pending with no retry consumed.
+            Assert.Equal(PersistedTaskStatus.Pending, upscale.Status);
+            Assert.Equal(0, upscale.RetryCount);
+        }
+        finally
+        {
+            await cts.CancelAsync();
+            await processor.StopAsync(CancellationToken.None);
+        }
     }
 
     [Fact]

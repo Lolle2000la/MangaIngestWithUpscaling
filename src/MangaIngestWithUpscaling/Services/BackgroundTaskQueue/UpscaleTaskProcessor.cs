@@ -159,6 +159,21 @@ public class UpscaleTaskProcessor(
         // processor. A task from the main queue is Pending and must be claimed here.
         if (task.Status != PersistedTaskStatus.Processing)
         {
+            // A same-chapter apply rewrites the original (and upscaled) CBZ this task streams from.
+            // StandardTaskProcessor defers the apply under an upscale; this is the symmetric half, so
+            // the two never run together.
+            if (
+                task.Data is IChapterTask chapterTask
+                && await HasSameChapterApplyTaskAsync(chapterTask.ChapterId, stoppingToken)
+            )
+            {
+                DeferTask(
+                    task,
+                    "a same-chapter ApplySplitsTask is in flight and is rewriting the chapter"
+                );
+                return false;
+            }
+
             return await ClaimAsync(task, stoppingToken);
         }
 
@@ -221,6 +236,20 @@ public class UpscaleTaskProcessor(
         }
 
         return true;
+    }
+
+    private async Task<bool> HasSameChapterApplyTaskAsync(
+        int chapterId,
+        CancellationToken stoppingToken
+    )
+    {
+        using IServiceScope scope = ScopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        return await StandardTaskProcessor.HasSameChapterApplyTaskAsync(
+            dbContext,
+            chapterId,
+            stoppingToken
+        );
     }
 
     /// <summary>

@@ -84,17 +84,67 @@ public class StandardTaskProcessor(
         int chapterId,
         CancellationToken cancellationToken
     ) =>
-        PersistedTaskQueries
-            .ForTaskTypesAndChapters(
-                context,
-                [chapterId],
-                [
-                    nameof(UpscaleTask),
-                    nameof(RepairUpscaleTask),
-                    nameof(DetectSplitCandidatesTask),
-                    nameof(RenameUpscaledChaptersSeriesTask),
-                ],
-                [PersistedTaskStatus.Pending, PersistedTaskStatus.Processing]
-            )
-            .AnyAsync(cancellationToken);
+        AnyChapterTaskAsync(
+            context,
+            chapterId,
+            [
+                nameof(UpscaleTask),
+                nameof(RepairUpscaleTask),
+                nameof(DetectSplitCandidatesTask),
+                nameof(RenameUpscaledChaptersSeriesTask),
+            ],
+            [PersistedTaskStatus.Pending, PersistedTaskStatus.Processing],
+            cancellationToken
+        );
+
+    /// <summary>
+    /// True when a same-chapter <see cref="ApplySplitsTask"/> is in flight. The guard above stops an
+    /// apply starting under an upscale; this is its symmetric half, so an upscale/repair/detect cannot
+    /// start while an apply is rewriting the same original (and upscaled) CBZ. Only a <c>Processing</c>
+    /// apply blocks: a merely <c>Pending</c> one is deferred by the guard above whenever an upscale is
+    /// pending, so treating it as a blocker here would deadlock the two.
+    /// </summary>
+    internal static Task<bool> HasSameChapterApplyTaskAsync(
+        ApplicationDbContext context,
+        int chapterId,
+        CancellationToken cancellationToken
+    ) =>
+        AnyChapterTaskAsync(
+            context,
+            chapterId,
+            [nameof(ApplySplitsTask)],
+            [PersistedTaskStatus.Processing],
+            cancellationToken
+        );
+
+    private static Task<bool> AnyChapterTaskAsync(
+        ApplicationDbContext context,
+        int chapterId,
+        IReadOnlyCollection<string> taskTypes,
+        IReadOnlyCollection<PersistedTaskStatus> statuses,
+        CancellationToken cancellationToken
+    )
+    {
+        if (context.Database.IsRelational())
+        {
+            return PersistedTaskQueries
+                .ForTaskTypesAndChapters(context, [chapterId], taskTypes, statuses)
+                .AnyAsync(cancellationToken);
+        }
+
+        // The InMemory provider (unit tests only) cannot translate the JSON Data column, so filter the
+        // status-matched rows in memory instead. Production always uses a relational provider.
+        var wantedStatuses = statuses.ToHashSet();
+        var wantedTypes = taskTypes.ToHashSet();
+        return Task.FromResult(
+            context
+                .PersistedTasks.Where(t => wantedStatuses.Contains(t.Status))
+                .AsEnumerable()
+                .Any(t =>
+                    wantedTypes.Contains(t.Data.GetType().Name)
+                    && t.Data is IChapterTask chapterTask
+                    && chapterTask.ChapterId == chapterId
+                )
+        );
+    }
 }
