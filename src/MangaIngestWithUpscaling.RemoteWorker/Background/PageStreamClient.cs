@@ -84,6 +84,15 @@ public sealed class PageStreamClient(
             return;
         }
 
+        if (manifest.TaskType != TaskType.Upscale)
+        {
+            // The delegation said upscale/repair but the manifest disagrees (version skew); routing
+            // on the delegation alone could stream the wrong page shape.
+            throw new InvalidOperationException(
+                $"Task {taskId} was delegated as an upscale task but its manifest reports {manifest.TaskType}."
+            );
+        }
+
         if (manifest.Pages.Count == 0)
         {
             throw new InvalidOperationException($"Task {taskId} has no pages to upscale.");
@@ -362,6 +371,13 @@ public sealed class PageStreamClient(
         {
             logger.LogInformation("Task {TaskId} was already fully detected.", taskId);
             return;
+        }
+
+        if (manifest.TaskType != TaskType.SplitDetection)
+        {
+            throw new InvalidOperationException(
+                $"Task {taskId} was delegated as a detection task but its manifest reports {manifest.TaskType}."
+            );
         }
 
         if (manifest.Pages.Count == 0)
