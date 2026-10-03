@@ -24,6 +24,11 @@
 LICENSE
 README.md
 !**/.gitignore
+
+# Deliberately kept out of the .git exclusion above: the .NET SDK reads HEAD/refs/packed-refs to
+# stamp the source revision into AssemblyInformationalVersion ("1.0.0+<sha>"), which EngineIdentity
+# hashes as the build half of a worker's engine identity. Without them every image claims the same
+# build, so a worker on an older upscaler build could add pages to another one's half-spooled chapter.
 !.git/HEAD
 !.git/config
 !.git/packed-refs
