@@ -44,6 +44,13 @@ public sealed class PageStreamClient(
     private static readonly TimeSpan UploadDrainGrace = TimeSpan.FromMinutes(2);
 
     /// <summary>
+    ///     How old a leftover stream directory must be before it is reclaimed. Generous on purpose: a
+    ///     directory's own timestamp goes stale while its contents are still being written, so a short
+    ///     window could delete the directory of a chapter that is streaming right now.
+    /// </summary>
+    private static readonly TimeSpan StaleStreamDirectoryRetention = TimeSpan.FromDays(7);
+
+    /// <summary>
     /// Inactivity allowance for a streamed chapter, scaled by the largest page exactly like the
     /// whole-CBZ path (<c>UpscaleTimeout × max(1, maxPixels / 1e6)</c>), with a floor so slow
     /// hardware still finishes a page while a wedged worker is eventually killed.
@@ -112,6 +119,10 @@ public sealed class PageStreamClient(
             .Pages.Where(p => !completed.Contains(p.Index))
             .Select(p => p.Index)
             .ToList();
+
+        // Reclaim directories an earlier run left behind: a worker killed mid-chapter never reaches its
+        // own cleanup, and nothing else owns these directories.
+        DeleteStaleStreamDirectories();
 
         string workDirectory = Path.Combine(
             Path.GetTempPath(),
@@ -761,6 +772,49 @@ public sealed class PageStreamClient(
             {
                 TryDeleteFile(upload.Path, upload.PageIndex);
             }
+        }
+    }
+
+    /// <summary>
+    ///     Removes stream directories left behind by a worker that died mid-chapter. Only the name this
+    ///     client creates is considered, so no other temp content is touched.
+    /// </summary>
+    private void DeleteStaleStreamDirectories()
+    {
+        DateTime cutoff = DateTime.UtcNow - StaleStreamDirectoryRetention;
+        try
+        {
+            foreach (
+                string directory in Directory.EnumerateDirectories(
+                    Path.GetTempPath(),
+                    "mangaingest_page_stream_*"
+                )
+            )
+            {
+                try
+                {
+                    if (Directory.GetLastWriteTimeUtc(directory) < cutoff)
+                    {
+                        Directory.Delete(directory, recursive: true);
+                        logger.LogInformation(
+                            "Removed the stale page stream directory {Directory}.",
+                            directory
+                        );
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogDebug(
+                        ex,
+                        "Failed to remove the stale page stream directory {Directory}.",
+                        directory
+                    );
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Failed to sweep stale page stream directories.");
         }
     }
 

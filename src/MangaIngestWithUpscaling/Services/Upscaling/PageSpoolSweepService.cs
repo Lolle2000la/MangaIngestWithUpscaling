@@ -15,6 +15,11 @@ public sealed class PageSpoolSweepService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Yield before sweeping so the sweep is not part of startup: the first await is what the host
+        // waits on while starting, and a large spool tree must not delay the application coming up. The
+        // sweep then runs on the continuation, well before the timer's first tick an hour later.
+        await Task.Yield();
+
         // Sweep once at startup so roots left by a previous process are removed promptly, not an
         // hour later.
         Sweep();
