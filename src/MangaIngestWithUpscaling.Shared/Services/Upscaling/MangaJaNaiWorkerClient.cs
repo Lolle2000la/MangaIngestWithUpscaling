@@ -25,6 +25,13 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     private static readonly TimeSpan ReadyTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan CancelGracePeriod = TimeSpan.FromSeconds(10);
 
+    /// <summary>
+    ///     How long the polite shutdown command waits for the stdin lock before the caller falls back
+    ///     to killing the process. A wedged worker's page producer can hold that lock while blocked on
+    ///     a full pipe, so an unbounded wait would hang host shutdown.
+    /// </summary>
+    private static readonly TimeSpan ShutdownSendGracePeriod = TimeSpan.FromSeconds(2);
+
     // After every page is upscaled and saved, the only remaining work is finalizing the
     // output archive, which produces no progress events. Give it a fixed grace period
     // instead of the pixel-scaled inactivity timeout.
@@ -444,11 +451,22 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             // spawn can't make us shut down the *new* worker by mistake.
             if (stdin is not null)
             {
-                await SendLineAsync(
-                    stdin,
-                    JsonSerializer.Serialize(new WorkerCommand("shutdown"), WorkerJson.Options),
-                    CancellationToken.None
+                // Best-effort and bounded: a wedged worker's page producer can hold the stdin lock
+                // while blocked on a full pipe, so waiting on it forever would hang host shutdown.
+                // Fall through to the kill below.
+                using var sendGrace = CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken
                 );
+                sendGrace.CancelAfter(ShutdownSendGracePeriod);
+                try
+                {
+                    await SendLineAsync(
+                        stdin,
+                        JsonSerializer.Serialize(new WorkerCommand("shutdown"), WorkerJson.Options),
+                        sendGrace.Token
+                    );
+                }
+                catch (OperationCanceledException) { }
             }
 
             using var grace = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -899,14 +917,16 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             }
         }
 
+        // Kill before waiting on the stdin lock: a page producer blocked writing to a wedged worker
+        // holds that lock, so disposing stdin first could wait forever and the process would never be
+        // killed. Killing closes the pipe and releases the producer.
+        await KillAndDisposeAsync(process);
         await DisposeStdinAsync(stdin);
         foreach (WorkerJob job in jobs)
         {
             job.MarkWorkerExited();
             job.FailCrashed("Upscale worker was shut down while the job was in flight.");
         }
-
-        await KillAndDisposeAsync(process);
 
         _logger.LogInformation("Upscale worker process stopped.");
     }
@@ -1362,7 +1382,6 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             jobs = _jobs.Values.ToArray();
         }
 
-        await DisposeStdinAsync(stdin);
         // Unblock a pending GPU-cache release so its in-flight guard is not left set.
         cacheRelease?.TrySetCanceled();
 
@@ -1378,9 +1397,12 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             new UpscaleWorkerCrashedException("Upscale worker exited before becoming ready.")
         );
 
-        // The stdout reader only reaches here on EOF, but if the process is somehow still
-        // alive (e.g. it closed stdout without exiting), kill it so it isn't orphaned.
+        // The stdout reader only reaches here on EOF, but if the process is somehow still alive (e.g.
+        // it closed stdout without exiting), kill it so it isn't orphaned. Kill before waiting on the
+        // stdin lock: a producer blocked writing to such a worker holds that lock, so disposing stdin
+        // first could wait forever.
         await KillAndDisposeAsync(process);
+        await DisposeStdinAsync(stdin);
     }
 
     private bool TryGetJob(string? id, [NotNullWhen(true)] out WorkerJob? job)
