@@ -135,6 +135,7 @@ Example — store the Python environment on a separate (larger) volume:
 | `EnableSmartDownscale` | `Ingest_Upscaler__EnableSmartDownscale` | `false` | Detect and downscale cheaply-upscaled images before AI upscaling — see [Smart Downscale](SMART_DOWNSCALE.md). |
 | `SmartDownscaleThreshold` | `Ingest_Upscaler__SmartDownscaleThreshold` | `15.0` | Laplacian std-dev below which an image is considered cheaply upscaled. Lower = stricter; higher = more aggressive. |
 | `SmartDownscaleFactor` | `Ingest_Upscaler__SmartDownscaleFactor` | `0.75` | Fallback scale factor (e.g. `0.75` = 75 %) used when the FFT cliff detector finds no clear cutoff frequency. |
+| `DetectServerRequestTimeout` | `Ingest_Upscaler__DetectServerRequestTimeout` | `00:10:00` | Maximum time a single request to the resident split-detection server may run before it is cancelled and the server killed; the caller then falls back to the per-image CLI, so a wedged detector cannot hang a task. `0` disables the guard. |
 
 ```yaml
     environment:

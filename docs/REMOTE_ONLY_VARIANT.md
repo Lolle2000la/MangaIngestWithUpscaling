@@ -58,6 +58,8 @@ The remote-only configuration runs the server component without using any local 
 When `Ingest_Upscaler__RemoteOnly=true` is set:
 - Local upscaling is disabled
 - All upscaling tasks are forwarded to remote workers via gRPC
+- Split application (`ApplySplitsTask`) runs server-side (it needs no ML backend); a repair of an
+  already-upscaled chapter is re-enqueued as a `RepairUpscaleTask` for a remote worker
 - Standard database and logging connections still apply
 - All gRPC endpoints for remote worker communication remain active
 

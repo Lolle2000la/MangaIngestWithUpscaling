@@ -1252,7 +1252,8 @@ public class DistributedUpscaleTaskProcessor(
                 differences,
                 currentStoragePath,
                 upscaleTargetPath,
-                logger
+                logger,
+                prepareMissingPagesCbz: false
             );
 
             if (differences.MissingPages.Count > 0)

@@ -48,12 +48,7 @@ public partial class UpscalingDistributionService
         {
             // A terminal task is a genuine not-found; a non-terminal one whose source is momentarily
             // unavailable is a restart, so a flaky mount resumes instead of failing the chapter.
-            context.Status = resolution.TaskTerminal
-                ? new Status(StatusCode.NotFound, "Task, chapter or profile not found")
-                : new Status(
-                    StatusCode.Unavailable,
-                    "The chapter's source is not currently available; retry the chapter"
-                );
+            context.Status = PageContextFailureStatus(resolution);
             return new PageManifestResponse { TaskId = request.TaskId };
         }
 
@@ -242,12 +237,7 @@ public partial class UpscalingDistributionService
         );
         if (pageContext is null)
         {
-            context.Status = resolution.TaskTerminal
-                ? new Status(StatusCode.NotFound, "Task, chapter or profile not found")
-                : new Status(
-                    StatusCode.Unavailable,
-                    "The chapter's source is not currently available; retry the chapter"
-                );
+            context.Status = PageContextFailureStatus(resolution);
             return;
         }
 
@@ -466,17 +456,14 @@ public partial class UpscalingDistributionService
                         );
                         if (pageContext is null)
                         {
+                            (string message, bool terminal) = PageContextFailure(uploadResolution);
                             return new UploadPageResponse
                             {
                                 Success = false,
-                                Message = uploadResolution.TaskTerminal
-                                    ? "Task, chapter or profile not found"
-                                    : "The chapter's source is not currently available; restart the chapter",
+                                Message = message,
                                 TaskId = taskId,
                                 PageIndex = pageIndex,
-                                // A terminal task is a hard failure; a transiently-unavailable source
-                                // is a restart (the soft-failure cap bounds a persistent failure).
-                                Terminal = uploadResolution.TaskTerminal,
+                                Terminal = terminal,
                             };
                         }
 
@@ -942,13 +929,12 @@ public partial class UpscalingDistributionService
         );
         if (pageContext is null)
         {
+            (string message, bool terminal) = PageContextFailure(resolution);
             return new UploadDetectionResultResponse
             {
                 Success = false,
-                Message = resolution.TaskTerminal
-                    ? "Task, chapter or profile not found"
-                    : "The chapter's source is not currently available; restart the chapter",
-                Terminal = resolution.TaskTerminal,
+                Message = message,
+                Terminal = terminal,
             };
         }
 
@@ -1412,7 +1398,29 @@ public partial class UpscalingDistributionService
     private sealed class PageContextResolution
     {
         public bool TaskTerminal { get; set; }
+
+        /// <summary>The task's source archive is corrupt (a deterministic, terminal failure).</summary>
+        public bool Corrupt { get; set; }
     }
+
+    /// <summary>gRPC status for a failed page-context resolution.</summary>
+    private static Status PageContextFailureStatus(PageContextResolution resolution) =>
+        resolution.Corrupt
+            ? new Status(StatusCode.DataLoss, "The chapter's source archive is corrupt.")
+        : resolution.TaskTerminal
+            ? new Status(StatusCode.NotFound, "Task, chapter or profile not found")
+        : new Status(
+            StatusCode.Unavailable,
+            "The chapter's source is not currently available; retry the chapter"
+        );
+
+    /// <summary>Message and terminal flag for an upload response to a failed resolution.</summary>
+    private static (string Message, bool Terminal) PageContextFailure(
+        PageContextResolution resolution
+    ) =>
+        resolution.Corrupt ? ("The chapter's source archive is corrupt.", true)
+        : resolution.TaskTerminal ? ("Task, chapter or profile not found", true)
+        : ("The chapter's source is not currently available; restart the chapter", false);
 
     private async Task<PageContext?> ResolvePageContextAsync(
         int taskId,
@@ -1438,192 +1446,209 @@ public partial class UpscalingDistributionService
             return null;
         }
 
-        if (task.Data is UpscaleTask upscaleTask)
+        try
         {
-            Chapter? chapter = await LoadChapterAsync(upscaleTask.ChapterId, ct);
-            if (chapter?.UpscaledFullPath is null)
+            if (task.Data is UpscaleTask upscaleTask)
             {
-                return null;
+                Chapter? chapter = await LoadChapterAsync(upscaleTask.ChapterId, ct);
+                if (chapter?.UpscaledFullPath is null)
+                {
+                    return null;
+                }
+
+                SharedUpscalerProfile? profile = await LoadProfileAsync(
+                    upscaleTask.UpscalerProfileId,
+                    ct
+                );
+                if (profile is null)
+                {
+                    return null;
+                }
+
+                string sourcePath = chapter.NotUpscaledFullPath;
+                if (!File.Exists(sourcePath))
+                {
+                    return null;
+                }
+
+                string identity = ComputeIdentity(sourcePath, profile);
+                if (!TryGetCachedPages(task.Id, identity, out List<SpoolPageDescriptor> pages))
+                {
+                    pages = BuildPageDescriptors(sourcePath, profile);
+                    if (pages.Count == 0)
+                    {
+                        return null;
+                    }
+
+                    pageContextCache.Set(
+                        task.Id,
+                        new PageContextCache.Entry(identity, pages, Array.Empty<string>())
+                    );
+                }
+
+                return new PageContext(
+                    task,
+                    chapter,
+                    profile,
+                    pages,
+                    identity,
+                    sourcePath,
+                    Kind: PageContextKind.Upscale
+                );
             }
 
-            SharedUpscalerProfile? profile = await LoadProfileAsync(
-                upscaleTask.UpscalerProfileId,
-                ct
-            );
-            if (profile is null)
+            if (task.Data is RepairUpscaleTask repairTask)
             {
-                return null;
-            }
+                Chapter? chapter = await LoadChapterAsync(repairTask.ChapterId, ct);
+                if (chapter?.UpscaledFullPath is null || !File.Exists(chapter.UpscaledFullPath))
+                {
+                    return null;
+                }
 
-            string sourcePath = chapter.NotUpscaledFullPath;
-            if (!File.Exists(sourcePath))
-            {
-                return null;
-            }
+                // Prefer the task's profile, which is also what the delegation response hands the worker
+                // as its engine profile, so the page descriptors/identity and the produced output agree.
+                // The chapter's profile is only a fallback if the task's profile was removed.
+                SharedUpscalerProfile? profile =
+                    await LoadProfileAsync(repairTask.UpscalerProfileId, ct)
+                    ?? chapter.UpscalerProfile;
+                if (profile is null)
+                {
+                    return null;
+                }
 
-            string identity = ComputeIdentity(sourcePath, profile);
-            if (!TryGetCachedPages(task.Id, identity, out List<SpoolPageDescriptor> pages))
-            {
-                pages = BuildPageDescriptors(sourcePath, profile);
+                string sourcePath = chapter.NotUpscaledFullPath;
+                if (!File.Exists(sourcePath))
+                {
+                    return null;
+                }
+
+                // The repair identity covers both files' size/mtime, the profile and the missing set, so
+                // re-deriving it from the cached missing set is enough to decide whether the cached
+                // context is still valid without re-running the (expensive) archive diff.
+                if (
+                    pageContextCache.TryGet(task.Id, out PageContextCache.Entry cached)
+                    && cached.MissingPages.Count > 0
+                    && string.Equals(
+                        ComputeRepairIdentity(
+                            sourcePath,
+                            chapter.UpscaledFullPath,
+                            profile,
+                            cached.MissingPages
+                        ),
+                        cached.Identity,
+                        StringComparison.Ordinal
+                    )
+                )
+                {
+                    return new PageContext(
+                        task,
+                        chapter,
+                        profile,
+                        cached.Pages.ToList(),
+                        cached.Identity,
+                        sourcePath,
+                        Kind: PageContextKind.Repair
+                    );
+                }
+
+                var differences = await metadataHandling.AnalyzePageDifferencesAsync(
+                    sourcePath,
+                    chapter.UpscaledFullPath
+                );
+                if (differences.MissingPages.Count == 0)
+                {
+                    pageContextCache.Remove(task.Id);
+                    return null;
+                }
+
+                List<SpoolPageDescriptor> pages = BuildRepairPageDescriptors(
+                    sourcePath,
+                    differences.MissingPages,
+                    profile
+                );
                 if (pages.Count == 0)
                 {
                     return null;
                 }
 
+                string repairIdentity = ComputeRepairIdentity(
+                    sourcePath,
+                    chapter.UpscaledFullPath,
+                    profile,
+                    differences.MissingPages
+                );
                 pageContextCache.Set(
                     task.Id,
-                    new PageContextCache.Entry(identity, pages, Array.Empty<string>())
+                    new PageContextCache.Entry(
+                        repairIdentity,
+                        pages,
+                        differences.MissingPages.ToList()
+                    )
                 );
-            }
 
-            return new PageContext(
-                task,
-                chapter,
-                profile,
-                pages,
-                identity,
-                sourcePath,
-                Kind: PageContextKind.Upscale
-            );
-        }
-
-        if (task.Data is RepairUpscaleTask repairTask)
-        {
-            Chapter? chapter = await LoadChapterAsync(repairTask.ChapterId, ct);
-            if (chapter?.UpscaledFullPath is null || !File.Exists(chapter.UpscaledFullPath))
-            {
-                return null;
-            }
-
-            // Prefer the task's profile, which is also what the delegation response hands the worker
-            // as its engine profile, so the page descriptors/identity and the produced output agree.
-            // The chapter's profile is only a fallback if the task's profile was removed.
-            SharedUpscalerProfile? profile =
-                await LoadProfileAsync(repairTask.UpscalerProfileId, ct) ?? chapter.UpscalerProfile;
-            if (profile is null)
-            {
-                return null;
-            }
-
-            string sourcePath = chapter.NotUpscaledFullPath;
-            if (!File.Exists(sourcePath))
-            {
-                return null;
-            }
-
-            // The repair identity covers both files' size/mtime, the profile and the missing set, so
-            // re-deriving it from the cached missing set is enough to decide whether the cached
-            // context is still valid without re-running the (expensive) archive diff.
-            if (
-                pageContextCache.TryGet(task.Id, out PageContextCache.Entry cached)
-                && cached.MissingPages.Count > 0
-                && string.Equals(
-                    ComputeRepairIdentity(
-                        sourcePath,
-                        chapter.UpscaledFullPath,
-                        profile,
-                        cached.MissingPages
-                    ),
-                    cached.Identity,
-                    StringComparison.Ordinal
-                )
-            )
-            {
                 return new PageContext(
                     task,
                     chapter,
                     profile,
-                    cached.Pages.ToList(),
-                    cached.Identity,
+                    pages,
+                    repairIdentity,
                     sourcePath,
                     Kind: PageContextKind.Repair
                 );
             }
 
-            var differences = await metadataHandling.AnalyzePageDifferencesAsync(
-                sourcePath,
-                chapter.UpscaledFullPath
-            );
-            if (differences.MissingPages.Count == 0)
+            if (task.Data is DetectSplitCandidatesTask detectTask)
             {
-                pageContextCache.Remove(task.Id);
-                return null;
-            }
-
-            List<SpoolPageDescriptor> pages = BuildRepairPageDescriptors(
-                sourcePath,
-                differences.MissingPages,
-                profile
-            );
-            if (pages.Count == 0)
-            {
-                return null;
-            }
-
-            string repairIdentity = ComputeRepairIdentity(
-                sourcePath,
-                chapter.UpscaledFullPath,
-                profile,
-                differences.MissingPages
-            );
-            pageContextCache.Set(
-                task.Id,
-                new PageContextCache.Entry(repairIdentity, pages, differences.MissingPages.ToList())
-            );
-
-            return new PageContext(
-                task,
-                chapter,
-                profile,
-                pages,
-                repairIdentity,
-                sourcePath,
-                Kind: PageContextKind.Repair
-            );
-        }
-
-        if (task.Data is DetectSplitCandidatesTask detectTask)
-        {
-            Chapter? chapter = await LoadChapterAsync(detectTask.ChapterId, ct);
-            if (chapter is null)
-            {
-                return null;
-            }
-
-            string sourcePath = chapter.NotUpscaledFullPath;
-            if (!File.Exists(sourcePath))
-            {
-                return null;
-            }
-
-            string identity = ComputeDetectionIdentity(sourcePath, detectTask.DetectorVersion);
-            if (!TryGetCachedPages(task.Id, identity, out List<SpoolPageDescriptor> pages))
-            {
-                pages = BuildDetectionPageDescriptors(sourcePath);
-                if (pages.Count == 0)
+                Chapter? chapter = await LoadChapterAsync(detectTask.ChapterId, ct);
+                if (chapter is null)
                 {
                     return null;
                 }
 
-                pageContextCache.Set(
-                    task.Id,
-                    new PageContextCache.Entry(identity, pages, Array.Empty<string>())
+                string sourcePath = chapter.NotUpscaledFullPath;
+                if (!File.Exists(sourcePath))
+                {
+                    return null;
+                }
+
+                string identity = ComputeDetectionIdentity(sourcePath, detectTask.DetectorVersion);
+                if (!TryGetCachedPages(task.Id, identity, out List<SpoolPageDescriptor> pages))
+                {
+                    pages = BuildDetectionPageDescriptors(sourcePath);
+                    if (pages.Count == 0)
+                    {
+                        return null;
+                    }
+
+                    pageContextCache.Set(
+                        task.Id,
+                        new PageContextCache.Entry(identity, pages, Array.Empty<string>())
+                    );
+                }
+
+                return new PageContext(
+                    task,
+                    chapter,
+                    Profile: null,
+                    pages,
+                    identity,
+                    sourcePath,
+                    Kind: PageContextKind.Detect,
+                    DetectorVersion: detectTask.DetectorVersion
                 );
             }
 
-            return new PageContext(
-                task,
-                chapter,
-                Profile: null,
-                pages,
-                identity,
-                sourcePath,
-                Kind: PageContextKind.Detect,
-                DetectorVersion: detectTask.DetectorVersion
-            );
+            return null;
         }
-
-        return null;
+        catch (InvalidDataException ex)
+        {
+            // A corrupt source archive is deterministic. Surface it as terminal (the handlers map
+            // Corrupt to DataLoss) instead of letting it become gRPC Unknown, which the worker treats
+            // as transient and retries until the soft-failure cap.
+            _logger.LogWarning(ex, "The source archive for task {TaskId} is corrupt.", taskId);
+            resolution.Corrupt = true;
+            return null;
+        }
     }
 
     /// <summary>Deletes a temp file, ignoring and logging any failure to do so.</summary>
@@ -1710,8 +1735,8 @@ public partial class UpscalingDistributionService
 
     /// <summary>
     /// Finishes a page-streamed repair: builds a CBZ from the spooled missing pages and hands it to
-    /// the task processor, which merges it into the existing upscaled chapter (and removes extra
-    /// pages) through the same repair path used for whole-CBZ transfers.
+    /// the repair service, which merges it into the existing upscaled chapter (and removes extra
+    /// pages).
     /// </summary>
     private async Task AssembleRepairedChapterAsync(
         PageContext pageContext,
