@@ -396,24 +396,27 @@ public sealed class PageStreamClient(
 
             int current = completed.Count;
             bool releasedUpscalerGpu = false;
-            foreach (int pageIndex in missing)
-            {
-                stoppingToken.ThrowIfCancellationRequested();
-
-                string sourceName = nameByIndex[pageIndex];
-                string path = Path.Combine(
-                    sourceDirectory,
-                    $"{pageIndex:D5}_{Path.GetFileName(sourceName)}"
-                );
-
-                await FetchPageToFileAsync(
+            // One long-lived GetPages stream for the whole chapter (the server opens the source archive
+            // once), yielding each page as it completes; detection reads the page as fetched, so no
+            // preprocessing is applied.
+            await foreach (
+                ChapterPage page in FetchPagesAsync(
                     client,
                     taskId,
                     manifest.TaskIdentity,
-                    pageIndex,
-                    path,
-                    stoppingToken
-                );
+                    missing,
+                    nameByIndex,
+                    sourceDirectory,
+                    stoppingToken,
+                    preprocess: false
+                )
+            )
+            {
+                stoppingToken.ThrowIfCancellationRequested();
+
+                int pageIndex = page.Index;
+                string sourceName = nameByIndex[pageIndex];
+                string path = page.Path;
 
                 List<SplitDetectionResult> results = await detection.DetectSplitsAsync(
                     path,
@@ -503,67 +506,6 @@ public sealed class PageStreamClient(
     private static string WorkerPageName(int pageIndex, string sourceName) =>
         $"{pageIndex:D5}_{Path.GetFileName(sourceName)}";
 
-    private static async Task FetchPageToFileAsync(
-        UpscalingService.UpscalingServiceClient client,
-        int taskId,
-        string identity,
-        int pageIndex,
-        string path,
-        CancellationToken cancellationToken
-    )
-    {
-        using AsyncServerStreamingCall<PageChunk> call = client.GetPages(
-            new GetPagesRequest
-            {
-                TaskId = taskId,
-                TaskIdentity = identity,
-                PageIndexes = { pageIndex },
-            },
-            deadline: DateTime.UtcNow.Add(PageTimeout),
-            cancellationToken: cancellationToken
-        );
-
-        await using FileStream file = new(
-            path,
-            FileMode.Create,
-            FileAccess.Write,
-            FileShare.None,
-            81920,
-            FileOptions.Asynchronous
-        );
-        long written = 0;
-        bool sawLast = false;
-        await foreach (PageChunk chunk in call.ResponseStream.ReadAllAsync(cancellationToken))
-        {
-            if (chunk.PageIndex != pageIndex)
-            {
-                continue;
-            }
-
-            if (!chunk.Chunk.IsEmpty)
-            {
-                await file.WriteAsync(chunk.Chunk.Memory, cancellationToken);
-                written += chunk.Chunk.Length;
-            }
-
-            if (chunk.IsLast)
-            {
-                sawLast = true;
-                break;
-            }
-        }
-
-        // The server silently skips a page it cannot find; without this the 0-byte file would be
-        // "detected", its error result accepted, and the chapter finalized without the page ever
-        // having been inspected. Mirror the upscale path's completeness guard.
-        if (!sawLast || written == 0)
-        {
-            throw new InvalidOperationException(
-                $"The server did not send page {pageIndex} of task {taskId}."
-            );
-        }
-    }
-
     /// <summary>
     /// Fetches all still-missing pages over one <see cref="UpscalingService.UpscalingServiceClient.GetPages"/>
     /// stream, splitting it into per-page files and yielding each page as its terminating chunk
@@ -577,7 +519,9 @@ public sealed class PageStreamClient(
         IReadOnlyList<int> missingPages,
         IReadOnlyDictionary<int, string> nameByIndex,
         string sourceDirectory,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken
+        [System.Runtime.CompilerServices.EnumeratorCancellation]
+            CancellationToken cancellationToken,
+        bool preprocess = true
     )
     {
         if (missingPages.Count == 0)
@@ -598,11 +542,12 @@ public sealed class PageStreamClient(
 
         // Preprocess each page in place so a streamed chapter matches the whole-CBZ path, which
         // preprocesses the archive before upscaling (max dimension, format conversion, smart
-        // downscale). A no-op when preprocessing is disabled.
+        // downscale). A no-op when preprocessing is disabled. Detection reads the page as-is, so it
+        // passes preprocess: false.
         IServiceScope? preprocessingScope = null;
         IImageResizeService? resizeService = null;
         ImagePreprocessingOptions? preprocessingOptions = null;
-        if (ImagePreprocessingOptions.IsEnabled(upscalerConfig.Value))
+        if (preprocess && ImagePreprocessingOptions.IsEnabled(upscalerConfig.Value))
         {
             preprocessingScope = scopeFactory.CreateScope();
             resizeService =
