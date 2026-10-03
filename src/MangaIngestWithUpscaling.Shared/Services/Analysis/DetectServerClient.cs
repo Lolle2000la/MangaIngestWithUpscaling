@@ -371,6 +371,12 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
         startInfo.ArgumentList.Add(checkpoint);
         startInfo.ArgumentList.Add("--config");
         startInfo.ArgumentList.Add(config);
+        // Exit the server when this process dies, so an abruptly killed host does not leave a warm
+        // model (and its GPU memory) resident forever.
+        startInfo.ArgumentList.Add("--parent-pid");
+        startInfo.ArgumentList.Add(
+            Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        );
         if (_config.Value.WorkerIdleCacheReleaseTimeout > TimeSpan.Zero)
         {
             startInfo.ArgumentList.Add("--idle-cache-release");

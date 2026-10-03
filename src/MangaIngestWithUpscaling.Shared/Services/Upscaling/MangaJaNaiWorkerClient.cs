@@ -663,6 +663,12 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         startInfo.ArgumentList.Add(settingsPath);
         startInfo.ArgumentList.Add("--queue-capacity");
         startInfo.ArgumentList.Add(_config.Value.WorkerQueueCapacity.ToString());
+        // Exit the worker when this process dies, so an abruptly killed host does not leave a warm
+        // model (and its GPU memory) resident forever.
+        startInfo.ArgumentList.Add("--parent-pid");
+        startInfo.ArgumentList.Add(
+            Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        );
         if (_config.Value.WorkerIdleCacheReleaseTimeout > TimeSpan.Zero)
         {
             startInfo.ArgumentList.Add("--cache-release-idle");
