@@ -94,8 +94,9 @@ public sealed class PageStreamClient(
         if (manifest.TaskType != TaskType.Upscale)
         {
             // The delegation said upscale/repair but the manifest disagrees (version skew); routing
-            // on the delegation alone could stream the wrong page shape.
-            throw new InvalidOperationException(
+            // on the delegation alone could stream the wrong page shape. A restart preserves the
+            // spool, so a rollout inconsistency does not delete a half-spooled chapter.
+            throw new PageStreamRestartException(
                 $"Task {taskId} was delegated as an upscale task but its manifest reports {manifest.TaskType}."
             );
         }
@@ -389,7 +390,8 @@ public sealed class PageStreamClient(
 
         if (manifest.TaskType != TaskType.SplitDetection)
         {
-            throw new InvalidOperationException(
+            // A rollout inconsistency, not a permanent failure: restart so the spool survives.
+            throw new PageStreamRestartException(
                 $"Task {taskId} was delegated as a detection task but its manifest reports {manifest.TaskType}."
             );
         }

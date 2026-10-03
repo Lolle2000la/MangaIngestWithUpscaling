@@ -6,10 +6,9 @@ namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 ///
 /// Bump <see cref="Current"/> on any incompatible wire change. When a build can still serve the
 /// previous version, leave <see cref="MinSupported"/> behind it; raise <see cref="MinSupported"/> once
-/// the older version is dropped. The handshake is bidirectional and range-based: each side sends its
-/// <c>[MinSupported, Current]</c> range and validates the other's whole range with
-/// <see cref="IsCompatible"/>, so the two interoperate when their ranges overlap (the effective wire
-/// version is the overlap's upper bound).
+/// the older version is dropped. The handshake is bidirectional: each side sends its
+/// <c>[MinSupported, Current]</c> range and validates the other's with <see cref="IsCompatible"/>,
+/// which requires the peer to speak this build's <c>Current</c> (no negotiated version exists yet).
 /// </summary>
 public static class UpscalingProtocolVersion
 {
@@ -24,11 +23,11 @@ public static class UpscalingProtocolVersion
         peerVersion >= MinSupported && peerVersion <= Current;
 
     /// <summary>
-    /// True when this build's range [<see cref="MinSupported"/>, <see cref="Current"/>] overlaps the
-    /// peer's range [<paramref name="peerMin"/>, <paramref name="peerCurrent"/>], so the two can agree
-    /// on a common version. This is the bidirectional handshake check: each side validates the other's
-    /// whole range, not just its <c>Current</c>, so a newer-but-compatible peer is accepted.
+    /// True when the peer can speak this build's <see cref="Current"/> protocol. Until the two sides
+    /// negotiate a shared version (each side currently keeps using its own <c>Current</c>), a peer
+    /// whose <c>Current</c> is newer is rejected: accepting it would let it send messages this build
+    /// cannot interpret. A peer whose range spans our <c>Current</c> is accepted.
     /// </summary>
     public static bool IsCompatible(int peerCurrent, int peerMin) =>
-        peerMin <= Current && MinSupported <= peerCurrent;
+        peerCurrent == Current && peerMin <= Current;
 }
