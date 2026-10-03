@@ -697,6 +697,54 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task GetTask_WhenASameChapterApplyBlocksTheHead_ServesTheTaskBehindIt()
+    {
+        // A Processing apply for chapter 7 blocks a chapter-7 task. DequeueUpscale always returns the
+        // queue minimum, so re-enqueuing the blocked task immediately would make every request re-pick
+        // it and starve the task behind it; it is re-offered after a delay instead.
+        using (IServiceScope scope = _provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            db.PersistedTasks.Add(
+                new PersistedTask
+                {
+                    Data = new ApplySplitsTask(7, 1),
+                    Status = PersistedTaskStatus.Processing,
+                    Order = 0,
+                }
+            );
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await _taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(7, 1));
+        await _taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(8, 1));
+
+        var serviceCts = new CancellationTokenSource();
+        await _processor.StartAsync(serviceCts.Token);
+        try
+        {
+            // The blocked head is deferred, so this request is answered with no task...
+            PersistedTask? first = await _processor.GetTask(TestContext.Current.CancellationToken);
+            Assert.Null(first);
+            Assert.DoesNotContain(
+                _taskQueue.GetUpscaleSnapshot(),
+                t => ((DetectSplitCandidatesTask)t.Data).ChapterId == 7
+            );
+
+            // ...and the task behind it is served instead of the head being re-picked forever.
+            PersistedTask? second = await _processor.GetTask(TestContext.Current.CancellationToken);
+            Assert.NotNull(second);
+            Assert.Equal(8, ((DetectSplitCandidatesTask)second!.Data).ChapterId);
+        }
+        finally
+        {
+            await serviceCts.CancelAsync();
+            await _processor.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task GetTask_WhenHandoffFails_RequeuesWithoutIncrementingRetry()
     {
         // A requester that cancels while the processor hands off the task is an infrastructure event:

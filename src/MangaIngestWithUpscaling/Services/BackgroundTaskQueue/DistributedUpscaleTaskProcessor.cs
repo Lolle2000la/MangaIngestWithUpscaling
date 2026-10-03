@@ -31,6 +31,14 @@ public class DistributedUpscaleTaskProcessor(
     private readonly Lock _lock = new();
     private readonly ChannelReader<object> _reader = taskQueue.UpscaleReader;
 
+    /// <summary>
+    ///     How long a task the apply guard deferred waits before it is re-offered. Re-enqueuing it
+    ///     immediately would put it back at the head of the queue (<c>DequeueUpscale</c> always returns
+    ///     the minimum), so every worker request would re-pick and re-defer it and starve every task
+    ///     behind it. Waiting lets those be served; the row stays Pending in the DB throughout.
+    /// </summary>
+    private static readonly TimeSpan DeferredTaskReofferInterval = TimeSpan.FromSeconds(10);
+
     private readonly Channel<(
         TaskCompletionSource<PersistedTask>,
         CancellationToken
@@ -367,7 +375,9 @@ public class DistributedUpscaleTaskProcessor(
                                 // A same-chapter apply is rewriting the CBZ this task will stream
                                 // from. Leave the task Pending and answer the worker with no task so
                                 // it retries shortly, instead of claiming it and racing the apply.
-                                taskQueue.ReEnqueue(task);
+                                // Re-offer it after a delay, not immediately, so it does not sit at the
+                                // head of the queue and starve the tasks behind it.
+                                DeferUpscaleTask(task, logger);
                                 claimedTask = null;
                                 tcs.TrySetCanceled(linkedCts.Token);
                                 break;
@@ -687,6 +697,34 @@ public class DistributedUpscaleTaskProcessor(
                 }
             }
         }
+    }
+
+    /// <summary>
+    ///     Schedules a delayed re-offer of a task the apply guard deferred, so it does not sit at the
+    ///     head of the queue and starve the tasks behind it. Best-effort: a shutdown or a task that is
+    ///     no longer Pending ends the wait, and the periodic replayer is the backstop.
+    /// </summary>
+    private void DeferUpscaleTask(PersistedTask task, ILogger logger)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(DeferredTaskReofferInterval, serviceStoppingToken);
+                if (await taskPersistenceService.IsTaskPendingAsync(task.Id, serviceStoppingToken))
+                {
+                    taskQueue.ReEnqueue(task);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Shutting down; the periodic replayer owns Pending rows.
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to re-offer deferred upscale task {TaskId}.", task.Id);
+            }
+        });
     }
 
     private async Task<bool> HasSameChapterApplyTaskAsync(int chapterId, CancellationToken ct)
@@ -1247,6 +1285,17 @@ public class DistributedUpscaleTaskProcessor(
                     chapter.FileName
                 );
                 await PersistFailedAsync(persistedTask, serviceStoppingToken);
+                return false;
+            }
+
+            if (differences.ReadFailed)
+            {
+                // Transient: requeue without consuming the retry budget, matching the worker-cancel path.
+                logger.LogWarning(
+                    "Could not read a source archive for repair task {TaskId}; requeuing.",
+                    persistedTask.Id
+                );
+                await RequeueClaimedTaskAsync(persistedTask, serviceStoppingToken);
                 return false;
             }
 
