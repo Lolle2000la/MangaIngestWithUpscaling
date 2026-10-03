@@ -108,6 +108,7 @@ public class SplitApplicationService(
         {
             // 1. Process Original
             logger.LogInformation("Applying splits to original chapter {ChapterId}", chapterId);
+            cancellationToken.ThrowIfCancellationRequested();
             ZipFile.ExtractToDirectory(originalCbzPath, originalExtractDir);
 
             var originalImages = Directory
@@ -159,6 +160,9 @@ public class SplitApplicationService(
             ZipFile.CreateFromDirectory(newOriginalDir, tempOriginalCbz);
 
             // Replace Original
+            // Observe cancellation before the swap: a cancelled apply must not move its replacement
+            // back over a chapter a concurrent merge has already deleted.
+            cancellationToken.ThrowIfCancellationRequested();
             File.Move(tempOriginalCbz, originalCbzPath, true);
 
             // 2. Process Upscaled if exists. Resolve the effective profile: a chapter can be upscaled
@@ -209,6 +213,7 @@ public class SplitApplicationService(
                     Directory.CreateDirectory(upscaledExtractDir);
                     Directory.CreateDirectory(newUpscaledDir);
 
+                    cancellationToken.ThrowIfCancellationRequested();
                     ZipFile.ExtractToDirectory(chapter.UpscaledFullPath, upscaledExtractDir);
 
                     var upscaledImages = Directory
@@ -326,6 +331,7 @@ public class SplitApplicationService(
                     ZipFile.CreateFromDirectory(newUpscaledDir, tempUpscaledCbz);
 
                     // Replace Upscaled
+                    cancellationToken.ThrowIfCancellationRequested();
                     File.Move(tempUpscaledCbz, chapter.UpscaledFullPath, true);
                 }
             }

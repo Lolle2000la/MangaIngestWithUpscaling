@@ -440,9 +440,6 @@ public class ChapterMergeCoordinator(
                 // Update database for the merge
                 await UpdateDatabaseForMergeAsync(mergeInfo, originalChapters, cancellationToken);
 
-                // Delete original chapter part files after successful merging
-                DeleteOriginalChapterPartFiles(mergeInfo, library);
-
                 // Handle merging of upscaled versions if they exist
                 UpscaledMergeResult upscaledMergeResult = await HandleUpscaledChapterMergingAsync(
                     originalChapters,
@@ -452,7 +449,11 @@ public class ChapterMergeCoordinator(
                     cancellationToken
                 );
 
-                // Handle upscale task management with information about partial merging
+                // Handle upscale task management with information about partial merging. This cancels
+                // any in-flight apply for a part, so it must run before the part files are deleted: a
+                // cancelled apply observes its token before swapping its replacement in (see
+                // SplitApplicationService), and deleting first would let a still-running apply recreate
+                // the file the merge just removed.
                 await upscaleTaskManager.HandleUpscaleTaskManagementAsync(
                     originalChapters,
                     mergeInfo,
@@ -460,6 +461,9 @@ public class ChapterMergeCoordinator(
                     upscaledMergeResult,
                     cancellationToken
                 );
+
+                // Delete original chapter part files now that the tasks that rewrite them are cancelled.
+                DeleteOriginalChapterPartFiles(mergeInfo, library);
 
                 completedMerges.Add(mergeInfo);
 
