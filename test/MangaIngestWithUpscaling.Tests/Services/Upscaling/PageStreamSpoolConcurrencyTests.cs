@@ -290,6 +290,11 @@ public class PageStreamSpoolConcurrencyTests
         string[] identities = { IdentityA, IdentityB };
         var violations = new ConcurrentBag<string>();
         int activeChurners = churners;
+        // The checker thread can be scheduled before the first churner has created the session, so only
+        // a session that existed and then went away is a violation. The counter makes that ordering
+        // happen every run rather than only when the scheduler feels like it.
+        bool sawSession = false;
+        int checkerLaps = 0;
 
         // One extra thread inspects the session throughout the churn: every page it sees recorded as
         // completed must carry bytes produced under the identity the session currently holds.
@@ -299,6 +304,11 @@ public class PageStreamSpoolConcurrencyTests
             {
                 if (worker == churners)
                 {
+                    // Take the first look before any churner creates the session — the ordering CI hit —
+                    // so "not created yet" is exercised on every run.
+                    Inspect();
+                    Interlocked.Increment(ref checkerLaps);
+
                     while (Volatile.Read(ref activeChurners) > 0)
                     {
                         Inspect();
@@ -307,6 +317,12 @@ public class PageStreamSpoolConcurrencyTests
 
                     Inspect();
                     return;
+                }
+
+                // Wait for that first look so the ordering above is guaranteed rather than likely.
+                while (Volatile.Read(ref checkerLaps) == 0)
+                {
+                    Thread.Yield();
                 }
 
                 try
@@ -354,9 +370,18 @@ public class PageStreamSpoolConcurrencyTests
                     PageStreamSession? current = _spool.TryGetSession(taskId);
                     if (current is null)
                     {
-                        violations.Add("the session disappeared during identity churn");
+                        // Not created yet (the checker can win the race to start), or the spool was
+                        // replaced between the read and here. Only a session that existed and then
+                        // vanished is a violation, and its absence is asserted after the churn.
+                        if (sawSession)
+                        {
+                            violations.Add("the session disappeared during identity churn");
+                        }
+
                         return;
                     }
+
+                    sawSession = true;
 
                     lock (current.Gate)
                     {
