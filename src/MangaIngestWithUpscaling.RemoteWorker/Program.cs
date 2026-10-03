@@ -183,7 +183,12 @@ using (var scope = app.Services.CreateScope())
     // Fail fast on version skew: an unsupported server would otherwise surface as opaque
     // Unimplemented failures for every task, dropping spools and burning retries. The server performs
     // the mirror-image check on the version we sent above.
-    if (!UpscalingProtocolVersion.IsSupported(connection.ProtocolVersion))
+    if (
+        !UpscalingProtocolVersion.IsCompatible(
+            connection.ProtocolVersion,
+            connection.MinSupportedProtocolVersion
+        )
+    )
     {
         logger.LogError(
             "The server speaks upscaling protocol version {ServerVersion} (supports {ServerMin}-{ServerVersion}), but this worker (version {WorkerVersion}) supports {Min}-{Max}. Upgrade the worker and server together.",

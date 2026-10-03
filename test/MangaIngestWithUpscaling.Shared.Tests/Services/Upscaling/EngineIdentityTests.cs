@@ -88,5 +88,40 @@ public class EngineIdentityTests
         );
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ForUpscaler_DistinguishesASameSizeFineTune()
+    {
+        // The fingerprint is relative path + size + a content prefix, so two models of the same size
+        // but different bytes must not hash the same (a same-size fine-tune). A path+size-only
+        // regression would pass this only if the prefix hash were dropped.
+        string first = Directory.CreateTempSubdirectory("engine_models_a").FullName;
+        string second = Directory.CreateTempSubdirectory("engine_models_b").FullName;
+        try
+        {
+            byte[] a = new byte[256];
+            byte[] b = new byte[256];
+            a[0] = 1;
+            b[0] = 2;
+            File.WriteAllBytes(Path.Combine(first, "model.pth"), a);
+            File.WriteAllBytes(Path.Combine(second, "model.pth"), b);
+
+            UpscalerConfig firstConfig = Config();
+            firstConfig.ModelsDirectory = first;
+            UpscalerConfig secondConfig = Config();
+            secondConfig.ModelsDirectory = second;
+
+            Assert.NotEqual(
+                EngineIdentity.ForUpscaler(firstConfig),
+                EngineIdentity.ForUpscaler(secondConfig)
+            );
+        }
+        finally
+        {
+            Directory.Delete(first, true);
+            Directory.Delete(second, true);
+        }
+    }
+
     private static UpscalerConfig Config() => new() { ModelsDirectory = "/nonexistent/models" };
 }

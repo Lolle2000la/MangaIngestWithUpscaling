@@ -6,10 +6,10 @@ namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 ///
 /// Bump <see cref="Current"/> on any incompatible wire change. When a build can still serve the
 /// previous version, leave <see cref="MinSupported"/> behind it; raise <see cref="MinSupported"/> once
-/// the older version is dropped. The handshake is bidirectional: the worker sends its
-/// <see cref="Current"/> to <c>CheckConnection</c> and the server validates it against
-/// <c>[MinSupported, Current]</c>, while the worker validates the server's <see cref="Current"/> the
-/// same way. Both sides must accept the other's <see cref="Current"/> for the pair to interoperate.
+/// the older version is dropped. The handshake is bidirectional and range-based: each side sends its
+/// <c>[MinSupported, Current]</c> range and validates the other's whole range with
+/// <see cref="IsCompatible"/>, so the two interoperate when their ranges overlap (the effective wire
+/// version is the overlap's upper bound).
 /// </summary>
 public static class UpscalingProtocolVersion
 {
@@ -22,4 +22,13 @@ public static class UpscalingProtocolVersion
     /// <summary>True when <paramref name="peerVersion"/> is within this build's supported range.</summary>
     public static bool IsSupported(int peerVersion) =>
         peerVersion >= MinSupported && peerVersion <= Current;
+
+    /// <summary>
+    /// True when this build's range [<see cref="MinSupported"/>, <see cref="Current"/>] overlaps the
+    /// peer's range [<paramref name="peerMin"/>, <paramref name="peerCurrent"/>], so the two can agree
+    /// on a common version. This is the bidirectional handshake check: each side validates the other's
+    /// whole range, not just its <c>Current</c>, so a newer-but-compatible peer is accepted.
+    /// </summary>
+    public static bool IsCompatible(int peerCurrent, int peerMin) =>
+        peerMin <= Current && MinSupported <= peerCurrent;
 }

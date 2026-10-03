@@ -951,6 +951,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                 Filename = request.OutputFilename,
                 Format = ToFormatString(request.Format),
                 Overwrite = request.Overwrite,
+                Quality = request.Quality,
             },
             Options = new WorkerJobOptions { Scale = (int)request.Scale },
         };
@@ -968,6 +969,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                 Filename = "%filename%",
                 Format = ToFormatString(request.Format),
                 Overwrite = true,
+                Quality = request.Quality,
             },
             Options = new WorkerJobOptions { Scale = (int)request.Scale },
             TotalPages = request.TotalPages,
@@ -1256,7 +1258,10 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
         if (TryGetAndTouch(error.Id, out WorkerJob? job))
         {
-            job.Fail($"Upscale worker error: {message}");
+            // Treat a worker-level error as recoverable (like a crash): it is commonly a transient
+            // engine fault (e.g. a caught CUDA OOM), and reporting it as terminal would delete the
+            // already-upscaled pages. The soft-failure cap still bounds a deterministic error.
+            job.FailCrashed($"Upscale worker error: {message}");
             return;
         }
 

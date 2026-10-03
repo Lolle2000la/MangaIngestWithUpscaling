@@ -122,6 +122,28 @@ public sealed class PageStreamClient(
                 manifest.Pages.Count
             );
 
+            // Resolve and validate the profile before starting the upload loop: mapping the manifest
+            // profile can throw (unknown enum), and it must not leave the channel uncompleted.
+            // Prefer the manifest's profile: the server computes the page output names and the
+            // content/engine identity from the profile resolved at manifest time, so the worker must
+            // produce bytes for the same profile.
+            UpscalerProfile effectiveProfile = manifest.UpscalerProfile is null
+                ? profile
+                : RemoteTaskProcessor.GetProfileFromResponse(manifest.UpscalerProfile);
+
+            var chapterRequest = new ChapterJobRequest
+            {
+                Id = $"task-{taskId}-{Guid.NewGuid():N}",
+                OutputFolder = outputDirectory,
+                Format = effectiveProfile.CompressionFormat,
+                Scale = effectiveProfile.ScalingFactor,
+                Quality = effectiveProfile.Quality,
+                // Only the missing pages are streamed, so the worker's archive_total must match, or
+                // AllPagesProcessed never becomes true on a resume and the postprocess grace period is
+                // never applied.
+                TotalPages = missing.Count,
+            };
+
             // Unbounded on purpose: OnPageDone is a synchronous worker callback, so it cannot apply
             // backpressure without blocking the worker's event reader. The records are tiny; the
             // upscaled output files they point at are deleted once uploaded, so the temp footprint is
@@ -190,25 +212,6 @@ public sealed class PageStreamClient(
                     );
                 }
             }
-
-            // Prefer the manifest's profile: the server computes the page output names and the
-            // content/engine identity from the profile resolved at manifest time, so the worker must
-            // produce bytes for the same profile.
-            UpscalerProfile effectiveProfile = manifest.UpscalerProfile is null
-                ? profile
-                : RemoteTaskProcessor.GetProfileFromResponse(manifest.UpscalerProfile);
-
-            var chapterRequest = new ChapterJobRequest
-            {
-                Id = $"task-{taskId}-{Guid.NewGuid():N}",
-                OutputFolder = outputDirectory,
-                Format = effectiveProfile.CompressionFormat,
-                Scale = effectiveProfile.ScalingFactor,
-                // Only the missing pages are streamed, so the worker's archive_total must match, or
-                // AllPagesProcessed never becomes true on a resume and the postprocess grace period is
-                // never applied.
-                TotalPages = missing.Count,
-            };
 
             await using var progressReporter = new StreamingProgressReporter(
                 client,
@@ -462,7 +465,7 @@ public sealed class PageStreamClient(
                         );
                     }
 
-                    throw new IOException(
+                    throw new InvalidOperationException(
                         $"Uploading the detection result for page {pageIndex} of task {taskId} failed: {response.Message}"
                     );
                 }
@@ -559,6 +562,7 @@ public sealed class PageStreamClient(
         int currentIndex = -1;
         string currentName = string.Empty;
         string currentPath = string.Empty;
+        long currentWritten = 0;
         var yielded = new HashSet<int>();
         try
         {
@@ -577,6 +581,7 @@ public sealed class PageStreamClient(
                     string sourceName = nameByIndex[currentIndex];
                     currentName = WorkerPageName(currentIndex, sourceName);
                     currentPath = Path.Combine(sourceDirectory, currentName);
+                    currentWritten = 0;
                     file = new FileStream(
                         currentPath,
                         FileMode.Create,
@@ -590,12 +595,25 @@ public sealed class PageStreamClient(
                 if (!chunk.Chunk.IsEmpty)
                 {
                     await file!.WriteAsync(chunk.Chunk.Memory, cancellationToken);
+                    currentWritten += chunk.Chunk.Length;
                 }
 
                 if (chunk.IsLast)
                 {
                     await file!.DisposeAsync();
                     file = null;
+
+                    // A 0-byte source entry must not be treated as a fetched page: detection would
+                    // "inspect" an empty file, swallow the decode failure and finalize the chapter
+                    // without ever looking at the page (the upscale path fails loudly because the
+                    // server rejects a 0-byte upload).
+                    if (currentWritten == 0)
+                    {
+                        throw new InvalidOperationException(
+                            $"The server sent page {currentIndex} of task {taskId} with no data."
+                        );
+                    }
+
                     yielded.Add(currentIndex);
 
                     if (resizeService is not null)
@@ -718,7 +736,7 @@ public sealed class PageStreamClient(
                     );
                 }
 
-                throw new IOException(
+                throw new InvalidOperationException(
                     $"Uploading page {upload.PageIndex} of task {taskId} failed: {response.Message}"
                 );
             }

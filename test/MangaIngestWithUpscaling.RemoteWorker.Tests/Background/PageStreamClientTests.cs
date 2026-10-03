@@ -287,7 +287,7 @@ public class PageStreamClientTests
             var worker = new FakeWorkerClient();
             var sut = CreateClient(worker);
 
-            var error = await Assert.ThrowsAsync<IOException>(() =>
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 sut.RunAsync(client, 1, Profile, CancellationToken.None)
             );
 
@@ -335,6 +335,35 @@ public class PageStreamClientTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task RunAsync_ThrowsWhenASourcePageIsEmpty()
+    {
+        string directory = Directory.CreateTempSubdirectory("page_stream_empty").FullName;
+        try
+        {
+            string source = CreateManyPageSourceCbz(directory, pageCount: 3);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination);
+            server.EmptyFetchForPage.Add(0);
+            var client = server.CreateClient();
+            var sut = CreateClient(new FakeWorkerClient());
+
+            // A 0-byte source entry must fail loudly instead of being treated as a fetched page: the
+            // detection path would "inspect" an empty file, swallow the decode failure and finalize
+            // the chapter without ever looking at the page.
+            InvalidOperationException error = await Assert.ThrowsAsync<InvalidOperationException>(
+                () =>
+                    sut.RunAsync(client, 1, Profile, CancellationToken.None)
+            );
+            Assert.Contains("with no data", error.Message);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task RunAsync_SurfacesATerminalUploadFailureOverATransientChapterCrash()
     {
         string directory = Directory.CreateTempSubdirectory("page_stream_precedence").FullName;
@@ -353,7 +382,7 @@ public class PageStreamClientTests
             };
             var sut = CreateClient(worker);
 
-            var error = await Assert.ThrowsAsync<IOException>(() =>
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 sut.RunAsync(client, 1, Profile, CancellationToken.None)
             );
 
@@ -517,6 +546,9 @@ public class PageStreamClientTests
         public HashSet<int> OmitFromFetch { get; } = new();
         public HashSet<int> FailUploadForPage { get; } = new();
         public HashSet<int> RestartUploadForPage { get; } = new();
+
+        /// <summary>Pages whose fetch yields only the terminating chunk (a 0-byte source entry).</summary>
+        public HashSet<int> EmptyFetchForPage { get; } = new();
         public Dictionary<int, byte[]> Uploaded { get; } = new();
         public bool OmitPagesWhenComplete { get; set; }
 
@@ -591,16 +623,19 @@ public class PageStreamClientTests
                 byte[] bytes = buffer.ToArray();
 
                 int chunkNumber = 0;
-                for (int offset = 0; offset < bytes.Length; offset += 4096)
+                if (!EmptyFetchForPage.Contains(index))
                 {
-                    int length = Math.Min(4096, bytes.Length - offset);
-                    yield return new PageChunk
+                    for (int offset = 0; offset < bytes.Length; offset += 4096)
                     {
-                        TaskId = 1,
-                        PageIndex = index,
-                        ChunkNumber = chunkNumber++,
-                        Chunk = ByteString.CopyFrom(bytes, offset, length),
-                    };
+                        int length = Math.Min(4096, bytes.Length - offset);
+                        yield return new PageChunk
+                        {
+                            TaskId = 1,
+                            PageIndex = index,
+                            ChunkNumber = chunkNumber++,
+                            Chunk = ByteString.CopyFrom(bytes, offset, length),
+                        };
+                    }
                 }
 
                 yield return new PageChunk

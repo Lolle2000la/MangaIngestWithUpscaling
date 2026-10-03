@@ -50,6 +50,14 @@ public interface IMangaJaNaiWorkerClient
     Task ShutdownWorkerAsync(CancellationToken cancellationToken);
 
     /// <summary>
+    /// Shuts the worker process down, optionally tearing it down even while a job is in flight. A
+    /// forced shutdown is used to free VRAM before split detection on VRAM-limited setups; the
+    /// in-flight task is requeued. Defaults to the graceful path for clients that do not distinguish.
+    /// </summary>
+    Task ShutdownWorkerAsync(bool force, CancellationToken cancellationToken) =>
+        ShutdownWorkerAsync(cancellationToken);
+
+    /// <summary>
     /// Asks the running worker to return its cached allocator blocks (VRAM) to the driver so
     /// co-tenant GPU processes can run, while keeping the worker warm. Returns <c>true</c> when
     /// the worker acknowledged the release, <c>false</c> when no worker is running, a job is in
@@ -70,6 +78,9 @@ public sealed record UpscaleJobRequest
     public required CompressionFormat Format { get; init; }
     public required ScaleFactor Scale { get; init; }
     public bool Overwrite { get; init; } = true;
+
+    /// <summary>Lossy compression quality; null uses the worker's workflow default.</summary>
+    public int? Quality { get; init; }
 }
 
 public sealed record UpscaleJobFile(string Input, string Output, string Status);
@@ -82,6 +93,9 @@ public sealed record ChapterJobRequest
     public required CompressionFormat Format { get; init; }
     public required ScaleFactor Scale { get; init; }
     public int TotalPages { get; init; }
+
+    /// <summary>Lossy compression quality; null uses the worker's workflow default.</summary>
+    public int? Quality { get; init; }
 }
 
 /// <summary>One page of a streamed chapter.</summary>

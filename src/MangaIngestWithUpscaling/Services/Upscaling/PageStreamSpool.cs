@@ -55,7 +55,13 @@ public sealed class PageStreamSpool
         && !name.StartsWith('/')
         && !name.StartsWith('\\')
         && !name.Contains(':')
-        && !name.Split('/', '\\').Any(segment => segment == "..");
+        && !name.Split('/', '\\').Any(IsUnsafeSegment);
+
+    /// <summary>
+    /// True for a path component that is a traversal or empty after Windows' trailing space/dot
+    /// stripping: ".", "..", "...", ".. ", " " and "" all normalize to a traversal or empty component.
+    /// </summary>
+    private static bool IsUnsafeSegment(string segment) => segment.TrimEnd(' ', '.').Length == 0;
 
     private readonly ConcurrentDictionary<int, PageStreamSession> _sessions = new();
     private readonly ILogger<PageStreamSpool> _logger;
@@ -303,6 +309,19 @@ public sealed class PageStreamSpool
         );
         if (result != CommitPageResult.Committed)
         {
+            try
+            {
+                File.Delete(tempPath);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(
+                    ex,
+                    "Failed to delete uncommitted page temp file {Temp}.",
+                    tempPath
+                );
+            }
+
             throw new InvalidOperationException(
                 $"Failed to commit page {pageIndex} for task {session.TaskId}: {result}."
             );
@@ -671,6 +690,25 @@ public sealed class PageStreamSpool
             {
                 // Terminal under the gate: a concurrent TryBeginAssembly must not re-run assembly on
                 // a session whose directory is being deleted.
+                session.Finalized = true;
+                return session.Directory;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Detaches one specific session (compare-and-remove), so a concurrent manifest that replaced the
+    /// task's session with a fresh one is not detached by mistake. Returns the directory to delete,
+    /// or null when this instance is no longer the task's current session.
+    /// </summary>
+    public string? Detach(PageStreamSession session)
+    {
+        if (_sessions.TryRemove(new KeyValuePair<int, PageStreamSession>(session.TaskId, session)))
+        {
+            lock (session.Gate)
+            {
                 session.Finalized = true;
                 return session.Directory;
             }

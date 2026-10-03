@@ -52,7 +52,9 @@ public class SplitDetectionService(
             var images = Directory
                 .GetFiles(inputPath)
                 .Where(f =>
-                    ImageConstants.SupportedImageExtensions.Contains(Path.GetExtension(f).ToLower())
+                    ImageConstants.SupportedImageExtensions.Contains(
+                        Path.GetExtension(f).ToLowerInvariant()
+                    )
                 )
                 .OrderBy(f => f)
                 .ToList();
@@ -102,8 +104,9 @@ public class SplitDetectionService(
             {
                 // VRAM-limited setup: even an idle worker (model weights + CUDA context)
                 // can starve detection, so tear the worker down completely. It is
-                // respawned lazily on the next upscale job.
-                await workerClient.ShutdownWorkerAsync(CancellationToken.None);
+                // respawned lazily on the next upscale job. Forced so an in-flight job cannot
+                // silently skip the teardown and leave the GPU starved (the job is requeued).
+                await workerClient.ShutdownWorkerAsync(force: true, CancellationToken.None);
             }
             else
             {

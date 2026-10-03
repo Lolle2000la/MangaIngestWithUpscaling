@@ -146,6 +146,7 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
     public async Task<bool> ReleaseGpuCacheAsync(CancellationToken cancellationToken)
     {
         Process? process;
+        StreamWriter? stdin;
         TaskCompletionSource? tcs;
         lock (_stateLock)
         {
@@ -171,19 +172,26 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
                 return false;
             }
 
+            // Send to the captured stdin, not the shared field, so a respawn cannot make us address
+            // the new process (which would mis-acknowledge the release).
+            stdin = _stdin;
             tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             _cacheReleaseTcs = tcs;
         }
 
         try
         {
-            await SendLineAsync(
-                JsonSerializer.Serialize(
-                    new DetectServerCommand("release_cache"),
-                    DetectServerJsonContext.Default.DetectServerCommand
-                ),
-                cancellationToken
-            );
+            if (stdin is not null)
+            {
+                await SendLineAsync(
+                    stdin,
+                    JsonSerializer.Serialize(
+                        new DetectServerCommand("release_cache"),
+                        DetectServerJsonContext.Default.DetectServerCommand
+                    ),
+                    cancellationToken
+                );
+            }
 
             // A healthy idle server answers immediately; the timeout only guards a wedged process.
             await tcs.Task.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
@@ -404,6 +412,11 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
             );
         }
 
+        // Capture the pid before publishing the process: the stdout reader can observe EOF and dispose
+        // the process (OnServerExited) at any point, after which reading process.Id would throw an
+        // InvalidOperationException that the caller does not treat as a fallback-eligible failure.
+        int processId = process.Id;
+
         StreamWriter stdin = process.StandardInput;
         lock (_stateLock)
         {
@@ -453,7 +466,7 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
         }
 
         TouchActivity();
-        _logger.LogInformation("Resident detection server started (pid {Pid}).", process.Id);
+        _logger.LogInformation("Resident detection server started (pid {Pid}).", processId);
     }
 
     private async Task KillServerAsync()
@@ -533,6 +546,7 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
 
         StreamWriter? stdin;
         TaskCompletionSource? cacheRelease;
+        DetectJob[] jobs;
         lock (_stateLock)
         {
             if (_process == process)
@@ -543,17 +557,32 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
                 _stdin = null;
                 cacheRelease = _cacheReleaseTcs;
                 _cacheReleaseTcs = null;
+                // Fault in-flight jobs here too. OnServerExited early-returns when _process no longer
+                // matches (a forced shutdown nulls it first), so without this a DetectAsync would
+                // block on its job.Completion for the full request timeout while holding _submitLock.
+                jobs = _jobs.Values.ToArray();
             }
             else
             {
                 stdin = null;
                 cacheRelease = null;
+                jobs = [];
             }
         }
 
         TryDispose(stdin);
         // Unblock a pending GPU-cache release so its caller does not wait the full timeout.
         cacheRelease?.TrySetCanceled();
+
+        foreach (DetectJob job in jobs)
+        {
+            job.Completion.TrySetException(
+                new DetectServerUnavailableException(
+                    "The detection server was shut down while the request was in flight."
+                )
+            );
+        }
+
         await KillAndDisposeAsync(process);
 
         _logger.LogInformation("Resident detection server process stopped.");

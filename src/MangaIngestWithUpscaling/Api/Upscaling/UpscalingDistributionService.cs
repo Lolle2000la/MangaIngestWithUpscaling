@@ -47,10 +47,17 @@ public partial class UpscalingDistributionService(
         // Validate the worker's version against this server's range. An old worker that still sends
         // the former Empty request arrives as version 0, so it is rejected here with a clear message
         // instead of failing with an opaque Unimplemented on every removed RPC.
-        if (!UpscalingProtocolVersion.IsSupported(request.ProtocolVersion))
+        if (
+            !UpscalingProtocolVersion.IsCompatible(
+                request.ProtocolVersion,
+                request.MinSupportedProtocolVersion
+            )
+        )
         {
             _logger.LogWarning(
-                "Rejecting a worker speaking upscaling protocol version {WorkerVersion} (this server supports {Min}-{Max}).",
+                "Rejecting a worker speaking upscaling protocol version {WorkerVersion} (range {WorkerMin}-{WorkerMax}; this server supports {Min}-{Max}).",
+                request.ProtocolVersion,
+                request.MinSupportedProtocolVersion,
                 request.ProtocolVersion,
                 UpscalingProtocolVersion.MinSupported,
                 UpscalingProtocolVersion.Current

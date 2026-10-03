@@ -47,7 +47,9 @@ public class SplitDetectionWorkerShutdownTests
         );
 
         _ = _workerClient.Received(1).ReleaseGpuCacheAsync(Arg.Any<CancellationToken>());
-        await _workerClient.DidNotReceive().ShutdownWorkerAsync(Arg.Any<CancellationToken>());
+        await _workerClient
+            .DidNotReceive()
+            .ShutdownWorkerAsync(Arg.Any<bool>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -64,7 +66,7 @@ public class SplitDetectionWorkerShutdownTests
             )
         );
 
-        await _workerClient.Received(1).ShutdownWorkerAsync(Arg.Any<CancellationToken>());
+        await _workerClient.Received(1).ShutdownWorkerAsync(true, Arg.Any<CancellationToken>());
         _ = _workerClient.DidNotReceive().ReleaseGpuCacheAsync(Arg.Any<CancellationToken>());
     }
 }

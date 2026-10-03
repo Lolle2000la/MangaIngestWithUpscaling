@@ -192,7 +192,7 @@ public class MangaJaNaiUpscaler(
         ),
     ];
 
-    private string ModelPath => sharedConfig.Value.ModelsDirectory;
+    private string ModelPath => sharedConfig.Value.ResolvedModelsDirectory;
 
     public async Task DownloadModelsIfNecessary(CancellationToken cancellationToken)
     {
@@ -379,6 +379,7 @@ public class MangaJaNaiUpscaler(
             OutputFilename = outputFilename,
             Format = profile.CompressionFormat,
             Scale = profile.ScalingFactor,
+            Quality = profile.Quality,
             Overwrite = true,
         };
 

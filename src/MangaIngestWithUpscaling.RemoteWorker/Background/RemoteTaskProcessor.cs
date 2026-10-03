@@ -147,6 +147,14 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 return StreamingFailureKind.Transient;
             }
 
+            if (current is IOException or UnauthorizedAccessException)
+            {
+                // A local I/O failure (computing the engine identity, reading a fetched page, or
+                // writing an upload) is transient: requeue with the spool intact rather than dropping
+                // it. A deterministic server rejection is thrown as InvalidOperationException.
+                return StreamingFailureKind.Transient;
+            }
+
             if (current is RpcException rpc)
             {
                 // The server signals "the chapter/profile/engine changed, restart" with

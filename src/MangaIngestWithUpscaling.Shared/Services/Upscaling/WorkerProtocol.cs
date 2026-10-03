@@ -112,6 +112,12 @@ public sealed record WorkerJobOutput
     public required string Filename { get; init; }
     public required string Format { get; init; }
     public bool Overwrite { get; init; }
+
+    /// <summary>
+    /// Lossy compression quality. Omitted when null so the worker falls back to its workflow default.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? Quality { get; init; }
 }
 
 public sealed record WorkerJobOptions

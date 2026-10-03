@@ -102,6 +102,7 @@ public class MangaJaNaiWorkerClientTests
             OutputFolder = "/out",
             Format = CompressionFormat.Webp,
             Scale = ScaleFactor.TwoX,
+            Quality = 93,
             TotalPages = 42,
         };
 
@@ -118,8 +119,27 @@ public class MangaJaNaiWorkerClientTests
             "webp",
             doc.RootElement.GetProperty("output").GetProperty("format").GetString()
         );
+        Assert.Equal(93, doc.RootElement.GetProperty("output").GetProperty("quality").GetInt32());
         Assert.Equal(2, doc.RootElement.GetProperty("options").GetProperty("scale").GetInt32());
         Assert.Equal(42, doc.RootElement.GetProperty("total_pages").GetInt32());
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void BuildChapterLine_OmitsQualityWhenUnset()
+    {
+        var request = new ChapterJobRequest
+        {
+            Id = "chap-1",
+            OutputFolder = "/out",
+            Format = CompressionFormat.Webp,
+            Scale = ScaleFactor.TwoX,
+        };
+
+        using JsonDocument doc = JsonDocument.Parse(
+            MangaJaNaiWorkerClient.BuildChapterLine(request)
+        );
+        Assert.False(doc.RootElement.GetProperty("output").TryGetProperty("quality", out _));
     }
 
     [Fact]

@@ -25,8 +25,15 @@ public sealed class PageContextCache
         /// Largest page (in pixels) in the source archive, computed once and reused by later
         /// manifests. The value is derived from the immutable source archive, so re-decoding the
         /// whole archive on every manifest (a resume re-manifests each attempt) is wasted work.
+        /// Written after an await from a singleton-shared entry, so use Volatile for the long.
         /// </summary>
-        public long MaxPagePixels { get; set; }
+        private long _maxPagePixels;
+
+        public long MaxPagePixels
+        {
+            get => Volatile.Read(ref _maxPagePixels);
+            set => Volatile.Write(ref _maxPagePixels, value);
+        }
     }
 
     private sealed class CachedEntry(Entry value)

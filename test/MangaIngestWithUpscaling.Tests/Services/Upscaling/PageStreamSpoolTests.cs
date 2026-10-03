@@ -649,6 +649,25 @@ public class PageStreamSpoolTests
         Assert.True(_spool.IsFinalized(session));
     }
 
+    [Theory]
+    [Trait("Category", "Unit")]
+    [InlineData("001.jpg", true)]
+    [InlineData("ch/001.jpg", true)]
+    [InlineData("ch\\001.jpg", true)]
+    [InlineData("page1..jpg", true)]
+    [InlineData("../evil.jpg", false)]
+    [InlineData("..\\evil.jpg", false)]
+    [InlineData(".. /evil.jpg", false)]
+    [InlineData(".../evil.jpg", false)]
+    [InlineData("C:/evil.jpg", false)]
+    [InlineData("C:\\evil.jpg", false)]
+    [InlineData("/etc/passwd", false)]
+    [InlineData("\\evil.jpg", false)]
+    public void IsSafeEntryName_RejectsTraversalAndWindowsForms(string name, bool expected)
+    {
+        Assert.Equal(expected, PageStreamSpool.IsSafeEntryName(name));
+    }
+
     private static byte[] ReadAll(Stream stream)
     {
         using var buffer = new MemoryStream();

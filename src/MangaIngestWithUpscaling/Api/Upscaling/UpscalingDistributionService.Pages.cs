@@ -117,7 +117,7 @@ public partial class UpscalingDistributionService
                     await AssembleUpscaledChapterAsync(pageContext, session);
                 }
 
-                DropPageSpool(pageContext.Task.Id);
+                DropPageSpool(session);
             }
             catch (PageStreamRestartException ex)
             {
@@ -129,7 +129,7 @@ public partial class UpscalingDistributionService
                 );
                 if (ex.ResetSpool)
                 {
-                    DropPageSpool(pageContext.Task.Id);
+                    DropPageSpool(session);
                     // Remove finalized (and deleted) the old session; a manifest built from it would
                     // report every page as completed against a dead spool, so the worker would do
                     // nothing. Re-create a fresh session so the chapter actually re-streams.
@@ -274,7 +274,11 @@ public partial class UpscalingDistributionService
                 // Stop early when the client has gone away instead of streaming the rest of the archive.
                 if (context.CancellationToken.IsCancellationRequested)
                 {
-                    break;
+                    context.Status = new Status(
+                        StatusCode.Cancelled,
+                        "The client cancelled the page fetch."
+                    );
+                    return;
                 }
 
                 if (
@@ -301,6 +305,7 @@ public partial class UpscalingDistributionService
                 byte[] buffer = new byte[1024 * 1024];
                 int chunkNumber = 0;
                 int bytesRead;
+                long pageBytes = 0;
                 while (
                     (
                         bytesRead = await input.ReadAsync(
@@ -310,6 +315,19 @@ public partial class UpscalingDistributionService
                     ) > 0
                 )
                 {
+                    pageBytes += bytesRead;
+                    if (pageBytes > MaxPageBytes)
+                    {
+                        // A decompression bomb: the upload direction is already capped by MaxPageBytes,
+                        // so the fetch direction must be too. Fail deterministically rather than
+                        // streaming unbounded bytes from one source entry.
+                        context.Status = new Status(
+                            StatusCode.DataLoss,
+                            $"Page {pageIndex} of task {request.TaskId} exceeds the maximum page size."
+                        );
+                        return;
+                    }
+
                     await responseStream.WriteAsync(
                         new PageChunk
                         {
@@ -778,6 +796,9 @@ public partial class UpscalingDistributionService
         try
         {
             await AssembleUpscaledChapterAsync(pageContext!, session);
+            // Drop the session while it is still marked assembling, so a concurrent manifest cannot
+            // replace it between EndAssembly and the detach and have its fresh session detached.
+            DropPageSpool(session);
         }
         catch (PageStreamRestartException ex)
         {
@@ -786,7 +807,7 @@ public partial class UpscalingDistributionService
             _logger.LogWarning(ex, "Assembly of task {TaskId} must restart.", taskId);
             if (ex.ResetSpool)
             {
-                DropPageSpool(taskId);
+                DropPageSpool(session);
             }
             else
             {
@@ -826,7 +847,6 @@ public partial class UpscalingDistributionService
             pageStreamSpool.EndAssembly(session);
         }
 
-        DropPageSpool(taskId);
         return new UploadPageResponse
         {
             Success = true,
@@ -871,14 +891,14 @@ public partial class UpscalingDistributionService
     }
 
     /// <summary>
-    /// Drops a task's page spool and cached context. Detaches (cheap) on the caller's path and runs
-    /// the potentially multi-gigabyte recursive delete off it, so a gRPC hot path does not block on
-    /// I/O.
+    /// Drops one specific session (compare-and-remove) and its cached context, offloading the delete.
+    /// Used on the finalize paths so a concurrent manifest that already replaced the task's session
+    /// is not detached by mistake.
     /// </summary>
-    private void DropPageSpool(int taskId)
+    private void DropPageSpool(PageStreamSession session)
     {
-        string? directory = pageStreamSpool.Detach(taskId);
-        pageContextCache.Remove(taskId);
+        string? directory = pageStreamSpool.Detach(session);
+        pageContextCache.Remove(session.TaskId);
         if (directory is not null)
         {
             _ = Task.Run(() => pageStreamSpool.DeleteDirectory(directory));
@@ -1140,6 +1160,18 @@ public partial class UpscalingDistributionService
                 };
             }
 
+            if (pageStreamSpool.IsFinalized(session))
+            {
+                // The spool was finalized/removed while this upload was in flight. Reporting success
+                // would tell the worker the discarded chapter is done; restart instead.
+                return new UploadDetectionResultResponse
+                {
+                    Success = false,
+                    Message = "The chapter was finalized while uploading; restart the chapter",
+                    Terminal = false,
+                };
+            }
+
             return new UploadDetectionResultResponse
             {
                 Success = true,
@@ -1151,7 +1183,7 @@ public partial class UpscalingDistributionService
         try
         {
             await FinalizeDetectionAsync(pageContext, session);
-            DropPageSpool(request.TaskId);
+            DropPageSpool(session);
 
             return new UploadDetectionResultResponse
             {
@@ -1169,7 +1201,7 @@ public partial class UpscalingDistributionService
             );
             if (ex.ResetSpool)
             {
-                DropPageSpool(request.TaskId);
+                DropPageSpool(session);
             }
             else
             {
