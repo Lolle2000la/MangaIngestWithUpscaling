@@ -136,4 +136,94 @@ public class StandardTaskProcessorGuardTests : IAsyncDisposable
             await processor.StopAsync(CancellationToken.None);
         }
     }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task Processor_RetriesADeferredApplyOnceTheBlockerFinishes()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDbContext<ApplicationDbContext>(options => _database.Configure(options));
+        var cleanup = Substitute.For<IQueueCleanup>();
+        cleanup.CleanupAsync().Returns(Task.FromResult<IReadOnlyList<int>>(Array.Empty<int>()));
+        services.AddScoped<IQueueCleanup>(_ => cleanup);
+        using ServiceProvider provider = services.BuildServiceProvider();
+
+        var scopeFactory = provider.GetRequiredService<IServiceScopeFactory>();
+        var taskQueue = new TaskQueue(
+            scopeFactory,
+            provider.GetRequiredService<ILogger<TaskQueue>>()
+        );
+        var processor = new FastDeferralStandardTaskProcessor(
+            taskQueue,
+            scopeFactory,
+            provider.GetRequiredService<ILogger<StandardTaskProcessor>>(),
+            new TaskPersistenceService(scopeFactory)
+        );
+
+        await taskQueue.EnqueueAsync(new UpscaleTask { ChapterId = 7, UpscalerProfileId = 1 });
+        await taskQueue.EnqueueAsync(new ApplySplitsTask(7, 1));
+        int applyId = taskQueue.GetStandardSnapshot().Single().Id;
+
+        var claimed = new TaskCompletionSource();
+        processor.StatusChanged += task =>
+        {
+            if (task.Id == applyId && task.Status == PersistedTaskStatus.Processing)
+            {
+                claimed.TrySetResult();
+            }
+
+            return Task.CompletedTask;
+        };
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+        await processor.StartAsync(cts.Token);
+        try
+        {
+            // Deferred while the upscale is pending.
+            await Task.Delay(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
+            Assert.False(claimed.Task.IsCompleted);
+
+            // Hold the blocker past the bounded transient-claim retry budget (250ms/1s/3s). Before
+            // deferrals had their own re-offer, the apply then sat until the 10-minute periodic replayer.
+            await Task.Delay(TimeSpan.FromSeconds(6), TestContext.Current.CancellationToken);
+            Assert.False(claimed.Task.IsCompleted);
+
+            await using (
+                ApplicationDbContext context = await _database.CreateContextAsync(
+                    TestContext.Current.CancellationToken
+                )
+            )
+            {
+                PersistedTask upscale = await context.PersistedTasks.SingleAsync(
+                    t => t.Order == 1,
+                    TestContext.Current.CancellationToken
+                );
+                upscale.Status = PersistedTaskStatus.Completed;
+                await context.SaveChangesAsync(TestContext.Current.CancellationToken);
+            }
+
+            // The apply is re-offered promptly instead of waiting for the replayer.
+            await claimed.Task.WaitAsync(
+                TimeSpan.FromSeconds(30),
+                TestContext.Current.CancellationToken
+            );
+        }
+        finally
+        {
+            await cts.CancelAsync();
+            await processor.StopAsync(CancellationToken.None);
+        }
+    }
+
+    /// <summary>Processor that re-offers a deferred task promptly, so the test does not wait 10 seconds.</summary>
+    private sealed class FastDeferralStandardTaskProcessor(
+        TaskQueue taskQueue,
+        IServiceScopeFactory scopeFactory,
+        ILogger<StandardTaskProcessor> logger,
+        ITaskPersistenceService taskPersistenceService
+    ) : StandardTaskProcessor(taskQueue, scopeFactory, logger, taskPersistenceService)
+    {
+        protected override TimeSpan DeferralRetryInterval => TimeSpan.FromMilliseconds(100);
+    }
 }

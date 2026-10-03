@@ -62,13 +62,12 @@ public class StandardTaskProcessor(
                 // ApplySplitsTask rewrites the original CBZ that a same-chapter upscale/repair/detect
                 // streams from, and this processor runs concurrently with the upscale processor, so
                 // defer it while one of those is pending or in flight to keep the chapter's chain
-                // ordered. The row stays Pending and is retried promptly (then by the periodic
-                // replayer).
-                Logger.LogInformation(
-                    "Deferring ApplySplitsTask {TaskId}: a same-chapter upscale task is pending or in flight.",
-                    task.Id
+                // ordered. A deferral is not a failure: the row stays Pending and is re-offered until the
+                // blocker finishes (only a restart leaves it to the periodic replayer).
+                DeferTask(
+                    task,
+                    "a same-chapter upscale task for this chapter is pending or in flight"
                 );
-                await RequeueTransientClaimFailureAsync(task);
                 return false;
             }
         }

@@ -25,6 +25,11 @@ public abstract class BackgroundTaskProcessorBase(
     // bounded number of times instead of hot-looping or waiting for the periodic replayer.
     // Successful claims and terminal outcomes remove the entry.
     private readonly ConcurrentDictionary<int, int> _claimAttempts = new();
+
+    // Consecutive deferrals per task, only to keep the "still waiting" trace at Debug after the first
+    // one: a task can now wait for a long-running sibling for hours, and the periodic replayer is no
+    // longer the thing that re-offers it.
+    private readonly ConcurrentDictionary<int, int> _deferrals = new();
     private CancellationTokenSource? currentStoppingToken;
     private PersistedTask? currentTask;
     private CancellationToken serviceStoppingToken;
@@ -37,6 +42,12 @@ public abstract class BackgroundTaskProcessorBase(
     /// </summary>
     protected virtual IReadOnlyList<TimeSpan> ClaimRetryBackoff { get; } =
         new[] { TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3) };
+
+    /// <summary>
+    ///     How long a deliberately deferred task waits before it is offered to the loop again. Virtual so
+    ///     tests can make it tiny.
+    /// </summary>
+    protected virtual TimeSpan DeferralRetryInterval { get; } = TimeSpan.FromSeconds(10);
 
     /// <summary>
     ///     Message logged when a task's processing throws a non-cancellation exception. Each
@@ -152,10 +163,14 @@ public abstract class BackgroundTaskProcessorBase(
     }
 
     /// <summary>
-    ///     Removes any recorded transient-claim-attempt counter for <paramref name="taskId" />,
-    ///     marking its earlier failures as resolved.
+    ///     Removes any recorded transient-claim-attempt and deferral counters for
+    ///     <paramref name="taskId" />, marking its earlier failures or waits as resolved.
     /// </summary>
-    protected void ForgetClaimAttempts(int taskId) => _claimAttempts.TryRemove(taskId, out _);
+    protected void ForgetClaimAttempts(int taskId)
+    {
+        _claimAttempts.TryRemove(taskId, out _);
+        _deferrals.TryRemove(taskId, out _);
+    }
 
     /// <summary>
     ///     Claims a Pending task. A claim failure (per-task cancellation from
@@ -407,6 +422,29 @@ public abstract class BackgroundTaskProcessorBase(
         // observe a disposed source instead of merely being cancelled on shutdown.
         _ = RetryClaimAfterBackoffAsync(task, backoff, serviceStoppingToken);
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    ///     Schedules a prompt re-offer of a task whose acquire step deferred it on purpose: it is waiting
+    ///     for another task, not failing. A deferral therefore neither consumes the bounded
+    ///     transient-claim retry budget nor trips its warning — one re-offer is outstanding at a time, and
+    ///     the row no longer being Pending ends the wait. The periodic replayer stays the backstop for a
+    ///     task left deferred by a restart.
+    /// </summary>
+    protected void DeferTask(PersistedTask task, string reason)
+    {
+        int attempt = _deferrals.AddOrUpdate(task.Id, 1, (_, current) => current + 1);
+        if (attempt == 1)
+        {
+            logger.LogInformation("Deferring task {TaskId}: {Reason}", task.Id, reason);
+        }
+        else
+        {
+            // One line per re-offer would flood the log while a blocker runs for hours.
+            logger.LogDebug("Still deferring task {TaskId}: {Reason}", task.Id, reason);
+        }
+
+        _ = RetryClaimAfterBackoffAsync(task, DeferralRetryInterval, serviceStoppingToken);
     }
 
     /// <summary>
