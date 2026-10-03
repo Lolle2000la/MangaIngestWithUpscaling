@@ -72,6 +72,9 @@ public abstract class BackgroundTaskProcessorBase(
     /// <summary>
     ///     Claims (or otherwise verifies) <paramref name="task" />. Returns <c>false</c> when it must
     ///     not run: it was dropped, its cancel was persisted, or a bounded retry was scheduled.
+    ///     An exception thrown from here is handled by <see cref="ProcessTaskAsync" /> — a cancellation
+    ///     the way a cancelled claim is, anything else as a transient failure — so no override can fault
+    ///     the processor loop.
     /// </summary>
     protected abstract Task<bool> TryAcquireTaskAsync(
         PersistedTask task,
@@ -215,7 +218,39 @@ public abstract class BackgroundTaskProcessorBase(
     /// </summary>
     protected async Task ProcessTaskAsync(PersistedTask task, CancellationToken stoppingToken)
     {
-        if (!await TryAcquireTaskAsync(task, stoppingToken))
+        bool acquired;
+        try
+        {
+            acquired = await TryAcquireTaskAsync(task, stoppingToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // CancelCurrent (removal or an explicit cancel) or shutdown cancelled the per-task token
+            // while an override was acquiring — the same-chapter guard of ApplySplitsTask queries the
+            // database there. Route it exactly like a cancelled claim so the intended cancel is
+            // persisted rather than lost, and so it cannot fault the loop: under
+            // BackgroundServiceExceptionBehavior.StopHost that would stop the whole application.
+            logger.LogInformation("Acquisition of task {TaskId} was canceled", task.Id);
+            ForgetClaimAttempts(task.Id);
+            await ApplyClaimCancellationAsync(task);
+            return;
+        }
+        catch (Exception ex)
+        {
+            // An override's acquisition step can also fail transiently (a database error while
+            // deciding whether the task may run yet). Reconcile the row and retry promptly, exactly as
+            // a failed claim does, so the failure cannot fault the processor either.
+            logger.LogError(
+                ex,
+                "Failed to acquire task {TaskId}; returning it to Pending for retry",
+                task.Id
+            );
+            await ReturnToPendingForReplayAsync(task);
+            await RequeueTransientClaimFailureAsync(task);
+            return;
+        }
+
+        if (!acquired)
         {
             return;
         }
