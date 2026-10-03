@@ -24,6 +24,13 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
     private static readonly TimeSpan ReadyTimeout = TimeSpan.FromMinutes(2);
 
     /// <summary>
+    ///     How long a failed startup is remembered before the server is attempted again. Retrying per
+    ///     request would burn a full <see cref="ReadyTimeout" /> on every page of a chapter on a host
+    ///     where the model never loads in time — before each request falls back to the CLI anyway.
+    /// </summary>
+    private static readonly TimeSpan UnavailableCooldown = TimeSpan.FromMinutes(5);
+
+    /// <summary>
     /// Encoding for the detection server's stdin. Must not emit a UTF-8 BOM: the server does
     /// <c>json.loads(line)</c>, which rejects a leading BOM, so a BOM would make every request fail
     /// to parse and stall for the full request timeout.
@@ -47,6 +54,7 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
     private TaskCompletionSource? _cacheReleaseTcs;
     private string? _currentJobId;
     private bool _shuttingDown;
+    private DateTime _unavailableUntilUtc;
     private CancellationTokenSource? _watchdogCts;
 
     private long _lastActivityTicks = DateTime.UtcNow.Ticks;
@@ -294,6 +302,46 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
     }
 
     private async Task EnsureServerAsync(CancellationToken cancellationToken)
+    {
+        DateTime unavailableUntil;
+        lock (_stateLock)
+        {
+            unavailableUntil = _unavailableUntilUtc;
+        }
+
+        if (unavailableUntil > DateTime.UtcNow)
+        {
+            // A failed startup is remembered, so the caller's CLI fallback is taken immediately instead
+            // of paying another full ready wait on a host where the model does not load in time.
+            throw new DetectServerUnavailableException(
+                $"The resident detection server is not retried until {unavailableUntil:u} after a failed startup."
+            );
+        }
+
+        try
+        {
+            await StartServerAsync(cancellationToken);
+        }
+        catch (DetectServerUnavailableException ex)
+        {
+            DateTime until = DateTime.UtcNow + UnavailableCooldown;
+            lock (_stateLock)
+            {
+                _unavailableUntilUtc = until;
+            }
+
+            // Logged here rather than per request: the cause is the start failure, and every request in
+            // the cooldown window would otherwise repeat the whole stderr tail.
+            _logger.LogWarning(
+                ex,
+                "Resident detection server startup failed; not retrying it until {Until:u}.",
+                until
+            );
+            throw;
+        }
+    }
+
+    private async Task StartServerAsync(CancellationToken cancellationToken)
     {
         Process? existing;
         lock (_stateLock)

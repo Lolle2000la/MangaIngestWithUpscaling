@@ -133,6 +133,55 @@ public class DetectServerClientTests
         }
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task DetectAsync_RemembersAStartupFailureInsteadOfRespawningPerRequest()
+    {
+        string? python = FindPython();
+        Assert.SkipWhen(python is null, "Python 3 is not available on this machine.");
+
+        string starts = Path.Combine(Path.GetTempPath(), $"detect_starts_{Guid.NewGuid():N}.txt");
+        using var layout = new LayoutScope(CountingFailingServer(starts));
+        using var host = BuildClient(python!, out DetectServerClient client);
+        string image = CreateTempImage();
+        try
+        {
+            DetectServerUnavailableException first =
+                await Assert.ThrowsAsync<DetectServerUnavailableException>(() =>
+                    client.DetectAsync(image, TestContext.Current.CancellationToken)
+                );
+            Assert.Contains("Failed to load model", first.Message);
+
+            // The next request must answer from the remembered failure: on a host where the model never
+            // loads in time, re-attempting per page would spend a full ready timeout before every page's
+            // CLI fallback (a startup that never becomes ready fails through this same path).
+            DetectServerUnavailableException second =
+                await Assert.ThrowsAsync<DetectServerUnavailableException>(() =>
+                    client.DetectAsync(image, TestContext.Current.CancellationToken)
+                );
+            Assert.Contains("not retried until", second.Message);
+
+            // The proof that it did not retry: the stand-in server was started exactly once.
+            Assert.Single(File.ReadAllLines(starts));
+        }
+        finally
+        {
+            File.Delete(image);
+            File.Delete(starts);
+        }
+    }
+
+    /// <summary>Failing server that records every start, so a retry would be visible.</summary>
+    private static string CountingFailingServer(string startsPath) =>
+        $$"""
+            import sys
+
+            with open(r"{{startsPath}}", "a", encoding="utf-8") as handle:
+                handle.write("start\n")
+            print("Failed to load model: simulated traceback", file=sys.stderr)
+            sys.exit(1)
+            """;
+
     private static ServiceProvider BuildClient(string python, out DetectServerClient client)
     {
         string workDir = Directory.CreateTempSubdirectory("detect_server_work").FullName;
