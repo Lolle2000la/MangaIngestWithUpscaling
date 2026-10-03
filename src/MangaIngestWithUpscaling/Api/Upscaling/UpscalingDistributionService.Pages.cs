@@ -6,6 +6,7 @@ using Google.Protobuf;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.Upscaling;
 using MangaIngestWithUpscaling.Shared.Configuration;
@@ -1350,6 +1351,14 @@ public partial class UpscalingDistributionService
         // Build the CBZ in the destination directory so the final move is a same-filesystem rename
         // (atomic on Unix); deleting the old CBZ before a cross-volume move could lose it if the move
         // failed.
+        if (destinationDirectory is not null)
+        {
+            // A hard kill between building this temp and moving it leaves it behind, and nothing else
+            // reclaims it (the spool sweeps only its own roots), so an orphan would sit in the library
+            // for good. Sweep what an earlier run left before adding another.
+            FileSystemHelpers.DeleteStaleTempSiblings(destinationDirectory, _logger);
+        }
+
         string tempCbz = Path.Combine(
             destinationDirectory ?? Path.GetTempPath(),
             $".upscaled_{pageContext.Task.Id}_{Guid.NewGuid():N}.tmp"
