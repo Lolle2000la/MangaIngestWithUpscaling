@@ -70,10 +70,22 @@ public sealed class PageStreamSpool
         name.Length >= 2 && char.IsAsciiLetter(name[0]) && name[1] == ':';
 
     /// <summary>
-    /// True for a path component that is a traversal or empty after Windows' trailing space/dot
-    /// stripping: ".", "..", "...", ".. ", " " and "" all normalize to a traversal or empty component.
+    /// True for a path component that is a parent traversal. Windows removes trailing spaces and dots
+    /// from a component, so ".. " normalizes to ".." there. A "." component and an empty component
+    /// (from "a//b") collapse harmlessly and must be preserved: rejecting them silently dropped pages
+    /// while the chapter was still reported upscaled.
     /// </summary>
-    private static bool IsUnsafeSegment(string segment) => segment.TrimEnd(' ', '.').Length == 0;
+    private static bool IsUnsafeSegment(string segment)
+    {
+        // Anything with a non-dot/space character is an ordinary name.
+        if (segment.TrimEnd(' ', '.').Length > 0)
+        {
+            return false;
+        }
+
+        // Only dots and spaces: a parent traversal when it has at least two dots ("..", ".. ", "...").
+        return segment.Count(c => c == '.') >= 2;
+    }
 
     private readonly ConcurrentDictionary<int, PageStreamSession> _sessions = new();
     private readonly ILogger<PageStreamSpool> _logger;

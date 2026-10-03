@@ -77,6 +77,37 @@ public class PageManifestBuilderTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void BuildPageDescriptors_KeepsBenignDotAndEmptySegments()
+    {
+        string directory = Directory.CreateTempSubdirectory("manifest_dot").FullName;
+        try
+        {
+            string source = CreateCbz(
+                directory,
+                ("./001.jpg", new byte[] { 1 }),
+                ("a//b.jpg", new byte[] { 2 }),
+                ("a/./c.jpg", new byte[] { 3 })
+            );
+
+            List<SpoolPageDescriptor> pages = UpscalingDistributionService.BuildPageDescriptors(
+                source,
+                Profile()
+            );
+
+            // "." and empty components collapse harmlessly; dropping them lost pages silently.
+            Assert.Equal(3, pages.Count);
+            Assert.Equal("./001.jpg", pages[0].SourceName);
+            Assert.Equal("a//b.jpg", pages[1].SourceName);
+            Assert.Equal("a/./c.jpg", pages[2].SourceName);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void BuildPageDescriptors_PreservesFoldersAndDedupesRepeatedEntries()
     {
         string directory = Directory.CreateTempSubdirectory("manifest_nested").FullName;
