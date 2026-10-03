@@ -4,6 +4,7 @@ using AutoRegisterInject;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.Analysis;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.Integrations;
@@ -97,6 +98,12 @@ public class SplitApplicationService(
         Directory.CreateDirectory(originalExtractDir);
         Directory.CreateDirectory(newOriginalDir);
 
+        // Each replacement is built next to the file it replaces and moved onto it, so the swap is a
+        // rename instead of a copy that rewrites the chapter in place (see TempSiblingPathFor). Both
+        // are removed below when the apply never reaches its move.
+        string tempOriginalCbz = FileSystemHelpers.TempSiblingPathFor(originalCbzPath, "splits");
+        string? tempUpscaledCbz = null;
+
         try
         {
             // 1. Process Original
@@ -145,7 +152,10 @@ public class SplitApplicationService(
             await UpdateComicInfoAsync(originalExtractDir, newOriginalDir);
 
             // Repack Original
-            var tempOriginalCbz = Path.Combine(tempRoot, "original.cbz");
+            FileSystemHelpers.DeleteStaleTempSiblings(
+                Path.GetDirectoryName(originalCbzPath)!,
+                logger
+            );
             ZipFile.CreateFromDirectory(newOriginalDir, tempOriginalCbz);
 
             // Replace Original
@@ -305,7 +315,14 @@ public class SplitApplicationService(
                     await UpdateComicInfoAsync(upscaledExtractDir, newUpscaledDir);
 
                     // Repack Upscaled
-                    var tempUpscaledCbz = Path.Combine(tempRoot, "upscaled.cbz");
+                    tempUpscaledCbz = FileSystemHelpers.TempSiblingPathFor(
+                        chapter.UpscaledFullPath,
+                        "splits"
+                    );
+                    FileSystemHelpers.DeleteStaleTempSiblings(
+                        Path.GetDirectoryName(chapter.UpscaledFullPath)!,
+                        logger
+                    );
                     ZipFile.CreateFromDirectory(newUpscaledDir, tempUpscaledCbz);
 
                     // Replace Upscaled
@@ -321,10 +338,39 @@ public class SplitApplicationService(
         }
         finally
         {
+            DeleteUnusedReplacement(tempOriginalCbz);
+            if (tempUpscaledCbz is not null)
+            {
+                DeleteUnusedReplacement(tempUpscaledCbz);
+            }
+
             if (Directory.Exists(tempRoot))
             {
                 Directory.Delete(tempRoot, true);
             }
+        }
+    }
+
+    /// <summary>
+    ///     Removes a replacement the apply built but never moved onto its destination, so a failed run
+    ///     does not leave a full-size temp in the library.
+    /// </summary>
+    private void DeleteUnusedReplacement(string tempPath)
+    {
+        try
+        {
+            if (File.Exists(tempPath))
+            {
+                File.Delete(tempPath);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to delete the unused split replacement {Temp}.",
+                tempPath
+            );
         }
     }
 

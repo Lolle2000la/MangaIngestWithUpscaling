@@ -595,6 +595,174 @@ public class SplitApplicationServiceTests : IAsyncDisposable
             .OnSplitsAppliedAsync(chapter.Id, 1, Arg.Any<CancellationToken>());
     }
 
+    [Fact]
+    public async Task ApplySplitsAsync_ReplacesTheChapterByRenameSoAReaderKeepsTheArchiveItOpened()
+    {
+        // Replacing a chapter used to be a File.Move from the apply's scratch space under the system
+        // temp directory, which is usually a different mount than the library: that fallback copies into
+        // the destination's inode, so a worker streaming pages from the chapter read a half-written
+        // archive. Building the replacement next to the chapter makes the swap a rename. /dev/shm is a
+        // separate mount from /tmp on Linux, which is the shape the bug needs.
+        string libraryRoot = Path.Combine(SharedMemoryRoot, $"split_rename_{Guid.NewGuid():N}");
+        Assert.SkipWhen(
+            !DirectoryCanLiveOnAnotherFilesystem(libraryRoot),
+            NoSecondFilesystemSkipReason
+        );
+
+        try
+        {
+            var library = new Library
+            {
+                Name = "Rename Library",
+                NotUpscaledLibraryPath = Path.Combine(libraryRoot, "original"),
+            };
+            _dbContext.Libraries.Add(library);
+            await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+            Directory.CreateDirectory(library.NotUpscaledLibraryPath);
+
+            var manga = new Manga
+            {
+                PrimaryTitle = "Rename Manga",
+                LibraryId = library.Id,
+                Library = library,
+            };
+            _dbContext.MangaSeries.Add(manga);
+            await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+            var chapter = new Chapter
+            {
+                FileName = "chapter1.cbz",
+                RelativePath = "manga/chapter1.cbz",
+                MangaId = manga.Id,
+                Manga = manga,
+                IsUpscaled = false,
+            };
+            _dbContext.Chapters.Add(chapter);
+            await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+            var originalCbzPath = Path.Combine(
+                library.NotUpscaledLibraryPath,
+                chapter.RelativePath
+            );
+            CreateTestCbz(originalCbzPath, "page1.png");
+
+            _dbContext.StripSplitFindings.Add(
+                new StripSplitFinding
+                {
+                    ChapterId = chapter.Id,
+                    DetectorVersion = 1,
+                    PageFileName = "page1",
+                    SplitJson = JsonSerializer.Serialize(
+                        new SplitDetectionResult
+                        {
+                            OriginalHeight = 1000,
+                            Splits = [new DetectedSplit { YOriginal = 500, Confidence = 0.9 }],
+                        }
+                    ),
+                }
+            );
+            await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+            _splitApplier
+                .ApplySplitsToImage(
+                    Arg.Any<string>(),
+                    Arg.Any<List<DetectedSplit>>(),
+                    Arg.Any<string>()
+                )
+                .Returns(callInfo =>
+                {
+                    var outputDir = callInfo.ArgAt<string>(2);
+                    var part1 = Path.Combine(outputDir, "page1_part1.png");
+                    var part2 = Path.Combine(outputDir, "page1_part2.png");
+                    File.WriteAllText(part1, "dummy");
+                    File.WriteAllText(part2, "dummy");
+                    return new List<string> { part1, part2 };
+                });
+
+            // How a worker holds the chapter open while it streams pages out of it.
+            using FileStream openedBefore = new(
+                originalCbzPath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete
+            );
+
+            await _service.ApplySplitsAsync(chapter.Id, 1, TestContext.Current.CancellationToken);
+
+            // The handle still sees the archive it opened; a copy into that inode would have rewritten
+            // the bytes underneath the reader mid-stream.
+            using (var stillOpen = new ZipArchive(openedBefore, ZipArchiveMode.Read))
+            {
+                Assert.Equal(
+                    new[] { "page1.png" },
+                    stillOpen.Entries.Select(e => e.FullName).ToArray()
+                );
+            }
+
+            // The chapter itself did get the split result.
+            using var replaced = ZipFile.OpenRead(originalCbzPath);
+            Assert.Equal(
+                new[] { "page1_part1.png", "page1_part2.png" },
+                replaced
+                    .Entries.Select(e => e.FullName)
+                    .OrderBy(n => n, StringComparer.Ordinal)
+                    .ToArray()
+            );
+        }
+        finally
+        {
+            if (Directory.Exists(libraryRoot))
+            {
+                Directory.Delete(libraryRoot, true);
+            }
+        }
+    }
+
+    private const string SharedMemoryRoot = "/dev/shm";
+
+    private const string NoSecondFilesystemSkipReason =
+        "Needs a library on a filesystem other than the process's temp directory (/dev/shm on Linux) "
+        + "to exercise a cross-filesystem replacement.";
+
+    /// <summary>
+    ///     True when <paramref name="probePath" /> can be created on a mount distinct from the one
+    ///     holding <see cref="Path.GetTempPath" />. Distinct mounts are the point: a rename between them
+    ///     fails with EXDEV, which is when File.Move falls back to a copying in-place rewrite.
+    /// </summary>
+    private static bool DirectoryCanLiveOnAnotherFilesystem(string probePath)
+    {
+        try
+        {
+            if (!Directory.Exists(SharedMemoryRoot))
+            {
+                return false;
+            }
+
+            if (
+                string.Equals(
+                    new DriveInfo(Path.GetTempPath()).Name,
+                    new DriveInfo(SharedMemoryRoot).Name,
+                    StringComparison.Ordinal
+                )
+            )
+            {
+                return false;
+            }
+
+            Directory.CreateDirectory(probePath);
+            string probe = Path.Combine(probePath, "probe");
+            File.WriteAllText(probe, "probe");
+            File.Delete(probe);
+            return true;
+        }
+        catch (Exception)
+        {
+            // No separate mount (or not writable): the test is skipped rather than reported as a pass.
+            return false;
+        }
+    }
+
     private void CreateTestCbz(string path, params string[] imageNames)
     {
         var tempExtractDir = Path.Combine(_tempDir, $"extract_{Guid.NewGuid()}");
