@@ -6,6 +6,7 @@ using Xunit;
 
 namespace MangaIngestWithUpscaling.Tests.Services.Upscaling;
 
+[Collection("PageStreamSpoolSharedRoot")]
 public class PageStreamSpoolTests
 {
     private readonly PageStreamSpool _spool = new(Substitute.For<ILogger<PageStreamSpool>>());
@@ -702,7 +703,7 @@ public class PageStreamSpoolTests
     [InlineData("page1..jpg", true)]
     // A colon is legal on Linux and must not silently drop the page; only a drive prefix is unsafe.
     [InlineData("Chapter 1: Intro/001.jpg", true)]
-    [InlineData("a:b.jpg", false)]
+    [InlineData("a:b.jpg", true)]
     // "." and empty components collapse harmlessly; only a parent traversal is unsafe.
     [InlineData("./001.jpg", true)]
     [InlineData("a//b.jpg", true)]

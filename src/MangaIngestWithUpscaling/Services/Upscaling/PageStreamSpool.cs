@@ -63,11 +63,15 @@ public sealed class PageStreamSpool
         && !name.Split('/', '\\').Any(IsUnsafeSegment);
 
     /// <summary>
-    ///     True for a Windows drive-relative or absolute prefix ("C:", "C:\", "C:evil"), which must not
-    ///     be interpreted as a drive path even when the host is Linux.
+    ///     True for a Windows absolute drive prefix ("C:\", "C:/"), which must not be interpreted as a
+    ///     drive path even when the host is Linux. A drive-relative "C:evil" and a legal Linux name like
+    ///     "a:b.jpg" are not rejected: dropping them silently lost pages.
     /// </summary>
     private static bool IsWindowsDriveForm(string name) =>
-        name.Length >= 2 && char.IsAsciiLetter(name[0]) && name[1] == ':';
+        name.Length >= 3
+        && char.IsAsciiLetter(name[0])
+        && name[1] == ':'
+        && (name[2] == '/' || name[2] == '\\');
 
     /// <summary>
     /// True for a path component that is a parent traversal. Windows removes trailing spaces and dots

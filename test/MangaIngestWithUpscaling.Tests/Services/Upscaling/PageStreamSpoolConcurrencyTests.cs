@@ -13,6 +13,7 @@ namespace MangaIngestWithUpscaling.Tests.Services.Upscaling;
 /// chapter, one-shot assembly, no session lost to a concurrent finalize) are only meaningful when
 /// operations actually overlap.
 /// </summary>
+[Collection("PageStreamSpoolSharedRoot")]
 public class PageStreamSpoolConcurrencyTests
 {
     private const string Identity = "identity";
@@ -753,3 +754,11 @@ public class PageStreamSpoolConcurrencyTests
     /// <summary>Payload marker that identifies the engine that produced a page.</summary>
     private static byte MarkerFor(string identity) => identity == IdentityA ? (byte)1 : (byte)2;
 }
+
+/// <summary>
+/// The spool sweeps the shared process-global spool parent, so its test classes must not run in
+/// parallel: one class deliberately ages a live root while another calls SweepStale, and a parallel
+/// sweeper would reclaim the other's live root nondeterministically.
+/// </summary>
+[CollectionDefinition("PageStreamSpoolSharedRoot", DisableParallelization = true)]
+public class PageStreamSpoolSharedRootCollection;
