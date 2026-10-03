@@ -192,6 +192,47 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
 
     [Fact]
     [Trait("Category", "Integration")]
+    public async Task AssemblyStorageFailure_KeepsTheSpoolAndLeavesTheTaskRetryable()
+    {
+        var client = new RemoteUpscalingServiceClient(_channel);
+        var sut = CreatePageStreamClient(new FakeWorkerClient());
+
+        // A directory where the assembled CBZ belongs makes the final same-filesystem move fail with an
+        // IOException — the disk-full/flaky-mount class the page-write path already treats as transient.
+        // Terminalising the task here would delete a chapter's worth of already-upscaled pages.
+        Directory.CreateDirectory(_upscaledPath);
+
+        try
+        {
+            await sut.RunAsync(client, _taskId, _profile, TestContext.Current.CancellationToken);
+        }
+        catch (Exception)
+        {
+            // The worker surfaces the failed finalize; the server-side state is what this asserts.
+        }
+
+        PageStreamSpool spool = _app.Services.GetRequiredService<PageStreamSpool>();
+        PageStreamSession? session = spool.TryGetSession(_taskId);
+        Assert.NotNull(session);
+        Assert.Equal(
+            new[] { 0, 1 },
+            spool.GetCompletedPages(session!).OrderBy(index => index).ToArray()
+        );
+
+        await using ApplicationDbContext context = await _database.CreateContextAsync(
+            TestContext.Current.CancellationToken
+        );
+        PersistedTask task = await context.PersistedTasks.FirstAsync(
+            t => t.Id == _taskId,
+            TestContext.Current.CancellationToken
+        );
+        // Never terminalised: the worker restarts the chapter with the spool intact.
+        Assert.NotEqual(PersistedTaskStatus.Failed, task.Status);
+        Assert.Equal(0, task.RetryCount);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
     public async Task StreamsAChapterOverRealGrpcAndMarksItUpscaled()
     {
         var client = new RemoteUpscalingServiceClient(_channel);

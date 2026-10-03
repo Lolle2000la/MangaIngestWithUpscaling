@@ -154,6 +154,27 @@ public partial class UpscalingDistributionService
             }
             catch (Exception ex)
             {
+                if (IsTransientStorageFailure(ex))
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "Finalizing task {TaskId} hit a storage failure; the worker must retry.",
+                        pageContext.Task.Id
+                    );
+                    // Unavailable rather than Internal: the worker classifies a permanent status as a
+                    // terminal failure and would drop the spool this branch exists to preserve.
+                    context.Status = new Status(
+                        StatusCode.Unavailable,
+                        "Finalizing the chapter hit a storage failure; retry"
+                    );
+                    return new PageManifestResponse
+                    {
+                        TaskId = pageContext.Task.Id,
+                        TaskIdentity = pageContext.Identity,
+                        TaskType = ToProtoTaskType(pageContext.Kind),
+                    };
+                }
+
                 // Do not report success: the worker would return cleanly and the task would linger
                 // in Processing. Mark it failed so it is retried or surfaced, and tell the worker.
                 _logger.LogError(
@@ -701,7 +722,7 @@ public partial class UpscalingDistributionService
                 // chapter so the already-upscaled pages are preserved. The soft-failure cap bounds a
                 // persistent failure, so it cannot spin forever. A non-I/O failure is a bug and stays
                 // terminal.
-                bool terminal = ex is not (IOException or UnauthorizedAccessException);
+                bool terminal = !IsTransientStorageFailure(ex);
                 return new UploadPageResponse
                 {
                     Success = false,
@@ -837,6 +858,23 @@ public partial class UpscalingDistributionService
         }
         catch (Exception ex)
         {
+            if (IsTransientStorageFailure(ex))
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Assembly of task {TaskId} hit a storage failure; keeping the spool for a retry.",
+                    taskId
+                );
+                return new UploadPageResponse
+                {
+                    Success = false,
+                    Message = ex.Message,
+                    TaskId = taskId,
+                    PageIndex = pageIndex,
+                    Terminal = false,
+                };
+            }
+
             _logger.LogError(ex, "Failed to assemble upscaled chapter for task {TaskId}", taskId);
             // Mirror the manifest complete-path: mark the task failed rather than relying solely on
             // the worker to report it, which may never arrive if the connection dropped.
@@ -1242,6 +1280,21 @@ public partial class UpscalingDistributionService
         }
         catch (Exception ex)
         {
+            if (IsTransientStorageFailure(ex))
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Finalizing detection for task {TaskId} hit a storage failure; keeping the spool for a retry.",
+                    request.TaskId
+                );
+                return new UploadDetectionResultResponse
+                {
+                    Success = false,
+                    Message = ex.Message,
+                    Terminal = false,
+                };
+            }
+
             _logger.LogError(
                 ex,
                 "Failed to process page-streamed detection results for task {TaskId}",
@@ -1712,6 +1765,26 @@ public partial class UpscalingDistributionService
             _logger.LogDebug(ex, "Could not compute the max page size for {Source}.", sourcePath);
             return 0;
         }
+    }
+
+    /// <summary>
+    ///     True when <paramref name="ex" /> — or something it wraps — is a local storage failure: a full
+    ///     disk, a flaky mount, a read-only volume. That is the class of error the spool exists to
+    ///     absorb, so every page-write, assembly and finalize path treats it the same way: keep the
+    ///     spool and let the worker restart the chapter, instead of deleting a chapter's worth of
+    ///     already-upscaled pages.
+    /// </summary>
+    private static bool IsTransientStorageFailure(Exception ex)
+    {
+        for (Exception? current = ex; current is not null; current = current.InnerException)
+        {
+            if (current is IOException or UnauthorizedAccessException)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>Marks a task failed, swallowing and logging any failure to do so.</summary>
