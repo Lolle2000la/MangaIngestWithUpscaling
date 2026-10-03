@@ -53,16 +53,20 @@ public class EngineIdentityTests
 
     [Fact]
     [Trait("Category", "Unit")]
-    public void ForUpscaler_IgnoresDeviceSelection()
+    public void ForUpscaler_DistinguishesBackendsButNotDeviceIndex()
     {
-        // A CUDA box and a ROCm box with the same models/preprocessing produce the same pixels, so
-        // device selection must not invalidate a chapter's spool on a cross-device hand-off.
+        // The accelerator backend is part of the identity: a CUDA and a ROCm run can produce different
+        // pixels (different kernels/precision), so they must never mix. The device index within a
+        // backend is not hashed, so a same-backend hand-off keeps the spool.
         UpscalerConfig cuda = Config();
+        UpscalerConfig cudaOtherDevice = Config();
+        cudaOtherDevice.SelectedDeviceIndex = 3;
         UpscalerConfig rocm = Config();
         rocm.PreferredGpuBackend = GpuBackend.ROCm;
         rocm.SelectedDeviceIndex = 3;
 
-        Assert.Equal(EngineIdentity.ForUpscaler(cuda), EngineIdentity.ForUpscaler(rocm));
+        Assert.Equal(EngineIdentity.ForUpscaler(cuda), EngineIdentity.ForUpscaler(cudaOtherDevice));
+        Assert.NotEqual(EngineIdentity.ForUpscaler(cuda), EngineIdentity.ForUpscaler(rocm));
     }
 
     [Fact]

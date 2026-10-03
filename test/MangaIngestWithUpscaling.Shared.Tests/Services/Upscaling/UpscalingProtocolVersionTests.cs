@@ -19,43 +19,49 @@ public class UpscalingProtocolVersionTests
 
     [Fact]
     [Trait("Category", "Unit")]
-    public void IsCompatible_RequiresThePeerToSpeakOurCurrentVersion()
+    public void IsCompatible_AcceptsOverlappingRangesAndRejectsDisjointOnes()
     {
-        // A peer whose range spans our Current is accepted.
+        // A newer-but-compatible peer: its Current is above ours but its Min reaches into our range.
+        Assert.True(
+            UpscalingProtocolVersion.IsCompatible(
+                UpscalingProtocolVersion.Current + 1,
+                UpscalingProtocolVersion.Current
+            )
+        );
+        // Exactly our range.
         Assert.True(
             UpscalingProtocolVersion.IsCompatible(
                 UpscalingProtocolVersion.Current,
                 UpscalingProtocolVersion.MinSupported
             )
         );
-        Assert.True(
-            UpscalingProtocolVersion.IsCompatible(
-                UpscalingProtocolVersion.Current,
-                UpscalingProtocolVersion.Current
-            )
-        );
-
-        // A newer peer is rejected until the two sides negotiate a shared version: it would keep using
-        // its own Current while this build uses ours.
-        Assert.False(
-            UpscalingProtocolVersion.IsCompatible(
-                UpscalingProtocolVersion.Current + 1,
-                UpscalingProtocolVersion.Current
-            )
-        );
-        Assert.False(
-            UpscalingProtocolVersion.IsCompatible(
-                UpscalingProtocolVersion.Current + 1,
-                UpscalingProtocolVersion.Current + 1
-            )
-        );
-
         // A peer whose whole range is below ours (an old worker that dropped our version).
         Assert.False(
             UpscalingProtocolVersion.IsCompatible(
                 UpscalingProtocolVersion.MinSupported - 1,
                 UpscalingProtocolVersion.MinSupported - 1
             )
+        );
+        // A peer that only speaks versions above ours.
+        Assert.False(
+            UpscalingProtocolVersion.IsCompatible(
+                UpscalingProtocolVersion.Current + 1,
+                UpscalingProtocolVersion.Current + 1
+            )
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void Negotiated_IsTheUpperBoundOfTheOverlap()
+    {
+        Assert.Equal(
+            UpscalingProtocolVersion.Current,
+            UpscalingProtocolVersion.Negotiated(UpscalingProtocolVersion.Current + 1)
+        );
+        Assert.Equal(
+            UpscalingProtocolVersion.MinSupported,
+            UpscalingProtocolVersion.Negotiated(UpscalingProtocolVersion.MinSupported)
         );
     }
 }

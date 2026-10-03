@@ -17,14 +17,16 @@ public static class EngineIdentity
 {
     /// <summary>
     /// Identity of the upscaler: the preprocessing configuration, the effective compute mode (CPU vs
-    /// GPU), the app/engine build, the resolved workflow (appstate2.json) and the model files under
-    /// <see cref="UpscalerConfig.ModelsDirectory"/>. The accelerator backend (CUDA/ROCm) is
-    /// deliberately excluded so a cross-device hand-off keeps the spool; that assumes the same models
-    /// and preprocessing produce the same pixels on every backend. This holds for the bundled models
-    /// in practice, but it is an assumption rather than a guarantee — a backend that diverges must not
-    /// have its pages mixed into another's chapter. Models are fingerprinted by relative path, size
-    /// and a content prefix — stable across workers with identical models and far cheaper than hashing
-    /// the ~gigabytes of weights, while still distinguishing a same-size fine-tune.
+    /// GPU) and accelerator backend, the app/engine build, the resolved workflow (appstate2.json) and
+    /// the model files under <see cref="UpscalerConfig.ModelsDirectory"/>. The specific GPU index is
+    /// deliberately excluded so a hand-off between two GPUs of the same backend keeps the spool; that
+    /// assumes the same models and preprocessing produce the same pixels on every device of a backend.
+    /// The torch/backend/driver version is not available here and is also assumed stable. Both are
+    /// assumptions rather than guarantees — a backend or runtime that diverges must not have its pages
+    /// mixed into another's chapter. Models are fingerprinted by relative path, size and a 64 KiB
+    /// sample from the head, middle and tail of each file — stable across workers with identical models
+    /// and far cheaper than hashing the ~gigabytes of weights, while still distinguishing a same-size
+    /// fine-tune that diverges past the first window.
     /// </summary>
     public static string ForUpscaler(UpscalerConfig config)
     {
@@ -60,6 +62,10 @@ public static class EngineIdentity
             // So UseCPU=true and (UseCPU=false, SelectedDeviceIndex=0) must hash the same and differ
             // from a GPU run (SelectedDeviceIndex > 0).
             .Append(config.UseCPU || config.SelectedDeviceIndex == 0)
+            .Append('|')
+            // The accelerator backend, so a CUDA and a ROCm run never mix. The GPU index itself is not
+            // hashed, so a same-backend hand-off keeps the spool.
+            .Append(config.PreferredGpuBackend)
             .Append('|');
 
         foreach (ImageFormatConversionRule rule in config.ImageFormatConversionRules ?? [])
