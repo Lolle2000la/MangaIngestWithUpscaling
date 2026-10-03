@@ -221,7 +221,9 @@ public class MetadataHandlingService(ILogger<MetadataHandlingService> logger)
                 originalFile,
                 upscaledFile
             );
-            return new PageDifferenceResult([], []);
+            // Distinguish "no differences" from "could not read": the repair path classifies a corrupt
+            // archive as terminal instead of a transient restart.
+            return new PageDifferenceResult([], []) { Corrupt = true };
         }
         catch (Exception ex)
         {

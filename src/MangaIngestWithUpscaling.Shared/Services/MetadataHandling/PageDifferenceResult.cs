@@ -25,6 +25,13 @@ public class PageDifferenceResult
     /// </summary>
     public bool CanRepair => MissingPages.Count > 0 || ExtraPages.Count > 0;
 
+    /// <summary>
+    /// True when the analysis could not read one of the archives because it is malformed, rather than
+    /// because the page sets match. Callers that must tell "no differences" from "corrupt" (the repair
+    /// path) check this.
+    /// </summary>
+    public bool Corrupt { get; init; }
+
     public PageDifferenceResult(IEnumerable<string> missingPages, IEnumerable<string> extraPages)
     {
         MissingPages = missingPages.ToList().AsReadOnly();

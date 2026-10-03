@@ -1086,6 +1086,39 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
 
     [Fact]
     [Trait("Category", "Integration")]
+    public async Task GetPageManifest_RepairPath_ClassifiesACorruptArchiveAsDataLoss()
+    {
+        // The repair context resolves by diffing the source against the upscaled chapter; a malformed
+        // archive must be terminal (DataLoss) rather than a restart the worker retries to the cap.
+        Directory.CreateDirectory(Path.GetDirectoryName(_upscaledPath)!);
+        CreateSourceCbz(_upscaledPath);
+        _metadata
+            .AnalyzePageDifferencesAsync(Arg.Any<string?>(), Arg.Any<string?>())
+            .Returns(
+                new PageDifferenceResult(Array.Empty<string>(), Array.Empty<string>())
+                {
+                    Corrupt = true,
+                }
+            );
+
+        var client = new RemoteUpscalingServiceClient(_channel);
+        RpcException ex = await Assert.ThrowsAsync<RpcException>(async () =>
+            await client.GetPageManifestAsync(
+                new RemotePageManifestRequest
+                {
+                    TaskId = _repairTaskId,
+                    EngineIdentity = UpscalerEngineIdentity,
+                },
+                deadline: DateTime.UtcNow.AddSeconds(30),
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+
+        Assert.Equal(StatusCode.DataLoss, ex.StatusCode);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
     public async Task RepairsAMissingPageOverRealGrpcAndMergesIt()
     {
         // The upscaled chapter is missing "001"; the source still has it.

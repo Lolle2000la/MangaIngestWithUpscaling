@@ -51,6 +51,26 @@ public class MetadataHandlingServiceTests
     }
 
     [Fact]
+    public async Task AnalyzePageDifferencesAsync_FlagsACorruptArchive()
+    {
+        string corrupt = Path.Combine(Path.GetTempPath(), $"corrupt_{Guid.NewGuid():N}.cbz");
+        await File.WriteAllTextAsync(corrupt, "not a zip", TestContext.Current.CancellationToken);
+        try
+        {
+            var result = await _service.AnalyzePageDifferencesAsync(corrupt, "nonexistent.cbz");
+
+            // Reported as "no differences", but flagged so the repair path can classify it as terminal
+            // instead of a transient restart.
+            Assert.Empty(result.MissingPages);
+            Assert.True(result.Corrupt);
+        }
+        finally
+        {
+            File.Delete(corrupt);
+        }
+    }
+
+    [Fact]
     public async Task WriteComicInfoAsync_DoesNotThrow_WhenFileDoesNotExist()
     {
         // Act & Assert

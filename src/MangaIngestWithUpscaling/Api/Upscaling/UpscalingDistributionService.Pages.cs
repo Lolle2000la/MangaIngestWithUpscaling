@@ -1633,6 +1633,19 @@ public partial class UpscalingDistributionService
                     sourcePath,
                     chapter.UpscaledFullPath
                 );
+                if (differences.Corrupt)
+                {
+                    // AnalyzePageDifferencesAsync reports a malformed archive as an empty result; the
+                    // repair path must classify it as terminal (the handlers map Corrupt to DataLoss)
+                    // rather than as a transient restart the worker retries to the soft-failure cap.
+                    _logger.LogWarning(
+                        "A source archive for repair task {TaskId} is corrupt.",
+                        taskId
+                    );
+                    resolution.Corrupt = true;
+                    return null;
+                }
+
                 if (differences.MissingPages.Count == 0)
                 {
                     pageContextCache.Remove(task.Id);
