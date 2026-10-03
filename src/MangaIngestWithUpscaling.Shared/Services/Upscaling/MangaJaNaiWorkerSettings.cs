@@ -33,7 +33,7 @@ public static class MangaJaNaiWorkerSettings
 
         if (root is JsonObject obj)
         {
-            obj["ModelsDirectory"] = config.ModelsDirectory;
+            obj["ModelsDirectory"] = config.ResolvedModelsDirectory;
             obj["UseFp16"] = config.UseFp16;
             obj["UseCpu"] = config.UseCPU;
             // In the backend's device indexing scheme, index 0 is CPU.

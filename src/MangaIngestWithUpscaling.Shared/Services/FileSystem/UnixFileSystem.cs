@@ -151,7 +151,11 @@ public class UnixFileSystem(
     }
 
     /// <inheritdoc/>
-    public void Move(string sourceFileName, string destFileName)
+    public void Move(string sourceFileName, string destFileName) =>
+        Move(sourceFileName, destFileName, overwrite: false);
+
+    /// <inheritdoc/>
+    public void Move(string sourceFileName, string destFileName, bool overwrite)
     {
         // Retrieve source file's permissions
         if (Syscall.stat(sourceFileName, out Stat sourceStat) != 0)
@@ -159,7 +163,7 @@ public class UnixFileSystem(
             Logger.LogWarning("Unable to get status for {sourceFileName}.", sourceFileName);
         }
 
-        File.Move(sourceFileName, destFileName);
+        File.Move(sourceFileName, destFileName, overwrite);
 
         UnixPermissionsConfig usedPermissions = permissionsConfig.Value with { };
 

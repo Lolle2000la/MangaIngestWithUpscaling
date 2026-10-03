@@ -74,32 +74,7 @@ public class ImageResizeService(
             throw new FileNotFoundException(localizer["Error_InputCbzFileNotFound", inputCbzPath]);
         }
 
-        if (options.MaxDimension.HasValue && options.MaxDimension.Value < 0)
-        {
-            throw new ArgumentException(
-                localizer["Error_MaxDimensionMustBePositive"],
-                nameof(options)
-            );
-        }
-
-        if (options.EnableSmartDownscale)
-        {
-            if (options.SmartDownscaleThreshold <= 0)
-            {
-                throw new ArgumentException(
-                    localizer["Error_SmartDownscaleThresholdMustBePositive"],
-                    nameof(options)
-                );
-            }
-
-            if (options.SmartDownscaleFactor <= 0 || options.SmartDownscaleFactor >= 1)
-            {
-                throw new ArgumentException(
-                    localizer["Error_SmartDownscaleFactorOutOfRange"],
-                    nameof(options)
-                );
-            }
-        }
+        Validate(options);
 
         string tempDir = Path.Combine(Path.GetTempPath(), $"manga_preprocess_{Guid.NewGuid()}");
         string tempCbzPath = Path.Combine(
@@ -128,6 +103,84 @@ public class ImageResizeService(
             logger.LogDebug("Created preprocessed temporary CBZ at {TempPath}", tempCbzPath);
 
             return new TempResizedCbz(tempCbzPath, this);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, true);
+            }
+        }
+    }
+
+    public async Task PreprocessImageInPlaceAsync(
+        string imagePath,
+        ImagePreprocessingOptions options,
+        CancellationToken cancellationToken
+    )
+    {
+        // Validate like the whole-CBZ path: the per-image pipeline swallows a per-image failure, so a
+        // bad smart-downscale configuration would otherwise be silently ignored and the page upscaled
+        // without the downscale the engine identity claims.
+        Validate(options);
+
+        // Reuse the directory pipeline (which owns the per-image logic) on a private copy, then move
+        // the single result back over the original so the caller keeps the same path.
+        string tempDir = Path.Combine(
+            Path.GetTempPath(),
+            $"manga_preprocess_page_{Guid.NewGuid()}"
+        );
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            string workingPath = Path.Combine(tempDir, Path.GetFileName(imagePath));
+            File.Copy(imagePath, workingPath, overwrite: true);
+
+            try
+            {
+                await ProcessImagesInDirectory(
+                    tempDir,
+                    options,
+                    cancellationToken,
+                    throwOnError: true
+                );
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // Match the whole-CBZ path, which copies a page it cannot preprocess through: keep the
+                // original so the page is still upscaled (the engine handles its own decode failure)
+                // rather than failing the whole chapter over one bad page. The original is only
+                // replaced on success, so a mid-write failure cannot truncate it either.
+                logger.LogWarning(
+                    ex,
+                    "Preprocessing {ImagePath} failed; keeping the original.",
+                    imagePath
+                );
+                return;
+            }
+
+            string[] results = Directory.GetFiles(tempDir, "*", SearchOption.AllDirectories);
+            if (results.Length == 1)
+            {
+                File.Move(results[0], imagePath, overwrite: true);
+            }
+            else if (results.Length == 0)
+            {
+                logger.LogWarning(
+                    "Preprocessing {ImagePath} produced no output; keeping the original.",
+                    imagePath
+                );
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    $"Preprocessing {imagePath} produced {results.Length} files for one image."
+                );
+            }
         }
         finally
         {
@@ -214,10 +267,46 @@ public class ImageResizeService(
         }
     }
 
+    /// <summary>
+    /// Validates the preprocessing options. Shared by the whole-CBZ and the in-place (streamed) paths
+    /// so a bad smart-downscale configuration fails fast in both instead of being silently swallowed
+    /// per image.
+    /// </summary>
+    private void Validate(ImagePreprocessingOptions options)
+    {
+        if (options.MaxDimension.HasValue && options.MaxDimension.Value < 0)
+        {
+            throw new ArgumentException(
+                localizer["Error_MaxDimensionMustBePositive"],
+                nameof(options)
+            );
+        }
+
+        if (options.EnableSmartDownscale)
+        {
+            if (options.SmartDownscaleThreshold <= 0)
+            {
+                throw new ArgumentException(
+                    localizer["Error_SmartDownscaleThresholdMustBePositive"],
+                    nameof(options)
+                );
+            }
+
+            if (options.SmartDownscaleFactor <= 0 || options.SmartDownscaleFactor >= 1)
+            {
+                throw new ArgumentException(
+                    localizer["Error_SmartDownscaleFactorOutOfRange"],
+                    nameof(options)
+                );
+            }
+        }
+    }
+
     private async Task ProcessImagesInDirectory(
         string directory,
         ImagePreprocessingOptions options,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        bool throwOnError = false
     )
     {
         var imageFiles = Directory
@@ -246,6 +335,13 @@ public class ImageResizeService(
                     if (ex is OperationCanceledException)
                         throw;
                     logger.LogWarning(ex, "Failed to process image: {ImagePath}", imagePath);
+                    if (throwOnError)
+                    {
+                        // The in-place path moves the single result over the original; swallowing a
+                        // mid-write failure would replace it with a truncated file.
+                        throw;
+                    }
+
                     return ValueTask.CompletedTask; // Continue processing other images even if one fails
                 }
             }

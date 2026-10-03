@@ -125,20 +125,6 @@ public class RepairUpscaleTask : BaseTask, IChapterTask
             return;
         }
 
-        if (!differences.CanRepair)
-        {
-            logger.LogWarning(
-                "Chapter \"{chapterFileName}\" of {seriesTitle} cannot be repaired - will fall back to full re-upscale",
-                chapter.FileName,
-                chapter.Manga.PrimaryTitle
-            );
-
-            // Fall back to full upscale by creating a regular UpscaleTask
-            var fallbackTask = new UpscaleTask(chapter, upscalerProfile);
-            await fallbackTask.ProcessAsync(services, cancellationToken);
-            return;
-        }
-
         var upscaler = services.GetRequiredService<IUpscaler>();
         var repairService = services.GetRequiredService<IRepairService>();
         try

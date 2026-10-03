@@ -19,7 +19,8 @@ public class RepairService : IRepairService
         PageDifferenceResult differences,
         string originalPath,
         string upscaledPath,
-        ILogger logger
+        ILogger logger,
+        bool prepareMissingPagesCbz = true
     )
     {
         string tempWorkDir = Path.Combine(Path.GetTempPath(), $"manga_repair_{Guid.NewGuid()}");
@@ -87,8 +88,9 @@ public class RepairService : IRepairService
             }
         }
 
-        // Create CBZ with missing pages (only if there are missing pages)
-        if (differences.MissingPages.Count > 0)
+        // Create CBZ with missing pages (only if there are missing pages). Skipped for the remote
+        // page-streaming path, which reads the missing pages from the original source.
+        if (prepareMissingPagesCbz && differences.MissingPages.Count > 0)
         {
             ZipFile.CreateFromDirectory(tempMissingDir, tempMissingCbz);
         }

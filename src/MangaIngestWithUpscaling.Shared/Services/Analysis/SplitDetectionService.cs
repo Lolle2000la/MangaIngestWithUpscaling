@@ -15,6 +15,7 @@ namespace MangaIngestWithUpscaling.Shared.Services.Analysis;
 public class SplitDetectionService(
     IPythonService pythonService,
     IMangaJaNaiWorkerClient workerClient,
+    IDetectServerClient detectServer,
     IOptions<UpscalerConfig> upscalerConfig,
     ILogger<SplitDetectionService> logger,
     IStringLocalizer<SplitDetectionService> localizer
@@ -22,23 +23,23 @@ public class SplitDetectionService(
 {
     public const int CURRENT_DETECTOR_VERSION = 1;
 
-    private const string SubmodulePath = "backend/src/manga-vert-split-nn";
-    private const string ScriptName = "detect_breaks.py";
-    private const string ModelPath = "models/BCE Only (v8)/final_deployment/best_model.pth";
-    private const string ConfigPath = "models/BCE Only (v8)/final_deployment/model_config.json";
-
     public async Task<List<SplitDetectionResult>> DetectSplitsAsync(
         string inputPath,
         IProgress<UpscaleProgress>? progress = null,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        bool releaseUpscalerGpu = true
     )
     {
         // The persistent upscaling worker keeps its models and the PyTorch caching
         // allocator resident on the GPU, which can starve the per-image detection
         // process of VRAM on smaller GPUs. By default we ask it to release its cached
         // VRAM (it stays warm and is reused by the next upscale job); when configured,
-        // it is shut down entirely for maximum free VRAM.
-        await ReleaseUpscalerGpuResourcesAsync();
+        // it is shut down entirely for maximum free VRAM. Callers that detect many images
+        // in a row (the page-streaming worker) release once and pass false afterwards.
+        if (releaseUpscalerGpu)
+        {
+            await ReleaseUpscalerGpuResourcesAsync();
+        }
 
         var results = new List<SplitDetectionResult>();
 
@@ -51,7 +52,9 @@ public class SplitDetectionService(
             var images = Directory
                 .GetFiles(inputPath)
                 .Where(f =>
-                    ImageConstants.SupportedImageExtensions.Contains(Path.GetExtension(f).ToLower())
+                    ImageConstants.SupportedImageExtensions.Contains(
+                        Path.GetExtension(f).ToLowerInvariant()
+                    )
                 )
                 .OrderBy(f => f)
                 .ToList();
@@ -101,8 +104,9 @@ public class SplitDetectionService(
             {
                 // VRAM-limited setup: even an idle worker (model weights + CUDA context)
                 // can starve detection, so tear the worker down completely. It is
-                // respawned lazily on the next upscale job.
-                await workerClient.ShutdownWorkerAsync(CancellationToken.None);
+                // respawned lazily on the next upscale job. Forced so an in-flight job cannot
+                // silently skip the teardown and leave the GPU starved (the job is requeued).
+                await workerClient.ShutdownWorkerAsync(force: true, CancellationToken.None);
             }
             else
             {
@@ -120,15 +124,39 @@ public class SplitDetectionService(
         }
     }
 
+    /// <summary>
+    /// Detects one image through the resident detection server, falling back to the per-image CLI
+    /// when the server cannot be started or spoken to (e.g. a missing script or Python environment).
+    /// </summary>
     private async Task<SplitDetectionResult> DetectSingleImageAsync(
         string imagePath,
         CancellationToken cancellationToken
     )
     {
-        var baseDir = AppContext.BaseDirectory;
-        var scriptPath = Path.Combine(baseDir, SubmodulePath, ScriptName);
-        var checkpointPath = Path.Combine(baseDir, SubmodulePath, ModelPath);
-        var configPath = Path.Combine(baseDir, SubmodulePath, ConfigPath);
+        try
+        {
+            return await detectServer.DetectAsync(imagePath, cancellationToken);
+        }
+        catch (DetectServerUnavailableException ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Resident detection server unavailable; falling back to the detection CLI for {ImagePath}.",
+                imagePath
+            );
+        }
+
+        return await DetectSingleImageViaCliAsync(imagePath, cancellationToken);
+    }
+
+    private async Task<SplitDetectionResult> DetectSingleImageViaCliAsync(
+        string imagePath,
+        CancellationToken cancellationToken
+    )
+    {
+        var scriptPath = SplitDetectionLayout.ScriptPath;
+        var checkpointPath = SplitDetectionLayout.CheckpointPath;
+        var configPath = SplitDetectionLayout.ConfigPath;
 
         if (!File.Exists(scriptPath))
         {
@@ -190,6 +218,12 @@ public class SplitDetectionService(
                 }
                 throw;
             }
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancellation is not a per-image detection failure: swallowing it here would upload a
+            // spurious "detection failed" result for the page instead of stopping the chapter.
+            throw;
         }
         catch (Exception ex)
         {

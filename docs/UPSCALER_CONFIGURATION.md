@@ -93,7 +93,7 @@ The environment variable for each setting follows the ASP.NET Core convention:
 | Setting | ENV variable | Default | Description |
 |---|---|---|---|
 | `PreferredGpuBackend` | `Ingest_Upscaler__PreferredGpuBackend` | `Auto` | Which GPU backend PyTorch should use. See [values](#preferredgpubackend-values). |
-| `SelectedDeviceIndex` | `Ingest_Upscaler__SelectedDeviceIndex` | `0` | GPU index when multiple GPUs are present. |
+| `SelectedDeviceIndex` | `Ingest_Upscaler__SelectedDeviceIndex` | `1` | Device index passed to PyTorch: `0` selects CPU, `1` is the first GPU, `2` the second, and so on. |
 | `UseFp16` | `Ingest_Upscaler__UseFp16` | `true` | Use half-precision (FP16) inference. Recommended for modern GPUs; turn off for CPU or older hardware. |
 | `UseCPU` | `Ingest_Upscaler__UseCPU` | `false` | Force CPU inference even when a GPU is available. |
 
@@ -135,6 +135,7 @@ Example — store the Python environment on a separate (larger) volume:
 | `EnableSmartDownscale` | `Ingest_Upscaler__EnableSmartDownscale` | `false` | Detect and downscale cheaply-upscaled images before AI upscaling — see [Smart Downscale](SMART_DOWNSCALE.md). |
 | `SmartDownscaleThreshold` | `Ingest_Upscaler__SmartDownscaleThreshold` | `15.0` | Laplacian std-dev below which an image is considered cheaply upscaled. Lower = stricter; higher = more aggressive. |
 | `SmartDownscaleFactor` | `Ingest_Upscaler__SmartDownscaleFactor` | `0.75` | Fallback scale factor (e.g. `0.75` = 75 %) used when the FFT cliff detector finds no clear cutoff frequency. |
+| `DetectServerRequestTimeout` | `Ingest_Upscaler__DetectServerRequestTimeout` | `00:10:00` | Maximum time a single request to the resident split-detection server may run before it is cancelled and the server killed; the caller then falls back to the per-image CLI, so a wedged detector cannot hang a task. `0` disables the guard. |
 
 ```yaml
     environment:

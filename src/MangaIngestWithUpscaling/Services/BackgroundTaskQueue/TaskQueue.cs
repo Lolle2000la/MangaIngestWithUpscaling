@@ -114,8 +114,7 @@ public class TaskQueue : ITaskQueue, IHostedService
             is UpscaleTask
                 or RenameUpscaledChaptersSeriesTask
                 or RepairUpscaleTask
-                or DetectSplitCandidatesTask
-                or ApplySplitsTask;
+                or DetectSplitCandidatesTask;
 
     public async Task EnqueueAsync<T>(T taskData)
         where T : BaseTask
@@ -736,14 +735,6 @@ public class TaskQueue : ITaskQueue, IHostedService
             var task = _upscaleTasks.Min;
             _upscaleTasks.Remove(task!);
             return task;
-        }
-    }
-
-    public PersistedTask? PeekUpscale()
-    {
-        lock (_upscaleTasksLock)
-        {
-            return _upscaleTasks.Count == 0 ? null : _upscaleTasks.Min;
         }
     }
 

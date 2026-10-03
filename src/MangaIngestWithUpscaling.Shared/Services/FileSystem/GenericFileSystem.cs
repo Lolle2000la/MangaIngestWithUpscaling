@@ -20,6 +20,12 @@ public class GenericFileSystem : IFileSystem
     }
 
     /// <inheritdoc/>
+    public void Move(string sourceFileName, string destFileName, bool overwrite)
+    {
+        File.Move(sourceFileName, destFileName, overwrite);
+    }
+
+    /// <inheritdoc/>
     public bool FileExists(string path)
     {
         return File.Exists(path);

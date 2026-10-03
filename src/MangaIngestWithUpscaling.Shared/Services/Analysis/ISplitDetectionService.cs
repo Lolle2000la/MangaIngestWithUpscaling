@@ -8,6 +8,7 @@ public interface ISplitDetectionService
     Task<List<SplitDetectionResult>> DetectSplitsAsync(
         string inputPath,
         IProgress<UpscaleProgress>? progress = null,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        bool releaseUpscalerGpu = true
     );
 }

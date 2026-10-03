@@ -4,7 +4,11 @@ using AutoRegisterInject;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.Analysis;
 using MangaIngestWithUpscaling.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Helpers;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.Integrations;
+using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
@@ -13,6 +17,7 @@ using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
+using Microsoft.Extensions.Options;
 
 namespace MangaIngestWithUpscaling.Services.Analysis;
 
@@ -22,6 +27,8 @@ public class SplitApplicationService(
     ISplitProcessingCoordinator splitProcessingCoordinator,
     ISplitApplier splitApplier,
     IUpscaler upscaler,
+    ITaskQueue taskQueue,
+    IOptions<UpscalerConfig> upscalerConfig,
     ILogger<SplitApplicationService> logger,
     IStringLocalizer<SplitApplicationService> localizer
 ) : ISplitApplicationService
@@ -35,6 +42,9 @@ public class SplitApplicationService(
         var chapter = await dbContext
             .Chapters.Include(c => c.Manga)
                 .ThenInclude(m => m.Library)
+                    .ThenInclude(l => l.UpscalerProfile)
+            .Include(c => c.Manga)
+                .ThenInclude(m => m.UpscalerProfilePreference)
             .Include(c => c.UpscalerProfile)
             .FirstOrDefaultAsync(c => c.Id == chapterId, cancellationToken);
 
@@ -88,6 +98,12 @@ public class SplitApplicationService(
         Directory.CreateDirectory(originalExtractDir);
         Directory.CreateDirectory(newOriginalDir);
 
+        // Each replacement is built next to the file it replaces and moved onto it, so the swap is a
+        // rename instead of a copy that rewrites the chapter in place (see TempSiblingPathFor). Both
+        // are removed below when the apply never reaches its move.
+        string tempOriginalCbz = FileSystemHelpers.TempSiblingPathFor(originalCbzPath, "splits");
+        string? tempUpscaledCbz = null;
+
         try
         {
             // 1. Process Original
@@ -136,127 +152,182 @@ public class SplitApplicationService(
             await UpdateComicInfoAsync(originalExtractDir, newOriginalDir);
 
             // Repack Original
-            var tempOriginalCbz = Path.Combine(tempRoot, "original.cbz");
+            FileSystemHelpers.DeleteStaleTempSiblings(
+                Path.GetDirectoryName(originalCbzPath)!,
+                logger
+            );
             ZipFile.CreateFromDirectory(newOriginalDir, tempOriginalCbz);
 
             // Replace Original
             File.Move(tempOriginalCbz, originalCbzPath, true);
 
-            // 2. Process Upscaled if exists
+            // 2. Process Upscaled if exists. Resolve the effective profile: a chapter can be upscaled
+            // with an inherited library/manga profile and no explicit FK (e.g. LibraryIntegrityChecker
+            // sets IsUpscaled without one), so the explicit FK alone would skip the rebuild and leave
+            // a stale upscaled CBZ in RemoteOnly.
+            var effectiveProfile =
+                chapter.UpscalerProfile ?? chapter.Manga?.EffectiveUpscalerProfile;
             if (
                 chapter.IsUpscaled
                 && chapter.UpscaledFullPath != null
                 && File.Exists(chapter.UpscaledFullPath)
-                && chapter.UpscalerProfile != null
+                && effectiveProfile != null
             )
             {
-                logger.LogInformation("Applying splits to upscaled chapter {ChapterId}", chapterId);
-                Directory.CreateDirectory(upscaledExtractDir);
-                Directory.CreateDirectory(newUpscaledDir);
-
-                ZipFile.ExtractToDirectory(chapter.UpscaledFullPath, upscaledExtractDir);
-
-                var upscaledImages = Directory
-                    .GetFiles(upscaledExtractDir)
-                    .Where(f =>
-                        ImageConstants.SupportedImageExtensions.Contains(Path.GetExtension(f))
-                    )
-                    .ToList();
-
-                // Collect pages that need to be upscaled (split pages from original)
-                var splitPagesToUpscale = new Dictionary<string, List<string>>(
-                    StringComparer.OrdinalIgnoreCase
-                ); // old page name -> new split page paths
-
-                foreach (var imagePath in upscaledImages)
+                if (upscalerConfig.Value.RemoteOnly)
                 {
-                    var fileNameWithoutExt = Path.GetFileNameWithoutExtension(imagePath);
-
-                    if (splitPagesMap.TryGetValue(fileNameWithoutExt, out var splitPages))
+                    // A remote-only server has no local ML backend, so it cannot upscale the new
+                    // split pages inline. Enqueue a repair task: the worker upscales only the pages
+                    // that differ (the new split pages) and merges them into the existing upscaled
+                    // CBZ. A plain UpscaleTask would be skipped because the chapter is already
+                    // upscaled, leaving the stale upscaled CBZ in place.
+                    //
+                    // OnSplitsAppliedAsync (below) enqueues a repair of its own when the library
+                    // upscales on ingest; only enqueue one here when it will not, so the upscaled CBZ
+                    // is never left stale (the inline path always updates it).
+                    bool repairedOnApplied =
+                        chapter.Manga?.Library?.UpscaleOnIngest == true
+                        && chapter.Manga.ShouldUpscale != false
+                        && chapter.Manga.Library.UpscalerProfileId != null;
+                    if (!repairedOnApplied)
                     {
-                        // This page was split in the original. Instead of trying to split the upscaled
-                        // version with coordinate scaling (which doesn't work correctly with
-                        // MaxDimensionBeforeUpscaling), we'll upscale the new split pages from the original.
-                        splitPagesToUpscale[fileNameWithoutExt] = splitPages;
-                        // Don't copy this old upscaled page - it will be replaced by split upscaled pages
-                    }
-                    else
-                    {
-                        // Copy unsplit image
-                        var destPath = Path.Combine(newUpscaledDir, Path.GetFileName(imagePath));
-                        File.Copy(imagePath, destPath);
+                        logger.LogInformation(
+                            "Remote-only mode: deferring the split-chapter repair for {ChapterId} to a worker.",
+                            chapterId
+                        );
+                        await taskQueue.EnqueueAsync(
+                            new RepairUpscaleTask(chapter, effectiveProfile)
+                        );
                     }
                 }
-
-                // Upscale the split pages if there are any
-                if (splitPagesToUpscale.Count > 0)
+                else
                 {
                     logger.LogInformation(
-                        "Upscaling {Count} split pages for chapter {ChapterId}",
-                        splitPagesToUpscale.Values.Sum(v => v.Count),
+                        "Applying splits to upscaled chapter {ChapterId}",
                         chapterId
                     );
+                    Directory.CreateDirectory(upscaledExtractDir);
+                    Directory.CreateDirectory(newUpscaledDir);
 
-                    // Create a temporary CBZ with just the split pages
-                    var splitPagesCbzDir = Path.Combine(tempRoot, "split_pages_to_upscale");
-                    Directory.CreateDirectory(splitPagesCbzDir);
+                    ZipFile.ExtractToDirectory(chapter.UpscaledFullPath, upscaledExtractDir);
 
-                    foreach (var splitPages in splitPagesToUpscale.Values)
-                    {
-                        foreach (var splitPagePath in splitPages)
-                        {
-                            var destPath = Path.Combine(
-                                splitPagesCbzDir,
-                                Path.GetFileName(splitPagePath)
-                            );
-                            File.Copy(splitPagePath, destPath);
-                        }
-                    }
-
-                    var splitPagesCbz = Path.Combine(tempRoot, "split_pages.cbz");
-                    var upscaledSplitPagesCbz = Path.Combine(tempRoot, "split_pages_upscaled.cbz");
-
-                    ZipFile.CreateFromDirectory(splitPagesCbzDir, splitPagesCbz);
-
-                    // Upscale the split pages
-                    await upscaler.Upscale(
-                        splitPagesCbz,
-                        upscaledSplitPagesCbz,
-                        chapter.UpscalerProfile,
-                        cancellationToken
-                    );
-
-                    // Extract upscaled split pages and add them to the new upscaled directory
-                    var upscaledSplitPagesDir = Path.Combine(tempRoot, "upscaled_split_pages");
-                    Directory.CreateDirectory(upscaledSplitPagesDir);
-                    ZipFile.ExtractToDirectory(upscaledSplitPagesCbz, upscaledSplitPagesDir);
-
-                    var upscaledSplitImages = Directory
-                        .GetFiles(upscaledSplitPagesDir)
+                    var upscaledImages = Directory
+                        .GetFiles(upscaledExtractDir)
                         .Where(f =>
                             ImageConstants.SupportedImageExtensions.Contains(Path.GetExtension(f))
                         )
                         .ToList();
 
-                    foreach (var upscaledSplitImage in upscaledSplitImages)
+                    // Collect pages that need to be upscaled (split pages from original)
+                    var splitPagesToUpscale = new Dictionary<string, List<string>>(
+                        StringComparer.OrdinalIgnoreCase
+                    ); // old page name -> new split page paths
+
+                    foreach (var imagePath in upscaledImages)
                     {
-                        var destPath = Path.Combine(
-                            newUpscaledDir,
-                            Path.GetFileName(upscaledSplitImage)
-                        );
-                        File.Copy(upscaledSplitImage, destPath);
+                        var fileNameWithoutExt = Path.GetFileNameWithoutExtension(imagePath);
+
+                        if (splitPagesMap.TryGetValue(fileNameWithoutExt, out var splitPages))
+                        {
+                            // This page was split in the original. Instead of trying to split the upscaled
+                            // version with coordinate scaling (which doesn't work correctly with
+                            // MaxDimensionBeforeUpscaling), we'll upscale the new split pages from the original.
+                            splitPagesToUpscale[fileNameWithoutExt] = splitPages;
+                            // Don't copy this old upscaled page - it will be replaced by split upscaled pages
+                        }
+                        else
+                        {
+                            // Copy unsplit image
+                            var destPath = Path.Combine(
+                                newUpscaledDir,
+                                Path.GetFileName(imagePath)
+                            );
+                            File.Copy(imagePath, destPath);
+                        }
                     }
+
+                    // Upscale the split pages if there are any
+                    if (splitPagesToUpscale.Count > 0)
+                    {
+                        logger.LogInformation(
+                            "Upscaling {Count} split pages for chapter {ChapterId}",
+                            splitPagesToUpscale.Values.Sum(v => v.Count),
+                            chapterId
+                        );
+
+                        // Create a temporary CBZ with just the split pages
+                        var splitPagesCbzDir = Path.Combine(tempRoot, "split_pages_to_upscale");
+                        Directory.CreateDirectory(splitPagesCbzDir);
+
+                        foreach (var splitPages in splitPagesToUpscale.Values)
+                        {
+                            foreach (var splitPagePath in splitPages)
+                            {
+                                var destPath = Path.Combine(
+                                    splitPagesCbzDir,
+                                    Path.GetFileName(splitPagePath)
+                                );
+                                File.Copy(splitPagePath, destPath);
+                            }
+                        }
+
+                        var splitPagesCbz = Path.Combine(tempRoot, "split_pages.cbz");
+                        var upscaledSplitPagesCbz = Path.Combine(
+                            tempRoot,
+                            "split_pages_upscaled.cbz"
+                        );
+
+                        ZipFile.CreateFromDirectory(splitPagesCbzDir, splitPagesCbz);
+
+                        // Upscale the split pages
+                        await upscaler.Upscale(
+                            splitPagesCbz,
+                            upscaledSplitPagesCbz,
+                            effectiveProfile,
+                            cancellationToken
+                        );
+
+                        // Extract upscaled split pages and add them to the new upscaled directory
+                        var upscaledSplitPagesDir = Path.Combine(tempRoot, "upscaled_split_pages");
+                        Directory.CreateDirectory(upscaledSplitPagesDir);
+                        ZipFile.ExtractToDirectory(upscaledSplitPagesCbz, upscaledSplitPagesDir);
+
+                        var upscaledSplitImages = Directory
+                            .GetFiles(upscaledSplitPagesDir)
+                            .Where(f =>
+                                ImageConstants.SupportedImageExtensions.Contains(
+                                    Path.GetExtension(f)
+                                )
+                            )
+                            .ToList();
+
+                        foreach (var upscaledSplitImage in upscaledSplitImages)
+                        {
+                            var destPath = Path.Combine(
+                                newUpscaledDir,
+                                Path.GetFileName(upscaledSplitImage)
+                            );
+                            File.Copy(upscaledSplitImage, destPath);
+                        }
+                    }
+
+                    // Update ComicInfo in newUpscaledDir
+                    await UpdateComicInfoAsync(upscaledExtractDir, newUpscaledDir);
+
+                    // Repack Upscaled
+                    tempUpscaledCbz = FileSystemHelpers.TempSiblingPathFor(
+                        chapter.UpscaledFullPath,
+                        "splits"
+                    );
+                    FileSystemHelpers.DeleteStaleTempSiblings(
+                        Path.GetDirectoryName(chapter.UpscaledFullPath)!,
+                        logger
+                    );
+                    ZipFile.CreateFromDirectory(newUpscaledDir, tempUpscaledCbz);
+
+                    // Replace Upscaled
+                    File.Move(tempUpscaledCbz, chapter.UpscaledFullPath, true);
                 }
-
-                // Update ComicInfo in newUpscaledDir
-                await UpdateComicInfoAsync(upscaledExtractDir, newUpscaledDir);
-
-                // Repack Upscaled
-                var tempUpscaledCbz = Path.Combine(tempRoot, "upscaled.cbz");
-                ZipFile.CreateFromDirectory(newUpscaledDir, tempUpscaledCbz);
-
-                // Replace Upscaled
-                File.Move(tempUpscaledCbz, chapter.UpscaledFullPath, true);
             }
 
             await splitProcessingCoordinator.OnSplitsAppliedAsync(
@@ -267,10 +338,39 @@ public class SplitApplicationService(
         }
         finally
         {
+            DeleteUnusedReplacement(tempOriginalCbz);
+            if (tempUpscaledCbz is not null)
+            {
+                DeleteUnusedReplacement(tempUpscaledCbz);
+            }
+
             if (Directory.Exists(tempRoot))
             {
                 Directory.Delete(tempRoot, true);
             }
+        }
+    }
+
+    /// <summary>
+    ///     Removes a replacement the apply built but never moved onto its destination, so a failed run
+    ///     does not leave a full-size temp in the library.
+    /// </summary>
+    private void DeleteUnusedReplacement(string tempPath)
+    {
+        try
+        {
+            if (File.Exists(tempPath))
+            {
+                File.Delete(tempPath);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to delete the unused split replacement {Temp}.",
+                tempPath
+            );
         }
     }
 

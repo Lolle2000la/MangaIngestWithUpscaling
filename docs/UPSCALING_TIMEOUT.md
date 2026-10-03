@@ -84,6 +84,12 @@ The `UpscaleTimeout` setting is equally available in the Remote Worker's `appset
 }
 ```
 
+When a chapter is streamed page by page, the scaled value above is used as the per-page inactivity
+allowance, but it is never taken below a **15-minute floor**. Streaming adds a network round-trip and
+page-by-page finalization on top of the local work, so a small `UpscaleTimeout` would otherwise abort
+healthy streamed chapters that the local path would complete. The floor does not apply to the
+non-streamed local path.
+
 ## See Also
 
 - [IMAGE_FORMAT_CONVERSION.md](IMAGE_FORMAT_CONVERSION.md) – preprocessing images before upscaling

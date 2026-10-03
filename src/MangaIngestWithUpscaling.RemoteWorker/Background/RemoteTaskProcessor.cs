@@ -1,14 +1,6 @@
-using System.Diagnostics;
-using System.IO.Compression;
 using System.Threading.Channels;
-using Google.Protobuf;
-using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Api.Upscaling;
-using MangaIngestWithUpscaling.RemoteWorker.Configuration;
-using MangaIngestWithUpscaling.Shared.Constants;
-using MangaIngestWithUpscaling.Shared.Data.Analysis;
-using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using CompressionFormat = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat;
 using ScaleFactor = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.ScaleFactor;
@@ -17,20 +9,38 @@ using UpscalerProfile = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.U
 
 namespace MangaIngestWithUpscaling.RemoteWorker.Background;
 
+/// <summary>
+/// Claims tasks from the server and runs each one as a page stream. The worker only speaks the
+/// page-streaming protocol: upscale, repair and split-detection tasks are streamed page by page and
+/// assembled server-side. Whole-CBZ transfers are no longer supported.
+/// </summary>
 public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : BackgroundService
 {
-    // Tracks download and processing statistics to optimize prefetch timing.
-    private readonly PrefetchCoordinator _coordinator = new();
-
-    // State tracking for task lifecycle coordination and exclusion.
-    private int? _currentTaskId;
     private volatile bool _fetchInProgress;
 
-    // Channel-based processing pipeline for coordinating fetch, upscale, and upload operations.
+    // Consecutive soft (transient/restart) failures per task, so a deterministically-failing task is
+    // escalated to a reported failure instead of cycling forever — even if other tasks fail in
+    // between (a single "last task" counter could be reset by an interleaved task).
+    private readonly Dictionary<int, int> _softFailureCounts = new();
+
+    private int _streamingTaskIdValue = -1;
+
+    /// <summary>
+    /// Id of the task the streaming loop is currently processing, or <c>null</c>. Used to avoid
+    /// re-claiming the in-flight task and to time the next claim.
+    /// </summary>
+    private int? StreamingTaskId
+    {
+        get
+        {
+            int value = Volatile.Read(ref _streamingTaskIdValue);
+            return value < 0 ? null : value;
+        }
+        set => Volatile.Write(ref _streamingTaskIdValue, value ?? -1);
+    }
+
     private Channel<bool>? _fetchSignals;
-    private Channel<ProcessedItem>? _toUpload;
-    private Channel<FetchedItem>? _toUpscale;
-    private int? _uploadInProgressTaskId;
+    private Channel<StreamingItem>? _toStream;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -39,16 +49,8 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 
         logger.LogInformation("Successfully connected to server and waiting for work.");
 
-        _toUpscale = Channel.CreateBounded<FetchedItem>(
+        _toStream = Channel.CreateBounded<StreamingItem>(
             new BoundedChannelOptions(1)
-            {
-                SingleReader = true,
-                SingleWriter = true,
-                FullMode = BoundedChannelFullMode.Wait,
-            }
-        );
-        _toUpload = Channel.CreateBounded<ProcessedItem>(
-            new BoundedChannelOptions(3)
             {
                 SingleReader = true,
                 SingleWriter = true,
@@ -67,27 +69,295 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
         _fetchSignals.Writer.TryWrite(true);
 
         Task fetchTask = FetchLoop(stoppingToken);
-        Task upscaleTask = UpscaleLoop(stoppingToken);
-        Task uploadTask = UploadLoop(stoppingToken);
+        Task streamingTask = StreamingLoop(stoppingToken);
 
-        await Task.WhenAll(fetchTask, upscaleTask, uploadTask);
+        await Task.WhenAll(fetchTask, streamingTask);
+    }
+
+    private static bool IsTransient(StatusCode code) =>
+        code
+            is StatusCode.Unavailable
+                or StatusCode.DeadlineExceeded
+                or StatusCode.Cancelled
+                // Unimplemented is a version-skew signal (a removed/changed RPC), not a deterministic
+                // failure: treat it as transient so it does not burn the retry budget.
+                or StatusCode.Unimplemented
+                // Aborted/ResourceExhausted are retryable transport/backpressure conditions, and
+                // Unknown is what an unhandled server-side exception produces — treating it as
+                // transient avoids turning a recoverable handler error into spool deletion.
+                or StatusCode.Aborted
+                or StatusCode.ResourceExhausted
+                or StatusCode.Unknown;
+
+    /// <summary>
+    /// How many consecutive soft (transient/restart) failures a task may accumulate before the worker
+    /// reports it as a hard failure. The server's dead-task reaper requeues without consuming the
+    /// retry budget, so without a cap a deterministically-failing task would cycle forever.
+    /// </summary>
+    private const int MaxConsecutiveSoftFailures = 5;
+
+    /// <summary>
+    /// A restart is the "no spool on this replica / identity changed" signal, which a misconfigured
+    /// deployment can produce indefinitely; use a much larger cap so it eventually surfaces without
+    /// turning a transient infrastructure issue into data loss.
+    /// </summary>
+    private const int MaxConsecutiveRestarts = 100;
+
+    /// <summary>How a page-streaming failure should be handled.</summary>
+    public enum StreamingFailureKind
+    {
+        /// <summary>A transport blip; requeue without reporting (the spool is preserved).</summary>
+        Transient,
+
+        /// <summary>A non-terminal rejection; restart the chapter without reporting.</summary>
+        Restart,
+
+        /// <summary>A deterministic failure; report it (which clears the spool).</summary>
+        Permanent,
     }
 
     /// <summary>
-    ///     Handles task reservation, file downloading, and coordination with the upscale pipeline.
-    ///     Waits for fetch signals, reserves tasks with prefetch hints, downloads CBZ files,
-    ///     and maintains task reservations until handed off to the upscaler.
+    /// Classifies a page-streaming failure. The whole exception chain is inspected, not just the
+    /// innermost: grpc-dotnet keeps the transport error in <see cref="Exception.InnerException"/>, so
+    /// <see cref="Exception.GetBaseException"/> would return (for example) a SocketException and miss
+    /// the <see cref="RpcException"/> carrying the status code. A restart or transient signal anywhere
+    /// in the chain wins over a permanent classification.
+    /// </summary>
+    public static StreamingFailureKind ClassifyStreamingFailure(Exception ex)
+    {
+        for (Exception? current = ex; current is not null; current = current.InnerException)
+        {
+            if (current is PageStreamRestartException)
+            {
+                return StreamingFailureKind.Restart;
+            }
+
+            if (current is UpscaleWorkerCrashedException)
+            {
+                // A crash (OOM/CUDA fault) is recoverable: respawn the worker and resume. Reporting it
+                // would drop the already-spooled pages and consume the retry budget.
+                return StreamingFailureKind.Transient;
+            }
+
+            if (current is TimeoutException)
+            {
+                // A wedged/hung worker (a cold model load or a transient CUDA stall past the scaled
+                // inactivity timeout) is as recoverable as a crash: respawn and resume rather than
+                // discarding the already-upscaled pages.
+                return StreamingFailureKind.Transient;
+            }
+
+            if (current is IOException or UnauthorizedAccessException)
+            {
+                // A local I/O failure (computing the engine identity, reading a fetched page, or
+                // writing an upload) is transient: requeue with the spool intact rather than dropping
+                // it. A deterministic server rejection is thrown as InvalidOperationException.
+                return StreamingFailureKind.Transient;
+            }
+
+            if (current is RpcException rpc)
+            {
+                // The server signals "the chapter/profile/engine changed, restart" with
+                // FailedPrecondition (e.g. GetPages after a manifest). That is a restart, not a
+                // failure.
+                if (rpc.StatusCode == StatusCode.FailedPrecondition)
+                {
+                    return StreamingFailureKind.Restart;
+                }
+
+                if (IsTransient(rpc.StatusCode))
+                {
+                    return StreamingFailureKind.Transient;
+                }
+            }
+        }
+
+        return StreamingFailureKind.Permanent;
+    }
+
+    /// <summary>
+    ///     True when any exception in the chain reports an RPC the server does not implement, which is how a
+    ///     worker meets a server from the other side of the upgrade cutover.
+    /// </summary>
+    private static bool CarriesUnimplemented(Exception ex)
+    {
+        for (Exception? current = ex; current is not null; current = current.InnerException)
+        {
+            if (current is RpcException { StatusCode: StatusCode.Unimplemented })
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    ///     Re-runs the connect-time version handshake and describes an incompatible peer, or returns null
+    ///     when the server reports a version this worker can work with — a partially rolled-out server, for
+    ///     which retrying is still worthwhile. A handshake that cannot complete at all leaves the original
+    ///     failure to speak for itself.
+    /// </summary>
+    private static async Task<string?> DescribeVersionSkewAsync(
+        UpscalingService.UpscalingServiceClient client,
+        ILogger logger,
+        CancellationToken stoppingToken
+    )
+    {
+        try
+        {
+            CheckConnectionResponse response = await client.CheckConnectionAsync(
+                new CheckConnectionRequest
+                {
+                    ProtocolVersion = UpscalingProtocolVersion.Current,
+                    MinSupportedProtocolVersion = UpscalingProtocolVersion.MinSupported,
+                },
+                deadline: DateTime.UtcNow.AddSeconds(15),
+                cancellationToken: stoppingToken
+            );
+
+            if (
+                UpscalingProtocolVersion.IsCompatible(
+                    response.ProtocolVersion,
+                    response.MinSupportedProtocolVersion
+                )
+            )
+            {
+                return null;
+            }
+
+            return $"it reports protocol {response.ProtocolVersion} (minimum {response.MinSupportedProtocolVersion}) while this worker supports {UpscalingProtocolVersion.MinSupported}-{UpscalingProtocolVersion.Current}";
+        }
+        catch (RpcException ex) when (ex.StatusCode == StatusCode.FailedPrecondition)
+        {
+            return $"it rejected this worker: {ex.Status.Detail}";
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(
+                ex,
+                "Could not re-check the protocol version after an Unimplemented failure."
+            );
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Surfaces a page-streaming failure. A transient or restart failure is only logged: the worker
+    /// lets the keep-alive lapse so the server requeues the task with its spool intact. A permanent
+    /// one is reported, which makes the server clear the spool. Extracted from the streaming loop so
+    /// the spool-preservation property can be asserted without running the loop.
+    ///
+    /// <paramref name="consecutiveSoftFailures"/> caps how long a deterministically-failing task can
+    /// cycle: the server's dead-task reaper requeues without consuming the retry budget, so a failure
+    /// that is permanently bad but classifies soft would otherwise loop forever. Once the cap is
+    /// reached the failure is reported (terminal), surfacing the task.
+    /// </summary>
+    /// <returns>
+    /// <see langword="true" /> when the failure was terminalized, so the caller may clear its
+    /// soft-failure counter; <see langword="false" /> when the task should be left to requeue —
+    /// including a terminal report that could not be delivered, in which case the counter must be
+    /// kept so the cap is still reached.
+    /// </returns>
+    public static async Task<bool> HandleStreamingFailureAsync(
+        UpscalingService.UpscalingServiceClient client,
+        int taskId,
+        Exception ex,
+        ILogger logger,
+        CancellationToken stoppingToken,
+        int consecutiveSoftFailures = 1
+    )
+    {
+        StreamingFailureKind kind = ClassifyStreamingFailure(ex);
+
+        // A running worker validated the protocol only at startup, so a server from the other side of the
+        // upgrade cutover answers with Unimplemented. Ask it again and say what is actually wrong: if the
+        // pair is genuinely incompatible, retrying cannot help and letting the task cycle through the
+        // soft-failure cap would only fail other chapters in turn.
+        string? versionSkew =
+            kind == StreamingFailureKind.Transient && CarriesUnimplemented(ex)
+                ? await DescribeVersionSkewAsync(client, logger, stoppingToken)
+                : null;
+
+        if (versionSkew is not null)
+        {
+            logger.LogError(
+                "Task {TaskId} cannot stream against this server: {Detail}. The worker and server must be upgraded together.",
+                taskId,
+                versionSkew
+            );
+        }
+        else if (kind is StreamingFailureKind.Transient or StreamingFailureKind.Restart)
+        {
+            int cap =
+                kind == StreamingFailureKind.Restart
+                    ? MaxConsecutiveRestarts
+                    : MaxConsecutiveSoftFailures;
+            if (consecutiveSoftFailures < cap)
+            {
+                // A transport blip or a non-terminal rejection must not consume the retry budget or
+                // drop the spool: reporting a failure makes the server delete the already-upscaled
+                // pages. Let the keep-alive lapse instead, so the server requeues the task with the
+                // spool intact and the worker resumes from the first missing page.
+                logger.LogWarning(
+                    ex,
+                    "Task {TaskId} was interrupted during page streaming; letting the server requeue it with the spool intact.",
+                    taskId
+                );
+                return false;
+            }
+
+            logger.LogError(
+                ex,
+                "Task {TaskId} failed after {Count} consecutive soft failures; reporting it as terminal.",
+                taskId,
+                consecutiveSoftFailures
+            );
+        }
+        else
+        {
+            logger.LogError(ex, "Task {TaskId} failed during page streaming.", taskId);
+        }
+
+        try
+        {
+            string message = versionSkew is null ? ex.Message : $"{ex.Message} ({versionSkew})";
+            await client.ReportTaskFailedAsync(
+                new ReportTaskFailedRequest { TaskId = taskId, ErrorMessage = message },
+                deadline: DateTime.UtcNow.AddSeconds(15),
+                cancellationToken: stoppingToken
+            );
+        }
+        catch (Exception rpcEx)
+        {
+            // The task was not actually terminalized, so report "not handled": the caller keeps the
+            // soft-failure counter, and a deterministic failure whose report keeps failing still
+            // reaches the cap instead of resetting and cycling forever.
+            logger.LogWarning(
+                rpcEx,
+                "Failed to report page-streaming failure for {TaskId}",
+                taskId
+            );
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Reserves tasks from the server and hands them to the streaming loop. Only upscale and
+    /// split-detection tasks are delegated to workers.
     /// </summary>
     private async Task FetchLoop(CancellationToken stoppingToken)
     {
-        var dispatcherTimer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+        using var dispatcherTimer = new PeriodicTimer(TimeSpan.FromSeconds(5));
         bool serverAvailable = true;
 
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                if (_fetchSignals is null || _toUpscale is null)
+                if (_fetchSignals is null || _toStream is null)
                 {
                     await Task.Delay(200, stoppingToken);
                     continue;
@@ -111,47 +381,10 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 var client =
                     scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
 
-                if (!await _toUpscale.Writer.WaitToWriteAsync(stoppingToken))
+                if (!await _toStream.Writer.WaitToWriteAsync(stoppingToken))
                 {
                     _fetchInProgress = false;
                     continue;
-                }
-
-                // Peek the head task's transfer size (without claiming) so we can defer claiming
-                // a task whose download is fast enough to fit inside the current job's remaining
-                // work. Deferring keeps the task available to faster workers until our GPU is
-                // closer to idle. This only makes sense while a job is actually being upscaled
-                // (_currentTaskId is set): once the GPU is idle we must claim immediately, and the
-                // coordinator's remaining-page estimate is stale between jobs. Peek is advisory:
-                // on failure we fall through and claim.
-                try
-                {
-                    PeekNextTaskResponse peek = await client.PeekNextTaskAsync(
-                        new Empty(),
-                        deadline: DateTime.UtcNow.AddSeconds(10),
-                        cancellationToken: stoppingToken
-                    );
-                    if (
-                        _currentTaskId.HasValue
-                        && peek.TaskId != -1
-                        && peek.HasInputSizeBytes
-                        && !_coordinator.ShouldClaim(peek.InputSizeBytes)
-                    )
-                    {
-                        logger.LogDebug(
-                            "Deferring claim: next task {TaskId} is {Bytes} bytes and fits within the remaining processing time.",
-                            peek.TaskId,
-                            peek.InputSizeBytes
-                        );
-                        _fetchInProgress = false;
-                        await dispatcherTimer.WaitForNextTickAsync(stoppingToken);
-                        _fetchSignals.Writer.TryWrite(true);
-                        continue;
-                    }
-                }
-                catch (RpcException ex)
-                {
-                    logger.LogDebug(ex, "PeekNextTask failed; claiming without a size hint.");
                 }
 
                 UpscaleTaskDelegationResponse resp;
@@ -187,13 +420,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                         throw;
                     }
 
-                    if (
-                        (_currentTaskId.HasValue && resp.TaskId == _currentTaskId.Value)
-                        || (
-                            _uploadInProgressTaskId.HasValue
-                            && resp.TaskId == _uploadInProgressTaskId.Value
-                        )
-                    )
+                    if (StreamingTaskId == resp.TaskId)
                     {
                         logger.LogDebug(
                             "FetchLoop: got in-flight task {taskId}; retrying shortly",
@@ -219,48 +446,72 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     continue;
                 }
 
-                int prefetchTaskId = resp.TaskId;
+                int taskId = resp.TaskId;
                 logger.LogInformation(
                     "Received task {TaskId} of type {TaskType} from server.",
-                    prefetchTaskId,
+                    taskId,
                     resp.TaskType
                 );
-                UpscalerProfile prefetchProfile = GetProfileFromResponse(resp.UpscalerProfile);
+
+                if (resp.TaskType is not (TaskType.Upscale or TaskType.SplitDetection))
+                {
+                    // Only upscale and split-detection tasks are delegated to workers. The task was
+                    // already claimed by RequestUpscaleTaskWithHint, so let its keep-alive lapse
+                    // (the reaper requeues it) and back off instead of spinning as fast as the
+                    // server answers.
+                    logger.LogWarning(
+                        "Ignoring task {TaskId} of unsupported type {TaskType}.",
+                        taskId,
+                        resp.TaskType
+                    );
+                    _fetchInProgress = false;
+                    await dispatcherTimer.WaitForNextTickAsync(stoppingToken);
+                    _fetchSignals.Writer.TryWrite(true);
+                    continue;
+                }
+
+                UpscalerProfile profile;
+                try
+                {
+                    profile = GetProfileFromResponse(resp.UpscalerProfile);
+                }
+                catch (Exception ex)
+                {
+                    // An unmappable profile (an unrecognized enum the server mapped to Unspecified) is
+                    // deterministic. The task is already claimed and has no keep-alive, so back off
+                    // like the unsupported-type branch instead of spinning in the generic catch, which
+                    // would re-claim it every 500 ms forever.
+                    logger.LogError(
+                        ex,
+                        "Ignoring task {TaskId}: its upscaler profile could not be resolved.",
+                        taskId
+                    );
+                    _fetchInProgress = false;
+                    await dispatcherTimer.WaitForNextTickAsync(stoppingToken);
+                    _fetchSignals.Writer.TryWrite(true);
+                    continue;
+                }
 
                 var persistentKeepAliveCts = CancellationTokenSource.CreateLinkedTokenSource(
                     stoppingToken
                 );
                 Task persistentKeepAliveTask = RunKeepAliveLoop(
                     persistentKeepAliveCts,
-                    () => prefetchTaskId,
+                    () => taskId,
                     id => new KeepAliveRequest { TaskId = id, Prefetch = true }
                 );
 
+                // Hand the reserved task to the streaming loop; it owns the keep-alive from here.
+                var streaming = new StreamingItem(
+                    taskId,
+                    resp.TaskType,
+                    profile,
+                    persistentKeepAliveCts,
+                    persistentKeepAliveTask
+                );
                 try
                 {
-                    var sw = Stopwatch.StartNew();
-                    using AsyncServerStreamingCall<CbzFileChunk> stream = client.GetCbzFile(
-                        new CbzToUpscaleRequest { TaskId = resp.TaskId, Prefetch = true },
-                        deadline: DateTime.UtcNow.AddMinutes(5),
-                        cancellationToken: persistentKeepAliveCts.Token
-                    );
-                    string file = await FetchFile(
-                        resp.TaskId,
-                        stream.ResponseStream.ReadAllAsync(persistentKeepAliveCts.Token)
-                    );
-                    sw.Stop();
-                    _coordinator.RecordDownload(new FileInfo(file).Length, sw.Elapsed);
-
-                    var fetched = new FetchedItem(
-                        resp.TaskId,
-                        prefetchProfile,
-                        file,
-                        persistentKeepAliveCts,
-                        persistentKeepAliveTask,
-                        resp.TaskType,
-                        resp.SplitFindingsJson
-                    );
-                    await _toUpscale.Writer.WriteAsync(fetched, stoppingToken);
+                    await _toStream.Writer.WriteAsync(streaming, stoppingToken);
                 }
                 catch
                 {
@@ -271,7 +522,6 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     }
                     catch { }
                     persistentKeepAliveCts.Dispose();
-
                     throw;
                 }
 
@@ -298,549 +548,39 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
         }
     }
 
-    /// <summary>
-    ///     Processes fetched items through the upscaling pipeline.
-    ///     Handles progress reporting, keep-alive management, and triggers the next fetch operation
-    ///     using predictive prefetch algorithms.
-    /// </summary>
-    private async Task UpscaleLoop(CancellationToken stoppingToken)
+    private async Task StreamingLoop(CancellationToken stoppingToken)
     {
-        if (_toUpscale is null || _toUpload is null)
-            return;
-
-        using var scope = serviceScopeFactory.CreateScope();
-        var client =
-            scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
-        var logger = scope.ServiceProvider.GetRequiredService<ILogger<RemoteTaskProcessor>>();
-        var upscaler = scope.ServiceProvider.GetRequiredService<IUpscaler>();
-        var splitDetectionService =
-            scope.ServiceProvider.GetRequiredService<ISplitDetectionService>();
-        var splitApplier = scope.ServiceProvider.GetRequiredService<ISplitApplier>();
-
-        while (!stoppingToken.IsCancellationRequested)
+        if (_toStream is null)
         {
-            FetchedItem item;
-            try
-            {
-                item = await _toUpscale.Reader.ReadAsync(stoppingToken);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-
-            _currentTaskId = item.TaskId;
-            var profile = item.Profile;
-
-            if (item.PersistentKeepAliveCts.IsCancellationRequested)
-            {
-                logger.LogInformation(
-                    "Task {TaskId} was cancelled prior to starting upscaling, skipping.",
-                    item.TaskId
-                );
-                SafeDelete(item.DownloadedFile);
-                await item.PersistentKeepAliveCts.CancelAsync();
-                try
-                {
-                    await item.PersistentKeepAliveTask;
-                }
-                catch { }
-                item.PersistentKeepAliveCts.Dispose();
-
-                _currentTaskId = null;
-                continue;
-            }
-
-            // Transition the persistent keep-alive from prefetch to processing mode
-            // We'll create a new keep-alive specifically for progress reporting during upscaling
-            using var upscalesCts = CancellationTokenSource.CreateLinkedTokenSource(
-                stoppingToken,
-                item.PersistentKeepAliveCts.Token
-            );
-            DateTime lastProgressSend = DateTime.UtcNow.AddSeconds(-10);
-            int prefetchSignaled = 0; // 0 = not signaled, 1 = signaled (atomic)
-
-            _coordinator.Reset();
-
-            // The persistent keep-alive continues running; we just add progress reporting
-            // No need to start a separate processing keep-alive loop since the persistent one continues
-
-            string? upscaledFile = null;
-            string? resultJson = null;
-            string? tempExtractDir = null;
-
-            // Progress reporting must not block upscaling: use a bounded channel and a background sender
-            var progressChannel = Channel.CreateBounded<UpscaleProgress>(
-                new BoundedChannelOptions(1)
-                {
-                    SingleReader = true,
-                    SingleWriter = true,
-                    FullMode = BoundedChannelFullMode.DropOldest,
-                }
-            );
-
-            // Writer: never await network; buffer latest only
-            var progress = new Progress<UpscaleProgress>(p =>
-            {
-                progressChannel.Writer.TryWrite(p);
-            });
-
-            // Reader/sender: debounced network I/O off the critical path
-            var progressSenderTask = Task.Run(
-                async () =>
-                {
-                    var debounce = new PeriodicTimer(TimeSpan.FromMilliseconds(200));
-                    UpscaleProgress? pending = null;
-                    while (!item.PersistentKeepAliveCts.IsCancellationRequested)
-                    {
-                        try
-                        {
-                            // Drain to latest
-                            while (progressChannel.Reader.TryRead(out UpscaleProgress? p))
-                            {
-                                pending = p;
-
-                                // Update per-page stats and trigger prefetch when appropriate.
-                                if (
-                                    _coordinator.OnProgress(p.Total, p.Current, p.Phase)
-                                    && Interlocked.CompareExchange(ref prefetchSignaled, 1, 0) == 0
-                                )
-                                {
-                                    _fetchSignals?.Writer.TryWrite(true);
-                                }
-                            }
-
-                            // Exit if channel is completed and no more data is available
-                            if (progressChannel.Reader.Completion.IsCompleted)
-                            {
-                                break;
-                            }
-
-                            // Debounced send of latest progress
-                            DateTime nowSend = DateTime.UtcNow;
-                            if (
-                                pending is not null
-                                && nowSend - lastProgressSend >= TimeSpan.FromMilliseconds(400)
-                            )
-                            {
-                                lastProgressSend = nowSend;
-                                try
-                                {
-                                    var req = new KeepAliveRequest { TaskId = item.TaskId };
-                                    if (pending.Total.HasValue)
-                                    {
-                                        req.Total = pending.Total.Value;
-                                    }
-
-                                    if (pending.Current.HasValue)
-                                    {
-                                        req.Current = pending.Current.Value;
-                                    }
-
-                                    if (!string.IsNullOrWhiteSpace(pending.StatusMessage))
-                                    {
-                                        req.StatusMessage = pending.StatusMessage;
-                                    }
-
-                                    if (!string.IsNullOrWhiteSpace(pending.Phase))
-                                    {
-                                        req.Phase = pending.Phase;
-                                    }
-
-                                    KeepAliveResponse? resp = await client.KeepAliveAsync(
-                                        req,
-                                        deadline: DateTime.UtcNow.AddSeconds(10),
-                                        cancellationToken: upscalesCts.Token
-                                    );
-                                    if (!resp.IsAlive)
-                                    {
-                                        await Task.WhenAll(
-                                            upscalesCts.CancelAsync(),
-                                            item.PersistentKeepAliveCts.CancelAsync()
-                                        );
-                                        break;
-                                    }
-                                }
-                                catch (RpcException ex) when (ex.StatusCode == StatusCode.NotFound)
-                                {
-                                    try
-                                    {
-                                        await Task.WhenAll(
-                                            upscalesCts.CancelAsync(),
-                                            item.PersistentKeepAliveCts.CancelAsync()
-                                        );
-                                    }
-                                    catch { }
-
-                                    break;
-                                }
-                                catch (Exception ex)
-                                {
-                                    logger.LogDebug(
-                                        ex,
-                                        "KeepAlive progress send failed for task {taskId}",
-                                        item.TaskId
-                                    );
-                                }
-                            }
-
-                            try
-                            {
-                                await debounce.WaitForNextTickAsync(upscalesCts.Token);
-                            }
-                            catch
-                            {
-                                break;
-                            }
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            break;
-                        }
-                        catch
-                        {
-                            // swallow and continue
-                        }
-                    }
-                },
-                upscalesCts.Token
-            );
-
-            try
-            {
-                logger.LogInformation(
-                    "Starting processing for task {TaskId} ({TaskType})",
-                    item.TaskId,
-                    item.TaskType
-                );
-
-                if (item.TaskType == TaskType.SplitDetection)
-                {
-                    logger.LogInformation(
-                        "Executing SplitDetection task {TaskId} on Remote Worker",
-                        item.TaskId
-                    );
-                    tempExtractDir = Path.Combine(
-                        Path.GetTempPath(),
-                        $"mangaingest_worker_extract_{item.TaskId}_{Guid.NewGuid()}"
-                    );
-                    Directory.CreateDirectory(tempExtractDir);
-                    ZipFile.ExtractToDirectory(item.DownloadedFile, tempExtractDir);
-
-                    var results = await splitDetectionService.DetectSplitsAsync(
-                        tempExtractDir,
-                        progress,
-                        upscalesCts.Token
-                    );
-                    resultJson = System.Text.Json.JsonSerializer.Serialize(
-                        results,
-                        WorkerJsonContext.Default.ListSplitDetectionResult
-                    );
-                }
-                else if (item.TaskType == TaskType.ApplySplits)
-                {
-                    tempExtractDir = Path.Combine(
-                        Path.GetTempPath(),
-                        $"mangaingest_worker_extract_{item.TaskId}_{Guid.NewGuid()}"
-                    );
-                    var newDir = Path.Combine(
-                        Path.GetTempPath(),
-                        $"mangaingest_worker_repack_{item.TaskId}_{Guid.NewGuid()}"
-                    );
-                    Directory.CreateDirectory(tempExtractDir);
-                    Directory.CreateDirectory(newDir);
-
-                    ZipFile.ExtractToDirectory(item.DownloadedFile, tempExtractDir);
-
-                    var findings = System.Text.Json.JsonSerializer.Deserialize(
-                        item.SplitFindingsJson!,
-                        WorkerJsonContext.Default.ListSplitFindingDto
-                    );
-
-                    List<SplitDetectionResult> detectionResults = new();
-                    bool hasValidFindings = false;
-
-                    if (findings != null && findings.Count > 0)
-                    {
-                        // Check if findings contain errors by deserializing and inspecting the result
-                        if (
-                            findings.Any(f =>
-                            {
-                                var result = System.Text.Json.JsonSerializer.Deserialize(
-                                    f.SplitJson,
-                                    WorkerJsonContext.Default.SplitDetectionResult
-                                );
-                                return result != null && !string.IsNullOrEmpty(result.Error);
-                            })
-                        )
-                        {
-                            logger.LogDebug(
-                                "Task {TaskId}: Findings contain errors. Will re-run detection locally.",
-                                item.TaskId
-                            );
-                        }
-                        else
-                        {
-                            hasValidFindings = true;
-                            foreach (var finding in findings)
-                            {
-                                var result = System.Text.Json.JsonSerializer.Deserialize(
-                                    finding.SplitJson,
-                                    WorkerJsonContext.Default.SplitDetectionResult
-                                );
-                                if (result != null)
-                                {
-                                    // Ensure image path matches what we expect locally if needed,
-                                    // but usually we match by filename anyway.
-                                    detectionResults.Add(result);
-                                }
-                            }
-                        }
-                    }
-
-                    if (!hasValidFindings)
-                    {
-                        logger.LogDebug(
-                            "Task {TaskId}: Running split detection locally on worker.",
-                            item.TaskId
-                        );
-                        detectionResults = await splitDetectionService.DetectSplitsAsync(
-                            tempExtractDir,
-                            progress,
-                            upscalesCts.Token
-                        );
-                    }
-
-                    var images = Directory
-                        .GetFiles(tempExtractDir)
-                        .Where(f =>
-                            ImageConstants.SupportedImageExtensions.Contains(Path.GetExtension(f))
-                        )
-                        .ToList();
-
-                    logger.LogInformation(
-                        "Task {TaskId}: Found {Count} images in archive.",
-                        item.TaskId,
-                        images.Count
-                    );
-
-                    int appliedCount = 0;
-                    foreach (var imagePath in images)
-                    {
-                        var fileNameWithoutExt = Path.GetFileNameWithoutExtension(imagePath);
-                        // Match by filename
-                        var result = detectionResults.FirstOrDefault(r =>
-                            Path.GetFileNameWithoutExtension(r.ImagePath)
-                                .Equals(fileNameWithoutExt, StringComparison.OrdinalIgnoreCase)
-                        );
-
-                        if (result != null && result.Splits.Count > 0)
-                        {
-                            splitApplier.ApplySplitsToImage(imagePath, result.Splits, newDir);
-                            appliedCount++;
-                        }
-                        else
-                        {
-                            // Copy unsplit
-                            var dest = Path.Combine(newDir, Path.GetFileName(imagePath));
-                            File.Copy(imagePath, dest);
-                        }
-                    }
-
-                    logger.LogInformation(
-                        "Task {TaskId}: Applied splits to {Count} images.",
-                        item.TaskId,
-                        appliedCount
-                    );
-
-                    // Copy ComicInfo.xml if exists
-                    var comicInfo = Path.Combine(tempExtractDir, "ComicInfo.xml");
-                    if (File.Exists(comicInfo))
-                    {
-                        File.Copy(comicInfo, Path.Combine(newDir, "ComicInfo.xml"));
-                    }
-
-                    upscaledFile = PrepareTempFile(item.TaskId, "_split.cbz");
-                    ZipFile.CreateFromDirectory(newDir, upscaledFile);
-
-                    Directory.Delete(newDir, true);
-                }
-                else
-                {
-                    upscaledFile = PrepareTempFile(item.TaskId, "_upscaled");
-                    try
-                    {
-                        await upscaler.Upscale(
-                            item.DownloadedFile,
-                            upscaledFile,
-                            profile,
-                            progress,
-                            upscalesCts.Token
-                        );
-                    }
-                    catch (NotImplementedException)
-                    {
-                        await upscaler.Upscale(
-                            item.DownloadedFile,
-                            upscaledFile,
-                            profile,
-                            upscalesCts.Token
-                        );
-                    }
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                SafeDelete(item.DownloadedFile);
-                if (upscaledFile != null)
-                    SafeDelete(upscaledFile);
-                if (tempExtractDir != null && Directory.Exists(tempExtractDir))
-                    Directory.Delete(tempExtractDir, true);
-                _currentTaskId = null;
-                await item.PersistentKeepAliveCts.CancelAsync();
-                try
-                {
-                    await item.PersistentKeepAliveTask;
-                }
-                catch { }
-                item.PersistentKeepAliveCts.Dispose();
-
-                if (Interlocked.CompareExchange(ref prefetchSignaled, 1, 0) == 0)
-                {
-                    _fetchSignals?.Writer.TryWrite(true);
-                }
-
-                continue;
-            }
-            catch (Exception ex)
-            {
-                try
-                {
-                    await client.ReportTaskFailedAsync(
-                        new ReportTaskFailedRequest
-                        {
-                            TaskId = item.TaskId,
-                            ErrorMessage = ex.Message,
-                        },
-                        deadline: DateTime.UtcNow.AddSeconds(15),
-                        cancellationToken: stoppingToken
-                    );
-                }
-                catch (Exception rpcEx)
-                {
-                    logger.LogWarning(
-                        rpcEx,
-                        "Failed to report task failure for {taskId}",
-                        item.TaskId
-                    );
-                }
-
-                SafeDelete(item.DownloadedFile);
-                if (upscaledFile != null)
-                    SafeDelete(upscaledFile);
-                if (tempExtractDir != null && Directory.Exists(tempExtractDir))
-                    Directory.Delete(tempExtractDir, true);
-
-                _currentTaskId = null;
-                await item.PersistentKeepAliveCts.CancelAsync();
-                try
-                {
-                    await item.PersistentKeepAliveTask;
-                }
-                catch { }
-                item.PersistentKeepAliveCts.Dispose();
-
-                if (Interlocked.CompareExchange(ref prefetchSignaled, 1, 0) == 0)
-                {
-                    _fetchSignals?.Writer.TryWrite(true);
-                }
-
-                continue;
-            }
-
-            try
-            {
-                progressChannel.Writer.TryComplete();
-            }
-            catch { }
-
-            try
-            {
-                await upscalesCts.CancelAsync();
-            }
-            catch { }
-
-            try
-            {
-                await progressSenderTask;
-            }
-            catch { }
-
-            if (Interlocked.CompareExchange(ref prefetchSignaled, 1, 0) == 0)
-            {
-                _fetchSignals?.Writer.TryWrite(true);
-            }
-
-            // Cleanup temp dir if it exists (should be done in finally usually, but here we are at end of loop)
-            if (tempExtractDir != null && Directory.Exists(tempExtractDir))
-                Directory.Delete(tempExtractDir, true);
-
-            await _toUpload.Writer.WriteAsync(
-                new ProcessedItem(
-                    item.TaskId,
-                    item.DownloadedFile,
-                    upscaledFile,
-                    resultJson,
-                    item.PersistentKeepAliveCts,
-                    item.PersistentKeepAliveTask,
-                    item.TaskType
-                ),
-                stoppingToken
-            );
-            _currentTaskId = null;
+            return;
         }
-    }
-
-    /// <summary>
-    ///     Handles uploading of processed files back to the server and cleanup of temporary files.
-    ///     Maintains keep-alive connections during the upload process.
-    /// </summary>
-    private async Task UploadLoop(CancellationToken stoppingToken)
-    {
-        if (_toUpload is null)
-            return;
 
         using var scope = serviceScopeFactory.CreateScope();
         var client =
             scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
         var logger = scope.ServiceProvider.GetRequiredService<ILogger<RemoteTaskProcessor>>();
+        var pageStreamClient = scope.ServiceProvider.GetRequiredService<PageStreamClient>();
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            ProcessedItem item;
+            StreamingItem item;
             try
             {
-                item = await _toUpload.Reader.ReadAsync(stoppingToken);
+                item = await _toStream.Reader.ReadAsync(stoppingToken);
             }
             catch (OperationCanceledException)
             {
                 break;
             }
 
-            _uploadInProgressTaskId = item.TaskId;
+            StreamingTaskId = item.TaskId;
 
             if (item.PersistentKeepAliveCts.IsCancellationRequested)
             {
                 logger.LogInformation(
-                    "Task {TaskId} was cancelled prior to upload, skipping.",
+                    "Task {TaskId} was cancelled prior to page streaming, skipping.",
                     item.TaskId
                 );
-                SafeDelete(item.DownloadedFile);
-                if (item.UpscaledFile != null)
-                {
-                    SafeDelete(item.UpscaledFile);
-                }
-
                 await item.PersistentKeepAliveCts.CancelAsync();
                 try
                 {
@@ -848,12 +588,14 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 }
                 catch { }
                 item.PersistentKeepAliveCts.Dispose();
-
-                _uploadInProgressTaskId = null;
+                StreamingTaskId = null;
+                // Re-signal the fetch loop, or it would block on _fetchSignals forever and the
+                // worker would stop claiming tasks.
+                _fetchSignals?.Writer.TryWrite(true);
                 continue;
             }
 
-            using var uploadCts = CancellationTokenSource.CreateLinkedTokenSource(
+            using var streamCts = CancellationTokenSource.CreateLinkedTokenSource(
                 stoppingToken,
                 item.PersistentKeepAliveCts.Token
             );
@@ -862,62 +604,49 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
             {
                 if (item.TaskType == TaskType.SplitDetection)
                 {
-                    if (item.ResultJson == null)
-                        throw new InvalidOperationException(
-                            "ResultJson is null for detection task"
-                        );
-                    await UploadDetectionResultAndCleanup(
-                        client,
-                        logger,
-                        item.TaskId,
-                        item.ResultJson,
-                        item.DownloadedFile,
-                        uploadCts.Token
+                    logger.LogInformation(
+                        "Page-streaming split detection for task {TaskId}.",
+                        item.TaskId
                     );
+                    await pageStreamClient.RunDetectionAsync(client, item.TaskId, streamCts.Token);
                 }
                 else
                 {
-                    if (item.UpscaledFile == null)
-                        throw new InvalidOperationException(
-                            "UpscaledFile is null for upscale task"
-                        );
-                    await UploadFileAndCleanup(
+                    logger.LogInformation("Page-streaming task {TaskId}.", item.TaskId);
+                    await pageStreamClient.RunAsync(
                         client,
-                        logger,
                         item.TaskId,
-                        item.UpscaledFile,
-                        item.DownloadedFile,
-                        item.UpscaledFile,
-                        uploadCts.Token
+                        item.Profile,
+                        streamCts.Token
                     );
                 }
+
+                // Completed without a soft failure; clear this task's counter.
+                _softFailureCounts.Remove(item.TaskId);
             }
             catch (OperationCanceledException)
             {
-                // this happens by normal user interruption (i.e. ctrl+c, stopping the container etc.)
+                // Normal user interruption or task cancellation.
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Task {taskId} failed during upload.", item.TaskId);
-                try
+                _softFailureCounts.TryGetValue(item.TaskId, out int softFailures);
+                softFailures++;
+                _softFailureCounts[item.TaskId] = softFailures;
+
+                bool reported = await HandleStreamingFailureAsync(
+                    client,
+                    item.TaskId,
+                    ex,
+                    logger,
+                    stoppingToken,
+                    softFailures
+                );
+                if (reported)
                 {
-                    await client.ReportTaskFailedAsync(
-                        new ReportTaskFailedRequest
-                        {
-                            TaskId = item.TaskId,
-                            ErrorMessage = ex.Message,
-                        },
-                        deadline: DateTime.UtcNow.AddSeconds(15),
-                        cancellationToken: stoppingToken
-                    );
-                }
-                catch (Exception rpcEx)
-                {
-                    logger.LogWarning(
-                        rpcEx,
-                        "Failed to report upload failure for {taskId}",
-                        item.TaskId
-                    );
+                    // The task is terminal, so its counter will never be read again; drop it rather
+                    // than letting the map grow one entry per permanently-failed task.
+                    _softFailureCounts.Remove(item.TaskId);
                 }
             }
             finally
@@ -929,154 +658,13 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 }
                 catch { }
                 item.PersistentKeepAliveCts.Dispose();
-
-                _uploadInProgressTaskId = null;
+                StreamingTaskId = null;
+                _fetchSignals?.Writer.TryWrite(true);
             }
         }
     }
 
-    private async Task UploadFile(
-        UpscalingService.UpscalingServiceClient client,
-        ILogger<RemoteTaskProcessor> logger,
-        int taskId,
-        string upscaledFile,
-        CancellationToken stoppingToken
-    )
-    {
-        await using FileStream fileStream = File.OpenRead(upscaledFile);
-        AsyncDuplexStreamingCall<CbzFileChunk, UploadUpscaledCbzResponse>? uploadStream =
-            client.UploadUpscaledCbzFile(
-                deadline: DateTime.UtcNow.AddMinutes(5),
-                cancellationToken: stoppingToken
-            );
-        byte[] buffer = new byte[1024 * 1024];
-        int bytesRead;
-        int chunkNumber = 0;
-        while (
-            (bytesRead = await fileStream.ReadAsync(buffer, 0, buffer.Length, stoppingToken)) > 0
-        )
-        {
-            await uploadStream.RequestStream.WriteAsync(
-                new CbzFileChunk
-                {
-                    TaskId = taskId,
-                    ChunkNumber = chunkNumber++,
-                    Chunk = ByteString.CopyFrom(buffer, 0, bytesRead),
-                },
-                stoppingToken
-            );
-        }
-
-        await uploadStream.RequestStream.CompleteAsync();
-
-        await foreach (
-            UploadUpscaledCbzResponse response in uploadStream.ResponseStream.ReadAllAsync(
-                stoppingToken
-            )
-        )
-        {
-            if (response.Success)
-            {
-                logger.LogInformation(
-                    "Successfully uploaded upscaled file for task {taskId}.",
-                    response.TaskId
-                );
-            }
-            else
-            {
-                logger.LogError(
-                    "Failed to upload upscaled file for task {taskId}: {message}",
-                    response.TaskId,
-                    response.Message
-                );
-            }
-        }
-    }
-
-    private async Task UploadDetectionResultAndCleanup(
-        UpscalingService.UpscalingServiceClient client,
-        ILogger<RemoteTaskProcessor> logger,
-        int taskId,
-        string resultJson,
-        string? downloadedFile,
-        CancellationToken stoppingToken
-    )
-    {
-        try
-        {
-            await client.UploadDetectionResultAsync(
-                new UploadDetectionResultRequest { TaskId = taskId, ResultJson = resultJson },
-                deadline: DateTime.UtcNow.AddSeconds(30),
-                cancellationToken: stoppingToken
-            );
-        }
-        finally
-        {
-            if (downloadedFile != null && File.Exists(downloadedFile))
-            {
-                File.Delete(downloadedFile);
-            }
-        }
-    }
-
-    private async Task UploadFileAndCleanup(
-        UpscalingService.UpscalingServiceClient client,
-        ILogger<RemoteTaskProcessor> logger,
-        int taskId,
-        string upscaledFile,
-        string? downloadedFile,
-        string? upscaledFileForCleanup,
-        CancellationToken stoppingToken
-    )
-    {
-        try
-        {
-            await UploadFile(client, logger, taskId, upscaledFile, stoppingToken);
-        }
-        finally
-        {
-            if (downloadedFile != null && File.Exists(downloadedFile))
-            {
-                File.Delete(downloadedFile);
-            }
-
-            if (upscaledFileForCleanup != null && File.Exists(upscaledFileForCleanup))
-                File.Delete(upscaledFileForCleanup);
-        }
-    }
-
-    private async Task<string> FetchFile(int taskId, IAsyncEnumerable<CbzFileChunk> stream)
-    {
-        Dictionary<int, byte[]> chunks = new();
-        await foreach (var chunk in stream)
-        {
-            chunks[chunk.ChunkNumber] = chunk.Chunk.ToByteArray();
-        }
-
-        var tempFile = PrepareTempFile(taskId);
-        await using (FileStream output = File.OpenWrite(tempFile))
-        {
-            foreach (var chunk in chunks.OrderBy(c => c.Key))
-            {
-                await output.WriteAsync(chunk.Value.AsMemory(0, chunk.Value.Length));
-            }
-        }
-
-        return tempFile;
-    }
-
-    private string PrepareTempFile(int taskId, string? suffix = null)
-    {
-        string tempDir = Path.Combine(
-            Path.GetTempPath(),
-            "mangaingestwithupscaling",
-            "remoteworker"
-        );
-        Directory.CreateDirectory(tempDir);
-        return Path.Combine(tempDir, $"task_{taskId}{suffix ?? ""}.cbz");
-    }
-
-    private static UpscalerProfile GetProfileFromResponse(
+    internal static UpscalerProfile GetProfileFromResponse(
         Api.Upscaling.UpscalerProfile? upscalerProfile
     )
     {
@@ -1120,24 +708,6 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
         };
     }
 
-    // Helpers
-    private static void SafeDelete(string? path)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            return;
-        }
-
-        try
-        {
-            if (File.Exists(path))
-            {
-                File.Delete(path);
-            }
-        }
-        catch { }
-    }
-
     private Task RunKeepAliveLoop(
         CancellationTokenSource cts,
         Func<int?> taskIdProvider,
@@ -1150,7 +720,10 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 using IServiceScope scope = serviceScopeFactory.CreateScope();
                 var client =
                     scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
-                var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
+                var logger = scope.ServiceProvider.GetRequiredService<
+                    ILogger<RemoteTaskProcessor>
+                >();
+                using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
                 while (!cts.IsCancellationRequested)
                 {
                     try
@@ -1177,7 +750,12 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                         await cts.CancelAsync();
                         break;
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        // A keep-alive lapse past the server's deadline requeues the task; log it so a
+                        // persistent failure is diagnosable instead of silent.
+                        logger.LogDebug(ex, "Keep-alive for the in-flight task failed.");
+                    }
 
                     try
                     {
@@ -1193,23 +771,11 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
         );
     }
 
-    private sealed record FetchedItem(
+    private sealed record StreamingItem(
         int TaskId,
-        UpscalerProfile Profile,
-        string DownloadedFile,
-        CancellationTokenSource PersistentKeepAliveCts,
-        Task PersistentKeepAliveTask,
         TaskType TaskType,
-        string? SplitFindingsJson = null
-    );
-
-    private sealed record ProcessedItem(
-        int TaskId,
-        string DownloadedFile,
-        string? UpscaledFile,
-        string? ResultJson,
+        UpscalerProfile Profile,
         CancellationTokenSource PersistentKeepAliveCts,
-        Task PersistentKeepAliveTask,
-        TaskType TaskType
+        Task PersistentKeepAliveTask
     );
 }

@@ -1,4 +1,3 @@
-using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.RemoteWorker.Configuration;
@@ -90,10 +89,6 @@ else
 }
 #endif
 
-builder.Services.Configure<WorkerConfig>(
-    builder.Configuration.GetSection(WorkerConfig.SectionName)
-);
-
 // Add services to the container.
 builder.Services.AddGrpc();
 builder.Services.AddHealthChecks();
@@ -146,16 +141,25 @@ using (var scope = app.Services.CreateScope())
         scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
 
-    while (true)
+    CheckConnectionResponse? connection = null;
+    while (connection is null)
     {
         try
         {
-            var testResponse = client.CheckConnection(
-                new Empty(),
+            connection = client.CheckConnection(
+                new CheckConnectionRequest
+                {
+                    ProtocolVersion = UpscalingProtocolVersion.Current,
+                    MinSupportedProtocolVersion = UpscalingProtocolVersion.MinSupported,
+                },
                 deadline: DateTime.UtcNow.AddSeconds(5)
             );
-            logger.LogDebug("Connection test response: {Response}", testResponse);
-            break;
+        }
+        catch (RpcException ex) when (ex.StatusCode == StatusCode.FailedPrecondition)
+        {
+            // The server rejected our version outright; retrying cannot help.
+            logger.LogError("The server rejected this worker: {Detail}", ex.Status.Detail);
+            throw;
         }
         catch (RpcException ex)
         {
@@ -174,6 +178,32 @@ using (var scope = app.Services.CreateScope())
             await Task.Delay(5000);
         }
     }
+
+    // Fail fast on version skew: an unsupported server would otherwise surface as opaque
+    // Unimplemented failures for every task, dropping spools and burning retries. The server performs
+    // the mirror-image check on the version we sent above.
+    if (
+        !UpscalingProtocolVersion.IsCompatible(
+            connection.ProtocolVersion,
+            connection.MinSupportedProtocolVersion
+        )
+    )
+    {
+        logger.LogError(
+            "The server speaks upscaling protocol version {ServerVersion} (supports {ServerMin}-{ServerVersion}), but this worker (version {WorkerVersion}) supports {Min}-{Max}. Upgrade the worker and server together.",
+            connection.ProtocolVersion,
+            connection.MinSupportedProtocolVersion,
+            connection.ProtocolVersion,
+            UpscalingProtocolVersion.Current,
+            UpscalingProtocolVersion.MinSupported,
+            UpscalingProtocolVersion.Current
+        );
+        throw new InvalidOperationException(
+            $"Incompatible upscaling protocol version {connection.ProtocolVersion}; this worker supports {UpscalingProtocolVersion.MinSupported}-{UpscalingProtocolVersion.Current}."
+        );
+    }
+
+    logger.LogDebug("Connection test response: {Response}", connection);
 
     var pythonService = scope.ServiceProvider.GetRequiredService<IPythonService>();
     var upscalerConfig = scope.ServiceProvider.GetRequiredService<IOptions<UpscalerConfig>>();

@@ -25,6 +25,7 @@ public static class WorkerJson
 [JsonDerivedType(typeof(WorkerStartedEvent), "started")]
 [JsonDerivedType(typeof(WorkerProgressEvent), "progress")]
 [JsonDerivedType(typeof(WorkerDoneEvent), "done")]
+[JsonDerivedType(typeof(WorkerPageDoneEvent), "page_done")]
 [JsonDerivedType(typeof(WorkerErrorEvent), "error")]
 [JsonDerivedType(typeof(WorkerCancelledEvent), "cancelled")]
 [JsonDerivedType(typeof(WorkerCacheReleasedEvent), "cache_released")]
@@ -53,6 +54,19 @@ public sealed record WorkerDoneEvent(
     string? Status,
     double ElapsedSeconds,
     List<WorkerDoneFile>? Files
+) : WorkerEvent;
+
+/// <summary>
+/// A single page of a streamed chapter finished (or failed). Emitted before the final
+/// <see cref="WorkerDoneEvent"/> so a driver can stream each page back immediately.
+/// </summary>
+public sealed record WorkerPageDoneEvent(
+    string? Id,
+    int? Index,
+    string? Input,
+    string? Output,
+    string? Status,
+    string? Error
 ) : WorkerEvent;
 
 public sealed record WorkerErrorEvent(string? Id, string? Message) : WorkerEvent;
@@ -98,11 +112,48 @@ public sealed record WorkerJobOutput
     public required string Filename { get; init; }
     public required string Format { get; init; }
     public bool Overwrite { get; init; }
+
+    /// <summary>
+    /// Lossy compression quality. Omitted when null so the worker falls back to its workflow default.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? Quality { get; init; }
 }
 
 public sealed record WorkerJobOptions
 {
     public int Scale { get; init; }
+}
+
+/// <summary>
+/// Starts a streamed chapter. Pages are then sent as <see cref="WorkerPageRequest"/> lines and the
+/// stream is ended with <see cref="WorkerCloseChapterRequest"/>. A chapter has no single input
+/// path, so <see cref="Output"/> is required and the chains come from the worker's settings.
+/// </summary>
+public sealed record WorkerChapterRequest
+{
+    public string Type { get; init; } = "open_chapter";
+    public required string Id { get; init; }
+    public required WorkerJobOutput Output { get; init; }
+    public WorkerJobOptions? Options { get; init; }
+    public int TotalPages { get; init; }
+}
+
+/// <summary>One source page of a streamed chapter. <c>Path</c> points at a file the driver owns.</summary>
+public sealed record WorkerPageRequest
+{
+    public string Type { get; init; } = "page";
+    public required string Id { get; init; }
+    public required int Index { get; init; }
+    public required string Name { get; init; }
+    public required string Path { get; init; }
+}
+
+/// <summary>Ends the page stream so the chapter can finish.</summary>
+public sealed record WorkerCloseChapterRequest
+{
+    public string Type { get; init; } = "close_chapter";
+    public required string Id { get; init; }
 }
 
 /// <summary>

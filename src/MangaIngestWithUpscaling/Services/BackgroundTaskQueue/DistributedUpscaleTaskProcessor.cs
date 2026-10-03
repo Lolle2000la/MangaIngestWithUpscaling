@@ -8,6 +8,7 @@ using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Services.RepairServices;
+using MangaIngestWithUpscaling.Services.Upscaling;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
@@ -53,7 +54,7 @@ public class DistributedUpscaleTaskProcessor(
     /// Otherwise, consistency issues may arise.
     /// </summary>
     /// <param name="checkAgainst">The task to check against if it is still the current task. Does so by using the Id.</param>
-    public async Task CancelCurrent(PersistedTask checkAgainst)
+    public virtual async Task CancelCurrent(PersistedTask checkAgainst)
     {
         PersistedTask? currentTask;
         using (_lock.EnterScope())
@@ -121,6 +122,7 @@ public class DistributedUpscaleTaskProcessor(
         }
 
         CleanupRepairFiles(checkAgainst.Id, logger);
+        DropPageSpool(checkAgainst.Id, logger);
 
         // Raise the event after releasing _lock: a subscriber that re-enters the processor (e.g. to
         // query running state) must never be able to deadlock the processor by calling back in.
@@ -146,6 +148,9 @@ public class DistributedUpscaleTaskProcessor(
     /// </summary>
     public void ForgetTask(int taskId)
     {
+        // The row is gone, so any page spool for it is orphaned.
+        DropPageSpool(taskId, logger);
+
         using (_lock.EnterScope())
         {
             if (!runningTasks.Remove(taskId))
@@ -421,39 +426,6 @@ public class DistributedUpscaleTaskProcessor(
                         continue;
                     }
 
-                    if (task.Data is ApplySplitsTask applySplitsTask)
-                    {
-                        // Check if the chapter exists
-                        using IServiceScope scope = scopeFactory.CreateScope();
-                        var logger = scope.ServiceProvider.GetRequiredService<
-                            ILogger<DistributedUpscaleTaskProcessor>
-                        >();
-                        var dbContext =
-                            scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-                        Chapter? chapter = await dbContext
-                            .Chapters.Include(t => t.Manga)
-                                .ThenInclude(t => t.Library)
-                            .FirstOrDefaultAsync(
-                                c => c.Id == applySplitsTask.ChapterId,
-                                linkedCts.Token
-                            );
-
-                        if (chapter == null || !File.Exists(chapter.NotUpscaledFullPath))
-                        {
-                            // Chapter no longer exists, mark task as failed (and persist it so a
-                            // restart does not replay a task that is already terminal). The terminal
-                            // write uses the service token so a worker disconnect cannot cancel it.
-                            await PersistFailedAsync(task, serviceStoppingToken);
-                            claimedTask = null;
-
-                            logger.LogWarning(
-                                "Skipping ApplySplitsTask {taskId} because chapter file is missing.",
-                                task.Id
-                            );
-                            continue;
-                        }
-                    }
-
                     if (task.Data is UpscaleTask upscaleData)
                     {
                         // Check if the target chapter file still exists before giving the task to the worker
@@ -677,15 +649,6 @@ public class DistributedUpscaleTaskProcessor(
         }
     }
 
-    /// <summary>
-    /// Returns the head of the upscale queue without claiming it, so a worker can inspect the
-    /// task (e.g. its transfer size) before deciding whether to claim it.
-    /// </summary>
-    public PersistedTask? PeekTask()
-    {
-        return taskQueue.PeekUpscale();
-    }
-
     public async Task<PersistedTask?> GetTask(CancellationToken stoppingToken)
     {
         var tcs = new TaskCompletionSource<PersistedTask>(
@@ -815,6 +778,13 @@ public class DistributedUpscaleTaskProcessor(
         }
 
         using IServiceScope scope = scopeFactory.CreateScope();
+        var completionLogger = scope.ServiceProvider.GetRequiredService<
+            ILogger<DistributedUpscaleTaskProcessor>
+        >();
+        // A completed task may still have a partial page spool; drop it now that the task is
+        // terminal.
+        DropPageSpool(taskId, completionLogger);
+
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         PersistedTask? dbTask = await dbContext.PersistedTasks.FirstOrDefaultAsync(t =>
             t.Id == taskId
@@ -1015,8 +985,51 @@ public class DistributedUpscaleTaskProcessor(
     }
 
     /// <summary>
-    ///     Cleans up temporary files created during repair processing.
+    /// Drops any partial page spool/cache for a task so its temp bytes do not linger until the
+    /// retention sweep. Best-effort.
     /// </summary>
+    private void DropPageSpool(int taskId, ILogger logger)
+    {
+        try
+        {
+            using IServiceScope scope = scopeFactory.CreateScope();
+            // Both are singletons, so they outlive this scope.
+            var spool = scope.ServiceProvider.GetRequiredService<PageStreamSpool>();
+            scope.ServiceProvider.GetRequiredService<PageContextCache>().Remove(taskId);
+            // Capture the current session now and compare-and-remove that exact instance later, so a
+            // task that is re-dispatched before the offloaded detach runs does not have its fresh
+            // session (and directory) removed.
+            PageStreamSession? session = spool.TryGetSession(taskId);
+            if (session is null)
+            {
+                return;
+            }
+
+            // Detach + delete off the caller's path. Detach acquires the session gate, which an
+            // in-flight assembly can hold for the whole (multi-GB) archive write, and this runs under
+            // the queue's enqueue semaphore; the recursive delete can also be many gigabytes.
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    string? directory = spool.Detach(session);
+                    if (directory is not null)
+                    {
+                        spool.DeleteDirectory(directory);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogDebug(ex, "Failed to drop the page spool for task {TaskId}.", taskId);
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Failed to drop the page spool for task {TaskId}.", taskId);
+        }
+    }
+
     private void CleanupRepairFiles(int taskId, ILogger logger)
     {
         try
@@ -1059,6 +1072,10 @@ public class DistributedUpscaleTaskProcessor(
                     errorMessage
                 );
             }
+
+            // Drop any partial page spool/cache for the failed task so its temp bytes do not linger
+            // until the retention sweep.
+            DropPageSpool(taskId, logger);
         }
 
         PersistedTask? failedTask = null;
@@ -1101,7 +1118,7 @@ public class DistributedUpscaleTaskProcessor(
     /// Prepares a RepairUpscaleTask for remote processing by analyzing differences and preparing missing pages CBZ.
     /// Returns true if the task was successfully prepared and should be delegated to remote workers.
     /// </summary>
-    private async Task<bool> PrepareRepairTaskForRemote(
+    internal async Task<bool> PrepareRepairTaskForRemote(
         RepairUpscaleTask repairTask,
         PersistedTask persistedTask,
         IServiceProvider services,
@@ -1186,38 +1203,22 @@ public class DistributedUpscaleTaskProcessor(
                 return false;
             }
 
-            if (!differences.CanRepair)
-            {
-                logger.LogWarning(
-                    "Chapter \"{chapterFileName}\" of {seriesTitle} cannot be repaired - will fall back to full re-upscale",
-                    chapter.FileName,
-                    chapter.Manga.PrimaryTitle
-                );
-
-                // Fall back to full upscale by creating a regular UpscaleTask and enqueuing it
-                var fallbackTask = new UpscaleTask(chapter, upscalerProfile);
-                await taskQueue.EnqueueAsync(fallbackTask);
-
-                // Mark original repair task as completed since we've handled the fallback
-                await PersistCompletedAsync(persistedTask, serviceStoppingToken);
-                return false;
-            }
-
             // Prepare the repair context for remote processing
             var repairService = services.GetRequiredService<IRepairService>();
             RepairContext repairContext = repairService.PrepareRepairContext(
                 differences,
                 currentStoragePath,
                 upscaleTargetPath,
-                logger
+                logger,
+                prepareMissingPagesCbz: false
             );
 
             if (differences.MissingPages.Count > 0)
             {
-                // Create and store remote repair state
+                // Create and store remote repair state. Page streaming reads the missing pages from
+                // the original source, so only the upscaled output path is tracked here.
                 var repairState = new RemoteRepairState
                 {
-                    PreparedMissingPagesCbzPath = repairContext.MissingPagesCbz,
                     UpscaledMissingPagesCbzPath = repairContext.UpscaledMissingCbz,
                     RepairContext = repairContext,
                 };
@@ -1366,11 +1367,6 @@ public class DistributedUpscaleTaskProcessor(
         private bool _cleanupCompleted;
 
         /// <summary>
-        ///     Path to the prepared CBZ file containing missing pages for remote upscaling.
-        /// </summary>
-        public string PreparedMissingPagesCbzPath { get; set; } = string.Empty;
-
-        /// <summary>
         ///     Path where the upscaled missing pages CBZ will be stored after remote processing.
         /// </summary>
         public string UpscaledMissingPagesCbzPath { get; set; } = string.Empty;
@@ -1456,7 +1452,6 @@ public class DistributedUpscaleTaskProcessor(
                 logger.LogDebug(ex, "RepairContext dispose threw during remote repair cleanup.");
             }
 
-            DeleteFileIfPresent(PreparedMissingPagesCbzPath, logger);
             DeleteFileIfPresent(UpscaledMissingPagesCbzPath, logger);
         }
 

@@ -25,6 +25,11 @@ public abstract class BackgroundTaskProcessorBase(
     // bounded number of times instead of hot-looping or waiting for the periodic replayer.
     // Successful claims and terminal outcomes remove the entry.
     private readonly ConcurrentDictionary<int, int> _claimAttempts = new();
+
+    // Consecutive deferrals per task, only to keep the "still waiting" trace at Debug after the first
+    // one: a task can now wait for a long-running sibling for hours, and the periodic replayer is no
+    // longer the thing that re-offers it.
+    private readonly ConcurrentDictionary<int, int> _deferrals = new();
     private CancellationTokenSource? currentStoppingToken;
     private PersistedTask? currentTask;
     private CancellationToken serviceStoppingToken;
@@ -37,6 +42,12 @@ public abstract class BackgroundTaskProcessorBase(
     /// </summary>
     protected virtual IReadOnlyList<TimeSpan> ClaimRetryBackoff { get; } =
         new[] { TimeSpan.FromMilliseconds(250), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3) };
+
+    /// <summary>
+    ///     How long a deliberately deferred task waits before it is offered to the loop again. Virtual so
+    ///     tests can make it tiny.
+    /// </summary>
+    protected virtual TimeSpan DeferralRetryInterval { get; } = TimeSpan.FromSeconds(10);
 
     /// <summary>
     ///     Message logged when a task's processing throws a non-cancellation exception. Each
@@ -72,6 +83,9 @@ public abstract class BackgroundTaskProcessorBase(
     /// <summary>
     ///     Claims (or otherwise verifies) <paramref name="task" />. Returns <c>false</c> when it must
     ///     not run: it was dropped, its cancel was persisted, or a bounded retry was scheduled.
+    ///     An exception thrown from here is handled by <see cref="ProcessTaskAsync" /> — a cancellation
+    ///     the way a cancelled claim is, anything else as a transient failure — so no override can fault
+    ///     the processor loop.
     /// </summary>
     protected abstract Task<bool> TryAcquireTaskAsync(
         PersistedTask task,
@@ -90,10 +104,11 @@ public abstract class BackgroundTaskProcessorBase(
     /// <summary>
     /// Cancels the current task if it matches the given task.
     /// The task is necessary to prevent canceling another if the task has already been processed.
-    /// Otherwise, consistency issues may arise.
+    /// Otherwise, consistency issues may arise. Virtual so a test can observe which processor was
+    /// asked to cancel a task.
     /// </summary>
     /// <param name="checkAgainst">The task to check against if it is still the current task. Does so by using the Id.</param>
-    public void CancelCurrent(PersistedTask checkAgainst)
+    public virtual void CancelCurrent(PersistedTask checkAgainst)
     {
         using (_lock.EnterScope())
         {
@@ -149,10 +164,14 @@ public abstract class BackgroundTaskProcessorBase(
     }
 
     /// <summary>
-    ///     Removes any recorded transient-claim-attempt counter for <paramref name="taskId" />,
-    ///     marking its earlier failures as resolved.
+    ///     Removes any recorded transient-claim-attempt and deferral counters for
+    ///     <paramref name="taskId" />, marking its earlier failures or waits as resolved.
     /// </summary>
-    protected void ForgetClaimAttempts(int taskId) => _claimAttempts.TryRemove(taskId, out _);
+    protected void ForgetClaimAttempts(int taskId)
+    {
+        _claimAttempts.TryRemove(taskId, out _);
+        _deferrals.TryRemove(taskId, out _);
+    }
 
     /// <summary>
     ///     Claims a Pending task. A claim failure (per-task cancellation from
@@ -215,7 +234,39 @@ public abstract class BackgroundTaskProcessorBase(
     /// </summary>
     protected async Task ProcessTaskAsync(PersistedTask task, CancellationToken stoppingToken)
     {
-        if (!await TryAcquireTaskAsync(task, stoppingToken))
+        bool acquired;
+        try
+        {
+            acquired = await TryAcquireTaskAsync(task, stoppingToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // CancelCurrent (removal or an explicit cancel) or shutdown cancelled the per-task token
+            // while an override was acquiring — the same-chapter guard of ApplySplitsTask queries the
+            // database there. Route it exactly like a cancelled claim so the intended cancel is
+            // persisted rather than lost, and so it cannot fault the loop: under
+            // BackgroundServiceExceptionBehavior.StopHost that would stop the whole application.
+            logger.LogInformation("Acquisition of task {TaskId} was canceled", task.Id);
+            ForgetClaimAttempts(task.Id);
+            await ApplyClaimCancellationAsync(task);
+            return;
+        }
+        catch (Exception ex)
+        {
+            // An override's acquisition step can also fail transiently (a database error while
+            // deciding whether the task may run yet). Reconcile the row and retry promptly, exactly as
+            // a failed claim does, so the failure cannot fault the processor either.
+            logger.LogError(
+                ex,
+                "Failed to acquire task {TaskId}; returning it to Pending for retry",
+                task.Id
+            );
+            await ReturnToPendingForReplayAsync(task);
+            await RequeueTransientClaimFailureAsync(task);
+            return;
+        }
+
+        if (!acquired)
         {
             return;
         }
@@ -372,6 +423,31 @@ public abstract class BackgroundTaskProcessorBase(
         // observe a disposed source instead of merely being cancelled on shutdown.
         _ = RetryClaimAfterBackoffAsync(task, backoff, serviceStoppingToken);
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    ///     Schedules a prompt re-offer of a task whose acquire step deferred it on purpose: it is waiting
+    ///     for another task, not failing. A deferral therefore neither consumes the bounded
+    ///     transient-claim retry budget nor trips its warning, and the row no longer being Pending ends
+    ///     the wait. Each deferral schedules its own re-offer; a duplicate from the periodic replayer is
+    ///     harmless because the re-offer is guarded on the row still being Pending and the claim path
+    ///     tolerates a repeated offer. The periodic replayer stays the backstop for a task left deferred
+    ///     by a restart.
+    /// </summary>
+    protected void DeferTask(PersistedTask task, string reason)
+    {
+        int attempt = _deferrals.AddOrUpdate(task.Id, 1, (_, current) => current + 1);
+        if (attempt == 1)
+        {
+            logger.LogInformation("Deferring task {TaskId}: {Reason}", task.Id, reason);
+        }
+        else
+        {
+            // One line per re-offer would flood the log while a blocker runs for hours.
+            logger.LogDebug("Still deferring task {TaskId}: {Reason}", task.Id, reason);
+        }
+
+        _ = RetryClaimAfterBackoffAsync(task, DeferralRetryInterval, serviceStoppingToken);
     }
 
     /// <summary>

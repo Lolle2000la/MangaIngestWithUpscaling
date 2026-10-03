@@ -50,6 +50,25 @@ public record UpscalerConfig
             "Models"
         );
 
+    /// <summary>
+    /// The models directory as an absolute path. A relative configured value is resolved against the
+    /// process CWD so the engine identity and the spawned Python worker agree on one directory.
+    /// </summary>
+    public string ResolvedModelsDirectory
+    {
+        get
+        {
+            try
+            {
+                return Path.GetFullPath(ModelsDirectory);
+            }
+            catch (Exception)
+            {
+                return ModelsDirectory;
+            }
+        }
+    }
+
     public string PythonEnvironmentDirectory { get; set; } =
         Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -126,6 +145,13 @@ public record UpscalerConfig
     ///     lazily on the next job, so this only affects idle resource usage.
     /// </summary>
     public TimeSpan WorkerIdleTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    ///     Maximum time a single request to the resident detection server may run before the request
+    ///     is cancelled and the server process killed; the caller then falls back to the per-image
+    ///     CLI, so a wedged detector cannot hang a task forever. Zero disables the guard.
+    /// </summary>
+    public TimeSpan DetectServerRequestTimeout { get; set; } = TimeSpan.FromMinutes(10);
 
     /// <summary>
     ///     Maximum number of jobs the persistent upscale worker may have in flight plus queued

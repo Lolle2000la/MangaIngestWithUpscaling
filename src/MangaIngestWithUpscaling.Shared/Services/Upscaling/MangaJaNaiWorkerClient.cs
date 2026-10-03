@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Python;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -32,6 +33,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IOptions<UpscalerConfig> _config;
     private readonly ILogger<MangaJaNaiWorkerClient> _logger;
+    private readonly IHostApplicationLifetime _lifetime;
 
     private readonly SemaphoreSlim _submitLock = new(1, 1);
     private readonly SemaphoreSlim _stdinLock = new(1, 1);
@@ -44,6 +46,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     private TaskCompletionSource? _cacheReleaseTcs;
     private string? _currentJobId;
     private bool _shuttingDown;
+    private CancellationTokenSource? _watchdogCts;
 
     // Stored as ticks so the stdout reader, watchdog, and job loop can update/read it
     // without torn reads on a DateTime struct.
@@ -54,12 +57,14 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     public MangaJaNaiWorkerClient(
         IServiceScopeFactory scopeFactory,
         IOptions<UpscalerConfig> config,
-        ILogger<MangaJaNaiWorkerClient> logger
+        ILogger<MangaJaNaiWorkerClient> logger,
+        IHostApplicationLifetime lifetime
     )
     {
         _scopeFactory = scopeFactory;
         _config = config;
         _logger = logger;
+        _lifetime = lifetime;
     }
 
     private void TouchActivity() =>
@@ -97,18 +102,27 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                 {
                     await SendLineAsync(BuildJobLine(request), cancellationToken);
                 }
-                catch (InvalidOperationException)
-                    when (_stdin is null && !cancellationToken.IsCancellationRequested)
+                catch (Exception ex)
+                    when (!cancellationToken.IsCancellationRequested
+                        && (
+                            (ex is IOException or ObjectDisposedException)
+                            || (ex is InvalidOperationException && _stdin is null)
+                        )
+                    )
                 {
                     // The worker crashed between the ready check and submission; respawn once
-                    // with a fresh job and retry.
+                    // with a fresh job and retry. A broken pipe surfaces as IOException/
+                    // ObjectDisposedException rather than InvalidOperationException.
                     _logger.LogWarning(
                         "Upscale worker crashed during submission; respawning and retrying once."
                     );
                     _jobs.TryRemove(request.Id, out _);
+                    // Publish the replacement process before registering the replacement job: the
+                    // dead process's OnWorkerExited faults the jobs it snapshots, and it must not see
+                    // (and fault) a job that belongs to the new worker.
+                    await EnsureWorkerAsync(cancellationToken);
                     job = new WorkerJob(request.Id, progress);
                     _jobs.TryAdd(request.Id, job);
-                    await EnsureWorkerAsync(cancellationToken);
                     await SendLineAsync(BuildJobLine(request), cancellationToken);
                 }
 
@@ -121,13 +135,17 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                     _ = RequestCancelAsync(request.Id);
                 });
 
-                Task monitor = MonitorTimeoutAsync(job, timeout);
+                // Only monitor inactivity when a timeout was supplied; a null timeout would
+                // otherwise leave an infinite, never-completing task alive for the process.
+                Task? monitor = timeout is null ? null : MonitorTimeoutAsync(job, timeout);
 
-                Task completed = await Task.WhenAny(
-                    job.Completion.Task,
-                    monitor,
-                    cancelSignal.Task
-                );
+                List<Task> waiters = [job.Completion.Task, cancelSignal.Task];
+                if (monitor is not null)
+                {
+                    waiters.Add(monitor);
+                }
+
+                Task completed = await Task.WhenAny(waiters);
 
                 if (completed == cancelSignal.Task)
                 {
@@ -157,7 +175,11 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                     throw new OperationCanceledException(cancellationToken);
                 }
 
-                if (completed == monitor)
+                // Prefer the monitor when it requested the timeout, even if the job's own completion
+                // won the race: a worker that honors the cancel emits a "cancelled" done, which
+                // faults the job with a non-timeout error that would otherwise classify as a hard
+                // failure and delete the spool. The timeout is the authoritative outcome.
+                if (monitor is not null && (completed == monitor || job.TimeoutRequested))
                 {
                     await monitor; // throws TimeoutException after escalating cancel/kill
                 }
@@ -177,20 +199,243 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         }
     }
 
-    public async Task ShutdownWorkerAsync(CancellationToken cancellationToken)
+    public async Task<UpscaleJobResult> RunChapterAsync(
+        ChapterJobRequest request,
+        IAsyncEnumerable<ChapterPage> pages,
+        IProgress<UpscaleProgress>? progress,
+        Action<UpscaleJobFile> onPageDone,
+        CancellationToken cancellationToken,
+        TimeSpan? timeout
+    )
+    {
+        await _submitLock.WaitAsync(cancellationToken);
+        try
+        {
+            TouchActivity();
+            await EnsureWorkerAsync(cancellationToken);
+
+            WorkerJob job = new(request.Id, progress, onPageDone, failOnPageErrors: false);
+            if (!_jobs.TryAdd(request.Id, job))
+            {
+                throw new InvalidOperationException(
+                    $"A job with id '{request.Id}' is already in flight."
+                );
+            }
+
+            _currentJobId = request.Id;
+
+            try
+            {
+                try
+                {
+                    await SendLineAsync(BuildChapterLine(request), cancellationToken);
+                }
+                catch (Exception ex)
+                    when (!cancellationToken.IsCancellationRequested
+                        && (
+                            (ex is IOException or ObjectDisposedException)
+                            || (ex is InvalidOperationException && _stdin is null)
+                        )
+                    )
+                {
+                    _logger.LogWarning(
+                        "Upscale worker crashed during chapter submission; respawning and retrying once."
+                    );
+                    _jobs.TryRemove(request.Id, out _);
+                    // Publish the replacement process before registering the replacement job: the
+                    // dead process's OnWorkerExited faults the jobs it snapshots, and it must not see
+                    // (and fault) a job that belongs to the new worker.
+                    await EnsureWorkerAsync(cancellationToken);
+                    job = new WorkerJob(request.Id, progress, onPageDone, failOnPageErrors: false);
+                    _jobs.TryAdd(request.Id, job);
+                    await SendLineAsync(BuildChapterLine(request), cancellationToken);
+                }
+
+                using var producerCts = CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken
+                );
+                Exception? producerError = null;
+                Task producer = Task.Run(
+                    async () =>
+                    {
+                        try
+                        {
+                            await foreach (
+                                ChapterPage page in pages.WithCancellation(producerCts.Token)
+                            )
+                            {
+                                await SendLineAsync(
+                                    BuildPageLine(request.Id, page),
+                                    producerCts.Token
+                                );
+                            }
+
+                            await SendLineAsync(
+                                BuildCloseChapterLine(request.Id),
+                                producerCts.Token
+                            );
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            // Cancelled by us (the chapter settled) or by the caller; not an error.
+                        }
+                        catch (Exception ex)
+                        {
+                            producerError = ex;
+                            await RequestCancelAsync(request.Id);
+                        }
+                    },
+                    CancellationToken.None
+                );
+
+                var cancelSignal = new TaskCompletionSource(
+                    TaskCreationOptions.RunContinuationsAsynchronously
+                );
+                using CancellationTokenRegistration cancelReg = cancellationToken.Register(() =>
+                {
+                    cancelSignal.TrySetResult();
+                    _ = RequestCancelAsync(request.Id);
+                });
+
+                // Only monitor inactivity when a timeout was supplied; a null timeout would
+                // otherwise leave an infinite, never-completing task alive for the process.
+                Task? monitor = timeout is null ? null : MonitorTimeoutAsync(job, timeout);
+
+                List<Task> waiters = [job.Completion.Task, cancelSignal.Task];
+                if (monitor is not null)
+                {
+                    waiters.Add(monitor);
+                }
+
+                Task completed = await Task.WhenAny(waiters);
+
+                // Stop feeding pages as soon as the chapter settles (finished, cancelled or timed
+                // out). On the timeout path the cancellation token is not signalled, so this is the
+                // only thing that stops the producer.
+                await producerCts.CancelAsync();
+                try
+                {
+                    await producer.WaitAsync(CancelGracePeriod, CancellationToken.None);
+                }
+                catch (Exception)
+                { /* the producer stops with the chapter */
+                }
+
+                if (completed == cancelSignal.Task)
+                {
+                    try
+                    {
+                        await job.Completion.Task.WaitAsync(
+                            CancelGracePeriod,
+                            CancellationToken.None
+                        );
+                    }
+                    catch (Exception)
+                    { /* the worker may already be gone; cancellation wins */
+                    }
+
+                    if (!job.Completion.Task.IsCompleted)
+                    {
+                        _logger.LogWarning(
+                            "Upscale worker chapter {JobId} did not cancel in time; killing the worker.",
+                            request.Id
+                        );
+                        await KillWorkerAsync();
+                    }
+
+                    throw new OperationCanceledException(cancellationToken);
+                }
+
+                // Prefer the monitor when it requested the timeout, even if the job's own completion
+                // won the race: a worker that honors the cancel emits a "cancelled" done, which
+                // faults the job with a non-timeout error that would otherwise classify as a hard
+                // failure and delete the spool. The timeout is the authoritative outcome.
+                if (monitor is not null && (completed == monitor || job.TimeoutRequested))
+                {
+                    await monitor; // throws TimeoutException after escalating cancel/kill
+                }
+
+                // Surface a worker *crash* (exit code + captured stderr) rather than the producer's
+                // consequential broken-pipe error. A producer failure that merely induced a
+                // "cancelled" done is not a crash, so the producer error is the real cause there.
+                if (job.WorkerExited)
+                {
+                    if (producerError is not null)
+                    {
+                        _logger.LogWarning(
+                            producerError,
+                            "Streaming chapter {JobId} failed while the worker process exited; surfacing the worker error.",
+                            request.Id
+                        );
+                    }
+
+                    return await job.Completion.Task;
+                }
+
+                if (producerError is not null)
+                {
+                    throw new InvalidOperationException(
+                        "Failed to stream the chapter pages to the upscale worker.",
+                        producerError
+                    );
+                }
+
+                return await job.Completion.Task;
+            }
+            finally
+            {
+                _jobs.TryRemove(request.Id, out _);
+                _currentJobId = null;
+                TouchActivity();
+            }
+        }
+        finally
+        {
+            _submitLock.Release();
+        }
+    }
+
+    public Task ShutdownWorkerAsync(CancellationToken cancellationToken) =>
+        ShutdownWorkerAsync(force: false, cancellationToken);
+
+    /// <summary>
+    /// Tears down the worker. <paramref name="force"/> skips the in-flight guard: host shutdown uses
+    /// it, since a job that has not yet observed ApplicationStopping must not keep the Python worker
+    /// (and its GPU memory) alive.
+    /// </summary>
+    public async Task ShutdownWorkerAsync(bool force, CancellationToken cancellationToken)
     {
         Process? process;
         StreamWriter? stdin;
+        bool alreadyExited;
         lock (_stateLock)
         {
+            // Never tear down the worker while a job is in flight: a streamed chapter (or a
+            // whole-CBZ job) holds it, and killing it would fail that task. The next detection
+            // attempt after the job finishes shuts it down instead.
+            if (!force && (_currentJobId is not null || !_jobs.IsEmpty))
+            {
+                _logger.LogDebug(
+                    "Not shutting down the upscale worker: a job is in flight or queued."
+                );
+                return;
+            }
+
             process = _process;
             stdin = _stdin;
             _shuttingDown = true;
-            if (process is null || process.HasExited)
+            alreadyExited = process is null || process.HasExited;
+            if (alreadyExited)
             {
                 _process = null;
-                return;
             }
+        }
+
+        if (alreadyExited)
+        {
+            // The process already exited; dispose the captured stdin rather than leak it.
+            await DisposeStdinAsync(stdin);
+            return;
         }
 
         try
@@ -210,7 +455,8 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             grace.CancelAfter(TimeSpan.FromSeconds(10));
             try
             {
-                await process.WaitForExitAsync(grace.Token);
+                // alreadyExited is false here, so process is non-null.
+                await process!.WaitForExitAsync(grace.Token);
             }
             catch (OperationCanceledException) { }
         }
@@ -246,25 +492,34 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                 return false;
             }
 
+            if (_cacheReleaseTcs is not null)
+            {
+                _logger.LogDebug("Not releasing worker GPU cache: a release is already in flight.");
+                return false;
+            }
+
             tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             _cacheReleaseTcs = tcs;
         }
 
         try
         {
-            await SendLineAsync(
-                JsonSerializer.Serialize(new WorkerCommand("release_cache"), WorkerJson.Options),
-                cancellationToken
-            );
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Failed to send the GPU cache release request to the worker.");
-            return false;
-        }
+            try
+            {
+                await SendLineAsync(
+                    JsonSerializer.Serialize(
+                        new WorkerCommand("release_cache"),
+                        WorkerJson.Options
+                    ),
+                    cancellationToken
+                );
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Failed to send the GPU cache release request to the worker.");
+                return false;
+            }
 
-        try
-        {
             // A healthy idle worker answers immediately; the timeout only guards against a
             // wedged process. The worker may legitimately answer "busy" (job started in the
             // meantime), which still counts as an acknowledged reply.
@@ -282,6 +537,8 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         }
         finally
         {
+            // Clear on every exit path: a failed send must not leave the in-flight guard set for the
+            // singleton's lifetime, which would silently disable all later releases.
             lock (_stateLock)
             {
                 if (_cacheReleaseTcs == tcs)
@@ -294,17 +551,62 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        _ = WatchdogLoopAsync(cancellationToken);
+        // Link the host's startup token with ApplicationStopping: StartAsync's token only fires when
+        // startup is aborted, so without the link the watchdog would keep polling after shutdown.
+        _watchdogCts = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            _lifetime.ApplicationStopping
+        );
+        _ = WatchdogLoopAsync(_watchdogCts.Token);
         return Task.CompletedTask;
     }
 
-    public Task StopAsync(CancellationToken cancellationToken) =>
-        ShutdownWorkerAsync(cancellationToken);
+    public async Task StopAsync(CancellationToken cancellationToken)
+    {
+        _watchdogCts?.Cancel();
+        await ShutdownWorkerAsync(force: true, cancellationToken);
+    }
 
-    public async ValueTask DisposeAsync() => await ShutdownWorkerAsync(CancellationToken.None);
+    public async ValueTask DisposeAsync()
+    {
+        _watchdogCts?.Cancel();
+        _watchdogCts?.Dispose();
+        _watchdogCts = null;
+        await ShutdownWorkerAsync(force: true, CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Asks the resident detection server to return its cached VRAM before the upscaler claims the
+    /// GPU, so two warm models do not fight over a small card. Best-effort.
+    /// </summary>
+    private async Task ReleaseDetectorGpuAsync()
+    {
+        try
+        {
+            using IServiceScope detectorScope = _scopeFactory.CreateScope();
+            IDetectServerClient? detector =
+                detectorScope.ServiceProvider.GetService<IDetectServerClient>();
+            if (detector is not null)
+            {
+                await detector.ReleaseGpuCacheAsync(CancellationToken.None);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(
+                ex,
+                "Failed to release the detection server's GPU cache before upscaling."
+            );
+        }
+    }
 
     private async Task EnsureWorkerAsync(CancellationToken cancellationToken)
     {
+        // Free the resident detection server's VRAM before the upscaler claims the GPU, so two warm
+        // models do not fight over a small card. Done before the warm-worker early return, so a
+        // detection run between two upscale jobs still releases the detector. Best-effort.
+        await ReleaseDetectorGpuAsync();
+
         Process? existing;
         lock (_stateLock)
         {
@@ -358,6 +660,8 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             RedirectStandardError = true,
             UseShellExecute = false,
             CreateNoWindow = true,
+            // Explicit no-BOM UTF-8 so the first JSON line is not prefixed with a BOM.
+            StandardInputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };
@@ -366,6 +670,12 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         startInfo.ArgumentList.Add(settingsPath);
         startInfo.ArgumentList.Add("--queue-capacity");
         startInfo.ArgumentList.Add(_config.Value.WorkerQueueCapacity.ToString());
+        // Exit the worker when this process dies, so an abruptly killed host does not leave a warm
+        // model (and its GPU memory) resident forever.
+        startInfo.ArgumentList.Add("--parent-pid");
+        startInfo.ArgumentList.Add(
+            Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        );
         if (_config.Value.WorkerIdleCacheReleaseTimeout > TimeSpan.Zero)
         {
             startInfo.ArgumentList.Add("--cache-release-idle");
@@ -384,6 +694,12 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         {
             startInfo.EnvironmentVariables["USER"] = "mangaingest";
         }
+
+        // Pin Python's stdio to UTF-8. The C# side writes BOM-less UTF-8, but Python reads stdin with
+        // the locale encoding unless told otherwise, so a non-ASCII page path would be mangled on
+        // Windows/ANSI or a bare C locale.
+        startInfo.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
+        startInfo.EnvironmentVariables["PYTHONUTF8"] = "1";
 
         var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         var readyTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -436,7 +752,9 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         {
             string stderrSection = BuildStderrSection();
             await KillWorkerAsync();
-            throw new InvalidOperationException(
+            // TimeoutException (not InvalidOperationException) so the streaming classifier treats a
+            // slow cold start as recoverable rather than dropping the already-spooled pages.
+            throw new TimeoutException(
                 $"Timed out waiting for the upscale worker to become ready.{stderrSection}"
             );
         }
@@ -459,11 +777,16 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     private async Task KillWorkerAsync()
     {
         Process? process;
+        TaskCompletionSource? cacheRelease;
         lock (_stateLock)
         {
             process = _process;
             _shuttingDown = true;
+            cacheRelease = _cacheReleaseTcs;
+            _cacheReleaseTcs = null;
         }
+
+        cacheRelease?.TrySetCanceled();
 
         if (process is null)
         {
@@ -494,7 +817,34 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         catch { }
     }
 
-    private static void TryKillAndDispose(Process? process)
+    /// <summary>
+    /// Disposes a captured stdin under the stdin lock, so a concurrent <see cref="SendLineAsync(string, CancellationToken)"/>
+    /// cannot write to a disposed writer (which would silently drop the line).
+    /// </summary>
+    private async Task DisposeStdinAsync(StreamWriter? stdin)
+    {
+        if (stdin is null)
+        {
+            return;
+        }
+
+        await _stdinLock.WaitAsync();
+        try
+        {
+            TryDispose(stdin);
+        }
+        finally
+        {
+            _stdinLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Kills the process (if alive) and waits briefly for it to exit before disposing, so a respawn
+    /// does not race the dead process's GPU context (a CUDA context can still hold VRAM after a kill,
+    /// causing an OOM on the new worker's model load).
+    /// </summary>
+    private static async Task KillAndDisposeAsync(Process? process)
     {
         if (process is null)
         {
@@ -506,6 +856,12 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             if (!process.HasExited)
             {
                 process.Kill(true);
+                using var exitCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                try
+                {
+                    await process.WaitForExitAsync(exitCts.Token);
+                }
+                catch (OperationCanceledException) { }
             }
         }
         catch { }
@@ -521,6 +877,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         }
 
         StreamWriter? stdin;
+        WorkerJob[] jobs;
         lock (_stateLock)
         {
             if (_process == process)
@@ -529,16 +886,27 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                 _readyTcs = null;
                 stdin = _stdin;
                 _stdin = null;
+                // Fault any in-flight jobs here too: a forced shutdown can null _process before the
+                // stdout reader observes EOF, so OnWorkerExited would early-return and leave a job's
+                // Completion uncompleted, hanging its caller forever.
+                jobs = _jobs.Values.ToArray();
             }
             else
             {
-                // A newer worker has already replaced this one; leave its stdin alone.
+                // A newer worker has already replaced this one; leave its stdin and jobs alone.
                 stdin = null;
+                jobs = [];
             }
         }
 
-        TryDispose(stdin);
-        TryKillAndDispose(process);
+        await DisposeStdinAsync(stdin);
+        foreach (WorkerJob job in jobs)
+        {
+            job.MarkWorkerExited();
+            job.FailCrashed("Upscale worker was shut down while the job was in flight.");
+        }
+
+        await KillAndDisposeAsync(process);
 
         _logger.LogInformation("Upscale worker process stopped.");
     }
@@ -618,10 +986,48 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                 Filename = request.OutputFilename,
                 Format = ToFormatString(request.Format),
                 Overwrite = request.Overwrite,
+                Quality = request.Quality,
             },
             Options = new WorkerJobOptions { Scale = (int)request.Scale },
         };
         return JsonSerializer.Serialize(job, WorkerJson.Options);
+    }
+
+    internal static string BuildChapterLine(ChapterJobRequest request)
+    {
+        var chapter = new WorkerChapterRequest
+        {
+            Id = request.Id,
+            Output = new WorkerJobOutput
+            {
+                Folder = request.OutputFolder,
+                Filename = "%filename%",
+                Format = ToFormatString(request.Format),
+                Overwrite = true,
+                Quality = request.Quality,
+            },
+            Options = new WorkerJobOptions { Scale = (int)request.Scale },
+            TotalPages = request.TotalPages,
+        };
+        return JsonSerializer.Serialize(chapter, WorkerJson.Options);
+    }
+
+    internal static string BuildPageLine(string id, ChapterPage page)
+    {
+        var request = new WorkerPageRequest
+        {
+            Id = id,
+            Index = page.Index,
+            Name = page.Name,
+            Path = page.Path,
+        };
+        return JsonSerializer.Serialize(request, WorkerJson.Options);
+    }
+
+    internal static string BuildCloseChapterLine(string id)
+    {
+        var request = new WorkerCloseChapterRequest { Id = id };
+        return JsonSerializer.Serialize(request, WorkerJson.Options);
     }
 
     internal static string ToFormatString(CompressionFormat format) =>
@@ -695,7 +1101,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         }
         finally
         {
-            OnWorkerExited(process);
+            await OnWorkerExited(process);
         }
     }
 
@@ -745,6 +1151,9 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                 case WorkerDoneEvent done:
                     DispatchDone(done);
                     break;
+                case WorkerPageDoneEvent pageDone:
+                    DispatchPageDone(pageDone);
+                    break;
                 case WorkerErrorEvent error:
                     DispatchError(error);
                     break;
@@ -763,8 +1172,23 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                     // Acknowledge the cancel; the job completes via the subsequent done event.
                     TouchJob(cancelled.Id);
                     break;
-                case WorkerCacheReleasedEvent:
-                    _cacheReleaseTcs?.TrySetResult();
+                case WorkerCacheReleasedEvent cacheReleased:
+                    // "ok" released the cache; "busy" (a job is running) did not, so the caller must
+                    // not be told the release succeeded.
+                    if (
+                        string.Equals(
+                            cacheReleased.Status,
+                            "ok",
+                            StringComparison.OrdinalIgnoreCase
+                        )
+                    )
+                    {
+                        _cacheReleaseTcs?.TrySetResult();
+                    }
+                    else
+                    {
+                        _cacheReleaseTcs?.TrySetCanceled();
+                    }
                     break;
             }
         }
@@ -805,6 +1229,14 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             .Select(f => new UpscaleJobFile(f.Input ?? "", f.Output ?? "", f.Status ?? ""))
             .ToList();
 
+        if (string.Equals(status, "cancelled", StringComparison.OrdinalIgnoreCase))
+        {
+            // A cancel the worker honored is a caller cancellation, not a failure: surface it as a
+            // cancellation so it is not classified permanent and does not drop the spool.
+            job.Cancel();
+            return;
+        }
+
         if (status != "ok")
         {
             job.Fail($"Upscale worker reported status '{status}'.");
@@ -812,7 +1244,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         }
 
         string[] failed = files.Where(f => f.Status == "error").Select(f => f.Input).ToArray();
-        if (failed.Length > 0)
+        if (job.FailOnPageErrors && failed.Length > 0)
         {
             job.Fail(
                 $"Upscale worker failed to process {failed.Length} file(s): {string.Join(", ", failed)}"
@@ -823,13 +1255,56 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         job.TrySetResult(new UpscaleJobResult(job.Id, status, files, done.ElapsedSeconds));
     }
 
+    private void DispatchPageDone(WorkerPageDoneEvent pageDone)
+    {
+        if (!TryGetAndTouch(pageDone.Id, out WorkerJob? job))
+        {
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(pageDone.Error))
+        {
+            _logger.LogWarning(
+                "Upscale worker reported an error for page {Input} of job {JobId}: {Error}",
+                pageDone.Input,
+                pageDone.Id,
+                pageDone.Error
+            );
+        }
+
+        // Carry the engine's per-page message into the status so it reaches the task's persisted
+        // error instead of the caller only being able to report "<input>: error".
+        string status = pageDone.Status ?? "";
+        if (status == "error" && !string.IsNullOrEmpty(pageDone.Error))
+        {
+            status = $"error: {pageDone.Error}";
+        }
+
+        try
+        {
+            job.OnPageDone?.Invoke(
+                new UpscaleJobFile(pageDone.Input ?? "", pageDone.Output ?? "", status)
+            );
+        }
+        catch (Exception ex)
+        {
+            // A throwing callback must not tear down the stdout reader (which would fault every
+            // in-flight job); fail just this job instead.
+            _logger.LogError(ex, "Page-done callback failed for job {JobId}.", pageDone.Id);
+            job.Fail($"Page-done callback failed: {ex.Message}");
+        }
+    }
+
     private void DispatchError(WorkerErrorEvent error)
     {
         string message = error.Message ?? "";
 
         if (TryGetAndTouch(error.Id, out WorkerJob? job))
         {
-            job.Fail($"Upscale worker error: {message}");
+            // Treat a worker-level error as recoverable (like a crash): it is commonly a transient
+            // engine fault (e.g. a caught CUDA OOM), and reporting it as terminal would delete the
+            // already-upscaled pages. The soft-failure cap still bounds a deterministic error.
+            job.FailCrashed($"Upscale worker error: {message}");
             return;
         }
 
@@ -846,7 +1321,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         }
     }
 
-    private void OnWorkerExited(Process process)
+    private async Task OnWorkerExited(Process process)
     {
         int? exitCode = null;
         try
@@ -863,6 +1338,8 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
         TaskCompletionSource? readyTcs;
         StreamWriter? stdin;
+        TaskCompletionSource? cacheRelease;
+        WorkerJob[] jobs;
         lock (_stateLock)
         {
             // A stale process (already replaced by a newer spawn) must not fault the new
@@ -877,24 +1354,33 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             _readyTcs = null;
             stdin = _stdin;
             _stdin = null;
+            cacheRelease = _cacheReleaseTcs;
+            _cacheReleaseTcs = null;
+            // Snapshot the jobs while the exiting process is still current: a crash-retry that
+            // respawns the worker and adds a replacement job after this point must not have its new
+            // job faulted by the dead process's exit.
+            jobs = _jobs.Values.ToArray();
         }
 
-        TryDispose(stdin);
+        await DisposeStdinAsync(stdin);
+        // Unblock a pending GPU-cache release so its in-flight guard is not left set.
+        cacheRelease?.TrySetCanceled();
 
-        foreach (WorkerJob job in _jobs.Values.ToArray())
+        foreach (WorkerJob job in jobs)
         {
-            job.Fail(
+            job.MarkWorkerExited();
+            job.FailCrashed(
                 $"Upscale worker process exited unexpectedly (exit code {detail}).{stderrSection}"
             );
         }
 
         readyTcs?.TrySetException(
-            new InvalidOperationException("Upscale worker exited before becoming ready.")
+            new UpscaleWorkerCrashedException("Upscale worker exited before becoming ready.")
         );
 
         // The stdout reader only reaches here on EOF, but if the process is somehow still
         // alive (e.g. it closed stdout without exiting), kill it so it isn't orphaned.
-        TryKillAndDispose(process);
+        await KillAndDisposeAsync(process);
     }
 
     private bool TryGetJob(string? id, [NotNullWhen(true)] out WorkerJob? job)
@@ -942,7 +1428,16 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                     effectiveTimeout
                 );
 
-                await RequestCancelAsync(job.Id);
+                // Mark the timeout before cancelling: the worker may acknowledge the cancel with a
+                // "cancelled" done, and the caller must surface the timeout rather than that done.
+                job.MarkTimeoutRequested();
+                // Fire-and-forget: the cancel must not be awaited on the stdin lock. A worker that
+                // stopped reading stdin (the exact wedge this monitor exists to catch) leaves the page
+                // producer blocked mid-write while holding that lock, so awaiting the cancel here would
+                // block this monitor too and the kill below would never be reached. The grace period
+                // below is the worker's whole budget to acknowledge the cancel; the kill then closes
+                // the pipe and releases the producer.
+                _ = RequestCancelAsync(job.Id);
 
                 Task finished = await Task.WhenAny(
                     job.Completion.Task,
@@ -980,11 +1475,20 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     {
         private long _lastEventTicks;
         private volatile bool _allPagesProcessed;
+        private volatile bool _workerExited;
+        private volatile bool _timeoutRequested;
 
-        public WorkerJob(string id, IProgress<UpscaleProgress>? progress)
+        public WorkerJob(
+            string id,
+            IProgress<UpscaleProgress>? progress,
+            Action<UpscaleJobFile>? onPageDone = null,
+            bool failOnPageErrors = true
+        )
         {
             Id = id;
             Progress = progress;
+            OnPageDone = onPageDone;
+            FailOnPageErrors = failOnPageErrors;
             Completion = new TaskCompletionSource<UpscaleJobResult>(
                 TaskCreationOptions.RunContinuationsAsynchronously
             );
@@ -993,11 +1497,34 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
         public string Id { get; }
         public IProgress<UpscaleProgress>? Progress { get; }
+        public Action<UpscaleJobFile>? OnPageDone { get; }
+
+        /// <summary>
+        /// Whether a per-file "error" entry should fail the job. The chapter/streaming flow copies a
+        /// page the engine could not process through instead (see <see cref="PageStreamClient"/>), so
+        /// it must not fail the whole chapter.
+        /// </summary>
+        public bool FailOnPageErrors { get; }
+
         public TaskCompletionSource<UpscaleJobResult> Completion { get; }
 
         public bool AllPagesProcessed => _allPagesProcessed;
 
         public void MarkAllPagesProcessed() => _allPagesProcessed = true;
+
+        /// <summary>True once the worker process has exited (as opposed to a job-level error).</summary>
+        public bool WorkerExited => _workerExited;
+
+        public void MarkWorkerExited() => _workerExited = true;
+
+        /// <summary>
+        /// Set by the inactivity monitor just before it cancels a wedged job. The worker may then
+        /// acknowledge with a "cancelled" done that faults the job; the timeout, not that done, is
+        /// the outcome the caller must surface.
+        /// </summary>
+        public bool TimeoutRequested => _timeoutRequested;
+
+        public void MarkTimeoutRequested() => _timeoutRequested = true;
 
         public DateTime LastEventUtc =>
             new(Interlocked.Read(ref _lastEventTicks), DateTimeKind.Utc);
@@ -1011,6 +1538,20 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
         public void Fail(string message) =>
             Completion.TrySetException(new InvalidOperationException(message));
+
+        /// <summary>
+        /// Cancels the job. Used when the worker honors a cancel, so the caller sees an
+        /// <see cref="OperationCanceledException"/> rather than a failure that would be classified
+        /// permanent and drop the spool.
+        /// </summary>
+        public void Cancel() => Completion.TrySetCanceled();
+
+        /// <summary>
+        /// Fails the job with a crash exception so the caller can tell a worker crash (recoverable,
+        /// the spool is preserved) from a deterministic job error (terminal).
+        /// </summary>
+        public void FailCrashed(string message) =>
+            Completion.TrySetException(new UpscaleWorkerCrashedException(message));
     }
 
     private sealed class StderrTailBuffer

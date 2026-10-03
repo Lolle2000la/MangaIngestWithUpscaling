@@ -441,4 +441,96 @@ public class ImageResizeServiceTests
         Assert.Equal(512, result.Width);
         Assert.Equal(512, result.Height);
     }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task PreprocessImageInPlaceAsync_ConvertsAMatchingFormatInPlace()
+    {
+        string directory = Directory.CreateTempSubdirectory("preprocess_page").FullName;
+        try
+        {
+            string path = Path.Combine(directory, "page.png");
+            using (Image image = Image.Black(8, 8))
+            {
+                image.WriteToFile(path);
+            }
+
+            await _service.PreprocessImageInPlaceAsync(
+                path,
+                new ImagePreprocessingOptions
+                {
+                    FormatConversionRules =
+                    [
+                        new MangaIngestWithUpscaling.Shared.Configuration.ImageFormatConversionRule
+                        {
+                            FromFormat = ".png",
+                            ToFormat = ".jpg",
+                            Quality = 90,
+                        },
+                    ],
+                },
+                TestContext.Current.CancellationToken
+            );
+
+            // The result replaces the file in place; libvips sniffs the content, and a JPEG starts
+            // with the SOI marker 0xFF 0xD8.
+            Assert.True(File.Exists(path));
+            byte[] bytes = File.ReadAllBytes(path);
+            Assert.Equal(0xFF, bytes[0]);
+            Assert.Equal(0xD8, bytes[1]);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task PreprocessImageInPlaceAsync_InvalidSmartDownscale_ShouldThrow()
+    {
+        // The streamed in-place path must validate like the whole-CBZ path, or a bad smart-downscale
+        // configuration is silently swallowed per image and the page is upscaled without the
+        // downscale the engine identity claims.
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            _service.PreprocessImageInPlaceAsync(
+                "unused.png",
+                new ImagePreprocessingOptions
+                {
+                    EnableSmartDownscale = true,
+                    SmartDownscaleThreshold = 1.0,
+                    SmartDownscaleFactor = 0,
+                },
+                TestContext.Current.CancellationToken
+            )
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task PreprocessImageInPlaceAsync_KeepsTheOriginalWhenTheImageCannotBeDecoded()
+    {
+        // A corrupt page must be copied through (the whole-CBZ path tolerated a bad image) rather than
+        // failing the whole chapter, and the original must be left untouched.
+        string imagePath = Path.Combine(Path.GetTempPath(), $"corrupt_{Guid.NewGuid():N}.png");
+        byte[] original = [1, 2, 3, 4, 5];
+        await File.WriteAllBytesAsync(imagePath, original, TestContext.Current.CancellationToken);
+        try
+        {
+            await _service.PreprocessImageInPlaceAsync(
+                imagePath,
+                new ImagePreprocessingOptions { MaxDimension = 100, FormatConversionRules = [] },
+                TestContext.Current.CancellationToken
+            );
+
+            Assert.Equal(
+                original,
+                await File.ReadAllBytesAsync(imagePath, TestContext.Current.CancellationToken)
+            );
+        }
+        finally
+        {
+            File.Delete(imagePath);
+        }
+    }
 }

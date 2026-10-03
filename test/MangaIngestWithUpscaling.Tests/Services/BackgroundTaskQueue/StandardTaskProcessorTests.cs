@@ -135,6 +135,22 @@ public class StandardTaskProcessorTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
+    public Task ExecuteAsync_WhenAcquisitionIsCancelled_PersistsTheCancelAndKeepsProcessing() =>
+        RunAcquireFailureScenarioAsync(
+            new OperationCanceledException("canceled"),
+            expectCanceled: true
+        );
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public Task ExecuteAsync_WhenAcquisitionThrows_ReturnsTheTaskToPendingAndKeepsProcessing() =>
+        RunAcquireFailureScenarioAsync(
+            new InvalidOperationException("acquisition failed"),
+            expectCanceled: false
+        );
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task ExecuteAsync_WhenClaimFailsPersistently_RetriesBoundedTimesAndKeepsServingOtherTasks()
     {
         // Regression guard: a persistent claim failure used to re-enqueue the same task at the
@@ -765,6 +781,73 @@ public class StandardTaskProcessorTests : IDisposable
         Assert.False(IsExecuteTaskFaulted(processor));
     }
 
+    /// <summary>
+    ///     Drives an acquisition failure through the real processor loop. The acquisition step is where
+    ///     a per-task cancel is observed — the same-chapter guard of <see cref="ApplySplitsTask"/> runs
+    ///     there — so an exception escaping it faults <c>ExecuteAsync</c>, which under
+    ///     <c>BackgroundServiceExceptionBehavior.StopHost</c> stops the whole application.
+    /// </summary>
+    private async Task RunAcquireFailureScenarioAsync(Exception acquireFailure, bool expectCanceled)
+    {
+        var persistence = Substitute.For<ITaskPersistenceService>();
+        persistence.ClaimTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(true);
+        persistence
+            .CancelTaskAsync(Arg.Any<int>(), Arg.Any<bool>(), Arg.Any<CancellationToken>())
+            .Returns(1);
+        persistence.IsTaskPendingAsync(Arg.Any<int>(), Arg.Any<CancellationToken>()).Returns(true);
+
+        var processor = new FailingAcquireStandardTaskProcessor(
+            _taskQueue,
+            _serviceProvider.GetRequiredService<IServiceScopeFactory>(),
+            _mockLogger,
+            persistence,
+            acquireFailure
+        );
+
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "first" });
+        await _taskQueue.EnqueueAsync(new LoggingTask { Message = "second" });
+
+        var processed = new TaskCompletionSource<PersistedTask>();
+        processor.StatusChanged += task =>
+        {
+            if (task.Status == PersistedTaskStatus.Processing)
+            {
+                processed.TrySetResult(task);
+            }
+            return Task.CompletedTask;
+        };
+
+        using var cts = new CancellationTokenSource();
+        await processor.StartAsync(cts.Token);
+
+        PersistedTask processedTask = await processed.Task.WaitAsync(
+            TimeSpan.FromSeconds(5),
+            TestContext.Current.CancellationToken
+        );
+
+        // The failed acquisition must not take the loop down: the task behind it is still served.
+        Assert.Equal("second", ((LoggingTask)processedTask.Data).Message);
+
+        if (expectCanceled)
+        {
+            // A cancel is authoritative: persist it rather than dropping the task.
+            await persistence
+                .Received(1)
+                .CancelTaskAsync(Arg.Any<int>(), false, Arg.Any<CancellationToken>());
+        }
+        else
+        {
+            // Anything else is transient: reconcile the row and retry it off the loop.
+            await persistence
+                .Received(1)
+                .RequeueStrandedTaskAsync(Arg.Any<int>(), Arg.Any<CancellationToken>());
+        }
+
+        await cts.CancelAsync();
+        await processor.StopAsync(CancellationToken.None);
+        Assert.False(IsExecuteTaskFaulted(processor));
+    }
+
     private ExposedStandardTaskProcessor CreateExposedProcessor(
         ITaskPersistenceService persistence
     ) =>
@@ -795,6 +878,30 @@ public class StandardTaskProcessorTests : IDisposable
             PersistedTask task,
             CancellationToken cancellationToken
         ) => ProcessTaskAsync(task, cancellationToken);
+    }
+
+    /// <summary>
+    ///     Processor whose acquisition step fails once and then defers to the real implementation,
+    ///     standing in for an override that observes the per-task cancellation or hits a transient
+    ///     error while acquiring.
+    /// </summary>
+    private sealed class FailingAcquireStandardTaskProcessor(
+        TaskQueue taskQueue,
+        IServiceScopeFactory scopeFactory,
+        ILogger<StandardTaskProcessor> logger,
+        ITaskPersistenceService taskPersistenceService,
+        Exception acquireFailure
+    ) : StandardTaskProcessor(taskQueue, scopeFactory, logger, taskPersistenceService)
+    {
+        private int _failuresLeft = 1;
+
+        protected override Task<bool> TryAcquireTaskAsync(
+            PersistedTask task,
+            CancellationToken stoppingToken
+        ) =>
+            Interlocked.Decrement(ref _failuresLeft) >= 0
+                ? Task.FromException<bool>(acquireFailure)
+                : base.TryAcquireTaskAsync(task, stoppingToken);
     }
 
     /// <summary>
