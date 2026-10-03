@@ -113,12 +113,6 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
 
             try
             {
-                string line = JsonSerializer.Serialize(
-                    new DetectServerRequest { Id = id, Path = imagePath },
-                    DetectServerJsonContext.Default.DetectServerRequest
-                );
-                await SendLineAsync(line, cancellationToken);
-
                 using CancellationTokenRegistration registration = cancellationToken.Register(() =>
                     _ = RequestCancelAsync(id)
                 );
@@ -126,6 +120,15 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
                 TimeSpan timeout = _config.Value.DetectServerRequestTimeout;
                 try
                 {
+                    // The send is inside this try: a cancellation that lands while acquiring the stdin
+                    // lock (or writing) must still reach the busy-detector kill below instead of
+                    // propagating past it and leaving the detector working on a request nobody wants.
+                    string line = JsonSerializer.Serialize(
+                        new DetectServerRequest { Id = id, Path = imagePath },
+                        DetectServerJsonContext.Default.DetectServerRequest
+                    );
+                    await SendLineAsync(line, cancellationToken);
+
                     return timeout > TimeSpan.Zero
                         ? await job.Completion.Task.WaitAsync(timeout, cancellationToken)
                         : await job.Completion.Task.WaitAsync(cancellationToken);
@@ -548,7 +551,8 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
 
             await readyTcs.Task;
         }
-        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
+        catch (OperationCanceledException)
+            when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
             string stderrSection = BuildStderrSection();
             await KillServerAsync();
