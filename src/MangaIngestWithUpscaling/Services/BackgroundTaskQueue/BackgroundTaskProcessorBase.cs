@@ -428,9 +428,11 @@ public abstract class BackgroundTaskProcessorBase(
     /// <summary>
     ///     Schedules a prompt re-offer of a task whose acquire step deferred it on purpose: it is waiting
     ///     for another task, not failing. A deferral therefore neither consumes the bounded
-    ///     transient-claim retry budget nor trips its warning — one re-offer is outstanding at a time, and
-    ///     the row no longer being Pending ends the wait. The periodic replayer stays the backstop for a
-    ///     task left deferred by a restart.
+    ///     transient-claim retry budget nor trips its warning, and the row no longer being Pending ends
+    ///     the wait. Each deferral schedules its own re-offer; a duplicate from the periodic replayer is
+    ///     harmless because the re-offer is guarded on the row still being Pending and the claim path
+    ///     tolerates a repeated offer. The periodic replayer stays the backstop for a task left deferred
+    ///     by a restart.
     /// </summary>
     protected void DeferTask(PersistedTask task, string reason)
     {
