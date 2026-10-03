@@ -147,6 +147,7 @@ public sealed class PageStreamSpool
                 }
 
                 session.LastTouchedUtc = DateTime.UtcNow;
+                TouchRoot();
                 return session;
             }
         }
@@ -165,6 +166,23 @@ public sealed class PageStreamSpool
     /// </summary>
     private string NewSessionDirectory(int taskId) =>
         Path.Combine(SpoolRoot, $"{taskId}_{Guid.NewGuid():N}");
+
+    /// <summary>
+    ///     Refreshes the spool root's timestamp, which is what another instance's sweep judges liveness
+    ///     by. Session activity is tracked in memory, so without this a replica sharing the temp
+    ///     directory could take a chapter that is still streaming for idle and reclaim its pages.
+    /// </summary>
+    private void TouchRoot()
+    {
+        try
+        {
+            File.SetLastWriteTimeUtc(SpoolRoot, DateTime.UtcNow);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Failed to refresh the page spool root timestamp.");
+        }
+    }
 
     /// <summary>
     /// Returns the session for a task if the manifest for this replica created one. An upload that
@@ -194,12 +212,22 @@ public sealed class PageStreamSpool
     )
     {
         FileStream output = BeginPageWrite(session, pageIndex, out string temp);
-        await using (output)
+        try
         {
-            await content.CopyToAsync(output, cancellationToken);
-        }
+            await using (output)
+            {
+                await content.CopyToAsync(output, cancellationToken);
+            }
 
-        CommitPage(session, pageIndex, temp);
+            CommitPage(session, pageIndex, temp);
+        }
+        catch
+        {
+            // A cancelled or failed copy leaves the temp file behind, and the page was never committed,
+            // so nothing else can reach it.
+            DeleteTempFile(temp);
+            throw;
+        }
     }
 
     /// <summary>
@@ -304,6 +332,7 @@ public sealed class PageStreamSpool
             session.PageSizes[pageIndex] = size;
             session.TotalBytes += size - previous;
             session.LastTouchedUtc = DateTime.UtcNow;
+            TouchRoot();
             return CommitPageResult.Committed;
         }
     }
@@ -321,22 +350,25 @@ public sealed class PageStreamSpool
         );
         if (result != CommitPageResult.Committed)
         {
-            try
-            {
-                File.Delete(tempPath);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(
-                    ex,
-                    "Failed to delete uncommitted page temp file {Temp}.",
-                    tempPath
-                );
-            }
+            DeleteTempFile(tempPath);
 
             throw new InvalidOperationException(
                 $"Failed to commit page {pageIndex} for task {session.TaskId}: {result}."
             );
+        }
+    }
+
+    /// <summary>Best-effort removal of a page temp file that was never committed.</summary>
+    private void DeleteTempFile(string tempPath)
+    {
+        try
+        {
+            File.Delete(tempPath);
+        }
+        catch (Exception ex)
+        {
+            // The session directory may already have been reclaimed, taking the temp file with it.
+            _logger.LogDebug(ex, "Failed to delete uncommitted page temp file {Temp}.", tempPath);
         }
     }
 

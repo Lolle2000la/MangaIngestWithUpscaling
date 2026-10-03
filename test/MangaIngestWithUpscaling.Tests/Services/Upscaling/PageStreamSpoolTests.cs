@@ -345,6 +345,29 @@ public class PageStreamSpoolTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task WritePageAsync_RemovesItsTempFileWhenTheCopyIsCancelled()
+    {
+        PageStreamSession session = _spool.GetOrCreateSession(310, "identity", "engine", 1);
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+
+        // The copy throws TaskCanceledException, so match the cancellation base type.
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            _spool.WritePageAsync(
+                session,
+                0,
+                new MemoryStream(new byte[] { 1, 2, 3 }),
+                cancelled.Token
+            )
+        );
+
+        // The page was never committed, so nothing may be left behind in the session directory.
+        Assert.Empty(Directory.GetFiles(session.Directory));
+        Assert.Empty(_spool.GetCompletedPages(session));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void Remove_DeletesSpoolDirectory()
     {
         PageStreamSession session = _spool.GetOrCreateSession(4, "identity", "engine", 1);
@@ -510,8 +533,9 @@ public class PageStreamSpoolTests
             Substitute.For<ILogger<PageSpoolSweepService>>()
         );
 
-        // The startup sweep runs synchronously before the timer awaits, so a stale session left by a
-        // previous process is removed promptly rather than an hour later.
+        // The startup sweep runs on the first continuation after startup rather than inline in StartAsync
+        // (which would delay the host coming up), so a stale session left by a previous process is still
+        // removed promptly instead of an hour later.
         await service.StartAsync(CancellationToken.None);
         try
         {
@@ -688,6 +712,64 @@ public class PageStreamSpoolTests
     {
         Assert.Equal(expected, PageStreamSpool.IsSafeEntryName(name));
     }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void SweepStale_KeepsAnotherInstancesActiveRootAndReclaimsAnIdleOne()
+    {
+        // Session activity lives in memory, but the sweep reclaims a root by its filesystem timestamp, so
+        // a chapter that is still streaming but whose pages were written a while ago used to look idle:
+        // another instance sharing the temp directory could reclaim it mid-chapter.
+        var active = new PageStreamSpool(Substitute.For<ILogger<PageStreamSpool>>());
+        var idle = new PageStreamSpool(Substitute.For<ILogger<PageStreamSpool>>());
+        var sweeper = new PageStreamSpool(Substitute.For<ILogger<PageStreamSpool>>());
+        try
+        {
+            PageStreamSession activeSession = WriteOnePage(active, 300);
+            PageStreamSession idleSession = WriteOnePage(idle, 301);
+
+            // Nothing has changed on disk since these pages were written.
+            AgeDirectory(active.SpoolRoot);
+            AgeDirectory(activeSession.Directory);
+            AgeDirectory(idle.SpoolRoot);
+            AgeDirectory(idleSession.Directory);
+
+            // A manifest refreshes the active spool's heartbeat without touching any page.
+            active.GetOrCreateSession(300, "identity", "engine", 1);
+
+            sweeper.SweepStale(TimeSpan.FromHours(24));
+
+            Assert.True(
+                Directory.Exists(active.SpoolRoot),
+                "A spool root that is still being used must survive another instance's sweep."
+            );
+            Assert.False(
+                Directory.Exists(idle.SpoolRoot),
+                "An idle spool root is still reclaimed."
+            );
+        }
+        finally
+        {
+            active.DeleteDirectory(active.SpoolRoot);
+            sweeper.DeleteDirectory(sweeper.SpoolRoot);
+        }
+    }
+
+    private static PageStreamSession WriteOnePage(PageStreamSpool spool, int taskId)
+    {
+        PageStreamSession session = spool.GetOrCreateSession(taskId, "identity", "engine", 1);
+        string temp;
+        using (FileStream page = spool.BeginPageWrite(session, 0, out temp))
+        {
+            page.WriteByte(1);
+        }
+
+        spool.CommitPage(session, 0, temp);
+        return session;
+    }
+
+    private static void AgeDirectory(string directory) =>
+        Directory.SetLastWriteTimeUtc(directory, DateTime.UtcNow - TimeSpan.FromDays(2));
 
     private static byte[] ReadAll(Stream stream)
     {
