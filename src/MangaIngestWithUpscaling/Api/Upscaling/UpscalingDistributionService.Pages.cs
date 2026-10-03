@@ -964,11 +964,14 @@ public partial class UpscalingDistributionService
     private void DropPageSpool(PageStreamSession session)
     {
         string? directory = pageStreamSpool.Detach(session);
-        pageContextCache.Remove(session.TaskId);
-        if (directory is not null)
+        if (directory is null)
         {
-            _ = Task.Run(() => pageStreamSpool.DeleteDirectory(directory));
+            // A concurrent manifest already replaced this session; its fresh cache entry must stay.
+            return;
         }
+
+        pageContextCache.Remove(session.TaskId);
+        _ = Task.Run(() => pageStreamSpool.DeleteDirectory(directory));
     }
 
     public override async Task<UploadDetectionResultResponse> UploadPageDetection(
@@ -1459,9 +1462,17 @@ public partial class UpscalingDistributionService
         }
         catch
         {
-            if (File.Exists(tempCbz))
+            try
             {
-                File.Delete(tempCbz);
+                if (File.Exists(tempCbz))
+                {
+                    File.Delete(tempCbz);
+                }
+            }
+            catch (Exception cleanupEx)
+            {
+                // A failed cleanup must not mask the original exception (and its failure classification).
+                _logger.LogDebug(cleanupEx, "Failed to delete the temporary CBZ {Temp}.", tempCbz);
             }
 
             throw;
@@ -1738,6 +1749,13 @@ public partial class UpscalingDistributionService
             // as transient and retries until the soft-failure cap.
             _logger.LogWarning(ex, "The source archive for task {TaskId} is corrupt.", taskId);
             resolution.Corrupt = true;
+            return null;
+        }
+        catch (IOException ex)
+        {
+            // A truncated or locked archive that is not a structural corruption: treat it as transient
+            // (Unavailable) rather than letting it surface as gRPC Unknown.
+            _logger.LogWarning(ex, "Failed to read the source archive for task {TaskId}.", taskId);
             return null;
         }
     }
