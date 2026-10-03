@@ -176,6 +176,73 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
     }
 
     /// <summary>
+    ///     True when any exception in the chain reports an RPC the server does not implement, which is how a
+    ///     worker meets a server from the other side of the upgrade cutover.
+    /// </summary>
+    private static bool CarriesUnimplemented(Exception ex)
+    {
+        for (Exception? current = ex; current is not null; current = current.InnerException)
+        {
+            if (current is RpcException { StatusCode: StatusCode.Unimplemented })
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    ///     Re-runs the connect-time version handshake and describes an incompatible peer, or returns null
+    ///     when the server reports a version this worker can work with — a partially rolled-out server, for
+    ///     which retrying is still worthwhile. A handshake that cannot complete at all leaves the original
+    ///     failure to speak for itself.
+    /// </summary>
+    private static async Task<string?> DescribeVersionSkewAsync(
+        UpscalingService.UpscalingServiceClient client,
+        ILogger logger,
+        CancellationToken stoppingToken
+    )
+    {
+        try
+        {
+            CheckConnectionResponse response = await client.CheckConnectionAsync(
+                new CheckConnectionRequest
+                {
+                    ProtocolVersion = UpscalingProtocolVersion.Current,
+                    MinSupportedProtocolVersion = UpscalingProtocolVersion.MinSupported,
+                },
+                deadline: DateTime.UtcNow.AddSeconds(15),
+                cancellationToken: stoppingToken
+            );
+
+            if (
+                UpscalingProtocolVersion.IsCompatible(
+                    response.ProtocolVersion,
+                    response.MinSupportedProtocolVersion
+                )
+            )
+            {
+                return null;
+            }
+
+            return $"it reports protocol {response.ProtocolVersion} (minimum {response.MinSupportedProtocolVersion}) while this worker supports {UpscalingProtocolVersion.MinSupported}-{UpscalingProtocolVersion.Current}";
+        }
+        catch (RpcException ex) when (ex.StatusCode == StatusCode.FailedPrecondition)
+        {
+            return $"it rejected this worker: {ex.Status.Detail}";
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(
+                ex,
+                "Could not re-check the protocol version after an Unimplemented failure."
+            );
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Surfaces a page-streaming failure. A transient or restart failure is only logged: the worker
     /// lets the keep-alive lapse so the server requeues the task with its spool intact. A permanent
     /// one is reported, which makes the server clear the spool. Extracted from the streaming loop so
@@ -196,7 +263,25 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
     )
     {
         StreamingFailureKind kind = ClassifyStreamingFailure(ex);
-        if (kind is StreamingFailureKind.Transient or StreamingFailureKind.Restart)
+
+        // A running worker validated the protocol only at startup, so a server from the other side of the
+        // upgrade cutover answers with Unimplemented. Ask it again and say what is actually wrong: if the
+        // pair is genuinely incompatible, retrying cannot help and letting the task cycle through the
+        // soft-failure cap would only fail other chapters in turn.
+        string? versionSkew =
+            kind == StreamingFailureKind.Transient && CarriesUnimplemented(ex)
+                ? await DescribeVersionSkewAsync(client, logger, stoppingToken)
+                : null;
+
+        if (versionSkew is not null)
+        {
+            logger.LogError(
+                "Task {TaskId} cannot stream against this server: {Detail}. The worker and server must be upgraded together.",
+                taskId,
+                versionSkew
+            );
+        }
+        else if (kind is StreamingFailureKind.Transient or StreamingFailureKind.Restart)
         {
             int cap =
                 kind == StreamingFailureKind.Restart
@@ -230,8 +315,9 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 
         try
         {
+            string message = versionSkew is null ? ex.Message : $"{ex.Message} ({versionSkew})";
             await client.ReportTaskFailedAsync(
-                new ReportTaskFailedRequest { TaskId = taskId, ErrorMessage = ex.Message },
+                new ReportTaskFailedRequest { TaskId = taskId, ErrorMessage = message },
                 deadline: DateTime.UtcNow.AddSeconds(15),
                 cancellationToken: stoppingToken
             );

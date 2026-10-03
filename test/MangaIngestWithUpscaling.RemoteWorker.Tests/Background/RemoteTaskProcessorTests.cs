@@ -252,6 +252,104 @@ public class RemoteTaskProcessorTests
         );
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task HandleStreamingFailure_ReportsAnIncompatibleServerVersionImmediately()
+    {
+        // Unimplemented means the server does not know the RPC, i.e. the pair is across the upgrade
+        // cutover. A running worker only validated the protocol at startup, so this asks again and, when
+        // the versions really cannot work together, reports the task with the cause instead of cycling it
+        // through the soft-failure cap (which would fail other chapters in turn).
+        var client = Substitute.For<UpscalingService.UpscalingServiceClient>();
+        StubCheckConnection(
+            client,
+            new CheckConnectionResponse
+            {
+                ProtocolVersion = UpscalingProtocolVersion.Current + 1,
+                MinSupportedProtocolVersion = UpscalingProtocolVersion.Current + 1,
+            }
+        );
+        StubReportTaskFailed(client);
+
+        await RemoteTaskProcessor.HandleStreamingFailureAsync(
+            client,
+            11,
+            new RpcException(new Status(StatusCode.Unimplemented, "unknown method")),
+            Substitute.For<ILogger>(),
+            CancellationToken.None
+        );
+
+        _ = client
+            .Received(1)
+            .ReportTaskFailedAsync(
+                Arg.Is<ReportTaskFailedRequest>(r =>
+                    r.TaskId == 11 && r.ErrorMessage.Contains("protocol")
+                ),
+                Arg.Any<Metadata>(),
+                Arg.Any<DateTime?>(),
+                Arg.Any<CancellationToken>()
+            );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task HandleStreamingFailure_KeepsRetryingWhenTheServerVersionIsCompatible()
+    {
+        // A server mid-rollout can answer the handshake within range, so the missing RPC is a rollout
+        // condition: keep the spool and retry rather than failing the chapter.
+        var client = Substitute.For<UpscalingService.UpscalingServiceClient>();
+        StubCheckConnection(
+            client,
+            new CheckConnectionResponse
+            {
+                ProtocolVersion = UpscalingProtocolVersion.Current,
+                MinSupportedProtocolVersion = UpscalingProtocolVersion.MinSupported,
+            }
+        );
+
+        await RemoteTaskProcessor.HandleStreamingFailureAsync(
+            client,
+            12,
+            new RpcException(new Status(StatusCode.Unimplemented, "unknown method")),
+            Substitute.For<ILogger>(),
+            CancellationToken.None
+        );
+
+        AssertNoFailureReported(client);
+    }
+
+    private static void StubCheckConnection(
+        UpscalingService.UpscalingServiceClient client,
+        CheckConnectionResponse response
+    ) =>
+        client
+            .CheckConnectionAsync(
+                Arg.Any<CheckConnectionRequest>(),
+                Arg.Any<Metadata>(),
+                Arg.Any<DateTime?>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(Unary(response));
+
+    private static void StubReportTaskFailed(UpscalingService.UpscalingServiceClient client) =>
+        client
+            .ReportTaskFailedAsync(
+                Arg.Any<ReportTaskFailedRequest>(),
+                Arg.Any<Metadata>(),
+                Arg.Any<DateTime?>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(Unary(new Empty()));
+
+    private static AsyncUnaryCall<T> Unary<T>(T response) =>
+        new(
+            Task.FromResult(response),
+            Task.FromResult(new Metadata()),
+            () => Status.DefaultSuccess,
+            () => new Metadata(),
+            () => { }
+        );
+
     private static void AssertNoFailureReported(UpscalingService.UpscalingServiceClient client) =>
         Assert.DoesNotContain(
             client.ReceivedCalls(),
