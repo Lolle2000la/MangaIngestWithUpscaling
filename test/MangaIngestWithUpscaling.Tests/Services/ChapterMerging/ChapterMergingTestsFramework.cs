@@ -2610,11 +2610,20 @@ public class PartialUpscalingMergeTests : IAsyncDisposable
             new PreprocessedInputCache()
         );
 
+        // ApplySplitsTask runs on the standard processor, so its cancellation has to go there.
+        var standardProcessor = new StandardTaskProcessor(
+            realQueueForProcessor,
+            scopeFactory,
+            Substitute.For<ILogger<StandardTaskProcessor>>(),
+            taskPersistenceService
+        );
+
         var splitCoordinator = Substitute.For<ISplitProcessingCoordinator>();
         var realTaskManager = new ChapterMergeUpscaleTaskManager(
             context,
             taskQueue,
             processor,
+            standardProcessor,
             splitCoordinator,
             taskManagerLogger
         );
@@ -2720,10 +2729,19 @@ public class PartialUpscalingMergeTests : IAsyncDisposable
         var splitCoordinator = Substitute.For<ISplitProcessingCoordinator>();
         var taskManagerLogger = Substitute.For<ILogger<ChapterMergeUpscaleTaskManager>>();
 
+        // ApplySplitsTask runs on the standard processor, so its cancellation has to go there.
+        var standardProcessor = new StandardTaskProcessor(
+            realQueueForProcessor,
+            scopeFactory,
+            Substitute.For<ILogger<StandardTaskProcessor>>(),
+            taskPersistenceService
+        );
+
         var taskManager = new ChapterMergeUpscaleTaskManager(
             context,
             taskQueue,
             upscaleTaskProcessor,
+            standardProcessor,
             splitCoordinator,
             taskManagerLogger
         );
@@ -2809,10 +2827,19 @@ public class PartialUpscalingMergeTests : IAsyncDisposable
             .EnqueueDetectionIfPlausibleAsync(chapter.Id, context, Arg.Any<CancellationToken>())
             .Returns(true);
 
+        // ApplySplitsTask runs on the standard processor, so its cancellation has to go there.
+        var standardProcessor = new StandardTaskProcessor(
+            realQueueForProcessor,
+            scopeFactory,
+            Substitute.For<ILogger<StandardTaskProcessor>>(),
+            taskPersistenceService
+        );
+
         var taskManager = new ChapterMergeUpscaleTaskManager(
             context,
             taskQueue,
             upscaleTaskProcessor,
+            standardProcessor,
             splitCoordinator,
             taskManagerLogger
         );
