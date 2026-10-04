@@ -559,6 +559,41 @@ public partial class LibraryIntegrityChecker(
             .Where(f => f.ChapterId == chapter.Id)
             .ToListAsync(cancellationToken);
 
+        // A chapter left at Processing with no live apply/detection task is stale: the task was
+        // canceled or removed (or the process died between enqueue and processing), and neither the
+        // cancel path nor RemoveTaskAsync resets the split state. Reset it so the pill does not spin
+        // forever and the apply can be re-run.
+        if (splitState.Status == SplitProcessingStatus.Processing)
+        {
+            bool hasLiveTask =
+                await HasExistingApplyTaskAsync(context, chapter.Id, cancellationToken)
+                || await HasExistingDetectionTaskAsync(context, chapter.Id, cancellationToken);
+            if (!hasLiveTask)
+            {
+                logger.LogWarning(
+                    "Chapter {chapterFileName} ({chapterId}) is stuck at split status 'Processing' with no live apply/detection task. Resetting so the split application can be re-run.",
+                    chapter.FileName,
+                    chapter.Id
+                );
+
+                if (findings.Count > 0)
+                {
+                    await stateManager.SetDetectedAsync(
+                        chapter.Id,
+                        splitState.LastProcessedDetectorVersion,
+                        context,
+                        cancellationToken
+                    );
+                }
+                else
+                {
+                    await stateManager.DeleteStateAsync(chapter.Id, context, cancellationToken);
+                }
+
+                return IntegrityCheckResult.Corrected;
+            }
+        }
+
         if (splitState.Status == SplitProcessingStatus.NoSplitsFound)
         {
             if (findings.Any())
@@ -1187,6 +1222,36 @@ public partial class LibraryIntegrityChecker(
     {
         return await PersistedTaskQueries
             .ForTaskTypeAndChapter<RepairUpscaleTask>(
+                context,
+                chapterId,
+                [PersistedTaskStatus.Pending, PersistedTaskStatus.Processing]
+            )
+            .AnyAsync(cancellationToken);
+    }
+
+    private static async Task<bool> HasExistingApplyTaskAsync(
+        ApplicationDbContext context,
+        int chapterId,
+        CancellationToken cancellationToken
+    )
+    {
+        return await PersistedTaskQueries
+            .ForTaskTypeAndChapter<ApplySplitsTask>(
+                context,
+                chapterId,
+                [PersistedTaskStatus.Pending, PersistedTaskStatus.Processing]
+            )
+            .AnyAsync(cancellationToken);
+    }
+
+    private static async Task<bool> HasExistingDetectionTaskAsync(
+        ApplicationDbContext context,
+        int chapterId,
+        CancellationToken cancellationToken
+    )
+    {
+        return await PersistedTaskQueries
+            .ForTaskTypeAndChapter<DetectSplitCandidatesTask>(
                 context,
                 chapterId,
                 [PersistedTaskStatus.Pending, PersistedTaskStatus.Processing]

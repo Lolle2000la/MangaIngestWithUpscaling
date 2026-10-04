@@ -2114,6 +2114,97 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
 
     [Fact]
     [Trait("Category", "Integration")]
+    public async Task CheckIntegrity_SplitStuckAtProcessingWithNoLiveTask_ResetsToDetected()
+    {
+        // Regression guard: canceling or removing a queued ApplySplitsTask left the chapter at
+        // Processing forever (the pill spins and there is no Retry). A Processing state with no live
+        // apply/detection task is stale and must be reset.
+        await using ApplicationDbContext ctx = _db.CreateContext();
+
+        string temp = Directory.CreateTempSubdirectory().FullName;
+        var lib = new Library
+        {
+            Name = "Lib",
+            NotUpscaledLibraryPath = Path.Combine(temp, "orig"),
+            UpscaledLibraryPath = Path.Combine(temp, "up"),
+        };
+        Directory.CreateDirectory(lib.NotUpscaledLibraryPath);
+        Directory.CreateDirectory(lib.UpscaledLibraryPath!);
+
+        string rel = "Series/Ch1.cbz";
+        Directory.CreateDirectory(Path.Combine(lib.NotUpscaledLibraryPath, "Series"));
+        File.WriteAllText(Path.Combine(lib.NotUpscaledLibraryPath, rel), "orig");
+
+        var manga = new Manga { PrimaryTitle = "Series", Library = lib };
+        var chapter = new Chapter
+        {
+            FileName = "ch1.cbz",
+            RelativePath = rel,
+            Manga = manga,
+            IsUpscaled = false,
+        };
+        manga.Chapters.Add(chapter);
+        lib.MangaSeries.Add(manga);
+        ctx.Libraries.Add(lib);
+        await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        ctx.ChapterSplitProcessingStates.Add(
+            new ChapterSplitProcessingState
+            {
+                ChapterId = chapter.Id,
+                Status = SplitProcessingStatus.Processing,
+                LastProcessedDetectorVersion = 1,
+            }
+        );
+        ctx.StripSplitFindings.Add(
+            new StripSplitFinding
+            {
+                ChapterId = chapter.Id,
+                PageFileName = "001",
+                DetectorVersion = 1,
+                SplitJson = "{}",
+                CreatedAt = DateTime.UtcNow,
+            }
+        );
+        await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+        ctx.ChangeTracker.Clear();
+
+        _metadata
+            .GetSeriesAndTitleFromComicInfoAsync(Arg.Any<string>())
+            .Returns(Task.FromResult(new ExtractedMetadata("Series", "Ch1", null)));
+
+        var checker = new LibraryIntegrityChecker(
+            ctx,
+            _factory,
+            _metadata,
+            _chapterRecognition,
+            new ChapterProcessingService(
+                ctx,
+                _upscalerJsonHandling,
+                _fileSystem,
+                Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
+                NullLogger<ChapterProcessingService>.Instance
+            ),
+            _taskQueue,
+            _cbzConverter,
+            NullLogger<LibraryIntegrityChecker>.Instance,
+            _options,
+            _splitCoordinator,
+            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
+        );
+
+        bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
+
+        Assert.True(changed);
+        var reloadedState = await ctx
+            .ChapterSplitProcessingStates.AsNoTracking()
+            .FirstAsync(s => s.ChapterId == chapter.Id, TestContext.Current.CancellationToken);
+        Assert.Equal(SplitProcessingStatus.Detected, reloadedState.Status);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
     public async Task CheckIntegrity_SplitAppliedWithNoFindings_NeverDetected_ResetsToDetected()
     {
         // This tests that truly corrupted states (Applied with no findings and no detection)
