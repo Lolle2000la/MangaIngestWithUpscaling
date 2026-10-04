@@ -8,8 +8,13 @@ namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 /// previous version, leave <see cref="MinSupported"/> behind it; raise <see cref="MinSupported"/> once
 /// the older version is dropped. The handshake is bidirectional and range-based: each side sends its
 /// <c>[MinSupported, Current]</c> range and validates the other's with <see cref="IsCompatible"/>,
-/// which accepts any overlap; both then use <see cref="Negotiated"/> (the overlap's upper bound) as
-/// the effective wire version.
+/// which accepts any overlap.
+///
+/// Version negotiation is <b>not implemented yet</b>: no behavior currently depends on the protocol
+/// version, so both sides keep speaking their own <see cref="Current"/> and only the handshake's range
+/// check guards compatibility. Any future version-dependent behavior must first carry
+/// <see cref="Negotiated"/> (the overlap's upper bound) on the wire and use it on both sides;
+/// otherwise a newer peer could emit a field or RPC an older one cannot interpret.
 /// </summary>
 public static class UpscalingProtocolVersion
 {
@@ -25,18 +30,20 @@ public static class UpscalingProtocolVersion
 
     /// <summary>
     /// True when this build's range [<see cref="MinSupported"/>, <see cref="Current"/>] overlaps the
-    /// peer's range [<paramref name="peerMin"/>, <paramref name="peerCurrent"/>], so the two can agree
-    /// on a common version. Each side validates the other's whole range with this, and both then use
-    /// <see cref="Negotiated"/> as the effective wire version.
+    /// peer's range [<paramref name="peerMin"/>, <paramref name="peerCurrent"/>], so the two could
+    /// agree on a common version. Each side validates the other's whole range with this; because
+    /// negotiation is not implemented (see the class remarks), the accepted version is still each
+    /// side's own <see cref="Current"/>.
     /// </summary>
     public static bool IsCompatible(int peerCurrent, int peerMin) =>
         Math.Max(MinSupported, peerMin) <= Math.Min(Current, peerCurrent);
 
     /// <summary>
-    /// The effective wire version after a compatible handshake: the upper bound of the overlap. Both
-    /// sides must use this rather than their own <see cref="Current"/> for any version-dependent
-    /// behavior, so a newer peer does not send messages an older one cannot interpret. Today every
-    /// build is [3, 3], so this is always <see cref="Current"/>.
+    /// The version both sides should speak after a compatible handshake: the upper bound of the
+    /// overlap. <b>Not yet wired through</b> — no behavior currently depends on the protocol version,
+    /// so both sides speak their own <see cref="Current"/>. This is the value a future version bump
+    /// must carry on the wire and use on both sides before adding version-dependent behavior. Today
+    /// every build is [3, 3], so it is always <see cref="Current"/>.
     /// </summary>
     public static int Negotiated(int peerCurrent) => Math.Min(Current, peerCurrent);
 }
