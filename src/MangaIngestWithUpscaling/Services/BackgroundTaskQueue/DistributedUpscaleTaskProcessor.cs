@@ -643,6 +643,19 @@ public class DistributedUpscaleTaskProcessor(
                         }
                     }
 
+                    // A merge/ingest CancelCurrent during the (long) pre-handoff window mutates this
+                    // exact instance to Canceled and drops it from runningTasks. The worker's page
+                    // RPCs would then be rejected, but handing it off still wastes round-trips and
+                    // leaves the RemoteRepairState/context created during preparation leaked. Re-check
+                    // the tracked instance immediately before the handoff and abandon it if it is gone.
+                    if (!IsTrackedProcessingTask(task))
+                    {
+                        CleanupRepairFiles(task.Id, logger);
+                        claimedTask = null;
+                        tcs.TrySetCanceled(linkedCts.Token);
+                        break;
+                    }
+
                     handedOff = tcs.TrySetResult(task);
                     if (!handedOff)
                     {
@@ -793,6 +806,22 @@ public class DistributedUpscaleTaskProcessor(
         using IServiceScope scope = scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         return await ChapterConflictGuard.HasSameChapterApplyTaskAsync(dbContext, chapterId, ct);
+    }
+
+    /// <summary>
+    ///     Whether <paramref name="task" /> is still the exact instance this processor tracks as
+    ///     <see cref="PersistedTaskStatus.Processing" />. A concurrent <see cref="CancelCurrent" />
+    ///     mutates that same instance to Canceled and removes it from <c>runningTasks</c>, so this
+    ///     detects a cancel that landed between the claim and the handoff.
+    /// </summary>
+    private bool IsTrackedProcessingTask(PersistedTask task)
+    {
+        using (_lock.EnterScope())
+        {
+            return runningTasks.TryGetValue(task.Id, out PersistedTask? tracked)
+                && ReferenceEquals(tracked, task)
+                && task.Status == PersistedTaskStatus.Processing;
+        }
     }
 
     public async Task<PersistedTask?> GetTask(CancellationToken stoppingToken)
@@ -1268,6 +1297,10 @@ public class DistributedUpscaleTaskProcessor(
             // Drop any partial page spool/cache for the failed task so its temp bytes do not linger
             // until the retention sweep.
             DropPageSpool(taskId, logger);
+
+            // A failed remote repair must also drop its RemoteRepairState and prepared CBZ/temp
+            // files; otherwise they linger on disk until the next process restart.
+            CleanupRepairFiles(taskId, logger);
         }
 
         PersistedTask? failedTask = null;
