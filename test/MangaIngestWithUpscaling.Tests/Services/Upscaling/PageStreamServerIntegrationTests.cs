@@ -154,6 +154,9 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         builder.Services.AddSingleton<ITaskPersistenceService, TaskPersistenceService>();
         builder.Services.AddSingleton<DistributedUpscaleTaskProcessor>();
         builder.Services.AddSingleton<PageStreamSpool>();
+        builder.Services.AddSingleton<IPageSpoolStore>(sp =>
+            sp.GetRequiredService<PageStreamSpool>()
+        );
         builder.Services.AddSingleton<PageContextCache>();
         builder.Services.AddSingleton<IUpscalerJsonHandlingService>(
             new UpscalerJsonHandlingService(Substitute.For<ILogger<UpscalerJsonHandlingService>>())

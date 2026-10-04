@@ -1164,7 +1164,7 @@ public class DistributedUpscaleTaskProcessor(
         {
             using IServiceScope scope = scopeFactory.CreateScope();
             // Both are singletons, so they outlive this scope.
-            var spool = scope.ServiceProvider.GetRequiredService<PageStreamSpool>();
+            var spool = scope.ServiceProvider.GetRequiredService<IPageSpoolStore>();
             scope.ServiceProvider.GetRequiredService<PageContextCache>().Remove(taskId);
             // Capture the current session now and compare-and-remove that exact instance later, so a
             // task that is re-dispatched before the offloaded detach runs does not have its fresh

@@ -42,8 +42,11 @@ public enum CommitPageResult
 /// opaque engine identity (its models and preprocessing). A manifest whose content or engine identity
 /// differs resets the spool, and a page produced by a different engine is rejected, so pages from
 /// different engines are never mixed into one chapter.
+///
+/// This is the process-local implementation of <see cref="IPageSpoolStore"/>; see that interface for
+/// the single-replica constraint a distributed store would have to remove.
 /// </summary>
-public sealed class PageStreamSpool
+public sealed class PageStreamSpool : IPageSpoolStore
 {
     /// <summary>Upper bound on the total bytes spooled for one task, so a chapter cannot fill the disk.</summary>
     public const long MaxTaskBytes = 8L * 1024 * 1024 * 1024;

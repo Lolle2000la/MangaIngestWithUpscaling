@@ -31,7 +31,7 @@ public partial class UpscalingDistributionService(
     IFileSystem fileSystem,
     IChapterChangedNotifier chapterChangedNotifier,
     ISplitProcessingService splitProcessingService,
-    PageStreamSpool pageStreamSpool,
+    IPageSpoolStore pageStreamSpool,
     PageContextCache pageContextCache,
     IUpscalerJsonHandlingService upscalerJsonHandlingService,
     IMetadataHandlingService metadataHandling,
