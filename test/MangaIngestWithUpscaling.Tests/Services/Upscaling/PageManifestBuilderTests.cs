@@ -48,7 +48,7 @@ public class PageManifestBuilderTests
 
     [Fact]
     [Trait("Category", "Unit")]
-    public void BuildPageDescriptors_DropsPagesWithAColonInTheName()
+    public void BuildPageDescriptors_KeepsPagesWithAColonInTheName()
     {
         string directory = Directory.CreateTempSubdirectory("manifest_colon").FullName;
         try
@@ -56,8 +56,7 @@ public class PageManifestBuilderTests
             string source = CreateCbz(
                 directory,
                 ("Chapter 1: Intro/001.jpg", new byte[] { 1 }),
-                ("C:evil.jpg", new byte[] { 2 }),
-                ("002.jpg", new byte[] { 3 })
+                ("002.jpg", new byte[] { 2 })
             );
 
             List<SpoolPageDescriptor> pages = PageManifestBuilder.BuildPageDescriptors(
@@ -65,11 +64,10 @@ public class PageManifestBuilderTests
                 Profile()
             );
 
-            // A colon in any segment is a Windows drive-relative ("C:evil.jpg") or alternate-data-
-            // stream form; the descriptor builder must drop it so the assembled archive never carries
-            // a name a third-party Windows extractor would resolve outside the target.
-            Assert.Single(pages);
-            Assert.Equal("002.jpg", pages[0].SourceName);
+            // A colon is legal on Linux; rejecting it silently dropped the page while the chapter was
+            // still reported upscaled.
+            Assert.Equal(2, pages.Count);
+            Assert.Equal("Chapter 1: Intro/001.jpg", pages[0].SourceName);
         }
         finally
         {

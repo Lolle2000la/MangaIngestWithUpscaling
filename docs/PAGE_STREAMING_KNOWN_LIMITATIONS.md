@@ -91,8 +91,14 @@ a change resets the spool and the worker's engine identity no longer varies with
 - `ImageResizeService` format conversion writes new-extension bytes and moves them over the original
   path, so the extension no longer matches the content (only safe because the engine sniffs magic
   bytes).
-- Metadata handling uses case-sensitive `.cbz` checks and treats a missing `.cbz` as "no differences";
-  the distributed repair path guards `File.Exists` but `RepairUpscaleTask` does not.
+- Metadata handling uses case-sensitive `.cbz` checks and treats a missing `.cbz` as "no differences"
+  (both repair paths now guard `File.Exists` on the source before analysing, so a missing original
+  fails terminally instead of rebuilding an empty archive).
+- `PageStreamSpool.IsSafeEntryName` rejects absolute and Windows drive-absolute (`C:\`, `C:/`) entry
+  names but deliberately keeps a drive-relative `C:evil.jpg` or an NTFS alternate-data-stream
+  `page.jpg:evil`, because a colon is legal on Linux and rejecting it silently dropped legitimate
+  pages. The server never extracts by entry name; a third-party Windows extractor reading a produced
+  CBZ could resolve such a name outside the target directory.
 - `IPageSpoolStore.WritePageAsync`/`CommitPage` are public but production-unused (test-only), and
   `TryCommitPage`'s `size = 0` default is a budget footgun.
 - The streaming inactivity allowance keeps a documented 15-minute floor that the local whole-CBZ
