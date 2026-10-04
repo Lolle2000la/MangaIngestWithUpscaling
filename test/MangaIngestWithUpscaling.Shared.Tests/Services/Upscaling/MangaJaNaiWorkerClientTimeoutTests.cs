@@ -211,7 +211,7 @@ public class MangaJaNaiWorkerClientTimeoutTests
         var pythonService = Substitute.For<IPythonService>();
         pythonService
             .GetPreparedEnvironment()
-            .Returns(new PythonEnvironment(python!, workDir, GpuBackend.CPU));
+            .Returns(new PythonEnvironment(python!, workDir, GpuBackend.CPU, 15));
 
         await using ServiceProvider provider = new ServiceCollection()
             .AddSingleton(pythonService)

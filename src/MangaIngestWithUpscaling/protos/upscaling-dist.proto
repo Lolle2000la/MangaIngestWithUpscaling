@@ -85,8 +85,9 @@ message PageDescriptor {
 
 message PageManifestRequest {
   int32 task_id = 1;
-  // Opaque identity of the engine (models + preprocessing) that will produce the pages. The server
-  // records it and refuses to mix pages produced by different engines into one chapter.
+  // Opaque identity of the engine (models + resolved backend + build + Python runtime) that will
+  // produce the pages. The server records it and refuses to mix pages produced by different engines
+  // into one chapter.
   string engine_identity = 2;
 }
 

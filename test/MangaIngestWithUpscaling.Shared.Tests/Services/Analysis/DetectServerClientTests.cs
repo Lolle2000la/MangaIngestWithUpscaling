@@ -390,7 +390,7 @@ public class DetectServerClientTests
         var pythonService = Substitute.For<IPythonService>();
         pythonService
             .GetPreparedEnvironment()
-            .Returns(new PythonEnvironment(python, workDir, GpuBackend.CPU));
+            .Returns(new PythonEnvironment(python, workDir, GpuBackend.CPU, 15));
 
         var provider = new ServiceCollection().AddSingleton(pythonService).BuildServiceProvider();
 

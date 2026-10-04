@@ -6,12 +6,15 @@ using Microsoft.Extensions.Options;
 namespace MangaIngestWithUpscaling.RemoteWorker.Background;
 
 /// <summary>
-/// Supplies the worker's engine identities. The models and preprocessing configuration do not change
-/// while the worker runs, so the (directory-walking) computation is done once and cached.
+/// Supplies the worker's engine identities. The models, resolved backend, build and Python runtime do
+/// not change while the worker runs, so the (directory-walking) computation is done once and cached.
 /// </summary>
 public interface IEngineIdentityProvider
 {
-    /// <summary>Identity of the upscaler (models + preprocessing), for upscale and repair tasks.</summary>
+    /// <summary>
+    /// Identity of the upscaler (models + resolved backend + build + Python runtime), for upscale and
+    /// repair tasks.
+    /// </summary>
     string Upscaler { get; }
 
     /// <summary>Identity of the page-break detector, for split-detection tasks.</summary>
@@ -35,13 +38,15 @@ public sealed class EngineIdentityProvider(IOptions<UpscalerConfig> config)
         {
             lock (_lock)
             {
-                // Hash the backend the Python environment actually resolved to, not the Auto
-                // preference: two default deployments on different hardware must not share an
-                // identity. The environment is prepared at startup, before the first task, so this is
-                // set by the time the identity is first needed.
+                // Hash the backend and runtime version the Python environment actually resolved to,
+                // not the Auto preference: two default deployments on different hardware or with a
+                // different torch/runtime must not share an identity. The environment is prepared at
+                // startup, before the first task, so these are set by the time the identity is first
+                // needed.
                 return _upscaler ??= EngineIdentity.ForUpscaler(
                     config.Value,
-                    PythonService.Environment?.InstalledBackend
+                    PythonService.Environment?.InstalledBackend,
+                    PythonService.Environment?.EnvironmentVersion
                 );
             }
         }

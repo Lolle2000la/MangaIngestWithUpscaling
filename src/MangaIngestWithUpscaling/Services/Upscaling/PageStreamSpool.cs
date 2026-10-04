@@ -58,9 +58,9 @@ public enum ReserveInFlightResult
 /// or profile changed) has its spool discarded so old and new bytes are never mixed.
 ///
 /// The identity covers the source file and the upscaler profile; the worker additionally supplies an
-/// opaque engine identity (its models and preprocessing). A manifest whose content or engine identity
-/// differs resets the spool, and a page produced by a different engine is rejected, so pages from
-/// different engines are never mixed into one chapter.
+/// opaque engine identity (its models, resolved backend, build and Python runtime). A manifest whose
+/// content or engine identity differs resets the spool, and a page produced by a different engine is
+/// rejected, so pages from different engines are never mixed into one chapter.
 ///
 /// This is the process-local implementation of <see cref="IPageSpoolStore"/>; see that interface for
 /// the single-replica constraint a distributed store would have to remove.

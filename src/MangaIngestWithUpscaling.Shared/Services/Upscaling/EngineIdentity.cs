@@ -10,24 +10,34 @@ namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 /// <summary>
 /// Computes an opaque, worker-supplied identity for the engine that will produce a chapter's pages.
 /// The server records the first identity a chapter is spooled with and refuses pages produced by a
-/// different engine, so a chapter cannot be assembled from pages upscaled by different models or
-/// preprocessing (which would leave a visible seam). The server never interprets the value.
+/// different engine, so a chapter cannot be assembled from pages upscaled by different models, engine
+/// code or Python runtime (which would leave a visible seam). The server never interprets the value.
 /// </summary>
 public static class EngineIdentity
 {
     /// <summary>
+    /// Version of the Python upscaler engine scripts. Increment when those scripts change. It must be
+    /// hashed explicitly because the engine code is not part of the .NET assembly version: a Python
+    /// submodule bump with no .NET build change would otherwise hash identically and let two workers
+    /// with different engine code blend pages into one chapter.
+    /// </summary>
+    public const int CurrentEngineVersion = 1;
+
+    /// <summary>
     /// Identity of the upscaler: the effective compute mode (CPU vs GPU) and accelerator backend, the
-    /// app/engine build, the resolved workflow (appstate2.json) and the model files under
+    /// engine code version, the installed Python environment version, the app build, the resolved
+    /// workflow (appstate2.json) and the model files under
     /// <see cref="UpscalerConfig.ModelsDirectory"/>. Preprocessing is deliberately excluded: the
     /// server owns it and folds the effective options into the content identity instead, so the worker
     /// hashes only what it controls. The specific GPU index is deliberately excluded so a hand-off
     /// between two GPUs of the same backend keeps the spool; that assumes the same models produce the
-    /// same pixels on every device of a backend. The torch/backend/driver version is not available
-    /// here and is also assumed stable. Both are assumptions rather than guarantees — a backend or
-    /// runtime that diverges must not have its pages mixed into another's chapter. Models are
-    /// fingerprinted by relative path, size and a 64 KiB sample from the head, middle and tail of each
-    /// file — stable across workers with identical models and far cheaper than hashing the ~gigabytes
-    /// of weights, while still distinguishing a same-size fine-tune that diverges past the first window.
+    /// same pixels on every device of a backend. The installed environment version and the engine code
+    /// version are hashed, so a different torch/runtime or package set (for example a worker that
+    /// force-accepted an older environment) or a Python-submodule bump without a .NET build change is
+    /// a different engine. Models are fingerprinted by relative path, size and a 64 KiB sample from the
+    /// head, middle and tail of each file — stable across workers with identical models and far cheaper
+    /// than hashing the ~gigabytes of weights, while still distinguishing a same-size fine-tune that
+    /// diverges past the first window.
     /// </summary>
     /// <param name="resolvedBackend">
     /// The backend the Python environment actually resolved to (e.g. <c>InstalledBackend</c> after
@@ -36,7 +46,23 @@ public static class EngineIdentity
     /// different hardware would otherwise hash the same and be allowed to blend pages. Falls back to
     /// the preference when the environment has not been prepared yet (tests, first startup).
     /// </param>
-    public static string ForUpscaler(UpscalerConfig config, GpuBackend? resolvedBackend = null)
+    /// <param name="environmentVersion">
+    /// The <see cref="PythonEnvironment.EnvironmentVersion"/> the worker's Python environment actually
+    /// installed (its torch/runtime and package set). Hashed so two workers with the same models but a
+    /// different runtime — for example one that force-accepted an older environment — do not blend
+    /// pages. When null (the environment has not been prepared yet, e.g. in tests) a fixed marker is
+    /// hashed instead.
+    /// </param>
+    /// <param name="engineVersion">
+    /// Overrides <see cref="CurrentEngineVersion"/>; intended for tests. Production callers omit it so
+    /// bumping the constant invalidates every chapter's spool.
+    /// </param>
+    public static string ForUpscaler(
+        UpscalerConfig config,
+        GpuBackend? resolvedBackend = null,
+        int? environmentVersion = null,
+        int? engineVersion = null
+    )
     {
         var material = new StringBuilder("upscaler|");
         // Preprocessing (max dimension, format conversion, smart downscale) is deliberately NOT hashed
@@ -57,9 +83,18 @@ public static class EngineIdentity
             // are configured Auto. The GPU index itself is not hashed, so a same-backend hand-off
             // keeps the spool.
             .Append(resolvedBackend ?? config.PreferredGpuBackend)
+            .Append('|')
+            // The engine code version: a Python-submodule bump changes no .NET assembly, so it needs
+            // its own component or two different engines would hash the same.
+            .Append(engineVersion ?? CurrentEngineVersion)
+            .Append('|')
+            // The installed Python environment version (torch/runtime + package set): a worker that
+            // force-accepted an older environment, or otherwise has a different runtime, must not
+            // blend pages with a freshly installed one.
+            .Append(environmentVersion?.ToString(CultureInfo.InvariantCulture) ?? "none")
+            .Append('|')
+            .Append(BuildVersion())
             .Append('|');
-
-        material.Append('|').Append(BuildVersion()).Append('|');
         AppendFileContentHash(material, Path.Combine(AppContext.BaseDirectory, "appstate2.json"));
 
         material.Append('|');

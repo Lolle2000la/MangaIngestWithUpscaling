@@ -215,6 +215,50 @@ public class EngineIdentityTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void ForUpscaler_ChangesWhenTheEnvironmentVersionChanges()
+    {
+        // The installed environment version carries the torch/runtime and package set, which the .NET
+        // build version does not: a worker that force-accepted an older environment must not blend
+        // pages with a freshly installed one.
+        UpscalerConfig config = Config();
+
+        Assert.NotEqual(
+            EngineIdentity.ForUpscaler(config, GpuBackend.CPU, environmentVersion: 15),
+            EngineIdentity.ForUpscaler(config, GpuBackend.CPU, environmentVersion: 14)
+        );
+
+        // A worker whose environment is not prepared yet hashes a fixed marker, distinct from any
+        // concrete version.
+        Assert.NotEqual(
+            EngineIdentity.ForUpscaler(config, GpuBackend.CPU),
+            EngineIdentity.ForUpscaler(config, GpuBackend.CPU, environmentVersion: 15)
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ForUpscaler_ChangesWhenTheEngineVersionChanges()
+    {
+        // The Python engine code version is not part of the .NET assembly version, so it is hashed
+        // explicitly. The parameter override asserts the effect without bumping the constant (which
+        // would invalidate every chapter's spool).
+        UpscalerConfig config = Config();
+
+        Assert.Equal(
+            EngineIdentity.ForUpscaler(config),
+            EngineIdentity.ForUpscaler(config, engineVersion: EngineIdentity.CurrentEngineVersion)
+        );
+        Assert.NotEqual(
+            EngineIdentity.ForUpscaler(config, engineVersion: EngineIdentity.CurrentEngineVersion),
+            EngineIdentity.ForUpscaler(
+                config,
+                engineVersion: EngineIdentity.CurrentEngineVersion + 1
+            )
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void ForDetector_IsStableForTheSameFiles()
     {
         WithDetectorRoot(() =>

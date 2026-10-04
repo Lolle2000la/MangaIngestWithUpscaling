@@ -123,6 +123,7 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
         );
 
         GpuBackend actualBackend = targetBackend;
+        int environmentVersion;
 
         if (needsRecreation)
         {
@@ -145,6 +146,7 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
                 environmentPath
             );
             await SaveEnvironmentState(environmentStatePath, targetBackend, relPythonPath);
+            environmentVersion = ENVIRONMENT_VERSION;
         }
         else
         {
@@ -164,9 +166,51 @@ public class PythonService(ILogger<PythonService> logger, IGpuDetectionService g
                     targetBackend
                 );
             }
+
+            // The environment was accepted as-is, so it may be older than ENVIRONMENT_VERSION (that is
+            // the point of forceAcceptExisting). Report the version actually installed so the engine
+            // identity distinguishes a stale runtime from a freshly installed one.
+            environmentVersion = await ReadEnvironmentVersion(environmentStatePath);
         }
 
-        return new PythonEnvironment(relPythonPath, backendSrcDirectory, actualBackend);
+        return new PythonEnvironment(
+            relPythonPath,
+            backendSrcDirectory,
+            actualBackend,
+            environmentVersion
+        );
+    }
+
+    /// <summary>
+    /// Reads the installed environment version from the state file. Falls back to
+    /// <see cref="ENVIRONMENT_VERSION" /> when the file is missing or unreadable, so a force-accepted
+    /// environment without usable state is treated as current rather than hashed as an arbitrary
+    /// value.
+    /// </summary>
+    private async Task<int> ReadEnvironmentVersion(string environmentStatePath)
+    {
+        try
+        {
+            if (!File.Exists(environmentStatePath))
+            {
+                return ENVIRONMENT_VERSION;
+            }
+
+            var stateJson = await File.ReadAllTextAsync(environmentStatePath);
+            EnvironmentState? state = JsonSerializer.Deserialize(
+                stateJson,
+                PythonServiceJsonContext.Default.EnvironmentState
+            );
+            return state?.EnvironmentVersion ?? ENVIRONMENT_VERSION;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to read environment version from state, assuming the current version"
+            );
+            return ENVIRONMENT_VERSION;
+        }
     }
 
     public Task<string> RunPythonScript(

@@ -103,6 +103,17 @@ public sealed class DetectServerClient : ResidentNdjsonProcess, IDetectServerCli
                 );
 
                 TimeSpan timeout = _config.Value.DetectServerRequestTimeout;
+                // Bound the send as well as the completion wait by the request timeout: a detector whose
+                // stdin pipe is blocked (alive but not reading) would otherwise hang the send while
+                // _submitLock is held, which also blocks the idle watchdog from reclaiming the process.
+                using var requestCts = CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken
+                );
+                if (timeout > TimeSpan.Zero)
+                {
+                    requestCts.CancelAfter(timeout);
+                }
+
                 try
                 {
                     // The send is inside this try: a cancellation that lands while acquiring the stdin
@@ -112,17 +123,20 @@ public sealed class DetectServerClient : ResidentNdjsonProcess, IDetectServerCli
                         new DetectServerRequest { Id = id, Path = imagePath },
                         DetectServerJsonContext.Default.DetectServerRequest
                     );
-                    await SendLineAsync(line, cancellationToken);
+                    await SendLineAsync(line, requestCts.Token);
 
-                    return timeout > TimeSpan.Zero
-                        ? await job.Completion.Task.WaitAsync(timeout, cancellationToken)
-                        : await job.Completion.Task.WaitAsync(cancellationToken);
+                    return await job.Completion.Task.WaitAsync(requestCts.Token);
                 }
-                catch (TimeoutException)
+                catch (OperationCanceledException)
+                    when (timeout > TimeSpan.Zero
+                        && requestCts.IsCancellationRequested
+                        && !cancellationToken.IsCancellationRequested
+                    )
                 {
-                    // A wedged detector (CUDA hang, blocked I/O) must not hang the task forever, and
-                    // holding _submitLock would also block the idle watchdog. Kill the process and
-                    // surface "unavailable" so the caller falls back to the per-image CLI.
+                    // A wedged detector (CUDA hang, blocked I/O, or a send that cannot drain) must not
+                    // hang the task forever, and holding _submitLock would also block the idle
+                    // watchdog. Kill the process and surface "unavailable" so the caller falls back to
+                    // the per-image CLI.
                     _logger.LogError(
                         "Detection request {Id} timed out after {Timeout}; killing the detection server.",
                         id,
