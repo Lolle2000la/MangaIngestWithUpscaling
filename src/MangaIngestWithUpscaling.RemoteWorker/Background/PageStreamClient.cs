@@ -33,10 +33,16 @@ public sealed class PageStreamClient(
 {
     private const int ChunkSizeBytes = 1024 * 1024;
 
-    // The manifest normally returns immediately, but when the chapter is already fully spooled the
-    // server assembles the CBZ inline before answering, so allow for a large chapter's build.
-    private static readonly TimeSpan ManifestTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan PageTimeout = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// Deadline for the manifest call. A non-positive configured value falls back to a generous
+    /// default, because the manifest can assemble an already-complete chapter inline.
+    /// </summary>
+    private TimeSpan ManifestDeadline() =>
+        upscalerConfig.Value.ManifestTimeout > TimeSpan.Zero
+            ? upscalerConfig.Value.ManifestTimeout
+            : TimeSpan.FromMinutes(10);
 
     /// <summary>
     /// How long a failed chapter's upload loop may keep draining already-produced pages before it is
@@ -119,7 +125,7 @@ public sealed class PageStreamClient(
     {
         PageManifestResponse manifest = await client.GetPageManifestAsync(
             new PageManifestRequest { TaskId = taskId, EngineIdentity = engineIdentity.Upscaler },
-            deadline: DateTime.UtcNow.Add(ManifestTimeout),
+            deadline: DateTime.UtcNow.Add(ManifestDeadline()),
             cancellationToken: stoppingToken
         );
 
@@ -435,7 +441,7 @@ public sealed class PageStreamClient(
     {
         PageManifestResponse manifest = await client.GetPageManifestAsync(
             new PageManifestRequest { TaskId = taskId, EngineIdentity = engineIdentity.Detector },
-            deadline: DateTime.UtcNow.Add(ManifestTimeout),
+            deadline: DateTime.UtcNow.Add(ManifestDeadline()),
             cancellationToken: stoppingToken
         );
 

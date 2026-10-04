@@ -91,6 +91,14 @@ public record UpscalerConfig
     public long MaxSpoolBytesPerTask { get; set; } = 8L * 1024 * 1024 * 1024;
 
     /// <summary>
+    /// How long a worker waits for a page manifest. The manifest normally returns immediately, but
+    /// when a chapter is already fully spooled the server assembles the CBZ before answering, which
+    /// can exceed a short deadline for a large chapter on slow storage — the worker would then
+    /// re-stream (and eventually fail) a chapter that was already complete.
+    /// </summary>
+    public TimeSpan ManifestTimeout { get; set; } = TimeSpan.FromMinutes(10);
+
+    /// <summary>
     ///     Per-million-pixel inactivity timeout used to guard long-running upscaling operations.
     ///     The effective timeout is scaled by the largest image in the archive:
     ///     <c>effectiveTimeout = UpscaleTimeout × max(1, maxImagePixelCount / 1_000_000)</c>.

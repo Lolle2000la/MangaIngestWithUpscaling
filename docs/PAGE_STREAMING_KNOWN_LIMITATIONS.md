@@ -32,17 +32,19 @@ The page-streaming design itself is described in [REMOTE_WORKER.md](REMOTE_WORKE
 
 ## Manifest deadline vs. inline assembly (Finding 10)
 
-- **Where:** `PageStreamClient.ManifestTimeout` and the manifest-complete branch in
-  `UpscalingDistributionService.Pages` (which assembles the CBZ inline before replying).
-- **Current behaviour:** the client allows 2 minutes for `GetPageManifest`; when the chapter is
-  already fully spooled the server assembles the final CBZ inside that call, which can exceed the
-  deadline on slow storage and a large chapter. A `DeadlineExceeded` is transient, so the worker
-  requeues and the assembly is retried (and can eventually fail the chapter).
+- **Where:** `PageStreamClient.ManifestDeadline` / `UpscalerConfig.ManifestTimeout` and the
+  manifest-complete branch in `UpscalingDistributionService.Pages` (which assembles the CBZ inline
+  before replying).
+- **Current behaviour:** the deadline is configurable (`ManifestTimeout`, default 10 minutes). The
+  manifest normally returns immediately, but when a chapter is already fully spooled the server
+  assembles the final CBZ inside the call; a chapter large enough to exceed the configured deadline
+  on slow storage still gets a transient `DeadlineExceeded`, so the worker requeues and the assembly
+  is retried (and can eventually fail the chapter).
 - **Symptom to watch for:** a large already-spooled chapter repeatedly re-streaming or failing with
-  deadline errors, with assembly log lines spanning more than the manifest timeout.
+  deadline errors, with assembly log lines spanning more than `ManifestTimeout`.
 - **Direction:** separate "the chapter is complete" from "the CBZ has been assembled": answer the
   manifest immediately and finalize asynchronously (the worker returns and the server completes the
-  task), or give the complete/assembly path an explicit, larger budget.
+  task), so the deadline stops covering the assembly at all.
 
 ## Preprocessing failure classification (Finding 12)
 
