@@ -97,11 +97,16 @@ Done:
 7. **`RemoteTaskProcessor` lifecycle seam.** `ITaskClaimSource`, `KeepAlivePump` and
    `SoftFailureTracker` make the loop testable without live gRPC.
 
-Remaining:
-5. **One finalize pipeline.** The manifest-complete path and the two upload handlers still repeat the
-   same commit→complete→assemble→finalize ladder with slightly diverging classification; a
-   `PageStreamFinalizer` template with per-kind hooks would remove the duplication.
-8. **Typed engine identity + one profile mapper.** The identity is still an opaque worker-side
-   string and the profile is mapped in two places that must agree. Unifying the mapper needs the
-   protobuf types available to the shared project; the server could then optionally verify the
-   identity (accept-and-warn first).
+5. **One finalize pipeline.** Done: `PageStreamFinalizer` owns the complete→assemble→finalize ladder
+   for the two upload handlers and the manifest-complete branch.
+
+8. **Typed engine identity + one profile mapper.** Assessed and left as-is. The profile is mapped in
+   two places (`ToProtoProfile` on the server, `GetProfileFromResponse` on the worker), but they are
+   inverses that *fail loudly* on divergence — the server maps an unknown enum to `Unspecified` and
+   the worker throws on `Unspecified` — so the "must agree" hazard is limited. Sharing the protobuf
+   types in `MangaIngestWithUpscaling.Shared` would work (compile the proto once with
+   `GrpcServices="Both"`, which pulls the ASP.NET Core gRPC server stack into Shared and moves the
+   generated types across assemblies), but it would also *remove* a property the integration tests
+   currently rely on: the server and client types are generated independently and exercised against
+   each other (`remote::` aliases), which is a real wire-compatibility guard. A typed identity value
+   object would be a modest readability win at broad churn. Not worth the coupling here.
