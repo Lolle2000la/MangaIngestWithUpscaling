@@ -149,7 +149,7 @@ public class ImageResizeService(
             {
                 throw;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!IsInfrastructureFailure(ex))
             {
                 // Match the whole-CBZ path, which copies a page it cannot preprocess through: keep the
                 // original so the page is still upscaled (the engine handles its own decode failure)
@@ -346,6 +346,47 @@ public class ImageResizeService(
                 }
             }
         );
+    }
+
+    public void VerifyReady()
+    {
+        // Exercise the native backend with a tiny in-memory image. Any infrastructure fault
+        // (DllNotFound/BadImageFormat/TypeInitialization) propagates; a worker that cannot preprocess
+        // must fail fast rather than silently skip it.
+        using Image probe = Image.NewFromArray(
+            new int[,]
+            {
+                { 0, 1 },
+                { 2, 3 },
+            }
+        );
+        using Image resized = probe.Resize(0.5, kernel: Enums.Kernel.Linear);
+        _ = resized.Width;
+    }
+
+    /// <summary>
+    /// True when an image-processing failure is an infrastructure fault (libvips missing or the wrong
+    /// architecture) rather than a page that cannot be decoded. Swallowing the former would let a
+    /// broken worker silently produce un-preprocessed pages while advertising the same engine identity
+    /// as a healthy one, so the per-page path surfaces it instead.
+    /// </summary>
+    private static bool IsInfrastructureFailure(Exception ex)
+    {
+        for (Exception? current = ex; current is not null; current = current.InnerException)
+        {
+            if (
+                current
+                is DllNotFoundException
+                    or EntryPointNotFoundException
+                    or BadImageFormatException
+                    or TypeInitializationException
+            )
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void ProcessImage(

@@ -45,6 +45,14 @@ public sealed class PageStreamClient(
     private static readonly TimeSpan UploadDrainGrace = TimeSpan.FromMinutes(2);
 
     /// <summary>
+    /// How many finished pages may be waiting to upload before the local worker is paused. Without a
+    /// bound, a fast GPU on a slow link accumulates up to a whole extra copy of the upscaled chapter on
+    /// the worker's temp disk; blocking the page-done callback applies backpressure to the worker (and
+    /// therefore to the fetch/upscale side), so the temp footprint is O(this), not O(chapter).
+    /// </summary>
+    private const int UploadBacklogLimit = 8;
+
+    /// <summary>
     ///     How old a leftover stream directory must be before it is reclaimed. Generous on purpose: a
     ///     directory's own timestamp goes stale while its contents are still being written, so a short
     ///     window could delete the directory of a chapter that is streaming right now.
@@ -203,9 +211,12 @@ public sealed class PageStreamClient(
             // upscaled output files they point at are only deleted once uploaded, so on a fast GPU with a
             // slow link the temp footprint grows with the backlog — up to a whole extra copy of the
             // upscaled chapter before the uploads catch up.
+            // The channel itself can stay unbounded: the semaphore bounds finished-but-not-uploaded
+            // pages, so at most UploadBacklogLimit are queued or in flight.
             var uploads = Channel.CreateUnbounded<PageUpload>(
                 new UnboundedChannelOptions { SingleReader = true, SingleWriter = false }
             );
+            using var uploadSlots = new SemaphoreSlim(UploadBacklogLimit, UploadBacklogLimit);
             var pageErrors = new System.Collections.Concurrent.ConcurrentBag<string>();
 
             // The upload loop and the chapter share a token so a rejected or dropped upload stops
@@ -219,6 +230,7 @@ public sealed class PageStreamClient(
                 taskId,
                 manifest.TaskIdentity,
                 uploads.Reader,
+                uploadSlots,
                 uploadFailureCts.Token
             );
             _ = uploadTask.ContinueWith(
@@ -246,6 +258,17 @@ public sealed class PageStreamClient(
                     sourceDirectory,
                     WorkerPageName(doneIndex, nameByIndex[doneIndex])
                 );
+
+                // Block the worker's page-done callback until an upload slot frees, so a fast GPU on
+                // a slow link cannot accumulate an unbounded upload backlog on disk.
+                try
+                {
+                    uploadSlots.Wait(uploadFailureCts.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
 
                 if (file.Status == "upscaled" && !string.IsNullOrEmpty(file.Output))
                 {
@@ -750,6 +773,7 @@ public sealed class PageStreamClient(
         int taskId,
         string identity,
         ChannelReader<PageUpload> uploads,
+        SemaphoreSlim uploadSlots,
         CancellationToken stoppingToken
     )
     {
@@ -829,6 +853,11 @@ public sealed class PageStreamClient(
             {
                 TryDeleteFile(upload.Path, upload.PageIndex);
             }
+
+            // Release the slot so the (possibly paused) page-done callback can hand over the next
+            // page. A throwing upload faults the loop, which cancels uploadFailureCts and unblocks the
+            // callback, so the slot is not needed on that path.
+            uploadSlots.Release();
         }
     }
 

@@ -233,6 +233,12 @@ using (var scope = app.Services.CreateScope())
 
     var upscaler = scope.ServiceProvider.GetRequiredService<IUpscaler>();
     await upscaler.DownloadModelsIfNecessary(CancellationToken.None);
+
+    // Fail fast if the native preprocessing backend is broken, so the worker cannot silently produce
+    // un-preprocessed pages while advertising the same engine identity as a healthy one.
+    scope
+        .ServiceProvider.GetRequiredService<MangaIngestWithUpscaling.Shared.Services.ImageProcessing.IImageResizeService>()
+        .VerifyReady();
 }
 
 app.MapHealthChecks("/health");

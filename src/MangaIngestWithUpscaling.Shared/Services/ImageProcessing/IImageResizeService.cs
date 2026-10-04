@@ -60,4 +60,12 @@ public interface IImageResizeService
         ImagePreprocessingOptions options,
         CancellationToken cancellationToken
     );
+
+    /// <summary>
+    /// Exercises the native image backend (libvips) with a tiny in-memory image. Throws when the
+    /// backend cannot run at all (missing or mis-versioned native library), so a worker fails fast at
+    /// startup instead of silently producing un-preprocessed pages while advertising the same engine
+    /// identity as a healthy one.
+    /// </summary>
+    void VerifyReady();
 }
