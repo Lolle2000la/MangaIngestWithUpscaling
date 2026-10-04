@@ -15,6 +15,13 @@ internal sealed class StderrTailBuffer
 
     public void Append(string line)
     {
+        // Bound a single line too: one oversized line (e.g. a stack dump) would otherwise push the
+        // buffer past MaxLength no matter how the existing content is trimmed.
+        if (line.Length > MaxLength)
+        {
+            line = line[..MaxLength];
+        }
+
         lock (_lock)
         {
             if (_buffer.Length + line.Length + 1 > MaxLength)

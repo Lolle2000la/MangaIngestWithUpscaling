@@ -781,6 +781,44 @@ public class PageStreamSpoolTests
         }
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void SweepStale_ReclaimsCrashedRootsUnderAConfiguredSpoolDirectory()
+    {
+        // The crashed-root sweep must scan the configured spool directory, not a hard-coded temp path,
+        // or orphaned multi-GB roots under a custom location are never reclaimed.
+        string configured = Directory.CreateTempSubdirectory("spool_config").FullName;
+        var idle = new PageStreamSpool(
+            Substitute.For<ILogger<PageStreamSpool>>(),
+            Options.Create(new UpscalerConfig { SpoolDirectory = configured })
+        );
+        var sweeper = new PageStreamSpool(
+            Substitute.For<ILogger<PageStreamSpool>>(),
+            Options.Create(new UpscalerConfig { SpoolDirectory = configured })
+        );
+        try
+        {
+            PageStreamSession idleSession = WriteOnePage(idle, 302);
+            AgeDirectory(idle.SpoolRoot);
+            AgeDirectory(idleSession.Directory);
+
+            sweeper.SweepStale(TimeSpan.FromHours(24));
+
+            Assert.False(
+                Directory.Exists(idle.SpoolRoot),
+                "A crashed root under the configured spool directory must be reclaimed."
+            );
+        }
+        finally
+        {
+            sweeper.DeleteDirectory(sweeper.SpoolRoot);
+            if (Directory.Exists(configured))
+            {
+                Directory.Delete(configured, true);
+            }
+        }
+    }
+
     private static PageStreamSession WriteOnePage(PageStreamSpool spool, int taskId)
     {
         PageStreamSession session = spool.GetOrCreateSession(taskId, "identity", "engine", 1);

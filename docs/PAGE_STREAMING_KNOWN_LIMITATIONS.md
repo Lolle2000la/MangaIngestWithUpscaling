@@ -19,16 +19,12 @@ The page-streaming design itself is described in [REMOTE_WORKER.md](REMOTE_WORKE
 - **Direction:** set `SpoolDirectory` to a real disk volume and consider a global (process-wide)
   budget in addition to the per-task one.
 
-## Worker upload backlog (Finding 5)
+## Worker upload backlog (Finding 5) — fixed
 
-- **Where:** `PageStreamClient.RunAsync` (`uploads` channel, `OnPageDone`).
-- **Current behaviour:** the upload channel is unbounded and `OnPageDone` is a synchronous,
-  non-blocking callback, so a fast GPU on a slow link can accumulate a whole extra copy of the
-  upscaled chapter on the worker's temp disk.
-- **Symptom to watch for:** the worker's temp directory growing by roughly one chapter per in-flight
-  task, or disk-full errors under sustained upload backpressure.
-- **Direction:** bound the in-flight backlog (bounded channel or semaphore released in the upload
-  loop) and pause the fetch/upscale side when it fills, so temp usage is O(page), not O(chapter).
+`PageStreamClient` now bounds the in-flight upload backlog with a semaphore (`UploadBacklogLimit`)
+acquired in the page-done callback and released after each upload, so a fast GPU on a slow link
+pauses the worker instead of accumulating a whole extra copy of the chapter on disk. Temp usage is
+O(backlog), not O(chapter).
 
 ## Manifest deadline vs. inline assembly (Finding 10)
 
@@ -46,19 +42,25 @@ The page-streaming design itself is described in [REMOTE_WORKER.md](REMOTE_WORKE
   manifest immediately and finalize asynchronously (the worker returns and the server completes the
   task), so the deadline stops covering the assembly at all.
 
-## Preprocessing failure classification (Finding 12)
+## Preprocessing failure classification (Finding 12) — fixed
 
-- **Where:** `ImageResizeService` (`PreprocessImageInPlaceAsync`).
-- **Current behaviour:** every non-cancellation exception while preprocessing a page is swallowed and
-  the original image is kept. That is correct for one undecodable page, but it also masks an
-  infrastructure failure (for example libvips missing in the AOT remote worker), and the engine
-  identity is computed from the *configured* preprocessing, not whether it ran, so a broken worker
-  advertises the same engine as a healthy one.
-- **Symptom to watch for:** streamed chapters completing with visibly un-preprocessed pages while
-  the local whole-CBZ path (or another worker) applies resizing/format conversion.
-- **Direction:** separate decode failures (keep the original) from infrastructure failures (rethrow),
-  and add a worker startup readiness probe through `IImageResizeService` so a worker that cannot
-  preprocess fails fast instead of producing different bytes.
+`ImageResizeService` now surfaces infrastructure faults (missing/mis-versioned libvips) instead of
+swallowing them, keeps the original only for a page it cannot decode, and exposes `VerifyReady`
+(probed at worker startup) so a broken worker fails fast. Preprocessing is also server-owned: the
+effective options are folded into the server-computed content identity (see the H2 note below), so
+a change resets the spool and the worker's engine identity no longer varies with its local config.
+
+## Residual medium items
+
+- **Permanent local I/O faults burn a chapter per retry (M6).** `ClassifyStreamingFailure` maps every
+  `IOException`/`UnauthorizedAccessException` to transient, so a read-only or full worker filesystem
+  re-fetches and re-upscales the missing pages up to the restart cap. Direction: distinguish
+  `DiskFull`/read-only (terminal) from truly transient I/O (the errno is platform-specific, so this
+  needs care).
+- **Equal size+mtime source edit can loop (M7).** `Assemble` restarts when the archive changed, but
+  `ResolvePageContextAsync` caches descriptors keyed on size+mtime, so a content change preserving
+  both never invalidates the cache and the restart repeats to the cap. Direction: fold a cheap
+  content signal (or the source's inode/ctime) into the cache key.
 
 ## Smaller known items
 

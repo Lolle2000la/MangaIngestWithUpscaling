@@ -97,7 +97,15 @@ public partial class UpscalingDistributionService
 
             case PageStreamFinalizeStatus.IdentityRaced:
                 // An identity reset raced the finalize; tell the worker to restart rather than claim
-                // the chapter is done when it was never assembled.
+                // the chapter is done when it was never assembled. Re-create a fresh session so the
+                // manifest is internally consistent: building it from the stale session would pair the
+                // new descriptors with the old session's identity and completed set.
+                session = pageStreamSpool.GetOrCreateSession(
+                    pageContext.Task.Id,
+                    pageContext.Identity,
+                    request.EngineIdentity,
+                    pageContext.Pages.Count
+                );
                 return await BuildManifestAsync(pageContext, session);
 
             case PageStreamFinalizeStatus.Finalized:
