@@ -1433,61 +1433,39 @@ public partial class UpscalingDistributionService
 
         // Build the CBZ in the destination directory so the final move is a same-filesystem rename
         // (atomic on Unix); deleting the old CBZ before a cross-volume move could lose it if the move
-        // failed.
-        if (destinationDirectory is not null)
-        {
-            // A hard kill between building this temp and moving it leaves it behind, and nothing else
-            // reclaims it (the spool sweeps only its own roots), so an orphan would sit in the library
-            // for good. Sweep what an earlier run left before adding another.
-            FileSystemHelpers.DeleteStaleTempSiblings(destinationDirectory, _logger);
-        }
-
+        // failed. AtomicFileReplacement also sweeps what an interrupted run left behind: the spool
+        // sweeps only its own roots, so an orphan would otherwise sit in the library for good.
         string tempCbz = Path.Combine(
             destinationDirectory ?? Path.GetTempPath(),
             $".upscaled_{pageContext.Task.Id}_{Guid.NewGuid():N}.tmp"
         );
+        using AtomicFileReplacement replacement = AtomicFileReplacement.BeginWithTempPath(
+            destination,
+            tempCbz,
+            _logger
+        );
 
-        try
-        {
-            pageStreamSpool.Assemble(
-                session,
-                pageContext.Identity,
-                pageContext.SourcePath,
-                pageContext.Pages,
-                tempCbz
-            );
-            await upscalerJsonHandlingService.WriteUpscalerJsonAsync(
-                tempCbz,
-                pageContext.Profile!,
-                CancellationToken.None
-            );
-            fileSystem.ApplyPermissions(tempCbz);
+        pageStreamSpool.Assemble(
+            session,
+            pageContext.Identity,
+            pageContext.SourcePath,
+            pageContext.Pages,
+            replacement.TempPath
+        );
+        await upscalerJsonHandlingService.WriteUpscalerJsonAsync(
+            replacement.TempPath,
+            pageContext.Profile!,
+            CancellationToken.None
+        );
+        fileSystem.ApplyPermissions(replacement.TempPath);
 
-            fileSystem.Move(tempCbz, destination, overwrite: true);
+        replacement.Commit(fileSystem);
 
-            pageContext.Chapter.IsUpscaled = true;
-            pageContext.Chapter.UpscalerProfileId = pageContext.Profile!.Id;
-            await dbContext.SaveChangesAsync();
-            await taskProcessor.TaskCompleted(pageContext.Task.Id);
-            _ = chapterChangedNotifier.Notify(pageContext.Chapter, true);
-        }
-        catch
-        {
-            try
-            {
-                if (File.Exists(tempCbz))
-                {
-                    File.Delete(tempCbz);
-                }
-            }
-            catch (Exception cleanupEx)
-            {
-                // A failed cleanup must not mask the original exception (and its failure classification).
-                _logger.LogDebug(cleanupEx, "Failed to delete the temporary CBZ {Temp}.", tempCbz);
-            }
-
-            throw;
-        }
+        pageContext.Chapter.IsUpscaled = true;
+        pageContext.Chapter.UpscalerProfileId = pageContext.Profile!.Id;
+        await dbContext.SaveChangesAsync();
+        await taskProcessor.TaskCompleted(pageContext.Task.Id);
+        _ = chapterChangedNotifier.Notify(pageContext.Chapter, true);
     }
 
     /// <summary>

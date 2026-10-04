@@ -99,13 +99,15 @@ public class SplitApplicationService(
         Directory.CreateDirectory(newOriginalDir);
 
         // Each replacement is built next to the file it replaces and moved onto it, so the swap is a
-        // rename instead of a copy that rewrites the chapter in place (see TempSiblingPathFor). Both
-        // are removed below when the apply never reaches its move.
-        string tempOriginalCbz = FileSystemHelpers.TempSiblingPathFor(originalCbzPath, "splits");
-        string? tempUpscaledCbz = null;
+        // rename instead of a copy that rewrites the chapter in place (see AtomicFileReplacement).
+        // Both are removed below when the apply never reaches its move.
+        AtomicFileReplacement? originalReplacement = null;
+        AtomicFileReplacement? upscaledReplacement = null;
 
         try
         {
+            originalReplacement = AtomicFileReplacement.Begin(originalCbzPath, "splits", logger);
+
             // 1. Process Original
             logger.LogInformation("Applying splits to original chapter {ChapterId}", chapterId);
             cancellationToken.ThrowIfCancellationRequested();
@@ -153,11 +155,7 @@ public class SplitApplicationService(
             await UpdateComicInfoAsync(originalExtractDir, newOriginalDir);
 
             // Repack Original
-            FileSystemHelpers.DeleteStaleTempSiblings(
-                Path.GetDirectoryName(originalCbzPath)!,
-                logger
-            );
-            ZipFile.CreateFromDirectory(newOriginalDir, tempOriginalCbz);
+            ZipFile.CreateFromDirectory(newOriginalDir, originalReplacement.TempPath);
 
             // The original is swapped in only after the upscaled rebuild below succeeds: moving it
             // first left the chapter with split pages but a stale upscaled CBZ when the rebuild threw,
@@ -190,7 +188,7 @@ public class SplitApplicationService(
                     // Swap the original first so the enqueued repair reads the split chapter rather
                     // than the pre-split one.
                     cancellationToken.ThrowIfCancellationRequested();
-                    File.Move(tempOriginalCbz, originalCbzPath, true);
+                    originalReplacement.Commit();
                     originalSwapped = true;
 
                     // OnSplitsAppliedAsync (below) enqueues a repair of its own when the library
@@ -327,15 +325,12 @@ public class SplitApplicationService(
                     await UpdateComicInfoAsync(upscaledExtractDir, newUpscaledDir);
 
                     // Repack Upscaled
-                    tempUpscaledCbz = FileSystemHelpers.TempSiblingPathFor(
-                        chapter.UpscaledFullPath,
-                        "splits"
-                    );
-                    FileSystemHelpers.DeleteStaleTempSiblings(
-                        Path.GetDirectoryName(chapter.UpscaledFullPath)!,
+                    upscaledReplacement = AtomicFileReplacement.Begin(
+                        chapter.UpscaledFullPath!,
+                        "splits",
                         logger
                     );
-                    ZipFile.CreateFromDirectory(newUpscaledDir, tempUpscaledCbz);
+                    ZipFile.CreateFromDirectory(newUpscaledDir, upscaledReplacement.TempPath);
 
                     // The upscaled swap happens with the original swap below.
                 }
@@ -348,12 +343,12 @@ public class SplitApplicationService(
             if (!originalSwapped)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                File.Move(tempOriginalCbz, originalCbzPath, true);
+                originalReplacement.Commit();
             }
-            if (tempUpscaledCbz is not null)
+            if (upscaledReplacement is not null)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                File.Move(tempUpscaledCbz, chapter.UpscaledFullPath!, true);
+                upscaledReplacement.Commit();
             }
 
             await splitProcessingCoordinator.OnSplitsAppliedAsync(
@@ -364,39 +359,13 @@ public class SplitApplicationService(
         }
         finally
         {
-            DeleteUnusedReplacement(tempOriginalCbz);
-            if (tempUpscaledCbz is not null)
-            {
-                DeleteUnusedReplacement(tempUpscaledCbz);
-            }
+            originalReplacement?.Dispose();
+            upscaledReplacement?.Dispose();
 
             if (Directory.Exists(tempRoot))
             {
                 Directory.Delete(tempRoot, true);
             }
-        }
-    }
-
-    /// <summary>
-    ///     Removes a replacement the apply built but never moved onto its destination, so a failed run
-    ///     does not leave a full-size temp in the library.
-    /// </summary>
-    private void DeleteUnusedReplacement(string tempPath)
-    {
-        try
-        {
-            if (File.Exists(tempPath))
-            {
-                File.Delete(tempPath);
-            }
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(
-                ex,
-                "Failed to delete the unused split replacement {Temp}.",
-                tempPath
-            );
         }
     }
 
