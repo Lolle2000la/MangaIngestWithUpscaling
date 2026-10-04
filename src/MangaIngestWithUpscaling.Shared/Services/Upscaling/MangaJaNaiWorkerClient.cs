@@ -113,10 +113,14 @@ public class MangaJaNaiWorkerClient : ResidentNdjsonProcess, IMangaJaNaiWorkerCl
                 var cancelSignal = new TaskCompletionSource(
                     TaskCreationOptions.RunContinuationsAsynchronously
                 );
+                // Capture the best-effort cancel send so the cancellation path can flush it to the
+                // worker before waiting out the grace period. The handler runs on the cancelling
+                // thread; the signal's asynchronous continuation reads the field below.
+                Task? cancelSend = null;
                 using var cancelReg = cancellationToken.Register(() =>
                 {
                     cancelSignal.TrySetResult();
-                    _ = RequestCancelAsync(request.Id);
+                    Volatile.Write(ref cancelSend, RequestCancelAsync(request.Id));
                 });
 
                 // Only monitor inactivity when a timeout was supplied; a null timeout would
@@ -133,6 +137,21 @@ public class MangaJaNaiWorkerClient : ResidentNdjsonProcess, IMangaJaNaiWorkerCl
 
                 if (completed == cancelSignal.Task)
                 {
+                    // Flush the best-effort cancel to the worker before waiting: otherwise the
+                    // grace period can elapse (and the worker be killed) before the stop command
+                    // has even been written.
+                    Task? pendingCancel = Volatile.Read(ref cancelSend);
+                    if (pendingCancel is not null)
+                    {
+                        try
+                        {
+                            await pendingCancel;
+                        }
+                        catch (Exception)
+                        { /* a failed cancel must not fault the caller */
+                        }
+                    }
+
                     // Wait for the worker to release the job slot, then surface cancellation.
                     try
                     {
@@ -284,10 +303,14 @@ public class MangaJaNaiWorkerClient : ResidentNdjsonProcess, IMangaJaNaiWorkerCl
                 var cancelSignal = new TaskCompletionSource(
                     TaskCreationOptions.RunContinuationsAsynchronously
                 );
+                // Capture the best-effort cancel send so the cancellation path can flush it to the
+                // worker before waiting out the grace period. The handler runs on the cancelling
+                // thread; the signal's asynchronous continuation reads the field below.
+                Task? cancelSend = null;
                 using CancellationTokenRegistration cancelReg = cancellationToken.Register(() =>
                 {
                     cancelSignal.TrySetResult();
-                    _ = RequestCancelAsync(request.Id);
+                    Volatile.Write(ref cancelSend, RequestCancelAsync(request.Id));
                 });
 
                 // Only monitor inactivity when a timeout was supplied; a null timeout would
@@ -316,6 +339,21 @@ public class MangaJaNaiWorkerClient : ResidentNdjsonProcess, IMangaJaNaiWorkerCl
 
                 if (completed == cancelSignal.Task)
                 {
+                    // Flush the best-effort cancel to the worker before waiting: otherwise the
+                    // grace period can elapse (and the worker be killed) before the stop command
+                    // has even been written.
+                    Task? pendingCancel = Volatile.Read(ref cancelSend);
+                    if (pendingCancel is not null)
+                    {
+                        try
+                        {
+                            await pendingCancel;
+                        }
+                        catch (Exception)
+                        { /* a failed cancel must not fault the caller */
+                        }
+                    }
+
                     try
                     {
                         await job.Completion.Task.WaitAsync(
@@ -894,7 +932,9 @@ public class MangaJaNaiWorkerClient : ResidentNdjsonProcess, IMangaJaNaiWorkerCl
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Failed to send cancel for job {JobId}.", jobId);
+            // A lost cancel is invisible at the default level otherwise, and the worker may keep
+            // running a job the host has already given up on.
+            _logger.LogInformation(ex, "Failed to send cancel for job {JobId}.", jobId);
         }
     }
 
