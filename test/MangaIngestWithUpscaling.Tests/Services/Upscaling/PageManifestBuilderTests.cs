@@ -1,5 +1,4 @@
 using System.IO.Compression;
-using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.Services.Upscaling;
 using Xunit;
 using SharedCompressionFormat = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat;
@@ -28,7 +27,7 @@ public class PageManifestBuilderTests
                 ("ComicInfo.xml", new byte[] { 3 })
             );
 
-            List<SpoolPageDescriptor> pages = UpscalingDistributionService.BuildPageDescriptors(
+            List<SpoolPageDescriptor> pages = PageManifestBuilder.BuildPageDescriptors(
                 source,
                 Profile()
             );
@@ -59,7 +58,7 @@ public class PageManifestBuilderTests
                 ("002.jpg", new byte[] { 2 })
             );
 
-            List<SpoolPageDescriptor> pages = UpscalingDistributionService.BuildPageDescriptors(
+            List<SpoolPageDescriptor> pages = PageManifestBuilder.BuildPageDescriptors(
                 source,
                 Profile()
             );
@@ -89,7 +88,7 @@ public class PageManifestBuilderTests
                 ("a/./c.jpg", new byte[] { 3 })
             );
 
-            List<SpoolPageDescriptor> pages = UpscalingDistributionService.BuildPageDescriptors(
+            List<SpoolPageDescriptor> pages = PageManifestBuilder.BuildPageDescriptors(
                 source,
                 Profile()
             );
@@ -120,7 +119,7 @@ public class PageManifestBuilderTests
                 ("ch1/001.jpg", new byte[] { 3 }) // duplicate entry name
             );
 
-            List<SpoolPageDescriptor> pages = UpscalingDistributionService.BuildPageDescriptors(
+            List<SpoolPageDescriptor> pages = PageManifestBuilder.BuildPageDescriptors(
                 source,
                 Profile()
             );
@@ -149,7 +148,7 @@ public class PageManifestBuilderTests
         {
             string source = CreateCbz(directory, ("001.jpg", new byte[] { 1 }));
 
-            List<SpoolPageDescriptor> pages = UpscalingDistributionService.BuildPageDescriptors(
+            List<SpoolPageDescriptor> pages = PageManifestBuilder.BuildPageDescriptors(
                 source,
                 Profile(SharedCompressionFormat.Jpg)
             );
@@ -175,7 +174,7 @@ public class PageManifestBuilderTests
                 ("001.png", new byte[] { 2 })
             );
 
-            List<SpoolPageDescriptor> pages = UpscalingDistributionService.BuildPageDescriptors(
+            List<SpoolPageDescriptor> pages = PageManifestBuilder.BuildPageDescriptors(
                 source,
                 Profile()
             );
@@ -206,12 +205,11 @@ public class PageManifestBuilderTests
                 ("ch1/002.jpg", new byte[] { 2 })
             );
 
-            List<SpoolPageDescriptor> pages =
-                UpscalingDistributionService.BuildRepairPageDescriptors(
-                    source,
-                    new[] { "002" },
-                    Profile()
-                );
+            List<SpoolPageDescriptor> pages = PageManifestBuilder.BuildRepairPageDescriptors(
+                source,
+                new[] { "002" },
+                Profile()
+            );
 
             // The source entry keeps its folder so it can be fetched, but the output name is flat:
             // the repair merge copies top-level files by name and the whole-CBZ repair path flattens.
@@ -239,12 +237,11 @@ public class PageManifestBuilderTests
                 ("003.jpg", new byte[] { 3 })
             );
 
-            List<SpoolPageDescriptor> pages =
-                UpscalingDistributionService.BuildRepairPageDescriptors(
-                    source,
-                    new[] { "002", "003" },
-                    Profile()
-                );
+            List<SpoolPageDescriptor> pages = PageManifestBuilder.BuildRepairPageDescriptors(
+                source,
+                new[] { "002", "003" },
+                Profile()
+            );
 
             Assert.Equal(2, pages.Count);
             Assert.Equal(new[] { 0, 1 }, pages.Select(p => p.Index));
@@ -267,8 +264,8 @@ public class PageManifestBuilderTests
         {
             string source = CreateCbz(directory, ("001.jpg", new byte[] { 1 }));
 
-            string webp = UpscalingDistributionService.ComputeIdentity(source, Profile());
-            string png = UpscalingDistributionService.ComputeIdentity(
+            string webp = PageManifestBuilder.ComputeIdentity(source, Profile());
+            string png = PageManifestBuilder.ComputeIdentity(
                 source,
                 Profile(SharedCompressionFormat.Png)
             );
@@ -295,13 +292,13 @@ public class PageManifestBuilderTests
             );
             string upscaled = CreateCbz(directory, ("001.webp", new byte[] { 9 }));
 
-            string one = UpscalingDistributionService.ComputeRepairIdentity(
+            string one = PageManifestBuilder.ComputeRepairIdentity(
                 source,
                 upscaled,
                 Profile(),
                 new[] { "002" }
             );
-            string two = UpscalingDistributionService.ComputeRepairIdentity(
+            string two = PageManifestBuilder.ComputeRepairIdentity(
                 source,
                 upscaled,
                 Profile(),
