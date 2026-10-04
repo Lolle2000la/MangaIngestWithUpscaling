@@ -40,6 +40,12 @@ public sealed class DetectServerClient : ResidentNdjsonProcess, IDetectServerCli
     private static readonly TimeSpan RuntimeFailureCooldown = TimeSpan.FromMinutes(1);
 
     /// <summary>
+    /// Bound on the shutdown line write, so a wedged server with a full stdin pipe cannot hang host
+    /// shutdown (the caller has no token). The kill below still tears the process down.
+    /// </summary>
+    private static readonly TimeSpan ShutdownSendGracePeriod = TimeSpan.FromSeconds(5);
+
+    /// <summary>
     /// Encoding for the detection server's stdin. Must not emit a UTF-8 BOM: the server does
     /// <c>json.loads(line)</c>, which rejects a leading BOM, so a BOM would make every request fail
     /// to parse and stall for the full request timeout.
@@ -317,14 +323,28 @@ public sealed class DetectServerClient : ResidentNdjsonProcess, IDetectServerCli
         {
             if (!process.HasExited && stdin is not null)
             {
-                await SendLineAsync(
-                    stdin,
-                    JsonSerializer.Serialize(
-                        new DetectServerCommand("shutdown"),
-                        DetectServerJsonContext.Default.DetectServerCommand
-                    ),
-                    CancellationToken.None
+                // Bound the shutdown write: a wedged server with a full stdin pipe can block the
+                // writer forever, and this runs from the watchdog/DisposeAsync with no caller token.
+                // Best-effort; the kill below still tears the process down.
+                using var sendGrace = CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken
                 );
+                sendGrace.CancelAfter(ShutdownSendGracePeriod);
+                try
+                {
+                    await SendLineAsync(
+                        stdin,
+                        JsonSerializer.Serialize(
+                            new DetectServerCommand("shutdown"),
+                            DetectServerJsonContext.Default.DetectServerCommand
+                        ),
+                        sendGrace.Token
+                    );
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogDebug(ex, "Failed to send the detection server shutdown command.");
+                }
             }
 
             if (!process.HasExited)

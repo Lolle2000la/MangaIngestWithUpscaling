@@ -166,7 +166,7 @@ public partial class UpscalingDistributionService
                     TaskType = ToProtoTaskType(pageContext.Kind),
                 };
 
-            default:
+            case PageStreamFinalizeStatus.FinalizedSuccessfully:
                 return new PageManifestResponse
                 {
                     TaskId = pageContext.Task.Id,
@@ -174,6 +174,13 @@ public partial class UpscalingDistributionService
                     TaskType = ToProtoTaskType(pageContext.Kind),
                     Complete = true,
                 };
+
+            // Case the success value explicitly and fail loudly on anything unhandled: a future
+            // failure status added to the enum must not silently report the chapter as complete.
+            default:
+                throw new InvalidOperationException(
+                    $"Unhandled page-stream finalize status {finalize.Status} for task {pageContext.Task.Id}."
+                );
         }
     }
 
@@ -607,14 +614,20 @@ public partial class UpscalingDistributionService
                             )
                         )
                         {
+                            // The per-task budget is transiently full because concurrent uploads hold
+                            // reservations that have not been committed yet; the page may well fit
+                            // once peers finish. A committed-total overflow is the deterministic case
+                            // (handled at commit, below). Restart rather than fail so a page that would
+                            // fit is not dropped along with the whole spool.
                             return new UploadPageResponse
                             {
                                 Success = false,
-                                Message = $"Task {taskId} exceeds the maximum spooled size.",
+                                Message =
+                                    "The spool budget is temporarily exhausted; restart the chapter.",
                                 TaskId = taskId,
                                 PageIndex = pageIndex,
                                 Terminal = PageStreamRejections.ToWireTerminal(
-                                    PageStreamDisposition.Terminal
+                                    PageStreamDisposition.Retry
                                 ),
                             };
                         }
@@ -854,7 +867,7 @@ public partial class UpscalingDistributionService
                     Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Terminal),
                 };
 
-            default:
+            case PageStreamFinalizeStatus.FinalizedSuccessfully:
                 return new UploadPageResponse
                 {
                     Success = true,
@@ -862,6 +875,13 @@ public partial class UpscalingDistributionService
                     TaskId = taskId,
                     PageIndex = pageIndex,
                 };
+
+            // Case the success value explicitly and fail loudly on anything unhandled: a future
+            // failure status added to the enum must not silently report the chapter as complete.
+            default:
+                throw new InvalidOperationException(
+                    $"Unhandled page-stream finalize status {finalize.Status} for task {taskId}."
+                );
         }
     }
 
@@ -1235,12 +1255,19 @@ public partial class UpscalingDistributionService
                     Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Terminal),
                 };
 
-            default:
+            case PageStreamFinalizeStatus.FinalizedSuccessfully:
                 return new UploadDetectionResultResponse
                 {
                     Success = true,
                     Message = "Detection results processed",
                 };
+
+            // Case the success value explicitly and fail loudly on anything unhandled: a future
+            // failure status added to the enum must not silently report the chapter as complete.
+            default:
+                throw new InvalidOperationException(
+                    $"Unhandled page-stream finalize status {finalize.Status}."
+                );
         }
     }
 

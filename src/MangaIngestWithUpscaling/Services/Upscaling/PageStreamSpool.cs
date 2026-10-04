@@ -111,13 +111,20 @@ public sealed class PageStreamSpool : IPageSpoolStore
 
         // Unique per PageStreamSpool instance (and therefore per process): two app instances, or two
         // test collections, on one host must not share task directories.
-        string root = string.IsNullOrWhiteSpace(config.Value.SpoolDirectory)
+        SpoolParent = string.IsNullOrWhiteSpace(config.Value.SpoolDirectory)
             ? Path.Combine(Path.GetTempPath(), "mangaingestwithupscaling", "page_spool")
             : Path.GetFullPath(config.Value.SpoolDirectory);
-        SpoolRoot = Path.Combine(root, $"{Environment.ProcessId}-{Guid.NewGuid():N}");
+        SpoolRoot = Path.Combine(SpoolParent, $"{Environment.ProcessId}-{Guid.NewGuid():N}");
     }
 
     public string SpoolRoot { get; }
+
+    /// <summary>
+    /// The directory this instance's root lives in, and the shared parent the crashed-root sweep
+    /// scans. Derived from the configured spool directory (not hard-coded to temp), so a configured
+    /// spool location is actually swept.
+    /// </summary>
+    public string SpoolParent { get; }
 
     /// <summary>
     /// Returns the session for a task, creating it or resetting it when the content identity or the
@@ -877,6 +884,7 @@ public sealed class PageStreamSpool : IPageSpoolStore
     public void SweepStale(TimeSpan retention)
     {
         DateTime cutoff = DateTime.UtcNow - retention;
+        var discarded = new List<string>();
         foreach ((int taskId, PageStreamSession session) in _sessions)
         {
             // Check and remove atomically under the gate: a manifest/upload that refreshed
@@ -898,8 +906,15 @@ public sealed class PageStreamSpool : IPageSpoolStore
 
                 _logger.LogInformation("Removing stale page spool for task {TaskId}.", taskId);
                 session.Finalized = true;
-                session.DeleteDirectory(_logger);
+                discarded.Add(session.Directory);
             }
+        }
+
+        // Delete off the gate: the recursive delete can be many gigabytes, and holding a session's gate
+        // across it would wedge that task's manifest/commit RPCs behind the sweep.
+        foreach (string directory in discarded)
+        {
+            DeleteDirectory(directory);
         }
 
         // Roots left by a previous process are invisible to _sessions (which is empty after a
@@ -942,9 +957,6 @@ public sealed class PageStreamSpool : IPageSpoolStore
             _logger.LogDebug(ex, "Failed to sweep the page spool parent {Parent}.", SpoolParent);
         }
     }
-
-    private static string SpoolParent =>
-        Path.Combine(Path.GetTempPath(), "mangaingestwithupscaling", "page_spool");
 
     /// <summary>
     /// Newest write time among a spool root and its immediate task directories. Page writes land in
