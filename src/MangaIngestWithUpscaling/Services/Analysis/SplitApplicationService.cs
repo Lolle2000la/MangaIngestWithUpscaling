@@ -159,11 +159,11 @@ public class SplitApplicationService(
             );
             ZipFile.CreateFromDirectory(newOriginalDir, tempOriginalCbz);
 
-            // Replace Original
-            // Observe cancellation before the swap: a cancelled apply must not move its replacement
-            // back over a chapter a concurrent merge has already deleted.
-            cancellationToken.ThrowIfCancellationRequested();
-            File.Move(tempOriginalCbz, originalCbzPath, true);
+            // The original is swapped in only after the upscaled rebuild below succeeds: moving it
+            // first left the chapter with split pages but a stale upscaled CBZ when the rebuild threw,
+            // and a retry could no longer match the findings (the original page is already split), so
+            // it silently marked the stale upscaled chapter as applied. Both swaps happen together at
+            // the end.
 
             // 2. Process Upscaled if exists. Resolve the effective profile: a chapter can be upscaled
             // with an inherited library/manga profile and no explicit FK (e.g. LibraryIntegrityChecker
@@ -171,6 +171,7 @@ public class SplitApplicationService(
             // a stale upscaled CBZ in RemoteOnly.
             var effectiveProfile =
                 chapter.UpscalerProfile ?? chapter.Manga?.EffectiveUpscalerProfile;
+            bool originalSwapped = false;
             if (
                 chapter.IsUpscaled
                 && chapter.UpscaledFullPath != null
@@ -186,6 +187,12 @@ public class SplitApplicationService(
                     // CBZ. A plain UpscaleTask would be skipped because the chapter is already
                     // upscaled, leaving the stale upscaled CBZ in place.
                     //
+                    // Swap the original first so the enqueued repair reads the split chapter rather
+                    // than the pre-split one.
+                    cancellationToken.ThrowIfCancellationRequested();
+                    File.Move(tempOriginalCbz, originalCbzPath, true);
+                    originalSwapped = true;
+
                     // OnSplitsAppliedAsync (below) enqueues a repair of its own when the library
                     // upscales on ingest; only enqueue one here when it will not, so the upscaled CBZ
                     // is never left stale (the inline path always updates it).
@@ -330,10 +337,23 @@ public class SplitApplicationService(
                     );
                     ZipFile.CreateFromDirectory(newUpscaledDir, tempUpscaledCbz);
 
-                    // Replace Upscaled
-                    cancellationToken.ThrowIfCancellationRequested();
-                    File.Move(tempUpscaledCbz, chapter.UpscaledFullPath, true);
+                    // The upscaled swap happens with the original swap below.
                 }
+            }
+
+            // Swap both replacements in last, so a failure while building either one (in particular
+            // the upscaled rebuild) leaves the chapter untouched and the apply is safely retryable.
+            // Observe cancellation before each swap: a cancelled apply must not move its replacement
+            // back over a chapter a concurrent merge has already deleted.
+            if (!originalSwapped)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                File.Move(tempOriginalCbz, originalCbzPath, true);
+            }
+            if (tempUpscaledCbz is not null)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                File.Move(tempUpscaledCbz, chapter.UpscaledFullPath!, true);
             }
 
             await splitProcessingCoordinator.OnSplitsAppliedAsync(

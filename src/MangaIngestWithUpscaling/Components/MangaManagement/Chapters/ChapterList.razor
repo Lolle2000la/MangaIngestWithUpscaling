@@ -1435,6 +1435,23 @@
                     ?? splitState?.LastProcessedDetectorVersion
                     ?? SplitDetectionService.CURRENT_DETECTOR_VERSION;
 
+                if (
+                    await SplitProcessingCoordinator.HasExistingApplyTaskAsync(
+                        chapter.Id,
+                        null,
+                        CancellationToken.None
+                    )
+                )
+                {
+                    // A double-click (or the integrity checker) already queued this apply; skip the
+                    // duplicate instead of creating a second row for the same chapter.
+                    Snackbar.Add(
+                        string.Format(Loc["Snackbar_SplitApplicationQueued"], chapter.FileName),
+                        Severity.Info
+                    );
+                    return;
+                }
+
                 // Enqueue rather than apply inline: an inline apply bypasses the same-chapter guard
                 // that keeps ApplySplitsTask from rewriting the original CBZ while a same-chapter
                 // upscale/repair/detect is running (the merge manager can only cancel PersistedTasks,

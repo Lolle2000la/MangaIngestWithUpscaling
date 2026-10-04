@@ -62,6 +62,17 @@ public interface ISplitProcessingCoordinator
     );
 
     /// <summary>
+    /// True when the chapter already has a pending or processing apply-splits task, so a duplicate
+    /// enqueue (a double-click or the integrity checker) can be skipped. The detection path has the
+    /// equivalent <c>HasExistingDetectionTaskAsync</c>; apply had none.
+    /// </summary>
+    Task<bool> HasExistingApplyTaskAsync(
+        int chapterId,
+        ApplicationDbContext? context = null,
+        CancellationToken cancellationToken = default
+    );
+
+    /// <summary>
     /// Handles the completion of split application (either local or remote).
     /// Updates the processing state, notifies changes, and schedules subsequent upscale/repair tasks if needed.
     /// </summary>

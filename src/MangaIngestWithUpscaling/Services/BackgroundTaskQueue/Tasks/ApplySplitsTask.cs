@@ -33,10 +33,27 @@ public class ApplySplitsTask : BaseTask, IChapterTask
     )
     {
         var splitApplicationService = services.GetRequiredService<ISplitApplicationService>();
-        await splitApplicationService.ApplySplitsAsync(
-            ChapterId,
-            DetectorVersion,
-            cancellationToken
-        );
+        try
+        {
+            await splitApplicationService.ApplySplitsAsync(
+                ChapterId,
+                DetectorVersion,
+                cancellationToken
+            );
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancellation is not a failure; leave the state for the retry/requeue path.
+            throw;
+        }
+        catch
+        {
+            // A failed apply must not leave the chapter stuck at Processing: RetryFor is 0 and the UI
+            // only offers the action from Detected, so the chapter would wedge until the DB is edited.
+            // Mirror detection's failure handling.
+            var stateManager = services.GetRequiredService<ISplitProcessingStateManager>();
+            await stateManager.SetFailedAsync(ChapterId, null, CancellationToken.None);
+            throw;
+        }
     }
 }

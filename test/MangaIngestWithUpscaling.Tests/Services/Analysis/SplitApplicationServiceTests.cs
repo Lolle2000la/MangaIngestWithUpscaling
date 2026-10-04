@@ -208,6 +208,119 @@ public class SplitApplicationServiceTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task ApplySplitsAsync_WhenTheUpscaledRebuildFails_LeavesTheOriginalUntouched()
+    {
+        // Regression guard: the original was swapped in before the upscaled rebuild, so a rebuild
+        // failure left the chapter with split pages but a stale upscaled CBZ; a retry could no longer
+        // match the findings (the original page was already split) and marked the stale upscaled
+        // chapter as applied.
+        var library = new Library
+        {
+            Name = "Test Library",
+            NotUpscaledLibraryPath = Path.Combine(_tempDir, "original_fail"),
+            UpscaledLibraryPath = Path.Combine(_tempDir, "upscaled_fail"),
+        };
+        _dbContext.Libraries.Add(library);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+        Directory.CreateDirectory(library.NotUpscaledLibraryPath);
+        Directory.CreateDirectory(library.UpscaledLibraryPath);
+
+        var profile = new UpscalerProfile
+        {
+            Name = "Test Profile",
+            ScalingFactor = ScaleFactor.TwoX,
+            CompressionFormat = CompressionFormat.Png,
+            Quality = 90,
+        };
+        _dbContext.UpscalerProfiles.Add(profile);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var manga = new Manga
+        {
+            PrimaryTitle = "Test Manga",
+            LibraryId = library.Id,
+            Library = library,
+        };
+        _dbContext.MangaSeries.Add(manga);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var chapter = new Chapter
+        {
+            FileName = "chapter1.cbz",
+            RelativePath = "manga/chapter1.cbz",
+            MangaId = manga.Id,
+            Manga = manga,
+            IsUpscaled = true,
+            UpscalerProfileId = profile.Id,
+            UpscalerProfile = profile,
+        };
+        _dbContext.Chapters.Add(chapter);
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var originalCbzPath = Path.Combine(library.NotUpscaledLibraryPath, chapter.RelativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(originalCbzPath)!);
+        CreateTestCbz(originalCbzPath, "page1.png", "page2.png");
+        CreateTestCbz(chapter.UpscaledFullPath!, "page1.png", "page2.png");
+
+        _dbContext.StripSplitFindings.Add(
+            new StripSplitFinding
+            {
+                ChapterId = chapter.Id,
+                DetectorVersion = 1,
+                PageFileName = "page1",
+                SplitJson = JsonSerializer.Serialize(
+                    new SplitDetectionResult
+                    {
+                        OriginalHeight = 1000,
+                        Splits = [new DetectedSplit { YOriginal = 500, Confidence = 0.9 }],
+                    }
+                ),
+            }
+        );
+        await _dbContext.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        _splitApplier
+            .ApplySplitsToImage(
+                Arg.Any<string>(),
+                Arg.Any<List<DetectedSplit>>(),
+                Arg.Any<string>()
+            )
+            .Returns(callInfo =>
+            {
+                var outputDir = callInfo.ArgAt<string>(2);
+                var part1 = Path.Combine(outputDir, "page1_part1.png");
+                var part2 = Path.Combine(outputDir, "page1_part2.png");
+                File.WriteAllText(part1, "dummy part1");
+                File.WriteAllText(part2, "dummy part2");
+                return new List<string> { part1, part2 };
+            });
+        _upscaler
+            .Upscale(
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<UpscalerProfile>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(Task.FromException(new InvalidOperationException("boom")));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _service.ApplySplitsAsync(chapter.Id, 1, TestContext.Current.CancellationToken)
+        );
+
+        // The original must still hold the pre-split pages, so a retry can match the finding again.
+        using (ZipArchive original = ZipFile.OpenRead(originalCbzPath))
+        {
+            Assert.Contains(original.Entries, e => e.FullName == "page1.png");
+            Assert.DoesNotContain(original.Entries, e => e.FullName == "page1_part1.png");
+        }
+
+        // And the apply must not be recorded as applied.
+        await _coordinator
+            .DidNotReceiveWithAnyArgs()
+            .OnSplitsAppliedAsync(default, default, TestContext.Current.CancellationToken);
+    }
+
+    [Fact]
     public async Task ApplySplitsAsync_RemoteOnly_EnqueuesARepairInsteadOfUpscalingInline()
     {
         // Arrange: an upscaled chapter with a split finding (a remote-only server has no ML backend).
