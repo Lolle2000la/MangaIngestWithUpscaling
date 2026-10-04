@@ -11,17 +11,17 @@ namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 public static class TaskClassifier
 {
     /// <summary>
-    ///     The upscale-family task type names. These are routed to the upscale queue and, while
-    ///     <c>Pending</c> or <c>Processing</c>, conflict with a same-chapter apply. The names are
-    ///     the concrete type names because <see cref="PersistedTaskQueries" /> matches the JSON
-    ///     <c>$type</c> discriminator on exactly that string.
+    ///     The upscale-family task types. These are routed to the upscale queue and, while
+    ///     <c>Pending</c> or <c>Processing</c>, conflict with a same-chapter apply. The concrete types
+    ///     (not just their names) are the source of truth: the name lists and
+    ///     <see cref="IsUpscaleTask" /> are both derived from this one set, so they cannot drift.
     /// </summary>
-    public static readonly IReadOnlyList<string> UpscaleFamilyTaskTypeNames =
+    private static readonly Type[] UpscaleFamily =
     [
-        nameof(UpscaleTask),
-        nameof(RepairUpscaleTask),
-        nameof(DetectSplitCandidatesTask),
-        nameof(RenameUpscaledChaptersSeriesTask),
+        typeof(UpscaleTask),
+        typeof(RepairUpscaleTask),
+        typeof(DetectSplitCandidatesTask),
+        typeof(RenameUpscaledChaptersSeriesTask),
     ];
 
     /// <summary>
@@ -29,22 +29,25 @@ public static class TaskClassifier
     ///     <see cref="ApplySplitsTask" />, which runs on the standard processor but still touches a
     ///     chapter a merge is manipulating.
     /// </summary>
-    public static readonly IReadOnlyList<string> ChapterScopedTaskTypeNames =
-    [
-        nameof(UpscaleTask),
-        nameof(RepairUpscaleTask),
-        nameof(RenameUpscaledChaptersSeriesTask),
-        nameof(DetectSplitCandidatesTask),
-        nameof(ApplySplitsTask),
-    ];
+    private static readonly Type[] ChapterScoped = [.. UpscaleFamily, typeof(ApplySplitsTask)];
+
+    /// <summary>
+    ///     The upscale-family task type names. The names are the concrete type names because
+    ///     <see cref="PersistedTaskQueries" /> matches the JSON <c>$type</c> discriminator on exactly
+    ///     that string.
+    /// </summary>
+    public static readonly IReadOnlyList<string> UpscaleFamilyTaskTypeNames = UpscaleFamily
+        .Select(t => t.Name)
+        .ToArray();
+
+    /// <summary>The chapter-scoped task type names.</summary>
+    public static readonly IReadOnlyList<string> ChapterScopedTaskTypeNames = ChapterScoped
+        .Select(t => t.Name)
+        .ToArray();
 
     /// <summary>True when <paramref name="data" /> is routed to the upscale queue.</summary>
     public static bool IsUpscaleTask(BaseTask data) =>
-        data
-            is UpscaleTask
-                or RenameUpscaledChaptersSeriesTask
-                or RepairUpscaleTask
-                or DetectSplitCandidatesTask;
+        UpscaleFamily.Any(type => type.IsInstanceOfType(data));
 
     /// <summary>The chapter a task targets, or <c>null</c> when it is not chapter-scoped.</summary>
     public static int? GetChapterId(BaseTask data) =>

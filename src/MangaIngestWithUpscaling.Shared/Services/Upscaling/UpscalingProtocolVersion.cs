@@ -12,9 +12,9 @@ namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 ///
 /// Version negotiation is <b>not implemented yet</b>: no behavior currently depends on the protocol
 /// version, so both sides keep speaking their own <see cref="Current"/> and only the handshake's range
-/// check guards compatibility. Any future version-dependent behavior must first carry
-/// <see cref="Negotiated"/> (the overlap's upper bound) on the wire and use it on both sides;
-/// otherwise a newer peer could emit a field or RPC an older one cannot interpret.
+/// check guards compatibility. Any future version-dependent behavior must first carry the overlap's
+/// upper bound on the wire and use it on both sides; otherwise a newer peer could emit a field or RPC
+/// an older one cannot interpret.
 /// </summary>
 public static class UpscalingProtocolVersion
 {
@@ -23,10 +23,6 @@ public static class UpscalingProtocolVersion
 
     /// <summary>The oldest version this build can still interoperate with.</summary>
     public const int MinSupported = 3;
-
-    /// <summary>True when <paramref name="peerVersion"/> is within this build's supported range.</summary>
-    public static bool IsSupported(int peerVersion) =>
-        peerVersion >= MinSupported && peerVersion <= Current;
 
     /// <summary>
     /// True when this build's range [<see cref="MinSupported"/>, <see cref="Current"/>] overlaps the
@@ -37,13 +33,4 @@ public static class UpscalingProtocolVersion
     /// </summary>
     public static bool IsCompatible(int peerCurrent, int peerMin) =>
         Math.Max(MinSupported, peerMin) <= Math.Min(Current, peerCurrent);
-
-    /// <summary>
-    /// The version both sides should speak after a compatible handshake: the upper bound of the
-    /// overlap. <b>Not yet wired through</b> — no behavior currently depends on the protocol version,
-    /// so both sides speak their own <see cref="Current"/>. This is the value a future version bump
-    /// must carry on the wire and use on both sides before adding version-dependent behavior. Today
-    /// every build is [3, 3], so it is always <see cref="Current"/>.
-    /// </summary>
-    public static int Negotiated(int peerCurrent) => Math.Min(Current, peerCurrent);
 }

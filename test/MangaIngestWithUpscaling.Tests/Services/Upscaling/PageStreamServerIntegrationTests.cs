@@ -132,6 +132,21 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
 
         await SeedAsync(notUpscaledDir, upscaledDir);
 
+        _app = await BuildAppAsync(maxSpoolBytesPerTask: 0);
+
+        TestServer server = _app.GetTestServer();
+        _channel = GrpcChannel.ForAddress(
+            server.BaseAddress,
+            new GrpcChannelOptions { HttpHandler = server.CreateHandler() }
+        );
+    }
+
+    /// <summary>
+    /// Builds and starts a server over the shared test database. <paramref name="maxSpoolBytesPerTask" />
+    /// of 0 keeps the production default; a small value drives the handler-level budget checks.
+    /// </summary>
+    private async Task<WebApplication> BuildAppAsync(long maxSpoolBytesPerTask)
+    {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
         builder.Logging.ClearProviders();
@@ -146,6 +161,7 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
                     ImageFormatConversionRules = [],
                     MaxDimensionBeforeUpscaling = null,
                     EnableSmartDownscale = false,
+                    MaxSpoolBytesPerTask = maxSpoolBytesPerTask,
                 }
             )
         );
@@ -179,17 +195,12 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
             .AddScheme<AuthenticationSchemeOptions, TestApiKeyHandler>("ApiKey", null);
         builder.Services.AddAuthorization();
 
-        _app = builder.Build();
-        _app.UseAuthentication();
-        _app.UseAuthorization();
-        _app.MapGrpcService<UpscalingDistributionService>();
-        await _app.StartAsync();
-
-        TestServer server = _app.GetTestServer();
-        _channel = GrpcChannel.ForAddress(
-            server.BaseAddress,
-            new GrpcChannelOptions { HttpHandler = server.CreateHandler() }
-        );
+        WebApplication app = builder.Build();
+        app.UseAuthentication();
+        app.UseAuthorization();
+        app.MapGrpcService<UpscalingDistributionService>();
+        await app.StartAsync();
+        return app;
     }
 
     public async ValueTask DisposeAsync()
@@ -1070,6 +1081,161 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
 
     [Fact]
     [Trait("Category", "Integration")]
+    public async Task UploadPage_EnforcesThePerTaskBudgetOverGrpc()
+    {
+        // A dedicated server with a tiny budget, so the handler-level reservation/commit checks can be
+        // driven with a couple of bytes (the production default is 8 GiB).
+        await using WebApplication budgetApp = await BuildAppAsync(maxSpoolBytesPerTask: 16);
+        TestServer server = budgetApp.GetTestServer();
+        using GrpcChannel channel = GrpcChannel.ForAddress(
+            server.BaseAddress,
+            new GrpcChannelOptions { HttpHandler = server.CreateHandler() }
+        );
+        var client = new RemoteUpscalingServiceClient(channel);
+        CancellationToken token = TestContext.Current.CancellationToken;
+
+        RemotePageManifestResponse manifest = await client.GetPageManifestAsync(
+            new RemotePageManifestRequest
+            {
+                TaskId = _taskId,
+                EngineIdentity = UpscalerEngineIdentity,
+            },
+            cancellationToken: token
+        );
+
+        // A page larger than the whole budget is deterministic: no peer releasing a reservation can
+        // make it fit, so the rejection must be terminal.
+        RemoteUploadPageResponse overflow = await UploadPageAsync(
+            client,
+            _taskId,
+            0,
+            new byte[32],
+            manifest.TaskIdentity,
+            UpscalerEngineIdentity,
+            token
+        );
+        Assert.False(overflow.Success);
+        Assert.True(overflow.Terminal);
+        Assert.Contains("maximum spooled size", overflow.Message);
+
+        // Seed an in-flight reservation that leaves room for a page by itself, but not alongside the
+        // reservation. The next upload is then transiently full and must be retryable, not terminal.
+        var spool = budgetApp.Services.GetRequiredService<PageStreamSpool>();
+        PageStreamSession session = spool.TryGetSession(_taskId)!;
+        Assert.Equal(
+            ReserveInFlightResult.Reserved,
+            spool.TryReserveInFlight(session, 1, 10, out _)
+        );
+
+        RemoteUploadPageResponse transient = await UploadPageAsync(
+            client,
+            _taskId,
+            0,
+            new byte[10],
+            manifest.TaskIdentity,
+            UpscalerEngineIdentity,
+            token
+        );
+        Assert.False(transient.Success);
+        Assert.False(transient.Terminal);
+        Assert.Contains("temporarily exhausted", transient.Message);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task GetPageManifest_ReportsCompleteWhileAnotherFinalizeIsInFlight()
+    {
+        CancellationToken token = TestContext.Current.CancellationToken;
+        var client = new RemoteUpscalingServiceClient(_channel);
+
+        RemotePageManifestResponse manifest = await client.GetPageManifestAsync(
+            new RemotePageManifestRequest
+            {
+                TaskId = _detectTaskId,
+                EngineIdentity = DetectorEngineIdentity,
+            },
+            deadline: DateTime.UtcNow.AddSeconds(30),
+            cancellationToken: token
+        );
+
+        // Spool every detection result so the next manifest finalizes the chapter.
+        var spool = _app.Services.GetRequiredService<PageStreamSpool>();
+        PageStreamSession session = spool.GetOrCreateSession(
+            _detectTaskId,
+            manifest.TaskIdentity,
+            DetectorEngineIdentity,
+            manifest.Pages.Count
+        );
+        foreach (var page in manifest.Pages)
+        {
+            string json = JsonSerializer.Serialize(
+                new SplitDetectionResult { ImagePath = page.SourceName, Count = 0 },
+                SharedJsonContext.Default.SplitDetectionResult
+            );
+            await spool.WritePageAsync(
+                session,
+                page.Index,
+                new MemoryStream(Encoding.UTF8.GetBytes(json)),
+                token
+            );
+        }
+
+        // Hold the first finalize inside the detection processing so a second manifest races it.
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _splitProcessing
+            .ProcessDetectionResultsAsync(
+                Arg.Any<int>(),
+                Arg.Any<List<SplitDetectionResult>>(),
+                Arg.Any<int>(),
+                Arg.Any<CancellationToken>()
+            )
+            .Returns(async _ =>
+            {
+                entered.TrySetResult();
+                await release.Task;
+            });
+
+        var firstCall = client.GetPageManifestAsync(
+            new RemotePageManifestRequest
+            {
+                TaskId = _detectTaskId,
+                EngineIdentity = DetectorEngineIdentity,
+            },
+            deadline: DateTime.UtcNow.AddSeconds(30),
+            cancellationToken: token
+        );
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
+
+        // A second finalize while the first is in flight reports success without redoing the work.
+        RemotePageManifestResponse second = await client.GetPageManifestAsync(
+            new RemotePageManifestRequest
+            {
+                TaskId = _detectTaskId,
+                EngineIdentity = DetectorEngineIdentity,
+            },
+            deadline: DateTime.UtcNow.AddSeconds(30),
+            cancellationToken: token
+        );
+        Assert.True(second.Complete);
+
+        release.TrySetResult();
+        RemotePageManifestResponse first = await firstCall.ResponseAsync;
+        Assert.True(first.Complete);
+
+        // The assembly ran exactly once; the racing finalize did not redo it.
+        await _splitProcessing
+            .Received(1)
+            .ProcessDetectionResultsAsync(
+                _chapterId,
+                Arg.Any<List<SplitDetectionResult>>(),
+                1,
+                Arg.Any<CancellationToken>()
+            );
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
     public async Task GetPageManifest_ResolvesAndCachesTheRepairContext()
     {
         // Repair resolves its context by diffing the source against the upscaled chapter; that must
@@ -1455,6 +1621,46 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         using var buffer = new MemoryStream();
         stream.CopyTo(buffer);
         return buffer.ToArray();
+    }
+
+    private static async Task<RemoteUploadPageResponse> UploadPageAsync(
+        RemoteUpscalingServiceClient client,
+        int taskId,
+        int pageIndex,
+        byte[] payload,
+        string taskIdentity,
+        string engineIdentity,
+        CancellationToken cancellationToken
+    )
+    {
+        using var call = client.UploadPage(cancellationToken: cancellationToken);
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = taskId,
+                PageIndex = pageIndex,
+                ChunkNumber = 0,
+                Chunk = ByteString.CopyFrom(payload),
+                ContentIdentity = taskIdentity,
+                EngineIdentity = engineIdentity,
+            },
+            cancellationToken
+        );
+        await call.RequestStream.WriteAsync(
+            new RemoteUploadPageChunk
+            {
+                TaskId = taskId,
+                PageIndex = pageIndex,
+                ChunkNumber = 1,
+                Chunk = ByteString.Empty,
+                IsLast = true,
+                ContentIdentity = taskIdentity,
+                EngineIdentity = engineIdentity,
+            },
+            cancellationToken
+        );
+        await call.RequestStream.CompleteAsync();
+        return await call.ResponseAsync;
     }
 
     /// <summary>

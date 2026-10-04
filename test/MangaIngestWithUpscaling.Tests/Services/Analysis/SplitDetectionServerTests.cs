@@ -12,6 +12,7 @@ using Xunit;
 
 namespace MangaIngestWithUpscaling.Tests.Services.Analysis;
 
+[Collection("DetectServerClientLayout")]
 public class SplitDetectionServerTests
 {
     private readonly IPythonService _pythonService = Substitute.For<IPythonService>();
@@ -159,3 +160,10 @@ public class SplitDetectionServerTests
         }
     }
 }
+
+/// <summary>
+/// Serializes the tests that mutate the process-wide <see cref="SplitDetectionLayout.Root" /> with the
+/// rest of this assembly, mirroring the collection of the same name in the shared test assembly.
+/// </summary>
+[CollectionDefinition("DetectServerClientLayout", DisableParallelization = true)]
+public class DetectServerClientLayoutCollection;

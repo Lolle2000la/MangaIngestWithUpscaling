@@ -7,18 +7,6 @@ public class UpscalingProtocolVersionTests
 {
     [Fact]
     [Trait("Category", "Unit")]
-    public void IsSupported_AcceptsTheSupportedRangeAndRejectsOutsideIt()
-    {
-        Assert.True(UpscalingProtocolVersion.IsSupported(UpscalingProtocolVersion.MinSupported));
-        Assert.True(UpscalingProtocolVersion.IsSupported(UpscalingProtocolVersion.Current));
-        Assert.False(
-            UpscalingProtocolVersion.IsSupported(UpscalingProtocolVersion.MinSupported - 1)
-        );
-        Assert.False(UpscalingProtocolVersion.IsSupported(UpscalingProtocolVersion.Current + 1));
-    }
-
-    [Fact]
-    [Trait("Category", "Unit")]
     public void IsCompatible_AcceptsOverlappingRangesAndRejectsDisjointOnes()
     {
         // A newer-but-compatible peer: its Current is above ours but its Min reaches into our range.
@@ -59,19 +47,5 @@ public class UpscalingProtocolVersionTests
         // handshake is only safe while MinSupported == Current. Decoupling them (a partial-rollout
         // bump) would let a newer side apply new behavior unilaterally; implement negotiation first.
         Assert.Equal(UpscalingProtocolVersion.Current, UpscalingProtocolVersion.MinSupported);
-    }
-
-    [Fact]
-    [Trait("Category", "Unit")]
-    public void Negotiated_IsTheUpperBoundOfTheOverlap()
-    {
-        Assert.Equal(
-            UpscalingProtocolVersion.Current,
-            UpscalingProtocolVersion.Negotiated(UpscalingProtocolVersion.Current + 1)
-        );
-        Assert.Equal(
-            UpscalingProtocolVersion.MinSupported,
-            UpscalingProtocolVersion.Negotiated(UpscalingProtocolVersion.MinSupported)
-        );
     }
 }

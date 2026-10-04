@@ -8,6 +8,8 @@ using MangaIngestWithUpscaling.RemoteWorker.Background;
 using MangaIngestWithUpscaling.RemoteWorker.Configuration;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Constants;
+using MangaIngestWithUpscaling.Shared.Data.Analysis;
+using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.DependencyInjection;
@@ -508,6 +510,129 @@ public class PageStreamClientTests
         }
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunAsync_PausesTheWorkerWhenTheUploadBacklogIsFull()
+    {
+        string directory = Directory.CreateTempSubdirectory("page_stream_backlog").FullName;
+        try
+        {
+            const int pageCount = 20;
+            string source = CreateManyPageSourceCbz(directory, pageCount);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination) { BlockUploads = true };
+            var client = server.CreateClient();
+            var worker = new FakeWorkerClient();
+            var sut = CreateClient(worker);
+
+            Task run = sut.RunAsync(client, 1, Profile, TestContext.Current.CancellationToken);
+
+            // The first upload is held in flight, so the worker must fill the bounded backlog and then
+            // block rather than racing through the whole chapter.
+            await server.FirstUploadStarted.Task.WaitAsync(
+                TimeSpan.FromSeconds(30),
+                TestContext.Current.CancellationToken
+            );
+            await WaitUntilAsync(
+                () => worker.ProcessedPages >= 8,
+                TestContext.Current.CancellationToken
+            );
+            await Task.Delay(200, TestContext.Current.CancellationToken);
+            Assert.True(
+                worker.ProcessedPages <= 8,
+                $"Expected at most 8 pages finished while uploads are blocked, saw {worker.ProcessedPages}."
+            );
+
+            server.ReleaseUploads.TrySetResult();
+            await run;
+
+            Assert.Equal(pageCount, worker.ProcessedPages);
+            Assert.True(File.Exists(destination));
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunDetectionAsync_ResumesWithoutReDetectingCompletedPagesAfterADrop()
+    {
+        string directory = Directory.CreateTempSubdirectory("page_detect_resume").FullName;
+        try
+        {
+            string source = CreateSourceCbz(directory);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination)
+            {
+                ManifestTaskType = TaskType.SplitDetection,
+            };
+            var client = server.CreateClient();
+
+            int detectionCalls = 0;
+            var detection = Substitute.For<ISplitDetectionService>();
+            detection
+                .DetectSplitsAsync(
+                    Arg.Any<string>(),
+                    Arg.Any<IProgress<UpscaleProgress>?>(),
+                    Arg.Any<CancellationToken>(),
+                    Arg.Any<bool>()
+                )
+                .Returns(ci =>
+                {
+                    detectionCalls++;
+                    if (detectionCalls == 2)
+                    {
+                        throw new InvalidOperationException("simulated detection drop");
+                    }
+
+                    return new List<SplitDetectionResult>
+                    {
+                        new() { ImagePath = ci.Arg<string>(), Count = 0 },
+                    };
+                });
+
+            var sut = CreateClient(new FakeWorkerClient(), CreateDetectionScopeFactory(detection));
+            await Assert.ThrowsAnyAsync<Exception>(() =>
+                sut.RunDetectionAsync(client, 1, TestContext.Current.CancellationToken)
+            );
+
+            // Page 0 was detected and uploaded before the drop; page 1 was not.
+            Assert.Contains(0, server.Completed);
+            Assert.DoesNotContain(1, server.Completed);
+
+            // The retry resumes at the missing page instead of re-detecting the completed one.
+            server.RequestedPages.Clear();
+            var recovering = CreateClient(
+                new FakeWorkerClient(),
+                CreateDetectionScopeFactory(detection)
+            );
+            await recovering.RunDetectionAsync(client, 1, TestContext.Current.CancellationToken);
+
+            Assert.Equal(new[] { 1 }, server.RequestedPages);
+            Assert.Contains(1, server.Completed);
+            Assert.Equal(3, detectionCalls);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    private static async Task WaitUntilAsync(
+        Func<bool> condition,
+        CancellationToken cancellationToken
+    )
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        while (!condition())
+        {
+            await Task.Delay(10, timeout.Token);
+        }
+    }
+
     private const string EngineIdentityValue = "test-engine";
 
     private sealed class StubEngineIdentityProvider : IEngineIdentityProvider
@@ -570,6 +695,19 @@ public class PageStreamClientTests
         resize ??= Substitute.For<IImageResizeService>();
         var provider = Substitute.For<IServiceProvider>();
         provider.GetService(typeof(IImageResizeService)).Returns(resize);
+        var scope = Substitute.For<IServiceScope>();
+        scope.ServiceProvider.Returns(provider);
+        var factory = Substitute.For<IServiceScopeFactory>();
+        factory.CreateScope().Returns(scope);
+        return factory;
+    }
+
+    private static IServiceScopeFactory CreateDetectionScopeFactory(
+        ISplitDetectionService detection
+    )
+    {
+        var provider = Substitute.For<IServiceProvider>();
+        provider.GetService(typeof(ISplitDetectionService)).Returns(detection);
         var scope = Substitute.For<IServiceScope>();
         scope.ServiceProvider.Returns(provider);
         var factory = Substitute.For<IServiceScopeFactory>();
@@ -664,6 +802,14 @@ public class PageStreamClientTests
         public Dictionary<int, byte[]> Uploaded { get; } = new();
         public bool OmitPagesWhenComplete { get; set; }
         public string PreprocessingJson { get; set; } = string.Empty;
+        public TaskType ManifestTaskType { get; set; } = TaskType.Upscale;
+
+        /// <summary>Hold every upload inside <c>CompleteAsync</c> until <see cref="ReleaseUploads" />.</summary>
+        public bool BlockUploads { get; set; }
+        public TaskCompletionSource FirstUploadStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseUploads { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public UpscalingService.UpscalingServiceClient CreateClient()
         {
@@ -688,6 +834,18 @@ public class PageStreamClientTests
                 .UploadPage(Arg.Any<Metadata>(), Arg.Any<DateTime?>(), Arg.Any<CancellationToken>())
                 .Returns(_ => ClientStream());
             client
+                .UploadPageDetectionAsync(
+                    Arg.Any<UploadPageDetectionRequest>(),
+                    Arg.Any<Metadata>(),
+                    Arg.Any<DateTime?>(),
+                    Arg.Any<CancellationToken>()
+                )
+                .Returns(ci =>
+                {
+                    Completed.Add(ci.Arg<UploadPageDetectionRequest>().PageIndex);
+                    return Unary(new UploadDetectionResultResponse { Success = true });
+                });
+            client
                 .KeepAliveAsync(
                     Arg.Any<KeepAliveRequest>(),
                     Arg.Any<Metadata>(),
@@ -704,7 +862,7 @@ public class PageStreamClientTests
             {
                 TaskId = 1,
                 TaskIdentity = Identity,
-                TaskType = TaskType.Upscale,
+                TaskType = ManifestTaskType,
                 Complete = Completed.Count >= Pages.Count,
                 PreprocessingJson = PreprocessingJson,
             };
@@ -767,12 +925,18 @@ public class PageStreamClientTests
             var response = new TaskCompletionSource<UploadPageResponse>(
                 TaskCreationOptions.RunContinuationsAsynchronously
             );
-            var writer = new FakeClientStreamWriter<UploadPageChunk>(chunks =>
+            var writer = new FakeClientStreamWriter<UploadPageChunk>(async chunks =>
             {
                 if (chunks.Count == 0)
                 {
                     response.TrySetResult(new UploadPageResponse { Success = true });
                     return;
+                }
+
+                if (BlockUploads)
+                {
+                    FirstUploadStarted.TrySetResult();
+                    await ReleaseUploads.Task;
                 }
 
                 int pageIndex = chunks[0].PageIndex;
@@ -900,9 +1064,9 @@ public class PageStreamClientTests
     private sealed class FakeClientStreamWriter<T> : IClientStreamWriter<T>
     {
         private readonly List<T> _items = new();
-        private readonly Action<List<T>> _onComplete;
+        private readonly Func<List<T>, Task> _onComplete;
 
-        public FakeClientStreamWriter(Action<List<T>> onComplete)
+        public FakeClientStreamWriter(Func<List<T>, Task> onComplete)
         {
             _onComplete = onComplete;
         }
@@ -923,10 +1087,6 @@ public class PageStreamClientTests
             return WriteAsync(message);
         }
 
-        public Task CompleteAsync()
-        {
-            _onComplete(_items);
-            return Task.CompletedTask;
-        }
+        public Task CompleteAsync() => _onComplete(_items);
     }
 }
