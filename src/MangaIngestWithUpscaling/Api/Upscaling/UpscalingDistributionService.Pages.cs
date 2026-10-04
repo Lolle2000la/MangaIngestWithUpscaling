@@ -69,49 +69,12 @@ public partial class UpscalingDistributionService
         );
 
         // Every page was already spooled by a previous run (e.g. assembly failed transiently):
-        // finish the chapter instead of asking the worker to produce it again.
-        if (pageStreamSpool.IsComplete(session))
-        {
-            if (!pageStreamSpool.TryBeginAssembly(session, pageContext.Identity))
-            {
-                if (
-                    !string.Equals(session.Identity, pageContext.Identity, StringComparison.Ordinal)
-                )
-                {
-                    // An identity reset raced the finalize; tell the worker to restart rather than
-                    // claim the chapter is done when it was never assembled.
-                    return await BuildManifestAsync(pageContext, session);
-                }
-
-                if (pageStreamSpool.IsFinalized(session))
-                {
-                    // The session was finalized between the manifest lookup and here while its
-                    // identity still matched. Reporting complete would tell the worker the discarded
-                    // chapter is done; re-create a fresh session so it re-streams.
-                    session = pageStreamSpool.GetOrCreateSession(
-                        pageContext.Task.Id,
-                        pageContext.Identity,
-                        request.EngineIdentity,
-                        pageContext.Pages.Count
-                    );
-                    return await BuildManifestAsync(pageContext, session);
-                }
-
-                // Another request is already finalizing; report complete without redoing the work.
-                return new PageManifestResponse
-                {
-                    TaskId = pageContext.Task.Id,
-                    TaskIdentity = pageContext.Identity,
-                    TaskType = ToProtoTaskType(pageContext.Kind),
-                    Complete = true,
-                };
-            }
-
-            // The winning session: the ResetSpool restart below reassigns `session` to a fresh one,
-            // and EndAssembly must clear the flag on the session that actually won TryBeginAssembly.
-            PageStreamSession assemblySession = session;
-
-            try
+        // finish the chapter instead of asking the worker to produce it again. The finalizer owns the
+        // complete check, the one-shot claim and the restart/transient/terminal classification.
+        PageStreamFinalizeOutcome finalize = await _pageStreamFinalizer.FinalizeAsync(
+            session,
+            pageContext.Identity,
+            async () =>
             {
                 if (pageContext.Kind == PageContextKind.Detect)
                 {
@@ -121,23 +84,50 @@ public partial class UpscalingDistributionService
                 {
                     await AssembleUpscaledChapterAsync(pageContext, session);
                 }
+            },
+            DropPageSpool,
+            MarkTaskFailedQuietlyAsync,
+            PageStreamFinalizeTexts.ManifestFinalize
+        );
 
-                DropPageSpool(session);
-            }
-            catch (PageStreamRestartException ex)
-            {
-                // Recoverable: tell the worker to stream the chapter again instead of failing it.
-                _logger.LogWarning(
-                    ex,
-                    "Restarting an already-complete page stream for task {TaskId}.",
-                    pageContext.Task.Id
+        switch (finalize.Status)
+        {
+            case PageStreamFinalizeStatus.NotComplete:
+                return await BuildManifestAsync(pageContext, session);
+
+            case PageStreamFinalizeStatus.IdentityRaced:
+                // An identity reset raced the finalize; tell the worker to restart rather than claim
+                // the chapter is done when it was never assembled.
+                return await BuildManifestAsync(pageContext, session);
+
+            case PageStreamFinalizeStatus.Finalized:
+                // The session was finalized between the manifest lookup and here while its identity
+                // still matched. Reporting complete would tell the worker the discarded chapter is
+                // done; re-create a fresh session so it re-streams.
+                session = pageStreamSpool.GetOrCreateSession(
+                    pageContext.Task.Id,
+                    pageContext.Identity,
+                    request.EngineIdentity,
+                    pageContext.Pages.Count
                 );
-                if (ex.ResetSpool)
+                return await BuildManifestAsync(pageContext, session);
+
+            case PageStreamFinalizeStatus.AlreadyAssembling:
+                // Another request is already finalizing; report complete without redoing the work.
+                return new PageManifestResponse
                 {
-                    DropPageSpool(session);
-                    // Remove finalized (and deleted) the old session; a manifest built from it would
-                    // report every page as completed against a dead spool, so the worker would do
-                    // nothing. Re-create a fresh session so the chapter actually re-streams.
+                    TaskId = pageContext.Task.Id,
+                    TaskIdentity = pageContext.Identity,
+                    TaskType = ToProtoTaskType(pageContext.Kind),
+                    Complete = true,
+                };
+
+            case PageStreamFinalizeStatus.Restart:
+                // Recoverable: tell the worker to stream the chapter again instead of failing it. A
+                // reset means the finalizer already removed the old session, so re-create a fresh one
+                // for the manifest; otherwise it kept the session and dropped the missing pages.
+                if (finalize.ResetSpool)
+                {
                     session = pageStreamSpool.GetOrCreateSession(
                         pageContext.Task.Id,
                         pageContext.Identity,
@@ -145,48 +135,26 @@ public partial class UpscalingDistributionService
                         pageContext.Pages.Count
                     );
                 }
-                else
-                {
-                    pageStreamSpool.ForgetMissingPages(session);
-                }
 
                 return await BuildManifestAsync(pageContext, session);
-            }
-            catch (Exception ex)
-            {
-                if (IsTransientStorageFailure(ex))
+
+            case PageStreamFinalizeStatus.TransientFailure:
+                // Unavailable rather than Internal: the worker classifies a permanent status as a
+                // terminal failure and would drop the spool this branch exists to preserve.
+                context.Status = new Status(
+                    StatusCode.Unavailable,
+                    "Finalizing the chapter hit a storage failure; retry"
+                );
+                return new PageManifestResponse
                 {
-                    _logger.LogWarning(
-                        ex,
-                        "Finalizing task {TaskId} hit a storage failure; the worker must retry.",
-                        pageContext.Task.Id
-                    );
-                    // Unavailable rather than Internal: the worker classifies a permanent status as a
-                    // terminal failure and would drop the spool this branch exists to preserve.
-                    context.Status = new Status(
-                        StatusCode.Unavailable,
-                        "Finalizing the chapter hit a storage failure; retry"
-                    );
-                    return new PageManifestResponse
-                    {
-                        TaskId = pageContext.Task.Id,
-                        TaskIdentity = pageContext.Identity,
-                        TaskType = ToProtoTaskType(pageContext.Kind),
-                    };
-                }
+                    TaskId = pageContext.Task.Id,
+                    TaskIdentity = pageContext.Identity,
+                    TaskType = ToProtoTaskType(pageContext.Kind),
+                };
 
-                // Do not report success: the worker would return cleanly and the task would linger
-                // in Processing. Mark it failed so it is retried or surfaced, and tell the worker.
-                _logger.LogError(
-                    ex,
-                    "Failed to finalize an already-complete page stream for task {TaskId}.",
-                    pageContext.Task.Id
-                );
-                await MarkTaskFailedQuietlyAsync(
-                    pageContext.Task.Id,
-                    $"Finalizing the chapter failed: {ex.Message}"
-                );
-
+            case PageStreamFinalizeStatus.TerminalFailure:
+                // Do not report success: the worker would return cleanly and the task would linger in
+                // Processing. The finalizer already marked the task failed; tell the worker.
                 context.Status = new Status(
                     StatusCode.Internal,
                     "Finalizing the already-complete chapter failed; the task was marked failed"
@@ -197,22 +165,16 @@ public partial class UpscalingDistributionService
                     TaskIdentity = pageContext.Identity,
                     TaskType = ToProtoTaskType(pageContext.Kind),
                 };
-            }
-            finally
-            {
-                pageStreamSpool.EndAssembly(assemblySession);
-            }
 
-            return new PageManifestResponse
-            {
-                TaskId = pageContext.Task.Id,
-                TaskIdentity = pageContext.Identity,
-                TaskType = ToProtoTaskType(pageContext.Kind),
-                Complete = true,
-            };
+            default:
+                return new PageManifestResponse
+                {
+                    TaskId = pageContext.Task.Id,
+                    TaskIdentity = pageContext.Identity,
+                    TaskType = ToProtoTaskType(pageContext.Kind),
+                    Complete = true,
+                };
         }
-
-        return await BuildManifestAsync(pageContext, session);
     }
 
     /// <summary>
@@ -770,7 +732,9 @@ public partial class UpscalingDistributionService
                 // chapter so the already-upscaled pages are preserved. The soft-failure cap bounds a
                 // persistent failure, so it cannot spin forever. A non-I/O failure is a bug and stays
                 // terminal.
-                PageStreamDisposition disposition = IsTransientStorageFailure(ex)
+                PageStreamDisposition disposition = PageStreamFinalizer.IsTransientStorageFailure(
+                    ex
+                )
                     ? PageStreamDisposition.Retry
                     : PageStreamDisposition.Terminal;
                 return new UploadPageResponse
@@ -814,35 +778,27 @@ public partial class UpscalingDistributionService
             }
         }
 
-        if (!pageStreamSpool.IsComplete(session))
-        {
-            return new UploadPageResponse
-            {
-                Success = true,
-                Message = "Page stored",
-                TaskId = taskId,
-                PageIndex = pageIndex,
-            };
-        }
+        PageStreamFinalizeOutcome finalize = await _pageStreamFinalizer.FinalizeAsync(
+            session,
+            pageContext!.Identity,
+            () => AssembleUpscaledChapterAsync(pageContext!, session),
+            DropPageSpool,
+            MarkTaskFailedQuietlyAsync,
+            PageStreamFinalizeTexts.UpscaleAssembly
+        );
 
-        if (!string.Equals(session.Identity, pageContext!.Identity, StringComparison.Ordinal))
+        switch (finalize.Status)
         {
-            return new UploadPageResponse
-            {
-                Success = false,
-                Message = "The chapter or profile changed; restart the chapter",
-                TaskId = taskId,
-                PageIndex = pageIndex,
-                Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Retry),
-            };
-        }
+            case PageStreamFinalizeStatus.NotComplete:
+                return new UploadPageResponse
+                {
+                    Success = true,
+                    Message = "Page stored",
+                    TaskId = taskId,
+                    PageIndex = pageIndex,
+                };
 
-        if (!pageStreamSpool.TryBeginAssembly(session, pageContext.Identity))
-        {
-            // False also covers a concurrent identity reset, which the worker must retry rather than
-            // treat as "someone else is finalizing".
-            if (!string.Equals(session.Identity, pageContext.Identity, StringComparison.Ordinal))
-            {
+            case PageStreamFinalizeStatus.IdentityRaced:
                 return new UploadPageResponse
                 {
                     Success = false,
@@ -851,10 +807,8 @@ public partial class UpscalingDistributionService
                     PageIndex = pageIndex,
                     Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Retry),
                 };
-            }
 
-            if (pageStreamSpool.IsFinalized(session))
-            {
+            case PageStreamFinalizeStatus.Finalized:
                 // The spool was finalized/removed while this upload was in flight. Reporting success
                 // would tell the worker the chapter is assembled when it was discarded; restart.
                 return new UploadPageResponse
@@ -865,96 +819,50 @@ public partial class UpscalingDistributionService
                     PageIndex = pageIndex,
                     Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Retry),
                 };
-            }
 
-            // Another worker is already assembling the completed chapter.
-            return new UploadPageResponse
-            {
-                Success = true,
-                Message = "Another worker is assembling the chapter",
-                TaskId = taskId,
-                PageIndex = pageIndex,
-            };
-        }
+            case PageStreamFinalizeStatus.AlreadyAssembling:
+                // Another worker is already assembling the completed chapter.
+                return new UploadPageResponse
+                {
+                    Success = true,
+                    Message = "Another worker is assembling the chapter",
+                    TaskId = taskId,
+                    PageIndex = pageIndex,
+                };
 
-        try
-        {
-            await AssembleUpscaledChapterAsync(pageContext!, session);
-            // Drop the session while it is still marked assembling, so a concurrent manifest cannot
-            // replace it between EndAssembly and the detach and have its fresh session detached.
-            DropPageSpool(session);
-        }
-        catch (PageStreamRestartException ex)
-        {
-            // Recoverable (source changed, a spooled page is missing, or a reset): tell the worker to
-            // restart the chapter rather than failing it terminally.
-            _logger.LogWarning(ex, "Assembly of task {TaskId} must restart.", taskId);
-            if (ex.ResetSpool)
-            {
-                DropPageSpool(session);
-            }
-            else
-            {
-                pageStreamSpool.ForgetMissingPages(session);
-            }
-
-            return new UploadPageResponse
-            {
-                Success = false,
-                Message = ex.Message,
-                TaskId = taskId,
-                PageIndex = pageIndex,
-                Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Retry),
-            };
-        }
-        catch (Exception ex)
-        {
-            if (IsTransientStorageFailure(ex))
-            {
-                _logger.LogWarning(
-                    ex,
-                    "Assembly of task {TaskId} hit a storage failure; keeping the spool for a retry.",
-                    taskId
-                );
+            case PageStreamFinalizeStatus.Restart:
+            case PageStreamFinalizeStatus.TransientFailure:
+                // Recoverable: tell the worker to restart rather than failing it terminally, so the
+                // already-upscaled pages are preserved.
                 return new UploadPageResponse
                 {
                     Success = false,
-                    Message = ex.Message,
+                    Message = finalize.Message!,
                     TaskId = taskId,
                     PageIndex = pageIndex,
                     Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Retry),
                 };
-            }
 
-            _logger.LogError(ex, "Failed to assemble upscaled chapter for task {TaskId}", taskId);
-            // Mirror the manifest complete-path: mark the task failed rather than relying solely on
-            // the worker to report it, which may never arrive if the connection dropped.
-            await MarkTaskFailedQuietlyAsync(
-                taskId,
-                $"Assembling the chapter failed: {ex.Message}"
-            );
-            return new UploadPageResponse
-            {
-                Success = false,
-                Message = ex.Message,
-                TaskId = taskId,
-                PageIndex = pageIndex,
-                // The task was already terminalised above; the worker must not requeue it.
-                Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Terminal),
-            };
-        }
-        finally
-        {
-            pageStreamSpool.EndAssembly(session);
-        }
+            case PageStreamFinalizeStatus.TerminalFailure:
+                // The finalizer already marked the task failed; the worker must not requeue it.
+                return new UploadPageResponse
+                {
+                    Success = false,
+                    Message = finalize.Message!,
+                    TaskId = taskId,
+                    PageIndex = pageIndex,
+                    Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Terminal),
+                };
 
-        return new UploadPageResponse
-        {
-            Success = true,
-            Message = "Chapter upscaled",
-            TaskId = taskId,
-            PageIndex = pageIndex,
-        };
+            default:
+                return new UploadPageResponse
+                {
+                    Success = true,
+                    Message = "Chapter upscaled",
+                    TaskId = taskId,
+                    PageIndex = pageIndex,
+                };
+        }
     }
 
     /// <summary>
@@ -1264,27 +1172,33 @@ public partial class UpscalingDistributionService
             };
         }
 
-        if (!pageStreamSpool.IsComplete(session))
-        {
-            return new UploadDetectionResultResponse { Success = true, Message = "Result stored" };
-        }
+        PageStreamFinalizeOutcome finalize = await _pageStreamFinalizer.FinalizeAsync(
+            session,
+            pageContext.Identity,
+            () => FinalizeDetectionAsync(pageContext, session),
+            DropPageSpool,
+            MarkTaskFailedQuietlyAsync,
+            PageStreamFinalizeTexts.DetectionFinalize
+        );
 
-        if (!pageStreamSpool.TryBeginAssembly(session, pageContext.Identity))
+        switch (finalize.Status)
         {
-            // False also covers a concurrent identity reset, which the worker must retry rather than
-            // treat as "someone else is finalizing".
-            if (!string.Equals(session.Identity, pageContext.Identity, StringComparison.Ordinal))
-            {
+            case PageStreamFinalizeStatus.NotComplete:
+                return new UploadDetectionResultResponse
+                {
+                    Success = true,
+                    Message = "Result stored",
+                };
+
+            case PageStreamFinalizeStatus.IdentityRaced:
                 return new UploadDetectionResultResponse
                 {
                     Success = false,
                     Message = "The chapter or profile changed; restart the chapter",
                     Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Retry),
                 };
-            }
 
-            if (pageStreamSpool.IsFinalized(session))
-            {
+            case PageStreamFinalizeStatus.Finalized:
                 // The spool was finalized/removed while this upload was in flight. Reporting success
                 // would tell the worker the discarded chapter is done; restart instead.
                 return new UploadDetectionResultResponse
@@ -1293,88 +1207,40 @@ public partial class UpscalingDistributionService
                     Message = "The chapter was finalized while uploading; restart the chapter",
                     Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Retry),
                 };
-            }
 
-            return new UploadDetectionResultResponse
-            {
-                Success = true,
-                Message = "Detection results are already being finalized",
-            };
-        }
+            case PageStreamFinalizeStatus.AlreadyAssembling:
+                return new UploadDetectionResultResponse
+                {
+                    Success = true,
+                    Message = "Detection results are already being finalized",
+                };
 
-        // Every page reported: finalize the chapter's findings.
-        try
-        {
-            await FinalizeDetectionAsync(pageContext, session);
-            DropPageSpool(session);
-
-            return new UploadDetectionResultResponse
-            {
-                Success = true,
-                Message = "Detection results processed",
-            };
-        }
-        catch (PageStreamRestartException ex)
-        {
-            // Recoverable (source changed, a spooled result is missing, or a reset): restart.
-            _logger.LogWarning(
-                ex,
-                "Detection finalize for task {TaskId} must restart.",
-                request.TaskId
-            );
-            if (ex.ResetSpool)
-            {
-                DropPageSpool(session);
-            }
-            else
-            {
-                pageStreamSpool.ForgetMissingPages(session);
-            }
-
-            return new UploadDetectionResultResponse
-            {
-                Success = false,
-                Message = ex.Message,
-                Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Retry),
-            };
-        }
-        catch (Exception ex)
-        {
-            if (IsTransientStorageFailure(ex))
-            {
-                _logger.LogWarning(
-                    ex,
-                    "Finalizing detection for task {TaskId} hit a storage failure; keeping the spool for a retry.",
-                    request.TaskId
-                );
+            case PageStreamFinalizeStatus.Restart:
+            case PageStreamFinalizeStatus.TransientFailure:
+                // Recoverable (source changed, a spooled result is missing, a reset, or a storage
+                // failure): restart rather than failing terminally.
                 return new UploadDetectionResultResponse
                 {
                     Success = false,
-                    Message = ex.Message,
+                    Message = finalize.Message!,
                     Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Retry),
                 };
-            }
 
-            _logger.LogError(
-                ex,
-                "Failed to process page-streamed detection results for task {TaskId}",
-                request.TaskId
-            );
-            await MarkTaskFailedQuietlyAsync(
-                request.TaskId,
-                $"Finalizing detection failed: {ex.Message}"
-            );
-            // The task was already terminalised; the worker must not try to requeue it.
-            return new UploadDetectionResultResponse
-            {
-                Success = false,
-                Message = ex.Message,
-                Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Terminal),
-            };
-        }
-        finally
-        {
-            pageStreamSpool.EndAssembly(session);
+            case PageStreamFinalizeStatus.TerminalFailure:
+                // The finalizer already marked the task failed; the worker must not requeue it.
+                return new UploadDetectionResultResponse
+                {
+                    Success = false,
+                    Message = finalize.Message!,
+                    Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Terminal),
+                };
+
+            default:
+                return new UploadDetectionResultResponse
+                {
+                    Success = true,
+                    Message = "Detection results processed",
+                };
         }
     }
 
@@ -1864,26 +1730,6 @@ public partial class UpscalingDistributionService
             _logger.LogDebug(ex, "Could not compute the max page size for {Source}.", sourcePath);
             return 0;
         }
-    }
-
-    /// <summary>
-    ///     True when <paramref name="ex" /> — or something it wraps — is a local storage failure: a full
-    ///     disk, a flaky mount, a read-only volume. That is the class of error the spool exists to
-    ///     absorb, so every page-write, assembly and finalize path treats it the same way: keep the
-    ///     spool and let the worker restart the chapter, instead of deleting a chapter's worth of
-    ///     already-upscaled pages.
-    /// </summary>
-    private static bool IsTransientStorageFailure(Exception ex)
-    {
-        for (Exception? current = ex; current is not null; current = current.InnerException)
-        {
-            if (current is IOException or UnauthorizedAccessException)
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /// <summary>Marks a task failed, swallowing and logging any failure to do so.</summary>

@@ -42,6 +42,7 @@ public partial class UpscalingDistributionService(
 {
     private readonly ILogger<UpscalingDistributionService> _logger = logger;
     private readonly UpscalerConfig _upscalerConfig = upscalerConfig.Value;
+    private readonly PageStreamFinalizer _pageStreamFinalizer = new(pageStreamSpool, logger);
 
     public override Task<CheckConnectionResponse> CheckConnection(
         CheckConnectionRequest request,
