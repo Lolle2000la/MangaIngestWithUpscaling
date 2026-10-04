@@ -113,6 +113,37 @@ public class PageStreamClientTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task RunAsync_WithAWindowsIllegalSourceName_StreamsIt()
+    {
+        // The server preserves legal-on-Linux names like "a:b.jpg"; the worker must not build a path
+        // that Windows forbids (the page index alone names the local file).
+        string directory = Directory.CreateTempSubdirectory("page_stream_illegal").FullName;
+        try
+        {
+            string source = Path.Combine(directory, "source.cbz");
+            using (ZipArchive zip = ZipFile.Open(source, ZipArchiveMode.Create))
+            {
+                WriteEntry(zip, "a:b.jpg", new byte[] { 1, 2, 3 });
+            }
+
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination);
+            var client = server.CreateClient();
+            var sut = CreateClient(new FakeWorkerClient());
+
+            await sut.RunAsync(client, 1, Profile, TestContext.Current.CancellationToken);
+
+            Assert.Equal(new[] { 0 }, server.RequestedPages);
+            Assert.True(File.Exists(destination));
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task RunAsync_ResumesAtTheFirstMissingPageAfterADrop()
     {
         string directory = Directory.CreateTempSubdirectory("page_stream_resume").FullName;

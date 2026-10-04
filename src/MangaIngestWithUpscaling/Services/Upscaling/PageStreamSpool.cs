@@ -128,6 +128,7 @@ public sealed class PageStreamSpool
                 _ => NewSession(taskId, identity, engineIdentity, pageCount)
             );
 
+            string? discardedDirectory = null;
             lock (session.Gate)
             {
                 if (session.Finalized)
@@ -164,7 +165,12 @@ public sealed class PageStreamSpool
                     );
                     // A fresh directory per reset: the discarded session's directory is unique, so a
                     // stale finalizer deleting it can never wipe the new session's files.
-                    session.Reset(identity, engineIdentity, pageCount, NewSessionDirectory(taskId));
+                    discardedDirectory = session.Reset(
+                        identity,
+                        engineIdentity,
+                        pageCount,
+                        NewSessionDirectory(taskId)
+                    );
                 }
                 else
                 {
@@ -173,8 +179,18 @@ public sealed class PageStreamSpool
 
                 session.LastTouchedUtc = DateTime.UtcNow;
                 TouchRoot();
-                return session;
             }
+
+            if (discardedDirectory is not null)
+            {
+                // Delete off the session gate: the recursive delete can be many gigabytes, and holding
+                // the gate across it would wedge every page RPC for this task behind it. The directory
+                // is unique and unreferenced, so deleting it later is safe.
+                string directory = discardedDirectory;
+                _ = Task.Run(() => DeleteDirectory(directory));
+            }
+
+            return session;
         }
     }
 
@@ -352,7 +368,17 @@ public sealed class PageStreamSpool
                 return CommitPageResult.OverBudget;
             }
 
-            File.Move(tempPath, session.PagePath(pageIndex), overwrite: true);
+            try
+            {
+                File.Move(tempPath, session.PagePath(pageIndex), overwrite: true);
+            }
+            catch (Exception ex) when (ex is DirectoryNotFoundException or FileNotFoundException)
+            {
+                // A concurrent identity reset deleted this session's directory (and the temp file in
+                // it) between the existence check above and the move; the page is stale, drop it.
+                return CommitPageResult.IdentityMismatch;
+            }
+
             session.Completed.Add(pageIndex);
             session.PageSizes[pageIndex] = size;
             session.TotalBytes += size - previous;
@@ -991,9 +1017,13 @@ public sealed class PageStreamSession
 
     public string PagePath(int pageIndex) => Path.Combine(Directory, $"page_{pageIndex:D5}.bin");
 
-    public void Reset(string identity, string engineIdentity, int pageCount, string directory)
+    /// <summary>
+    /// Discards this session's spool for a new identity, returning the discarded directory so the
+    /// caller can delete it off the session gate (the recursive delete can be many gigabytes).
+    /// </summary>
+    public string? Reset(string identity, string engineIdentity, int pageCount, string directory)
     {
-        DeleteDirectory();
+        string? discardedDirectory = Directory;
         Identity = identity;
         EngineIdentity = engineIdentity;
         PageCount = pageCount;
@@ -1007,6 +1037,7 @@ public sealed class PageStreamSession
         // identity could never finalize.
         Assembling = false;
         Finalized = false;
+        return discardedDirectory;
     }
 
     public void DeleteDirectory(ILogger? logger = null)

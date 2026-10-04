@@ -570,13 +570,20 @@ public sealed class PageStreamClient(
     }
 
     /// <summary>
-    /// Name handed to the local worker for a page. The worker writes "&lt;stem&gt;.&lt;format&gt;" into a
-    /// single folder, so the name must be unique per page: two pages whose source names share a
-    /// stem (e.g. "ch1/001.jpg" and "ch2/001.jpg") would otherwise overwrite each other's output
-    /// before it is uploaded, storing the wrong bytes under each page's server-side output name.
+    /// Name handed to the local worker for a page. The name must be unique per page (the worker
+    /// writes "&lt;stem&gt;.&lt;format&gt;" into a single folder, so two source names that share a stem would
+    /// overwrite each other's output), and it must be a valid filename on the host OS: the server
+    /// deliberately preserves legal-on-Linux names like "a:b.jpg", which Windows cannot create, and
+    /// building such a path would fail the chapter permanently. The page index alone guarantees
+    /// uniqueness, so use an index-only name plus a sanitized extension for decoding.
     /// </summary>
-    private static string WorkerPageName(int pageIndex, string sourceName) =>
-        $"{pageIndex:D5}_{Path.GetFileName(sourceName)}";
+    private static string WorkerPageName(int pageIndex, string sourceName)
+    {
+        string extension = Path.GetExtension(sourceName);
+        bool safeExtension =
+            extension.Length is >= 2 and <= 10 && extension.Skip(1).All(char.IsAsciiLetterOrDigit);
+        return safeExtension ? $"{pageIndex:D5}{extension}" : $"{pageIndex:D5}.img";
+    }
 
     /// <summary>
     /// Fetches all still-missing pages over one <see cref="UpscalingService.UpscalingServiceClient.GetPages"/>
