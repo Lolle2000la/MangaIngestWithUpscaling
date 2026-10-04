@@ -506,56 +506,58 @@ public class ImageResizeService(
             processedImage = image.Resize(scaleFactor, kernel: Enums.Kernel.Linear);
         }
 
-        if (needsFormatConversion)
+        try
         {
-            string targetExtension = conversionRule!.ToFormat.ToLowerInvariant();
-            if (!targetExtension.StartsWith('.'))
+            if (needsFormatConversion)
             {
-                targetExtension = "." + targetExtension;
-            }
+                string targetExtension = conversionRule!.ToFormat.ToLowerInvariant();
+                if (!targetExtension.StartsWith('.'))
+                {
+                    targetExtension = "." + targetExtension;
+                }
 
-            string directory = Path.GetDirectoryName(imagePath)!;
-            string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(imagePath);
-            string baseNewImagePath = Path.Combine(
-                directory,
-                fileNameWithoutExtension + targetExtension
-            );
-            string newImagePath = baseNewImagePath;
-            int suffix = 1;
-            while (File.Exists(newImagePath))
-            {
-                newImagePath = Path.Combine(
+                string directory = Path.GetDirectoryName(imagePath)!;
+                string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(imagePath);
+                string baseNewImagePath = Path.Combine(
                     directory,
-                    $"{fileNameWithoutExtension}_{suffix}{targetExtension}"
+                    fileNameWithoutExtension + targetExtension
                 );
-                suffix++;
+                string newImagePath = baseNewImagePath;
+                int suffix = 1;
+                while (File.Exists(newImagePath))
+                {
+                    newImagePath = Path.Combine(
+                        directory,
+                        $"{fileNameWithoutExtension}_{suffix}{targetExtension}"
+                    );
+                    suffix++;
+                }
+
+                logger.LogDebug(
+                    "Converting image {ImagePath} from {FromFormat} to {ToFormat}",
+                    imagePath,
+                    currentExtension,
+                    targetExtension
+                );
+
+                SaveImageWithFormat(
+                    processedImage,
+                    newImagePath,
+                    targetExtension,
+                    conversionRule.Quality
+                );
+
+                File.Delete(imagePath);
             }
-
-            logger.LogDebug(
-                "Converting image {ImagePath} from {FromFormat} to {ToFormat}",
-                imagePath,
-                currentExtension,
-                targetExtension
-            );
-
-            SaveImageWithFormat(
-                processedImage,
-                newImagePath,
-                targetExtension,
-                conversionRule.Quality
-            );
-
-            if (processedImage != image)
+            else
             {
-                processedImage.Dispose();
+                processedImage.WriteToFile(imagePath);
             }
-
-            File.Delete(imagePath);
         }
-        else
+        finally
         {
-            processedImage.WriteToFile(imagePath);
-
+            // The resized copy is a separate native Image; dispose it even when the save throws so a
+            // failing encode or a full disk does not leak it as ProcessImagesInDirectory continues.
             if (processedImage != image)
             {
                 processedImage.Dispose();

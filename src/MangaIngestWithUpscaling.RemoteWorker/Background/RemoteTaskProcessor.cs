@@ -16,8 +16,6 @@ namespace MangaIngestWithUpscaling.RemoteWorker.Background;
 /// </summary>
 public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : BackgroundService
 {
-    private volatile bool _fetchInProgress;
-
     private readonly SoftFailureTracker _softFailures = new();
     private readonly KeepAlivePump _keepAlivePump = new(serviceScopeFactory);
 
@@ -349,14 +347,10 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 }
 
                 bool _ = await _fetchSignals.Reader.ReadAsync(stoppingToken);
-                if (_fetchInProgress)
-                {
-                    // Coalesce signals while a fetch is in progress
-                    continue;
-                }
 
-                _fetchInProgress = true;
-
+                // Coalesce signals that arrived while the previous fetch ran. Only this loop reads the
+                // channel and it never re-reads while a fetch is in flight, so there is no in-progress
+                // state to check here.
                 while (_fetchSignals.Reader.TryRead(out _)) { }
 
                 using var scope = serviceScopeFactory.CreateScope();
@@ -369,7 +363,6 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 
                 if (!await _toStream.Writer.WaitToWriteAsync(stoppingToken))
                 {
-                    _fetchInProgress = false;
                     continue;
                 }
 
@@ -398,7 +391,6 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     catch (Exception e)
                     {
                         logger.LogError(e, "Failed to request upscale task for prefetch.");
-                        _fetchInProgress = false;
                         throw;
                     }
 
@@ -422,7 +414,6 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 
                 if (resp is null || resp.TaskId == -1)
                 {
-                    _fetchInProgress = false;
                     await dispatcherTimer.WaitForNextTickAsync(stoppingToken);
                     _fetchSignals.Writer.TryWrite(true);
                     continue;
@@ -456,7 +447,6 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                         logger,
                         stoppingToken
                     );
-                    _fetchInProgress = false;
                     await dispatcherTimer.WaitForNextTickAsync(stoppingToken);
                     _fetchSignals.Writer.TryWrite(true);
                     continue;
@@ -487,7 +477,6 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                         logger,
                         stoppingToken
                     );
-                    _fetchInProgress = false;
                     await dispatcherTimer.WaitForNextTickAsync(stoppingToken);
                     _fetchSignals.Writer.TryWrite(true);
                     continue;
@@ -525,17 +514,24 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     persistentKeepAliveCts.Dispose();
                     throw;
                 }
-
-                _fetchInProgress = false;
             }
             catch (OperationCanceledException)
             {
                 break;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-                _fetchInProgress = false;
                 _fetchSignals!.Writer.TryWrite(false);
+                // Resolve a logger here: the per-iteration scope logger is declared inside the try and
+                // is not in scope in the catch. Without this the cause of a failing fetch is invisible.
+                using (var scope = serviceScopeFactory.CreateScope())
+                {
+                    var logger = scope.ServiceProvider.GetRequiredService<
+                        ILogger<RemoteTaskProcessor>
+                    >();
+                    logger.LogError(ex, "Failed to fetch a task; will retry.");
+                }
+
                 // Soft failure; wait a bit before next signal consumption
                 try
                 {

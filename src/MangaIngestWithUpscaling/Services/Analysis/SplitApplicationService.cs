@@ -336,19 +336,19 @@ public class SplitApplicationService(
                 }
             }
 
-            // Swap both replacements in last, so a failure while building either one (in particular
-            // the upscaled rebuild) leaves the chapter untouched and the apply is safely retryable.
-            // Observe cancellation before each swap: a cancelled apply must not move its replacement
-            // back over a chapter a concurrent merge has already deleted.
-            if (!originalSwapped)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                originalReplacement.Commit();
-            }
+            // Observe cancellation once, before the pair. The two swaps are not atomic across two files,
+            // so order them so a failure between them is retryable: commit the upscaled first, leaving the
+            // original unsplit, so a retry re-matches the findings and rebuilds the upscaled archive.
+            // Committing the original first left a split original with a stale unsplit upscaled that a
+            // retry could no longer match (the _part names differ) and would mark Applied.
+            cancellationToken.ThrowIfCancellationRequested();
             if (upscaledReplacement is not null)
             {
-                cancellationToken.ThrowIfCancellationRequested();
                 upscaledReplacement.Commit();
+            }
+            if (!originalSwapped)
+            {
+                originalReplacement.Commit();
             }
 
             await splitProcessingCoordinator.OnSplitsAppliedAsync(
