@@ -50,6 +50,23 @@ public class MetadataHandlingServiceTests
         Assert.False(result.CanRepair);
     }
 
+    [Theory]
+    [InlineData(null, "upscaled.cbz")]
+    [InlineData("original.cbz", null)]
+    [InlineData("original.txt", "upscaled.txt")]
+    public async Task AnalyzePageDifferencesAsync_FlagsAnUninspectablePath(
+        string? original,
+        string? upscaled
+    )
+    {
+        // A null/empty/non-cbz path cannot be inspected, so it must not read as "no differences" and
+        // let a caller complete a repair without looking.
+        var result = await _service.AnalyzePageDifferencesAsync(original, upscaled);
+
+        Assert.True(result.ReadFailed);
+        Assert.False(result.AreEqual);
+    }
+
     [Fact]
     public async Task AnalyzePageDifferencesAsync_FlagsACorruptArchive()
     {

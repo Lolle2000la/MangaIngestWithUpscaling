@@ -42,11 +42,18 @@ public class FileSystemHelpers
     ///     usually sits on another mount, where the move becomes a copy that rewrites the destination in
     ///     place — a worker streaming pages from that chapter would read a half-written archive.
     /// </summary>
-    public static string TempSiblingPathFor(string destinationPath, string label) =>
-        Path.Combine(
-            Path.GetDirectoryName(destinationPath)!,
-            $".{Path.GetFileName(destinationPath)}.{label}.{Guid.NewGuid():N}.tmp"
-        );
+    public static string TempSiblingPathFor(string destinationPath, string label)
+    {
+        string directory = Path.GetDirectoryName(destinationPath)!;
+        string stem = Path.GetFileNameWithoutExtension(destinationPath);
+        string extension = Path.GetExtension(destinationPath);
+        // Bound the stem: a chapter filename can sit near the 255-byte limit, and appending the label
+        // and a 32-hex GUID to the full name would push the temp path over it (PathTooLong /
+        // ENAMETOOLONG). Uniqueness comes from the GUID, not the stem.
+        const int maxStemLength = 40;
+        string boundedStem = stem.Length <= maxStemLength ? stem : stem[..maxStemLength];
+        return Path.Combine(directory, $".{boundedStem}.{label}.{Guid.NewGuid():N}{extension}.tmp");
+    }
 
     /// <summary>
     ///     Reclaims temp replacements an interrupted run left behind: a hard kill between creating the

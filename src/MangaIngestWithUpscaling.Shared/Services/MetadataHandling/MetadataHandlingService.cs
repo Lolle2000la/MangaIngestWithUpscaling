@@ -168,11 +168,15 @@ public class MetadataHandlingService(ILogger<MetadataHandlingService> logger)
     )
     {
         if (string.IsNullOrEmpty(originalFile) || string.IsNullOrEmpty(upscaledFile))
-            return new PageDifferenceResult([], []);
+        {
+            // Cannot inspect, so not "no differences": flag it so a caller never completes a repair
+            // without looking at the archives.
+            return new PageDifferenceResult([], []) { ReadFailed = true };
+        }
 
         if (!originalFile.EndsWith(".cbz") || !upscaledFile.EndsWith(".cbz"))
         {
-            return new PageDifferenceResult([], []);
+            return new PageDifferenceResult([], []) { ReadFailed = true };
         }
 
         try

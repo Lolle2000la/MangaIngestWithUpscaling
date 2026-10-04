@@ -53,6 +53,16 @@ public class UpscalingProtocolVersionTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void MinSupported_EqualsCurrentUntilNegotiationIsImplemented()
+    {
+        // Tripwire: with no wire negotiation, both sides speak their own Current, so the range-overlap
+        // handshake is only safe while MinSupported == Current. Decoupling them (a partial-rollout
+        // bump) would let a newer side apply new behavior unilaterally; implement negotiation first.
+        Assert.Equal(UpscalingProtocolVersion.Current, UpscalingProtocolVersion.MinSupported);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void Negotiated_IsTheUpperBoundOfTheOverlap()
     {
         Assert.Equal(

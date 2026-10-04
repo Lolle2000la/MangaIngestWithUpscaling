@@ -218,17 +218,20 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
 
         try
         {
-            if (stdin is not null)
+            if (stdin is null)
             {
-                await SendLineAsync(
-                    stdin,
-                    JsonSerializer.Serialize(
-                        new DetectServerCommand("release_cache"),
-                        DetectServerJsonContext.Default.DetectServerCommand
-                    ),
-                    cancellationToken
-                );
+                // No server to ask; do not wait out the full timeout for a release that was never sent.
+                return false;
             }
+
+            await SendLineAsync(
+                stdin,
+                JsonSerializer.Serialize(
+                    new DetectServerCommand("release_cache"),
+                    DetectServerJsonContext.Default.DetectServerCommand
+                ),
+                cancellationToken
+            );
 
             // A healthy idle server answers immediately; the timeout only guards a wedged process.
             await tcs.Task.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None);
@@ -696,7 +699,6 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
             }
         }
 
-        await DisposeStdinAsync(stdin);
         // Unblock a pending GPU-cache release so its caller does not wait the full timeout.
         cacheRelease?.TrySetCanceled();
         // Unblock a startup wait: EnsureServerAsync awaits this TCS, and OnServerExited will not fault
@@ -717,7 +719,11 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
             );
         }
 
+        // Kill before disposing stdin: a wedged server's writer can hold _stdinLock while blocked on a
+        // full pipe, and waiting on it here would stall teardown. Killing closes the pipe and unblocks
+        // the writer. MangaJaNaiWorkerClient uses the same order.
         await KillAndDisposeAsync(process);
+        await DisposeStdinAsync(stdin);
 
         _logger.LogInformation("Resident detection server process stopped.");
     }
@@ -1051,7 +1057,6 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
             jobs = _jobs.Values.ToArray();
         }
 
-        await DisposeStdinAsync(stdin);
         // Unblock a pending GPU-cache release so its caller does not wait the full timeout.
         cacheRelease?.TrySetCanceled();
 
@@ -1070,7 +1075,10 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
             )
         );
 
+        // Kill/dispose before disposing stdin, so a writer blocked on the (now broken) pipe cannot
+        // hold _stdinLock across teardown.
         await KillAndDisposeAsync(process);
+        await DisposeStdinAsync(stdin);
     }
 
     private sealed class DetectJob

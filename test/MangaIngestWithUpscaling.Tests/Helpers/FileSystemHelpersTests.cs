@@ -36,7 +36,27 @@ public class FileSystemHelpersTests : IDisposable
         // Beside the destination on purpose: moving the replacement onto the chapter is then a rename,
         // which a reader of the chapter cannot observe half-done.
         Assert.Equal(Path.GetDirectoryName(destination), Path.GetDirectoryName(temp));
-        Assert.StartsWith($".{Path.GetFileName(destination)}.splits.", Path.GetFileName(temp));
+        Assert.StartsWith(
+            $".{Path.GetFileNameWithoutExtension(destination)}.splits.",
+            Path.GetFileName(temp)
+        );
+        Assert.EndsWith(".cbz.tmp", temp, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TempSiblingPathFor_BoundsAVeryLongDestinationName()
+    {
+        // A chapter filename can sit near the 255-byte limit; appending the label and a GUID to the
+        // full name would push the temp path over it.
+        string longName = new string('x', 240) + ".cbz";
+        string destination = Path.Combine(_tempRoot, longName);
+
+        string temp = FileSystemHelpers.TempSiblingPathFor(destination, "splits");
+
+        Assert.True(
+            Path.GetFileName(temp).Length < Path.GetFileName(destination).Length,
+            "the temp name must be shorter than the destination name"
+        );
         Assert.EndsWith(".tmp", temp, StringComparison.Ordinal);
     }
 
