@@ -77,6 +77,20 @@ public record UpscalerConfig
         );
 
     /// <summary>
+    /// Directory the page-streaming spool is written to. Defaults to a subdirectory of the system temp
+    /// directory. Set this to a path on a real disk when <c>/tmp</c> is a RAM-backed tmpfs, so spooling
+    /// large chapters cannot exhaust memory.
+    /// </summary>
+    public string? SpoolDirectory { get; set; }
+
+    /// <summary>
+    /// Upper bound on the bytes spooled for one streamed task, so a single chapter cannot fill the
+    /// disk. Defaults to 8 GiB. There is no process-wide cap; see
+    /// <c>docs/PAGE_STREAMING_KNOWN_LIMITATIONS.md</c>.
+    /// </summary>
+    public long MaxSpoolBytesPerTask { get; set; } = 8L * 1024 * 1024 * 1024;
+
+    /// <summary>
     ///     Per-million-pixel inactivity timeout used to guard long-running upscaling operations.
     ///     The effective timeout is scaled by the largest image in the archive:
     ///     <c>effectiveTimeout = UpscaleTimeout × max(1, maxImagePixelCount / 1_000_000)</c>.

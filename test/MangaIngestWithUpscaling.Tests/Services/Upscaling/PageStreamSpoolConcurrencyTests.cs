@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using MangaIngestWithUpscaling.Services.Upscaling;
+using MangaIngestWithUpscaling.Shared.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 using Xunit;
 
@@ -30,7 +32,10 @@ public class PageStreamSpoolConcurrencyTests
 
     private static readonly int Workers = Math.Clamp(Environment.ProcessorCount * 2, 4, 16);
 
-    private readonly PageStreamSpool _spool = new(Substitute.For<ILogger<PageStreamSpool>>());
+    private readonly PageStreamSpool _spool = new(
+        Substitute.For<ILogger<PageStreamSpool>>(),
+        Options.Create(new UpscalerConfig())
+    );
 
     [Fact]
     [Trait("Category", "Unit")]

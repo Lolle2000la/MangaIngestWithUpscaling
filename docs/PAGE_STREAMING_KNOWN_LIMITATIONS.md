@@ -9,13 +9,15 @@ The page-streaming design itself is described in [REMOTE_WORKER.md](REMOTE_WORKE
 
 ## Spool location and budget (Finding 3)
 
-- **Where:** `PageStreamSpool` (`SpoolRoot`, `MaxTaskBytes`).
-- **Current behaviour:** the spool root is always under `Path.GetTempPath()`, the per-task budget is
-  a fixed 8 GiB, and there is no process-wide cap.
+- **Where:** `PageStreamSpool` (`SpoolRoot`, `_maxTaskBytes`).
+- **Current behaviour:** the root and the per-task budget are configurable
+  (`UpscalerConfig.SpoolDirectory`, `UpscalerConfig.MaxSpoolBytesPerTask`, default 8 GiB); the root
+  defaults to a subdirectory of the system temp directory. There is still **no process-wide cap**, so
+  several large chapters spooling at once are bounded only by the sum of their per-task budgets.
 - **Symptom to watch for:** a container whose `/tmp` is a tmpfs (RAM-backed) exhausting host memory
-  when several large chapters spool at once; a single task filling the spool volume.
-- **Direction:** make the root configurable (an `UpscalerConfig` option), document that it must not
-  be tmpfs, and add a global (process-wide) budget in addition to the per-task one.
+  when several large chapters spool at once even though each is within its per-task budget.
+- **Direction:** set `SpoolDirectory` to a real disk volume and consider a global (process-wide)
+  budget in addition to the per-task one.
 
 ## Worker upload backlog (Finding 5)
 

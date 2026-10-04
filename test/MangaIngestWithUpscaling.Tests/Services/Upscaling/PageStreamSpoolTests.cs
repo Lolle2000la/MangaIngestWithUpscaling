@@ -1,6 +1,8 @@
 using System.IO.Compression;
 using MangaIngestWithUpscaling.Services.Upscaling;
+using MangaIngestWithUpscaling.Shared.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using NSubstitute;
 using Xunit;
 
@@ -9,7 +11,10 @@ namespace MangaIngestWithUpscaling.Tests.Services.Upscaling;
 [Collection("PageStreamSpoolSharedRoot")]
 public class PageStreamSpoolTests
 {
-    private readonly PageStreamSpool _spool = new(Substitute.For<ILogger<PageStreamSpool>>());
+    private readonly PageStreamSpool _spool = new(
+        Substitute.For<ILogger<PageStreamSpool>>(),
+        Options.Create(new UpscalerConfig())
+    );
 
     private static string CreateSourceCbz(string directory)
     {
@@ -523,7 +528,10 @@ public class PageStreamSpoolTests
     [Trait("Category", "Unit")]
     public async Task PageSpoolSweepService_SweepsStaleSessionsOnStartup()
     {
-        var spool = new PageStreamSpool(Substitute.For<ILogger<PageStreamSpool>>());
+        var spool = new PageStreamSpool(
+            Substitute.For<ILogger<PageStreamSpool>>(),
+            Options.Create(new UpscalerConfig())
+        );
         var cache = new PageContextCache();
         PageStreamSession session = spool.GetOrCreateSession(70, "identity", "engine", 1);
         session.LastTouchedUtc = DateTime.UtcNow - TimeSpan.FromDays(2);
@@ -728,9 +736,18 @@ public class PageStreamSpoolTests
         // Session activity lives in memory, but the sweep reclaims a root by its filesystem timestamp, so
         // a chapter that is still streaming but whose pages were written a while ago used to look idle:
         // another instance sharing the temp directory could reclaim it mid-chapter.
-        var active = new PageStreamSpool(Substitute.For<ILogger<PageStreamSpool>>());
-        var idle = new PageStreamSpool(Substitute.For<ILogger<PageStreamSpool>>());
-        var sweeper = new PageStreamSpool(Substitute.For<ILogger<PageStreamSpool>>());
+        var active = new PageStreamSpool(
+            Substitute.For<ILogger<PageStreamSpool>>(),
+            Options.Create(new UpscalerConfig())
+        );
+        var idle = new PageStreamSpool(
+            Substitute.For<ILogger<PageStreamSpool>>(),
+            Options.Create(new UpscalerConfig())
+        );
+        var sweeper = new PageStreamSpool(
+            Substitute.For<ILogger<PageStreamSpool>>(),
+            Options.Create(new UpscalerConfig())
+        );
         try
         {
             PageStreamSession activeSession = WriteOnePage(active, 300);

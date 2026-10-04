@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.IO.Compression;
+using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Constants;
+using Microsoft.Extensions.Options;
 
 namespace MangaIngestWithUpscaling.Services.Upscaling;
 
@@ -93,21 +95,25 @@ public sealed class PageStreamSpool
 
     private readonly ConcurrentDictionary<int, PageStreamSession> _sessions = new();
     private readonly ILogger<PageStreamSpool> _logger;
+    private readonly long _maxTaskBytes;
 
-    public PageStreamSpool(ILogger<PageStreamSpool> logger)
+    public PageStreamSpool(ILogger<PageStreamSpool> logger, IOptions<UpscalerConfig> config)
     {
         _logger = logger;
+        _maxTaskBytes =
+            config.Value.MaxSpoolBytesPerTask > 0
+                ? config.Value.MaxSpoolBytesPerTask
+                : MaxTaskBytes;
+
+        // Unique per PageStreamSpool instance (and therefore per process): two app instances, or two
+        // test collections, on one host must not share task directories.
+        string root = string.IsNullOrWhiteSpace(config.Value.SpoolDirectory)
+            ? Path.Combine(Path.GetTempPath(), "mangaingestwithupscaling", "page_spool")
+            : Path.GetFullPath(config.Value.SpoolDirectory);
+        SpoolRoot = Path.Combine(root, $"{Environment.ProcessId}-{Guid.NewGuid():N}");
     }
 
-    // Unique per PageStreamSpool instance (and therefore per process): two app instances, or two
-    // test collections, on one host must not share task directories.
-    public string SpoolRoot { get; } =
-        Path.Combine(
-            Path.GetTempPath(),
-            "mangaingestwithupscaling",
-            "page_spool",
-            $"{Environment.ProcessId}-{Guid.NewGuid():N}"
-        );
+    public string SpoolRoot { get; }
 
     /// <summary>
     /// Returns the session for a task, creating it or resetting it when the content identity or the
@@ -363,7 +369,7 @@ public sealed class PageStreamSpool
             // Re-uploading a page replaces its bytes; adjust by the delta so legitimate retries do
             // not spuriously trip the per-task budget.
             long previous = session.PageSizes.TryGetValue(pageIndex, out long prev) ? prev : 0;
-            if (session.TotalBytes - previous + size > MaxTaskBytes)
+            if (session.TotalBytes - previous + size > _maxTaskBytes)
             {
                 return CommitPageResult.OverBudget;
             }
@@ -494,7 +500,7 @@ public sealed class PageStreamSpool
             long previous = session.PageSizes.TryGetValue(pageIndex, out long prev) ? prev : 0;
             if (
                 session.TotalBytes - previous + session.InFlightByGeneration.Values.Sum() + bytes
-                > MaxTaskBytes
+                > _maxTaskBytes
             )
             {
                 return false;
