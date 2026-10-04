@@ -307,6 +307,9 @@ public partial class UpscalingDistributionService
             }
 
             bool loggedMissing = false;
+            // One buffer reused across the requested pages: a per-page 1 MiB allocation is churn on a
+            // large fetch.
+            byte[] buffer = new byte[1024 * 1024];
             foreach (int pageIndex in request.PageIndexes.Distinct())
             {
                 // Stop early when the client has gone away instead of streaming the rest of the archive.
@@ -356,7 +359,6 @@ public partial class UpscalingDistributionService
                 }
 
                 await using Stream input = entry.Open();
-                byte[] buffer = new byte[1024 * 1024];
                 int chunkNumber = 0;
                 int bytesRead;
                 long pageBytes = 0;
