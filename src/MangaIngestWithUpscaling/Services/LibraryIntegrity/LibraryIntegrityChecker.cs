@@ -910,6 +910,23 @@ public partial class LibraryIntegrityChecker(
                         chapter.UpscaledFullPath
                     );
 
+                // An unreadable archive is not repairable, but it must not fall through to deletion:
+                // a periodic scan deleting a valid upscale because a source was momentarily locked or
+                // half-written would destroy the user's work. Corrupt is terminal; ReadFailed skips.
+                if (differences.Corrupt || differences.ReadFailed)
+                {
+                    logger.LogWarning(
+                        "Could not analyze the archives of upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle} ({reason}); skipping without deleting the upscale.",
+                        chapter.FileName,
+                        chapter.Id,
+                        chapter.Manga.PrimaryTitle,
+                        differences.Corrupt ? "corrupt" : "unreadable"
+                    );
+                    return differences.Corrupt
+                        ? IntegrityCheckResult.Invalid
+                        : IntegrityCheckResult.MaybeInProgress;
+                }
+
                 if (differences.CanRepair)
                 {
                     logger.LogInformation(
@@ -999,6 +1016,22 @@ public partial class LibraryIntegrityChecker(
                         chapter.NotUpscaledFullPath,
                         chapter.UpscaledFullPath
                     );
+
+                // As above: never delete on an unreadable archive. Corrupt is terminal; ReadFailed
+                // skips this scan.
+                if (differences.Corrupt || differences.ReadFailed)
+                {
+                    logger.LogWarning(
+                        "Could not analyze the archives of chapter {chapterFileName} ({chapterId}) of {seriesTitle} ({reason}); skipping without deleting the upscale.",
+                        chapter.FileName,
+                        chapter.Id,
+                        chapter.Manga?.PrimaryTitle,
+                        differences.Corrupt ? "corrupt" : "unreadable"
+                    );
+                    return differences.Corrupt
+                        ? IntegrityCheckResult.Invalid
+                        : IntegrityCheckResult.MaybeInProgress;
+                }
 
                 if (differences.CanRepair && chapter.Manga?.EffectiveUpscalerProfile != null)
                 {

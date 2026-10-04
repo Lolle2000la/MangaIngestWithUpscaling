@@ -1,6 +1,7 @@
 using System.Reflection;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
+using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.RepairServices;
@@ -26,6 +27,7 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
     private readonly ServiceProvider _provider;
     private readonly TaskQueue _taskQueue;
     private readonly DistributedUpscaleTaskProcessor _processor;
+    private readonly IMetadataHandlingService _metadata;
 
     public DistributedUpscaleTaskProcessorPersistenceTests()
     {
@@ -43,7 +45,8 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
         );
         // HandleRepairTaskCompletion resolves these before it can fail on a missing chapter.
         services.AddScoped(_ => Substitute.For<IRepairService>());
-        services.AddScoped(_ => Substitute.For<IMetadataHandlingService>());
+        _metadata = Substitute.For<IMetadataHandlingService>();
+        services.AddScoped(_ => _metadata);
 
         _provider = services.BuildServiceProvider();
         using (var scope = _provider.CreateScope())
@@ -129,6 +132,63 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
 
         Assert.Equal(PersistedTaskStatus.Failed, await GetStatusAsync(taskId));
         Assert.False(_processor.IsRunningRemotely(taskId));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task TaskCompleted_WhenRepairArchiveReadFailsTransiently_RequeuesInsteadOfFailing()
+    {
+        // Regression guard: AnalyzePageDifferencesAsync reports a transient read failure as an empty
+        // result, whose AreEqual is true, so the completion path used to mark the repair Completed
+        // (discarding the already-upscaled pages) or Failed. It must requeue instead.
+        await using ApplicationDbContext ctx = _database.CreateContext();
+
+        string temp = Directory.CreateTempSubdirectory().FullName;
+        var lib = new Library
+        {
+            Name = "Lib",
+            NotUpscaledLibraryPath = Path.Combine(temp, "orig"),
+            UpscaledLibraryPath = Path.Combine(temp, "up"),
+        };
+        Directory.CreateDirectory(lib.NotUpscaledLibraryPath);
+        Directory.CreateDirectory(lib.UpscaledLibraryPath!);
+        var manga = new Manga { PrimaryTitle = "Series", Library = lib };
+        var chapter = new Chapter
+        {
+            FileName = "ch1.cbz",
+            RelativePath = "Series/Ch1.cbz",
+            Manga = manga,
+            IsUpscaled = true,
+        };
+        manga.Chapters.Add(chapter);
+        lib.MangaSeries.Add(manga);
+        ctx.Libraries.Add(lib);
+        await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var task = new PersistedTask
+        {
+            Data = new RepairUpscaleTask { ChapterId = chapter.Id, UpscalerProfileId = 1 },
+            Status = PersistedTaskStatus.Processing,
+            Order = 1,
+        };
+        ctx.PersistedTasks.Add(task);
+        await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        _metadata
+            .AnalyzePageDifferencesAsync(Arg.Any<string?>(), Arg.Any<string?>())
+            .Returns(new PageDifferenceResult([], []) { ReadFailed = true });
+
+        Dictionary<int, DistributedUpscaleTaskProcessor.RemoteRepairState> states = GetPrivateField<
+            Dictionary<int, DistributedUpscaleTaskProcessor.RemoteRepairState>
+        >(_processor, "remoteRepairStates");
+        states[task.Id] = new DistributedUpscaleTaskProcessor.RemoteRepairState
+        {
+            RepairContext = new RepairContext(),
+        };
+
+        await _processor.TaskCompleted(task.Id);
+
+        Assert.Equal(PersistedTaskStatus.Pending, await GetStatusAsync(task.Id));
     }
 
     [Fact]

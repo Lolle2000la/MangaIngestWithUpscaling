@@ -637,6 +637,12 @@ public class DistributedUpscaleTaskProcessor(
             }
             catch (Exception ex)
             {
+                // Log before surfacing: the worker only sees an RPC error, so without this the
+                // server-side cause of a failed handoff is lost.
+                logger.LogError(
+                    ex,
+                    "Failed to serve a task request; the claimed task will be requeued."
+                );
                 tcs.TrySetException(ex);
 
                 // An unexpected error after the claim but before handoff must not strand the task.
@@ -879,17 +885,24 @@ public class DistributedUpscaleTaskProcessor(
             return;
         }
 
-        bool repairSuccess = true;
+        RepairCompletionOutcome repairOutcome = RepairCompletionOutcome.Completed;
         if (dbTask.Data is RepairUpscaleTask repairTask)
         {
-            repairSuccess = await HandleRepairTaskCompletion(
+            repairOutcome = await HandleRepairTaskCompletion(
                 repairTask,
                 dbTask,
                 scope.ServiceProvider
             );
         }
 
-        if (repairSuccess)
+        if (repairOutcome == RepairCompletionOutcome.Requeued)
+        {
+            // The handler already put the row back to Pending (a transient read failure); leave it
+            // for re-dispatch instead of persisting a terminal state.
+            return;
+        }
+
+        if (repairOutcome == RepairCompletionOutcome.Completed)
         {
             int affected = await taskPersistenceService.CompleteTaskAsync(taskId);
             if (affected == 0)
@@ -917,11 +930,24 @@ public class DistributedUpscaleTaskProcessor(
         }
     }
 
+    /// <summary>Outcome of finishing a remote repair, so the caller does not persist a terminal state
+    /// after a transient failure has already requeued the task.</summary>
+    private enum RepairCompletionOutcome
+    {
+        /// <summary>The repair was applied; mark the task completed.</summary>
+        Completed,
+
+        /// <summary>The repair could not be applied; mark the task failed.</summary>
+        Failed,
+
+        /// <summary>A transient read failure already requeued the task; leave its status alone.</summary>
+        Requeued,
+    }
+
     /// <summary>
     ///     Handles the completion of a repair task by merging the upscaled missing pages back into the original CBZ.
-    ///     Returns true if the repair was completed successfully, false otherwise.
     /// </summary>
-    private async Task<bool> HandleRepairTaskCompletion(
+    private async Task<RepairCompletionOutcome> HandleRepairTaskCompletion(
         RepairUpscaleTask repairTask,
         PersistedTask persistedTask,
         IServiceProvider services
@@ -942,7 +968,7 @@ public class DistributedUpscaleTaskProcessor(
             if (!remoteRepairStates.TryGetValue(persistedTask.Id, out repairState))
             {
                 logger.LogError("No repair state found for repair task {taskId}", persistedTask.Id);
-                return false;
+                return RepairCompletionOutcome.Failed;
             }
         }
 
@@ -952,7 +978,7 @@ public class DistributedUpscaleTaskProcessor(
                 "Repair state for task {taskId} is already being cleaned up; skipping completion.",
                 persistedTask.Id
             );
-            return false;
+            return RepairCompletionOutcome.Failed;
         }
 
         try
@@ -969,7 +995,7 @@ public class DistributedUpscaleTaskProcessor(
                     repairTask.ChapterId,
                     persistedTask.Id
                 );
-                return false;
+                return RepairCompletionOutcome.Failed;
             }
 
             if (chapter.UpscaledFullPath == null)
@@ -978,7 +1004,7 @@ public class DistributedUpscaleTaskProcessor(
                     "Upscaled path not set for chapter {chapterId}",
                     repairTask.ChapterId
                 );
-                return false;
+                return RepairCompletionOutcome.Failed;
             }
 
             // Check if the repair is still needed (files might have changed)
@@ -989,6 +1015,29 @@ public class DistributedUpscaleTaskProcessor(
                 originalPath,
                 upscaledPath
             );
+            if (differences.Corrupt)
+            {
+                // A malformed archive reports no missing pages; completing here would discard the
+                // already-upscaled pages and leave a corrupt source marked repaired. Fail terminally.
+                logger.LogError(
+                    "A source archive for repair task {taskId} is corrupt; failing the repair.",
+                    persistedTask.Id
+                );
+                return RepairCompletionOutcome.Failed;
+            }
+
+            if (differences.ReadFailed)
+            {
+                // A transient read failure (locked/half-written archive) is not "no differences";
+                // requeue without consuming the retry budget instead of discarding the work.
+                logger.LogWarning(
+                    "Could not read a source archive for repair task {taskId}; requeuing.",
+                    persistedTask.Id
+                );
+                await RequeueClaimedTaskAsync(persistedTask, serviceStoppingToken);
+                return RepairCompletionOutcome.Requeued;
+            }
+
             if (differences.AreEqual)
             {
                 logger.LogInformation(
@@ -998,7 +1047,7 @@ public class DistributedUpscaleTaskProcessor(
                 );
                 // Clean up repair state since repair is no longer needed
                 CleanupRepairFiles(persistedTask.Id, logger);
-                return true;
+                return RepairCompletionOutcome.Completed;
             }
 
             // Verify the upscaled missing pages file exists
@@ -1012,7 +1061,7 @@ public class DistributedUpscaleTaskProcessor(
                     persistedTask.Id,
                     repairState.UpscaledMissingPagesCbzPath
                 );
-                return false;
+                return RepairCompletionOutcome.Failed;
             }
 
             if (repairState.RepairContext is null)
@@ -1021,7 +1070,7 @@ public class DistributedUpscaleTaskProcessor(
                     "No RepairContext found for repair task {taskId}",
                     persistedTask.Id
                 );
-                return false;
+                return RepairCompletionOutcome.Failed;
             }
 
             RepairContext? repairContext = repairState.RepairContext;
@@ -1050,7 +1099,7 @@ public class DistributedUpscaleTaskProcessor(
                     upscaledPath
                 );
 
-                return true;
+                return RepairCompletionOutcome.Completed;
             }
             finally
             {
@@ -1061,7 +1110,7 @@ public class DistributedUpscaleTaskProcessor(
         {
             logger.LogError(ex, "Failed to complete repair task {taskId}", persistedTask.Id);
             CleanupRepairFiles(persistedTask.Id, logger);
-            return false;
+            return RepairCompletionOutcome.Failed;
         }
         finally
         {

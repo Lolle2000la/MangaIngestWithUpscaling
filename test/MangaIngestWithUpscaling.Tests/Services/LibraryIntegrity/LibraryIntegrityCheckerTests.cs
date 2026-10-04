@@ -736,6 +736,92 @@ public class LibraryIntegrityCheckerTests : IAsyncDisposable
         await _taskQueue.DidNotReceiveWithAnyArgs().EnqueueAsync<RepairUpscaleTask>(default!);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    [Trait("Category", "Integration")]
+    public async Task CheckIntegrity_UnreadableArchive_DoesNotDeleteUpscaled(bool corrupt)
+    {
+        // Regression guard: an unreadable archive reports empty page lists, so it used to look
+        // unrepairable and fall through to deletion — a periodic scan deleting a valid upscale
+        // because a source was momentarily locked or half-written.
+        await using ApplicationDbContext ctx = _db.CreateContext();
+
+        string temp = Directory.CreateTempSubdirectory().FullName;
+        var lib = new Library
+        {
+            Name = "Lib",
+            NotUpscaledLibraryPath = Path.Combine(temp, "orig"),
+            UpscaledLibraryPath = Path.Combine(temp, "up"),
+        };
+        Directory.CreateDirectory(lib.NotUpscaledLibraryPath);
+        Directory.CreateDirectory(lib.UpscaledLibraryPath!);
+
+        string rel = "Series/Ch1.cbz";
+        Directory.CreateDirectory(Path.Combine(lib.NotUpscaledLibraryPath, "Series"));
+        Directory.CreateDirectory(Path.Combine(lib.UpscaledLibraryPath!, "Series"));
+        File.WriteAllText(Path.Combine(lib.NotUpscaledLibraryPath, rel), "orig");
+        File.WriteAllText(Path.Combine(lib.UpscaledLibraryPath!, rel), "up");
+
+        var manga = new Manga { PrimaryTitle = "Series", Library = lib };
+        var chapter = new Chapter
+        {
+            FileName = "ch1.cbz",
+            RelativePath = rel,
+            Manga = manga,
+            IsUpscaled = true,
+        };
+        manga.Chapters.Add(chapter);
+        lib.MangaSeries.Add(manga);
+
+        ctx.Libraries.Add(lib);
+        await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        _metadata
+            .PagesEqualAsync(Arg.Any<string>(), Arg.Any<string>())
+            .Returns(Task.FromResult(false));
+        _metadata
+            .GetSeriesAndTitleFromComicInfoAsync(Arg.Any<string>())
+            .Returns(new ExtractedMetadata("Series", "Ch1", null));
+        _metadata
+            .AnalyzePageDifferencesAsync(Arg.Any<string>(), Arg.Any<string>())
+            .Returns(_ =>
+                corrupt
+                    ? new PageDifferenceResult([], []) { Corrupt = true }
+                    : new PageDifferenceResult([], []) { ReadFailed = true }
+            );
+
+        var checker = new LibraryIntegrityChecker(
+            ctx,
+            _factory,
+            _metadata,
+            _chapterRecognition,
+            new ChapterProcessingService(
+                ctx,
+                _upscalerJsonHandling,
+                _fileSystem,
+                Substitute.For<IStringLocalizer<ChapterProcessingService>>(),
+                NullLogger<ChapterProcessingService>.Instance
+            ),
+            _taskQueue,
+            _cbzConverter,
+            NullLogger<LibraryIntegrityChecker>.Instance,
+            _options,
+            _splitCoordinator,
+            new SplitProcessingStateManager(ctx, NullLogger<SplitProcessingStateManager>.Instance),
+            Substitute.For<IStringLocalizer<LibraryIntegrityChecker>>()
+        );
+
+        bool changed = await checker.CheckIntegrity(chapter, TestContext.Current.CancellationToken);
+
+        Assert.True(changed);
+        Assert.True(
+            File.Exists(Path.Combine(lib.UpscaledLibraryPath!, rel)),
+            "an unreadable archive must not cause the upscaled file to be deleted"
+        );
+        await _taskQueue.DidNotReceiveWithAnyArgs().EnqueueAsync<RepairUpscaleTask>(default!);
+    }
+
     [Fact]
     [Trait("Category", "Integration")]
     public async Task CheckIntegrity_DifferentPages_ExistingRepairTask_NoDuplicate()
