@@ -40,6 +40,7 @@ public partial class IngestProcessor(
     IChapterPartMerger chapterPartMerger,
     IChapterMergeCoordinator chapterMergeCoordinator,
     UpscaleTaskProcessor upscaleTaskProcessor,
+    DistributedUpscaleTaskProcessor distributedUpscaleTaskProcessor,
     IImageFilterService imageFilterService,
     IChapterProcessingService chapterProcessingService,
     ISplitProcessingCoordinator splitProcessingCoordinator,
@@ -889,6 +890,18 @@ public partial class IngestProcessor(
     }
 
     /// <summary>
+    ///     Cancels a running upscale task on whichever processor owns its queue. A genuine upscale is
+    ///     owned by the distributed processor in RemoteOnly (the local upscale processor only drains
+    ///     rerouted tasks there), so asking only the local one left a remote upscale rewriting the
+    ///     chapter this merge was manipulating.
+    /// </summary>
+    private async Task CancelRunningUpscaleTaskAsync(PersistedTask task)
+    {
+        upscaleTaskProcessor.CancelCurrent(task);
+        await distributedUpscaleTaskProcessor.CancelCurrent(task);
+    }
+
+    /// <summary>
     ///     Cancel and remove any existing UpscaleTasks for the given original chapter parts.
     ///     Pending tasks are removed directly; processing tasks are canceled via the processor and then removed.
     ///     Completed/failed/canceled tasks are cleaned up.
@@ -910,7 +923,7 @@ public partial class IngestProcessor(
                 {
                     case PersistedTaskStatus.Pending:
                         // Remove pending tasks
-                        upscaleTaskProcessor.CancelCurrent(task);
+                        await CancelRunningUpscaleTaskAsync(task);
                         await taskQueue.RemoveTaskAsync(task);
                         logger.LogInformation(
                             "Removed pending upscale task for original chapter {ChapterId} due to merge",
@@ -920,7 +933,7 @@ public partial class IngestProcessor(
 
                     case PersistedTaskStatus.Processing:
                         // Cancel and then remove processing tasks
-                        upscaleTaskProcessor.CancelCurrent(task);
+                        await CancelRunningUpscaleTaskAsync(task);
                         // Give processor a brief moment and refresh status
                         await Task.Delay(50, cancellationToken);
                         try

@@ -86,6 +86,13 @@ public class IngestProcessorTaskCancellationTests : IAsyncDisposable
             taskPersistenceService,
             new PreprocessedInputCache()
         );
+        var distributedProcessor = Substitute.For<DistributedUpscaleTaskProcessor>(
+            taskQueue,
+            scopeFactory,
+            upscalerOptions,
+            Substitute.For<ILogger<DistributedUpscaleTaskProcessor>>(),
+            taskPersistenceService
+        );
 
         // SUT
         var chapterProcessingService = Substitute.For<IChapterProcessingService>();
@@ -113,6 +120,7 @@ public class IngestProcessorTaskCancellationTests : IAsyncDisposable
             chapterPartMerger,
             mergeCoordinator,
             processor,
+            distributedProcessor,
             imageFilter,
             chapterProcessingService,
             splitCoordinator,
