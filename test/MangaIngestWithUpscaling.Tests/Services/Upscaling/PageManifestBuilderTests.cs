@@ -313,6 +313,38 @@ public class PageManifestBuilderTests
         }
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void BuildPageDescriptors_DropsEntriesThatCouldEscapeTheArchive()
+    {
+        // Path traversal must be rejected through the descriptor builder, not only at IsSafeEntryName,
+        // so the assembled archive can never be made to write outside its target.
+        string directory = Directory.CreateTempSubdirectory("manifest_traversal").FullName;
+        try
+        {
+            string source = CreateCbz(
+                directory,
+                ("../evil.jpg", new byte[] { 1 }),
+                ("/absolute.jpg", new byte[] { 2 }),
+                ("C:\\drive.jpg", new byte[] { 3 }),
+                ("..\\windows-traversal.jpg", new byte[] { 4 }),
+                ("ok/001.jpg", new byte[] { 5 })
+            );
+
+            List<SpoolPageDescriptor> pages = PageManifestBuilder.BuildPageDescriptors(
+                source,
+                Profile()
+            );
+
+            Assert.Single(pages);
+            Assert.Equal("ok/001.jpg", pages[0].SourceName);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
     private static SharedUpscalerProfile Profile(
         SharedCompressionFormat format = SharedCompressionFormat.Webp
     ) =>

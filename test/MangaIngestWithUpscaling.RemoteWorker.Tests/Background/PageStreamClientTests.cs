@@ -144,6 +144,43 @@ public class PageStreamClientTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task RunAsync_MultiChunkPage_ReassemblesEveryByte()
+    {
+        // A page larger than the 1 MiB upload chunk size (and the fetch chunk size) must survive the
+        // multi-chunk download and upload without truncation or reordering.
+        string directory = Directory.CreateTempSubdirectory("page_stream_multichunk").FullName;
+        try
+        {
+            byte[] payload = new byte[(1024 * 1024) + 4096];
+            for (int i = 0; i < payload.Length; i++)
+            {
+                payload[i] = (byte)(i % 251);
+            }
+
+            string source = Path.Combine(directory, "source.cbz");
+            using (ZipArchive zip = ZipFile.Open(source, ZipArchiveMode.Create))
+            {
+                WriteEntry(zip, "001.jpg", payload);
+            }
+
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination);
+            var client = server.CreateClient();
+            var sut = CreateClient(new FakeWorkerClient());
+
+            await sut.RunAsync(client, 1, Profile, TestContext.Current.CancellationToken);
+
+            // The fake worker "upscales" by reversing the bytes.
+            Assert.Equal(payload.Reverse().ToArray(), server.Uploaded[0]);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task RunAsync_ResumesAtTheFirstMissingPageAfterADrop()
     {
         string directory = Directory.CreateTempSubdirectory("page_stream_resume").FullName;

@@ -357,6 +357,9 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         RemoteUploadPageResponse response = await call.ResponseAsync;
 
         Assert.False(response.Success);
+        // A stale identity is a restart, not a terminal failure: marking it terminal would make the
+        // worker drop the whole spooled chapter.
+        Assert.False(response.Terminal);
         Assert.Contains("changed", response.Message);
     }
 
@@ -408,6 +411,8 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         RemoteUploadPageResponse response = await call.ResponseAsync;
 
         Assert.False(response.Success);
+        // An engine mismatch is a restart, not a terminal failure.
+        Assert.False(response.Terminal);
         Assert.Contains("engine", response.Message);
     }
 
