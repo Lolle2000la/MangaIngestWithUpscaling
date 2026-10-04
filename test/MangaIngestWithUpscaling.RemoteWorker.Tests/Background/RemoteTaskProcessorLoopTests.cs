@@ -22,8 +22,8 @@ namespace MangaIngestWithUpscaling.RemoteWorker.Tests.Background;
 /// </summary>
 public class RemoteTaskProcessorLoopTests
 {
-    /// <summary>Mirrors <c>RemoteTaskProcessor.MaxConsecutiveSoftFailures</c>.</summary>
-    private const int SoftFailureCap = 5;
+    /// <summary>Mirrors <c>SoftFailureTracker.MaxConsecutiveSoftFailures</c>.</summary>
+    private const int SoftFailureCap = SoftFailureTracker.MaxConsecutiveSoftFailures;
 
     [Fact]
     [Trait("Category", "Integration")]
@@ -106,10 +106,25 @@ public class RemoteTaskProcessorLoopTests
     {
         var provider = new ServiceCollection()
             .AddSingleton(client)
+            .AddSingleton<ITaskClaimSource>(new FakeTaskClaimSource())
             .AddSingleton(CreatePageStreamClient())
             .AddSingleton(Substitute.For<ILogger<RemoteTaskProcessor>>())
             .BuildServiceProvider();
         return new RemoteTaskProcessor(provider.GetRequiredService<IServiceScopeFactory>());
+    }
+
+    /// <summary>
+    /// Drives the claim seam without gRPC: every claim returns the same task, so the loop keeps
+    /// failing it and the soft-failure counter is exercised.
+    /// </summary>
+    private sealed class FakeTaskClaimSource : ITaskClaimSource
+    {
+        public Task<UpscaleTaskDelegationResponse> RequestTaskWithHintAsync(
+            CancellationToken stoppingToken
+        ) =>
+            Task.FromResult(
+                new UpscaleTaskDelegationResponse { TaskId = 1, TaskType = TaskType.Upscale }
+            );
     }
 
     private static PageStreamClient CreatePageStreamClient()
@@ -132,16 +147,6 @@ public class RemoteTaskProcessorLoopTests
     )
     {
         var client = Substitute.For<UpscalingService.UpscalingServiceClient>();
-        client
-            .RequestUpscaleTaskWithHintAsync(
-                Arg.Any<RequestTaskRequest>(),
-                Arg.Any<Metadata>(),
-                Arg.Any<DateTime?>(),
-                Arg.Any<CancellationToken>()
-            )
-            .Returns(_ =>
-                Unary(new UpscaleTaskDelegationResponse { TaskId = 1, TaskType = TaskType.Upscale })
-            );
         client
             .GetPageManifestAsync(
                 Arg.Any<PageManifestRequest>(),

@@ -15,5 +15,6 @@ public static class ServiceRegistration
         services.AddHostedService(sp => sp.GetRequiredService<RemoteTaskProcessor>());
         services.AddSingleton<PageStreamClient>();
         services.AddSingleton<IEngineIdentityProvider, EngineIdentityProvider>();
+        services.AddTransient<ITaskClaimSource, GrpcTaskClaimSource>();
     }
 }

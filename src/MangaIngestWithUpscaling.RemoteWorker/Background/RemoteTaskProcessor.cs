@@ -18,10 +18,8 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
 {
     private volatile bool _fetchInProgress;
 
-    // Consecutive soft (transient/restart) failures per task, so a deterministically-failing task is
-    // escalated to a reported failure instead of cycling forever — even if other tasks fail in
-    // between (a single "last task" counter could be reset by an interleaved task).
-    private readonly Dictionary<int, int> _softFailureCounts = new();
+    private readonly SoftFailureTracker _softFailures = new();
+    private readonly KeepAlivePump _keepAlivePump = new(serviceScopeFactory);
 
     private int _streamingTaskIdValue = -1;
 
@@ -88,20 +86,6 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 or StatusCode.Aborted
                 or StatusCode.ResourceExhausted
                 or StatusCode.Unknown;
-
-    /// <summary>
-    /// How many consecutive soft (transient/restart) failures a task may accumulate before the worker
-    /// reports it as a hard failure. The server's dead-task reaper requeues without consuming the
-    /// retry budget, so without a cap a deterministically-failing task would cycle forever.
-    /// </summary>
-    private const int MaxConsecutiveSoftFailures = 5;
-
-    /// <summary>
-    /// A restart is the "no spool on this replica / identity changed" signal, which a misconfigured
-    /// deployment can produce indefinitely; use a much larger cap so it eventually surfaces without
-    /// turning a transient infrastructure issue into data loss.
-    /// </summary>
-    private const int MaxConsecutiveRestarts = 100;
 
     /// <summary>How a page-streaming failure should be handled.</summary>
     public enum StreamingFailureKind
@@ -289,10 +273,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
         }
         else if (kind is StreamingFailureKind.Transient or StreamingFailureKind.Restart)
         {
-            int cap =
-                kind == StreamingFailureKind.Restart
-                    ? MaxConsecutiveRestarts
-                    : MaxConsecutiveSoftFailures;
+            int cap = SoftFailureTracker.CapFor(kind);
             if (consecutiveSoftFailures < cap)
             {
                 // A transport blip or a non-terminal rejection must not consume the retry budget or
@@ -380,6 +361,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 >();
                 var client =
                     scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
+                var claimSource = scope.ServiceProvider.GetRequiredService<ITaskClaimSource>();
 
                 if (!await _toStream.Writer.WaitToWriteAsync(stoppingToken))
                 {
@@ -392,11 +374,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 {
                     try
                     {
-                        resp = await client.RequestUpscaleTaskWithHintAsync(
-                            new RequestTaskRequest { Prefetch = true },
-                            deadline: DateTime.UtcNow.AddSeconds(15),
-                            cancellationToken: stoppingToken
-                        );
+                        resp = await claimSource.RequestTaskWithHintAsync(stoppingToken);
                         serverAvailable = true;
                     }
                     catch (RpcException e)
@@ -514,7 +492,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 var persistentKeepAliveCts = CancellationTokenSource.CreateLinkedTokenSource(
                     stoppingToken
                 );
-                Task persistentKeepAliveTask = RunKeepAliveLoop(
+                Task persistentKeepAliveTask = _keepAlivePump.RunAsync(
                     persistentKeepAliveCts,
                     () => taskId,
                     id => new KeepAliveRequest { TaskId = id, Prefetch = true }
@@ -641,7 +619,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 }
 
                 // Completed without a soft failure; clear this task's counter.
-                _softFailureCounts.Remove(item.TaskId);
+                _softFailures.Reset(item.TaskId);
             }
             catch (OperationCanceledException)
             {
@@ -649,9 +627,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
             }
             catch (Exception ex)
             {
-                _softFailureCounts.TryGetValue(item.TaskId, out int softFailures);
-                softFailures++;
-                _softFailureCounts[item.TaskId] = softFailures;
+                int softFailures = _softFailures.Increment(item.TaskId);
 
                 bool reported = await HandleStreamingFailureAsync(
                     client,
@@ -665,7 +641,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 {
                     // The task is terminal, so its counter will never be read again; drop it rather
                     // than letting the map grow one entry per permanently-failed task.
-                    _softFailureCounts.Remove(item.TaskId);
+                    _softFailures.Reset(item.TaskId);
                 }
             }
             finally
@@ -725,69 +701,6 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 _ => throw new InvalidOperationException("Unknown upscaler method."),
             },
         };
-    }
-
-    private Task RunKeepAliveLoop(
-        CancellationTokenSource cts,
-        Func<int?> taskIdProvider,
-        Func<int, KeepAliveRequest> requestFactory
-    )
-    {
-        return Task.Run(
-            async () =>
-            {
-                using IServiceScope scope = serviceScopeFactory.CreateScope();
-                var client =
-                    scope.ServiceProvider.GetRequiredService<UpscalingService.UpscalingServiceClient>();
-                var logger = scope.ServiceProvider.GetRequiredService<
-                    ILogger<RemoteTaskProcessor>
-                >();
-                using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
-                while (!cts.IsCancellationRequested)
-                {
-                    try
-                    {
-                        int? id = taskIdProvider();
-                        if (!id.HasValue)
-                        {
-                            break;
-                        }
-
-                        KeepAliveResponse? ka = await client.KeepAliveAsync(
-                            requestFactory(id.Value),
-                            deadline: DateTime.UtcNow.AddSeconds(10),
-                            cancellationToken: cts.Token
-                        );
-                        if (!ka.IsAlive)
-                        {
-                            await cts.CancelAsync();
-                            break;
-                        }
-                    }
-                    catch (RpcException ex) when (ex.StatusCode == StatusCode.NotFound)
-                    {
-                        await cts.CancelAsync();
-                        break;
-                    }
-                    catch (Exception ex)
-                    {
-                        // A keep-alive lapse past the server's deadline requeues the task; log it so a
-                        // persistent failure is diagnosable instead of silent.
-                        logger.LogDebug(ex, "Keep-alive for the in-flight task failed.");
-                    }
-
-                    try
-                    {
-                        await timer.WaitForNextTickAsync(cts.Token);
-                    }
-                    catch
-                    {
-                        break;
-                    }
-                }
-            },
-            cts.Token
-        );
     }
 
     private sealed record StreamingItem(
