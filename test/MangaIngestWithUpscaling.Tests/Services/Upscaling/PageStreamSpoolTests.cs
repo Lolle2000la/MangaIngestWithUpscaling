@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using MangaIngestWithUpscaling.Services.Upscaling;
 using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NSubstitute;

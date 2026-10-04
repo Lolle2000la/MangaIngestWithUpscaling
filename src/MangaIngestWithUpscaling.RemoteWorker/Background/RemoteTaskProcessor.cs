@@ -160,6 +160,21 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
     }
 
     /// <summary>
+    /// The shared disposition a failure kind maps to: a <see cref="StreamingFailureKind.Permanent"/>
+    /// failure is terminal (the server clears the spool), while a transient or restart failure is a
+    /// retry that preserves it. This is the worker-side counterpart of the server's wire
+    /// <c>terminal</c> flag, so the two cannot drift.
+    /// </summary>
+    public static PageStreamDisposition ToDisposition(StreamingFailureKind kind) =>
+        kind == StreamingFailureKind.Permanent
+            ? PageStreamDisposition.Terminal
+            : PageStreamDisposition.Retry;
+
+    /// <summary>Classifies a page-streaming failure into the shared disposition.</summary>
+    public static PageStreamDisposition ClassifyStreamingDisposition(Exception ex) =>
+        ToDisposition(ClassifyStreamingFailure(ex));
+
+    /// <summary>
     ///     True when any exception in the chain reports an RPC the server does not implement, which is how a
     ///     worker meets a server from the other side of the upgrade cutover.
     /// </summary>
@@ -253,6 +268,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
     )
     {
         StreamingFailureKind kind = ClassifyStreamingFailure(ex);
+        PageStreamDisposition disposition = ToDisposition(kind);
 
         // A running worker validated the protocol only at startup, so a server from the other side of the
         // upgrade cutover answers with Unimplemented. Ask it again and say what is actually wrong: if the
@@ -271,7 +287,7 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 versionSkew
             );
         }
-        else if (kind is StreamingFailureKind.Transient or StreamingFailureKind.Restart)
+        else if (disposition == PageStreamDisposition.Retry)
         {
             int cap = SoftFailureTracker.CapFor(kind);
             if (consecutiveSoftFailures < cap)

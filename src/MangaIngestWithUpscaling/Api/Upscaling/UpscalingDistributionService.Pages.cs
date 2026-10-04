@@ -485,7 +485,9 @@ public partial class UpscalingDistributionService
                                 "The page stream changed task, page, content or engine mid-upload.",
                             TaskId = taskId,
                             PageIndex = pageIndex,
-                            Terminal = true,
+                            Terminal = PageStreamRejections.ToWireTerminal(
+                                PageStreamDisposition.Terminal
+                            ),
                         };
                     }
 
@@ -505,14 +507,15 @@ public partial class UpscalingDistributionService
                         );
                         if (pageContext is null)
                         {
-                            (string message, bool terminal) = PageContextFailure(uploadResolution);
+                            (string message, PageStreamDisposition disposition) =
+                                PageContextFailure(uploadResolution);
                             return new UploadPageResponse
                             {
                                 Success = false,
                                 Message = message,
                                 TaskId = taskId,
                                 PageIndex = pageIndex,
-                                Terminal = terminal,
+                                Terminal = PageStreamRejections.ToWireTerminal(disposition),
                             };
                         }
 
@@ -524,7 +527,9 @@ public partial class UpscalingDistributionService
                                 Message = "This task is not a page-streamed upscale task.",
                                 TaskId = taskId,
                                 PageIndex = pageIndex,
-                                Terminal = true,
+                                Terminal = PageStreamRejections.ToWireTerminal(
+                                    PageStreamDisposition.Terminal
+                                ),
                             };
                         }
 
@@ -538,6 +543,9 @@ public partial class UpscalingDistributionService
                                 Message = "The chapter or profile changed; restart the chapter",
                                 TaskId = taskId,
                                 PageIndex = pageIndex,
+                                Terminal = PageStreamRejections.ToWireTerminal(
+                                    PageStreamDisposition.Retry
+                                ),
                             };
                         }
 
@@ -550,7 +558,9 @@ public partial class UpscalingDistributionService
                                     $"Page index {pageIndex} is out of range for task {taskId}",
                                 TaskId = taskId,
                                 PageIndex = pageIndex,
-                                Terminal = true,
+                                Terminal = PageStreamRejections.ToWireTerminal(
+                                    PageStreamDisposition.Terminal
+                                ),
                             };
                         }
 
@@ -571,7 +581,9 @@ public partial class UpscalingDistributionService
                                     "No page spool for this task on this server instance; the chapter must be pinned to one replica",
                                 TaskId = taskId,
                                 PageIndex = pageIndex,
-                                Terminal = false,
+                                Terminal = PageStreamRejections.ToWireTerminal(
+                                    PageStreamDisposition.Retry
+                                ),
                             };
                         }
 
@@ -597,7 +609,9 @@ public partial class UpscalingDistributionService
                                 Message = ex.Message,
                                 TaskId = taskId,
                                 PageIndex = pageIndex,
-                                Terminal = false,
+                                Terminal = PageStreamRejections.ToWireTerminal(
+                                    PageStreamDisposition.Retry
+                                ),
                             };
                         }
                     }
@@ -614,7 +628,9 @@ public partial class UpscalingDistributionService
                                     $"Page {pageIndex} of task {taskId} exceeds the maximum page size.",
                                 TaskId = taskId,
                                 PageIndex = pageIndex,
-                                Terminal = true,
+                                Terminal = PageStreamRejections.ToWireTerminal(
+                                    PageStreamDisposition.Terminal
+                                ),
                             };
                         }
 
@@ -635,7 +651,9 @@ public partial class UpscalingDistributionService
                                 Message = $"Task {taskId} exceeds the maximum spooled size.",
                                 TaskId = taskId,
                                 PageIndex = pageIndex,
-                                Terminal = true,
+                                Terminal = PageStreamRejections.ToWireTerminal(
+                                    PageStreamDisposition.Terminal
+                                ),
                             };
                         }
 
@@ -665,7 +683,7 @@ public partial class UpscalingDistributionService
                 {
                     Success = false,
                     Message = "No page data received",
-                    Terminal = true,
+                    Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Terminal),
                 };
             }
 
@@ -679,7 +697,7 @@ public partial class UpscalingDistributionService
                     Message = "The page upload ended before the final chunk.",
                     TaskId = taskId,
                     PageIndex = pageIndex,
-                    Terminal = true,
+                    Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Terminal),
                 };
             }
 
@@ -691,7 +709,7 @@ public partial class UpscalingDistributionService
                     Message = "The page upload contained no data.",
                     TaskId = taskId,
                     PageIndex = pageIndex,
-                    Terminal = true,
+                    Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Terminal),
                 };
             }
 
@@ -715,7 +733,9 @@ public partial class UpscalingDistributionService
                         Message = $"Task {taskId} exceeds the maximum spooled size.",
                         TaskId = taskId,
                         PageIndex = pageIndex,
-                        Terminal = true,
+                        Terminal = PageStreamRejections.ToWireTerminal(
+                            PageStreamDisposition.Terminal
+                        ),
                     };
                 }
 
@@ -732,6 +752,7 @@ public partial class UpscalingDistributionService
                                 : "The chapter or profile changed; restart the chapter",
                         TaskId = taskId,
                         PageIndex = pageIndex,
+                        Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Retry),
                     };
                 }
 
@@ -749,14 +770,16 @@ public partial class UpscalingDistributionService
                 // chapter so the already-upscaled pages are preserved. The soft-failure cap bounds a
                 // persistent failure, so it cannot spin forever. A non-I/O failure is a bug and stays
                 // terminal.
-                bool terminal = !IsTransientStorageFailure(ex);
+                PageStreamDisposition disposition = IsTransientStorageFailure(ex)
+                    ? PageStreamDisposition.Retry
+                    : PageStreamDisposition.Terminal;
                 return new UploadPageResponse
                 {
                     Success = false,
                     Message = ex.Message,
                     TaskId = taskId,
                     PageIndex = pageIndex,
-                    Terminal = terminal,
+                    Terminal = PageStreamRejections.ToWireTerminal(disposition),
                 };
             }
         }
@@ -810,6 +833,7 @@ public partial class UpscalingDistributionService
                 Message = "The chapter or profile changed; restart the chapter",
                 TaskId = taskId,
                 PageIndex = pageIndex,
+                Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Retry),
             };
         }
 
@@ -825,7 +849,7 @@ public partial class UpscalingDistributionService
                     Message = "The chapter or profile changed; restart the chapter",
                     TaskId = taskId,
                     PageIndex = pageIndex,
-                    Terminal = false,
+                    Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Retry),
                 };
             }
 
@@ -839,7 +863,7 @@ public partial class UpscalingDistributionService
                     Message = "The chapter was finalized while uploading; restart the chapter",
                     TaskId = taskId,
                     PageIndex = pageIndex,
-                    Terminal = false,
+                    Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Retry),
                 };
             }
 
@@ -880,7 +904,7 @@ public partial class UpscalingDistributionService
                 Message = ex.Message,
                 TaskId = taskId,
                 PageIndex = pageIndex,
-                Terminal = false,
+                Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Retry),
             };
         }
         catch (Exception ex)
@@ -898,7 +922,7 @@ public partial class UpscalingDistributionService
                     Message = ex.Message,
                     TaskId = taskId,
                     PageIndex = pageIndex,
-                    Terminal = false,
+                    Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Retry),
                 };
             }
 
@@ -916,7 +940,7 @@ public partial class UpscalingDistributionService
                 TaskId = taskId,
                 PageIndex = pageIndex,
                 // The task was already terminalised above; the worker must not requeue it.
-                Terminal = true,
+                Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Terminal),
             };
         }
         finally
@@ -998,12 +1022,12 @@ public partial class UpscalingDistributionService
         );
         if (pageContext is null)
         {
-            (string message, bool terminal) = PageContextFailure(resolution);
+            (string message, PageStreamDisposition disposition) = PageContextFailure(resolution);
             return new UploadDetectionResultResponse
             {
                 Success = false,
                 Message = message,
-                Terminal = terminal,
+                Terminal = PageStreamRejections.ToWireTerminal(disposition),
             };
         }
 
@@ -1013,7 +1037,7 @@ public partial class UpscalingDistributionService
             {
                 Success = false,
                 Message = "Task is not a page-streamed detection task",
-                Terminal = true,
+                Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Terminal),
             };
         }
 
@@ -1023,6 +1047,7 @@ public partial class UpscalingDistributionService
             {
                 Success = false,
                 Message = "The chapter changed; request a new manifest",
+                Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Retry),
             };
         }
 
@@ -1038,6 +1063,7 @@ public partial class UpscalingDistributionService
                 Success = false,
                 Message =
                     "No page spool for this task on this server instance; the chapter must be pinned to one replica",
+                Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Retry),
             };
         }
 
@@ -1048,7 +1074,7 @@ public partial class UpscalingDistributionService
                 Success = false,
                 Message =
                     $"Page index {request.PageIndex} is out of range for task {request.TaskId}",
-                Terminal = true,
+                Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Terminal),
             };
         }
 
@@ -1060,7 +1086,7 @@ public partial class UpscalingDistributionService
                 Success = false,
                 Message =
                     $"The detection result for page {request.PageIndex} of task {request.TaskId} is too large.",
-                Terminal = true,
+                Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Terminal),
             };
         }
 
@@ -1087,7 +1113,7 @@ public partial class UpscalingDistributionService
                 Success = false,
                 Message =
                     $"The detection result for page {request.PageIndex} of task {request.TaskId} is not valid JSON.",
-                Terminal = true,
+                Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Terminal),
             };
         }
 
@@ -1098,7 +1124,7 @@ public partial class UpscalingDistributionService
                 Success = false,
                 Message =
                     $"The detection result for page {request.PageIndex} of task {request.TaskId} is not valid.",
-                Terminal = true,
+                Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Terminal),
             };
         }
 
@@ -1114,7 +1140,7 @@ public partial class UpscalingDistributionService
                 Success = false,
                 Message =
                     $"The detection result for page {request.PageIndex} of task {request.TaskId} names a different image.",
-                Terminal = true,
+                Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Terminal),
             };
         }
 
@@ -1131,7 +1157,7 @@ public partial class UpscalingDistributionService
                 Success = false,
                 Message =
                     $"The detection result for page {request.PageIndex} of task {request.TaskId} names a different image.",
-                Terminal = true,
+                Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Terminal),
             };
         }
 
@@ -1150,7 +1176,7 @@ public partial class UpscalingDistributionService
             {
                 Success = false,
                 Message = $"Task {request.TaskId} exceeds the maximum spooled size.",
-                Terminal = true,
+                Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Terminal),
             };
         }
 
@@ -1175,7 +1201,7 @@ public partial class UpscalingDistributionService
                 {
                     Success = false,
                     Message = ex.Message,
-                    Terminal = false,
+                    Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Retry),
                 };
             }
 
@@ -1218,6 +1244,11 @@ public partial class UpscalingDistributionService
         {
             DeleteTempQuietly(resultTemp);
 
+            // Over-budget is deterministic; an identity/engine change should restart.
+            PageStreamDisposition disposition =
+                commitResult == CommitPageResult.OverBudget
+                    ? PageStreamDisposition.Terminal
+                    : PageStreamDisposition.Retry;
             return new UploadDetectionResultResponse
             {
                 Success = false,
@@ -1229,8 +1260,7 @@ public partial class UpscalingDistributionService
                         "The detector changed; request a new manifest",
                     _ => "The chapter changed; request a new manifest",
                 },
-                // Over-budget is deterministic; an identity/engine change should restart.
-                Terminal = commitResult == CommitPageResult.OverBudget,
+                Terminal = PageStreamRejections.ToWireTerminal(disposition),
             };
         }
 
@@ -1249,7 +1279,7 @@ public partial class UpscalingDistributionService
                 {
                     Success = false,
                     Message = "The chapter or profile changed; restart the chapter",
-                    Terminal = false,
+                    Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Retry),
                 };
             }
 
@@ -1261,7 +1291,7 @@ public partial class UpscalingDistributionService
                 {
                     Success = false,
                     Message = "The chapter was finalized while uploading; restart the chapter",
-                    Terminal = false,
+                    Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Retry),
                 };
             }
 
@@ -1305,7 +1335,7 @@ public partial class UpscalingDistributionService
             {
                 Success = false,
                 Message = ex.Message,
-                Terminal = false,
+                Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Retry),
             };
         }
         catch (Exception ex)
@@ -1321,7 +1351,7 @@ public partial class UpscalingDistributionService
                 {
                     Success = false,
                     Message = ex.Message,
-                    Terminal = false,
+                    Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Retry),
                 };
             }
 
@@ -1339,7 +1369,7 @@ public partial class UpscalingDistributionService
             {
                 Success = false,
                 Message = ex.Message,
-                Terminal = true,
+                Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Terminal),
             };
         }
         finally
@@ -1482,23 +1512,42 @@ public partial class UpscalingDistributionService
     }
 
     /// <summary>gRPC status for a failed page-context resolution.</summary>
-    private static Status PageContextFailureStatus(PageContextResolution resolution) =>
-        resolution.Corrupt
-            ? new Status(StatusCode.DataLoss, "The chapter's source archive is corrupt.")
-        : resolution.TaskTerminal
-            ? new Status(StatusCode.NotFound, "Task, chapter or profile not found")
-        : new Status(
-            StatusCode.Unavailable,
-            "The chapter's source is not currently available; retry the chapter"
+    private static Status PageContextFailureStatus(PageContextResolution resolution)
+    {
+        PageStreamDisposition disposition = PageStreamRejections.ForResolution(
+            resolution.TaskTerminal,
+            resolution.Corrupt
         );
+        if (disposition == PageStreamDisposition.Retry)
+        {
+            return new Status(
+                StatusCode.Unavailable,
+                "The chapter's source is not currently available; retry the chapter"
+            );
+        }
 
-    /// <summary>Message and terminal flag for an upload response to a failed resolution.</summary>
-    private static (string Message, bool Terminal) PageContextFailure(
+        // Terminal: a corrupt archive is deterministic data loss; a gone/terminal task is not-found.
+        return resolution.Corrupt
+            ? new Status(StatusCode.DataLoss, "The chapter's source archive is corrupt.")
+            : new Status(StatusCode.NotFound, "Task, chapter or profile not found");
+    }
+
+    /// <summary>Message and disposition for an upload response to a failed resolution.</summary>
+    private static (string Message, PageStreamDisposition Disposition) PageContextFailure(
         PageContextResolution resolution
-    ) =>
-        resolution.Corrupt ? ("The chapter's source archive is corrupt.", true)
-        : resolution.TaskTerminal ? ("Task, chapter or profile not found", true)
-        : ("The chapter's source is not currently available; restart the chapter", false);
+    )
+    {
+        PageStreamDisposition disposition = PageStreamRejections.ForResolution(
+            resolution.TaskTerminal,
+            resolution.Corrupt
+        );
+        string message =
+            disposition == PageStreamDisposition.Retry
+                ? "The chapter's source is not currently available; restart the chapter"
+            : resolution.Corrupt ? "The chapter's source archive is corrupt."
+            : "Task, chapter or profile not found";
+        return (message, disposition);
+    }
 
     private async Task<PageContext?> ResolvePageContextAsync(
         int taskId,

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.IO.Compression;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Constants;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.Options;
 
 namespace MangaIngestWithUpscaling.Services.Upscaling;

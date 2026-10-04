@@ -379,8 +379,8 @@ public sealed class PageStreamClient(
             if (
                 uploadError is not null
                 && uploadError is not OperationCanceledException
-                && RemoteTaskProcessor.ClassifyStreamingFailure(uploadError)
-                    is RemoteTaskProcessor.StreamingFailureKind.Permanent
+                && RemoteTaskProcessor.ClassifyStreamingDisposition(uploadError)
+                    is PageStreamDisposition.Terminal
             )
             {
                 ExceptionDispatchInfo.Capture(uploadError).Throw();
