@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Threading.Channels;
 using AutoRegisterInject;
 using MangaIngestWithUpscaling.Data;
@@ -50,10 +49,8 @@ public class TaskQueue : ITaskQueue, IHostedService
     private readonly SortedSet<PersistedTask> _upscaleTasks;
     private readonly object _upscaleTasksLock = new();
 
-    // One gate per chapter, used to make the "check the same-chapter conflict, then claim" sequence
-    // atomic across the standard and upscale processors. A slow leak (one SemaphoreSlim per chapter
-    // ever seen) is acceptable; chapters are bounded by the library.
-    private readonly ConcurrentDictionary<int, SemaphoreSlim> _chapterGates = new();
+    // Owns the chapter-conflict queries and the process-local chapter gate.
+    private readonly ChapterConflictGuard _chapterConflictGuard = new();
 
     public TaskQueue(IServiceScopeFactory scopeFactory, ILogger<TaskQueue> logger)
     {
@@ -115,12 +112,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         }
     }
 
-    public static bool IsUpscaleTask(BaseTask data) =>
-        data
-            is UpscaleTask
-                or RenameUpscaledChaptersSeriesTask
-                or RepairUpscaleTask
-                or DetectSplitCandidatesTask;
+    public static bool IsUpscaleTask(BaseTask data) => TaskClassifier.IsUpscaleTask(data);
 
     public async Task EnqueueAsync<T>(T taskData)
         where T : BaseTask
@@ -760,10 +752,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         c.FileName
     );
 
-    private static int? GetChapterId(BaseTask data)
-    {
-        return data is IChapterTask chapterTask ? chapterTask.ChapterId : null;
-    }
+    private static int? GetChapterId(BaseTask data) => TaskClassifier.GetChapterId(data);
 
     private static int CompareChapters(Chapter a, Chapter b)
     {
@@ -814,18 +803,8 @@ public class TaskQueue : ITaskQueue, IHostedService
     ///     claim (or an advisory lock) instead. Merge cancellation is likewise an in-process token
     ///     cancel and cannot reach an apply running on another replica.
     /// </summary>
-    public async Task<IDisposable> AcquireChapterGateAsync(
+    public Task<IDisposable> AcquireChapterGateAsync(
         int chapterId,
         CancellationToken cancellationToken
-    )
-    {
-        SemaphoreSlim gate = _chapterGates.GetOrAdd(chapterId, _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(cancellationToken);
-        return new ChapterGateLease(gate);
-    }
-
-    private sealed class ChapterGateLease(SemaphoreSlim gate) : IDisposable
-    {
-        public void Dispose() => gate.Release();
-    }
+    ) => _chapterConflictGuard.AcquireChapterGateAsync(chapterId, cancellationToken);
 }

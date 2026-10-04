@@ -21,15 +21,6 @@ public class ChapterMergeUpscaleTaskManager(
     ILogger<ChapterMergeUpscaleTaskManager> logger
 ) : IChapterMergeUpscaleTaskManager
 {
-    private static readonly string[] ChapterScopedTaskTypes =
-    {
-        nameof(UpscaleTask),
-        nameof(RepairUpscaleTask),
-        nameof(RenameUpscaledChaptersSeriesTask),
-        nameof(DetectSplitCandidatesTask),
-        nameof(ApplySplitsTask),
-    };
-
     /// <summary>
     ///     Cancels a running chapter-scoped task on whichever processor owns its queue.
     ///     <see cref="ApplySplitsTask"/> is no longer an upscale-family task, so it runs on the standard
@@ -63,7 +54,11 @@ public class ChapterMergeUpscaleTaskManager(
 
         // Find and handle all upscale and split-related tasks for the chapters being merged
         List<PersistedTask> allRelatedTasks = await PersistedTaskQueries
-            .ForTaskTypesAndChapters(dbContext, chapterIds, ChapterScopedTaskTypes)
+            .ForTaskTypesAndChapters(
+                dbContext,
+                chapterIds,
+                TaskClassifier.ChapterScopedTaskTypeNames
+            )
             .OrderBy(p => p.Status == PersistedTaskStatus.Pending ? 0 : 1)
             .ToListAsync(cancellationToken);
 
@@ -73,7 +68,7 @@ public class ChapterMergeUpscaleTaskManager(
 
         foreach (PersistedTask task in allRelatedTasks)
         {
-            int? taskChapterId = GetChapterId(task.Data);
+            int? taskChapterId = TaskClassifier.GetChapterId(task.Data);
             string taskTypeName = task.Data.GetType().Name;
 
             switch (task.Status)
@@ -171,7 +166,7 @@ public class ChapterMergeUpscaleTaskManager(
                     logger.LogDebug(
                         "Successfully canceled and will remove task {TaskType} for chapter {ChapterId}",
                         canceledTask.Data.GetType().Name,
-                        GetChapterId(canceledTask.Data)
+                        TaskClassifier.GetChapterId(canceledTask.Data)
                     );
                 }
                 else
@@ -181,7 +176,7 @@ public class ChapterMergeUpscaleTaskManager(
                     logger.LogWarning(
                         "Task {TaskType} for chapter {ChapterId} still has status {Status} after cancellation wait. Skipping removal to avoid interrupting active processing.",
                         canceledTask.Data.GetType().Name,
-                        GetChapterId(canceledTask.Data),
+                        TaskClassifier.GetChapterId(canceledTask.Data),
                         canceledTask.Status
                     );
                 }
@@ -236,7 +231,7 @@ public class ChapterMergeUpscaleTaskManager(
             .ForTaskTypesAndChapters(
                 dbContext,
                 chapterIds,
-                ChapterScopedTaskTypes,
+                TaskClassifier.ChapterScopedTaskTypeNames,
                 [PersistedTaskStatus.Pending, PersistedTaskStatus.Processing]
             )
             .ToListAsync(cancellationToken);
@@ -248,7 +243,9 @@ public class ChapterMergeUpscaleTaskManager(
                 string.Join(
                     ", ",
                     chapters
-                        .Where(c => pendingTasks.Any(pt => GetChapterId(pt.Data) == c.Id))
+                        .Where(c =>
+                            pendingTasks.Any(pt => TaskClassifier.GetChapterId(pt.Data) == c.Id)
+                        )
                         .Select(c => c.FileName)
                 )
             );
@@ -256,19 +253,6 @@ public class ChapterMergeUpscaleTaskManager(
 
         // Always allow merging since we now handle task management properly
         return new UpscaleCompatibilityResult(true);
-    }
-
-    private static int? GetChapterId(BaseTask task)
-    {
-        return task switch
-        {
-            UpscaleTask t => t.ChapterId,
-            RepairUpscaleTask t => t.ChapterId,
-            RenameUpscaledChaptersSeriesTask t => t.ChapterId,
-            DetectSplitCandidatesTask t => t.ChapterId,
-            ApplySplitsTask t => t.ChapterId,
-            _ => null,
-        };
     }
 
     private async Task QueueUpscaleTaskForMergedChapterIfNeeded(

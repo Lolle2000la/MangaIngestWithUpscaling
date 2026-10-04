@@ -773,7 +773,7 @@ public class DistributedUpscaleTaskProcessor(
     {
         using IServiceScope scope = scopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        return await StandardTaskProcessor.HasSameChapterApplyTaskAsync(dbContext, chapterId, ct);
+        return await ChapterConflictGuard.HasSameChapterApplyTaskAsync(dbContext, chapterId, ct);
     }
 
     public async Task<PersistedTask?> GetTask(CancellationToken stoppingToken)

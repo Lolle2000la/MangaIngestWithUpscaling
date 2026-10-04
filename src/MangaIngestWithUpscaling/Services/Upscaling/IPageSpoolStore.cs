@@ -2,16 +2,17 @@ namespace MangaIngestWithUpscaling.Services.Upscaling;
 
 /// <summary>
 /// Stores the upscaled pages of a page-streamed task and assembles the final chapter from them.
-/// The handlers depend on this seam rather than on the concrete spool, so the single-replica
+/// The handlers depend on this seam rather than on the concrete spool, so the process-local
 /// constraint is stated once here instead of being repeated at every call site.
 ///
 /// The production implementation, <see cref="PageStreamSpool"/>, keeps a task's session in memory
-/// and its page files on local disk, so it is <b>process-local</b>: the manifest that creates a
-/// task's session, the page fetches and the page uploads must all reach the same replica. A
-/// deployment that cannot pin a chapter to one replica would provide a distributed implementation
-/// of this interface — sharing the session state and the page bytes across replicas — and swap it in
-/// via DI; the handlers would not change. (That adapter would also have to rework
-/// <see cref="PageStreamSession"/>, which this interface still exposes.)
+/// and its page files on local disk, so it is <b>process-local by design</b>: the manifest that
+/// creates a task's session, the page fetches and the page uploads must all reach the same replica.
+/// This interface exposes the mutable concrete <see cref="PageStreamSession"/> and the spool's
+/// budget internals and omits lifecycle operations such as <c>Remove</c>/<c>SweepStale</c>, so a
+/// distributed adapter is not achievable without reworking the handlers; a deployment must instead
+/// pin every RPC for a chapter to one replica. This mirrors the single-replica constraint recorded
+/// in <c>docs/PAGE_STREAMING_KNOWN_LIMITATIONS.md</c>.
 /// </summary>
 public interface IPageSpoolStore
 {

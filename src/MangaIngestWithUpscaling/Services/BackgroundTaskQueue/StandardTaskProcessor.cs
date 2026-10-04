@@ -2,7 +2,6 @@ using System.Threading.Channels;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
-using Microsoft.EntityFrameworkCore;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 
@@ -91,19 +90,7 @@ public class StandardTaskProcessor(
         ApplicationDbContext context,
         int chapterId,
         CancellationToken cancellationToken
-    ) =>
-        AnyChapterTaskAsync(
-            context,
-            chapterId,
-            [
-                nameof(UpscaleTask),
-                nameof(RepairUpscaleTask),
-                nameof(DetectSplitCandidatesTask),
-                nameof(RenameUpscaledChaptersSeriesTask),
-            ],
-            [PersistedTaskStatus.Pending, PersistedTaskStatus.Processing],
-            cancellationToken
-        );
+    ) => ChapterConflictGuard.HasSameChapterUpscaleTaskAsync(context, chapterId, cancellationToken);
 
     /// <summary>
     /// True when a same-chapter <see cref="ApplySplitsTask"/> is in flight. The guard above stops an
@@ -116,43 +103,5 @@ public class StandardTaskProcessor(
         ApplicationDbContext context,
         int chapterId,
         CancellationToken cancellationToken
-    ) =>
-        AnyChapterTaskAsync(
-            context,
-            chapterId,
-            [nameof(ApplySplitsTask)],
-            [PersistedTaskStatus.Processing],
-            cancellationToken
-        );
-
-    private static Task<bool> AnyChapterTaskAsync(
-        ApplicationDbContext context,
-        int chapterId,
-        IReadOnlyCollection<string> taskTypes,
-        IReadOnlyCollection<PersistedTaskStatus> statuses,
-        CancellationToken cancellationToken
-    )
-    {
-        if (context.Database.IsRelational())
-        {
-            return PersistedTaskQueries
-                .ForTaskTypesAndChapters(context, [chapterId], taskTypes, statuses)
-                .AnyAsync(cancellationToken);
-        }
-
-        // The InMemory provider (unit tests only) cannot translate the JSON Data column, so filter the
-        // status-matched rows in memory instead. Production always uses a relational provider.
-        var wantedStatuses = statuses.ToHashSet();
-        var wantedTypes = taskTypes.ToHashSet();
-        return Task.FromResult(
-            context
-                .PersistedTasks.Where(t => wantedStatuses.Contains(t.Status))
-                .AsEnumerable()
-                .Any(t =>
-                    wantedTypes.Contains(t.Data.GetType().Name)
-                    && t.Data is IChapterTask chapterTask
-                    && chapterTask.ChapterId == chapterId
-                )
-        );
-    }
+    ) => ChapterConflictGuard.HasSameChapterApplyTaskAsync(context, chapterId, cancellationToken);
 }

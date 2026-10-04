@@ -252,7 +252,7 @@ public class UpscaleTaskProcessor(
     {
         using IServiceScope scope = ScopeFactory.CreateScope();
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-        return await StandardTaskProcessor.HasSameChapterApplyTaskAsync(
+        return await ChapterConflictGuard.HasSameChapterApplyTaskAsync(
             dbContext,
             chapterId,
             stoppingToken
