@@ -137,6 +137,18 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         builder.Logging.ClearProviders();
         builder.Services.AddGrpc();
         builder.Services.AddOptions();
+        // The server owns preprocessing; disable it here so the streaming tests do not need a real
+        // image-resize service on the worker side (the worker now takes its options from the server).
+        builder.Services.AddSingleton<IOptions<UpscalerConfig>>(
+            Options.Create(
+                new UpscalerConfig
+                {
+                    ImageFormatConversionRules = [],
+                    MaxDimensionBeforeUpscaling = null,
+                    EnableSmartDownscale = false,
+                }
+            )
+        );
         builder.Services.AddDbContext<ApplicationDbContext>(o => _database.Configure(o));
         builder.Services.AddSingleton<TaskQueue>();
         builder.Services.AddSingleton<ITaskPersistenceService, TaskPersistenceService>();
@@ -1138,14 +1150,18 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         using (IServiceScope scope = _app.Services.CreateScope())
         {
             PersistedTask repairTask = await LoadTaskAsync(_repairTaskId);
-            bool prepared = await processor.PrepareRepairTaskForRemote(
-                (RepairUpscaleTask)repairTask.Data,
-                repairTask,
-                scope.ServiceProvider,
-                TestContext.Current.CancellationToken
-            );
+            DistributedUpscaleTaskProcessor.RepairPreparationOutcome prepared =
+                await processor.PrepareRepairTaskForRemote(
+                    (RepairUpscaleTask)repairTask.Data,
+                    repairTask,
+                    scope.ServiceProvider,
+                    TestContext.Current.CancellationToken
+                );
 
-            Assert.False(prepared);
+            Assert.Equal(
+                DistributedUpscaleTaskProcessor.RepairPreparationOutcome.Terminal,
+                prepared
+            );
         }
 
         await using ApplicationDbContext context = await _database.CreateContextAsync(
@@ -1180,7 +1196,8 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         using (IServiceScope scope = _app.Services.CreateScope())
         {
             PersistedTask repairTask = await LoadTaskAsync(_repairTaskId);
-            Assert.True(
+            Assert.Equal(
+                DistributedUpscaleTaskProcessor.RepairPreparationOutcome.Prepared,
                 await processor.PrepareRepairTaskForRemote(
                     (RepairUpscaleTask)repairTask.Data,
                     repairTask,
@@ -1277,7 +1294,8 @@ public sealed class PageStreamServerIntegrationTests : IAsyncLifetime
         using (IServiceScope scope = _app.Services.CreateScope())
         {
             PersistedTask repairTask = await LoadTaskAsync(nestedTaskId);
-            Assert.True(
+            Assert.Equal(
+                DistributedUpscaleTaskProcessor.RepairPreparationOutcome.Prepared,
                 await processor.PrepareRepairTaskForRemote(
                     (RepairUpscaleTask)repairTask.Data,
                     repairTask,

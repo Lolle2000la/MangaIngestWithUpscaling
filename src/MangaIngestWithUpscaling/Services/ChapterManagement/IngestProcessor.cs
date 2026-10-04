@@ -945,11 +945,27 @@ public partial class IngestProcessor(
                             /* ignore */
                         }
 
-                        await taskQueue.RemoveTaskAsync(task);
-                        logger.LogInformation(
-                            "Canceled and removed processing upscale task for original chapter {ChapterId} due to merge",
-                            ch.Id
-                        );
+                        if (task.Status == PersistedTaskStatus.Canceled)
+                        {
+                            await taskQueue.RemoveTaskAsync(task);
+                            logger.LogInformation(
+                                "Canceled and removed processing upscale task for original chapter {ChapterId} due to merge",
+                                ch.Id
+                            );
+                        }
+                        else
+                        {
+                            // Still Processing after the wait: a remote worker may be actively writing
+                            // this chapter. Removing the row here would leave the processor's cancel
+                            // unreachable and let it keep writing; leave it to the processor, matching
+                            // the merge manager's guard.
+                            logger.LogWarning(
+                                "Upscale task {TaskId} for original chapter {ChapterId} is still {Status} after cancellation; not removing it to avoid interrupting active processing.",
+                                task.Id,
+                                ch.Id,
+                                task.Status
+                            );
+                        }
                         break;
 
                     default:
