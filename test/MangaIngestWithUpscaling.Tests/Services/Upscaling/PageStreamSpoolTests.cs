@@ -391,11 +391,17 @@ public class PageStreamSpoolTests
     public void ReleaseInFlight_IgnoresAReservationFromAStaleGeneration()
     {
         PageStreamSession session = _spool.GetOrCreateSession(40, "identity-a", "engine", 1);
-        Assert.True(_spool.TryReserveInFlight(session, 0, 100, out long staleGeneration));
+        Assert.Equal(
+            ReserveInFlightResult.Reserved,
+            _spool.TryReserveInFlight(session, 0, 100, out long staleGeneration)
+        );
 
         // The identity changes and resets the session (generation bumps, in-flight zeroed).
         _spool.GetOrCreateSession(40, "identity-b", "engine", 1);
-        Assert.True(_spool.TryReserveInFlight(session, 0, 50, out _));
+        Assert.Equal(
+            ReserveInFlightResult.Reserved,
+            _spool.TryReserveInFlight(session, 0, 50, out _)
+        );
 
         // The stale release must not subtract from the new identity's in-flight accounting.
         _spool.ReleaseInFlight(session, staleGeneration, 100);
@@ -404,7 +410,7 @@ public class PageStreamSpoolTests
 
     [Fact]
     [Trait("Category", "Unit")]
-    public void AssemblePagesOnly_OverwritesAnExistingDestination()
+    public void AssemblePagesOnly_WritesTheMissingPagesToTheProvidedTempPath()
     {
         string directory = Directory.CreateTempSubdirectory("spool_repair").FullName;
         try
@@ -419,10 +425,9 @@ public class PageStreamSpoolTests
 
             _spool.CommitPage(session, 0, temp);
 
+            // The repair finalize passes a fresh unique temp and commits it atomically, so the spool
+            // writes to the given path and no longer deletes an existing destination itself.
             string destination = Path.Combine(directory, "missing.cbz");
-            File.WriteAllBytes(destination, new byte[] { 1 });
-            _spool.AssemblePagesOnly(session, session.Identity, pages, destination);
-            // A re-finalize into the same prepared repair target must not throw.
             _spool.AssemblePagesOnly(session, session.Identity, pages, destination);
 
             using ZipArchive output = ZipFile.OpenRead(destination);
@@ -573,12 +578,49 @@ public class PageStreamSpoolTests
         PageStreamSession session = _spool.GetOrCreateSession(62, "identity", "engine", 2);
 
         // Neither page is committed yet, so both reservations must count against the budget.
-        Assert.True(_spool.TryReserveInFlight(session, 0, PageStreamSpool.MaxTaskBytes - 1, out _));
-        Assert.False(_spool.TryReserveInFlight(session, 1, 2, out _));
+        Assert.Equal(
+            ReserveInFlightResult.Reserved,
+            _spool.TryReserveInFlight(session, 0, PageStreamSpool.MaxTaskBytes - 1, out _)
+        );
+        // Only the peer's in-flight reservation pushes the second over, so it is retryable.
+        Assert.Equal(
+            ReserveInFlightResult.TransientlyFull,
+            _spool.TryReserveInFlight(session, 1, 2, out _)
+        );
 
         // Releasing the first reservation frees the budget for the second.
         _spool.ReleaseInFlight(session, session.Generation, PageStreamSpool.MaxTaskBytes - 1);
-        Assert.True(_spool.TryReserveInFlight(session, 1, 2, out _));
+        Assert.Equal(
+            ReserveInFlightResult.Reserved,
+            _spool.TryReserveInFlight(session, 1, 2, out _)
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void TryReserveInFlight_DistinguishesADeterministicOverflowFromATransientFullBudget()
+    {
+        var spool = new PageStreamSpool(
+            Substitute.For<ILogger<PageStreamSpool>>(),
+            Options.Create(new UpscalerConfig { MaxSpoolBytesPerTask = 100 })
+        );
+        PageStreamSession session = spool.GetOrCreateSession(63, "identity", "engine", 2);
+
+        // Larger than the whole budget: no peer releasing can make it fit.
+        Assert.Equal(
+            ReserveInFlightResult.OverBudget,
+            spool.TryReserveInFlight(session, 0, 101, out _)
+        );
+
+        // Fits the committed total alone, but not alongside another in-flight reservation.
+        Assert.Equal(
+            ReserveInFlightResult.Reserved,
+            spool.TryReserveInFlight(session, 0, 60, out _)
+        );
+        Assert.Equal(
+            ReserveInFlightResult.TransientlyFull,
+            spool.TryReserveInFlight(session, 1, 60, out _)
+        );
     }
 
     [Fact]
@@ -807,6 +849,48 @@ public class PageStreamSpoolTests
             Assert.False(
                 Directory.Exists(idle.SpoolRoot),
                 "A crashed root under the configured spool directory must be reclaimed."
+            );
+        }
+        finally
+        {
+            sweeper.DeleteDirectory(sweeper.SpoolRoot);
+            if (Directory.Exists(configured))
+            {
+                Directory.Delete(configured, true);
+            }
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void SweepStale_ReclaimsOnlyOwnedRootsUnderAConfiguredSpoolDirectory()
+    {
+        // SpoolDirectory is operator-settable and may be shared, so the crashed-root sweep must only
+        // reclaim siblings shaped like the app's own {pid}-{guid} roots.
+        string configured = Directory.CreateTempSubdirectory("spool_owned").FullName;
+        var sweeper = new PageStreamSpool(
+            Substitute.For<ILogger<PageStreamSpool>>(),
+            Options.Create(new UpscalerConfig { SpoolDirectory = configured })
+        );
+        string unrelated = Path.Combine(configured, "unrelated");
+        string owned = Path.Combine(configured, $"12345-{Guid.NewGuid():N}");
+        try
+        {
+            Directory.CreateDirectory(unrelated);
+            Directory.CreateDirectory(owned);
+            DateTime old = DateTime.UtcNow - TimeSpan.FromDays(2);
+            Directory.SetLastWriteTimeUtc(unrelated, old);
+            Directory.SetLastWriteTimeUtc(owned, old);
+
+            sweeper.SweepStale(TimeSpan.FromSeconds(1));
+
+            Assert.True(
+                Directory.Exists(unrelated),
+                "An unrelated sibling under a shared spool directory must not be deleted."
+            );
+            Assert.False(
+                Directory.Exists(owned),
+                "A root shaped like the app's own spool root is reclaimed."
             );
         }
         finally

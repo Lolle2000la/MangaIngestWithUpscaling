@@ -613,30 +613,33 @@ public partial class UpscalingDistributionService
 
                         // Reserve against the per-task budget before writing, so concurrent uploads
                         // cannot each fill temp before any committed-byte check runs.
-                        if (
-                            !pageStreamSpool.TryReserveInFlight(
-                                session,
-                                pageIndex,
-                                length,
-                                out long generation
-                            )
-                        )
+                        ReserveInFlightResult reservation = pageStreamSpool.TryReserveInFlight(
+                            session,
+                            pageIndex,
+                            length,
+                            out long generation
+                        );
+                        if (reservation != ReserveInFlightResult.Reserved)
                         {
-                            // The per-task budget is transiently full because concurrent uploads hold
-                            // reservations that have not been committed yet; the page may well fit
-                            // once peers finish. A committed-total overflow is the deterministic case
-                            // (handled at commit, below). Restart rather than fail so a page that would
-                            // fit is not dropped along with the whole spool.
+                            // OverBudget is deterministic: the committed total plus this page already
+                            // exceeds the per-task cap even with zero in-flight reservations, so
+                            // retrying can never succeed. TransientlyFull reflects only peers'
+                            // in-flight reservations, which will commit or release; restart so a page
+                            // that would fit is not dropped along with the whole spool.
+                            PageStreamDisposition disposition =
+                                reservation == ReserveInFlightResult.OverBudget
+                                    ? PageStreamDisposition.Terminal
+                                    : PageStreamDisposition.Retry;
                             return new UploadPageResponse
                             {
                                 Success = false,
                                 Message =
-                                    "The spool budget is temporarily exhausted; restart the chapter.",
+                                    reservation == ReserveInFlightResult.OverBudget
+                                        ? $"Task {taskId} exceeds the maximum spooled size."
+                                        : "The spool budget is temporarily exhausted; restart the chapter.",
                                 TaskId = taskId,
                                 PageIndex = pageIndex,
-                                Terminal = PageStreamRejections.ToWireTerminal(
-                                    PageStreamDisposition.Retry
-                                ),
+                                Terminal = PageStreamRejections.ToWireTerminal(disposition),
                             };
                         }
 
@@ -1099,20 +1102,28 @@ public partial class UpscalingDistributionService
 
         // Mirror the upscale path's budget reservation: several detection uploads in flight could
         // otherwise each write a full result before any committed-byte check runs.
-        if (
-            !pageStreamSpool.TryReserveInFlight(
-                session,
-                request.PageIndex,
-                resultBytes.Length,
-                out long reservationGeneration
-            )
-        )
+        ReserveInFlightResult reservation = pageStreamSpool.TryReserveInFlight(
+            session,
+            request.PageIndex,
+            resultBytes.Length,
+            out long reservationGeneration
+        );
+        if (reservation != ReserveInFlightResult.Reserved)
         {
+            // OverBudget is deterministic; TransientlyFull only reflects peers' in-flight
+            // reservations, which will commit or release, so restart rather than fail the task.
+            PageStreamDisposition disposition =
+                reservation == ReserveInFlightResult.OverBudget
+                    ? PageStreamDisposition.Terminal
+                    : PageStreamDisposition.Retry;
             return new UploadDetectionResultResponse
             {
                 Success = false,
-                Message = $"Task {request.TaskId} exceeds the maximum spooled size.",
-                Terminal = PageStreamRejections.ToWireTerminal(PageStreamDisposition.Terminal),
+                Message =
+                    reservation == ReserveInFlightResult.OverBudget
+                        ? $"Task {request.TaskId} exceeds the maximum spooled size."
+                        : "The spool budget is temporarily exhausted; restart the chapter.",
+                Terminal = PageStreamRejections.ToWireTerminal(disposition),
             };
         }
 
@@ -1826,12 +1837,33 @@ public partial class UpscalingDistributionService
             );
         }
 
+        string destination = repairState.UpscaledMissingPagesCbzPath;
+        string? destinationDirectory = Path.GetDirectoryName(destination);
+        if (destinationDirectory is not null)
+        {
+            fileSystem.CreateDirectory(destinationDirectory);
+        }
+
+        // Mirror the full-assembly path: build the repair CBZ beside its destination and rename it
+        // into place, so a concurrent reader/merger never sees a missing or half-written archive.
+        string tempCbz = Path.Combine(
+            destinationDirectory ?? Path.GetTempPath(),
+            $".repair_{pageContext.Task.Id}_{Guid.NewGuid():N}.tmp"
+        );
+        using AtomicFileReplacement replacement = AtomicFileReplacement.BeginWithTempPath(
+            destination,
+            tempCbz,
+            _logger
+        );
+
         pageStreamSpool.AssemblePagesOnly(
             session,
             pageContext.Identity,
             pageContext.Pages,
-            repairState.UpscaledMissingPagesCbzPath
+            replacement.TempPath
         );
+
+        replacement.Commit(fileSystem);
 
         // Runs HandleRepairTaskCompletion, which merges the missing pages into the existing
         // upscaled CBZ and marks the task complete.

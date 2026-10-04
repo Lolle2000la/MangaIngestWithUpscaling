@@ -229,7 +229,8 @@ public class PageStreamSpoolConcurrencyTests
                 for (int index = worker; index < pages; index += Workers)
                 {
                     byte[] payload = Enumerable.Repeat((byte)(index + 1), index + 1).ToArray();
-                    Assert.True(
+                    Assert.Equal(
+                        ReserveInFlightResult.Reserved,
                         _spool.TryReserveInFlight(
                             session,
                             index,
@@ -269,7 +270,10 @@ public class PageStreamSpoolConcurrencyTests
             4,
             _ =>
             {
-                if (_spool.TryReserveInFlight(contended, 0, half, out long generation))
+                if (
+                    _spool.TryReserveInFlight(contended, 0, half, out long generation)
+                    == ReserveInFlightResult.Reserved
+                )
                 {
                     granted.Enqueue(generation);
                 }

@@ -29,6 +29,25 @@ public enum CommitPageResult
     OverBudget,
 }
 
+/// <summary>Outcome of reserving in-flight bytes for a still-streaming page.</summary>
+public enum ReserveInFlightResult
+{
+    /// <summary>The bytes were reserved against the per-task budget.</summary>
+    Reserved,
+
+    /// <summary>
+    /// The reservation fits the committed total but not the peers' current in-flight reservations;
+    /// it may succeed once those peers commit or release. Retryable.
+    /// </summary>
+    TransientlyFull,
+
+    /// <summary>
+    /// The committed total plus this page alone already exceeds the per-task budget, so no peer
+    /// releasing a reservation can make it fit. Deterministic.
+    /// </summary>
+    OverBudget,
+}
+
 /// <summary>
 /// Process-local spool of upscaled pages for page-streamed tasks. Pages are written atomically as
 /// they arrive and the final CBZ is assembled from the source archive plus the spooled pages, so a
@@ -491,12 +510,15 @@ public sealed class PageStreamSpool : IPageSpoolStore
     /// <summary>
     /// Reserves in-flight bytes for a page that is still streaming, so many concurrent uploads
     /// cannot each write up to <c>MaxPageBytes</c> to temp before any committed-byte check runs.
-    /// Returns false when the reservation would exceed <see cref="MaxTaskBytes"/>. A re-upload of a
-    /// page that is already committed is measured against the bytes it replaces. The returned
-    /// <paramref name="generation"/> must be passed to <see cref="ReleaseInFlight"/> so a reservation
-    /// made under an identity that was since reset cannot corrupt the new identity's accounting.
+    /// Returns <see cref="ReserveInFlightResult.OverBudget"/> when the committed total plus this
+    /// page alone exceeds <see cref="MaxTaskBytes"/> (deterministic), and
+    /// <see cref="ReserveInFlightResult.TransientlyFull"/> when only peers' in-flight reservations
+    /// push it over (retryable). A re-upload of a page that is already committed is measured against
+    /// the bytes it replaces. The returned <paramref name="generation"/> must be passed to
+    /// <see cref="ReleaseInFlight"/> so a reservation made under an identity that was since reset
+    /// cannot corrupt the new identity's accounting.
     /// </summary>
-    public bool TryReserveInFlight(
+    public ReserveInFlightResult TryReserveInFlight(
         PageStreamSession session,
         int pageIndex,
         long bytes,
@@ -509,17 +531,22 @@ public sealed class PageStreamSpool : IPageSpoolStore
             // A re-upload replaces the page's committed bytes, so account for the replaced page
             // rather than double-counting it against the budget.
             long previous = session.PageSizes.TryGetValue(pageIndex, out long prev) ? prev : 0;
-            if (
-                session.TotalBytes - previous + session.InFlightByGeneration.Values.Sum() + bytes
-                > _maxTaskBytes
-            )
+            long committedAfter = session.TotalBytes - previous + bytes;
+            if (committedAfter > _maxTaskBytes)
             {
-                return false;
+                // The page does not fit the committed total even with zero in-flight reservations,
+                // so waiting for peers to release can never make it succeed.
+                return ReserveInFlightResult.OverBudget;
+            }
+
+            if (committedAfter + session.InFlightByGeneration.Values.Sum() > _maxTaskBytes)
+            {
+                return ReserveInFlightResult.TransientlyFull;
             }
 
             session.InFlightByGeneration[generation] =
                 session.InFlightByGeneration.GetValueOrDefault(generation) + bytes;
-            return true;
+            return ReserveInFlightResult.Reserved;
         }
     }
 
@@ -793,10 +820,8 @@ public sealed class PageStreamSpool : IPageSpoolStore
             Directory.CreateDirectory(destinationDirectory);
         }
 
-        // ZipArchiveMode.Create uses FileMode.CreateNew; a re-finalize into the same prepared repair
-        // target would otherwise throw an opaque IOException.
-        File.Delete(destinationPath);
-
+        // The caller passes a fresh, unique temp path (the repair finalize commits it atomically),
+        // so there is no existing destination to delete here.
         using ZipArchive output = ZipFile.Open(destinationPath, ZipArchiveMode.Create);
         foreach (SpoolPageDescriptor page in pages)
         {
@@ -930,6 +955,13 @@ public sealed class PageStreamSpool : IPageSpoolStore
                         continue;
                     }
 
+                    // SpoolParent is operator-settable and may be shared: reclaim only siblings the
+                    // app itself created, never an unrelated directory that happens to live there.
+                    if (!IsOwnedSpoolRootName(Path.GetFileName(directory)))
+                    {
+                        continue;
+                    }
+
                     try
                     {
                         if (GetLatestWriteUtc(directory) < cutoff)
@@ -976,6 +1008,23 @@ public sealed class PageStreamSpool : IPageSpoolStore
         }
 
         return latest;
+    }
+
+    /// <summary>
+    /// True when <paramref name="name"/> has the shape this app gives its spool roots:
+    /// <c>{process id}-{32 hex guid}</c>. The configured spool directory is dedicated to those roots,
+    /// so the crashed-root sweep must ignore every other sibling rather than delete it.
+    /// </summary>
+    private static bool IsOwnedSpoolRootName(string name)
+    {
+        int separator = name.IndexOf('-');
+        if (separator <= 0)
+        {
+            return false;
+        }
+
+        return int.TryParse(name.AsSpan(0, separator), out _)
+            && Guid.TryParseExact(name.AsSpan(separator + 1), "N", out _);
     }
 }
 

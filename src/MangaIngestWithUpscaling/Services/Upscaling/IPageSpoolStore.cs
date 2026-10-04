@@ -64,10 +64,13 @@ public interface IPageSpoolStore
     /// <summary>
     /// Reserves in-flight bytes for a page that is still streaming, so many concurrent uploads
     /// cannot each write up to <c>MaxPageBytes</c> to temp before any committed-byte check runs.
-    /// Returns false when the reservation would exceed the per-task budget. The returned
-    /// <paramref name="generation"/> must be passed to <see cref="ReleaseInFlight"/>.
+    /// Returns <see cref="ReserveInFlightResult.OverBudget"/> when the committed total plus this page
+    /// alone exceeds the per-task budget (deterministic, retrying cannot help) and
+    /// <see cref="ReserveInFlightResult.TransientlyFull"/> when only peers' in-flight reservations
+    /// push it over (retryable). The returned <paramref name="generation"/> must be passed to
+    /// <see cref="ReleaseInFlight"/>.
     /// </summary>
-    bool TryReserveInFlight(
+    ReserveInFlightResult TryReserveInFlight(
         PageStreamSession session,
         int pageIndex,
         long bytes,

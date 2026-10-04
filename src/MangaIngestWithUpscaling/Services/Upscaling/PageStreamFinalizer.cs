@@ -105,6 +105,23 @@ public sealed class PageStreamFinalizer(IPageSpoolStore spool, ILogger logger)
     {
         if (!spool.IsComplete(session))
         {
+            // A concurrent manifest can reset the session between the page commit and here, so the
+            // page was just discarded and IsComplete is false for the new identity. Reporting
+            // NotComplete would be mapped to success by the upload handlers for a page that no longer
+            // exists, and a last-page upload could strand the task. Re-check identity/finalize first.
+            if (!string.Equals(session.Identity, identity, StringComparison.Ordinal))
+            {
+                return new PageStreamFinalizeOutcome(
+                    PageStreamFinalizeStatus.IdentityRaced,
+                    session
+                );
+            }
+
+            if (spool.IsFinalized(session))
+            {
+                return new PageStreamFinalizeOutcome(PageStreamFinalizeStatus.Finalized, session);
+            }
+
             return new PageStreamFinalizeOutcome(PageStreamFinalizeStatus.NotComplete, session);
         }
 

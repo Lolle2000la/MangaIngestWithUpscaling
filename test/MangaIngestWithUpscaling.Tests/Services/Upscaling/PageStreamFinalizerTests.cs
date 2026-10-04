@@ -40,6 +40,58 @@ public class PageStreamFinalizerTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public async Task FinalizeAsync_WhenAnIncompleteSessionIdentityRaced_ReturnsIdentityRaced()
+    {
+        var spool = Substitute.For<IPageSpoolStore>();
+        spool.IsComplete(Arg.Any<PageStreamSession>()).Returns(false);
+        PageStreamSession session = Session();
+        bool finalized = false;
+
+        // A concurrent manifest reset the session, so the just-committed page was discarded: the
+        // incomplete session must not be reported as NotComplete (which the handlers map to success).
+        PageStreamFinalizeOutcome outcome = await Finalizer(spool)
+            .FinalizeAsync(
+                session,
+                "a-different-identity",
+                () =>
+                {
+                    finalized = true;
+                    return Task.CompletedTask;
+                },
+                _ => { },
+                (_, _) => Task.CompletedTask,
+                Texts
+            );
+
+        Assert.Equal(PageStreamFinalizeStatus.IdentityRaced, outcome.Status);
+        Assert.False(finalized);
+        spool.DidNotReceive().TryBeginAssembly(Arg.Any<PageStreamSession>(), Arg.Any<string>());
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task FinalizeAsync_WhenAnIncompleteSessionWasFinalized_ReturnsFinalized()
+    {
+        var spool = Substitute.For<IPageSpoolStore>();
+        spool.IsComplete(Arg.Any<PageStreamSession>()).Returns(false);
+        spool.IsFinalized(Arg.Any<PageStreamSession>()).Returns(true);
+        PageStreamSession session = Session();
+
+        PageStreamFinalizeOutcome outcome = await Finalizer(spool)
+            .FinalizeAsync(
+                session,
+                session.Identity,
+                () => Task.CompletedTask,
+                _ => { },
+                (_, _) => Task.CompletedTask,
+                Texts
+            );
+
+        Assert.Equal(PageStreamFinalizeStatus.Finalized, outcome.Status);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public async Task FinalizeAsync_WhenTheFinalizeSucceeds_ReturnsFinalizedSuccessfully()
     {
         var spool = Complete();

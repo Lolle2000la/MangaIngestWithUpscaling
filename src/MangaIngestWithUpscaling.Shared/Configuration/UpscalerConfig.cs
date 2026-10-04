@@ -77,9 +77,11 @@ public record UpscalerConfig
         );
 
     /// <summary>
-    /// Directory the page-streaming spool is written to. Defaults to a subdirectory of the system temp
-    /// directory. Set this to a path on a real disk when <c>/tmp</c> is a RAM-backed tmpfs, so spooling
-    /// large chapters cannot exhaust memory.
+    /// Dedicated, app-owned directory the page-streaming spool is written to. The app creates its own
+    /// <c>{process id}-{guid}</c> roots under it and sweeps only those, so do not point it at a
+    /// directory that holds unrelated data. Defaults to a subdirectory of the system temp directory.
+    /// Set this to a path on a real disk when <c>/tmp</c> is a RAM-backed tmpfs, so spooling large
+    /// chapters cannot exhaust memory.
     /// </summary>
     public string? SpoolDirectory { get; set; }
 
