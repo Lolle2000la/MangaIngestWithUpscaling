@@ -12,6 +12,7 @@ using MangaIngestWithUpscaling.Services.Upscaling;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
+using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.EntityFrameworkCore;
 using SharedCompressionFormat = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat;
@@ -236,6 +237,11 @@ public partial class UpscalingDistributionService
                 ? null
                 : ToProtoProfile(pageContext.Profile),
             MaxPagePixels = await GetOrComputeMaxPagePixelsAsync(pageContext),
+            // The server owns the preprocessing settings; send them so the streamed chapter is
+            // preprocessed with the operator's intent rather than the worker's own config.
+            PreprocessingJson = JsonSerializer.Serialize(
+                ImagePreprocessingOptions.FromConfig(_upscalerConfig)
+            ),
         };
         response.Pages.AddRange(
             pageContext.Pages.Select(p => new PageDescriptor

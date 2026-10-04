@@ -12,6 +12,7 @@ using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.Upscaling;
+using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
@@ -19,6 +20,7 @@ using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace MangaIngestWithUpscaling.Api.Upscaling;
 
@@ -34,10 +36,12 @@ public partial class UpscalingDistributionService(
     IUpscalerJsonHandlingService upscalerJsonHandlingService,
     IMetadataHandlingService metadataHandling,
     IImageResizeService imageResizeService,
+    IOptions<UpscalerConfig> upscalerConfig,
     ILogger<UpscalingDistributionService> logger
 ) : UpscalingService.UpscalingServiceBase
 {
     private readonly ILogger<UpscalingDistributionService> _logger = logger;
+    private readonly UpscalerConfig _upscalerConfig = upscalerConfig.Value;
 
     public override Task<CheckConnectionResponse> CheckConnection(
         CheckConnectionRequest request,

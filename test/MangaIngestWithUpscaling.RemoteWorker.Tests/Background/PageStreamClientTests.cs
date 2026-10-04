@@ -1,9 +1,11 @@
 using System.IO.Compression;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using Google.Protobuf;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.RemoteWorker.Background;
+using MangaIngestWithUpscaling.RemoteWorker.Configuration;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
@@ -60,6 +62,48 @@ public class PageStreamClientTests
             Assert.Equal(new byte[] { 3, 2, 1 }, ReadEntry(zip, "001.webp"));
             Assert.Equal(new byte[] { 6, 5, 4 }, ReadEntry(zip, "002.webp"));
             Assert.Equal("<ComicInfo/>"u8.ToArray(), ReadEntry(zip, "ComicInfo.xml"));
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunAsync_UsesTheServersPreprocessingOptions()
+    {
+        // The server owns the preprocessing settings, so the worker must apply the options the
+        // manifest carries, not its own (here: disabled) configuration.
+        string directory = Directory.CreateTempSubdirectory("page_stream_preprocess").FullName;
+        try
+        {
+            string source = CreateSourceCbz(directory);
+            string destination = Path.Combine(directory, "out.cbz");
+            var server = new FakePageServer(source, destination)
+            {
+                PreprocessingJson = JsonSerializer.Serialize(
+                    new ImagePreprocessingOptions { MaxDimension = 1234 },
+                    WorkerJsonContext.Default.ImagePreprocessingOptions
+                ),
+            };
+            var client = server.CreateClient();
+            var resize = Substitute.For<IImageResizeService>();
+            var sut = CreateClient(
+                new FakeWorkerClient(),
+                CreateScopeFactory(resize),
+                new UpscalerConfig { ImageFormatConversionRules = [] }
+            );
+
+            await sut.RunAsync(client, 1, Profile, TestContext.Current.CancellationToken);
+
+            await resize
+                .Received(server.Pages.Count)
+                .PreprocessImageInPlaceAsync(
+                    Arg.Any<string>(),
+                    Arg.Is<ImagePreprocessingOptions>(o => o.MaxDimension == 1234),
+                    Arg.Any<CancellationToken>()
+                );
         }
         finally
         {
@@ -551,6 +595,7 @@ public class PageStreamClientTests
         public HashSet<int> EmptyFetchForPage { get; } = new();
         public Dictionary<int, byte[]> Uploaded { get; } = new();
         public bool OmitPagesWhenComplete { get; set; }
+        public string PreprocessingJson { get; set; } = string.Empty;
 
         public UpscalingService.UpscalingServiceClient CreateClient()
         {
@@ -593,6 +638,7 @@ public class PageStreamClientTests
                 TaskIdentity = Identity,
                 TaskType = TaskType.Upscale,
                 Complete = Completed.Count >= Pages.Count,
+                PreprocessingJson = PreprocessingJson,
             };
             // The real server omits the descriptors when it reports the chapter as already
             // complete; allow tests to reproduce that shape.

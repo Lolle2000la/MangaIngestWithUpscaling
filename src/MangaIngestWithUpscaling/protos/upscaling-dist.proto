@@ -105,6 +105,11 @@ message PageManifestResponse {
   // Largest page (in pixels) in the source archive, so the worker can scale its inactivity timeout
   // the same way the local upscaler does. 0 when unknown.
   int64 max_page_pixels = 8;
+  // The server's effective preprocessing options as JSON (ImagePreprocessingOptions). The server owns
+  // MaxDimensionBeforeUpscaling / ImageFormatConversionRules / smart-downscale, so a streamed chapter
+  // must be preprocessed with the server's configuration, not the worker's. Empty means "no
+  // preprocessing"; an older server that does not send it makes the worker fall back to its own.
+  string preprocessing_json = 9;
 }
 
 message GetPagesRequest {

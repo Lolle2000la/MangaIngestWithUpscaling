@@ -4,6 +4,7 @@ using System.Threading.Channels;
 using Google.Protobuf;
 using Grpc.Core;
 using MangaIngestWithUpscaling.Api.Upscaling;
+using MangaIngestWithUpscaling.RemoteWorker.Configuration;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
@@ -67,6 +68,38 @@ public sealed class PageStreamClient(
         TimeSpan scaled = upscalerConfig.Value.UpscaleTimeout * scaling;
         TimeSpan floor = TimeSpan.FromMinutes(15);
         return scaled > floor ? scaled : floor;
+    }
+
+    /// <summary>
+    /// Resolves the preprocessing the server wants for a chapter. The server owns
+    /// <c>MaxDimensionBeforeUpscaling</c> / format-conversion / smart-downscale, so its options win; an
+    /// older server that does not send them makes the worker fall back to its own configuration.
+    /// </summary>
+    private ImagePreprocessingOptions ResolvePreprocessing(PageManifestResponse manifest)
+    {
+        if (string.IsNullOrEmpty(manifest.PreprocessingJson))
+        {
+            return ImagePreprocessingOptions.FromConfig(upscalerConfig.Value);
+        }
+
+        try
+        {
+            // Source-generated context: the RemoteWorker is AOT-published, so reflection-based
+            // deserialization is not available.
+            return JsonSerializer.Deserialize(
+                    manifest.PreprocessingJson,
+                    WorkerJsonContext.Default.ImagePreprocessingOptions
+                ) ?? ImagePreprocessingOptions.FromConfig(upscalerConfig.Value);
+        }
+        catch (JsonException ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Could not parse the server's preprocessing options for task {TaskId}; using the worker's own configuration.",
+                manifest.TaskId
+            );
+            return ImagePreprocessingOptions.FromConfig(upscalerConfig.Value);
+        }
     }
 
     public async Task RunAsync(
@@ -250,7 +283,8 @@ public sealed class PageStreamClient(
                     missing,
                     nameByIndex,
                     sourceDirectory,
-                    uploadFailureCts.Token
+                    uploadFailureCts.Token,
+                    preprocessing: ResolvePreprocessing(manifest)
                 ),
                 progressReporter.Progress,
                 OnPageDone,
@@ -559,7 +593,8 @@ public sealed class PageStreamClient(
         string sourceDirectory,
         [System.Runtime.CompilerServices.EnumeratorCancellation]
             CancellationToken cancellationToken,
-        bool preprocess = true
+        bool preprocess = true,
+        ImagePreprocessingOptions? preprocessing = null
     )
     {
         if (missingPages.Count == 0)
@@ -581,16 +616,23 @@ public sealed class PageStreamClient(
         // Preprocess each page in place so a streamed chapter matches the whole-CBZ path, which
         // preprocesses the archive before upscaling (max dimension, format conversion, smart
         // downscale). A no-op when preprocessing is disabled. Detection reads the page as-is, so it
-        // passes preprocess: false.
+        // passes preprocess: false. The options come from the server (which owns the settings) when
+        // it sent them, otherwise from the worker's own configuration.
         IServiceScope? preprocessingScope = null;
         IImageResizeService? resizeService = null;
         ImagePreprocessingOptions? preprocessingOptions = null;
-        if (preprocess && ImagePreprocessingOptions.IsEnabled(upscalerConfig.Value))
+        ImagePreprocessingOptions? effectivePreprocessing = preprocess
+            ? preprocessing ?? ImagePreprocessingOptions.FromConfig(upscalerConfig.Value)
+            : null;
+        if (
+            effectivePreprocessing is not null
+            && ImagePreprocessingOptions.IsEnabled(effectivePreprocessing)
+        )
         {
             preprocessingScope = scopeFactory.CreateScope();
             resizeService =
                 preprocessingScope.ServiceProvider.GetRequiredService<IImageResizeService>();
-            preprocessingOptions = ImagePreprocessingOptions.FromConfig(upscalerConfig.Value);
+            preprocessingOptions = effectivePreprocessing;
         }
 
         FileStream? file = null;
