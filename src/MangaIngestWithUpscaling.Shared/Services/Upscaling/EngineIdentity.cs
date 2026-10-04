@@ -16,17 +16,18 @@ namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 public static class EngineIdentity
 {
     /// <summary>
-    /// Identity of the upscaler: the preprocessing configuration, the effective compute mode (CPU vs
-    /// GPU) and accelerator backend, the app/engine build, the resolved workflow (appstate2.json) and
-    /// the model files under <see cref="UpscalerConfig.ModelsDirectory"/>. The specific GPU index is
-    /// deliberately excluded so a hand-off between two GPUs of the same backend keeps the spool; that
-    /// assumes the same models and preprocessing produce the same pixels on every device of a backend.
-    /// The torch/backend/driver version is not available here and is also assumed stable. Both are
-    /// assumptions rather than guarantees — a backend or runtime that diverges must not have its pages
-    /// mixed into another's chapter. Models are fingerprinted by relative path, size and a 64 KiB
-    /// sample from the head, middle and tail of each file — stable across workers with identical models
-    /// and far cheaper than hashing the ~gigabytes of weights, while still distinguishing a same-size
-    /// fine-tune that diverges past the first window.
+    /// Identity of the upscaler: the effective compute mode (CPU vs GPU) and accelerator backend, the
+    /// app/engine build, the resolved workflow (appstate2.json) and the model files under
+    /// <see cref="UpscalerConfig.ModelsDirectory"/>. Preprocessing is deliberately excluded: the
+    /// server owns it and folds the effective options into the content identity instead, so the worker
+    /// hashes only what it controls. The specific GPU index is deliberately excluded so a hand-off
+    /// between two GPUs of the same backend keeps the spool; that assumes the same models produce the
+    /// same pixels on every device of a backend. The torch/backend/driver version is not available
+    /// here and is also assumed stable. Both are assumptions rather than guarantees — a backend or
+    /// runtime that diverges must not have its pages mixed into another's chapter. Models are
+    /// fingerprinted by relative path, size and a 64 KiB sample from the head, middle and tail of each
+    /// file — stable across workers with identical models and far cheaper than hashing the ~gigabytes
+    /// of weights, while still distinguishing a same-size fine-tune that diverges past the first window.
     /// </summary>
     /// <param name="resolvedBackend">
     /// The backend the Python environment actually resolved to (e.g. <c>InstalledBackend</c> after
@@ -38,29 +39,11 @@ public static class EngineIdentity
     public static string ForUpscaler(UpscalerConfig config, GpuBackend? resolvedBackend = null)
     {
         var material = new StringBuilder("upscaler|");
-        // Normalize "disabled" spellings so an inactive setting does not needlessly invalidate every
-        // spool: null and 0 both mean "no max dimension", and the smart-downscale knobs only matter
-        // when the feature is enabled.
-        material
-            .Append(
-                config.MaxDimensionBeforeUpscaling is null or 0
-                    ? "-"
-                    : config.MaxDimensionBeforeUpscaling.Value.ToString(
-                        CultureInfo.InvariantCulture
-                    )
-            )
-            .Append('|')
-            .Append(config.EnableSmartDownscale)
-            .Append('|');
-        if (config.EnableSmartDownscale)
-        {
-            material
-                .Append(config.SmartDownscaleThreshold.ToString("R", CultureInfo.InvariantCulture))
-                .Append('|')
-                .Append(config.SmartDownscaleFactor.ToString("R", CultureInfo.InvariantCulture))
-                .Append('|');
-        }
-
+        // Preprocessing (max dimension, format conversion, smart downscale) is deliberately NOT hashed
+        // here. The server owns it and sends the effective options to the worker, which applies them;
+        // the server folds them into the content identity instead, so a preprocessing change resets
+        // the spool there. Hashing the worker's local copy would be wrong in both directions: it would
+        // miss a server-side change and spuriously reject a worker whose local config differs.
         material
             .Append(config.UseFp16)
             .Append('|')
@@ -75,17 +58,6 @@ public static class EngineIdentity
             // keeps the spool.
             .Append(resolvedBackend ?? config.PreferredGpuBackend)
             .Append('|');
-
-        foreach (ImageFormatConversionRule rule in config.ImageFormatConversionRules ?? [])
-        {
-            material
-                .Append(rule.FromFormat)
-                .Append('>')
-                .Append(rule.ToFormat)
-                .Append('@')
-                .Append(rule.Quality?.ToString(CultureInfo.InvariantCulture) ?? "-")
-                .Append(',');
-        }
 
         material.Append('|').Append(BuildVersion()).Append('|');
         AppendFileContentHash(material, Path.Combine(AppContext.BaseDirectory, "appstate2.json"));

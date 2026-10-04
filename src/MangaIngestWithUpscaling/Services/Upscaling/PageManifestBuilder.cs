@@ -1,7 +1,10 @@
+using System.Globalization;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
+using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Constants;
+using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
 using SharedCompressionFormat = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat;
 using SharedUpscalerProfile = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.UpscalerProfile;
 
@@ -139,7 +142,8 @@ public static class PageManifestBuilder
         string sourcePath,
         string upscaledPath,
         SharedUpscalerProfile profile,
-        IReadOnlyList<string> missingPages
+        IReadOnlyList<string> missingPages,
+        ImagePreprocessingOptions preprocessing
     )
     {
         FileInfo source = new(sourcePath);
@@ -158,9 +162,51 @@ public static class PageManifestBuilder
             (int)profile.ScalingFactor,
             profile.Quality,
             (int)profile.UpscalerMethod,
-            string.Join(',', missingPages.OrderBy(p => p, StringComparer.Ordinal))
+            string.Join(',', missingPages.OrderBy(p => p, StringComparer.Ordinal)),
+            PreprocessingFingerprint(preprocessing)
         );
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
+    }
+
+    /// <summary>
+    /// A stable fingerprint of the effective preprocessing. The server owns these options and sends
+    /// them to the worker, so they belong in the server-computed content identity: a change to them
+    /// must discard the spool (otherwise pages preprocessed differently could be assembled into one
+    /// chapter). The worker's engine identity deliberately excludes them.
+    /// </summary>
+    internal static string PreprocessingFingerprint(ImagePreprocessingOptions options)
+    {
+        var material = new StringBuilder();
+        material
+            .Append(
+                options.MaxDimension is null or 0
+                    ? "-"
+                    : options.MaxDimension.Value.ToString(CultureInfo.InvariantCulture)
+            )
+            .Append('|')
+            .Append(options.EnableSmartDownscale)
+            .Append('|');
+        if (options.EnableSmartDownscale)
+        {
+            material
+                .Append(options.SmartDownscaleThreshold.ToString("R", CultureInfo.InvariantCulture))
+                .Append('|')
+                .Append(options.SmartDownscaleFactor.ToString("R", CultureInfo.InvariantCulture))
+                .Append('|');
+        }
+
+        foreach (ImageFormatConversionRule rule in options.FormatConversionRules ?? [])
+        {
+            material
+                .Append(rule.FromFormat)
+                .Append('>')
+                .Append(rule.ToFormat)
+                .Append('@')
+                .Append(rule.Quality?.ToString(CultureInfo.InvariantCulture) ?? "-")
+                .Append(',');
+        }
+
+        return material.ToString();
     }
 
     internal static List<SpoolPageDescriptor> BuildDetectionPageDescriptors(string sourcePath)
@@ -212,7 +258,11 @@ public static class PageManifestBuilder
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
     }
 
-    internal static string ComputeIdentity(string sourcePath, SharedUpscalerProfile profile)
+    internal static string ComputeIdentity(
+        string sourcePath,
+        SharedUpscalerProfile profile,
+        ImagePreprocessingOptions preprocessing
+    )
     {
         FileInfo info = new(sourcePath);
         string material = string.Join(
@@ -224,7 +274,8 @@ public static class PageManifestBuilder
             (int)profile.CompressionFormat,
             (int)profile.ScalingFactor,
             profile.Quality,
-            (int)profile.UpscalerMethod
+            (int)profile.UpscalerMethod,
+            PreprocessingFingerprint(preprocessing)
         );
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(material)));
     }

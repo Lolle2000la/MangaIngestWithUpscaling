@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using MangaIngestWithUpscaling.Services.Upscaling;
+using MangaIngestWithUpscaling.Shared.Services.ImageProcessing;
 using Xunit;
 using SharedCompressionFormat = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.CompressionFormat;
 using SharedScaleFactor = MangaIngestWithUpscaling.Shared.Data.LibraryManagement.ScaleFactor;
@@ -264,13 +265,40 @@ public class PageManifestBuilderTests
         {
             string source = CreateCbz(directory, ("001.jpg", new byte[] { 1 }));
 
-            string webp = PageManifestBuilder.ComputeIdentity(source, Profile());
+            string webp = PageManifestBuilder.ComputeIdentity(source, Profile(), Preprocessing());
             string png = PageManifestBuilder.ComputeIdentity(
                 source,
-                Profile(SharedCompressionFormat.Png)
+                Profile(SharedCompressionFormat.Png),
+                Preprocessing()
             );
 
             Assert.NotEqual(webp, png);
+        }
+        finally
+        {
+            Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ComputeIdentity_ChangesWithPreprocessing()
+    {
+        // The server owns preprocessing and folds it into the content identity, so a change resets
+        // the spool (the worker's engine identity deliberately excludes it).
+        string directory = Directory.CreateTempSubdirectory("identity_prep").FullName;
+        try
+        {
+            string source = CreateCbz(directory, ("001.jpg", new byte[] { 1 }));
+
+            string none = PageManifestBuilder.ComputeIdentity(source, Profile(), Preprocessing());
+            string resized = PageManifestBuilder.ComputeIdentity(
+                source,
+                Profile(),
+                new ImagePreprocessingOptions { MaxDimension = 1600 }
+            );
+
+            Assert.NotEqual(none, resized);
         }
         finally
         {
@@ -296,13 +324,15 @@ public class PageManifestBuilderTests
                 source,
                 upscaled,
                 Profile(),
-                new[] { "002" }
+                new[] { "002" },
+                Preprocessing()
             );
             string two = PageManifestBuilder.ComputeRepairIdentity(
                 source,
                 upscaled,
                 Profile(),
-                new[] { "001", "002" }
+                new[] { "001", "002" },
+                Preprocessing()
             );
 
             Assert.NotEqual(one, two);
@@ -344,6 +374,8 @@ public class PageManifestBuilderTests
             Directory.Delete(directory, true);
         }
     }
+
+    private static ImagePreprocessingOptions Preprocessing() => new();
 
     private static SharedUpscalerProfile Profile(
         SharedCompressionFormat format = SharedCompressionFormat.Webp

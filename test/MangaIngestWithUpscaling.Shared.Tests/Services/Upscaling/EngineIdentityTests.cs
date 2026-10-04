@@ -17,13 +17,22 @@ public class EngineIdentityTests
 
     [Fact]
     [Trait("Category", "Unit")]
-    public void ForUpscaler_ChangesWhenPreprocessingChanges()
+    public void ForUpscaler_IgnoresPreprocessingBecauseTheServerOwnsIt()
     {
+        // The server owns preprocessing and folds the effective options into the content identity, so
+        // the worker's engine identity must not vary with its local preprocessing config: otherwise a
+        // server-side change would go unnoticed, and a differing local config would needlessly reject
+        // a spool on a hand-off.
         UpscalerConfig baseline = Config();
         UpscalerConfig changed = Config();
         changed.EnableSmartDownscale = true;
+        changed.MaxDimensionBeforeUpscaling = 1600;
+        changed.ImageFormatConversionRules =
+        [
+            new ImageFormatConversionRule { FromFormat = ".png", ToFormat = ".webp" },
+        ];
 
-        Assert.NotEqual(EngineIdentity.ForUpscaler(baseline), EngineIdentity.ForUpscaler(changed));
+        Assert.Equal(EngineIdentity.ForUpscaler(baseline), EngineIdentity.ForUpscaler(changed));
     }
 
     [Fact]
@@ -164,31 +173,18 @@ public class EngineIdentityTests
 
     [Fact]
     [Trait("Category", "Unit")]
-    public void ForUpscaler_IgnoresInactivePreprocessingKnobs()
+    public void ForUpscaler_IgnoresAllPreprocessingKnobs()
     {
-        // null and 0 both mean "no max dimension", and the smart-downscale knobs only matter when the
-        // feature is enabled; changing an inactive setting must not invalidate a spool.
-        UpscalerConfig nullMax = Config();
-        UpscalerConfig zeroMax = Config();
-        zeroMax.MaxDimensionBeforeUpscaling = 0;
-        Assert.Equal(EngineIdentity.ForUpscaler(nullMax), EngineIdentity.ForUpscaler(zeroMax));
-
+        // Preprocessing is server-owned (see ForUpscaler_IgnoresPreprocessingBecauseTheServerOwnsIt),
+        // so no local preprocessing setting affects the engine identity.
         UpscalerConfig baseline = Config();
-        UpscalerConfig changedKnob = Config();
-        changedKnob.SmartDownscaleThreshold = 99.0;
-        changedKnob.SmartDownscaleFactor = 0.5;
-        Assert.Equal(EngineIdentity.ForUpscaler(baseline), EngineIdentity.ForUpscaler(changedKnob));
+        UpscalerConfig changed = Config();
+        changed.MaxDimensionBeforeUpscaling = 1600;
+        changed.EnableSmartDownscale = true;
+        changed.SmartDownscaleThreshold = 99.0;
+        changed.SmartDownscaleFactor = 0.5;
 
-        // Once enabled, the knobs are part of the identity.
-        UpscalerConfig enabled = Config();
-        enabled.EnableSmartDownscale = true;
-        UpscalerConfig enabledDifferent = Config();
-        enabledDifferent.EnableSmartDownscale = true;
-        enabledDifferent.SmartDownscaleThreshold = 99.0;
-        Assert.NotEqual(
-            EngineIdentity.ForUpscaler(enabled),
-            EngineIdentity.ForUpscaler(enabledDifferent)
-        );
+        Assert.Equal(EngineIdentity.ForUpscaler(baseline), EngineIdentity.ForUpscaler(changed));
     }
 
     [Fact]

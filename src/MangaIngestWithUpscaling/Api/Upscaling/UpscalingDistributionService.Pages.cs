@@ -1464,7 +1464,11 @@ public partial class UpscalingDistributionService
                     return null;
                 }
 
-                string identity = PageManifestBuilder.ComputeIdentity(sourcePath, profile);
+                string identity = PageManifestBuilder.ComputeIdentity(
+                    sourcePath,
+                    profile,
+                    ImagePreprocessingOptions.FromConfig(_upscalerConfig)
+                );
                 if (!TryGetCachedPages(task.Id, identity, out List<SpoolPageDescriptor> pages))
                 {
                     pages = PageManifestBuilder.BuildPageDescriptors(sourcePath, profile);
@@ -1526,7 +1530,8 @@ public partial class UpscalingDistributionService
                             sourcePath,
                             chapter.UpscaledFullPath,
                             profile,
-                            cached.MissingPages
+                            cached.MissingPages,
+                            ImagePreprocessingOptions.FromConfig(_upscalerConfig)
                         ),
                         cached.Identity,
                         StringComparison.Ordinal
@@ -1592,7 +1597,8 @@ public partial class UpscalingDistributionService
                     sourcePath,
                     chapter.UpscaledFullPath,
                     profile,
-                    differences.MissingPages
+                    differences.MissingPages,
+                    ImagePreprocessingOptions.FromConfig(_upscalerConfig)
                 );
                 pageContextCache.Set(
                     task.Id,
