@@ -6,6 +6,7 @@ using System.Text.Json;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
+using MangaIngestWithUpscaling.Shared.Services.Processes;
 using MangaIngestWithUpscaling.Shared.Services.Python;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -17,10 +18,10 @@ namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 /// <summary>
 /// Owns a long-running <c>worker.py</c> subprocess and routes upscale jobs to it over NDJSON.
 /// The process is spawned lazily on the first job, kept alive so models/GPU stay warm across jobs,
-/// and torn down by <see cref="WatchdogLoopAsync"/> once it has been idle for
+/// and torn down by the inherited idle watchdog once it has been idle for
 /// <see cref="UpscalerConfig.WorkerIdleTimeout"/>.
 /// </summary>
-public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, IAsyncDisposable
+public class MangaJaNaiWorkerClient : ResidentNdjsonProcess, IMangaJaNaiWorkerClient
 {
     private static readonly TimeSpan ReadyTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan CancelGracePeriod = TimeSpan.FromSeconds(10);
@@ -38,28 +39,9 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
     private static readonly TimeSpan PostprocessGracePeriod = TimeSpan.FromMinutes(10);
 
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly IOptions<UpscalerConfig> _config;
-    private readonly ILogger<MangaJaNaiWorkerClient> _logger;
-    private readonly IHostApplicationLifetime _lifetime;
-
-    private readonly SemaphoreSlim _submitLock = new(1, 1);
-    private readonly SemaphoreSlim _stdinLock = new(1, 1);
-    private readonly Lock _stateLock = new();
     private readonly ConcurrentDictionary<string, WorkerJob> _jobs = new();
 
-    private Process? _process;
-    private StreamWriter? _stdin;
-    private TaskCompletionSource? _readyTcs;
-    private TaskCompletionSource? _cacheReleaseTcs;
     private string? _currentJobId;
-    private bool _shuttingDown;
-    private CancellationTokenSource? _watchdogCts;
-
-    // Stored as ticks so the stdout reader, watchdog, and job loop can update/read it
-    // without torn reads on a DateTime struct.
-    private long _lastActivityTicks = DateTime.UtcNow.Ticks;
-
-    private readonly StderrTailBuffer _stderr = new();
 
     public MangaJaNaiWorkerClient(
         IServiceScopeFactory scopeFactory,
@@ -67,15 +49,10 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         ILogger<MangaJaNaiWorkerClient> logger,
         IHostApplicationLifetime lifetime
     )
+        : base(config, logger, lifetime, ReadyTimeout)
     {
         _scopeFactory = scopeFactory;
-        _config = config;
-        _logger = logger;
-        _lifetime = lifetime;
     }
-
-    private void TouchActivity() =>
-        Interlocked.Exchange(ref _lastActivityTicks, DateTime.UtcNow.Ticks);
 
     public async Task<UpscaleJobResult> RunJobAsync(
         UpscaleJobRequest request,
@@ -603,31 +580,18 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         }
     }
 
-    public Task StartAsync(CancellationToken cancellationToken)
-    {
-        // Link the host's startup token with ApplicationStopping: StartAsync's token only fires when
-        // startup is aborted, so without the link the watchdog would keep polling after shutdown.
-        _watchdogCts = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken,
-            _lifetime.ApplicationStopping
-        );
-        _ = WatchdogLoopAsync(_watchdogCts.Token);
-        return Task.CompletedTask;
-    }
+    protected override Task ShutdownProcessAsync(bool force, CancellationToken cancellationToken) =>
+        ShutdownWorkerAsync(force, cancellationToken);
 
-    public async Task StopAsync(CancellationToken cancellationToken)
-    {
-        _watchdogCts?.Cancel();
-        await ShutdownWorkerAsync(force: true, cancellationToken);
-    }
+    protected override bool HasInFlightJob => _currentJobId is not null || !_jobs.IsEmpty;
 
-    public async ValueTask DisposeAsync()
-    {
-        _watchdogCts?.Cancel();
-        _watchdogCts?.Dispose();
-        _watchdogCts = null;
-        await ShutdownWorkerAsync(force: true, CancellationToken.None);
-    }
+    protected override void HandleStdoutLine(string line) => HandleEvent(line);
+
+    protected override Exception CreateStdinUnavailableException() =>
+        new InvalidOperationException("Upscale worker stdin is not available.");
+
+    protected override Exception CreateProcessStartFailureException(Exception? inner) =>
+        new InvalidOperationException("Failed to start the upscale worker process.");
 
     /// <summary>
     /// Asks the resident detection server to return its cached VRAM before the upscaler claims the
@@ -684,7 +648,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
         // Start a fresh stderr buffer for the new worker so a timeout/crash report doesn't
         // include diagnostics from the previous process.
-        _stderr.Clear();
+        ClearStderr();
 
         // IPythonService is scoped (it owns per-request GPU detection), so resolve it from a
         // short-lived scope here instead of injecting it into this singleton.
@@ -705,20 +669,11 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
 
         string settingsPath = MangaJaNaiWorkerSettings.EnsureSettings(_config.Value);
 
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = environment.PythonExecutablePath,
-            WorkingDirectory = environment.DesiredWorkindDirectory,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            // Explicit no-BOM UTF-8 so the first JSON line is not prefixed with a BOM.
-            StandardInputEncoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-        };
+        // Explicit no-BOM UTF-8 so the first JSON line is not prefixed with a BOM.
+        ProcessStartInfo startInfo = CreateStartInfo(
+            environment,
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)
+        );
         startInfo.ArgumentList.Add("worker.py");
         startInfo.ArgumentList.Add("--settings");
         startInfo.ArgumentList.Add(settingsPath);
@@ -744,39 +699,10 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             startInfo.ArgumentList.Add("--warmup");
         }
 
-        if (!startInfo.EnvironmentVariables.ContainsKey("USER"))
-        {
-            startInfo.EnvironmentVariables["USER"] = "mangaingest";
-        }
+        ApplyPythonEnvironmentVariables(startInfo);
 
-        // Pin Python's stdio to UTF-8. The C# side writes BOM-less UTF-8, but Python reads stdin with
-        // the locale encoding unless told otherwise, so a non-ASCII page path would be mangled on
-        // Windows/ANSI or a bare C locale.
-        startInfo.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
-        startInfo.EnvironmentVariables["PYTHONUTF8"] = "1";
-
-        var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         var readyTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        if (!process.Start())
-        {
-            throw new InvalidOperationException("Failed to start the upscale worker process.");
-        }
-
-        StreamWriter stdin = process.StandardInput;
-
-        // Publish the process and its stdin together so ShutdownWorkerAsync can't capture
-        // a mismatched (process, stdin) pair while a new worker is being spawned.
-        lock (_stateLock)
-        {
-            _shuttingDown = false;
-            _process = process;
-            _stdin = stdin;
-            _readyTcs = readyTcs;
-        }
-
-        _ = ReadStdoutAsync(process);
-        _ = ReadStderrAsync(process);
+        int processId = StartProcess(startInfo, readyTcs);
 
         using var timeoutCts = new CancellationTokenSource(ReadyTimeout);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(
@@ -785,22 +711,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         );
         try
         {
-            // Keep the idle watchdog from tearing the worker down during a long
-            // spawn/warmup: touch the activity clock periodically until ready completes.
-            while (!readyTcs.Task.IsCompleted)
-            {
-                TouchActivity();
-                try
-                {
-                    await readyTcs.Task.WaitAsync(TimeSpan.FromSeconds(5), linked.Token);
-                }
-                catch (TimeoutException)
-                {
-                    // Still spawning; loop and touch again.
-                }
-            }
-
-            await readyTcs.Task;
+            await WaitForReadyAsync(readyTcs, linked.Token);
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
         {
@@ -823,7 +734,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         TouchActivity();
         _logger.LogInformation(
             "Upscale worker started (pid {Pid}) using settings {SettingsPath}.",
-            process.Id,
+            processId,
             settingsPath
         );
     }
@@ -860,67 +771,6 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         }
 
         await CleanupAsync(process);
-    }
-
-    private static void TryDispose(IDisposable? disposable)
-    {
-        try
-        {
-            disposable?.Dispose();
-        }
-        catch { }
-    }
-
-    /// <summary>
-    /// Disposes a captured stdin under the stdin lock, so a concurrent <see cref="SendLineAsync(string, CancellationToken)"/>
-    /// cannot write to a disposed writer (which would silently drop the line).
-    /// </summary>
-    private async Task DisposeStdinAsync(StreamWriter? stdin)
-    {
-        if (stdin is null)
-        {
-            return;
-        }
-
-        await _stdinLock.WaitAsync();
-        try
-        {
-            TryDispose(stdin);
-        }
-        finally
-        {
-            _stdinLock.Release();
-        }
-    }
-
-    /// <summary>
-    /// Kills the process (if alive) and waits briefly for it to exit before disposing, so a respawn
-    /// does not race the dead process's GPU context (a CUDA context can still hold VRAM after a kill,
-    /// causing an OOM on the new worker's model load).
-    /// </summary>
-    private static async Task KillAndDisposeAsync(Process? process)
-    {
-        if (process is null)
-        {
-            return;
-        }
-
-        try
-        {
-            if (!process.HasExited)
-            {
-                process.Kill(true);
-                using var exitCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                try
-                {
-                    await process.WaitForExitAsync(exitCts.Token);
-                }
-                catch (OperationCanceledException) { }
-            }
-        }
-        catch { }
-
-        TryDispose(process);
     }
 
     private async Task CleanupAsync(Process? process)
@@ -965,69 +815,6 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         }
 
         _logger.LogInformation("Upscale worker process stopped.");
-    }
-
-    private async Task WatchdogLoopAsync(CancellationToken cancellationToken)
-    {
-        var poll = TimeSpan.FromSeconds(1);
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            try
-            {
-                await Task.Delay(poll, cancellationToken);
-                await EnsureIdleShutdownAsync();
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "Upscale worker idle watchdog error.");
-            }
-        }
-    }
-
-    private async Task EnsureIdleShutdownAsync()
-    {
-        // Take the submit lock (non-blocking) so the idle check + shutdown are atomic with
-        // respect to a fresh job submission: if a job is being submitted or processed we skip
-        // teardown, and once we commit to it a new job waits for us to finish.
-        if (!await _submitLock.WaitAsync(0))
-        {
-            return;
-        }
-
-        try
-        {
-            Process? process;
-            bool idle;
-            lock (_stateLock)
-            {
-                process = _process;
-                idle = _currentJobId is null && _jobs.IsEmpty;
-                if (process is null || process.HasExited)
-                {
-                    return;
-                }
-            }
-
-            TimeSpan idleFor =
-                DateTime.UtcNow
-                - new DateTime(Interlocked.Read(ref _lastActivityTicks), DateTimeKind.Utc);
-            if (idle && idleFor >= _config.Value.WorkerIdleTimeout)
-            {
-                _logger.LogInformation(
-                    "Upscale worker idle for {IdleFor}, shutting down to release GPU resources.",
-                    idleFor
-                );
-                await ShutdownWorkerAsync(CancellationToken.None);
-            }
-        }
-        finally
-        {
-            _submitLock.Release();
-        }
     }
 
     internal static string BuildJobLine(UpscaleJobRequest request)
@@ -1096,35 +883,6 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             _ => "webp",
         };
 
-    private async Task SendLineAsync(string line, CancellationToken cancellationToken)
-    {
-        StreamWriter? stdin = _stdin;
-        if (stdin is null)
-        {
-            throw new InvalidOperationException("Upscale worker stdin is not available.");
-        }
-
-        await SendLineAsync(stdin, line, cancellationToken);
-    }
-
-    private async Task SendLineAsync(
-        StreamWriter stdin,
-        string line,
-        CancellationToken cancellationToken
-    )
-    {
-        await _stdinLock.WaitAsync(cancellationToken);
-        try
-        {
-            await stdin.WriteLineAsync(line.AsMemory(), cancellationToken);
-            await stdin.FlushAsync(cancellationToken);
-        }
-        finally
-        {
-            _stdinLock.Release();
-        }
-    }
-
     private async Task RequestCancelAsync(string jobId)
     {
         try
@@ -1140,57 +898,6 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         }
     }
 
-    private async Task ReadStdoutAsync(Process process)
-    {
-        try
-        {
-            string? line;
-            while ((line = await process.StandardOutput.ReadLineAsync()) is not null)
-            {
-                TouchActivity();
-                HandleEvent(line);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Upscale worker stdout reader stopped.");
-        }
-        finally
-        {
-            await OnWorkerExited(process);
-        }
-    }
-
-    private async Task ReadStderrAsync(Process process)
-    {
-        try
-        {
-            string? line;
-            while ((line = await process.StandardError.ReadLineAsync()) is not null)
-            {
-                // Mirror worker diagnostics to the host stderr when enabled (default in dev),
-                // so they are visible regardless of the configured log level.
-                if (_config.Value.WorkerLogToStderr)
-                {
-                    Console.Error.WriteLine($"[upscale worker] {line}");
-                }
-
-                _logger.LogDebug("[upscale worker] {Line}", line);
-                _stderr.Append(line);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Upscale worker stderr reader stopped.");
-        }
-    }
-
-    private string BuildStderrSection()
-    {
-        string stderr = _stderr.GetTail();
-        return stderr.Length > 0 ? $"\n\nWorker stderr (tail):\n{stderr}" : "";
-    }
-
     private void HandleEvent(string line)
     {
         try
@@ -1199,7 +906,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
             switch (evt)
             {
                 case WorkerReadyEvent:
-                    _readyTcs?.TrySetResult();
+                    SignalReady();
                     break;
                 case WorkerProgressEvent progress:
                     DispatchProgress(progress);
@@ -1231,20 +938,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                 case WorkerCacheReleasedEvent cacheReleased:
                     // "ok" released the cache; "busy" (a job is running) did not, so the caller must
                     // not be told the release succeeded.
-                    if (
-                        string.Equals(
-                            cacheReleased.Status,
-                            "ok",
-                            StringComparison.OrdinalIgnoreCase
-                        )
-                    )
-                    {
-                        _cacheReleaseTcs?.TrySetResult();
-                    }
-                    else
-                    {
-                        _cacheReleaseTcs?.TrySetCanceled();
-                    }
+                    HandleCacheReleased(cacheReleased.Status);
                     break;
             }
         }
@@ -1377,7 +1071,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         }
     }
 
-    private async Task OnWorkerExited(Process process)
+    protected override async Task OnProcessExitedAsync(Process process)
     {
         int? exitCode = null;
         try
@@ -1610,42 +1304,5 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
         /// </summary>
         public void FailCrashed(string message) =>
             Completion.TrySetException(new UpscaleWorkerCrashedException(message));
-    }
-
-    private sealed class StderrTailBuffer
-    {
-        private const int MaxLength = 8192;
-        private readonly Lock _lock = new();
-        private readonly StringBuilder _buffer = new();
-
-        public void Append(string line)
-        {
-            lock (_lock)
-            {
-                if (_buffer.Length + line.Length + 1 > MaxLength)
-                {
-                    // Drop the oldest half so the tail (most recent diagnostics) is preserved.
-                    _buffer.Remove(0, _buffer.Length / 2);
-                }
-
-                _buffer.AppendLine(line);
-            }
-        }
-
-        public void Clear()
-        {
-            lock (_lock)
-            {
-                _buffer.Clear();
-            }
-        }
-
-        public string GetTail()
-        {
-            lock (_lock)
-            {
-                return _buffer.ToString();
-            }
-        }
     }
 }

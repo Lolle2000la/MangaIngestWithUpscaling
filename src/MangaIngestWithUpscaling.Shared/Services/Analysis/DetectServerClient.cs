@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
+using MangaIngestWithUpscaling.Shared.Services.Processes;
 using MangaIngestWithUpscaling.Shared.Services.Python;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -16,10 +17,10 @@ namespace MangaIngestWithUpscaling.Shared.Services.Analysis;
 /// <summary>
 /// Owns a long-running <c>detect_server.py</c> subprocess and routes detection requests to it over
 /// NDJSON. Spawned lazily on first use, kept alive so the model stays resident across pages, and
-/// torn down by <see cref="WatchdogLoopAsync"/> once idle for
+/// torn down by the inherited idle watchdog once idle for
 /// <see cref="UpscalerConfig.WorkerIdleTimeout"/>.
 /// </summary>
-public sealed class DetectServerClient : IDetectServerClient, IHostedService, IAsyncDisposable
+public sealed class DetectServerClient : ResidentNdjsonProcess, IDetectServerClient
 {
     private static readonly TimeSpan ReadyTimeout = TimeSpan.FromMinutes(2);
 
@@ -47,27 +48,10 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
         new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly IOptions<UpscalerConfig> _config;
-    private readonly ILogger<DetectServerClient> _logger;
-    private readonly IHostApplicationLifetime _lifetime;
-
-    private readonly SemaphoreSlim _submitLock = new(1, 1);
-    private readonly SemaphoreSlim _stdinLock = new(1, 1);
-    private readonly Lock _stateLock = new();
     private readonly ConcurrentDictionary<string, DetectJob> _jobs = new();
 
-    private Process? _process;
-    private StreamWriter? _stdin;
-    private TaskCompletionSource? _readyTcs;
-    private TaskCompletionSource? _cacheReleaseTcs;
     private string? _currentJobId;
-    private bool _shuttingDown;
     private DateTime _unavailableUntilUtc;
-    private CancellationTokenSource? _watchdogCts;
-
-    private long _lastActivityTicks = DateTime.UtcNow.Ticks;
-
-    private readonly StderrTailBuffer _stderr = new();
 
     // Non-JSON lines the server prints to stdout (e.g. a model-load traceback before it becomes
     // ready). They are not protocol events, but they carry the failure cause, so keep a tail.
@@ -79,15 +63,10 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
         ILogger<DetectServerClient> logger,
         IHostApplicationLifetime lifetime
     )
+        : base(config, logger, lifetime, ReadyTimeout)
     {
         _scopeFactory = scopeFactory;
-        _config = config;
-        _logger = logger;
-        _lifetime = lifetime;
     }
-
-    private void TouchActivity() =>
-        Interlocked.Exchange(ref _lastActivityTicks, DateTime.UtcNow.Ticks);
 
     public async Task<SplitDetectionResult> DetectAsync(
         string imagePath,
@@ -254,31 +233,69 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
         }
     }
 
-    public Task StartAsync(CancellationToken cancellationToken)
+    protected override Task ShutdownProcessAsync(bool force, CancellationToken cancellationToken) =>
+        ShutdownServerAsync(cancellationToken);
+
+    protected override bool HasInFlightJob => _currentJobId is not null || !_jobs.IsEmpty;
+
+    protected override void HandleStdoutLine(string line) => HandleEvent(line);
+
+    protected override Exception CreateStdinUnavailableException() =>
+        new DetectServerUnavailableException("The detection server stdin is not available.");
+
+    protected override Exception? TranslateProcessStartException(Exception ex) =>
+        ex is Win32Exception or InvalidOperationException
+            ? new DetectServerUnavailableException(
+                "Failed to start the resident detection server process.",
+                ex
+            )
+            : null;
+
+    protected override Exception CreateProcessStartFailureException(Exception? inner) =>
+        inner is null
+            ? new DetectServerUnavailableException(
+                "Failed to start the resident detection server process."
+            )
+            : new DetectServerUnavailableException(
+                "Failed to start the resident detection server process.",
+                inner
+            );
+
+    protected override Exception? TranslateSendException(Exception ex) =>
+        ex is IOException or ObjectDisposedException or Win32Exception or InvalidOperationException
+            ? new DetectServerUnavailableException(
+                "The detection server's stdin is not writable.",
+                ex
+            )
+            : null;
+
+    protected override string BuildStderrSection()
     {
-        // Link the host's startup token with ApplicationStopping: StartAsync's token only fires when
-        // startup is aborted, so without the link the watchdog would keep polling after shutdown.
-        _watchdogCts = CancellationTokenSource.CreateLinkedTokenSource(
-            cancellationToken,
-            _lifetime.ApplicationStopping
-        );
-        _ = WatchdogLoopAsync(_watchdogCts.Token);
-        return Task.CompletedTask;
+        string stderr = GetStderrTail();
+        string stdoutNoise = _stdoutNoise.GetTail();
+        var builder = new StringBuilder();
+        if (stderr.Length > 0)
+        {
+            builder.Append("\n\nDetection server stderr (tail):\n").Append(stderr);
+        }
+
+        if (stdoutNoise.Length > 0)
+        {
+            builder
+                .Append("\n\nDetection server stdout (non-protocol, tail):\n")
+                .Append(stdoutNoise);
+        }
+
+        return builder.ToString();
     }
 
-    public async Task StopAsync(CancellationToken cancellationToken)
-    {
-        _watchdogCts?.Cancel();
-        await ShutdownServerAsync(cancellationToken);
-    }
-
-    public async ValueTask DisposeAsync()
-    {
-        _watchdogCts?.Cancel();
-        _watchdogCts?.Dispose();
-        _watchdogCts = null;
-        await ShutdownServerAsync(CancellationToken.None);
-    }
+    protected override string StderrLogTemplate => "[detect server] {Line}";
+    protected override string StderrConsolePrefix => "[detect server]";
+    protected override string StdoutReaderStoppedLog => "Detection server stdout reader stopped.";
+    protected override string StderrReaderStoppedLog => "Detection server stderr reader stopped.";
+    protected override string WatchdogErrorLog => "Detection server idle watchdog error.";
+    protected override string IdleShutdownLog =>
+        "Detection server idle for {IdleFor}, shutting down to release GPU resources.";
 
     public async Task ShutdownServerAsync(CancellationToken cancellationToken)
     {
@@ -412,7 +429,7 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
             await CleanupAsync(existing);
         }
 
-        _stderr.Clear();
+        ClearStderr();
         _stdoutNoise.Clear();
 
         string serverScript = SplitDetectionLayout.ServerScriptPath;
@@ -449,20 +466,8 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
             );
         }
 
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = environment.PythonExecutablePath,
-            WorkingDirectory = environment.DesiredWorkindDirectory,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            // A BOM would be written before the first JSON line and break the server's json.loads.
-            StandardInputEncoding = StdinEncoding,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-        };
+        // A BOM would be written before the first JSON line and break the server's json.loads.
+        ProcessStartInfo startInfo = CreateStartInfo(environment, StdinEncoding);
         startInfo.ArgumentList.Add(serverScript);
         startInfo.ArgumentList.Add("--checkpoint");
         startInfo.ArgumentList.Add(checkpoint);
@@ -484,53 +489,13 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
             );
         }
 
-        if (!startInfo.EnvironmentVariables.ContainsKey("USER"))
-        {
-            startInfo.EnvironmentVariables["USER"] = "mangaingest";
-        }
+        ApplyPythonEnvironmentVariables(startInfo);
 
-        // Pin Python's stdio to UTF-8. The C# side writes BOM-less UTF-8, but Python reads stdin with
-        // the locale encoding unless told otherwise, so a non-ASCII page path would be mangled on
-        // Windows/ANSI or a bare C locale.
-        startInfo.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
-        startInfo.EnvironmentVariables["PYTHONUTF8"] = "1";
-
-        var process = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
         var readyTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        try
-        {
-            if (!process.Start())
-            {
-                throw new DetectServerUnavailableException(
-                    "Failed to start the resident detection server process."
-                );
-            }
-        }
-        catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
-        {
-            throw new DetectServerUnavailableException(
-                "Failed to start the resident detection server process.",
-                ex
-            );
-        }
-
-        // Capture the pid before publishing the process: the stdout reader can observe EOF and dispose
-        // the process (OnServerExited) at any point, after which reading process.Id would throw an
-        // InvalidOperationException that the caller does not treat as a fallback-eligible failure.
-        int processId = process.Id;
-
-        StreamWriter stdin = process.StandardInput;
-        lock (_stateLock)
-        {
-            _shuttingDown = false;
-            _process = process;
-            _stdin = stdin;
-            _readyTcs = readyTcs;
-        }
-
-        _ = ReadStdoutAsync(process);
-        _ = ReadStderrAsync(process);
+        // The pid is captured before publishing the process: the stdout reader can observe EOF and
+        // dispose the process (OnProcessExitedAsync) at any point, after which reading process.Id
+        // would throw an InvalidOperationException the caller does not treat as fallback-eligible.
+        int processId = StartProcess(startInfo, readyTcs);
 
         using var timeoutCts = new CancellationTokenSource(ReadyTimeout);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(
@@ -539,20 +504,7 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
         );
         try
         {
-            while (!readyTcs.Task.IsCompleted)
-            {
-                TouchActivity();
-                try
-                {
-                    await readyTcs.Task.WaitAsync(TimeSpan.FromSeconds(5), linked.Token);
-                }
-                catch (TimeoutException)
-                {
-                    // Still loading the model; loop and touch again.
-                }
-            }
-
-            await readyTcs.Task;
+            await WaitForReadyAsync(readyTcs, linked.Token);
         }
         catch (OperationCanceledException)
             when (timeoutCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
@@ -602,67 +554,6 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
         await CleanupAsync(process);
     }
 
-    private static void TryDispose(IDisposable? disposable)
-    {
-        try
-        {
-            disposable?.Dispose();
-        }
-        catch { }
-    }
-
-    /// <summary>
-    /// Disposes a captured stdin under the stdin lock, so a concurrent <see cref="SendLineAsync(string, CancellationToken)"/>
-    /// cannot write to a disposed writer (which would silently drop the line).
-    /// </summary>
-    private async Task DisposeStdinAsync(StreamWriter? stdin)
-    {
-        if (stdin is null)
-        {
-            return;
-        }
-
-        await _stdinLock.WaitAsync();
-        try
-        {
-            TryDispose(stdin);
-        }
-        finally
-        {
-            _stdinLock.Release();
-        }
-    }
-
-    /// <summary>
-    /// Kills the process (if alive) and waits briefly for it to exit before disposing, so a respawn
-    /// does not race the dead process's GPU context (a CUDA context can still hold VRAM after a kill,
-    /// causing an OOM on the new server's model load).
-    /// </summary>
-    private static async Task KillAndDisposeAsync(Process? process)
-    {
-        if (process is null)
-        {
-            return;
-        }
-
-        try
-        {
-            if (!process.HasExited)
-            {
-                process.Kill(true);
-                using var exitCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                try
-                {
-                    await process.WaitForExitAsync(exitCts.Token);
-                }
-                catch (OperationCanceledException) { }
-            }
-        }
-        catch { }
-
-        TryDispose(process);
-    }
-
     private async Task CleanupAsync(Process? process)
     {
         if (process is null)
@@ -685,9 +576,10 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
                 _stdin = null;
                 cacheRelease = _cacheReleaseTcs;
                 _cacheReleaseTcs = null;
-                // Fault in-flight jobs here too. OnServerExited early-returns when _process no longer
-                // matches (a forced shutdown nulls it first), so without this a DetectAsync would
-                // block on its job.Completion for the full request timeout while holding _submitLock.
+                // Fault in-flight jobs here too. OnProcessExitedAsync early-returns when _process no
+                // longer matches (a forced shutdown nulls it first), so without this a DetectAsync
+                // would block on its job.Completion for the full request timeout while holding
+                // _submitLock.
                 jobs = _jobs.Values.ToArray();
             }
             else
@@ -701,9 +593,9 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
 
         // Unblock a pending GPU-cache release so its caller does not wait the full timeout.
         cacheRelease?.TrySetCanceled();
-        // Unblock a startup wait: EnsureServerAsync awaits this TCS, and OnServerExited will not fault
-        // it once _process has been cleared, so a shutdown during startup would otherwise stall for
-        // the full ReadyTimeout.
+        // Unblock a startup wait: EnsureServerAsync awaits this TCS, and OnProcessExitedAsync will
+        // not fault it once _process has been cleared, so a shutdown during startup would otherwise
+        // stall for the full ReadyTimeout.
         readyTcs?.TrySetException(
             new DetectServerUnavailableException(
                 "The detection server was shut down before becoming ready."
@@ -728,112 +620,6 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
         _logger.LogInformation("Resident detection server process stopped.");
     }
 
-    private async Task WatchdogLoopAsync(CancellationToken cancellationToken)
-    {
-        var poll = TimeSpan.FromSeconds(1);
-        while (!cancellationToken.IsCancellationRequested)
-        {
-            try
-            {
-                await Task.Delay(poll, cancellationToken);
-                await EnsureIdleShutdownAsync();
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "Detection server idle watchdog error.");
-            }
-        }
-    }
-
-    private async Task EnsureIdleShutdownAsync()
-    {
-        if (!await _submitLock.WaitAsync(0))
-        {
-            return;
-        }
-
-        try
-        {
-            Process? process;
-            bool idle;
-            lock (_stateLock)
-            {
-                process = _process;
-                idle = _currentJobId is null && _jobs.IsEmpty;
-                if (process is null || process.HasExited)
-                {
-                    return;
-                }
-            }
-
-            TimeSpan idleFor =
-                DateTime.UtcNow
-                - new DateTime(Interlocked.Read(ref _lastActivityTicks), DateTimeKind.Utc);
-            if (idle && idleFor >= _config.Value.WorkerIdleTimeout)
-            {
-                _logger.LogInformation(
-                    "Detection server idle for {IdleFor}, shutting down to release GPU resources.",
-                    idleFor
-                );
-                await ShutdownServerAsync(CancellationToken.None);
-            }
-        }
-        finally
-        {
-            _submitLock.Release();
-        }
-    }
-
-    private async Task SendLineAsync(string line, CancellationToken cancellationToken)
-    {
-        StreamWriter? stdin = _stdin;
-        if (stdin is null)
-        {
-            throw new DetectServerUnavailableException(
-                "The detection server stdin is not available."
-            );
-        }
-
-        await SendLineAsync(stdin, line, cancellationToken);
-    }
-
-    private async Task SendLineAsync(
-        StreamWriter stdin,
-        string line,
-        CancellationToken cancellationToken
-    )
-    {
-        await _stdinLock.WaitAsync(cancellationToken);
-        try
-        {
-            await stdin.WriteLineAsync(line.AsMemory(), cancellationToken);
-            await stdin.FlushAsync(cancellationToken);
-        }
-        catch (Exception ex)
-            when (ex
-                    is IOException
-                        or ObjectDisposedException
-                        or Win32Exception
-                        or InvalidOperationException
-            )
-        {
-            // A broken pipe or a dead writer means the resident server is unusable; surface it as
-            // "unavailable" so the caller falls back to the per-image CLI instead of failing.
-            throw new DetectServerUnavailableException(
-                "The detection server's stdin is not writable.",
-                ex
-            );
-        }
-        finally
-        {
-            _stdinLock.Release();
-        }
-    }
-
     private async Task RequestCancelAsync(string jobId)
     {
         try
@@ -852,69 +638,6 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
         }
     }
 
-    private async Task ReadStdoutAsync(Process process)
-    {
-        try
-        {
-            string? line;
-            while ((line = await process.StandardOutput.ReadLineAsync()) is not null)
-            {
-                TouchActivity();
-                HandleEvent(line);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Detection server stdout reader stopped.");
-        }
-        finally
-        {
-            await OnServerExited(process);
-        }
-    }
-
-    private async Task ReadStderrAsync(Process process)
-    {
-        try
-        {
-            string? line;
-            while ((line = await process.StandardError.ReadLineAsync()) is not null)
-            {
-                if (_config.Value.WorkerLogToStderr)
-                {
-                    Console.Error.WriteLine($"[detect server] {line}");
-                }
-
-                _logger.LogDebug("[detect server] {Line}", line);
-                _stderr.Append(line);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Detection server stderr reader stopped.");
-        }
-    }
-
-    private string BuildStderrSection()
-    {
-        string stderr = _stderr.GetTail();
-        string stdoutNoise = _stdoutNoise.GetTail();
-        var builder = new StringBuilder();
-        if (stderr.Length > 0)
-        {
-            builder.Append("\n\nDetection server stderr (tail):\n").Append(stderr);
-        }
-
-        if (stdoutNoise.Length > 0)
-        {
-            builder
-                .Append("\n\nDetection server stdout (non-protocol, tail):\n")
-                .Append(stdoutNoise);
-        }
-
-        return builder.ToString();
-    }
-
     private void HandleEvent(string line)
     {
         try
@@ -926,7 +649,7 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
             switch (evt)
             {
                 case DetectServerReadyEvent:
-                    _readyTcs?.TrySetResult();
+                    SignalReady();
                     break;
                 case DetectServerResultEvent result:
                     if (TryGetJob(result.Id, out DetectJob? resultJob))
@@ -971,20 +694,7 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
                 case DetectServerCacheReleasedEvent cacheReleased:
                     // "ok" released the cache; "busy" (a detection is running) did not, so the caller
                     // must not be told the release succeeded.
-                    if (
-                        string.Equals(
-                            cacheReleased.Status,
-                            "ok",
-                            StringComparison.OrdinalIgnoreCase
-                        )
-                    )
-                    {
-                        _cacheReleaseTcs?.TrySetResult();
-                    }
-                    else
-                    {
-                        _cacheReleaseTcs?.TrySetCanceled();
-                    }
+                    HandleCacheReleased(cacheReleased.Status);
                     break;
                 case DetectServerPongEvent:
                     break;
@@ -1008,7 +718,7 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
         return id is not null && _jobs.TryGetValue(id, out job);
     }
 
-    private async Task OnServerExited(Process process)
+    protected override async Task OnProcessExitedAsync(Process process)
     {
         int? exitCode = null;
         try
@@ -1095,41 +805,5 @@ public sealed class DetectServerClient : IDetectServerClient, IHostedService, IA
         public string Id { get; }
         public string ImagePath { get; }
         public TaskCompletionSource<SplitDetectionResult> Completion { get; }
-    }
-
-    private sealed class StderrTailBuffer
-    {
-        private const int MaxLength = 8192;
-        private readonly Lock _lock = new();
-        private readonly StringBuilder _buffer = new();
-
-        public void Append(string line)
-        {
-            lock (_lock)
-            {
-                if (_buffer.Length + line.Length + 1 > MaxLength)
-                {
-                    _buffer.Remove(0, _buffer.Length / 2);
-                }
-
-                _buffer.AppendLine(line);
-            }
-        }
-
-        public void Clear()
-        {
-            lock (_lock)
-            {
-                _buffer.Clear();
-            }
-        }
-
-        public string GetTail()
-        {
-            lock (_lock)
-            {
-                return _buffer.ToString();
-            }
-        }
     }
 }
