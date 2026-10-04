@@ -1,9 +1,13 @@
 using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Xunit;
 
 namespace MangaIngestWithUpscaling.Shared.Tests.Services.Upscaling;
 
+// Shares the process-wide SplitDetectionLayout.Root with the detector tests, so the mutations below
+// cannot race them.
+[Collection("DetectServerClientLayout")]
 public class EngineIdentityTests
 {
     [Fact]
@@ -207,6 +211,59 @@ public class EngineIdentityTests
             EngineIdentity.ForUpscaler(config),
             EngineIdentity.ForUpscaler(config, GpuBackend.Auto)
         );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ForDetector_IsStableForTheSameFiles()
+    {
+        WithDetectorRoot(() =>
+        {
+            WriteDetectorFiles(checkpoint: "model", config: "{}");
+
+            Assert.Equal(EngineIdentity.ForDetector(), EngineIdentity.ForDetector());
+        });
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ForDetector_ChangesWhenTheCheckpointContentChanges()
+    {
+        WithDetectorRoot(() =>
+        {
+            WriteDetectorFiles(checkpoint: "model", config: "{}");
+            string before = EngineIdentity.ForDetector();
+
+            // Same length, different bytes: the identity must hash the content, not just the size.
+            WriteDetectorFiles(checkpoint: "modem", config: "{}");
+            string after = EngineIdentity.ForDetector();
+
+            Assert.NotEqual(before, after);
+        });
+    }
+
+    private static void WithDetectorRoot(Action test)
+    {
+        string previousRoot = SplitDetectionLayout.Root;
+        string root = Directory.CreateTempSubdirectory("engine_detector").FullName;
+        try
+        {
+            SplitDetectionLayout.Root = root;
+            test();
+        }
+        finally
+        {
+            SplitDetectionLayout.Root = previousRoot;
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static void WriteDetectorFiles(string checkpoint, string config)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(SplitDetectionLayout.CheckpointPath)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(SplitDetectionLayout.ConfigPath)!);
+        File.WriteAllText(SplitDetectionLayout.CheckpointPath, checkpoint);
+        File.WriteAllText(SplitDetectionLayout.ConfigPath, config);
     }
 
     private static UpscalerConfig Config() => new() { ModelsDirectory = "/nonexistent/models" };
