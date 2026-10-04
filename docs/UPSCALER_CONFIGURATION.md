@@ -26,7 +26,7 @@ services:
       TZ: Europe/Berlin                              # your timezone
       Ingest_Upscaler__PreferredGpuBackend: CUDA    # NVIDIA (CUDA 11.8)
       Ingest_Upscaler__UseFp16: "true"              # recommended for modern GPUs
-      Ingest_Upscaler__SelectedDeviceIndex: "0"     # GPU index (0 = first GPU)
+      Ingest_Upscaler__SelectedDeviceIndex: "1"     # device index (0 = CPU, 1 = first GPU)
     volumes:
       - ./data:/data       # database, logs, and Python environment
       - ./models:/models   # upscaling models
@@ -113,7 +113,7 @@ The environment variable for each setting follows the ASP.NET Core convention:
 
 | Setting | ENV variable | Default | Description |
 |---|---|---|---|
-| `ModelsDirectory` | `Ingest_Upscaler__ModelsDirectory` | `/data/models` (Docker) | Directory where upscaling models are stored. |
+| `ModelsDirectory` | `Ingest_Upscaler__ModelsDirectory` | `/models/MangaJaNai` (Docker) | Directory where upscaling models are stored. |
 | `PythonEnvironmentDirectory` | `Ingest_Upscaler__PythonEnvironmentDirectory` | `/data/pyenv` (Docker) | Directory where the Python/PyTorch environment is installed on first startup. Map to a separate volume if you want to store it on a different disk. |
 
 Example — store the Python environment on a separate (larger) volume:
@@ -195,10 +195,10 @@ to your `appsettings.json`:
 {
   "Upscaler": {
     "PreferredGpuBackend": "CUDA",
-    "SelectedDeviceIndex": 0,
+    "SelectedDeviceIndex": 1,
     "UseFp16": true,
     "UseCPU": false,
-    "ModelsDirectory": "/models",
+    "ModelsDirectory": "/models/MangaJaNai",
     "PythonEnvironmentDirectory": "/data/pyenv",
     "RemoteOnly": false,
     "ForceAcceptExistingEnvironment": false,

@@ -365,13 +365,27 @@ public sealed class PageStreamSpool
     /// <summary>Atomically moves a completed page into place and records it as done.</summary>
     public void CommitPage(PageStreamSession session, int pageIndex, string tempPath)
     {
+        // Read the size defensively: a reset may delete the temp file between the caller creating it
+        // and this call, and reading FileInfo.Length would otherwise throw FileNotFoundException out
+        // of the public API instead of yielding TryCommitPage's clean IdentityMismatch drop.
+        long size;
+        try
+        {
+            size = new FileInfo(tempPath).Length;
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            DeleteTempFile(tempPath);
+            return;
+        }
+
         CommitPageResult result = TryCommitPage(
             session,
             session.Identity,
             session.EngineIdentity,
             pageIndex,
             tempPath,
-            new FileInfo(tempPath).Length
+            size
         );
         if (result != CommitPageResult.Committed)
         {
@@ -508,22 +522,34 @@ public sealed class PageStreamSpool
     {
         lock (session.Gate)
         {
-            if (
-                session.Finalized
-                || session.Assembling
-                || !string.Equals(session.Identity, expectedIdentity, StringComparison.Ordinal)
-            )
-            {
-                return false;
-            }
-
-            session.Assembling = true;
-            return true;
+            return TryBeginAssemblyLocked(session, expectedIdentity);
         }
     }
 
-    public bool TryBeginAssembly(PageStreamSession session) =>
-        TryBeginAssembly(session, session.Identity);
+    public bool TryBeginAssembly(PageStreamSession session)
+    {
+        // Read the identity under the gate: reading it outside could race a Reset that changes it
+        // between the read and the check.
+        lock (session.Gate)
+        {
+            return TryBeginAssemblyLocked(session, session.Identity);
+        }
+    }
+
+    private static bool TryBeginAssemblyLocked(PageStreamSession session, string expectedIdentity)
+    {
+        if (
+            session.Finalized
+            || session.Assembling
+            || !string.Equals(session.Identity, expectedIdentity, StringComparison.Ordinal)
+        )
+        {
+            return false;
+        }
+
+        session.Assembling = true;
+        return true;
+    }
 
     /// <summary>
     /// True once the session has been finalized (removed or swept). A caller that held the session

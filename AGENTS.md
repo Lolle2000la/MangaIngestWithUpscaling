@@ -235,7 +235,7 @@ local and synchronous.
   "Upscaler": {
     "UseFp16": true,
     "UseCPU": false,
-    "SelectedDeviceIndex": 0,
+    "SelectedDeviceIndex": 1,
     "RemoteOnly": false,  // Set to true for development
     "PreferredGpuBackend": "Auto"
   }
