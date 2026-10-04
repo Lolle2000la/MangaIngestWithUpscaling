@@ -116,6 +116,29 @@ public static class EngineIdentity
         return Hash(material.ToString());
     }
 
+    /// <summary>
+    /// Cheap fingerprint (length and last-write time) of the deployed workflow config
+    /// (<c>appstate2.json</c>) that <see cref="MangaJaNaiWorkerSettings.EnsureSettings"/> re-reads on
+    /// every worker spawn. <see cref="ForUpscaler"/> already hashes the file's content, but callers
+    /// that cache the identity must notice a workflow edit made while the process is alive, so a later
+    /// spawn does not run a different workflow under the old identity. The models-directory walk stays
+    /// cached; only this cheap check runs per access.
+    /// </summary>
+    public static string WorkflowConfigFingerprint()
+    {
+        string path = Path.Combine(AppContext.BaseDirectory, "appstate2.json");
+        if (!File.Exists(path))
+        {
+            return "missing";
+        }
+
+        FileInfo info = new(path);
+        return string.Create(
+            CultureInfo.InvariantCulture,
+            $"{info.Length}:{info.LastWriteTimeUtc.Ticks}"
+        );
+    }
+
     private static void AppendDirectoryFingerprint(StringBuilder material, string directory)
     {
         if (!Directory.Exists(directory))
@@ -163,16 +186,20 @@ public static class EngineIdentity
         using FileStream stream = File.OpenRead(file);
         long length = stream.Length;
 
-        // Sample the head, middle and tail, skipping duplicates for a file shorter than one window, so
-        // a same-size fine-tune that diverges past the first window is still distinguished.
+        // Sample the head, middle and tail, so a same-size fine-tune that diverges past the first
+        // window is still distinguished. The tail is sampled for any file longer than one window
+        // (not only longer than two): a 64-128 KiB file otherwise sampled head+middle only, so a
+        // fine-tune differing solely in its tail hashed identically. The middle is skipped when it
+        // would duplicate the head (a file only just over one window long).
         var offsets = new List<long> { 0 };
         if (length > FingerprintSampleBytes)
         {
-            offsets.Add((length - FingerprintSampleBytes) / 2);
-        }
+            long middle = (length - FingerprintSampleBytes) / 2;
+            if (middle > 0)
+            {
+                offsets.Add(middle);
+            }
 
-        if (length > FingerprintSampleBytes * 2)
-        {
             offsets.Add(length - FingerprintSampleBytes);
         }
 

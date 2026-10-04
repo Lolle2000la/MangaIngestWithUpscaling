@@ -93,12 +93,19 @@ a change resets the spool and the worker's engine identity no longer varies with
   bytes).
 - Metadata handling uses case-sensitive `.cbz` checks and treats a missing `.cbz` as "no differences";
   the distributed repair path guards `File.Exists` but `RepairUpscaleTask` does not.
-- `LibraryIntegrityChecker` keeps a private duplicate of
-  `ISplitProcessingCoordinator.HasExistingApplyTaskAsync`.
 - `IPageSpoolStore.WritePageAsync`/`CommitPage` are public but production-unused (test-only), and
   `TryCommitPage`'s `size = 0` default is a budget footgun.
 - The streaming inactivity allowance keeps a documented 15-minute floor that the local whole-CBZ
   path does not have, so the two paths kill a wedged engine on different schedules.
+- A permanently unreadable source (`ReadFailed`) is re-offered every 10 s and never consumes the
+  retry budget, so `RetryFor` never escalates; a separate transient-attempt counter is needed.
+- An identity-raced manifest can pair new descriptors with the old identity while the old session is
+  still `Assembling`; it self-heals via a `GetPages` `FailedPrecondition` at the cost of extra
+  restart round-trips.
+- `TouchRoot` is not refreshed during a long single-page upload or assembly, so a sibling replica's
+  `SweepStale` could in theory reclaim an in-use spool within the retention window.
+- Detection stem-collision handling and detection-upload exception classification are inconsistent
+  with the upscale path (both preserve the spool, so safe).
 
 ## Architecture follow-ups (still open)
 

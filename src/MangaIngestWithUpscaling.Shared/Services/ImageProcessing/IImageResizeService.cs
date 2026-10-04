@@ -62,10 +62,11 @@ public interface IImageResizeService
     );
 
     /// <summary>
-    /// Exercises the native image backend (libvips) with a tiny in-memory image. Throws when the
-    /// backend cannot run at all (missing or mis-versioned native library), so a worker fails fast at
-    /// startup instead of silently producing un-preprocessed pages while advertising the same engine
-    /// identity as a healthy one.
+    /// Exercises the native image backend (libvips) end-to-end with a tiny in-memory image, including a
+    /// resize and a lossless (.png) and lossy (.jpg) encode/decode round-trip. Throws when the backend
+    /// cannot run (missing or mis-versioned native library) or a loader/encoder is missing, so a worker
+    /// fails fast at startup instead of silently producing un-preprocessed pages while advertising the
+    /// same engine identity as a healthy one.
     /// </summary>
     void VerifyReady();
 }

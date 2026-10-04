@@ -52,6 +52,16 @@ public class ImageResizeServiceTests
         _service = new ImageResizeService(_mockLogger, _mockLocalizer);
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void VerifyReady_ExercisesResizeAndRealPngJpegCodecs()
+    {
+        // Uses the native libvips PNG/JPEG codecs, which the rest of this suite already depends on. A
+        // libvips built without them (or with a broken loader) must throw here rather than at the first
+        // page.
+        _service.VerifyReady();
+    }
+
     [Theory]
     [InlineData(-1)]
     [InlineData(-100)]

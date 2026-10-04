@@ -50,4 +50,48 @@ public class EngineIdentityProviderTests
             Directory.Delete(directory, recursive: true);
         }
     }
+
+    /// <summary>
+    /// <see cref="MangaJaNaiWorkerSettings.EnsureSettings"/> re-reads <c>appstate2.json</c> on every
+    /// worker spawn, so an edit made while this process is alive must not be served under the old
+    /// cached identity. Changing the file changes its fingerprint (length) and must force a recompute.
+    /// </summary>
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void Upscaler_RecomputesWhenTheWorkflowConfigFingerprintChanges()
+    {
+        string configPath = Path.Combine(AppContext.BaseDirectory, "appstate2.json");
+        byte[]? original = File.Exists(configPath) ? File.ReadAllBytes(configPath) : null;
+        string directory = Directory.CreateTempSubdirectory("engine_provider_config").FullName;
+        try
+        {
+            var provider = new EngineIdentityProvider(
+                Options.Create(new UpscalerConfig { ModelsDirectory = directory })
+            );
+
+            File.WriteAllText(configPath, "{\"workflow\":\"a\"}");
+            string before = provider.Upscaler;
+
+            // Change the content length, so the fingerprint differs even if the filesystem's write
+            // timestamp granularity would not have moved.
+            File.WriteAllText(configPath, "{\"workflow\":\"bb\"}");
+            string after = provider.Upscaler;
+
+            Assert.NotEqual(before, after);
+            // The recomputed identity is cached again for the new fingerprint.
+            Assert.Equal(after, provider.Upscaler);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+            if (original is null)
+            {
+                File.Delete(configPath);
+            }
+            else
+            {
+                File.WriteAllBytes(configPath, original);
+            }
+        }
+    }
 }

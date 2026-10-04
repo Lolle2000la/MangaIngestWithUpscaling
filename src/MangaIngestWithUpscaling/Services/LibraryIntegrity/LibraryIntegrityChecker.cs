@@ -566,8 +566,11 @@ public partial class LibraryIntegrityChecker(
         if (splitState.Status == SplitProcessingStatus.Processing)
         {
             bool hasLiveTask =
-                await HasExistingApplyTaskAsync(context, chapter.Id, cancellationToken)
-                || await HasExistingDetectionTaskAsync(context, chapter.Id, cancellationToken);
+                await splitProcessingCoordinator.HasExistingApplyTaskAsync(
+                    chapter.Id,
+                    context,
+                    cancellationToken
+                ) || await HasExistingDetectionTaskAsync(context, chapter.Id, cancellationToken);
             if (!hasLiveTask)
             {
                 logger.LogWarning(
@@ -1222,21 +1225,6 @@ public partial class LibraryIntegrityChecker(
     {
         return await PersistedTaskQueries
             .ForTaskTypeAndChapter<RepairUpscaleTask>(
-                context,
-                chapterId,
-                [PersistedTaskStatus.Pending, PersistedTaskStatus.Processing]
-            )
-            .AnyAsync(cancellationToken);
-    }
-
-    private static async Task<bool> HasExistingApplyTaskAsync(
-        ApplicationDbContext context,
-        int chapterId,
-        CancellationToken cancellationToken
-    )
-    {
-        return await PersistedTaskQueries
-            .ForTaskTypeAndChapter<ApplySplitsTask>(
                 context,
                 chapterId,
                 [PersistedTaskStatus.Pending, PersistedTaskStatus.Processing]

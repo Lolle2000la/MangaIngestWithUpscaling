@@ -101,6 +101,12 @@ string authHeaderValue = $"ApiKey {boundWorkerConfig.ApiKey}";
 
 builder.Services.AddGrpcClient<UpscalingService.UpscalingServiceClient>(o =>
 {
+    // Match the server's per-message receive ceiling (src/MangaIngestWithUpscaling/Program.cs); the
+    // 4 MiB gRPC default would reject a manifest for a very large chapter (~40k pages).
+    o.ChannelOptionsActions.Add(channelOptions =>
+        channelOptions.MaxReceiveMessageSize = 32 * 1024 * 1024
+    );
+
     o.CallOptionsActions.Add(context =>
     {
         Metadata metadata = context.CallOptions.Headers ?? new Metadata();

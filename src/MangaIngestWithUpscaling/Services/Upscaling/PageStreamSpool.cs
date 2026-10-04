@@ -71,32 +71,22 @@ public sealed class PageStreamSpool : IPageSpoolStore
     public const long MaxTaskBytes = 8L * 1024 * 1024 * 1024;
 
     /// <summary>
-    /// Rejects archive entry names that could escape the output archive on extraction (absolute or
-    /// parent-traversing paths). Shared with the manifest builder so the descriptor set and the
-    /// assembled archive agree.
+    /// Rejects archive entry names that could escape the output archive on extraction (absolute,
+    /// parent-traversing or Windows drive-relative/ADS paths). Shared with the manifest builder so the
+    /// descriptor set and the assembled archive agree.
     /// </summary>
     public static bool IsSafeEntryName(string name) =>
         !string.IsNullOrEmpty(name)
         && !Path.IsPathRooted(name)
-        // Reject Windows drive/UNC forms independent of the host OS: on Linux Path.IsPathRooted
-        // returns false for "C:\evil.jpg" and "\\server\share\evil.jpg". Only a drive prefix is
-        // rejected, not a colon anywhere: a colon is legal on Linux and rejecting it silently dropped
-        // legitimate pages (the chapter was still reported upscaled).
+        // Reject Windows forms independent of the host OS: on Linux Path.IsPathRooted returns false
+        // for "C:\evil.jpg", "C:evil.jpg" and "\\server\share\evil.jpg". A colon in any segment is a
+        // drive-relative ("C:evil.jpg") or NTFS alternate-data-stream ("page.jpg:evil") form that a
+        // third-party Windows extractor would not treat as a plain name, so it is rejected even though
+        // a colon is legal on Linux. (The server itself never extracts by entry name.)
         && !name.StartsWith('/')
         && !name.StartsWith('\\')
-        && !IsWindowsDriveForm(name)
-        && !name.Split('/', '\\').Any(IsUnsafeSegment);
-
-    /// <summary>
-    ///     True for a Windows absolute drive prefix ("C:\", "C:/"), which must not be interpreted as a
-    ///     drive path even when the host is Linux. A drive-relative "C:evil" and a legal Linux name like
-    ///     "a:b.jpg" are not rejected: dropping them silently lost pages.
-    /// </summary>
-    private static bool IsWindowsDriveForm(string name) =>
-        name.Length >= 3
-        && char.IsAsciiLetter(name[0])
-        && name[1] == ':'
-        && (name[2] == '/' || name[2] == '\\');
+        && name.Split('/', '\\')
+            .All(segment => !segment.Contains(':') && !IsUnsafeSegment(segment));
 
     /// <summary>
     /// True for a path component that is a parent traversal. Windows removes trailing spaces and dots

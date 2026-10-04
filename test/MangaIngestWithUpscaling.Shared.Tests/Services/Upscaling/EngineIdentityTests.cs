@@ -177,6 +177,42 @@ public class EngineIdentityTests
 
     [Fact]
     [Trait("Category", "Unit")]
+    public void ForUpscaler_DistinguishesASameSizeFineTuneInTheTailOfA64To128KiBFile()
+    {
+        // A file between one and two 64 KiB windows used to sample only the head and middle, so a
+        // fine-tune differing solely in its tail hashed identically. The tail is now sampled whenever
+        // the file is longer than one window.
+        string first = Directory.CreateTempSubdirectory("engine_models_smalltail_a").FullName;
+        string second = Directory.CreateTempSubdirectory("engine_models_smalltail_b").FullName;
+        try
+        {
+            const int size = 96 * 1024;
+            byte[] a = new byte[size];
+            byte[] b = new byte[size];
+            a[size - 1] = 1;
+            b[size - 1] = 2;
+            File.WriteAllBytes(Path.Combine(first, "model.pth"), a);
+            File.WriteAllBytes(Path.Combine(second, "model.pth"), b);
+
+            UpscalerConfig firstConfig = Config();
+            firstConfig.ModelsDirectory = first;
+            UpscalerConfig secondConfig = Config();
+            secondConfig.ModelsDirectory = second;
+
+            Assert.NotEqual(
+                EngineIdentity.ForUpscaler(firstConfig),
+                EngineIdentity.ForUpscaler(secondConfig)
+            );
+        }
+        finally
+        {
+            Directory.Delete(first, true);
+            Directory.Delete(second, true);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
     public void ForUpscaler_IgnoresAllPreprocessingKnobs()
     {
         // Preprocessing is server-owned (see ForUpscaler_IgnoresPreprocessingBecauseTheServerOwnsIt),

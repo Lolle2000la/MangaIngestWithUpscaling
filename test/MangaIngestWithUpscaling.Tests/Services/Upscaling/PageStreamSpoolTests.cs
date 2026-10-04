@@ -752,9 +752,6 @@ public class PageStreamSpoolTests
     [InlineData("ch/001.jpg", true)]
     [InlineData("ch\\001.jpg", true)]
     [InlineData("page1..jpg", true)]
-    // A colon is legal on Linux and must not silently drop the page; only a drive prefix is unsafe.
-    [InlineData("Chapter 1: Intro/001.jpg", true)]
-    [InlineData("a:b.jpg", true)]
     // "." and empty components collapse harmlessly; only a parent traversal is unsafe.
     [InlineData("./001.jpg", true)]
     [InlineData("a//b.jpg", true)]
@@ -763,6 +760,11 @@ public class PageStreamSpoolTests
     [InlineData("..\\evil.jpg", false)]
     [InlineData(".. /evil.jpg", false)]
     [InlineData(".../evil.jpg", false)]
+    // A colon in any segment is a Windows drive-relative ("C:evil.jpg") or NTFS alternate-data-stream
+    // form; a third-party Windows extractor would not treat it as a plain name.
+    [InlineData("Chapter 1: Intro/001.jpg", false)]
+    [InlineData("a:b.jpg", false)]
+    [InlineData("C:evil.jpg", false)]
     [InlineData("C:/evil.jpg", false)]
     [InlineData("C:\\evil.jpg", false)]
     [InlineData("/etc/passwd", false)]

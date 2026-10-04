@@ -350,18 +350,29 @@ public class ImageResizeService(
 
     public void VerifyReady()
     {
-        // Exercise the native backend with a tiny in-memory image. Any infrastructure fault
-        // (DllNotFound/BadImageFormat/TypeInitialization) propagates; a worker that cannot preprocess
-        // must fail fast rather than silently skip it.
+        // Exercise the native backend end-to-end with a tiny in-memory image: resize (transform) and
+        // round-trip both a lossless (.png) and a lossy (.jpg) encode/decode. An in-memory
+        // NewFromArray+Resize alone only proves the native library loaded; it never touches a codec, so
+        // a libvips built without the PNG/JPEG loaders or encoders would pass and the worker would
+        // silently produce un-preprocessed pages while advertising a healthy engine identity.
         using Image probe = Image.NewFromArray(
-            new int[,]
+            new byte[,]
             {
-                { 0, 1 },
-                { 2, 3 },
+                { 0, 1, 2, 3 },
+                { 4, 5, 6, 7 },
+                { 8, 9, 10, 11 },
+                { 12, 13, 14, 15 },
             }
         );
         using Image resized = probe.Resize(0.5, kernel: Enums.Kernel.Linear);
-        _ = resized.Width;
+
+        using Image png = Image.NewFromBuffer(resized.WriteToBuffer(".png"));
+        if (png.Width <= 0)
+            throw new InvalidOperationException("libvips PNG round-trip produced no pixels.");
+
+        using Image jpg = Image.NewFromBuffer(resized.WriteToBuffer(".jpg"));
+        if (jpg.Width <= 0)
+            throw new InvalidOperationException("libvips JPEG round-trip produced no pixels.");
     }
 
     /// <summary>
@@ -369,6 +380,13 @@ public class ImageResizeService(
     /// architecture) rather than a page that cannot be decoded. Swallowing the former would let a
     /// broken worker silently produce un-preprocessed pages while advertising the same engine identity
     /// as a healthy one, so the per-page path surfaces it instead.
+    /// <para>
+    /// <see cref="NetVips.VipsException"/> is deliberately not classified here: a missing loader or
+    /// encoder is indistinguishable from a genuinely corrupt page by exception type or message (both
+    /// surface as <c>VipsForeignLoad</c>/<c>VipsForeignSave</c> failures), so broadening this would
+    /// start failing chapters on a single bad page instead of keeping the original. Missing codecs are
+    /// caught by <see cref="VerifyReady"/> at startup instead.
+    /// </para>
     /// </summary>
     private static bool IsInfrastructureFailure(Exception ex)
     {
