@@ -1404,6 +1404,107 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
         Assert.False(File.Exists(upscaledCbz));
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ReapDeadTasks_WhenTaskAwaitsHandoff_DoesNotRequeueIt()
+    {
+        // Regression guard: a claimed task is tracked in runningTasks before handoff, but its
+        // LastKeepAlive is not refreshed while remote repair preparation runs (there is no worker and
+        // no heartbeat yet). A stale timestamp must not let the reaper requeue (and duplicate
+        // dispatch) a task that is still being prepared.
+        int taskId = await SeedTaskAsync(PersistedTaskStatus.Processing);
+        var awaiting = new PersistedTask
+        {
+            Id = taskId,
+            Data = new DetectSplitCandidatesTask(1, 1),
+            Status = PersistedTaskStatus.Processing,
+            LastKeepAlive = DateTime.UtcNow.AddMinutes(-5),
+        };
+        Dictionary<int, PersistedTask> runningTasks = GetPrivateField<
+            Dictionary<int, PersistedTask>
+        >(_processor, "runningTasks");
+        HashSet<int> awaitingHandoff = GetPrivateField<HashSet<int>>(_processor, "awaitingHandoff");
+        runningTasks[taskId] = awaiting;
+        awaitingHandoff.Add(taskId);
+
+        await _processor.ReapDeadTasksAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(PersistedTaskStatus.Processing, await GetStatusAsync(taskId));
+        Assert.True(runningTasks.ContainsKey(taskId));
+        Assert.Contains(taskId, awaitingHandoff);
+        Assert.DoesNotContain(_taskQueue.GetUpscaleSnapshot(), t => t.Id == taskId);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ReapDeadTasks_WhenTaskWasHandedOff_RequeuesIt()
+    {
+        // A task the worker actually owns (no longer awaiting handoff) whose keep-alive went stale is
+        // still recovered by the reaper.
+        int taskId = await SeedTaskAsync(PersistedTaskStatus.Processing);
+        var deadTask = new PersistedTask
+        {
+            Id = taskId,
+            Data = new DetectSplitCandidatesTask(1, 1),
+            Status = PersistedTaskStatus.Processing,
+            LastKeepAlive = DateTime.UtcNow.AddMinutes(-5),
+        };
+        Dictionary<int, PersistedTask> runningTasks = GetPrivateField<
+            Dictionary<int, PersistedTask>
+        >(_processor, "runningTasks");
+        runningTasks[taskId] = deadTask;
+
+        await _processor.ReapDeadTasksAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(PersistedTaskStatus.Pending, await GetStatusAsync(taskId));
+        Assert.Contains(_taskQueue.GetUpscaleSnapshot(), t => t.Id == taskId);
+        Assert.False(runningTasks.ContainsKey(taskId));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task GetTask_WhenTaskIsReroutedLocally_DropsItFromTracking()
+    {
+        // Regression guard: a rerouted task stayed in runningTasks with a stale LastKeepAlive while
+        // the request went on to hand off a second task, so the reaper could requeue it while the
+        // local processor was still running it (duplicate dispatch).
+        await _taskQueue.EnqueueAsync(
+            new RenameUpscaledChaptersSeriesTask(999_999, "/tmp/ch1.cbz", "New Title")
+        );
+        await _taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(1, 1));
+        int reroutedId = _taskQueue
+            .GetUpscaleSnapshot()
+            .Single(t => t.Data is RenameUpscaledChaptersSeriesTask)
+            .Id;
+
+        var serviceCts = new CancellationTokenSource();
+        await _processor.StartAsync(serviceCts.Token);
+        try
+        {
+            PersistedTask? handedToRemote = await _processor.GetTask(
+                TestContext.Current.CancellationToken
+            );
+            Assert.NotNull(handedToRemote);
+            Assert.IsType<DetectSplitCandidatesTask>(handedToRemote!.Data);
+
+            Assert.False(_processor.IsRunningRemotely(reroutedId));
+            Dictionary<int, PersistedTask> runningTasks = GetPrivateField<
+                Dictionary<int, PersistedTask>
+            >(_processor, "runningTasks");
+            Assert.False(runningTasks.ContainsKey(reroutedId));
+            HashSet<int> awaitingHandoff = GetPrivateField<HashSet<int>>(
+                _processor,
+                "awaitingHandoff"
+            );
+            Assert.DoesNotContain(reroutedId, awaitingHandoff);
+        }
+        finally
+        {
+            await serviceCts.CancelAsync();
+            await _processor.StopAsync(CancellationToken.None);
+        }
+    }
+
     private static T GetPrivateField<T>(object target, string name)
     {
         return (T)

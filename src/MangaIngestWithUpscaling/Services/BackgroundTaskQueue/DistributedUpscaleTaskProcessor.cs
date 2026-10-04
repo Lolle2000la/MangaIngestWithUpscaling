@@ -52,6 +52,15 @@ public class DistributedUpscaleTaskProcessor(
 
     private readonly Dictionary<int, PersistedTask> runningTasks = new();
 
+    /// <summary>
+    ///     Ids claimed by this processor but not yet handed off to a worker. A claimed task is put
+    ///     into <see cref="runningTasks" /> immediately so cancellation can see it, but its
+    ///     <see cref="PersistedTask.LastKeepAlive" /> is not refreshed while remote preparation runs
+    ///     (there is no worker and no heartbeat yet). The reaper must not treat such a task as dead,
+    ///     or it would requeue a task that is still being prepared and dispatch it twice.
+    /// </summary>
+    private readonly HashSet<int> awaitingHandoff = new();
+
     private CancellationToken serviceStoppingToken;
 
     public event Func<PersistedTask, Task>? StatusChanged;
@@ -104,6 +113,9 @@ public class DistributedUpscaleTaskProcessor(
                     canceled = tracked;
                 }
 
+                // Keep the reaper exclusion in sync with the removal; a canceled task must never be
+                // selected as a dead task afterwards.
+                awaitingHandoff.Remove(checkAgainst.Id);
                 runningTasks.Remove(checkAgainst.Id);
             }
         }
@@ -159,12 +171,9 @@ public class DistributedUpscaleTaskProcessor(
         // The row is gone, so any page spool for it is orphaned.
         DropPageSpool(taskId, logger);
 
-        using (_lock.EnterScope())
+        if (!RemoveFromRunningTasks(taskId))
         {
-            if (!runningTasks.Remove(taskId))
-            {
-                return;
-            }
+            return;
         }
 
         CleanupRepairFiles(taskId, logger);
@@ -235,11 +244,12 @@ public class DistributedUpscaleTaskProcessor(
         _ = StatusChanged?.Invoke(task);
     }
 
-    private void RemoveFromRunningTasks(int taskId)
+    private bool RemoveFromRunningTasks(int taskId)
     {
         using (_lock.EnterScope())
         {
-            runningTasks.Remove(taskId);
+            awaitingHandoff.Remove(taskId);
+            return runningTasks.Remove(taskId);
         }
     }
 
@@ -402,6 +412,9 @@ public class DistributedUpscaleTaskProcessor(
                                 {
                                     task.LastKeepAlive = DateTime.UtcNow;
                                     runningTasks[task.Id] = task;
+                                    // The worker does not own it yet; keep it out of the reaper until
+                                    // GetTask removes this marker at handoff.
+                                    awaitingHandoff.Add(task.Id);
                                 }
 
                                 trackedClaimId = task.Id;
@@ -473,7 +486,11 @@ public class DistributedUpscaleTaskProcessor(
                             );
 
                             await taskQueue.SendToLocalUpscaleAsync(task, linkedCts.Token);
-                            // Handed off to the local processor; it owns the task from here.
+                            // Handed off to the local processor; it owns the task from here. Drop our
+                            // tracking (and the reaper exclusion) so a stale claim cannot be requeued
+                            // while the local processor is still running it.
+                            RemoveFromRunningTasks(task.Id);
+                            trackedClaimId = null;
                             claimedTask = null;
                             continue;
                         }
@@ -493,7 +510,11 @@ public class DistributedUpscaleTaskProcessor(
                         );
 
                         await taskQueue.SendToLocalUpscaleAsync(task, linkedCts.Token);
-                        // Handed off to the local processor; it owns the task from here.
+                        // Handed off to the local processor; it owns the task from here. Drop our
+                        // tracking (and the reaper exclusion) so a stale claim cannot be requeued
+                        // while the local processor is still running it.
+                        RemoveFromRunningTasks(task.Id);
+                        trackedClaimId = null;
                         claimedTask = null;
                         continue;
                     }
@@ -681,10 +702,7 @@ public class DistributedUpscaleTaskProcessor(
                 // processor no longer owns. A handed-off task stays in runningTasks.
                 if (trackedClaimId is int trackedId && !handedOff)
                 {
-                    using (_lock.EnterScope())
-                    {
-                        runningTasks.Remove(trackedId);
-                    }
+                    RemoveFromRunningTasks(trackedId);
                 }
             }
         }
@@ -706,7 +724,8 @@ public class DistributedUpscaleTaskProcessor(
         {
             deadTasks = runningTasks
                 .Values.Where(t =>
-                    t.Status == PersistedTaskStatus.Processing
+                    !awaitingHandoff.Contains(t.Id)
+                    && t.Status == PersistedTaskStatus.Processing
                     && t.LastKeepAlive.AddMinutes(1) < DateTime.UtcNow
                 )
                 .ToList();
@@ -803,6 +822,8 @@ public class DistributedUpscaleTaskProcessor(
             using (_lock.EnterScope())
             {
                 runningTasks[task.Id] = task;
+                // The worker now owns the task, so it is no longer excluded from the reaper.
+                awaitingHandoff.Remove(task.Id);
             }
 
             _ = StatusChanged?.Invoke(task);
@@ -901,6 +922,7 @@ public class DistributedUpscaleTaskProcessor(
 
         using (_lock.EnterScope())
         {
+            awaitingHandoff.Remove(taskId);
             runningTasks.Remove(taskId);
         }
 
@@ -1253,6 +1275,7 @@ public class DistributedUpscaleTaskProcessor(
         {
             if (runningTasks.TryGetValue(taskId, out PersistedTask? task))
             {
+                awaitingHandoff.Remove(taskId);
                 runningTasks.Remove(taskId);
                 failedTask = task;
             }
