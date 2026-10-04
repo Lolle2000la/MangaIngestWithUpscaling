@@ -79,6 +79,74 @@ public class DetectServerClientTests
         );
     }
 
+    [Theory]
+    [InlineData(GpuBackend.CPU, 0, "cpu")]
+    [InlineData(GpuBackend.CPU, 2, "cpu")]
+    [InlineData(GpuBackend.CUDA, 1, "cuda:0")]
+    [InlineData(GpuBackend.CUDA_12_8, 1, "cuda:0")]
+    [InlineData(GpuBackend.ROCm, 2, "cuda:1")]
+    [InlineData(GpuBackend.ROCm_GFX120X, 3, "cuda:2")]
+    [InlineData(GpuBackend.XPU, 1, "xpu:0")]
+    [Trait("Category", "Unit")]
+    public void ResolveDetectorDevice_MapsTheCpuInclusiveIndexToATorchDevice(
+        GpuBackend installedBackend,
+        int selectedDeviceIndex,
+        string expected
+    )
+    {
+        var config = new UpscalerConfig
+        {
+            SelectedDeviceIndex = selectedDeviceIndex,
+            PreferredGpuBackend = GpuBackend.Auto,
+        };
+
+        Assert.Equal(expected, DetectServerClient.ResolveDetectorDevice(config, installedBackend));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ResolveDetectorDevice_ForcesCpuWhenConfigured()
+    {
+        var config = new UpscalerConfig
+        {
+            UseCPU = true,
+            SelectedDeviceIndex = 2,
+            PreferredGpuBackend = GpuBackend.CUDA,
+        };
+
+        Assert.Equal("cpu", DetectServerClient.ResolveDetectorDevice(config, GpuBackend.CUDA));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ResolveDetectorDevice_FallsBackToThePreferredBackend()
+    {
+        var config = new UpscalerConfig
+        {
+            SelectedDeviceIndex = 1,
+            PreferredGpuBackend = GpuBackend.CUDA,
+        };
+
+        Assert.Equal(
+            "cuda:0",
+            DetectServerClient.ResolveDetectorDevice(config, installedBackend: null)
+        );
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ResolveDetectorDevice_OmitsTheDeviceWhenTheBackendIsUnresolved()
+    {
+        var config = new UpscalerConfig
+        {
+            SelectedDeviceIndex = 1,
+            PreferredGpuBackend = GpuBackend.Auto,
+        };
+
+        Assert.Null(DetectServerClient.ResolveDetectorDevice(config, installedBackend: null));
+        Assert.Null(DetectServerClient.ResolveDetectorDevice(config, GpuBackend.Auto));
+    }
+
     [Fact]
     [Trait("Category", "Unit")]
     public async Task DetectAsync_SpawnsTheServerDetectsAndReleasesTheCache()

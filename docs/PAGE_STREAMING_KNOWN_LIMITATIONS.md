@@ -75,6 +75,9 @@ a change resets the spool and the worker's engine identity no longer varies with
   (Unavailable) rather than completing, so it can cycle up to the restart cap.
 - `RequestTaskRequest.prefetch` / `RequestUpscaleTaskWithHint` are now a no-op hint logged at Debug.
 - The detector logs a warning per page while the resident server is in its cooldown window.
+- Device selection for the resident split detector is derived from `SelectedDeviceIndex`, but `GpuBackend`
+  has no MPS value: on an Apple MPS host the backend resolves to `Auto`, so `--device` is omitted and
+  the detector falls back to its own auto-select (which may not match the upscaler's device).
 - The engine identity samples three 64 KiB windows per model file, so a same-size weight change
   confined between the windows is not detected.
 - Cross-instance mutual exclusion for a chapter is process-local (see `TaskQueue.AcquireChapterGateAsync`);

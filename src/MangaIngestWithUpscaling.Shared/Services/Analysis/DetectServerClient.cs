@@ -441,6 +441,40 @@ public sealed class DetectServerClient : ResidentNdjsonProcess, IDetectServerCli
         }
     }
 
+    /// <summary>
+    ///     Maps <see cref="UpscalerConfig.SelectedDeviceIndex" /> to the torch device string the
+    ///     detector's <c>--device</c> accepts (e.g. <c>cuda:1</c>, <c>xpu:0</c>, <c>cpu</c>). The
+    ///     configured index is CPU-inclusive: <c>0</c> is CPU and index <c>N</c> is the
+    ///     <c>(N-1)</c>th accelerator, matching the upscaler. PyTorch exposes ROCm through the
+    ///     <c>cuda</c> namespace, while XPU uses <c>xpu</c>; the backend is resolved from the
+    ///     installed environment, falling back to the configured preference.
+    /// </summary>
+    /// <returns>
+    ///     The device string, or <see langword="null" /> when the backend is still unresolved
+    ///     (<see cref="GpuBackend.Auto" />), so the detector auto-selects rather than the host
+    ///     guessing a namespace.
+    /// </returns>
+    internal static string? ResolveDetectorDevice(
+        UpscalerConfig config,
+        GpuBackend? installedBackend
+    )
+    {
+        if (config.UseCPU || config.SelectedDeviceIndex <= 0)
+        {
+            return "cpu";
+        }
+
+        GpuBackend backend = installedBackend ?? config.PreferredGpuBackend;
+        return backend switch
+        {
+            GpuBackend.XPU => $"xpu:{config.SelectedDeviceIndex - 1}",
+            GpuBackend.CUDA or GpuBackend.CUDA_12_8 or GpuBackend.ROCm or GpuBackend.ROCm_GFX120X =>
+                $"cuda:{config.SelectedDeviceIndex - 1}",
+            GpuBackend.CPU => "cpu",
+            _ => null,
+        };
+    }
+
     private async Task StartServerAsync(CancellationToken cancellationToken)
     {
         Process? existing;
@@ -507,6 +541,15 @@ public sealed class DetectServerClient : ResidentNdjsonProcess, IDetectServerCli
         startInfo.ArgumentList.Add(checkpoint);
         startInfo.ArgumentList.Add("--config");
         startInfo.ArgumentList.Add(config);
+        // Keep the detector on the same device the upscaler uses (CPU-inclusive index); see
+        // ResolveDetectorDevice. Omitted when the backend is still unresolved, so the detector keeps
+        // its own auto-selection instead of guessing a namespace.
+        string? detectorDevice = ResolveDetectorDevice(_config.Value, environment.InstalledBackend);
+        if (detectorDevice is not null)
+        {
+            startInfo.ArgumentList.Add("--device");
+            startInfo.ArgumentList.Add(detectorDevice);
+        }
         // Exit the server when this process dies, so an abruptly killed host does not leave a warm
         // model (and its GPU memory) resident forever.
         startInfo.ArgumentList.Add("--parent-pid");

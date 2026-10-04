@@ -93,7 +93,7 @@ The environment variable for each setting follows the ASP.NET Core convention:
 | Setting | ENV variable | Default | Description |
 |---|---|---|---|
 | `PreferredGpuBackend` | `Ingest_Upscaler__PreferredGpuBackend` | `Auto` | Which GPU backend PyTorch should use. See [values](#preferredgpubackend-values). |
-| `SelectedDeviceIndex` | `Ingest_Upscaler__SelectedDeviceIndex` | `1` | Device index passed to PyTorch: `0` selects CPU, `1` is the first GPU, `2` the second, and so on. |
+| `SelectedDeviceIndex` | `Ingest_Upscaler__SelectedDeviceIndex` | `1` | Device index passed to PyTorch: `0` selects CPU, `1` is the first GPU, `2` the second, and so on. The resident split-detection server follows the same setting (mapped to `cuda:N` / `xpu:N` / `cpu`), so both backends run on the same device. |
 | `UseFp16` | `Ingest_Upscaler__UseFp16` | `true` | Use half-precision (FP16) inference. Recommended for modern GPUs; turn off for CPU or older hardware. |
 | `UseCPU` | `Ingest_Upscaler__UseCPU` | `false` | Force CPU inference even when a GPU is available. |
 
