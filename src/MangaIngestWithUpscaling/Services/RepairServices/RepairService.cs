@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using AutoRegisterInject;
+using MangaIngestWithUpscaling.Helpers;
 using MangaIngestWithUpscaling.Shared.Constants;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
@@ -152,16 +153,18 @@ public class RepairService : IRepairService
             }
         }
 
-        // Create new CBZ file from repaired directory
-        string tempRepairedCbz = Path.Combine(context.WorkDirectory, "repaired.cbz");
-        ZipFile.CreateFromDirectory(context.UpscaledDirectory, tempRepairedCbz);
-
-        // Replace the original upscaled file
-        if (File.Exists(finalUpscaledPath))
-        {
-            File.Delete(finalUpscaledPath);
-        }
-        File.Move(tempRepairedCbz, finalUpscaledPath);
+        // Build the repaired CBZ beside its destination and commit it atomically. The old code wrote
+        // to a temp under the system temp directory and deleted the destination before moving it in;
+        // on a cross-volume move that copy can fail (disk full, permission, I/O) after the
+        // destination is already gone, losing the only upscaled copy. The atomic replace overwrites
+        // in place and leaves the original untouched if anything fails.
+        using AtomicFileReplacement replacement = AtomicFileReplacement.Begin(
+            finalUpscaledPath,
+            "repair",
+            logger
+        );
+        ZipFile.CreateFromDirectory(context.UpscaledDirectory, replacement.TempPath);
+        replacement.Commit();
     }
 
     /// <summary>
