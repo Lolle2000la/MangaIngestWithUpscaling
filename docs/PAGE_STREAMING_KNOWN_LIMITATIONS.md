@@ -78,7 +78,41 @@ a change resets the spool and the worker's engine identity no longer varies with
 - The engine identity samples three 64 KiB windows per model file, so a same-size weight change
   confined between the windows is not detected.
 - Cross-instance mutual exclusion for a chapter is process-local (see `TaskQueue.AcquireChapterGateAsync`);
-  a multi-replica deployment needs a DB-level conditional claim.
+  a multi-replica deployment needs a DB-level conditional claim. **Single-replica is the supported
+  deployment today**: the queue is in-memory and the chapter gate is process-local, so a multi-replica
+  deployment can run conflicting chapter tasks. Treat multi-replica as unsupported until a DB-level
+  conditional claim (or advisory lock) replaces the gate.
+- `IPageSpoolStore` returns the mutable concrete `PageStreamSession` and omits `Remove`/`SweepStale`,
+  so it is a test seam rather than a distributed abstraction. Direction: return an opaque handle plus
+  an immutable snapshot and move budget/gate access behind store methods (or rename it to say
+  "process-local").
+- `AtomicFileReplacement` documents a "sibling temp" invariant but does not enforce it; a temp on
+  another volume silently degrades the move to a copy.
+- `ImageResizeService` format conversion writes new-extension bytes and moves them over the original
+  path, so the extension no longer matches the content (only safe because the engine sniffs magic
+  bytes).
+- Metadata handling uses case-sensitive `.cbz` checks and treats a missing `.cbz` as "no differences";
+  the distributed repair path guards `File.Exists` but `RepairUpscaleTask` does not.
+- `LibraryIntegrityChecker` keeps a private duplicate of
+  `ISplitProcessingCoordinator.HasExistingApplyTaskAsync`.
+- `IPageSpoolStore.WritePageAsync`/`CommitPage` are public but production-unused (test-only), and
+  `TryCommitPage`'s `size = 0` default is a budget footgun.
+- The streaming inactivity allowance keeps a documented 15-minute floor that the local whole-CBZ
+  path does not have, so the two paths kill a wedged engine on different schedules.
+
+## Architecture follow-ups (still open)
+
+- Extract a `PageContextResolver` (identity/descriptor/DB/archive work) out of the ~1900-line RPC
+  partial and return a result type instead of null-means-transient.
+- Decompose `PageStreamClient` (fetch stream / upload queue / progress reporter / work directory) and
+  `PageStreamSpool` (session registry / page writer / zip assembler / sweeper).
+- A generic `NdjsonJobRegistry<TResult>` and a `FailureCooldown` value type so `DetectServerClient`
+  and `MangaJaNaiWorkerClient` stop duplicating job/TCS/cooldown plumbing.
+- A single `TaskQueue.TryBeginChapterTaskAsync(task, onDefer)` owning gate + conflict check + claim
+  (the conflict rule itself is now single-sourced in `ChapterConflictGuard`).
+- A real engine-fingerprint seam (`IEngineFingerprint`/`IRuntimeInfo`) instead of the static
+  `EngineIdentity` plus `PythonService.Environment` reach-through; the runtime version and engine
+  constant are now hashed, but the seam would make them injectable and testable.
 
 ## Architecture follow-ups
 
@@ -94,14 +128,13 @@ Done:
    shared `PageStreamRestartException`; the wire `terminal` bool is mapped in one place.
 4. **`IPageSpoolStore`.** The store seam exists and states the single-replica constraint once; the
    concrete `PageStreamSpool` is the (process-local) implementation.
-6. **`AtomicFileReplacement`.** The "build a sibling temp → atomic move → sweep stale temps" pattern
-   is single-sourced for split apply and the streamed-chapter assembly.
-7. **`RemoteTaskProcessor` lifecycle seam.** `ITaskClaimSource`, `KeepAlivePump` and
+5. **`AtomicFileReplacement`.** The "build a sibling temp → atomic move → sweep stale temps" pattern
+   is single-sourced for split apply and the streamed-chapter assembly (the repair assembly now uses
+   it too).
+6. **`RemoteTaskProcessor` lifecycle seam.** `ITaskClaimSource`, `KeepAlivePump` and
    `SoftFailureTracker` make the loop testable without live gRPC.
-
-5. **One finalize pipeline.** Done: `PageStreamFinalizer` owns the complete→assemble→finalize ladder
-   for the two upload handlers and the manifest-complete branch.
-
+7. **One finalize pipeline.** `PageStreamFinalizer` owns the complete→assemble→finalize ladder for
+   the two upload handlers and the manifest-complete branch.
 8. **Typed engine identity + one profile mapper.** Assessed and left as-is. The profile is mapped in
    two places (`ToProtoProfile` on the server, `GetProfileFromResponse` on the worker), but they are
    inverses that *fail loudly* on divergence — the server maps an unknown enum to `Unspecified` and
