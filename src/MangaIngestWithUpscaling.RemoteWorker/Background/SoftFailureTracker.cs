@@ -1,3 +1,5 @@
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
+
 namespace MangaIngestWithUpscaling.RemoteWorker.Background;
 
 /// <summary>
@@ -41,8 +43,6 @@ public sealed class SoftFailureTracker
     public void Reset(int taskId) => _counts.Remove(taskId);
 
     /// <summary>The consecutive-failure count at which <paramref name="kind" /> is terminalized.</summary>
-    public static int CapFor(RemoteTaskProcessor.StreamingFailureKind kind) =>
-        kind == RemoteTaskProcessor.StreamingFailureKind.Restart
-            ? MaxConsecutiveRestarts
-            : MaxConsecutiveSoftFailures;
+    public static int CapFor(StreamingFailureKind kind) =>
+        kind == StreamingFailureKind.Restart ? MaxConsecutiveRestarts : MaxConsecutiveSoftFailures;
 }

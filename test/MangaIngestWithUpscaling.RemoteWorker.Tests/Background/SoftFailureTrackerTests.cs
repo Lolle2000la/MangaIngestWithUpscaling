@@ -1,4 +1,5 @@
 using MangaIngestWithUpscaling.RemoteWorker.Background;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Xunit;
 
 namespace MangaIngestWithUpscaling.RemoteWorker.Tests.Background;
@@ -39,15 +40,15 @@ public class SoftFailureTrackerTests
         // is.
         Assert.Equal(
             SoftFailureTracker.MaxConsecutiveSoftFailures,
-            SoftFailureTracker.CapFor(RemoteTaskProcessor.StreamingFailureKind.Transient)
+            SoftFailureTracker.CapFor(StreamingFailureKind.Transient)
         );
         Assert.Equal(
             SoftFailureTracker.MaxConsecutiveSoftFailures,
-            SoftFailureTracker.CapFor(RemoteTaskProcessor.StreamingFailureKind.Permanent)
+            SoftFailureTracker.CapFor(StreamingFailureKind.Permanent)
         );
         Assert.Equal(
             SoftFailureTracker.MaxConsecutiveRestarts,
-            SoftFailureTracker.CapFor(RemoteTaskProcessor.StreamingFailureKind.Restart)
+            SoftFailureTracker.CapFor(StreamingFailureKind.Restart)
         );
     }
 

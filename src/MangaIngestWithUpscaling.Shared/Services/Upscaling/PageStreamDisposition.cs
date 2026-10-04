@@ -7,9 +7,6 @@ namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 /// </summary>
 public enum PageStreamDisposition
 {
-    /// <summary>The page was accepted; there is nothing to restart and nothing to report.</summary>
-    Accepted,
-
     /// <summary>
     /// Recoverable: keep the spool and let the server requeue the chapter, so the worker resumes at
     /// the first missing page instead of losing the already-upscaled pages.

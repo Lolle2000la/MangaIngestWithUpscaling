@@ -9,8 +9,8 @@ public static class PageStreamRejections
 {
     /// <summary>
     /// The wire contract: only a <see cref="PageStreamDisposition.Terminal"/> disposition sets
-    /// <c>terminal = true</c>. A <see cref="PageStreamDisposition.Retry"/> (and an
-    /// <see cref="PageStreamDisposition.Accepted"/>) is non-terminal, so the worker keeps the spool.
+    /// <c>terminal = true</c>. A <see cref="PageStreamDisposition.Retry"/> is non-terminal, so the
+    /// worker keeps the spool.
     /// </summary>
     public static bool ToWireTerminal(PageStreamDisposition disposition) =>
         disposition == PageStreamDisposition.Terminal;

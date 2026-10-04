@@ -87,19 +87,6 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 or StatusCode.ResourceExhausted
                 or StatusCode.Unknown;
 
-    /// <summary>How a page-streaming failure should be handled.</summary>
-    public enum StreamingFailureKind
-    {
-        /// <summary>A transport blip; requeue without reporting (the spool is preserved).</summary>
-        Transient,
-
-        /// <summary>A non-terminal rejection; restart the chapter without reporting.</summary>
-        Restart,
-
-        /// <summary>A deterministic failure; report it (which clears the spool).</summary>
-        Permanent,
-    }
-
     /// <summary>
     /// Classifies a page-streaming failure. The whole exception chain is inspected, not just the
     /// innermost: grpc-dotnet keeps the transport error in <see cref="Exception.InnerException"/>, so
@@ -348,7 +335,8 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
     private async Task FetchLoop(CancellationToken stoppingToken)
     {
         using var dispatcherTimer = new PeriodicTimer(TimeSpan.FromSeconds(5));
-        bool serverAvailable = true;
+        // Warn once per outage, not once per retry tick.
+        bool loggedUnavailable = false;
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -391,17 +379,17 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                     try
                     {
                         resp = await claimSource.RequestTaskWithHintAsync(stoppingToken);
-                        serverAvailable = true;
+                        loggedUnavailable = false;
                     }
                     catch (RpcException e)
                         when (e.StatusCode is StatusCode.NotFound or StatusCode.Unavailable)
                     {
-                        if (serverAvailable && e.StatusCode == StatusCode.Unavailable)
+                        if (!loggedUnavailable && e.StatusCode == StatusCode.Unavailable)
                         {
                             logger.LogWarning(
                                 "Server is currently unavailable; will retry shortly."
                             );
-                            serverAvailable = false;
+                            loggedUnavailable = true;
                         }
 
                         await dispatcherTimer.WaitForNextTickAsync(stoppingToken);

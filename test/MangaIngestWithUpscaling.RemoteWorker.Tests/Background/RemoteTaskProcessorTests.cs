@@ -14,16 +14,16 @@ public class RemoteTaskProcessorTests
 {
     [Theory]
     [Trait("Category", "Unit")]
-    [InlineData(StatusCode.Unavailable, RemoteTaskProcessor.StreamingFailureKind.Transient)]
-    [InlineData(StatusCode.DeadlineExceeded, RemoteTaskProcessor.StreamingFailureKind.Transient)]
-    [InlineData(StatusCode.Cancelled, RemoteTaskProcessor.StreamingFailureKind.Transient)]
-    [InlineData(StatusCode.FailedPrecondition, RemoteTaskProcessor.StreamingFailureKind.Restart)]
-    [InlineData(StatusCode.Unimplemented, RemoteTaskProcessor.StreamingFailureKind.Transient)]
-    [InlineData(StatusCode.Internal, RemoteTaskProcessor.StreamingFailureKind.Permanent)]
-    [InlineData(StatusCode.InvalidArgument, RemoteTaskProcessor.StreamingFailureKind.Permanent)]
+    [InlineData(StatusCode.Unavailable, StreamingFailureKind.Transient)]
+    [InlineData(StatusCode.DeadlineExceeded, StreamingFailureKind.Transient)]
+    [InlineData(StatusCode.Cancelled, StreamingFailureKind.Transient)]
+    [InlineData(StatusCode.FailedPrecondition, StreamingFailureKind.Restart)]
+    [InlineData(StatusCode.Unimplemented, StreamingFailureKind.Transient)]
+    [InlineData(StatusCode.Internal, StreamingFailureKind.Permanent)]
+    [InlineData(StatusCode.InvalidArgument, StreamingFailureKind.Permanent)]
     public void ClassifyStreamingFailure_ClassifiesRpcStatusCodes(
         StatusCode code,
-        RemoteTaskProcessor.StreamingFailureKind expected
+        StreamingFailureKind expected
     )
     {
         Assert.Equal(
@@ -44,7 +44,7 @@ public class RemoteTaskProcessorTests
         );
 
         Assert.Equal(
-            RemoteTaskProcessor.StreamingFailureKind.Transient,
+            StreamingFailureKind.Transient,
             RemoteTaskProcessor.ClassifyStreamingFailure(wrapped)
         );
     }
@@ -54,7 +54,7 @@ public class RemoteTaskProcessorTests
     public void ClassifyStreamingFailure_TreatsANonTerminalRejectionAsRestart()
     {
         Assert.Equal(
-            RemoteTaskProcessor.StreamingFailureKind.Restart,
+            StreamingFailureKind.Restart,
             RemoteTaskProcessor.ClassifyStreamingFailure(new PageStreamRestartException("restart"))
         );
     }
@@ -64,7 +64,7 @@ public class RemoteTaskProcessorTests
     public void ClassifyStreamingFailure_TreatsAnOrdinaryErrorAsPermanent()
     {
         Assert.Equal(
-            RemoteTaskProcessor.StreamingFailureKind.Permanent,
+            StreamingFailureKind.Permanent,
             RemoteTaskProcessor.ClassifyStreamingFailure(
                 new InvalidOperationException("The server did not send page 0.")
             )
@@ -78,7 +78,7 @@ public class RemoteTaskProcessorTests
         // A crashed worker (OOM/CUDA fault) must not drop the already-spooled pages: respawn and
         // resume instead of reporting a permanent failure.
         Assert.Equal(
-            RemoteTaskProcessor.StreamingFailureKind.Transient,
+            StreamingFailureKind.Transient,
             RemoteTaskProcessor.ClassifyStreamingFailure(
                 new UpscaleWorkerCrashedException("Upscale worker process exited unexpectedly.")
             )
@@ -197,7 +197,7 @@ public class RemoteTaskProcessorTests
         // A wedged worker (a cold model load or a CUDA stall past the scaled inactivity timeout) is
         // as recoverable as a crash: respawn and resume rather than discarding the spool.
         Assert.Equal(
-            RemoteTaskProcessor.StreamingFailureKind.Transient,
+            StreamingFailureKind.Transient,
             RemoteTaskProcessor.ClassifyStreamingFailure(new TimeoutException("inactivity"))
         );
     }
@@ -277,7 +277,7 @@ public class RemoteTaskProcessorTests
         );
 
         Assert.Equal(
-            RemoteTaskProcessor.StreamingFailureKind.Transient,
+            StreamingFailureKind.Transient,
             RemoteTaskProcessor.ClassifyStreamingFailure(ex)
         );
     }

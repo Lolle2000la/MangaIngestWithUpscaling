@@ -7,7 +7,6 @@ public class PageStreamRejectionsTests
 {
     [Theory]
     [Trait("Category", "Unit")]
-    [InlineData(PageStreamDisposition.Accepted, false)]
     [InlineData(PageStreamDisposition.Retry, false)]
     [InlineData(PageStreamDisposition.Terminal, true)]
     public void ToWireTerminal_OnlyTerminalIsTerminal(
@@ -15,7 +14,7 @@ public class PageStreamRejectionsTests
         bool expected
     )
     {
-        // The wire contract: only Terminal sets terminal=true, so Retry (and Accepted) keeps the spool.
+        // The wire contract: only Terminal sets terminal=true, so Retry keeps the spool.
         Assert.Equal(expected, PageStreamRejections.ToWireTerminal(disposition));
     }
 

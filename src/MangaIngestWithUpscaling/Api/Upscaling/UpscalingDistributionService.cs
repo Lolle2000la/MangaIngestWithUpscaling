@@ -163,33 +163,7 @@ public partial class UpscalingDistributionService(
         var response = new UpscaleTaskDelegationResponse
         {
             TaskId = task.Id,
-            UpscalerProfile = new UpscalerProfile
-            {
-                Name = upscalerProfile.Name,
-                UpscalerMethod = upscalerProfile.UpscalerMethod switch
-                {
-                    Shared.Data.LibraryManagement.UpscalerMethod.MangaJaNai =>
-                        UpscalerMethod.MangaJaNai,
-                    _ => UpscalerMethod.Unspecified,
-                },
-                CompressionFormat = upscalerProfile.CompressionFormat switch
-                {
-                    Shared.Data.LibraryManagement.CompressionFormat.Avif => CompressionFormat.Avif,
-                    Shared.Data.LibraryManagement.CompressionFormat.Jpg => CompressionFormat.Jpg,
-                    Shared.Data.LibraryManagement.CompressionFormat.Png => CompressionFormat.Png,
-                    Shared.Data.LibraryManagement.CompressionFormat.Webp => CompressionFormat.Webp,
-                    _ => CompressionFormat.Unspecified,
-                },
-                Quality = upscalerProfile.Quality,
-                ScalingFactor = upscalerProfile.ScalingFactor switch
-                {
-                    Shared.Data.LibraryManagement.ScaleFactor.OneX => ScaleFactor.OneX,
-                    Shared.Data.LibraryManagement.ScaleFactor.TwoX => ScaleFactor.TwoX,
-                    Shared.Data.LibraryManagement.ScaleFactor.ThreeX => ScaleFactor.ThreeX,
-                    Shared.Data.LibraryManagement.ScaleFactor.FourX => ScaleFactor.FourX,
-                    _ => ScaleFactor.Unspecified,
-                },
-            },
+            UpscalerProfile = ToProtoProfile(upscalerProfile),
         };
 
         return response;
