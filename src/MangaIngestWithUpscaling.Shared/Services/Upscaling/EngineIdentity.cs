@@ -28,7 +28,14 @@ public static class EngineIdentity
     /// and far cheaper than hashing the ~gigabytes of weights, while still distinguishing a same-size
     /// fine-tune that diverges past the first window.
     /// </summary>
-    public static string ForUpscaler(UpscalerConfig config)
+    /// <param name="resolvedBackend">
+    /// The backend the Python environment actually resolved to (e.g. <c>InstalledBackend</c> after
+    /// <c>PreparePythonEnvironment</c>). Hashed instead of <see cref="UpscalerConfig.PreferredGpuBackend"/>
+    /// because the preference defaults to <see cref="GpuBackend.Auto"/>: two default deployments on
+    /// different hardware would otherwise hash the same and be allowed to blend pages. Falls back to
+    /// the preference when the environment has not been prepared yet (tests, first startup).
+    /// </param>
+    public static string ForUpscaler(UpscalerConfig config, GpuBackend? resolvedBackend = null)
     {
         var material = new StringBuilder("upscaler|");
         // Normalize "disabled" spellings so an inactive setting does not needlessly invalidate every
@@ -63,9 +70,10 @@ public static class EngineIdentity
             // from a GPU run (SelectedDeviceIndex > 0).
             .Append(config.UseCPU || config.SelectedDeviceIndex == 0)
             .Append('|')
-            // The accelerator backend, so a CUDA and a ROCm run never mix. The GPU index itself is not
-            // hashed, so a same-backend hand-off keeps the spool.
-            .Append(config.PreferredGpuBackend)
+            // The *resolved* accelerator backend, so a CUDA and a ROCm run never mix even when both
+            // are configured Auto. The GPU index itself is not hashed, so a same-backend hand-off
+            // keeps the spool.
+            .Append(resolvedBackend ?? config.PreferredGpuBackend)
             .Append('|');
 
         foreach (ImageFormatConversionRule rule in config.ImageFormatConversionRules ?? [])

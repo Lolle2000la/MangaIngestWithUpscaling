@@ -191,5 +191,27 @@ public class EngineIdentityTests
         );
     }
 
+    [Fact]
+    [Trait("Category", "Unit")]
+    public void ForUpscaler_HashesTheResolvedBackendNotTheAutoPreference()
+    {
+        // The preference defaults to Auto, so two default deployments on different hardware would
+        // share an identity unless the resolved backend is hashed. The provider passes the value the
+        // Python environment actually installed.
+        UpscalerConfig config = Config();
+        Assert.Equal(GpuBackend.Auto, config.PreferredGpuBackend);
+
+        Assert.NotEqual(
+            EngineIdentity.ForUpscaler(config, GpuBackend.CUDA),
+            EngineIdentity.ForUpscaler(config, GpuBackend.ROCm)
+        );
+
+        // Falls back to the preference when the environment is not prepared yet (tests, first start).
+        Assert.Equal(
+            EngineIdentity.ForUpscaler(config),
+            EngineIdentity.ForUpscaler(config, GpuBackend.Auto)
+        );
+    }
+
     private static UpscalerConfig Config() => new() { ModelsDirectory = "/nonexistent/models" };
 }

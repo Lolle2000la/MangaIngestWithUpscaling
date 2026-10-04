@@ -1,4 +1,5 @@
 using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Services.Python;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.Options;
 
@@ -34,7 +35,14 @@ public sealed class EngineIdentityProvider(IOptions<UpscalerConfig> config)
         {
             lock (_lock)
             {
-                return _upscaler ??= EngineIdentity.ForUpscaler(config.Value);
+                // Hash the backend the Python environment actually resolved to, not the Auto
+                // preference: two default deployments on different hardware must not share an
+                // identity. The environment is prepared at startup, before the first task, so this is
+                // set by the time the identity is first needed.
+                return _upscaler ??= EngineIdentity.ForUpscaler(
+                    config.Value,
+                    PythonService.Environment?.InstalledBackend
+                );
             }
         }
     }
