@@ -21,7 +21,6 @@
 @using System.Globalization
 @using Microsoft.Extensions.DependencyInjection
 @using MudBlazor
-@inject ISplitApplicationService SplitApplicationService
 @inject ApplicationDbContext DbContext
 @inject IMetadataHandlingService MetadataHandler
 @inject IMangaMetadataChanger MangaMetadataChanger
@@ -1436,10 +1435,18 @@
                     ?? splitState?.LastProcessedDetectorVersion
                     ?? SplitDetectionService.CURRENT_DETECTOR_VERSION;
 
-                await SplitApplicationService.ApplySplitsAsync(chapter.Id, detectorVersion, CancellationToken.None);
+                // Enqueue rather than apply inline: an inline apply bypasses the same-chapter guard
+                // that keeps ApplySplitsTask from rewriting the original CBZ while a same-chapter
+                // upscale/repair/detect is running (the merge manager can only cancel PersistedTasks,
+                // so an inline apply is invisible to it).
+                await TaskQueue.EnqueueAsync(new ApplySplitsTask(chapter, detectorVersion));
+                await SplitStateManager.SetProcessingAsync(
+                    chapter.Id,
+                    detectorVersion,
+                    null,
+                    CancellationToken.None
+                );
                 Snackbar.Add(string.Format(Loc["Snackbar_SplitApplicationQueued"], chapter.FileName), Severity.Success);
-
-                await SplitStateManager.ResetToPendingAsync(chapter.Id, null, CancellationToken.None);
 
                 await LoadChapters();
                 StateHasChanged();
