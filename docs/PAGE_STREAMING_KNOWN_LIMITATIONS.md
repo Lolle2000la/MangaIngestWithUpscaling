@@ -80,25 +80,28 @@ The page-streaming design itself is described in [REMOTE_WORKER.md](REMOTE_WORKE
 
 ## Architecture follow-ups
 
-The page-streaming work currently rests on duplicated discipline that would benefit from extraction.
-These are deliberately deferred to keep this PR reviewable; each is independent.
+The page-streaming work rested on duplicated discipline that has largely been extracted. The
+remaining items are deliberately deferred.
 
-1. **Shared resident NDJSON process supervisor.** `MangaJaNaiWorkerClient` and `DetectServerClient`
-   independently implement the same spawn/ready/watchdog/line-protocol/kill machinery. Extract a
-   `ResidentNdjsonProcess`; each client becomes a thin protocol adapter.
-2. **`PageManifestBuilder` + `PageIdentity`.** The RPC service re-walks the archive and rebuilds the
-   identity in three near-identical copies; one archive-walk routine plus a value object removes it.
-3. **One restart/retry taxonomy.** The retry disposition is derived in three places (the wire bool,
-   the server's return sites, and `ClassifyStreamingFailure`), with two different
-   `PageStreamRestartException` types. A shared `Disposition` mapping makes it explicit and testable.
-4. **`IPageSpoolStore`.** The process-local / pin-to-one-replica constraint leaks into five handlers;
-   a store abstraction states it once and makes multi-replica a swap-in adapter.
-5. **One finalize pipeline.** The manifest-complete path and the two upload handlers repeat the same
-   commit→complete→assemble→finalize ladder with slightly diverging classification.
-6. **`CbzBuilder` + `IAtomicFileReplacer`.** "Build a sibling temp → atomic move → sweep stale temps"
-   is implemented in the spool assembly, the streamed chapter assembly, and split apply.
-7. **`RemoteTaskProcessor` lifecycle seam.** `ITaskClaimSource`, a single keep-alive pump, and a
-   soft-failure tracker make the loop testable without live gRPC.
-8. **Typed engine identity + one profile mapper.** The identity is an opaque worker-side string and
-   the profile is mapped in two places that must agree; let the server optionally verify it and
-   share one mapper.
+Done:
+1. **Shared resident NDJSON process supervisor.** Extracted to `ResidentNdjsonProcess` (plus a shared
+   `StderrTailBuffer`); `MangaJaNaiWorkerClient` and `DetectServerClient` are protocol adapters.
+2. **`PageManifestBuilder`.** The descriptor builders and identity computers moved out of the RPC
+   service into `PageManifestBuilder`. (A `PageIdentity` value object is still a possible refinement.)
+3. **One restart/retry taxonomy.** `PageStreamDisposition` + `PageStreamRejections` and a single
+   shared `PageStreamRestartException`; the wire `terminal` bool is mapped in one place.
+4. **`IPageSpoolStore`.** The store seam exists and states the single-replica constraint once; the
+   concrete `PageStreamSpool` is the (process-local) implementation.
+6. **`AtomicFileReplacement`.** The "build a sibling temp → atomic move → sweep stale temps" pattern
+   is single-sourced for split apply and the streamed-chapter assembly.
+7. **`RemoteTaskProcessor` lifecycle seam.** `ITaskClaimSource`, `KeepAlivePump` and
+   `SoftFailureTracker` make the loop testable without live gRPC.
+
+Remaining:
+5. **One finalize pipeline.** The manifest-complete path and the two upload handlers still repeat the
+   same commit→complete→assemble→finalize ladder with slightly diverging classification; a
+   `PageStreamFinalizer` template with per-kind hooks would remove the duplication.
+8. **Typed engine identity + one profile mapper.** The identity is still an opaque worker-side
+   string and the profile is mapped in two places that must agree. Unifying the mapper needs the
+   protobuf types available to the shared project; the server could then optionally verify the
+   identity (accept-and-warn first).
