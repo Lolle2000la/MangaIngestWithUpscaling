@@ -456,13 +456,23 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 if (resp.TaskType is not (TaskType.Upscale or TaskType.SplitDetection))
                 {
                     // Only upscale and split-detection tasks are delegated to workers. The task was
-                    // already claimed by RequestUpscaleTaskWithHint, so let its keep-alive lapse
-                    // (the reaper requeues it) and back off instead of spinning as fast as the
-                    // server answers.
+                    // already claimed by RequestUpscaleTaskWithHint but never gets a keep-alive, so
+                    // letting it lapse would make the server requeue and re-delegate it forever
+                    // without consuming the retry budget. Report it so the failure is terminal and
+                    // user-visible, then back off instead of spinning as fast as the server answers.
                     logger.LogWarning(
                         "Ignoring task {TaskId} of unsupported type {TaskType}.",
                         taskId,
                         resp.TaskType
+                    );
+                    await HandleStreamingFailureAsync(
+                        client,
+                        taskId,
+                        new InvalidOperationException(
+                            $"The worker does not support task type {resp.TaskType}."
+                        ),
+                        logger,
+                        stoppingToken
                     );
                     _fetchInProgress = false;
                     await dispatcherTimer.WaitForNextTickAsync(stoppingToken);
@@ -478,13 +488,22 @@ public class RemoteTaskProcessor(IServiceScopeFactory serviceScopeFactory) : Bac
                 catch (Exception ex)
                 {
                     // An unmappable profile (an unrecognized enum the server mapped to Unspecified) is
-                    // deterministic. The task is already claimed and has no keep-alive, so back off
-                    // like the unsupported-type branch instead of spinning in the generic catch, which
-                    // would re-claim it every 500 ms forever.
+                    // deterministic. The task is already claimed and has no keep-alive, so report it as
+                    // a terminal failure (like the unsupported-type branch) rather than letting the
+                    // reaper requeue it forever without consuming the retry budget.
                     logger.LogError(
                         ex,
                         "Ignoring task {TaskId}: its upscaler profile could not be resolved.",
                         taskId
+                    );
+                    await HandleStreamingFailureAsync(
+                        client,
+                        taskId,
+                        new InvalidOperationException(
+                            $"The upscaler profile for task {taskId} could not be resolved."
+                        ),
+                        logger,
+                        stoppingToken
                     );
                     _fetchInProgress = false;
                     await dispatcherTimer.WaitForNextTickAsync(stoppingToken);

@@ -262,6 +262,14 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                     cancellationToken
                 );
                 Exception? producerError = null;
+                // Completes only on a producer *failure*, not on its normal finish: the producer
+                // finishes before the job does, so waiting on the producer task itself would settle the
+                // chapter early. A failure must unblock the wait, though — otherwise a wedged worker
+                // that ignores the cancel leaves the job, the cancel signal and the (absent) timeout
+                // all pending, hanging the job and leaking the single worker slot forever.
+                var producerFault = new TaskCompletionSource(
+                    TaskCreationOptions.RunContinuationsAsynchronously
+                );
                 Task producer = Task.Run(
                     async () =>
                     {
@@ -289,6 +297,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                         catch (Exception ex)
                         {
                             producerError = ex;
+                            producerFault.TrySetResult();
                             await RequestCancelAsync(request.Id);
                         }
                     },
@@ -308,7 +317,7 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                 // otherwise leave an infinite, never-completing task alive for the process.
                 Task? monitor = timeout is null ? null : MonitorTimeoutAsync(job, timeout);
 
-                List<Task> waiters = [job.Completion.Task, cancelSignal.Task];
+                List<Task> waiters = [job.Completion.Task, cancelSignal.Task, producerFault.Task];
                 if (monitor is not null)
                 {
                     waiters.Add(monitor);
@@ -377,6 +386,33 @@ public class MangaJaNaiWorkerClient : IMangaJaNaiWorkerClient, IHostedService, I
                     }
 
                     return await job.Completion.Task;
+                }
+
+                if (completed == producerFault.Task)
+                {
+                    // The producer failed (broken pipe or a page-source error). Give the worker the
+                    // same grace as a caller cancellation and kill it if it does not stop, so a wedged
+                    // process that ignores the cancel does not hold the single worker slot until host
+                    // restart. The producer error is surfaced below.
+                    try
+                    {
+                        await job.Completion.Task.WaitAsync(
+                            CancelGracePeriod,
+                            CancellationToken.None
+                        );
+                    }
+                    catch (Exception)
+                    { /* the worker may already be gone */
+                    }
+
+                    if (!job.Completion.Task.IsCompleted)
+                    {
+                        _logger.LogWarning(
+                            "Upscale worker chapter {JobId} did not stop after a streaming failure; killing the worker.",
+                            request.Id
+                        );
+                        await KillWorkerAsync();
+                    }
                 }
 
                 if (producerError is not null)
