@@ -26,7 +26,7 @@ services:
       TZ: Europe/Berlin                              # your timezone
       Ingest_Upscaler__PreferredGpuBackend: CUDA    # NVIDIA (CUDA 11.8)
       Ingest_Upscaler__UseFp16: "true"              # recommended for modern GPUs
-      Ingest_Upscaler__SelectedDeviceIndex: "0"     # GPU index (0 = first GPU)
+      Ingest_Upscaler__SelectedDeviceIndex: "1"     # device index (0 = CPU, 1 = first GPU)
     volumes:
       - ./data:/data       # database, logs, and Python environment
       - ./models:/models   # upscaling models
@@ -93,7 +93,7 @@ The environment variable for each setting follows the ASP.NET Core convention:
 | Setting | ENV variable | Default | Description |
 |---|---|---|---|
 | `PreferredGpuBackend` | `Ingest_Upscaler__PreferredGpuBackend` | `Auto` | Which GPU backend PyTorch should use. See [values](#preferredgpubackend-values). |
-| `SelectedDeviceIndex` | `Ingest_Upscaler__SelectedDeviceIndex` | `0` | GPU index when multiple GPUs are present. |
+| `SelectedDeviceIndex` | `Ingest_Upscaler__SelectedDeviceIndex` | `1` | Device index passed to PyTorch: `0` selects CPU, `1` is the first GPU, `2` the second, and so on. The resident split-detection server follows the same setting (mapped to `cuda:N` / `xpu:N` / `cpu`), so both backends run on the same device. |
 | `UseFp16` | `Ingest_Upscaler__UseFp16` | `true` | Use half-precision (FP16) inference. Recommended for modern GPUs; turn off for CPU or older hardware. |
 | `UseCPU` | `Ingest_Upscaler__UseCPU` | `false` | Force CPU inference even when a GPU is available. |
 
@@ -113,7 +113,7 @@ The environment variable for each setting follows the ASP.NET Core convention:
 
 | Setting | ENV variable | Default | Description |
 |---|---|---|---|
-| `ModelsDirectory` | `Ingest_Upscaler__ModelsDirectory` | `/data/models` (Docker) | Directory where upscaling models are stored. |
+| `ModelsDirectory` | `Ingest_Upscaler__ModelsDirectory` | `/models/MangaJaNai` (Docker) | Directory where upscaling models are stored. |
 | `PythonEnvironmentDirectory` | `Ingest_Upscaler__PythonEnvironmentDirectory` | `/data/pyenv` (Docker) | Directory where the Python/PyTorch environment is installed on first startup. Map to a separate volume if you want to store it on a different disk. |
 
 Example — store the Python environment on a separate (larger) volume:
@@ -135,6 +135,7 @@ Example — store the Python environment on a separate (larger) volume:
 | `EnableSmartDownscale` | `Ingest_Upscaler__EnableSmartDownscale` | `false` | Detect and downscale cheaply-upscaled images before AI upscaling — see [Smart Downscale](SMART_DOWNSCALE.md). |
 | `SmartDownscaleThreshold` | `Ingest_Upscaler__SmartDownscaleThreshold` | `15.0` | Laplacian std-dev below which an image is considered cheaply upscaled. Lower = stricter; higher = more aggressive. |
 | `SmartDownscaleFactor` | `Ingest_Upscaler__SmartDownscaleFactor` | `0.75` | Fallback scale factor (e.g. `0.75` = 75 %) used when the FFT cliff detector finds no clear cutoff frequency. |
+| `DetectServerRequestTimeout` | `Ingest_Upscaler__DetectServerRequestTimeout` | `00:10:00` | Maximum time a single request to the resident split-detection server may run before it is cancelled and the server killed; the caller then falls back to the per-image CLI, so a wedged detector cannot hang a task. `0` disables the guard. |
 
 ```yaml
     environment:
@@ -194,10 +195,10 @@ to your `appsettings.json`:
 {
   "Upscaler": {
     "PreferredGpuBackend": "CUDA",
-    "SelectedDeviceIndex": 0,
+    "SelectedDeviceIndex": 1,
     "UseFp16": true,
     "UseCPU": false,
-    "ModelsDirectory": "/models",
+    "ModelsDirectory": "/models/MangaJaNai",
     "PythonEnvironmentDirectory": "/data/pyenv",
     "RemoteOnly": false,
     "ForceAcceptExistingEnvironment": false,

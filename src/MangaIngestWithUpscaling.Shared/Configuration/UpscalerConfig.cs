@@ -50,12 +50,55 @@ public record UpscalerConfig
             "Models"
         );
 
+    /// <summary>
+    /// The models directory as an absolute path. A relative configured value is resolved against the
+    /// process CWD so the engine identity and the spawned Python worker agree on one directory.
+    /// </summary>
+    public string ResolvedModelsDirectory
+    {
+        get
+        {
+            try
+            {
+                return Path.GetFullPath(ModelsDirectory);
+            }
+            catch (Exception)
+            {
+                return ModelsDirectory;
+            }
+        }
+    }
+
     public string PythonEnvironmentDirectory { get; set; } =
         Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "MangaIngestWithUpscaling",
             "Python-Env"
         );
+
+    /// <summary>
+    /// Dedicated, app-owned directory the page-streaming spool is written to. The app creates its own
+    /// <c>{process id}-{guid}</c> roots under it and sweeps only those, so do not point it at a
+    /// directory that holds unrelated data. Defaults to a subdirectory of the system temp directory.
+    /// Set this to a path on a real disk when <c>/tmp</c> is a RAM-backed tmpfs, so spooling large
+    /// chapters cannot exhaust memory.
+    /// </summary>
+    public string? SpoolDirectory { get; set; }
+
+    /// <summary>
+    /// Upper bound on the bytes spooled for one streamed task, so a single chapter cannot fill the
+    /// disk. Defaults to 8 GiB. There is no process-wide cap; see
+    /// <c>docs/PAGE_STREAMING_KNOWN_LIMITATIONS.md</c>.
+    /// </summary>
+    public long MaxSpoolBytesPerTask { get; set; } = 8L * 1024 * 1024 * 1024;
+
+    /// <summary>
+    /// How long a worker waits for a page manifest. The manifest normally returns immediately, but
+    /// when a chapter is already fully spooled the server assembles the CBZ before answering, which
+    /// can exceed a short deadline for a large chapter on slow storage — the worker would then
+    /// re-stream (and eventually fail) a chapter that was already complete.
+    /// </summary>
+    public TimeSpan ManifestTimeout { get; set; } = TimeSpan.FromMinutes(10);
 
     /// <summary>
     ///     Per-million-pixel inactivity timeout used to guard long-running upscaling operations.
@@ -126,6 +169,13 @@ public record UpscalerConfig
     ///     lazily on the next job, so this only affects idle resource usage.
     /// </summary>
     public TimeSpan WorkerIdleTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    ///     Maximum time a single request to the resident detection server may run before the request
+    ///     is cancelled and the server process killed; the caller then falls back to the per-image
+    ///     CLI, so a wedged detector cannot hang a task forever. Zero disables the guard.
+    /// </summary>
+    public TimeSpan DetectServerRequestTimeout { get; set; } = TimeSpan.FromMinutes(10);
 
     /// <summary>
     ///     Maximum number of jobs the persistent upscale worker may have in flight plus queued

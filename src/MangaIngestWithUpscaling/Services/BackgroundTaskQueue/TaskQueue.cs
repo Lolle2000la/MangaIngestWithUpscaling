@@ -49,6 +49,9 @@ public class TaskQueue : ITaskQueue, IHostedService
     private readonly SortedSet<PersistedTask> _upscaleTasks;
     private readonly object _upscaleTasksLock = new();
 
+    // Owns the chapter-conflict queries and the process-local chapter gate.
+    private readonly ChapterConflictGuard _chapterConflictGuard = new();
+
     public TaskQueue(IServiceScopeFactory scopeFactory, ILogger<TaskQueue> logger)
     {
         _scopeFactory = scopeFactory;
@@ -109,13 +112,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         }
     }
 
-    public static bool IsUpscaleTask(BaseTask data) =>
-        data
-            is UpscaleTask
-                or RenameUpscaledChaptersSeriesTask
-                or RepairUpscaleTask
-                or DetectSplitCandidatesTask
-                or ApplySplitsTask;
+    public static bool IsUpscaleTask(BaseTask data) => TaskClassifier.IsUpscaleTask(data);
 
     public async Task EnqueueAsync<T>(T taskData)
         where T : BaseTask
@@ -739,14 +736,6 @@ public class TaskQueue : ITaskQueue, IHostedService
         }
     }
 
-    public PersistedTask? PeekUpscale()
-    {
-        lock (_upscaleTasksLock)
-        {
-            return _upscaleTasks.Count == 0 ? null : _upscaleTasks.Min;
-        }
-    }
-
     // Send tasks that must be handled locally (e.g., Repair/Rename upscaled) directly to the local UpscaleTaskProcessor
     public ValueTask SendToLocalUpscaleAsync(
         PersistedTask task,
@@ -763,10 +752,7 @@ public class TaskQueue : ITaskQueue, IHostedService
         c.FileName
     );
 
-    private static int? GetChapterId(BaseTask data)
-    {
-        return data is IChapterTask chapterTask ? chapterTask.ChapterId : null;
-    }
+    private static int? GetChapterId(BaseTask data) => TaskClassifier.GetChapterId(data);
 
     private static int CompareChapters(Chapter a, Chapter b)
     {
@@ -804,4 +790,21 @@ public class TaskQueue : ITaskQueue, IHostedService
 
         return _chapterNameComparer.Compare(a, b);
     }
+
+    /// <summary>
+    ///     Serializes the "check the same-chapter conflict, then claim" sequence for one chapter across
+    ///     the standard and upscale processors. Without it the two guards are separate read-then-claim
+    ///     pairs and can both pass, letting an apply and an upscale run together. The gate is held only
+    ///     for the check-and-claim, not for the task's run.
+    ///
+    ///     <b>Process-local.</b> It is only correct when a single server instance owns the queue: the
+    ///     DB guards are a read-then-status-update, not an atomic claim, so two replicas can both read
+    ///     "no conflict" and both claim. Running multiple replicas requires a DB-level conditional
+    ///     claim (or an advisory lock) instead. Merge cancellation is likewise an in-process token
+    ///     cancel and cannot reach an apply running on another replica.
+    /// </summary>
+    public Task<IDisposable> AcquireChapterGateAsync(
+        int chapterId,
+        CancellationToken cancellationToken
+    ) => _chapterConflictGuard.AcquireChapterGateAsync(chapterId, cancellationToken);
 }

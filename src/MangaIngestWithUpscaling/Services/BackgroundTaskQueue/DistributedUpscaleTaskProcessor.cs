@@ -8,6 +8,7 @@ using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.Integrations;
 using MangaIngestWithUpscaling.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Services.RepairServices;
+using MangaIngestWithUpscaling.Services.Upscaling;
 using MangaIngestWithUpscaling.Shared.Configuration;
 using MangaIngestWithUpscaling.Shared.Data.Analysis;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
@@ -30,6 +31,14 @@ public class DistributedUpscaleTaskProcessor(
     private readonly Lock _lock = new();
     private readonly ChannelReader<object> _reader = taskQueue.UpscaleReader;
 
+    /// <summary>
+    ///     How long a task the apply guard deferred waits before it is re-offered. Re-enqueuing it
+    ///     immediately would put it back at the head of the queue (<c>DequeueUpscale</c> always returns
+    ///     the minimum), so every worker request would re-pick and re-defer it and starve every task
+    ///     behind it. Waiting lets those be served; the row stays Pending in the DB throughout.
+    /// </summary>
+    private static readonly TimeSpan DeferredTaskReofferInterval = TimeSpan.FromSeconds(10);
+
     private readonly Channel<(
         TaskCompletionSource<PersistedTask>,
         CancellationToken
@@ -43,6 +52,15 @@ public class DistributedUpscaleTaskProcessor(
 
     private readonly Dictionary<int, PersistedTask> runningTasks = new();
 
+    /// <summary>
+    ///     Ids claimed by this processor but not yet handed off to a worker. A claimed task is put
+    ///     into <see cref="runningTasks" /> immediately so cancellation can see it, but its
+    ///     <see cref="PersistedTask.LastKeepAlive" /> is not refreshed while remote preparation runs
+    ///     (there is no worker and no heartbeat yet). The reaper must not treat such a task as dead,
+    ///     or it would requeue a task that is still being prepared and dispatch it twice.
+    /// </summary>
+    private readonly HashSet<int> awaitingHandoff = new();
+
     private CancellationToken serviceStoppingToken;
 
     public event Func<PersistedTask, Task>? StatusChanged;
@@ -53,7 +71,7 @@ public class DistributedUpscaleTaskProcessor(
     /// Otherwise, consistency issues may arise.
     /// </summary>
     /// <param name="checkAgainst">The task to check against if it is still the current task. Does so by using the Id.</param>
-    public async Task CancelCurrent(PersistedTask checkAgainst)
+    public virtual async Task CancelCurrent(PersistedTask checkAgainst)
     {
         PersistedTask? currentTask;
         using (_lock.EnterScope())
@@ -95,6 +113,9 @@ public class DistributedUpscaleTaskProcessor(
                     canceled = tracked;
                 }
 
+                // Keep the reaper exclusion in sync with the removal; a canceled task must never be
+                // selected as a dead task afterwards.
+                awaitingHandoff.Remove(checkAgainst.Id);
                 runningTasks.Remove(checkAgainst.Id);
             }
         }
@@ -121,6 +142,7 @@ public class DistributedUpscaleTaskProcessor(
         }
 
         CleanupRepairFiles(checkAgainst.Id, logger);
+        DropPageSpool(checkAgainst.Id, logger);
 
         // Raise the event after releasing _lock: a subscriber that re-enters the processor (e.g. to
         // query running state) must never be able to deadlock the processor by calling back in.
@@ -146,12 +168,12 @@ public class DistributedUpscaleTaskProcessor(
     /// </summary>
     public void ForgetTask(int taskId)
     {
-        using (_lock.EnterScope())
+        // The row is gone, so any page spool for it is orphaned.
+        DropPageSpool(taskId, logger);
+
+        if (!RemoveFromRunningTasks(taskId))
         {
-            if (!runningTasks.Remove(taskId))
-            {
-                return;
-            }
+            return;
         }
 
         CleanupRepairFiles(taskId, logger);
@@ -222,11 +244,12 @@ public class DistributedUpscaleTaskProcessor(
         _ = StatusChanged?.Invoke(task);
     }
 
-    private void RemoveFromRunningTasks(int taskId)
+    private bool RemoveFromRunningTasks(int taskId)
     {
         using (_lock.EnterScope())
         {
-            runningTasks.Remove(taskId);
+            awaitingHandoff.Remove(taskId);
+            return runningTasks.Remove(taskId);
         }
     }
 
@@ -302,6 +325,11 @@ public class DistributedUpscaleTaskProcessor(
             // instead of being left stranded in Processing: it is no longer in the in-memory
             // upscale set, was never added to runningTasks, and ReplayPendingOrFailed ignores it.
             PersistedTask? claimedTask = null;
+            // Tracks a task added to runningTasks right after its claim, before the handoff. A merge or
+            // ingest CancelCurrent would otherwise no-op during that window (runningTasks was populated
+            // only on handoff) and let a remote worker keep writing a chapter the merge deleted.
+            int? trackedClaimId = null;
+            bool handedOff = false;
             try
             {
                 bool completed = false;
@@ -327,9 +355,9 @@ public class DistributedUpscaleTaskProcessor(
                         continue;
                     }
 
-                    // Track the task before the claim. ClaimTaskAsync can throw after the row was
-                    // already committed to Processing, so the outer catch must recover the claim
-                    // itself; assigning only after a successful claim left such a row stranded.
+                    // Track the task before the claim and before the guard: the guard awaits the DB
+                    // with the request token, so a worker disconnect there must still requeue the task
+                    // rather than strand it outside every in-memory queue.
                     claimedTask = task;
 
                     using (IServiceScope scope = scopeFactory.CreateScope())
@@ -338,19 +366,73 @@ public class DistributedUpscaleTaskProcessor(
                             ILogger<DistributedUpscaleTaskProcessor>
                         >();
 
-                        if (await taskPersistenceService.ClaimTaskAsync(task.Id, linkedCts.Token))
+                        // The guard and the claim must be atomic against the standard processor's
+                        // apply guard, or both can pass their read-then-claim and run together.
+                        IDisposable? chapterGate = null;
+                        if (task.Data is IChapterTask chapterTask)
                         {
-                            task.Status = PersistedTaskStatus.Processing;
-                        }
-                        else
-                        {
-                            logger.LogInformation(
-                                "Task {taskId} could not be claimed (already processed or concurrency conflict).",
-                                task.Id
+                            chapterGate = await taskQueue.AcquireChapterGateAsync(
+                                chapterTask.ChapterId,
+                                linkedCts.Token
                             );
-                            // Not ours to recover: it is already claimed elsewhere or terminal.
-                            claimedTask = null;
-                            continue;
+                        }
+
+                        try
+                        {
+                            if (
+                                task.Data is IChapterTask guarded
+                                && await HasSameChapterApplyTaskAsync(
+                                    guarded.ChapterId,
+                                    linkedCts.Token
+                                )
+                            )
+                            {
+                                // A same-chapter apply is rewriting the CBZ this task will stream
+                                // from. Leave the task Pending and answer the worker with no task so
+                                // it retries shortly, instead of claiming it and racing the apply.
+                                // Re-offer it after a delay, not immediately, so it does not sit at the
+                                // head of the queue and starve the tasks behind it.
+                                DeferUpscaleTask(task, logger);
+                                claimedTask = null;
+                                tcs.TrySetCanceled(linkedCts.Token);
+                                break;
+                            }
+
+                            if (
+                                await taskPersistenceService.ClaimTaskAsync(
+                                    task.Id,
+                                    linkedCts.Token
+                                )
+                            )
+                            {
+                                task.Status = PersistedTaskStatus.Processing;
+                                // Make the claim visible to cancellation now; the outer finally
+                                // removes it again if it is never handed off.
+                                using (_lock.EnterScope())
+                                {
+                                    task.LastKeepAlive = DateTime.UtcNow;
+                                    runningTasks[task.Id] = task;
+                                    // The worker does not own it yet; keep it out of the reaper until
+                                    // GetTask removes this marker at handoff.
+                                    awaitingHandoff.Add(task.Id);
+                                }
+
+                                trackedClaimId = task.Id;
+                            }
+                            else
+                            {
+                                logger.LogInformation(
+                                    "Task {taskId} could not be claimed (already processed or concurrency conflict).",
+                                    task.Id
+                                );
+                                // Not ours to recover: it is already claimed elsewhere or terminal.
+                                claimedTask = null;
+                                continue;
+                            }
+                        }
+                        finally
+                        {
+                            chapterGate?.Dispose();
                         }
                     }
 
@@ -370,22 +452,30 @@ public class DistributedUpscaleTaskProcessor(
                                 task.Id
                             );
 
-                            bool prepared = await PrepareRepairTaskForRemote(
+                            RepairPreparationOutcome preparation = await PrepareRepairTaskForRemote(
                                 repairTask,
                                 task,
                                 scope.ServiceProvider,
                                 linkedCts.Token
                             );
-                            if (!prepared)
+                            if (preparation == RepairPreparationOutcome.Requeued)
                             {
-                                // PrepareRepairTaskForRemote already requeued the task or persisted
-                                // a terminal state, so it is no longer ours to recover.
+                                // The task was re-offered after a delay and is out of the in-memory
+                                // queue. Stop scanning and answer the request rather than re-reading
+                                // the re-offer signal and re-dequeuing the same task forever.
+                                claimedTask = null;
+                                tcs.TrySetCanceled(linkedCts.Token);
+                                break;
+                            }
+
+                            if (preparation == RepairPreparationOutcome.Terminal)
+                            {
+                                // Already completed or failed, so it is no longer ours to recover.
                                 claimedTask = null;
                                 continue;
                             }
 
-                            // Allow the prepared repair task to be delegated to remote workers
-                            // Fall through to the delegation logic below
+                            // Prepared: allow it to be delegated to remote workers below
                         }
                         else
                         {
@@ -396,7 +486,11 @@ public class DistributedUpscaleTaskProcessor(
                             );
 
                             await taskQueue.SendToLocalUpscaleAsync(task, linkedCts.Token);
-                            // Handed off to the local processor; it owns the task from here.
+                            // Handed off to the local processor; it owns the task from here. Drop our
+                            // tracking (and the reaper exclusion) so a stale claim cannot be requeued
+                            // while the local processor is still running it.
+                            RemoveFromRunningTasks(task.Id);
+                            trackedClaimId = null;
                             claimedTask = null;
                             continue;
                         }
@@ -416,42 +510,13 @@ public class DistributedUpscaleTaskProcessor(
                         );
 
                         await taskQueue.SendToLocalUpscaleAsync(task, linkedCts.Token);
-                        // Handed off to the local processor; it owns the task from here.
+                        // Handed off to the local processor; it owns the task from here. Drop our
+                        // tracking (and the reaper exclusion) so a stale claim cannot be requeued
+                        // while the local processor is still running it.
+                        RemoveFromRunningTasks(task.Id);
+                        trackedClaimId = null;
                         claimedTask = null;
                         continue;
-                    }
-
-                    if (task.Data is ApplySplitsTask applySplitsTask)
-                    {
-                        // Check if the chapter exists
-                        using IServiceScope scope = scopeFactory.CreateScope();
-                        var logger = scope.ServiceProvider.GetRequiredService<
-                            ILogger<DistributedUpscaleTaskProcessor>
-                        >();
-                        var dbContext =
-                            scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
-                        Chapter? chapter = await dbContext
-                            .Chapters.Include(t => t.Manga)
-                                .ThenInclude(t => t.Library)
-                            .FirstOrDefaultAsync(
-                                c => c.Id == applySplitsTask.ChapterId,
-                                linkedCts.Token
-                            );
-
-                        if (chapter == null || !File.Exists(chapter.NotUpscaledFullPath))
-                        {
-                            // Chapter no longer exists, mark task as failed (and persist it so a
-                            // restart does not replay a task that is already terminal). The terminal
-                            // write uses the service token so a worker disconnect cannot cancel it.
-                            await PersistFailedAsync(task, serviceStoppingToken);
-                            claimedTask = null;
-
-                            logger.LogWarning(
-                                "Skipping ApplySplitsTask {taskId} because chapter file is missing.",
-                                task.Id
-                            );
-                            continue;
-                        }
                     }
 
                     if (task.Data is UpscaleTask upscaleData)
@@ -578,7 +643,21 @@ public class DistributedUpscaleTaskProcessor(
                         }
                     }
 
-                    if (!tcs.TrySetResult(task))
+                    // A merge/ingest CancelCurrent during the (long) pre-handoff window mutates this
+                    // exact instance to Canceled and drops it from runningTasks. The worker's page
+                    // RPCs would then be rejected, but handing it off still wastes round-trips and
+                    // leaves the RemoteRepairState/context created during preparation leaked. Re-check
+                    // the tracked instance immediately before the handoff and abandon it if it is gone.
+                    if (!IsTrackedProcessingTask(task))
+                    {
+                        CleanupRepairFiles(task.Id, logger);
+                        claimedTask = null;
+                        tcs.TrySetCanceled(linkedCts.Token);
+                        break;
+                    }
+
+                    handedOff = tcs.TrySetResult(task);
+                    if (!handedOff)
                     {
                         // Requester couldn't accept the task (likely cancelled). A failed handoff is
                         // an infrastructure event, not a task failure, so it is requeued without
@@ -615,12 +694,28 @@ public class DistributedUpscaleTaskProcessor(
             }
             catch (Exception ex)
             {
+                // Log before surfacing: the worker only sees an RPC error, so without this the
+                // server-side cause of a failed handoff is lost.
+                logger.LogError(
+                    ex,
+                    "Failed to serve a task request; the claimed task will be requeued."
+                );
                 tcs.TrySetException(ex);
 
                 // An unexpected error after the claim but before handoff must not strand the task.
                 if (claimedTask != null)
                 {
                     await RequeueClaimedTaskAsync(claimedTask, serviceStoppingToken);
+                }
+            }
+            finally
+            {
+                // A claim tracked but not handed off (requeued, terminal, rerouted or deferred) is no
+                // longer ours; drop it so CancelCurrent and the reaper do not act on a task this
+                // processor no longer owns. A handed-off task stays in runningTasks.
+                if (trackedClaimId is int trackedId && !handedOff)
+                {
+                    RemoveFromRunningTasks(trackedId);
                 }
             }
         }
@@ -642,7 +737,8 @@ public class DistributedUpscaleTaskProcessor(
         {
             deadTasks = runningTasks
                 .Values.Where(t =>
-                    t.Status == PersistedTaskStatus.Processing
+                    !awaitingHandoff.Contains(t.Id)
+                    && t.Status == PersistedTaskStatus.Processing
                     && t.LastKeepAlive.AddMinutes(1) < DateTime.UtcNow
                 )
                 .ToList();
@@ -678,12 +774,54 @@ public class DistributedUpscaleTaskProcessor(
     }
 
     /// <summary>
-    /// Returns the head of the upscale queue without claiming it, so a worker can inspect the
-    /// task (e.g. its transfer size) before deciding whether to claim it.
+    ///     Schedules a delayed re-offer of a task the apply guard deferred, so it does not sit at the
+    ///     head of the queue and starve the tasks behind it. Best-effort: a shutdown or a task that is
+    ///     no longer Pending ends the wait, and the periodic replayer is the backstop.
     /// </summary>
-    public PersistedTask? PeekTask()
+    private void DeferUpscaleTask(PersistedTask task, ILogger logger)
     {
-        return taskQueue.PeekUpscale();
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(DeferredTaskReofferInterval, serviceStoppingToken);
+                if (await taskPersistenceService.IsTaskPendingAsync(task.Id, serviceStoppingToken))
+                {
+                    taskQueue.ReEnqueue(task);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Shutting down; the periodic replayer owns Pending rows.
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to re-offer deferred upscale task {TaskId}.", task.Id);
+            }
+        });
+    }
+
+    private async Task<bool> HasSameChapterApplyTaskAsync(int chapterId, CancellationToken ct)
+    {
+        using IServiceScope scope = scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+        return await ChapterConflictGuard.HasSameChapterApplyTaskAsync(dbContext, chapterId, ct);
+    }
+
+    /// <summary>
+    ///     Whether <paramref name="task" /> is still the exact instance this processor tracks as
+    ///     <see cref="PersistedTaskStatus.Processing" />. A concurrent <see cref="CancelCurrent" />
+    ///     mutates that same instance to Canceled and removes it from <c>runningTasks</c>, so this
+    ///     detects a cancel that landed between the claim and the handoff.
+    /// </summary>
+    private bool IsTrackedProcessingTask(PersistedTask task)
+    {
+        using (_lock.EnterScope())
+        {
+            return runningTasks.TryGetValue(task.Id, out PersistedTask? tracked)
+                && ReferenceEquals(tracked, task)
+                && task.Status == PersistedTaskStatus.Processing;
+        }
     }
 
     public async Task<PersistedTask?> GetTask(CancellationToken stoppingToken)
@@ -713,6 +851,8 @@ public class DistributedUpscaleTaskProcessor(
             using (_lock.EnterScope())
             {
                 runningTasks[task.Id] = task;
+                // The worker now owns the task, so it is no longer excluded from the reaper.
+                awaitingHandoff.Remove(task.Id);
             }
 
             _ = StatusChanged?.Invoke(task);
@@ -811,10 +951,18 @@ public class DistributedUpscaleTaskProcessor(
 
         using (_lock.EnterScope())
         {
+            awaitingHandoff.Remove(taskId);
             runningTasks.Remove(taskId);
         }
 
         using IServiceScope scope = scopeFactory.CreateScope();
+        var completionLogger = scope.ServiceProvider.GetRequiredService<
+            ILogger<DistributedUpscaleTaskProcessor>
+        >();
+        // A completed task may still have a partial page spool; drop it now that the task is
+        // terminal.
+        DropPageSpool(taskId, completionLogger);
+
         var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
         PersistedTask? dbTask = await dbContext.PersistedTasks.FirstOrDefaultAsync(t =>
             t.Id == taskId
@@ -824,17 +972,24 @@ public class DistributedUpscaleTaskProcessor(
             return;
         }
 
-        bool repairSuccess = true;
+        RepairCompletionOutcome repairOutcome = RepairCompletionOutcome.Completed;
         if (dbTask.Data is RepairUpscaleTask repairTask)
         {
-            repairSuccess = await HandleRepairTaskCompletion(
+            repairOutcome = await HandleRepairTaskCompletion(
                 repairTask,
                 dbTask,
                 scope.ServiceProvider
             );
         }
 
-        if (repairSuccess)
+        if (repairOutcome == RepairCompletionOutcome.Requeued)
+        {
+            // The handler already put the row back to Pending (a transient read failure); leave it
+            // for re-dispatch instead of persisting a terminal state.
+            return;
+        }
+
+        if (repairOutcome == RepairCompletionOutcome.Completed)
         {
             int affected = await taskPersistenceService.CompleteTaskAsync(taskId);
             if (affected == 0)
@@ -862,11 +1017,24 @@ public class DistributedUpscaleTaskProcessor(
         }
     }
 
+    /// <summary>Outcome of finishing a remote repair, so the caller does not persist a terminal state
+    /// after a transient failure has already requeued the task.</summary>
+    private enum RepairCompletionOutcome
+    {
+        /// <summary>The repair was applied; mark the task completed.</summary>
+        Completed,
+
+        /// <summary>The repair could not be applied; mark the task failed.</summary>
+        Failed,
+
+        /// <summary>A transient read failure already requeued the task; leave its status alone.</summary>
+        Requeued,
+    }
+
     /// <summary>
     ///     Handles the completion of a repair task by merging the upscaled missing pages back into the original CBZ.
-    ///     Returns true if the repair was completed successfully, false otherwise.
     /// </summary>
-    private async Task<bool> HandleRepairTaskCompletion(
+    private async Task<RepairCompletionOutcome> HandleRepairTaskCompletion(
         RepairUpscaleTask repairTask,
         PersistedTask persistedTask,
         IServiceProvider services
@@ -887,7 +1055,7 @@ public class DistributedUpscaleTaskProcessor(
             if (!remoteRepairStates.TryGetValue(persistedTask.Id, out repairState))
             {
                 logger.LogError("No repair state found for repair task {taskId}", persistedTask.Id);
-                return false;
+                return RepairCompletionOutcome.Failed;
             }
         }
 
@@ -897,7 +1065,7 @@ public class DistributedUpscaleTaskProcessor(
                 "Repair state for task {taskId} is already being cleaned up; skipping completion.",
                 persistedTask.Id
             );
-            return false;
+            return RepairCompletionOutcome.Failed;
         }
 
         try
@@ -914,7 +1082,7 @@ public class DistributedUpscaleTaskProcessor(
                     repairTask.ChapterId,
                     persistedTask.Id
                 );
-                return false;
+                return RepairCompletionOutcome.Failed;
             }
 
             if (chapter.UpscaledFullPath == null)
@@ -923,7 +1091,7 @@ public class DistributedUpscaleTaskProcessor(
                     "Upscaled path not set for chapter {chapterId}",
                     repairTask.ChapterId
                 );
-                return false;
+                return RepairCompletionOutcome.Failed;
             }
 
             // Check if the repair is still needed (files might have changed)
@@ -934,6 +1102,29 @@ public class DistributedUpscaleTaskProcessor(
                 originalPath,
                 upscaledPath
             );
+            if (differences.Corrupt)
+            {
+                // A malformed archive reports no missing pages; completing here would discard the
+                // already-upscaled pages and leave a corrupt source marked repaired. Fail terminally.
+                logger.LogError(
+                    "A source archive for repair task {taskId} is corrupt; failing the repair.",
+                    persistedTask.Id
+                );
+                return RepairCompletionOutcome.Failed;
+            }
+
+            if (differences.ReadFailed)
+            {
+                // A transient read failure (locked/half-written archive) is not "no differences";
+                // requeue without consuming the retry budget instead of discarding the work.
+                logger.LogWarning(
+                    "Could not read a source archive for repair task {taskId}; requeuing.",
+                    persistedTask.Id
+                );
+                await RequeueClaimedTaskAsync(persistedTask, serviceStoppingToken);
+                return RepairCompletionOutcome.Requeued;
+            }
+
             if (differences.AreEqual)
             {
                 logger.LogInformation(
@@ -943,7 +1134,7 @@ public class DistributedUpscaleTaskProcessor(
                 );
                 // Clean up repair state since repair is no longer needed
                 CleanupRepairFiles(persistedTask.Id, logger);
-                return true;
+                return RepairCompletionOutcome.Completed;
             }
 
             // Verify the upscaled missing pages file exists
@@ -957,7 +1148,7 @@ public class DistributedUpscaleTaskProcessor(
                     persistedTask.Id,
                     repairState.UpscaledMissingPagesCbzPath
                 );
-                return false;
+                return RepairCompletionOutcome.Failed;
             }
 
             if (repairState.RepairContext is null)
@@ -966,7 +1157,7 @@ public class DistributedUpscaleTaskProcessor(
                     "No RepairContext found for repair task {taskId}",
                     persistedTask.Id
                 );
-                return false;
+                return RepairCompletionOutcome.Failed;
             }
 
             RepairContext? repairContext = repairState.RepairContext;
@@ -995,7 +1186,7 @@ public class DistributedUpscaleTaskProcessor(
                     upscaledPath
                 );
 
-                return true;
+                return RepairCompletionOutcome.Completed;
             }
             finally
             {
@@ -1006,7 +1197,7 @@ public class DistributedUpscaleTaskProcessor(
         {
             logger.LogError(ex, "Failed to complete repair task {taskId}", persistedTask.Id);
             CleanupRepairFiles(persistedTask.Id, logger);
-            return false;
+            return RepairCompletionOutcome.Failed;
         }
         finally
         {
@@ -1015,8 +1206,51 @@ public class DistributedUpscaleTaskProcessor(
     }
 
     /// <summary>
-    ///     Cleans up temporary files created during repair processing.
+    /// Drops any partial page spool/cache for a task so its temp bytes do not linger until the
+    /// retention sweep. Best-effort.
     /// </summary>
+    private void DropPageSpool(int taskId, ILogger logger)
+    {
+        try
+        {
+            using IServiceScope scope = scopeFactory.CreateScope();
+            // Both are singletons, so they outlive this scope.
+            var spool = scope.ServiceProvider.GetRequiredService<IPageSpoolStore>();
+            scope.ServiceProvider.GetRequiredService<PageContextCache>().Remove(taskId);
+            // Capture the current session now and compare-and-remove that exact instance later, so a
+            // task that is re-dispatched before the offloaded detach runs does not have its fresh
+            // session (and directory) removed.
+            PageStreamSession? session = spool.TryGetSession(taskId);
+            if (session is null)
+            {
+                return;
+            }
+
+            // Detach + delete off the caller's path. Detach acquires the session gate, which an
+            // in-flight assembly can hold for the whole (multi-GB) archive write, and this runs under
+            // the queue's enqueue semaphore; the recursive delete can also be many gigabytes.
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    string? directory = spool.Detach(session);
+                    if (directory is not null)
+                    {
+                        spool.DeleteDirectory(directory);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogDebug(ex, "Failed to drop the page spool for task {TaskId}.", taskId);
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Failed to drop the page spool for task {TaskId}.", taskId);
+        }
+    }
+
     private void CleanupRepairFiles(int taskId, ILogger logger)
     {
         try
@@ -1059,6 +1293,14 @@ public class DistributedUpscaleTaskProcessor(
                     errorMessage
                 );
             }
+
+            // Drop any partial page spool/cache for the failed task so its temp bytes do not linger
+            // until the retention sweep.
+            DropPageSpool(taskId, logger);
+
+            // A failed remote repair must also drop its RemoteRepairState and prepared CBZ/temp
+            // files; otherwise they linger on disk until the next process restart.
+            CleanupRepairFiles(taskId, logger);
         }
 
         PersistedTask? failedTask = null;
@@ -1066,6 +1308,7 @@ public class DistributedUpscaleTaskProcessor(
         {
             if (runningTasks.TryGetValue(taskId, out PersistedTask? task))
             {
+                awaitingHandoff.Remove(taskId);
                 runningTasks.Remove(taskId);
                 failedTask = task;
             }
@@ -1097,11 +1340,25 @@ public class DistributedUpscaleTaskProcessor(
         }
     }
 
+    /// <summary>Result of preparing a repair task for remote delegation, so the selection loop can
+    /// tell "hand it off" from "already resolved" from "requeued, stop scanning".</summary>
+    internal enum RepairPreparationOutcome
+    {
+        /// <summary>Prepared and ready to delegate to a remote worker.</summary>
+        Prepared,
+
+        /// <summary>Transiently unavailable and already re-offered; the caller must stop scanning and
+        /// answer the request rather than re-dequeue it.</summary>
+        Requeued,
+
+        /// <summary>The task was completed or failed; it is no longer in the queue.</summary>
+        Terminal,
+    }
+
     /// <summary>
     /// Prepares a RepairUpscaleTask for remote processing by analyzing differences and preparing missing pages CBZ.
-    /// Returns true if the task was successfully prepared and should be delegated to remote workers.
     /// </summary>
-    private async Task<bool> PrepareRepairTaskForRemote(
+    internal async Task<RepairPreparationOutcome> PrepareRepairTaskForRemote(
         RepairUpscaleTask repairTask,
         PersistedTask persistedTask,
         IServiceProvider services,
@@ -1143,7 +1400,7 @@ public class DistributedUpscaleTaskProcessor(
                     repairTask.UpscalerProfileId
                 );
                 await PersistFailedAsync(persistedTask, serviceStoppingToken);
-                return false;
+                return RepairPreparationOutcome.Terminal;
             }
 
             if (chapter.UpscaledFullPath == null)
@@ -1154,11 +1411,25 @@ public class DistributedUpscaleTaskProcessor(
                     chapter.Manga?.Library?.Id
                 );
                 await PersistFailedAsync(persistedTask, serviceStoppingToken);
-                return false;
+                return RepairPreparationOutcome.Terminal;
             }
 
             string upscaleTargetPath = chapter.UpscaledFullPath;
             string currentStoragePath = chapter.NotUpscaledFullPath;
+
+            if (!File.Exists(currentStoragePath))
+            {
+                // A missing source cannot be repaired, and AnalyzePageDifferencesAsync would report it
+                // as an empty (== equal) archive and complete the task without inspecting anything.
+                // Fail it instead of silently declaring the repair done.
+                logger.LogError(
+                    "The source archive for repair task {TaskId} is missing ({Path}); failing it.",
+                    persistedTask.Id,
+                    currentStoragePath
+                );
+                await PersistFailedAsync(persistedTask, serviceStoppingToken);
+                return RepairPreparationOutcome.Terminal;
+            }
 
             logger.LogInformation(
                 "Preparing remote repair of chapter \"{chapterFileName}\" of {seriesTitle}",
@@ -1172,6 +1443,34 @@ public class DistributedUpscaleTaskProcessor(
                 upscaleTargetPath
             );
 
+            if (differences.Corrupt)
+            {
+                // A malformed archive reports no missing pages; completing the task here would mark a
+                // corrupt source as successfully repaired and leave a stale upscaled CBZ. Fail it
+                // terminally instead.
+                logger.LogError(
+                    "The source archive for repair task {TaskId} of chapter \"{chapterFileName}\" is corrupt; failing it.",
+                    persistedTask.Id,
+                    chapter.FileName
+                );
+                await PersistFailedAsync(persistedTask, serviceStoppingToken);
+                return RepairPreparationOutcome.Terminal;
+            }
+
+            if (differences.ReadFailed)
+            {
+                // Transient: requeue without consuming the retry budget, matching the worker-cancel
+                // path. Defer the in-memory re-offer: an immediate re-add writes a signal the selection
+                // loop reads straight back, re-dequeues the same still-unreadable task and starves
+                // every other request until the host restarts.
+                logger.LogWarning(
+                    "Could not read a source archive for repair task {TaskId}; requeuing.",
+                    persistedTask.Id
+                );
+                await DeferClaimedTaskAsync(persistedTask, logger);
+                return RepairPreparationOutcome.Requeued;
+            }
+
             if (differences.AreEqual)
             {
                 logger.LogInformation(
@@ -1183,24 +1482,7 @@ public class DistributedUpscaleTaskProcessor(
                 // Mark as completed and don't delegate to remote workers. Terminal writes use the
                 // service token so a worker disconnect cannot cancel them.
                 await PersistCompletedAsync(persistedTask, serviceStoppingToken);
-                return false;
-            }
-
-            if (!differences.CanRepair)
-            {
-                logger.LogWarning(
-                    "Chapter \"{chapterFileName}\" of {seriesTitle} cannot be repaired - will fall back to full re-upscale",
-                    chapter.FileName,
-                    chapter.Manga.PrimaryTitle
-                );
-
-                // Fall back to full upscale by creating a regular UpscaleTask and enqueuing it
-                var fallbackTask = new UpscaleTask(chapter, upscalerProfile);
-                await taskQueue.EnqueueAsync(fallbackTask);
-
-                // Mark original repair task as completed since we've handled the fallback
-                await PersistCompletedAsync(persistedTask, serviceStoppingToken);
-                return false;
+                return RepairPreparationOutcome.Terminal;
             }
 
             // Prepare the repair context for remote processing
@@ -1209,15 +1491,16 @@ public class DistributedUpscaleTaskProcessor(
                 differences,
                 currentStoragePath,
                 upscaleTargetPath,
-                logger
+                logger,
+                prepareMissingPagesCbz: false
             );
 
             if (differences.MissingPages.Count > 0)
             {
-                // Create and store remote repair state
+                // Create and store remote repair state. Page streaming reads the missing pages from
+                // the original source, so only the upscaled output path is tracked here.
                 var repairState = new RemoteRepairState
                 {
-                    PreparedMissingPagesCbzPath = repairContext.MissingPagesCbz,
                     UpscaledMissingPagesCbzPath = repairContext.UpscaledMissingCbz,
                     RepairContext = repairContext,
                 };
@@ -1239,7 +1522,7 @@ public class DistributedUpscaleTaskProcessor(
                 );
 
                 // Task is ready to be delegated to remote workers
-                return true;
+                return RepairPreparationOutcome.Prepared;
             }
             else
             {
@@ -1253,7 +1536,7 @@ public class DistributedUpscaleTaskProcessor(
                     "Completed repair with no missing pages (only removed {extraCount} extra pages)",
                     differences.ExtraPages.Count
                 );
-                return false;
+                return RepairPreparationOutcome.Terminal;
             }
         }
         catch (OperationCanceledException) when (!serviceStoppingToken.IsCancellationRequested)
@@ -1261,12 +1544,14 @@ public class DistributedUpscaleTaskProcessor(
             // The requesting worker disconnected (or its request was cancelled) while the task was
             // being prepared. This is not a task failure: do not persist a terminal state and do not
             // bump the retry count. Requeue it so it stays replayable instead of being abandoned.
+            // The request token is cancelled, so the selection loop will break rather than re-dequeue
+            // it; an immediate re-add is safe here.
             logger.LogDebug(
                 "Preparation of repair task {TaskId} was cancelled by the requesting worker; requeuing.",
                 persistedTask.Id
             );
             await RequeueClaimedTaskAsync(persistedTask, serviceStoppingToken);
-            return false;
+            return RepairPreparationOutcome.Requeued;
         }
         catch (Exception ex)
         {
@@ -1277,8 +1562,50 @@ public class DistributedUpscaleTaskProcessor(
             );
             CleanupRepairFiles(persistedTask.Id, logger);
             await PersistFailedAsync(persistedTask, serviceStoppingToken);
-            return false;
+            return RepairPreparationOutcome.Terminal;
         }
+    }
+
+    /// <summary>
+    /// Requeues a claimed task without synchronously re-adding it to the in-memory queue, then
+    /// re-offers it after a delay. Used from inside the selection loop: an immediate re-add writes a
+    /// signal the loop reads straight back, re-dequeues the same task and starves every other request
+    /// (the task is the queue minimum, so nothing behind it is ever offered). The row is persisted
+    /// Pending and the periodic replayer is the backstop.
+    /// </summary>
+    private async Task DeferClaimedTaskAsync(PersistedTask persistedTask, ILogger logger)
+    {
+        // Drop any prepared repair context/temp files before requeueing, matching
+        // RequeueClaimedTaskAsync; cleanup respects an in-flight completion's usage lease.
+        CleanupRepairFiles(persistedTask.Id, logger);
+
+        int affected;
+        try
+        {
+            affected = await taskPersistenceService.RequeueStrandedTaskAsync(
+                persistedTask.Id,
+                serviceStoppingToken
+            );
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to requeue claimed task {TaskId}; leaving it for startup recovery.",
+                persistedTask.Id
+            );
+            return;
+        }
+
+        if (affected == 0)
+        {
+            // The row is already terminal or was removed; do not resurrect it.
+            return;
+        }
+
+        persistedTask.Status = PersistedTaskStatus.Pending;
+        _ = StatusChanged?.Invoke(persistedTask);
+        DeferUpscaleTask(persistedTask, logger);
     }
 
     /// <summary>
@@ -1366,11 +1693,6 @@ public class DistributedUpscaleTaskProcessor(
         private bool _cleanupCompleted;
 
         /// <summary>
-        ///     Path to the prepared CBZ file containing missing pages for remote upscaling.
-        /// </summary>
-        public string PreparedMissingPagesCbzPath { get; set; } = string.Empty;
-
-        /// <summary>
         ///     Path where the upscaled missing pages CBZ will be stored after remote processing.
         /// </summary>
         public string UpscaledMissingPagesCbzPath { get; set; } = string.Empty;
@@ -1456,7 +1778,6 @@ public class DistributedUpscaleTaskProcessor(
                 logger.LogDebug(ex, "RepairContext dispose threw during remote repair cleanup.");
             }
 
-            DeleteFileIfPresent(PreparedMissingPagesCbzPath, logger);
             DeleteFileIfPresent(UpscaledMissingPagesCbzPath, logger);
         }
 

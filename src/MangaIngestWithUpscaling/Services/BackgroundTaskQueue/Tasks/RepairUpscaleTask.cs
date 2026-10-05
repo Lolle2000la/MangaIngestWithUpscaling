@@ -103,6 +103,16 @@ public class RepairUpscaleTask : BaseTask, IChapterTask
         string upscaleTargetPath = chapter.UpscaledFullPath;
         string currentStoragePath = chapter.NotUpscaledFullPath;
 
+        if (!File.Exists(currentStoragePath))
+        {
+            // A missing source cannot be repaired. AnalyzePageDifferencesAsync treats it as an empty
+            // archive, so every upscaled page would look like an extra page and the repair would
+            // rebuild the upscaled CBZ from nothing. Fail terminally without touching that file.
+            throw new FileNotFoundException(
+                $"The source archive for chapter \"{chapter.FileName}\" is missing: {currentStoragePath}"
+            );
+        }
+
         logger.LogInformation(
             "Starting repair of chapter \"{chapterFileName}\" of {seriesTitle}",
             chapter.FileName,
@@ -115,6 +125,23 @@ public class RepairUpscaleTask : BaseTask, IChapterTask
             upscaleTargetPath
         );
 
+        if (differences.Corrupt)
+        {
+            // A malformed archive reports no missing pages; returning here would mark a corrupt source
+            // as successfully repaired. Fail terminally instead.
+            throw new InvalidDataException(
+                $"The source archive for chapter \"{chapter.FileName}\" is corrupt."
+            );
+        }
+
+        if (differences.ReadFailed)
+        {
+            // The local path has no requeue signal; fail rather than silently completing the repair.
+            throw new IOException(
+                $"Could not read the source archive for chapter \"{chapter.FileName}\"."
+            );
+        }
+
         if (differences.AreEqual)
         {
             logger.LogInformation(
@@ -122,20 +149,6 @@ public class RepairUpscaleTask : BaseTask, IChapterTask
                 chapter.FileName,
                 chapter.Manga.PrimaryTitle
             );
-            return;
-        }
-
-        if (!differences.CanRepair)
-        {
-            logger.LogWarning(
-                "Chapter \"{chapterFileName}\" of {seriesTitle} cannot be repaired - will fall back to full re-upscale",
-                chapter.FileName,
-                chapter.Manga.PrimaryTitle
-            );
-
-            // Fall back to full upscale by creating a regular UpscaleTask
-            var fallbackTask = new UpscaleTask(chapter, upscalerProfile);
-            await fallbackTask.ProcessAsync(services, cancellationToken);
             return;
         }
 
@@ -155,13 +168,17 @@ public class RepairUpscaleTask : BaseTask, IChapterTask
             );
             _ = chapterChangedNotifier.Notify(chapter, true);
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // Clean up on failure - let integrity checker handle it
-            if (File.Exists(upscaleTargetPath))
-            {
-                File.Delete(upscaleTargetPath);
-            }
+            // Do not delete the upscaled file. The final merge is atomic, so the destination is
+            // either the fully repaired archive or the untouched original; deleting it here would
+            // destroy the user's only copy. Let the integrity checker decide what to do.
+            logger.LogError(
+                ex,
+                "Repair of chapter \"{chapterFileName}\" of {seriesTitle} failed",
+                chapter.FileName,
+                chapter.Manga.PrimaryTitle
+            );
 
             throw;
         }

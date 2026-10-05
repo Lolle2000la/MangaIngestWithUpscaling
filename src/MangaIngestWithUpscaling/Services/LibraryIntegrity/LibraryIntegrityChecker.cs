@@ -559,6 +559,44 @@ public partial class LibraryIntegrityChecker(
             .Where(f => f.ChapterId == chapter.Id)
             .ToListAsync(cancellationToken);
 
+        // A chapter left at Processing with no live apply/detection task is stale: the task was
+        // canceled or removed (or the process died between enqueue and processing), and neither the
+        // cancel path nor RemoveTaskAsync resets the split state. Reset it so the pill does not spin
+        // forever and the apply can be re-run.
+        if (splitState.Status == SplitProcessingStatus.Processing)
+        {
+            bool hasLiveTask =
+                await splitProcessingCoordinator.HasExistingApplyTaskAsync(
+                    chapter.Id,
+                    context,
+                    cancellationToken
+                ) || await HasExistingDetectionTaskAsync(context, chapter.Id, cancellationToken);
+            if (!hasLiveTask)
+            {
+                logger.LogWarning(
+                    "Chapter {chapterFileName} ({chapterId}) is stuck at split status 'Processing' with no live apply/detection task. Resetting so the split application can be re-run.",
+                    chapter.FileName,
+                    chapter.Id
+                );
+
+                if (findings.Count > 0)
+                {
+                    await stateManager.SetDetectedAsync(
+                        chapter.Id,
+                        splitState.LastProcessedDetectorVersion,
+                        context,
+                        cancellationToken
+                    );
+                }
+                else
+                {
+                    await stateManager.DeleteStateAsync(chapter.Id, context, cancellationToken);
+                }
+
+                return IntegrityCheckResult.Corrected;
+            }
+        }
+
         if (splitState.Status == SplitProcessingStatus.NoSplitsFound)
         {
             if (findings.Any())
@@ -910,6 +948,23 @@ public partial class LibraryIntegrityChecker(
                         chapter.UpscaledFullPath
                     );
 
+                // An unreadable archive is not repairable, but it must not fall through to deletion:
+                // a periodic scan deleting a valid upscale because a source was momentarily locked or
+                // half-written would destroy the user's work. Corrupt is terminal; ReadFailed skips.
+                if (differences.Corrupt || differences.ReadFailed)
+                {
+                    logger.LogWarning(
+                        "Could not analyze the archives of upscaled chapter {chapterFileName} ({chapterId}) of {seriesTitle} ({reason}); skipping without deleting the upscale.",
+                        chapter.FileName,
+                        chapter.Id,
+                        chapter.Manga.PrimaryTitle,
+                        differences.Corrupt ? "corrupt" : "unreadable"
+                    );
+                    return differences.Corrupt
+                        ? IntegrityCheckResult.Invalid
+                        : IntegrityCheckResult.MaybeInProgress;
+                }
+
                 if (differences.CanRepair)
                 {
                     logger.LogInformation(
@@ -999,6 +1054,22 @@ public partial class LibraryIntegrityChecker(
                         chapter.NotUpscaledFullPath,
                         chapter.UpscaledFullPath
                     );
+
+                // As above: never delete on an unreadable archive. Corrupt is terminal; ReadFailed
+                // skips this scan.
+                if (differences.Corrupt || differences.ReadFailed)
+                {
+                    logger.LogWarning(
+                        "Could not analyze the archives of chapter {chapterFileName} ({chapterId}) of {seriesTitle} ({reason}); skipping without deleting the upscale.",
+                        chapter.FileName,
+                        chapter.Id,
+                        chapter.Manga?.PrimaryTitle,
+                        differences.Corrupt ? "corrupt" : "unreadable"
+                    );
+                    return differences.Corrupt
+                        ? IntegrityCheckResult.Invalid
+                        : IntegrityCheckResult.MaybeInProgress;
+                }
 
                 if (differences.CanRepair && chapter.Manga?.EffectiveUpscalerProfile != null)
                 {
@@ -1154,6 +1225,21 @@ public partial class LibraryIntegrityChecker(
     {
         return await PersistedTaskQueries
             .ForTaskTypeAndChapter<RepairUpscaleTask>(
+                context,
+                chapterId,
+                [PersistedTaskStatus.Pending, PersistedTaskStatus.Processing]
+            )
+            .AnyAsync(cancellationToken);
+    }
+
+    private static async Task<bool> HasExistingDetectionTaskAsync(
+        ApplicationDbContext context,
+        int chapterId,
+        CancellationToken cancellationToken
+    )
+    {
+        return await PersistedTaskQueries
+            .ForTaskTypeAndChapter<DetectSplitCandidatesTask>(
                 context,
                 chapterId,
                 [PersistedTaskStatus.Pending, PersistedTaskStatus.Processing]

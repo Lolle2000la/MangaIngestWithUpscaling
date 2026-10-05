@@ -265,6 +265,22 @@ public class SplitProcessingCoordinator(
             .AnyAsync(cancellationToken);
     }
 
+    public async Task<bool> HasExistingApplyTaskAsync(
+        int chapterId,
+        ApplicationDbContext? context = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        var db = context ?? dbContext;
+        return await PersistedTaskQueries
+            .ForTaskTypeAndChapter<ApplySplitsTask>(
+                db,
+                chapterId,
+                [PersistedTaskStatus.Pending, PersistedTaskStatus.Processing]
+            )
+            .AnyAsync(cancellationToken);
+    }
+
     public async Task OnSplitsAppliedAsync(
         int chapterId,
         int detectorVersion,

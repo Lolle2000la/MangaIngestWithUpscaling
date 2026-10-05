@@ -168,11 +168,15 @@ public class MetadataHandlingService(ILogger<MetadataHandlingService> logger)
     )
     {
         if (string.IsNullOrEmpty(originalFile) || string.IsNullOrEmpty(upscaledFile))
-            return new PageDifferenceResult([], []);
+        {
+            // Cannot inspect, so not "no differences": flag it so a caller never completes a repair
+            // without looking at the archives.
+            return new PageDifferenceResult([], []) { ReadFailed = true };
+        }
 
         if (!originalFile.EndsWith(".cbz") || !upscaledFile.EndsWith(".cbz"))
         {
-            return new PageDifferenceResult([], []);
+            return new PageDifferenceResult([], []) { ReadFailed = true };
         }
 
         try
@@ -221,7 +225,9 @@ public class MetadataHandlingService(ILogger<MetadataHandlingService> logger)
                 originalFile,
                 upscaledFile
             );
-            return new PageDifferenceResult([], []);
+            // Distinguish "no differences" from "could not read": the repair path classifies a corrupt
+            // archive as terminal instead of a transient restart.
+            return new PageDifferenceResult([], []) { Corrupt = true };
         }
         catch (Exception ex)
         {
@@ -232,7 +238,9 @@ public class MetadataHandlingService(ILogger<MetadataHandlingService> logger)
                 originalFile,
                 upscaledFile
             );
-            return new PageDifferenceResult([], []);
+            // Not "no differences": a repair must not be finalized as successful when the archives
+            // could not be read. Flagged separately from Corrupt so a caller can retry rather than fail.
+            return new PageDifferenceResult([], []) { ReadFailed = true };
         }
     }
 

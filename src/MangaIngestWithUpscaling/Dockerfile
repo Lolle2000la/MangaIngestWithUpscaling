@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y \
 	rm -rf /var/lib/apt/lists/*
 # The Python virtual environment is installed at runtime into the data volume on first startup.
 ENV Ingest_Upscaler__PythonEnvironmentDirectory=/data/pyenv
-ENV Ingest_Upscaler__SelectedDeviceIndex=0
+ENV Ingest_Upscaler__SelectedDeviceIndex=1
 ENV Ingest_Upscaler__PreferredGpuBackend=CUDA
 # configure models save directory
 ENV Ingest_Upscaler__ModelsDirectory=/models/MangaJaNai

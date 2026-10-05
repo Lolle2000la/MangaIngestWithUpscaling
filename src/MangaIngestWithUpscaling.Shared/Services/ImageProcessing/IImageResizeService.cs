@@ -45,4 +45,28 @@ public interface IImageResizeService
     /// <param name="cbzPath">Path to the CBZ file</param>
     /// <param name="cancellationToken">Cancellation token</param>
     Task<long> GetMaxPixelCountFromCbzAsync(string cbzPath, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Applies the same per-image preprocessing as <see cref="CreatePreprocessedTempCbzAsync"/>
+    /// (max dimension, format conversion, smart downscale) to a single image file, overwriting it
+    /// in place. Used by the page-streaming path so a streamed chapter matches the whole-CBZ path,
+    /// which preprocesses the whole archive before upscaling.
+    /// </summary>
+    /// <param name="imagePath">Path to the image to preprocess (overwritten with the result)</param>
+    /// <param name="options">Preprocessing options to apply</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    Task PreprocessImageInPlaceAsync(
+        string imagePath,
+        ImagePreprocessingOptions options,
+        CancellationToken cancellationToken
+    );
+
+    /// <summary>
+    /// Exercises the native image backend (libvips) end-to-end with a tiny in-memory image, including a
+    /// resize and a lossless (.png) and lossy (.jpg) encode/decode round-trip. Throws when the backend
+    /// cannot run (missing or mis-versioned native library) or a loader/encoder is missing, so a worker
+    /// fails fast at startup instead of silently producing un-preprocessed pages while advertising the
+    /// same engine identity as a healthy one.
+    /// </summary>
+    void VerifyReady();
 }

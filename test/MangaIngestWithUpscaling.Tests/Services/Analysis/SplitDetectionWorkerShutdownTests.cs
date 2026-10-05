@@ -14,6 +14,7 @@ public class SplitDetectionWorkerShutdownTests
 {
     private readonly IPythonService _pythonService;
     private readonly IMangaJaNaiWorkerClient _workerClient;
+    private readonly IDetectServerClient _detectServer;
     private readonly UpscalerConfig _config;
     private readonly SplitDetectionService _service;
 
@@ -21,10 +22,12 @@ public class SplitDetectionWorkerShutdownTests
     {
         _pythonService = Substitute.For<IPythonService>();
         _workerClient = Substitute.For<IMangaJaNaiWorkerClient>();
+        _detectServer = Substitute.For<IDetectServerClient>();
         _config = new UpscalerConfig();
         _service = new SplitDetectionService(
             _pythonService,
             _workerClient,
+            _detectServer,
             Options.Create(_config),
             Substitute.For<ILogger<SplitDetectionService>>(),
             Substitute.For<IStringLocalizer<SplitDetectionService>>()
@@ -44,7 +47,9 @@ public class SplitDetectionWorkerShutdownTests
         );
 
         _ = _workerClient.Received(1).ReleaseGpuCacheAsync(Arg.Any<CancellationToken>());
-        await _workerClient.DidNotReceive().ShutdownWorkerAsync(Arg.Any<CancellationToken>());
+        await _workerClient
+            .DidNotReceive()
+            .ShutdownWorkerAsync(Arg.Any<bool>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -61,7 +66,7 @@ public class SplitDetectionWorkerShutdownTests
             )
         );
 
-        await _workerClient.Received(1).ShutdownWorkerAsync(Arg.Any<CancellationToken>());
+        await _workerClient.Received(1).ShutdownWorkerAsync(true, Arg.Any<CancellationToken>());
         _ = _workerClient.DidNotReceive().ReleaseGpuCacheAsync(Arg.Any<CancellationToken>());
     }
 }

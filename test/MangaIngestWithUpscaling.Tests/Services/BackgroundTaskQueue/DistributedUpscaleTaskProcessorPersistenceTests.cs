@@ -1,10 +1,12 @@
 using System.Reflection;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
+using MangaIngestWithUpscaling.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 using MangaIngestWithUpscaling.Services.RepairServices;
 using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
 using MangaIngestWithUpscaling.Shared.Services.MetadataHandling;
 using MangaIngestWithUpscaling.Tests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
@@ -26,6 +28,8 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
     private readonly ServiceProvider _provider;
     private readonly TaskQueue _taskQueue;
     private readonly DistributedUpscaleTaskProcessor _processor;
+    private readonly IMetadataHandlingService _metadata;
+    private readonly IRepairService _repairService;
 
     public DistributedUpscaleTaskProcessorPersistenceTests()
     {
@@ -42,8 +46,10 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
             Options.Create(new UpscalerConfig { RemoteOnly = true })
         );
         // HandleRepairTaskCompletion resolves these before it can fail on a missing chapter.
-        services.AddScoped(_ => Substitute.For<IRepairService>());
-        services.AddScoped(_ => Substitute.For<IMetadataHandlingService>());
+        _repairService = Substitute.For<IRepairService>();
+        services.AddScoped(_ => _repairService);
+        _metadata = Substitute.For<IMetadataHandlingService>();
+        services.AddScoped(_ => _metadata);
 
         _provider = services.BuildServiceProvider();
         using (var scope = _provider.CreateScope())
@@ -72,36 +78,6 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
     {
         await _provider.DisposeAsync();
         await _database.DisposeAsync();
-    }
-
-    [Fact]
-    [Trait("Category", "Unit")]
-    public async Task GetTask_ApplySplitsTaskForMissingChapter_PersistsFailedStatus()
-    {
-        // Regression guard: the skip branch used to only set the in-memory status, leaving the
-        // database row stuck in Processing (and replaying on restart).
-        var cts = new CancellationTokenSource();
-        await _taskQueue.EnqueueAsync(new ApplySplitsTask(999_999, 1));
-        await _taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(1, 1));
-
-        int failingTaskId = _taskQueue
-            .GetUpscaleSnapshot()
-            .Single(t => t.Data is ApplySplitsTask)
-            .Id;
-
-        Task runTask = _processor.StartAsync(cts.Token);
-        PersistedTask? handedToRemote = await _processor.GetTask(cts.Token);
-
-        Assert.NotNull(handedToRemote);
-        Assert.IsType<DetectSplitCandidatesTask>(handedToRemote!.Data);
-        Assert.Equal(PersistedTaskStatus.Failed, await GetStatusAsync(failingTaskId));
-
-        await cts.CancelAsync();
-        try
-        {
-            await runTask;
-        }
-        catch (OperationCanceledException) { }
     }
 
     [Fact]
@@ -159,6 +135,63 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
 
         Assert.Equal(PersistedTaskStatus.Failed, await GetStatusAsync(taskId));
         Assert.False(_processor.IsRunningRemotely(taskId));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task TaskCompleted_WhenRepairArchiveReadFailsTransiently_RequeuesInsteadOfFailing()
+    {
+        // Regression guard: AnalyzePageDifferencesAsync reports a transient read failure as an empty
+        // result, whose AreEqual is true, so the completion path used to mark the repair Completed
+        // (discarding the already-upscaled pages) or Failed. It must requeue instead.
+        await using ApplicationDbContext ctx = _database.CreateContext();
+
+        string temp = Directory.CreateTempSubdirectory().FullName;
+        var lib = new Library
+        {
+            Name = "Lib",
+            NotUpscaledLibraryPath = Path.Combine(temp, "orig"),
+            UpscaledLibraryPath = Path.Combine(temp, "up"),
+        };
+        Directory.CreateDirectory(lib.NotUpscaledLibraryPath);
+        Directory.CreateDirectory(lib.UpscaledLibraryPath!);
+        var manga = new Manga { PrimaryTitle = "Series", Library = lib };
+        var chapter = new Chapter
+        {
+            FileName = "ch1.cbz",
+            RelativePath = "Series/Ch1.cbz",
+            Manga = manga,
+            IsUpscaled = true,
+        };
+        manga.Chapters.Add(chapter);
+        lib.MangaSeries.Add(manga);
+        ctx.Libraries.Add(lib);
+        await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var task = new PersistedTask
+        {
+            Data = new RepairUpscaleTask { ChapterId = chapter.Id, UpscalerProfileId = 1 },
+            Status = PersistedTaskStatus.Processing,
+            Order = 1,
+        };
+        ctx.PersistedTasks.Add(task);
+        await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        _metadata
+            .AnalyzePageDifferencesAsync(Arg.Any<string?>(), Arg.Any<string?>())
+            .Returns(new PageDifferenceResult([], []) { ReadFailed = true });
+
+        Dictionary<int, DistributedUpscaleTaskProcessor.RemoteRepairState> states = GetPrivateField<
+            Dictionary<int, DistributedUpscaleTaskProcessor.RemoteRepairState>
+        >(_processor, "remoteRepairStates");
+        states[task.Id] = new DistributedUpscaleTaskProcessor.RemoteRepairState
+        {
+            RepairContext = new RepairContext(),
+        };
+
+        await _processor.TaskCompleted(task.Id);
+
+        Assert.Equal(PersistedTaskStatus.Pending, await GetStatusAsync(task.Id));
     }
 
     [Fact]
@@ -359,9 +392,10 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
         // requeued promptly without consuming its RetryFor budget.
         int taskId = await SeedRepairTaskAsync(retryFor: 3, retryCount: 0);
 
-        bool prepared = await InvokePrepareRepairTaskForRemoteAsync(taskId);
+        DistributedUpscaleTaskProcessor.RepairPreparationOutcome prepared =
+            await InvokePrepareRepairTaskForRemoteAsync(taskId);
 
-        Assert.False(prepared);
+        Assert.Equal(DistributedUpscaleTaskProcessor.RepairPreparationOutcome.Requeued, prepared);
         Assert.Equal(PersistedTaskStatus.Pending, await GetStatusAsync(taskId));
         Assert.Equal(0, await GetRetryCountAsync(taskId));
         Assert.Contains(_taskQueue.GetUpscaleSnapshot(), t => t.Id == taskId);
@@ -376,7 +410,10 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
 
         for (int i = 0; i < 5; i++)
         {
-            Assert.False(await InvokePrepareRepairTaskForRemoteAsync(taskId));
+            Assert.Equal(
+                DistributedUpscaleTaskProcessor.RepairPreparationOutcome.Requeued,
+                await InvokePrepareRepairTaskForRemoteAsync(taskId)
+            );
             Assert.Equal(PersistedTaskStatus.Pending, await GetStatusAsync(taskId));
             Assert.Equal(0, await GetRetryCountAsync(taskId));
         }
@@ -389,9 +426,10 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
         // A RetryFor of 1 must not turn an infrastructure event into a terminal failure.
         int taskId = await SeedRepairTaskAsync(retryFor: 1, retryCount: 0);
 
-        bool prepared = await InvokePrepareRepairTaskForRemoteAsync(taskId);
+        DistributedUpscaleTaskProcessor.RepairPreparationOutcome prepared =
+            await InvokePrepareRepairTaskForRemoteAsync(taskId);
 
-        Assert.False(prepared);
+        Assert.Equal(DistributedUpscaleTaskProcessor.RepairPreparationOutcome.Requeued, prepared);
         Assert.Equal(PersistedTaskStatus.Pending, await GetStatusAsync(taskId));
         Assert.Equal(0, await GetRetryCountAsync(taskId));
         Assert.Contains(_taskQueue.GetUpscaleSnapshot(), t => t.Id == taskId);
@@ -548,7 +586,9 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
         return task.Id;
     }
 
-    private async Task<bool> InvokePrepareRepairTaskForRemoteAsync(int taskId)
+    private async Task<DistributedUpscaleTaskProcessor.RepairPreparationOutcome> InvokePrepareRepairTaskForRemoteAsync(
+        int taskId
+    )
     {
         PersistedTask persistedTask;
         using (IServiceScope scope = _provider.CreateScope())
@@ -578,7 +618,7 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
             }
         );
 
-        return await (Task<bool>)invocation!;
+        return await (Task<DistributedUpscaleTaskProcessor.RepairPreparationOutcome>)invocation!;
     }
 
     [Fact]
@@ -685,9 +725,16 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
             persistence
         );
 
-        // ApplySplits performs a chapter query after the claim, which observes the cancelled token.
-        // A disconnect is an infrastructure event, so it is requeued regardless of RetryFor.
-        await _taskQueue.EnqueueAsync(new ApplySplitsTask(999_999, 1) { RetryFor = 1 });
+        // The upscale branch performs a chapter query after the claim, which observes the cancelled
+        // token. A disconnect is an infrastructure event, so it is requeued regardless of RetryFor.
+        await _taskQueue.EnqueueAsync(
+            new UpscaleTask
+            {
+                ChapterId = 999_999,
+                UpscalerProfileId = 999_999,
+                RetryFor = 1,
+            }
+        );
         int taskId = _taskQueue.GetUpscaleSnapshot().Single().Id;
 
         await processor.StartAsync(serviceCts.Token);
@@ -716,6 +763,358 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
 
         await serviceCts.CancelAsync();
         await processor.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task GetTask_WhenASameChapterApplyBlocksTheHead_ServesTheTaskBehindIt()
+    {
+        // A Processing apply for chapter 7 blocks a chapter-7 task. DequeueUpscale always returns the
+        // queue minimum, so re-enqueuing the blocked task immediately would make every request re-pick
+        // it and starve the task behind it; it is re-offered after a delay instead.
+        using (IServiceScope scope = _provider.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            db.PersistedTasks.Add(
+                new PersistedTask
+                {
+                    Data = new ApplySplitsTask(7, 1),
+                    Status = PersistedTaskStatus.Processing,
+                    Order = 0,
+                }
+            );
+            await db.SaveChangesAsync(TestContext.Current.CancellationToken);
+        }
+
+        await _taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(7, 1));
+        await _taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(8, 1));
+
+        var serviceCts = new CancellationTokenSource();
+        await _processor.StartAsync(serviceCts.Token);
+        try
+        {
+            // The blocked head is deferred, so this request is answered with no task...
+            PersistedTask? first = await _processor.GetTask(TestContext.Current.CancellationToken);
+            Assert.Null(first);
+            Assert.DoesNotContain(
+                _taskQueue.GetUpscaleSnapshot(),
+                t => ((DetectSplitCandidatesTask)t.Data).ChapterId == 7
+            );
+
+            // ...and the task behind it is served instead of the head being re-picked forever.
+            PersistedTask? second = await _processor.GetTask(TestContext.Current.CancellationToken);
+            Assert.NotNull(second);
+            Assert.Equal(8, ((DetectSplitCandidatesTask)second!.Data).ChapterId);
+        }
+        finally
+        {
+            await serviceCts.CancelAsync();
+            await _processor.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task GetTask_WhenRepairPreparationReadFails_AnswersTheRequestAndServesTheTaskBehindIt()
+    {
+        // Regression guard: the ReadFailed requeue re-added the task to the in-memory queue, so the
+        // selection loop read the signal straight back, re-dequeued the same still-unreadable task and
+        // starved every other request until the host restarted. It must be deferred and the request
+        // answered so the tasks behind it are served.
+        await using ApplicationDbContext ctx = _database.CreateContext();
+
+        string temp = Directory.CreateTempSubdirectory().FullName;
+        var lib = new Library
+        {
+            Name = "Lib",
+            NotUpscaledLibraryPath = Path.Combine(temp, "orig"),
+            UpscaledLibraryPath = Path.Combine(temp, "up"),
+        };
+        Directory.CreateDirectory(lib.NotUpscaledLibraryPath);
+        Directory.CreateDirectory(lib.UpscaledLibraryPath!);
+        var profile = new UpscalerProfile
+        {
+            Name = "Default",
+            CompressionFormat = CompressionFormat.Webp,
+            Quality = 80,
+            ScalingFactor = ScaleFactor.TwoX,
+        };
+        var manga = new Manga { PrimaryTitle = "Series", Library = lib };
+        string rel = "Series/Ch1.cbz";
+        string sourcePath = Path.Combine(lib.NotUpscaledLibraryPath, rel);
+        Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
+        File.WriteAllText(sourcePath, "source");
+        var chapter = new Chapter
+        {
+            FileName = "ch1.cbz",
+            RelativePath = rel,
+            Manga = manga,
+            IsUpscaled = true,
+            UpscalerProfile = profile,
+        };
+        manga.Chapters.Add(chapter);
+        lib.MangaSeries.Add(manga);
+        ctx.Libraries.Add(lib);
+        await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        _metadata
+            .AnalyzePageDifferencesAsync(Arg.Any<string?>(), Arg.Any<string?>())
+            .Returns(new PageDifferenceResult([], []) { ReadFailed = true });
+
+        await _taskQueue.EnqueueAsync(
+            new RepairUpscaleTask { ChapterId = chapter.Id, UpscalerProfileId = profile.Id }
+        );
+        await _taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(999_999, 1));
+        int repairTaskId = _taskQueue
+            .GetUpscaleSnapshot()
+            .Single(t => t.Data is RepairUpscaleTask)
+            .Id;
+
+        var serviceCts = new CancellationTokenSource();
+        await _processor.StartAsync(serviceCts.Token);
+        try
+        {
+            // The unreadable repair is deferred, so this request is answered with no task...
+            PersistedTask? first = await _processor.GetTask(TestContext.Current.CancellationToken);
+            Assert.Null(first);
+            Assert.Equal(PersistedTaskStatus.Pending, await GetStatusAsync(repairTaskId));
+            Assert.DoesNotContain(
+                _taskQueue.GetUpscaleSnapshot(),
+                t => t.Data is RepairUpscaleTask
+            );
+
+            // ...and the task behind it is served instead of the loop spinning on the unreadable one.
+            PersistedTask? second = await _processor.GetTask(TestContext.Current.CancellationToken);
+            Assert.NotNull(second);
+            Assert.IsType<DetectSplitCandidatesTask>(second!.Data);
+        }
+        finally
+        {
+            await serviceCts.CancelAsync();
+            await _processor.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task CancelCurrent_DuringRepairPreparation_CancelsTheClaimedTask()
+    {
+        // Regression guard: runningTasks was populated only on handoff, so a merge/ingest
+        // CancelCurrent during the (long) repair-preparation window no-oped and a remote worker could
+        // keep writing a chapter the merge deleted.
+        await using ApplicationDbContext ctx = _database.CreateContext();
+
+        string temp = Directory.CreateTempSubdirectory().FullName;
+        var lib = new Library
+        {
+            Name = "Lib",
+            NotUpscaledLibraryPath = Path.Combine(temp, "orig"),
+            UpscaledLibraryPath = Path.Combine(temp, "up"),
+        };
+        Directory.CreateDirectory(lib.NotUpscaledLibraryPath);
+        Directory.CreateDirectory(lib.UpscaledLibraryPath!);
+        var profile = new UpscalerProfile
+        {
+            Name = "Default",
+            CompressionFormat = CompressionFormat.Webp,
+            Quality = 80,
+            ScalingFactor = ScaleFactor.TwoX,
+        };
+        var manga = new Manga { PrimaryTitle = "Series", Library = lib };
+        string rel = "Series/Ch1.cbz";
+        string sourcePath = Path.Combine(lib.NotUpscaledLibraryPath, rel);
+        Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
+        File.WriteAllText(sourcePath, "source");
+        var chapter = new Chapter
+        {
+            FileName = "ch1.cbz",
+            RelativePath = rel,
+            Manga = manga,
+            IsUpscaled = true,
+            UpscalerProfile = profile,
+        };
+        manga.Chapters.Add(chapter);
+        lib.MangaSeries.Add(manga);
+        ctx.Libraries.Add(lib);
+        await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        var prepareStarted = new ManualResetEventSlim(false);
+        var releasePrepare = new ManualResetEventSlim(false);
+        _metadata
+            .AnalyzePageDifferencesAsync(Arg.Any<string?>(), Arg.Any<string?>())
+            .Returns(_ =>
+            {
+                prepareStarted.Set();
+                releasePrepare.Wait(TestContext.Current.CancellationToken);
+                return Task.FromResult(new PageDifferenceResult([], []) { ReadFailed = true });
+            });
+
+        await _taskQueue.EnqueueAsync(
+            new RepairUpscaleTask { ChapterId = chapter.Id, UpscalerProfileId = profile.Id }
+        );
+        int taskId = _taskQueue.GetUpscaleSnapshot().Single().Id;
+
+        var serviceCts = new CancellationTokenSource();
+        await _processor.StartAsync(serviceCts.Token);
+        try
+        {
+            Task<PersistedTask?> getTask = _processor.GetTask(
+                TestContext.Current.CancellationToken
+            );
+            Assert.True(
+                prepareStarted.Wait(
+                    TimeSpan.FromSeconds(10),
+                    TestContext.Current.CancellationToken
+                ),
+                "Repair preparation should have started."
+            );
+
+            await _processor.CancelCurrent(new PersistedTask { Id = taskId });
+
+            Assert.Equal(PersistedTaskStatus.Canceled, await GetStatusAsync(taskId));
+
+            releasePrepare.Set();
+            Assert.Null(
+                await getTask.WaitAsync(
+                    TimeSpan.FromSeconds(10),
+                    TestContext.Current.CancellationToken
+                )
+            );
+        }
+        finally
+        {
+            releasePrepare.Set();
+            await serviceCts.CancelAsync();
+            await _processor.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task CancelCurrent_DuringRepairPreparation_WhenPrepared_DoesNotHandOffAndCleansUp()
+    {
+        // A cancel that lands while preparation is in flight but preparation still returns Prepared
+        // must not hand the task to a worker: the worker's page RPCs would be rejected, and the
+        // RemoteRepairState/context created after CancelCurrent's own cleanup would leak.
+        await using ApplicationDbContext ctx = _database.CreateContext();
+
+        string temp = Directory.CreateTempSubdirectory().FullName;
+        var lib = new Library
+        {
+            Name = "Lib",
+            NotUpscaledLibraryPath = Path.Combine(temp, "orig"),
+            UpscaledLibraryPath = Path.Combine(temp, "up"),
+        };
+        Directory.CreateDirectory(lib.NotUpscaledLibraryPath);
+        Directory.CreateDirectory(lib.UpscaledLibraryPath!);
+        var profile = new UpscalerProfile
+        {
+            Name = "Default",
+            CompressionFormat = CompressionFormat.Webp,
+            Quality = 80,
+            ScalingFactor = ScaleFactor.TwoX,
+        };
+        var manga = new Manga { PrimaryTitle = "Series", Library = lib };
+        string rel = "Series/Ch1.cbz";
+        string sourcePath = Path.Combine(lib.NotUpscaledLibraryPath, rel);
+        Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
+        File.WriteAllText(sourcePath, "source");
+        var chapter = new Chapter
+        {
+            FileName = "ch1.cbz",
+            RelativePath = rel,
+            Manga = manga,
+            IsUpscaled = true,
+            UpscalerProfile = profile,
+        };
+        manga.Chapters.Add(chapter);
+        lib.MangaSeries.Add(manga);
+        ctx.Libraries.Add(lib);
+        await ctx.SaveChangesAsync(TestContext.Current.CancellationToken);
+
+        string workDirectory = Directory.CreateTempSubdirectory().FullName;
+        string preparedCbz = Path.Combine(workDirectory, "upscaled_missing_pages.cbz");
+        await File.WriteAllTextAsync(
+            preparedCbz,
+            "prepared",
+            TestContext.Current.CancellationToken
+        );
+        _repairService
+            .PrepareRepairContext(
+                Arg.Any<PageDifferenceResult>(),
+                Arg.Any<string>(),
+                Arg.Any<string>(),
+                Arg.Any<ILogger>(),
+                Arg.Any<bool>()
+            )
+            .Returns(_ => new RepairContext
+            {
+                WorkDirectory = workDirectory,
+                UpscaledMissingCbz = preparedCbz,
+            });
+
+        var prepareStarted = new ManualResetEventSlim(false);
+        var releasePrepare = new ManualResetEventSlim(false);
+        _metadata
+            .AnalyzePageDifferencesAsync(Arg.Any<string?>(), Arg.Any<string?>())
+            .Returns(_ =>
+            {
+                prepareStarted.Set();
+                releasePrepare.Wait(TestContext.Current.CancellationToken);
+                return Task.FromResult(new PageDifferenceResult(["page2"], []));
+            });
+
+        await _taskQueue.EnqueueAsync(
+            new RepairUpscaleTask { ChapterId = chapter.Id, UpscalerProfileId = profile.Id }
+        );
+        int taskId = _taskQueue.GetUpscaleSnapshot().Single().Id;
+
+        var serviceCts = new CancellationTokenSource();
+        await _processor.StartAsync(serviceCts.Token);
+        try
+        {
+            Task<PersistedTask?> getTask = _processor.GetTask(
+                TestContext.Current.CancellationToken
+            );
+            Assert.True(
+                prepareStarted.Wait(
+                    TimeSpan.FromSeconds(10),
+                    TestContext.Current.CancellationToken
+                ),
+                "Repair preparation should have started."
+            );
+
+            await _processor.CancelCurrent(new PersistedTask { Id = taskId });
+            Assert.Equal(PersistedTaskStatus.Canceled, await GetStatusAsync(taskId));
+
+            releasePrepare.Set();
+            Assert.Null(
+                await getTask.WaitAsync(
+                    TimeSpan.FromSeconds(10),
+                    TestContext.Current.CancellationToken
+                )
+            );
+
+            Assert.False(_processor.IsRunningRemotely(taskId));
+            Assert.Null(_processor.GetRemoteRepairState(taskId));
+            Assert.False(File.Exists(preparedCbz));
+        }
+        finally
+        {
+            releasePrepare.Set();
+            await serviceCts.CancelAsync();
+            await _processor.StopAsync(CancellationToken.None);
+
+            if (Directory.Exists(temp))
+            {
+                Directory.Delete(temp, true);
+            }
+
+            if (Directory.Exists(workDirectory))
+            {
+                Directory.Delete(workDirectory, true);
+            }
+        }
     }
 
     [Fact]
@@ -869,11 +1268,18 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
             persistence
         );
 
-        // ApplySplits performs a chapter query after the claim; when the recovered task is
+        // The upscale branch performs a chapter query after the claim; when the recovered task is
         // re-claimed it fails on its missing chapter before the next task is handed to the worker.
         // A post-commit claim failure is an infrastructure event and is requeued regardless of the
         // task's RetryFor budget.
-        await _taskQueue.EnqueueAsync(new ApplySplitsTask(999_999, 1) { RetryFor = 1 });
+        await _taskQueue.EnqueueAsync(
+            new UpscaleTask
+            {
+                ChapterId = 999_999,
+                UpscalerProfileId = 999_999,
+                RetryFor = 1,
+            }
+        );
         int taskId = _taskQueue.GetUpscaleSnapshot().Single().Id;
 
         await processor.StartAsync(serviceCts.Token);
@@ -1049,9 +1455,10 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
                 TestContext.Current.CancellationToken,
             }
         );
-        bool prepared = await (Task<bool>)invocation!;
+        DistributedUpscaleTaskProcessor.RepairPreparationOutcome prepared =
+            await (Task<DistributedUpscaleTaskProcessor.RepairPreparationOutcome>)invocation!;
 
-        Assert.False(prepared);
+        Assert.Equal(DistributedUpscaleTaskProcessor.RepairPreparationOutcome.Terminal, prepared);
         Assert.True(
             disposed.Wait(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken),
             "The stale repair context should have been disposed."
@@ -1085,18 +1492,9 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
             taskId = task.Id;
         }
 
-        string preparedCbz = Path.Combine(
-            Path.GetTempPath(),
-            $"repair-prepared-{Guid.NewGuid():N}.cbz"
-        );
         string upscaledCbz = Path.Combine(
             Path.GetTempPath(),
             $"repair-upscaled-{Guid.NewGuid():N}.cbz"
-        );
-        await File.WriteAllTextAsync(
-            preparedCbz,
-            "prepared",
-            TestContext.Current.CancellationToken
         );
         await File.WriteAllTextAsync(
             upscaledCbz,
@@ -1109,7 +1507,6 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
         >(_processor, "remoteRepairStates");
         states[taskId] = new DistributedUpscaleTaskProcessor.RemoteRepairState
         {
-            PreparedMissingPagesCbzPath = preparedCbz,
             UpscaledMissingPagesCbzPath = upscaledCbz,
         };
 
@@ -1134,8 +1531,141 @@ public class DistributedUpscaleTaskProcessorPersistenceTests : IAsyncDisposable
 
         Assert.Equal(PersistedTaskStatus.Pending, await GetStatusAsync(taskId));
         Assert.False(states.ContainsKey(taskId));
-        Assert.False(File.Exists(preparedCbz));
         Assert.False(File.Exists(upscaledCbz));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task TaskFailed_WhenRepairWasPrepared_CleansUpStateAndTempFiles()
+    {
+        // A failed remote repair must drop its RemoteRepairState and prepared CBZ/temp files;
+        // otherwise they linger on disk until the next process restart.
+        int taskId = await SeedTaskAsync(PersistedTaskStatus.Processing);
+
+        string upscaledCbz = Path.Combine(
+            Path.GetTempPath(),
+            $"repair-failed-{Guid.NewGuid():N}.cbz"
+        );
+        await File.WriteAllTextAsync(
+            upscaledCbz,
+            "upscaled",
+            TestContext.Current.CancellationToken
+        );
+
+        Dictionary<int, DistributedUpscaleTaskProcessor.RemoteRepairState> states = GetPrivateField<
+            Dictionary<int, DistributedUpscaleTaskProcessor.RemoteRepairState>
+        >(_processor, "remoteRepairStates");
+        states[taskId] = new DistributedUpscaleTaskProcessor.RemoteRepairState
+        {
+            UpscaledMissingPagesCbzPath = upscaledCbz,
+        };
+
+        await _processor.TaskFailed(taskId, "worker failed");
+
+        Assert.False(states.ContainsKey(taskId));
+        Assert.False(File.Exists(upscaledCbz));
+        Assert.Equal(PersistedTaskStatus.Failed, await GetStatusAsync(taskId));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ReapDeadTasks_WhenTaskAwaitsHandoff_DoesNotRequeueIt()
+    {
+        // Regression guard: a claimed task is tracked in runningTasks before handoff, but its
+        // LastKeepAlive is not refreshed while remote repair preparation runs (there is no worker and
+        // no heartbeat yet). A stale timestamp must not let the reaper requeue (and duplicate
+        // dispatch) a task that is still being prepared.
+        int taskId = await SeedTaskAsync(PersistedTaskStatus.Processing);
+        var awaiting = new PersistedTask
+        {
+            Id = taskId,
+            Data = new DetectSplitCandidatesTask(1, 1),
+            Status = PersistedTaskStatus.Processing,
+            LastKeepAlive = DateTime.UtcNow.AddMinutes(-5),
+        };
+        Dictionary<int, PersistedTask> runningTasks = GetPrivateField<
+            Dictionary<int, PersistedTask>
+        >(_processor, "runningTasks");
+        HashSet<int> awaitingHandoff = GetPrivateField<HashSet<int>>(_processor, "awaitingHandoff");
+        runningTasks[taskId] = awaiting;
+        awaitingHandoff.Add(taskId);
+
+        await _processor.ReapDeadTasksAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(PersistedTaskStatus.Processing, await GetStatusAsync(taskId));
+        Assert.True(runningTasks.ContainsKey(taskId));
+        Assert.Contains(taskId, awaitingHandoff);
+        Assert.DoesNotContain(_taskQueue.GetUpscaleSnapshot(), t => t.Id == taskId);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ReapDeadTasks_WhenTaskWasHandedOff_RequeuesIt()
+    {
+        // A task the worker actually owns (no longer awaiting handoff) whose keep-alive went stale is
+        // still recovered by the reaper.
+        int taskId = await SeedTaskAsync(PersistedTaskStatus.Processing);
+        var deadTask = new PersistedTask
+        {
+            Id = taskId,
+            Data = new DetectSplitCandidatesTask(1, 1),
+            Status = PersistedTaskStatus.Processing,
+            LastKeepAlive = DateTime.UtcNow.AddMinutes(-5),
+        };
+        Dictionary<int, PersistedTask> runningTasks = GetPrivateField<
+            Dictionary<int, PersistedTask>
+        >(_processor, "runningTasks");
+        runningTasks[taskId] = deadTask;
+
+        await _processor.ReapDeadTasksAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal(PersistedTaskStatus.Pending, await GetStatusAsync(taskId));
+        Assert.Contains(_taskQueue.GetUpscaleSnapshot(), t => t.Id == taskId);
+        Assert.False(runningTasks.ContainsKey(taskId));
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task GetTask_WhenTaskIsReroutedLocally_DropsItFromTracking()
+    {
+        // Regression guard: a rerouted task stayed in runningTasks with a stale LastKeepAlive while
+        // the request went on to hand off a second task, so the reaper could requeue it while the
+        // local processor was still running it (duplicate dispatch).
+        await _taskQueue.EnqueueAsync(
+            new RenameUpscaledChaptersSeriesTask(999_999, "/tmp/ch1.cbz", "New Title")
+        );
+        await _taskQueue.EnqueueAsync(new DetectSplitCandidatesTask(1, 1));
+        int reroutedId = _taskQueue
+            .GetUpscaleSnapshot()
+            .Single(t => t.Data is RenameUpscaledChaptersSeriesTask)
+            .Id;
+
+        var serviceCts = new CancellationTokenSource();
+        await _processor.StartAsync(serviceCts.Token);
+        try
+        {
+            PersistedTask? handedToRemote = await _processor.GetTask(
+                TestContext.Current.CancellationToken
+            );
+            Assert.NotNull(handedToRemote);
+            Assert.IsType<DetectSplitCandidatesTask>(handedToRemote!.Data);
+
+            Assert.False(_processor.IsRunningRemotely(reroutedId));
+            Dictionary<int, PersistedTask> runningTasks = GetPrivateField<
+                Dictionary<int, PersistedTask>
+            >(_processor, "runningTasks");
+            Assert.False(runningTasks.ContainsKey(reroutedId));
+            HashSet<int> awaitingHandoff = GetPrivateField<HashSet<int>>(
+                _processor,
+                "awaitingHandoff"
+            );
+            Assert.DoesNotContain(reroutedId, awaitingHandoff);
+        }
+        finally
+        {
+            await serviceCts.CancelAsync();
+            await _processor.StopAsync(CancellationToken.None);
+        }
     }
 
     private static T GetPrivateField<T>(object target, string name)

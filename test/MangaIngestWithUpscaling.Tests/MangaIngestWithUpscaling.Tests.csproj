@@ -35,6 +35,10 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\MangaIngestWithUpscaling\MangaIngestWithUpscaling.csproj" />
     <ProjectReference Include="..\..\src\MangaIngestWithUpscaling.Shared\MangaIngestWithUpscaling.Shared.csproj" />
+    <ProjectReference
+      Include="..\..\src\MangaIngestWithUpscaling.RemoteWorker\MangaIngestWithUpscaling.RemoteWorker.csproj"
+      Aliases="remote"
+    />
     <ProjectReference Include="..\..\tools\MangaIngestWithUpscaling.DbMigrator\MangaIngestWithUpscaling.DbMigrator.csproj" />
   </ItemGroup>
 </Project>

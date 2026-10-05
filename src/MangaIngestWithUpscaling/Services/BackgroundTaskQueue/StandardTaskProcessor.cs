@@ -1,6 +1,7 @@
 using System.Threading.Channels;
 using MangaIngestWithUpscaling.Data;
 using MangaIngestWithUpscaling.Data.BackgroundTaskQueue;
+using MangaIngestWithUpscaling.Services.BackgroundTaskQueue.Tasks;
 
 namespace MangaIngestWithUpscaling.Services.BackgroundTaskQueue;
 
@@ -40,8 +41,67 @@ public class StandardTaskProcessor(
         }
     }
 
-    protected override Task<bool> TryAcquireTaskAsync(
+    protected override async Task<bool> TryAcquireTaskAsync(
         PersistedTask task,
         CancellationToken stoppingToken
-    ) => ClaimAsync(task, stoppingToken);
+    )
+    {
+        if (task.Data is ApplySplitsTask applySplits)
+        {
+            // Hold the chapter gate across the guard and the claim, so the symmetric guard on the
+            // upscale side cannot interleave (both passing their read-then-claim and running together).
+            using IDisposable gate = await TaskQueue.AcquireChapterGateAsync(
+                applySplits.ChapterId,
+                stoppingToken
+            );
+            using IServiceScope scope = ScopeFactory.CreateScope();
+            var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+            if (
+                await HasSameChapterUpscaleTaskAsync(
+                    dbContext,
+                    applySplits.ChapterId,
+                    stoppingToken
+                )
+            )
+            {
+                // ApplySplitsTask rewrites the original CBZ that a same-chapter upscale/repair/detect
+                // streams from, and this processor runs concurrently with the upscale processor, so
+                // defer it while one of those is pending or in flight to keep the chapter's chain
+                // ordered. A deferral is not a failure: the row stays Pending and is re-offered until the
+                // blocker finishes (only a restart leaves it to the periodic replayer).
+                DeferTask(
+                    task,
+                    "a same-chapter upscale task for this chapter is pending or in flight"
+                );
+                return false;
+            }
+
+            return await ClaimAsync(task, stoppingToken);
+        }
+
+        return await ClaimAsync(task, stoppingToken);
+    }
+
+    /// <summary>
+    /// True when a same-chapter upscale-family task is pending or in flight. <see cref="ApplySplitsTask"/>
+    /// must not run concurrently with one: it rewrites the original CBZ that a worker streams from.
+    /// </summary>
+    internal static Task<bool> HasSameChapterUpscaleTaskAsync(
+        ApplicationDbContext context,
+        int chapterId,
+        CancellationToken cancellationToken
+    ) => ChapterConflictGuard.HasSameChapterUpscaleTaskAsync(context, chapterId, cancellationToken);
+
+    /// <summary>
+    /// True when a same-chapter <see cref="ApplySplitsTask"/> is in flight. The guard above stops an
+    /// apply starting under an upscale; this is its symmetric half, so an upscale/repair/detect cannot
+    /// start while an apply is rewriting the same original (and upscaled) CBZ. Only a <c>Processing</c>
+    /// apply blocks: a merely <c>Pending</c> one is deferred by the guard above whenever an upscale is
+    /// pending, so treating it as a blocker here would deadlock the two.
+    /// </summary>
+    internal static Task<bool> HasSameChapterApplyTaskAsync(
+        ApplicationDbContext context,
+        int chapterId,
+        CancellationToken cancellationToken
+    ) => ChapterConflictGuard.HasSameChapterApplyTaskAsync(context, chapterId, cancellationToken);
 }

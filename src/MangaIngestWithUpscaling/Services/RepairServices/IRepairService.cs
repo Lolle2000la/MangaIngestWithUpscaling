@@ -12,11 +12,17 @@ public interface IRepairService
     /// <summary>
     /// Prepares a repair context by analyzing differences, extracting pages, and creating temporary CBZ files.
     /// </summary>
+    /// <param name="prepareMissingPagesCbz">
+    /// When true (the default), also zips the extracted missing pages into a CBZ for batch upscaling.
+    /// The remote page-streaming path reads the missing pages from the original source, so it passes
+    /// false to skip that I/O.
+    /// </param>
     RepairContext PrepareRepairContext(
         PageDifferenceResult differences,
         string originalPath,
         string upscaledPath,
-        ILogger logger
+        ILogger logger,
+        bool prepareMissingPagesCbz = true
     );
 
     /// <summary>

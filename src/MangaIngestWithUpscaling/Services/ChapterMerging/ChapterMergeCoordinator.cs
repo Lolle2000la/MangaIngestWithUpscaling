@@ -160,6 +160,9 @@ public class ChapterMergeCoordinator(
                 }
                 else
                 {
+                    // The merger no longer deletes the part files, so leave them intact here: no DB
+                    // rows were dropped in this branch, and removing the files would orphan the rows
+                    // that still point at them. The mismatch is logged for investigation.
                     logger.LogWarning(
                         "Mismatch between expected chapters ({Expected}) and found chapters ({Found}) for merge {MergedFileName}",
                         mergeInfo.OriginalParts.Count,
@@ -310,14 +313,23 @@ public class ChapterMergeCoordinator(
             // Update database records to reflect the merge
             await UpdateDatabaseForMergeAsync(mergeInfo, chapters, cancellationToken);
 
-            // Handle upscale task management with information about partial merging
-            await upscaleTaskManager.HandleUpscaleTaskManagementAsync(
-                chapters,
-                mergeInfo,
-                library,
-                upscaledMergeResult,
-                cancellationToken
-            );
+            // Handle upscale task management with information about partial merging. Run it before
+            // the part files are deleted so a cancelled apply cannot recreate them; delete in a
+            // finally so a failure after the rows are dropped still removes them.
+            try
+            {
+                await upscaleTaskManager.HandleUpscaleTaskManagementAsync(
+                    chapters,
+                    mergeInfo,
+                    library,
+                    upscaledMergeResult,
+                    cancellationToken
+                );
+            }
+            finally
+            {
+                DeleteOriginalChapterPartFiles(mergeInfo, library);
+            }
 
             await dbContext.SaveChangesAsync(cancellationToken);
 
@@ -440,26 +452,42 @@ public class ChapterMergeCoordinator(
                 // Update database for the merge
                 await UpdateDatabaseForMergeAsync(mergeInfo, originalChapters, cancellationToken);
 
-                // Delete original chapter part files after successful merging
-                DeleteOriginalChapterPartFiles(mergeInfo, library);
+                // Once the database rows are gone the original part files must not survive, or the
+                // integrity checker can re-import them as new chapters. Delete them in a finally so a
+                // failure in either async step below still removes them. The success path still runs
+                // the delete after HandleUpscaleTaskManagementAsync, which cancels in-flight applies
+                // that would otherwise recreate the files.
+                try
+                {
+                    // Handle merging of upscaled versions if they exist
+                    UpscaledMergeResult upscaledMergeResult =
+                        await HandleUpscaledChapterMergingAsync(
+                            originalChapters,
+                            mergeInfo,
+                            library,
+                            seriesLibraryPath,
+                            cancellationToken
+                        );
 
-                // Handle merging of upscaled versions if they exist
-                UpscaledMergeResult upscaledMergeResult = await HandleUpscaledChapterMergingAsync(
-                    originalChapters,
-                    mergeInfo,
-                    library,
-                    seriesLibraryPath,
-                    cancellationToken
-                );
-
-                // Handle upscale task management with information about partial merging
-                await upscaleTaskManager.HandleUpscaleTaskManagementAsync(
-                    originalChapters,
-                    mergeInfo,
-                    library,
-                    upscaledMergeResult,
-                    cancellationToken
-                );
+                    // Handle upscale task management with information about partial merging. This
+                    // cancels any in-flight apply for a part, so it must run before the part files are
+                    // deleted: a cancelled apply observes its token before swapping its replacement in
+                    // (see SplitApplicationService), and deleting first would let a still-running apply
+                    // recreate the file the merge just removed.
+                    await upscaleTaskManager.HandleUpscaleTaskManagementAsync(
+                        originalChapters,
+                        mergeInfo,
+                        library,
+                        upscaledMergeResult,
+                        cancellationToken
+                    );
+                }
+                finally
+                {
+                    // Delete original chapter part files now that the tasks that rewrite them are
+                    // cancelled (or the steps failed after the rows were already dropped).
+                    DeleteOriginalChapterPartFiles(mergeInfo, library);
+                }
 
                 completedMerges.Add(mergeInfo);
 
@@ -1739,14 +1767,26 @@ public class ChapterMergeCoordinator(
         // Update database records to reflect the merge
         await UpdateDatabaseForMergeAsync(mergeInfo, originalChapters, cancellationToken);
 
-        // Handle upscale task management with information about partial merging
-        await upscaleTaskManager.HandleUpscaleTaskManagementAsync(
-            originalChapters,
-            mergeInfo,
-            library,
-            upscaledMergeResult,
-            cancellationToken
-        );
+        // Handle upscale task management with information about partial merging. This cancels any
+        // in-flight apply for a part, so it must run before the part files are deleted: a cancelled
+        // apply observes its token before swapping its replacement in (see SplitApplicationService),
+        // and deleting first would let a still-running apply recreate the file the merge just removed.
+        // Delete in a finally so a failure in the async step still removes the files once the rows are
+        // already dropped, leaving no orphaned part files behind.
+        try
+        {
+            await upscaleTaskManager.HandleUpscaleTaskManagementAsync(
+                originalChapters,
+                mergeInfo,
+                library,
+                upscaledMergeResult,
+                cancellationToken
+            );
+        }
+        finally
+        {
+            DeleteOriginalChapterPartFiles(mergeInfo, library);
+        }
     }
 
     #endregion

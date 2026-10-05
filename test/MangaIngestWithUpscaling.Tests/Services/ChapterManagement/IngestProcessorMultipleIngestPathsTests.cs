@@ -95,6 +95,13 @@ public class IngestProcessorMultipleIngestPathsTests : IAsyncDisposable
             Substitute.For<ITaskPersistenceService>(),
             new PreprocessedInputCache()
         );
+        var distributedProcessor = Substitute.For<DistributedUpscaleTaskProcessor>(
+            taskQueue,
+            scopeFactory,
+            Options.Create(new UpscalerConfig { RemoteOnly = true }),
+            Substitute.For<ILogger<DistributedUpscaleTaskProcessor>>(),
+            Substitute.For<ITaskPersistenceService>()
+        );
 
         var ingest = new IngestProcessor(
             db,
@@ -109,6 +116,7 @@ public class IngestProcessorMultipleIngestPathsTests : IAsyncDisposable
             chapterPartMerger,
             mergeCoordinator,
             processor,
+            distributedProcessor,
             imageFilter,
             chapterProcessingService,
             splitCoordinator,

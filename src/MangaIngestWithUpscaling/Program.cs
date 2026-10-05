@@ -126,7 +126,10 @@ builder.Services.AddControllers();
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddMemoryCache();
 
-builder.Services.AddGrpc();
+// A global per-message receive ceiling for every gRPC method. The handlers bound their own inputs
+// (per-page, per-task and detection caps), so this is only the outer ceiling; whole-CBZ transfers are
+// gone, so it does not need to be raised for one.
+builder.Services.AddGrpc(options => options.MaxReceiveMessageSize = 32 * 1024 * 1024);
 builder.Services.AddHealthChecks();
 
 builder.Services.AddMudServices();
@@ -420,6 +423,10 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
+// gRPC streaming calls (UploadPage) disable Kestrel's request-body cap themselves
+// (Grpc.AspNetCore.Server sets MaxRequestBodySize = null for client/duplex streaming), so
+// there is nothing useful to raise here; the handlers bound their own input instead. The global
+// per-message receive limit set above (32 MB) is the real per-call ceiling.
 app.UseAuthentication();
 app.UseAuthorization();
 

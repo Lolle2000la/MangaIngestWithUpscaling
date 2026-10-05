@@ -9,7 +9,7 @@ python3 python3-venv wget libjpeg-dev zlib1g-dev libtiff-dev libwebp-dev libopen
 rm -rf /var/lib/apt/lists/*
 # The Python virtual environment is installed at runtime into the data volume on first startup.
 ENV Ingest_Upscaler__PythonEnvironmentDirectory=/data/pyenv
-ENV Ingest_Upscaler__SelectedDeviceIndex=0
+ENV Ingest_Upscaler__SelectedDeviceIndex=1
 ENV Ingest_Upscaler__PreferredGpuBackend=CUDA
 
 # This stage is used to build the service project

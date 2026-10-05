@@ -74,32 +74,7 @@ public class ImageResizeService(
             throw new FileNotFoundException(localizer["Error_InputCbzFileNotFound", inputCbzPath]);
         }
 
-        if (options.MaxDimension.HasValue && options.MaxDimension.Value < 0)
-        {
-            throw new ArgumentException(
-                localizer["Error_MaxDimensionMustBePositive"],
-                nameof(options)
-            );
-        }
-
-        if (options.EnableSmartDownscale)
-        {
-            if (options.SmartDownscaleThreshold <= 0)
-            {
-                throw new ArgumentException(
-                    localizer["Error_SmartDownscaleThresholdMustBePositive"],
-                    nameof(options)
-                );
-            }
-
-            if (options.SmartDownscaleFactor <= 0 || options.SmartDownscaleFactor >= 1)
-            {
-                throw new ArgumentException(
-                    localizer["Error_SmartDownscaleFactorOutOfRange"],
-                    nameof(options)
-                );
-            }
-        }
+        Validate(options);
 
         string tempDir = Path.Combine(Path.GetTempPath(), $"manga_preprocess_{Guid.NewGuid()}");
         string tempCbzPath = Path.Combine(
@@ -128,6 +103,84 @@ public class ImageResizeService(
             logger.LogDebug("Created preprocessed temporary CBZ at {TempPath}", tempCbzPath);
 
             return new TempResizedCbz(tempCbzPath, this);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, true);
+            }
+        }
+    }
+
+    public async Task PreprocessImageInPlaceAsync(
+        string imagePath,
+        ImagePreprocessingOptions options,
+        CancellationToken cancellationToken
+    )
+    {
+        // Validate like the whole-CBZ path: the per-image pipeline swallows a per-image failure, so a
+        // bad smart-downscale configuration would otherwise be silently ignored and the page upscaled
+        // without the downscale the engine identity claims.
+        Validate(options);
+
+        // Reuse the directory pipeline (which owns the per-image logic) on a private copy, then move
+        // the single result back over the original so the caller keeps the same path.
+        string tempDir = Path.Combine(
+            Path.GetTempPath(),
+            $"manga_preprocess_page_{Guid.NewGuid()}"
+        );
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            string workingPath = Path.Combine(tempDir, Path.GetFileName(imagePath));
+            File.Copy(imagePath, workingPath, overwrite: true);
+
+            try
+            {
+                await ProcessImagesInDirectory(
+                    tempDir,
+                    options,
+                    cancellationToken,
+                    throwOnError: true
+                );
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex) when (!IsInfrastructureFailure(ex))
+            {
+                // Match the whole-CBZ path, which copies a page it cannot preprocess through: keep the
+                // original so the page is still upscaled (the engine handles its own decode failure)
+                // rather than failing the whole chapter over one bad page. The original is only
+                // replaced on success, so a mid-write failure cannot truncate it either.
+                logger.LogWarning(
+                    ex,
+                    "Preprocessing {ImagePath} failed; keeping the original.",
+                    imagePath
+                );
+                return;
+            }
+
+            string[] results = Directory.GetFiles(tempDir, "*", SearchOption.AllDirectories);
+            if (results.Length == 1)
+            {
+                File.Move(results[0], imagePath, overwrite: true);
+            }
+            else if (results.Length == 0)
+            {
+                logger.LogWarning(
+                    "Preprocessing {ImagePath} produced no output; keeping the original.",
+                    imagePath
+                );
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    $"Preprocessing {imagePath} produced {results.Length} files for one image."
+                );
+            }
         }
         finally
         {
@@ -214,10 +267,46 @@ public class ImageResizeService(
         }
     }
 
+    /// <summary>
+    /// Validates the preprocessing options. Shared by the whole-CBZ and the in-place (streamed) paths
+    /// so a bad smart-downscale configuration fails fast in both instead of being silently swallowed
+    /// per image.
+    /// </summary>
+    private void Validate(ImagePreprocessingOptions options)
+    {
+        if (options.MaxDimension.HasValue && options.MaxDimension.Value < 0)
+        {
+            throw new ArgumentException(
+                localizer["Error_MaxDimensionMustBePositive"],
+                nameof(options)
+            );
+        }
+
+        if (options.EnableSmartDownscale)
+        {
+            if (options.SmartDownscaleThreshold <= 0)
+            {
+                throw new ArgumentException(
+                    localizer["Error_SmartDownscaleThresholdMustBePositive"],
+                    nameof(options)
+                );
+            }
+
+            if (options.SmartDownscaleFactor <= 0 || options.SmartDownscaleFactor >= 1)
+            {
+                throw new ArgumentException(
+                    localizer["Error_SmartDownscaleFactorOutOfRange"],
+                    nameof(options)
+                );
+            }
+        }
+    }
+
     private async Task ProcessImagesInDirectory(
         string directory,
         ImagePreprocessingOptions options,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        bool throwOnError = false
     )
     {
         var imageFiles = Directory
@@ -246,10 +335,76 @@ public class ImageResizeService(
                     if (ex is OperationCanceledException)
                         throw;
                     logger.LogWarning(ex, "Failed to process image: {ImagePath}", imagePath);
+                    if (throwOnError)
+                    {
+                        // The in-place path moves the single result over the original; swallowing a
+                        // mid-write failure would replace it with a truncated file.
+                        throw;
+                    }
+
                     return ValueTask.CompletedTask; // Continue processing other images even if one fails
                 }
             }
         );
+    }
+
+    public void VerifyReady()
+    {
+        // Exercise the native backend end-to-end with a tiny in-memory image: resize (transform) and
+        // round-trip both a lossless (.png) and a lossy (.jpg) encode/decode. An in-memory
+        // NewFromArray+Resize alone only proves the native library loaded; it never touches a codec, so
+        // a libvips built without the PNG/JPEG loaders or encoders would pass and the worker would
+        // silently produce un-preprocessed pages while advertising a healthy engine identity.
+        using Image probe = Image.NewFromArray(
+            new byte[,]
+            {
+                { 0, 1, 2, 3 },
+                { 4, 5, 6, 7 },
+                { 8, 9, 10, 11 },
+                { 12, 13, 14, 15 },
+            }
+        );
+        using Image resized = probe.Resize(0.5, kernel: Enums.Kernel.Linear);
+
+        using Image png = Image.NewFromBuffer(resized.WriteToBuffer(".png"));
+        if (png.Width <= 0)
+            throw new InvalidOperationException("libvips PNG round-trip produced no pixels.");
+
+        using Image jpg = Image.NewFromBuffer(resized.WriteToBuffer(".jpg"));
+        if (jpg.Width <= 0)
+            throw new InvalidOperationException("libvips JPEG round-trip produced no pixels.");
+    }
+
+    /// <summary>
+    /// True when an image-processing failure is an infrastructure fault (libvips missing or the wrong
+    /// architecture) rather than a page that cannot be decoded. Swallowing the former would let a
+    /// broken worker silently produce un-preprocessed pages while advertising the same engine identity
+    /// as a healthy one, so the per-page path surfaces it instead.
+    /// <para>
+    /// <see cref="NetVips.VipsException"/> is deliberately not classified here: a missing loader or
+    /// encoder is indistinguishable from a genuinely corrupt page by exception type or message (both
+    /// surface as <c>VipsForeignLoad</c>/<c>VipsForeignSave</c> failures), so broadening this would
+    /// start failing chapters on a single bad page instead of keeping the original. Missing codecs are
+    /// caught by <see cref="VerifyReady"/> at startup instead.
+    /// </para>
+    /// </summary>
+    private static bool IsInfrastructureFailure(Exception ex)
+    {
+        for (Exception? current = ex; current is not null; current = current.InnerException)
+        {
+            if (
+                current
+                is DllNotFoundException
+                    or EntryPointNotFoundException
+                    or BadImageFormatException
+                    or TypeInitializationException
+            )
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void ProcessImage(
@@ -369,56 +524,58 @@ public class ImageResizeService(
             processedImage = image.Resize(scaleFactor, kernel: Enums.Kernel.Linear);
         }
 
-        if (needsFormatConversion)
+        try
         {
-            string targetExtension = conversionRule!.ToFormat.ToLowerInvariant();
-            if (!targetExtension.StartsWith('.'))
+            if (needsFormatConversion)
             {
-                targetExtension = "." + targetExtension;
-            }
+                string targetExtension = conversionRule!.ToFormat.ToLowerInvariant();
+                if (!targetExtension.StartsWith('.'))
+                {
+                    targetExtension = "." + targetExtension;
+                }
 
-            string directory = Path.GetDirectoryName(imagePath)!;
-            string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(imagePath);
-            string baseNewImagePath = Path.Combine(
-                directory,
-                fileNameWithoutExtension + targetExtension
-            );
-            string newImagePath = baseNewImagePath;
-            int suffix = 1;
-            while (File.Exists(newImagePath))
-            {
-                newImagePath = Path.Combine(
+                string directory = Path.GetDirectoryName(imagePath)!;
+                string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(imagePath);
+                string baseNewImagePath = Path.Combine(
                     directory,
-                    $"{fileNameWithoutExtension}_{suffix}{targetExtension}"
+                    fileNameWithoutExtension + targetExtension
                 );
-                suffix++;
+                string newImagePath = baseNewImagePath;
+                int suffix = 1;
+                while (File.Exists(newImagePath))
+                {
+                    newImagePath = Path.Combine(
+                        directory,
+                        $"{fileNameWithoutExtension}_{suffix}{targetExtension}"
+                    );
+                    suffix++;
+                }
+
+                logger.LogDebug(
+                    "Converting image {ImagePath} from {FromFormat} to {ToFormat}",
+                    imagePath,
+                    currentExtension,
+                    targetExtension
+                );
+
+                SaveImageWithFormat(
+                    processedImage,
+                    newImagePath,
+                    targetExtension,
+                    conversionRule.Quality
+                );
+
+                File.Delete(imagePath);
             }
-
-            logger.LogDebug(
-                "Converting image {ImagePath} from {FromFormat} to {ToFormat}",
-                imagePath,
-                currentExtension,
-                targetExtension
-            );
-
-            SaveImageWithFormat(
-                processedImage,
-                newImagePath,
-                targetExtension,
-                conversionRule.Quality
-            );
-
-            if (processedImage != image)
+            else
             {
-                processedImage.Dispose();
+                processedImage.WriteToFile(imagePath);
             }
-
-            File.Delete(imagePath);
         }
-        else
+        finally
         {
-            processedImage.WriteToFile(imagePath);
-
+            // The resized copy is a separate native Image; dispose it even when the save throws so a
+            // failing encode or a full disk does not leak it as ProcessImagesInDirectory continues.
             if (processedImage != image)
             {
                 processedImage.Dispose();

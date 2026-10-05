@@ -1,0 +1,290 @@
+using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Shared.Services.Python;
+using MangaIngestWithUpscaling.Shared.Services.Upscaling;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using NSubstitute;
+
+namespace MangaIngestWithUpscaling.Shared.Tests.Services.Upscaling;
+
+/// <summary>
+/// Exercises the real <see cref="MangaJaNaiWorkerClient.RunChapterAsync"/> chapter protocol against a
+/// tiny stand-in <c>worker.py</c> that speaks the NDJSON protocol. This is the runtime path the
+/// static-classifier tests cannot reach: a worker that politely acknowledges the inactivity cancel
+/// must still surface as a <see cref="TimeoutException"/> (recoverable) rather than as a job error
+/// that the streaming classifier treats as permanent and deletes the spool for.
+/// </summary>
+public class MangaJaNaiWorkerClientTimeoutTests
+{
+    private const string FakeWorker = """
+        import json
+        import sys
+
+        def emit(obj):
+            sys.stdout.write(json.dumps(obj) + "\n")
+            sys.stdout.flush()
+
+        emit({"type": "ready", "capacity": 1})
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                continue
+            kind = msg.get("type")
+            job_id = msg.get("id")
+            if kind == "open_chapter":
+                emit({"type": "accepted", "id": job_id, "capacity": 1})
+                emit({"type": "started", "id": job_id})
+            elif kind == "cancel":
+                # Honor the cancel the way the real worker does: acknowledge, then report a
+                # non-"ok" done. Without the fix this faults the job and hides the timeout.
+                emit({"type": "cancelled", "id": job_id})
+                emit(
+                    {
+                        "type": "done",
+                        "id": job_id,
+                        "status": "cancelled",
+                        "elapsed_seconds": 0.0,
+                        "files": [],
+                    }
+                )
+            elif kind == "shutdown":
+                break
+        """;
+
+    private const string FakeWorkerCancels = """
+        import json
+        import sys
+
+        def emit(obj):
+            sys.stdout.write(json.dumps(obj) + "\n")
+            sys.stdout.flush()
+
+        emit({"type": "ready", "capacity": 1})
+
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                continue
+            kind = msg.get("type")
+            job_id = msg.get("id")
+            if kind == "open_chapter":
+                # Report a cancellation without being asked: a caller cancellation must surface as
+                # OperationCanceledException, not a permanent failure.
+                emit({"type": "accepted", "id": job_id, "capacity": 1})
+                emit({"type": "cancelled", "id": job_id})
+                emit(
+                    {
+                        "type": "done",
+                        "id": job_id,
+                        "status": "cancelled",
+                        "elapsed_seconds": 0.0,
+                        "files": [],
+                    }
+                )
+            elif kind == "shutdown":
+                break
+        """;
+
+    /// <summary>
+    /// Accepts the chapter and then stops reading stdin, the way a wedged worker does. The page
+    /// producer keeps writing until the OS pipe fills and blocks while holding the client's stdin
+    /// lock, so the inactivity monitor must be able to kill the worker without needing that lock.
+    /// </summary>
+    private const string FakeWorkerStopsReading = """
+        import json
+        import sys
+        import time
+
+        def emit(obj):
+            sys.stdout.write(json.dumps(obj) + "\n")
+            sys.stdout.flush()
+
+        emit({"type": "ready", "capacity": 1})
+
+        while True:
+            line = sys.stdin.readline()
+            if not line:
+                break
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                continue
+            kind = msg.get("type")
+            job_id = msg.get("id")
+            if kind == "open_chapter":
+                emit({"type": "accepted", "id": job_id, "capacity": 1})
+                emit({"type": "started", "id": job_id})
+                time.sleep(3600)
+            elif kind == "shutdown":
+                break
+        """;
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunChapterAsync_WhenTheWorkerHonorsAnInactivityCancel_ThrowsTimeout()
+    {
+        // A short inactivity timeout: the fake worker never reports progress, so the monitor fires,
+        // cancels, and must surface the timeout.
+        Exception error = await RunChapterAsync(
+            FakeWorker,
+            TimeSpan.FromMilliseconds(500),
+            "chap-timeout"
+        );
+
+        Assert.IsType<TimeoutException>(error);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunChapterAsync_WhenTheWorkerReportsCancelled_ThrowsOperationCanceled()
+    {
+        // A worker-reported cancellation must be an OperationCanceledException, not a job error that
+        // the streaming classifier would treat as permanent and delete the spool for.
+        Exception error = await RunChapterAsync(FakeWorkerCancels, timeout: null, "chap-cancel");
+
+        Assert.IsAssignableFrom<OperationCanceledException>(error);
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task RunChapterAsync_WhenTheWorkerStopsReadingStdin_StillKillsItAndThrowsTimeout()
+    {
+        // The worker stops reading stdin, so the page producer fills the OS pipe and blocks while
+        // holding the stdin lock. The monitor must not wait on that same lock: if it did, it could
+        // never reach the kill and the chapter would hang until host shutdown. Bound the call so a
+        // regression fails the test instead of hanging the suite.
+        Exception error = await RunChapterAsync(
+                FakeWorkerStopsReading,
+                TimeSpan.FromMilliseconds(500),
+                "chap-wedged",
+                pageCount: 32
+            )
+            .WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+        Assert.IsType<TimeoutException>(error);
+        Assert.Contains("Upscaling timed out", error.Message);
+    }
+
+    private static async Task<Exception> RunChapterAsync(
+        string script,
+        TimeSpan? timeout,
+        string requestId,
+        int pageCount = 1
+    )
+    {
+        string? python = FindPython();
+        Assert.SkipWhen(python is null, "Python 3 is not available on this machine.");
+
+        string workDir = Path.Combine(
+            Path.GetTempPath(),
+            $"mangajanai_worker_test_{Guid.NewGuid():N}"
+        );
+        Directory.CreateDirectory(workDir);
+        await File.WriteAllTextAsync(
+            Path.Combine(workDir, "worker.py"),
+            script,
+            TestContext.Current.CancellationToken
+        );
+
+        string pagePath = Path.Combine(workDir, "page0.png");
+        await File.WriteAllBytesAsync(
+            pagePath,
+            [0x89, 0x50, 0x4E, 0x47],
+            TestContext.Current.CancellationToken
+        );
+
+        var pythonService = Substitute.For<IPythonService>();
+        pythonService
+            .GetPreparedEnvironment()
+            .Returns(new PythonEnvironment(python!, workDir, GpuBackend.CPU, 15));
+
+        await using ServiceProvider provider = new ServiceCollection()
+            .AddSingleton(pythonService)
+            .BuildServiceProvider();
+
+        var client = new MangaJaNaiWorkerClient(
+            provider.GetRequiredService<IServiceScopeFactory>(),
+            Options.Create(new UpscalerConfig()),
+            NullLogger<MangaJaNaiWorkerClient>.Instance,
+            Substitute.For<IHostApplicationLifetime>()
+        );
+
+        try
+        {
+            var request = new ChapterJobRequest
+            {
+                Id = requestId,
+                OutputFolder = workDir,
+                Format = CompressionFormat.Webp,
+                Scale = ScaleFactor.TwoX,
+                TotalPages = pageCount,
+            };
+
+            return await Record.ExceptionAsync(() =>
+                    client.RunChapterAsync(
+                        request,
+                        Pages(pageCount, pagePath),
+                        progress: null,
+                        onPageDone: _ => { },
+                        CancellationToken.None,
+                        timeout
+                    )
+                ) ?? throw new InvalidOperationException("Expected the chapter to fail.");
+        }
+        finally
+        {
+            await client.DisposeAsync();
+            try
+            {
+                Directory.Delete(workDir, recursive: true);
+            }
+            catch (IOException) { }
+        }
+    }
+
+    private static async IAsyncEnumerable<ChapterPage> Pages(int count, string firstPath)
+    {
+        await Task.Yield();
+        for (int index = 0; index < count; index++)
+        {
+            // Long paths for the trailing pages so a handful of page lines fill the OS pipe (~64 KiB)
+            // and the producer blocks holding the stdin lock, which is what the wedged-worker test
+            // needs. They are never opened by the fake worker.
+            string path = index == 0 ? firstPath : new string('p', 16 * 1024) + index;
+            yield return new ChapterPage(index, $"page{index}.png", path);
+        }
+    }
+
+    private static string? FindPython()
+    {
+        foreach (string name in new[] { "python3", "python" })
+        {
+            string? path = Environment
+                .GetEnvironmentVariable("PATH")
+                ?.Split(Path.PathSeparator)
+                .Select(dir => Path.Combine(dir, name))
+                .FirstOrDefault(File.Exists);
+            if (path is not null)
+            {
+                return path;
+            }
+        }
+
+        return null;
+    }
+}

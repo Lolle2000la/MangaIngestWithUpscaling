@@ -21,7 +21,6 @@
 @using System.Globalization
 @using Microsoft.Extensions.DependencyInjection
 @using MudBlazor
-@inject ISplitApplicationService SplitApplicationService
 @inject ApplicationDbContext DbContext
 @inject IMetadataHandlingService MetadataHandler
 @inject IMangaMetadataChanger MangaMetadataChanger
@@ -1436,10 +1435,35 @@
                     ?? splitState?.LastProcessedDetectorVersion
                     ?? SplitDetectionService.CURRENT_DETECTOR_VERSION;
 
-                await SplitApplicationService.ApplySplitsAsync(chapter.Id, detectorVersion, CancellationToken.None);
-                Snackbar.Add(string.Format(Loc["Snackbar_SplitApplicationQueued"], chapter.FileName), Severity.Success);
+                if (
+                    await SplitProcessingCoordinator.HasExistingApplyTaskAsync(
+                        chapter.Id,
+                        null,
+                        CancellationToken.None
+                    )
+                )
+                {
+                    // A double-click (or the integrity checker) already queued this apply; skip the
+                    // duplicate instead of creating a second row for the same chapter.
+                    Snackbar.Add(
+                        string.Format(Loc["Snackbar_SplitApplicationQueued"], chapter.FileName),
+                        Severity.Info
+                    );
+                    return;
+                }
 
-                await SplitStateManager.ResetToPendingAsync(chapter.Id, null, CancellationToken.None);
+                // Enqueue rather than apply inline: an inline apply bypasses the same-chapter guard
+                // that keeps ApplySplitsTask from rewriting the original CBZ while a same-chapter
+                // upscale/repair/detect is running (the merge manager can only cancel PersistedTasks,
+                // so an inline apply is invisible to it).
+                await TaskQueue.EnqueueAsync(new ApplySplitsTask(chapter, detectorVersion));
+                await SplitStateManager.SetProcessingAsync(
+                    chapter.Id,
+                    detectorVersion,
+                    null,
+                    CancellationToken.None
+                );
+                Snackbar.Add(string.Format(Loc["Snackbar_SplitApplicationQueued"], chapter.FileName), Severity.Success);
 
                 await LoadChapters();
                 StateHasChanged();

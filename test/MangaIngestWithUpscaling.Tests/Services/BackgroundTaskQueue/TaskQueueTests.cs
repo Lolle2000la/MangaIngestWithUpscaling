@@ -287,19 +287,20 @@ public class TaskQueueTests : IDisposable
 
     [Fact]
     [Trait("Category", "Unit")]
-    public async Task RemoveTaskAsync_ApplySplitsTask_ShouldRemoveFromUpscaleSet()
+    public async Task RemoveTaskAsync_ApplySplitsTask_ShouldRemoveFromStandardSet()
     {
-        // Arrange
+        // ApplySplitsTask runs server-side, so it is a standard task and must be removed from the
+        // standard set (not the worker-dependent upscale set).
         var splitTaskData = new ApplySplitsTask(1, 1);
         await _taskQueue.EnqueueAsync(splitTaskData);
-        var task = _taskQueue.GetUpscaleSnapshot().First();
+        var task = _taskQueue.GetStandardSnapshot().First();
 
         // Act
         await _taskQueue.RemoveTaskAsync(task);
 
         // Assert
-        Assert.Empty(_taskQueue.GetUpscaleSnapshot());
-        Assert.Null(_taskQueue.DequeueUpscale());
+        Assert.Empty(_taskQueue.GetStandardSnapshot());
+        Assert.Null(_taskQueue.DequeueStandard());
     }
 
     [Fact]
@@ -1186,7 +1187,6 @@ public class TaskQueueTests : IDisposable
                                 case 1:
                                     _taskQueue.DequeueStandard();
                                     _taskQueue.DequeueUpscale();
-                                    _taskQueue.PeekUpscale();
                                     break;
                                 default:
                                     _ = _taskQueue.GetStandardSnapshot().Count;
