@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=rocm/dev-ubuntu-24.04:latest
+ARG BASE_IMAGE=rocm/dev-ubuntu-24.04:7.2.4
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS dotnet-runtime
 
@@ -25,12 +25,12 @@ WORKDIR /app
 # Copy .NET 10 runtime
 COPY --from=dotnet-runtime /usr/share/dotnet /usr/share/dotnet
 ENV DOTNET_ROOT=/usr/share/dotnet
-ENV PATH="/usr/share/dotnet:${PATH}"
+ENV PATH="/opt/rocm/bin:/usr/share/dotnet:${PATH}"
 ENV LD_LIBRARY_PATH="/opt/rocm/lib:${LD_LIBRARY_PATH}"
 
 # Install dependencies for NetVips, .NET globalization, and official AMD ONNX Runtime with MIGraphX
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget ca-certificates unzip libicu-dev \
+    wget ca-certificates unzip libicu-dev migraphx \
     libjpeg-dev zlib1g-dev libtiff-dev libwebp-dev libopenjp2-7-dev && \
     wget -q https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.4/onnxruntime_migraphx-1.23.2-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl -O /tmp/ort.whl && \
     unzip -j /tmp/ort.whl 'onnxruntime/capi/libonnxruntime*' -d /usr/lib/ && \
