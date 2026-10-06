@@ -304,6 +304,8 @@ public static class OnnxTiler
 
     /// <summary>
     /// Gets the ratio of peak intermediate activation memory to input tensor bytes for a given architecture and scale.
+    /// In super-resolution neural networks, peak workspace memory is quadratic with upscale factor (scale^2)
+    /// because the output stage convolution workspaces operate on (scale * W) * (scale * H) pixels.
     /// </summary>
     public static double GetMemoryMultiplier(
         ModelArchitecture architecture,
@@ -311,47 +313,17 @@ public static class OnnxTiler
         long modelSizeBytes = 0
     )
     {
+        int scaleFactorSq = scale * scale;
         return architecture switch
         {
-            ModelArchitecture.Span => scale >= 4 ? 100.0 : 50.0,
-            ModelArchitecture.FdatM => scale >= 4 ? 380.0 : 200.0,
-            ModelArchitecture.FdatXl => scale >= 4 ? 700.0 : 400.0,
-            ModelArchitecture.Dat2 => scale >= 4 ? 800.0 : 450.0,
-            ModelArchitecture.HatL => scale >= 4 ? 2200.0 : 1200.0,
-            ModelArchitecture.Esrgan => scale >= 4 ? 1250.0 : 750.0,
-            _ => modelSizeBytes > 0 ? (modelSizeBytes / (1024.0 * 52.0)) : 1000.0,
-        };
-    }
-
-    /// <summary>
-    /// Gets the empirically validated maximum safe tile dimension in pixels for a given architecture and scale,
-    /// preventing execution provider GPU memory allocations from exceeding driver chunk sizes and spilling into GTT.
-    /// </summary>
-    public static int GetMaxTileSizeForArchitecture(ModelArchitecture architecture, int scale)
-    {
-        if (scale <= 2)
-        {
-            return architecture switch
-            {
-                ModelArchitecture.Span => 1280,
-                ModelArchitecture.Esrgan => 896,
-                ModelArchitecture.FdatM => 640,
-                ModelArchitecture.FdatXl => 512,
-                ModelArchitecture.Dat2 => 512,
-                ModelArchitecture.HatL => 384,
-                _ => 896,
-            };
-        }
-
-        return architecture switch
-        {
-            ModelArchitecture.Span => 1024,
-            ModelArchitecture.Esrgan => 448,
-            ModelArchitecture.FdatM => 384,
-            ModelArchitecture.FdatXl => 320,
-            ModelArchitecture.Dat2 => 256,
-            ModelArchitecture.HatL => 256,
-            _ => 448,
+            ModelArchitecture.Span => 15.0 * scaleFactorSq,
+            ModelArchitecture.FdatM => 45.0 * scaleFactorSq,
+            ModelArchitecture.FdatXl => 80.0 * scaleFactorSq,
+            ModelArchitecture.Dat2 => 90.0 * scaleFactorSq,
+            ModelArchitecture.HatL => 175.0 * scaleFactorSq,
+            ModelArchitecture.Esrgan => 125.0 * scaleFactorSq,
+            _ => (modelSizeBytes > 0 ? (modelSizeBytes / (1024.0 * 52.0)) : 75.0)
+                * (scaleFactorSq / 4.0),
         };
     }
 
@@ -377,7 +349,8 @@ public static class OnnxTiler
     /// <summary>
     /// Estimates a safe maximum tile dimension in pixels based on model architecture, scale,
     /// image dimensions, precision (FP16/FP32), and available memory budget.
-    /// If the whole image fits safely within the budget and architecture limits, returns 0 (no tiling needed).
+    /// If the whole image fits safely within the budget, returns 0 (no tiling needed).
+    /// Dynamically derives tile size from the memory budget without arbitrary hardcoded limits.
     /// </summary>
     public static int EstimateTileSize(
         int width,
@@ -389,9 +362,6 @@ public static class OnnxTiler
         bool isFp16 = false
     )
     {
-        var arch = DetectArchitecture(modelNameOrPath);
-        int maxAllowed = GetMaxTileSizeForArchitecture(arch, scale);
-
         long peakMemory = EstimatePeakMemoryBytes(
             width,
             height,
@@ -405,15 +375,22 @@ public static class OnnxTiler
             return 0; // Whole image fits safely within budget (single pass)!
         }
 
+        var arch = DetectArchitecture(modelNameOrPath);
         double multiplier = GetMemoryMultiplier(arch, scale, modelSizeBytes);
         int elementSize = isFp16 ? 2 : 4;
+        long staticWeights = modelSizeBytes > 0 ? modelSizeBytes : 70L * 1024 * 1024;
+        long availableForActivation = Math.Max(
+            100L * 1024 * 1024,
+            memoryBudgetBytes - staticWeights
+        );
 
-        double tilePixels = memoryBudgetBytes / (3.0 * elementSize * multiplier);
-        int tileDim = (int)Math.Sqrt(Math.Max(16.0, tilePixels));
+        double tilePixels = availableForActivation / (3.0 * elementSize * multiplier);
+        int tileDim = (int)Math.Sqrt(Math.Max(64.0, tilePixels));
 
-        // Snap to multiple of 64, clamped between architecture safe limits
+        // Snap down to multiple of 64 for optimal GPU tensor alignment
         int snapped = (tileDim / 64) * 64;
-        return Math.Clamp(snapped, Math.Min(256, maxAllowed), maxAllowed);
+        // Never return less than 128 (tiling below 128 has excessive padding/blending overhead)
+        return Math.Max(128, snapped);
     }
 
     /// <summary>
@@ -456,8 +433,8 @@ public static class OnnxTiler
                             long free = Math.Max(0, total - used);
                             if (free > 0)
                             {
-                                // Use at most 40% of free VRAM, capped at 4 GiB
-                                return Math.Min((long)(free * 0.40), 4L * 1024 * 1024 * 1024);
+                                // Use up to 65% of free VRAM, capped at 8 GiB
+                                return Math.Min((long)(free * 0.65), 8L * 1024 * 1024 * 1024);
                             }
                         }
                     }
@@ -469,8 +446,8 @@ public static class OnnxTiler
             // Fallback
         }
 
-        // Safe fallback for systems where sysfs is not accessible or on CPU/DirectML: 3 GiB
-        return 3L * 1024 * 1024 * 1024;
+        // Safe fallback for systems where sysfs is not accessible or on CPU/DirectML: 4 GiB
+        return 4L * 1024 * 1024 * 1024;
     }
 
     /// <summary>

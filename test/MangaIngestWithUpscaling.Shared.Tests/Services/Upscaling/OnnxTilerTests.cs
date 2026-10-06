@@ -322,8 +322,8 @@ public class OnnxTilerTests
             "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
             isFp16: false
         );
-        // ~57.6 GB
-        Assert.InRange(esrgan4xPeak, 50L * 1024 * 1024 * 1024, 65L * 1024 * 1024 * 1024);
+        // ~85-92 GB peak activation memory for full 1600x2400 page at 4x
+        Assert.InRange(esrgan4xPeak, 70L * 1024 * 1024 * 1024, 100L * 1024 * 1024 * 1024);
 
         // 1600x2400 on 2x SPAN (FP16)
         long span2xPeak = OnnxTiler.EstimatePeakMemoryBytes(
@@ -333,14 +333,14 @@ public class OnnxTilerTests
             "2x_IllustrationJaNai_V3detail_SPAN_S_40k_fp16.onnx",
             isFp16: true
         );
-        // ~1.15 GB
+        // ~1.3 GB
         Assert.InRange(span2xPeak, 1L * 1024 * 1024 * 1024, 2L * 1024 * 1024 * 1024);
     }
 
     [Fact]
     public void EstimateTileSize_Span_ReturnsZeroForFullImageUnderBudget()
     {
-        // SPAN requires ~1.15 GB on 1600x2400, well below a 4 GB budget -> single pass
+        // SPAN requires ~1.3 GB on 1600x2400, well below a 4 GB budget -> single pass
         int tileSize = OnnxTiler.EstimateTileSize(
             1600,
             2400,
@@ -355,13 +355,13 @@ public class OnnxTilerTests
     [Fact]
     public void EstimateTileSize_Esrgan4x_ReturnsSafeTileSize()
     {
-        // ESRGAN 4x requires ~57 GB on 1600x2400; tile size is safely capped to 448 to prevent GTT spilling
+        // ESRGAN 4x under a 5 GiB budget dynamically yields 448x448 tiles
         int tileSize = OnnxTiler.EstimateTileSize(
             1600,
             2400,
             4,
             "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
-            memoryBudgetBytes: 8L * 1024 * 1024 * 1024,
+            memoryBudgetBytes: 5L * 1024 * 1024 * 1024,
             isFp16: false
         );
         Assert.Equal(448, tileSize);
@@ -371,13 +371,13 @@ public class OnnxTilerTests
     [Fact]
     public void EstimateTileSize_Esrgan2x_AllowsLargerTileSize()
     {
-        // ESRGAN 2x has 4x smaller output tensors; tile size is allowed up to 896 for speed and quality
+        // ESRGAN 2x under a 5 GiB budget dynamically yields 896x896 tiles (scale^2 scaling)
         int tileSize = OnnxTiler.EstimateTileSize(
             1600,
             2400,
             2,
             "2x_MangaJaNai_1600p_V1_ESRGAN_90k.onnx",
-            memoryBudgetBytes: 8L * 1024 * 1024 * 1024,
+            memoryBudgetBytes: 5L * 1024 * 1024 * 1024,
             isFp16: false
         );
         Assert.Equal(896, tileSize);

@@ -76,7 +76,10 @@ public sealed class OnnxSessionFactory(
         {
             GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
             ExecutionMode = ExecutionMode.ORT_SEQUENTIAL,
+            EnableMemoryPattern = false,
         };
+        options.AddSessionConfigEntry("session.arena_extend_strategy", "kSameAsRequested");
+        options.AddSessionConfigEntry("memory.enable_memory_arena_shrinkage", "cpu:0;gpu:0");
 
         if (forceCpu)
         {
@@ -112,7 +115,10 @@ public sealed class OnnxSessionFactory(
             {
                 GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
                 ExecutionMode = ExecutionMode.ORT_SEQUENTIAL,
+                EnableMemoryPattern = false,
             };
+            cpuOptions.AddSessionConfigEntry("session.arena_extend_strategy", "kSameAsRequested");
+            cpuOptions.AddSessionConfigEntry("memory.enable_memory_arena_shrinkage", "cpu:0;gpu:0");
             return new InferenceSession(modelPath, cpuOptions);
         }
     }
