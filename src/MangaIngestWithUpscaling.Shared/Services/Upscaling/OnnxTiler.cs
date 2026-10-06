@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 
@@ -242,13 +243,26 @@ public sealed class TileBlender
 }
 
 /// <summary>
+/// Known neural network architectures used by MangaJaNai and IllustrationJaNai models.
+/// </summary>
+public enum ModelArchitecture
+{
+    Unknown,
+    Esrgan,
+    Span,
+    FdatM,
+    FdatXl,
+    Dat2,
+    HatL,
+}
+
+/// <summary>
 /// Provides tiling, reflect padding, and output reconstruction for ONNX upscaling models.
 /// </summary>
 public static class OnnxTiler
 {
     /// <summary>
-    /// Default tile size constraint. 0 means unbounded / whole image first (matching MangaJaNaiConverterGui).
-    /// If whole-image inference exceeds available memory, it automatically halves and splits into tiles.
+    /// Default tile size constraint. 0 means auto-estimate safe tile size based on model architecture and VRAM.
     /// </summary>
     public const int DefaultTileSize = 0;
 
@@ -258,9 +272,177 @@ public static class OnnxTiler
     public const int DefaultTilePad = 16;
 
     /// <summary>
+    /// Detects the neural network model architecture from its name or file path.
+    /// </summary>
+    public static ModelArchitecture DetectArchitecture(string modelNameOrPath)
+    {
+        string name = Path.GetFileNameWithoutExtension(modelNameOrPath);
+        if (name.Contains("SPAN", StringComparison.OrdinalIgnoreCase))
+            return ModelArchitecture.Span;
+        if (name.Contains("HAT", StringComparison.OrdinalIgnoreCase))
+            return ModelArchitecture.HatL;
+        if (
+            name.Contains("DAT2", StringComparison.OrdinalIgnoreCase)
+            || (
+                name.Contains("DAT", StringComparison.OrdinalIgnoreCase)
+                && !name.Contains("FDAT", StringComparison.OrdinalIgnoreCase)
+            )
+        )
+            return ModelArchitecture.Dat2;
+        if (name.Contains("FDAT_XL", StringComparison.OrdinalIgnoreCase))
+            return ModelArchitecture.FdatXl;
+        if (name.Contains("FDAT", StringComparison.OrdinalIgnoreCase))
+            return ModelArchitecture.FdatM;
+        if (
+            name.Contains("ESRGAN", StringComparison.OrdinalIgnoreCase)
+            || name.Contains("MangaJaNai", StringComparison.OrdinalIgnoreCase)
+        )
+            return ModelArchitecture.Esrgan;
+
+        return ModelArchitecture.Unknown;
+    }
+
+    /// <summary>
+    /// Gets the ratio of peak intermediate activation memory to input tensor bytes for a given architecture and scale.
+    /// </summary>
+    public static double GetMemoryMultiplier(
+        ModelArchitecture architecture,
+        int scale,
+        long modelSizeBytes = 0
+    )
+    {
+        return architecture switch
+        {
+            ModelArchitecture.Span => scale >= 4 ? 100.0 : 50.0,
+            ModelArchitecture.FdatM => scale >= 4 ? 380.0 : 200.0,
+            ModelArchitecture.FdatXl => scale >= 4 ? 700.0 : 400.0,
+            ModelArchitecture.Dat2 => scale >= 4 ? 800.0 : 450.0,
+            ModelArchitecture.HatL => scale >= 4 ? 2200.0 : 1200.0,
+            ModelArchitecture.Esrgan => scale >= 4 ? 1250.0 : 750.0,
+            _ => modelSizeBytes > 0 ? (modelSizeBytes / (1024.0 * 52.0)) : 1000.0,
+        };
+    }
+
+    /// <summary>
+    /// Estimates peak activation memory in bytes required to upscale an image of the given dimensions.
+    /// </summary>
+    public static long EstimatePeakMemoryBytes(
+        int width,
+        int height,
+        int scale,
+        string modelNameOrPath,
+        long modelSizeBytes = 0,
+        bool isFp16 = false
+    )
+    {
+        var arch = DetectArchitecture(modelNameOrPath);
+        double multiplier = GetMemoryMultiplier(arch, scale, modelSizeBytes);
+        int elementSize = isFp16 ? 2 : 4;
+        long inputBytes = (long)width * height * 3 * elementSize;
+        return (long)(inputBytes * multiplier);
+    }
+
+    /// <summary>
+    /// Estimates a safe maximum tile dimension in pixels based on model architecture, scale,
+    /// image dimensions, precision (FP16/FP32), and available memory budget.
+    /// If the whole image fits safely within the budget, returns 0 (no tiling needed).
+    /// </summary>
+    public static int EstimateTileSize(
+        int width,
+        int height,
+        int scale,
+        string modelNameOrPath,
+        long memoryBudgetBytes,
+        long modelSizeBytes = 0,
+        bool isFp16 = false
+    )
+    {
+        long peakMemory = EstimatePeakMemoryBytes(
+            width,
+            height,
+            scale,
+            modelNameOrPath,
+            modelSizeBytes,
+            isFp16
+        );
+        if (peakMemory <= memoryBudgetBytes)
+        {
+            return 0; // Whole image fits within budget (single pass)!
+        }
+
+        var arch = DetectArchitecture(modelNameOrPath);
+        double multiplier = GetMemoryMultiplier(arch, scale, modelSizeBytes);
+        int elementSize = isFp16 ? 2 : 4;
+
+        double tilePixels = memoryBudgetBytes / (3.0 * elementSize * multiplier);
+        int tileDim = (int)Math.Sqrt(Math.Max(16.0, tilePixels));
+
+        // Snap to multiple of 64, clamped between 256 and 1024
+        int snapped = (tileDim / 64) * 64;
+        return Math.Clamp(snapped, 256, 1024);
+    }
+
+    /// <summary>
+    /// Discovers available GPU VRAM on Linux via AMDGPU/DRM sysfs, reserving a 25% safety margin,
+    /// or returns a safe 4 GiB default budget on other systems.
+    /// </summary>
+    public static long GetAvailableVramBudget()
+    {
+        try
+        {
+            if (Directory.Exists("/sys/class/drm"))
+            {
+                var cards = Directory.GetDirectories("/sys/class/drm", "card*");
+                foreach (var card in cards)
+                {
+                    string totalPath = Path.Combine(card, "device", "mem_info_vram_total");
+                    string usedPath = Path.Combine(card, "device", "mem_info_vram_used");
+                    if (File.Exists(totalPath))
+                    {
+                        if (
+                            long.TryParse(
+                                File.ReadAllText(totalPath).Trim(),
+                                CultureInfo.InvariantCulture,
+                                out long total
+                            )
+                            && total > 0
+                        )
+                        {
+                            long used = 0;
+                            if (File.Exists(usedPath))
+                            {
+                                long.TryParse(
+                                    File.ReadAllText(usedPath).Trim(),
+                                    CultureInfo.InvariantCulture,
+                                    out used
+                                );
+                            }
+
+                            long free = Math.Max(0, total - used);
+                            if (free > 0)
+                            {
+                                // Reserve 25% of free VRAM as safety margin, cap budget at 12 GiB
+                                return Math.Min((long)(free * 0.75), 12L * 1024 * 1024 * 1024);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Fallback
+        }
+
+        // Safe fallback for systems where sysfs is not accessible or on CPU/DirectML: 4 GiB
+        return 4L * 1024 * 1024 * 1024;
+    }
+
+    /// <summary>
     /// Upscales an RGB image represented by raw interleaved RGB byte array.
-    /// Attempts whole-image inference first when possible, automatically falling back
-    /// to symmetric auto-split tiling with smooth half-sine overlap blending if memory is exceeded.
+    /// When tileSize &lt;= 0, attempts whole-image inference in a single pass.
+    /// When tileSize &gt; 0, partitions the image into symmetric tiles bounded by tileSize
+    /// with smooth half-sine overlap blending to eliminate visible seams.
     /// </summary>
     public static byte[] UpscaleRgb(
         byte[] rgbBytes,
@@ -398,6 +580,10 @@ public static class OnnxTiler
                 || msg.Contains("cudaMalloc", StringComparison.OrdinalIgnoreCase)
                 || msg.Contains("hipMalloc", StringComparison.OrdinalIgnoreCase)
                 || msg.Contains("VK_ERROR_OUT_OF", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("VK_ERROR_DEVICE_LOST", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("DEVICE_LOST", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("command submission", StringComparison.OrdinalIgnoreCase)
+                || msg.Contains("raw_hash_map", StringComparison.OrdinalIgnoreCase)
                 || msg.Contains("allocation failed", StringComparison.OrdinalIgnoreCase)
                 || msg.Contains("DXGI_ERROR", StringComparison.OrdinalIgnoreCase)
                 || msg.Contains(

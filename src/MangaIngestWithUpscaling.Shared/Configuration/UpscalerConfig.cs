@@ -47,6 +47,20 @@ public record UpscalerConfig
     public bool UseFp16 { get; set; } = true;
     public bool UseCPU { get; set; } = false;
 
+    /// <summary>
+    ///     Tile size for ONNX upscaling in pixels.
+    ///     0 = Auto-estimate based on model architecture, scaling factor, and available VRAM (default).
+    ///     &gt; 0 = Explicit maximum tile size (e.g. 512, 768, 1024).
+    ///     -1 = Force single pass (no tiling).
+    /// </summary>
+    public int TileSize { get; set; } = 0;
+
+    /// <summary>
+    ///     Memory budget in bytes for automatic tile size estimation.
+    ///     0 = Auto-detect from GPU / system VRAM (default).
+    /// </summary>
+    public long MemoryBudgetBytes { get; set; } = 0;
+
     public string ModelsDirectory { get; set; } =
         Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

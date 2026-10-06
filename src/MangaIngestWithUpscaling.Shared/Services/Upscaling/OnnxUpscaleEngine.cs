@@ -7,6 +7,7 @@ using MangaIngestWithUpscaling.Shared.Services.Inference;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.ML.OnnxRuntime;
+using Microsoft.ML.OnnxRuntime.Tensors;
 using NetVips;
 
 namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
@@ -50,14 +51,12 @@ public class OnnxUpscaleEngine(
                 int origHeight = vipsImage.Height;
 
                 string modelPath = SelectModel(ModelsDirectory, isGrayscale, origHeight, scale);
-                logger.LogDebug(
-                    "Upscaling {InputPath} ({Width}x{Height}, isGrayscale={IsGrayscale}) using model {Model}",
-                    Path.GetFileName(inputPath),
-                    origWidth,
-                    origHeight,
-                    isGrayscale,
-                    Path.GetFileName(modelPath)
-                );
+                long modelSizeBytes = 0;
+                try
+                {
+                    modelSizeBytes = new FileInfo(modelPath).Length;
+                }
+                catch { }
 
                 using var flattened = vipsImage.HasAlpha() ? vipsImage.Flatten() : vipsImage.Copy();
                 using var rgb =
@@ -75,15 +74,57 @@ public class OnnxUpscaleEngine(
                 cancellationToken.ThrowIfCancellationRequested();
 
                 InferenceSession session = sessionFactory.GetOrCreateSession(modelPath);
+                bool isFp16 =
+                    session.InputMetadata.TryGetValue("input", out var inputMeta)
+                    && inputMeta.ElementType == typeof(Float16);
 
-                byte[] upscaledBytes = OnnxTiler.UpscaleRgb(
-                    inputBytes,
+                long budget =
+                    config.Value.MemoryBudgetBytes > 0
+                        ? config.Value.MemoryBudgetBytes
+                        : OnnxTiler.GetAvailableVramBudget();
+
+                int effectiveTileSize =
+                    config.Value.TileSize > 0 ? config.Value.TileSize
+                    : config.Value.TileSize < 0 ? 0
+                    : OnnxTiler.EstimateTileSize(
+                        origWidth,
+                        origHeight,
+                        scale,
+                        modelPath,
+                        budget,
+                        modelSizeBytes,
+                        isFp16
+                    );
+
+                logger.LogDebug(
+                    "Upscaling {InputPath} ({Width}x{Height}, isGrayscale={IsGrayscale}) using model {Model} with tile size {TileSize} (budget: {BudgetMb} MB)",
+                    Path.GetFileName(inputPath),
                     origWidth,
                     origHeight,
-                    scale,
-                    session,
-                    cancellationToken: cancellationToken
+                    isGrayscale,
+                    Path.GetFileName(modelPath),
+                    effectiveTileSize == 0 ? "Full image" : effectiveTileSize.ToString(),
+                    budget / (1024 * 1024)
                 );
+
+                byte[] upscaledBytes;
+                try
+                {
+                    upscaledBytes = OnnxTiler.UpscaleRgb(
+                        inputBytes,
+                        origWidth,
+                        origHeight,
+                        scale,
+                        session,
+                        tileSize: effectiveTileSize,
+                        cancellationToken: cancellationToken
+                    );
+                }
+                catch (Exception)
+                {
+                    sessionFactory.InvalidateSession(modelPath);
+                    throw;
+                }
 
                 cancellationToken.ThrowIfCancellationRequested();
 

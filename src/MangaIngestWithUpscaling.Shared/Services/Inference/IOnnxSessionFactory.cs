@@ -17,4 +17,9 @@ public interface IOnnxSessionFactory : IDisposable
     /// Creates a new un-cached <see cref="InferenceSession"/> for the specified model path.
     /// </summary>
     InferenceSession CreateSession(string modelPath);
+
+    /// <summary>
+    /// Invalidates and disposes the cached session for the specified model path if present.
+    /// </summary>
+    void InvalidateSession(string modelPath);
 }

@@ -293,4 +293,93 @@ public class OnnxTilerTests
         double avgDiff = totalDiff / singlePass.Length;
         Assert.True(avgDiff < 5.0, $"Average pixel difference should be small, but was {avgDiff}");
     }
+
+    [Theory]
+    [InlineData("4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx", ModelArchitecture.Esrgan)]
+    [InlineData("2x_MangaJaNai_1200p_V1_ESRGAN_70k.onnx", ModelArchitecture.Esrgan)]
+    [InlineData("2x_IllustrationJaNai_V3detail_SPAN_S_40k_fp16.onnx", ModelArchitecture.Span)]
+    [InlineData("4x_IllustrationJaNai_V2standard_FDAT_M_52k.onnx", ModelArchitecture.FdatM)]
+    [InlineData("4x_IllustrationJaNai_V2standard_FDAT_XL_18k.onnx", ModelArchitecture.FdatXl)]
+    [InlineData("4x_IllustrationJaNai_V1_DAT2_190k.onnx", ModelArchitecture.Dat2)]
+    [InlineData("4x_IllustrationJaNai_V3detail_HAT_L_28k_bf16.onnx", ModelArchitecture.HatL)]
+    [InlineData("random_custom_model.onnx", ModelArchitecture.Unknown)]
+    public void DetectArchitecture_IdentifiesArchitecturesCorrectly(
+        string modelName,
+        ModelArchitecture expected
+    )
+    {
+        Assert.Equal(expected, OnnxTiler.DetectArchitecture(modelName));
+    }
+
+    [Fact]
+    public void EstimatePeakMemoryBytes_CalculatesRealisticRequirements()
+    {
+        // 1600x2400 on 4x ESRGAN (FP32)
+        long esrgan4xPeak = OnnxTiler.EstimatePeakMemoryBytes(
+            1600,
+            2400,
+            4,
+            "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
+            isFp16: false
+        );
+        // ~57.6 GB
+        Assert.InRange(esrgan4xPeak, 50L * 1024 * 1024 * 1024, 65L * 1024 * 1024 * 1024);
+
+        // 1600x2400 on 2x SPAN (FP16)
+        long span2xPeak = OnnxTiler.EstimatePeakMemoryBytes(
+            1600,
+            2400,
+            2,
+            "2x_IllustrationJaNai_V3detail_SPAN_S_40k_fp16.onnx",
+            isFp16: true
+        );
+        // ~1.15 GB
+        Assert.InRange(span2xPeak, 1L * 1024 * 1024 * 1024, 2L * 1024 * 1024 * 1024);
+    }
+
+    [Fact]
+    public void EstimateTileSize_Span_ReturnsZeroForFullImageUnderBudget()
+    {
+        // SPAN requires ~1.15 GB on 1600x2400, well below a 4 GB budget -> single pass
+        int tileSize = OnnxTiler.EstimateTileSize(
+            1600,
+            2400,
+            2,
+            "2x_IllustrationJaNai_V3detail_SPAN_S_40k_fp16.onnx",
+            memoryBudgetBytes: 4L * 1024 * 1024 * 1024,
+            isFp16: true
+        );
+        Assert.Equal(0, tileSize);
+    }
+
+    [Fact]
+    public void EstimateTileSize_Esrgan4x_ReturnsSafeTileSize()
+    {
+        // ESRGAN 4x requires ~57 GB on 1600x2400; with 8 GB budget, tile size should be ~704
+        int tileSize = OnnxTiler.EstimateTileSize(
+            1600,
+            2400,
+            4,
+            "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
+            memoryBudgetBytes: 8L * 1024 * 1024 * 1024,
+            isFp16: false
+        );
+        Assert.InRange(tileSize, 512, 832);
+        Assert.Equal(0, tileSize % 64);
+    }
+
+    [Fact]
+    public void EstimateTileSize_SmallImage_ReturnsZero()
+    {
+        // Small 64x64 icon fits in memory under any budget -> single pass
+        int tileSize = OnnxTiler.EstimateTileSize(
+            64,
+            64,
+            4,
+            "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
+            memoryBudgetBytes: 4L * 1024 * 1024 * 1024,
+            isFp16: false
+        );
+        Assert.Equal(0, tileSize);
+    }
 }

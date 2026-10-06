@@ -27,6 +27,28 @@ public sealed class OnnxSessionFactory(
         return _sessions.GetOrAdd(fullPath, CreateSession);
     }
 
+    public void InvalidateSession(string modelPath)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        string fullPath = Path.GetFullPath(modelPath);
+        if (_sessions.TryRemove(fullPath, out var session))
+        {
+            try
+            {
+                session.Dispose();
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(
+                    ex,
+                    "Failed to cleanly dispose invalidated session for {Model}",
+                    Path.GetFileName(modelPath)
+                );
+            }
+        }
+    }
+
     public InferenceSession CreateSession(string modelPath)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
