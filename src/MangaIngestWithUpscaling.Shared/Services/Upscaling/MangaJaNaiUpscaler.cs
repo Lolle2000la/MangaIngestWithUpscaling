@@ -196,16 +196,12 @@ public class MangaJaNaiUpscaler(
         ),
         new(
             "https://github.com/Lolle2000la/manga-vert-split-nn/releases/download/1.0.0/page_break_detector.onnx.zip",
-            "709e63a144105bc618b1558a9dbc9f04e9a970ccd1a6f34915eb0af1c0e91d22",
+            "c492185cc959638e98a5903fb0644a85778f5c6e7e1f57f14e15a211d1683e11",
             new Dictionary<string, string>
             {
                 {
                     "page_break_detector.onnx",
                     "1ef8a11980137aabef118d18f8ea417b1f7e7fd9277724015cff01688a412826"
-                },
-                {
-                    "page_break_detector.onnx.data",
-                    "a27c08523b1683cb942206c3eb04539a4fdc8d1e023fb708fe7350992e3de419"
                 },
             }
         ),

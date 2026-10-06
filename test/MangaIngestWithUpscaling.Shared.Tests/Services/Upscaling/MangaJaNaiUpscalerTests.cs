@@ -919,17 +919,13 @@ public class MangaJaNaiUpscalerTests : IDisposable
         }
 
         string targetOnnxPath = Path.Combine(_tempDir, "page_break_detector.onnx");
-        string targetDataPath = Path.Combine(_tempDir, "page_break_detector.onnx.data");
         Assert.False(File.Exists(targetOnnxPath));
-        Assert.False(File.Exists(targetDataPath));
 
         // Act: Run download
         await _upscaler.DownloadModelsIfNecessary(CancellationToken.None);
 
-        // Assert: The page_break_detector files were downloaded and extracted
+        // Assert: The page_break_detector file was downloaded and extracted
         Assert.True(File.Exists(targetOnnxPath));
-        Assert.True(File.Exists(targetDataPath));
         Assert.True(new FileInfo(targetOnnxPath).Length > 0);
-        Assert.True(new FileInfo(targetDataPath).Length > 0);
     }
 }
