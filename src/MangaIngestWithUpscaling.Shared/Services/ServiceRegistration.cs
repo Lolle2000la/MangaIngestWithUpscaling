@@ -1,4 +1,4 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
 using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.FileSystem;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
@@ -18,13 +18,6 @@ public static class ServiceRegistration
             sp.GetRequiredService<MangaJaNaiWorkerClient>()
         );
         services.AddHostedService(sp => sp.GetRequiredService<MangaJaNaiWorkerClient>());
-
-        // The detection server keeps the page-break model resident across the pages of a chapter.
-        services.AddSingleton<DetectServerClient>();
-        services.AddSingleton<IDetectServerClient>(sp =>
-            sp.GetRequiredService<DetectServerClient>()
-        );
-        services.AddHostedService(sp => sp.GetRequiredService<DetectServerClient>());
 
         // register unix file system if running on unix, otherwise use generic file system
         if (

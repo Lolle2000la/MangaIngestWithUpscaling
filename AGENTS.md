@@ -13,15 +13,12 @@ MangaIngestWithUpscaling is a **Blazor-based web application** designed to **ing
 
 ### Prerequisites
 - .NET 10.0 SDK (REQUIRED - .NET 9/8 will not work)
-- Python 3.12 or newer
-- Git with submodule support
 
 ### Bootstrap, Build, and Test the Repository
 
 **CRITICAL TIMING EXPECTATIONS:**
 - **NEVER CANCEL** any build or dependency installation commands
 - **Build commands may take 30+ seconds** - always set timeout to 120+ seconds
-- **First run may take 2-5 minutes** for Python environment setup
 
 ```bash
 # 1. Install .NET 10.0 SDK (if not installed)
@@ -30,18 +27,15 @@ chmod +x dotnet-install.sh
 ./dotnet-install.sh --channel 10.0 --install-dir ~/.dotnet
 export PATH="$HOME/.dotnet:$PATH"
 
-# 2. Initialize git submodules (REQUIRED for build)
-git submodule update --init --recursive
-
-# 3. Restore dependencies (~24 seconds - NEVER CANCEL)
+# 2. Restore dependencies (~24 seconds - NEVER CANCEL)
 dotnet restore MangaIngestWithUpscaling.sln
 # Build takes ~24s. Set timeout to 120+ seconds.
 
-# 4. Build the solution (~23 seconds - NEVER CANCEL)  
+# 3. Build the solution (~23 seconds - NEVER CANCEL)  
 dotnet build --no-restore MangaIngestWithUpscaling.sln
 # Build takes ~23s. Set timeout to 120+ seconds.
 
-# 5. Build Remote Worker separately (~1 second)
+# 4. Build Remote Worker separately (~1 second)
 dotnet build --no-restore src/MangaIngestWithUpscaling.RemoteWorker
 ```
 
@@ -62,13 +56,12 @@ dotnet run --project src/MangaIngestWithUpscaling.RemoteWorker
 # Requires configuration in appsettings.json with ApiKey and ApiUrl
 ```
 
-**Alternative Configuration (for full ML functionality):**
+**Alternative Configuration (for local ML functionality):**
 ```bash
-# Only use if you need local upscaling (will download PyTorch, takes 2-5 minutes)
+# Enable local ONNX upscaling
 export Ingest_Upscaler__UseCPU=true
 export Ingest_Upscaler__RemoteOnly=false
 dotnet run --project src/MangaIngestWithUpscaling
-# FIRST RUN WILL TAKE 2-5 MINUTES - NEVER CANCEL
 ```
 
 ## Validation
@@ -85,7 +78,6 @@ dotnet run --project src/MangaIngestWithUpscaling
    ```bash
    dotnet csharpier format src/ test/ tools/ # Or even just the modified files
    # Only ever commit formatted code
-   # Note that the submodule are rightly excluded from the glob pattern above
    ```
 
 3. **Application Startup Test:**
@@ -216,7 +208,6 @@ local and synchronous.
 │   └── MangaIngestWithUpscaling.Tests.UI/ # UI tests
 ├── tools/
 │   └── MangaIngestWithUpscaling.DbMigrator/ # SQLite <-> PostgreSQL data migration CLI
-├── MangaJaNaiConverterGui/            # Git submodule (ML backend files)
 ├── docs/                              # Documentation
 └── .github/workflows/                 # CI/CD pipelines
 ```
@@ -334,15 +325,9 @@ dotnet run --project src/MangaIngestWithUpscaling
 - Application will fall back to CPU backend automatically
 - Use `RemoteOnly=true` to skip GPU detection entirely
 
-**Python environment setup timeout:**
-- Network issues during PyTorch download
-- Use `RemoteOnly=true` mode for development
-- Allow 2-5 minutes for full ML environment setup
-
 **Build timeout issues:**
 - Always set timeouts to 120+ seconds for builds
 - Never cancel long-running operations
-- Submodule initialization is required before building
 
 **Database migration errors:**
 - Application creates SQLite databases automatically
@@ -354,7 +339,7 @@ dotnet run --project src/MangaIngestWithUpscaling
 - **Build**: ~23 seconds (NEVER CANCEL) 
 - **Remote Worker Build**: ~1 second
 - **Application Startup**: ~10-30 seconds
-- **First Run with ML**: 2-5 minutes (NEVER CANCEL)
+- **First Run with ML**: Models downloaded automatically on first start (~30-60s)
 
 ## CI/CD Information
 
@@ -386,7 +371,6 @@ run the two `TEST_DB_PROVIDER=postgres` commands above when your change touches 
 - **Testcontainers** - Spins up PostgreSQL for the dual-provider test passes (Docker required)
 - **gRPC** - Communication protocol
 - **Serilog** - Logging framework
-- **System.CommandLine** - CLI parsing for the database migrator
-- **Python 3.x + PyTorch** - ML backend (optional with RemoteOnly)
+- **Microsoft.ML.OnnxRuntime** - Pure C# ML inference engine (MIGraphX, DirectML, CUDA, CPU)
 
 Remember: **ALWAYS use RemoteOnly mode for development** unless you specifically need to test ML functionality locally.

@@ -30,21 +30,14 @@ For information about the remote-only server variant without ML dependencies, se
 
 The preferred way to run the application is through Docker. The standard image supports all GPU backends — you select the backend via an environment variable.
 
-### Python Environment Storage
+### ONNX Runtime and Model Storage
 
-On first startup, the application automatically downloads and installs the GPU-specific Python/PyTorch environment into the `/data/pyenv` directory inside your data volume. This means:
+The application runs pure C# using ONNX Runtime for ML inference. There is no Python or PyTorch deployment needed:
 
-- **No large image downloads** for GPU backends — only a lightweight image is pulled
-- **Environment persists across image updates** — PyTorch is not re-downloaded unless the required version changes
-- **Configurable location** — if you want to store the Python environment on a separate volume (e.g. a larger disk), map it explicitly and override `Ingest_Upscaler__PythonEnvironmentDirectory`:
-
-```yaml
-    volumes:
-      - /path/to/store/appdata:/data
-      - /path/to/store/pyenv:/pyenv   # separate volume for the Python environment
-    environment:
-      Ingest_Upscaler__PythonEnvironmentDirectory: /pyenv
-```
+- **Ultra-lightweight footprint** — no multi-gigabyte PyTorch/CUDA wheels downloaded
+- **Native Hardware Acceleration** — supports MIGraphX (AMD GPUs), CUDA (NVIDIA), DirectML (Windows), and CPU fallback
+- **Automatic Model Provisioning** — optimized ONNX models are downloaded on demand into the `/models` directory from GitHub releases
+- **Persistent models** — models are cached in `/models` across updates
 
 ### NVIDIA GPU (CUDA)
 
@@ -128,9 +121,7 @@ services:
       - seccomp:unconfined
 ```
 
-> **Note:** The ROCm PyTorch build is large. On first startup, it will be downloaded and installed into your data volume. This may take several minutes.
-
-I do not have an AMD GPU, so I cannot test this. If you have any issues, please open an issue.
+> **Note:** AMD hardware acceleration uses ONNX Runtime with the MIGraphX / ROCm execution provider.
 
 ### Intel Arc GPU (XPU)
 

@@ -3,7 +3,6 @@ using MangaIngestWithUpscaling.Api.Upscaling;
 using MangaIngestWithUpscaling.RemoteWorker.Configuration;
 using MangaIngestWithUpscaling.RemoteWorker.Services;
 using MangaIngestWithUpscaling.Shared.Configuration;
-using MangaIngestWithUpscaling.Shared.Services.Python;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.Options;
 using Serilog;
@@ -210,32 +209,6 @@ using (var scope = app.Services.CreateScope())
     }
 
     logger.LogDebug("Connection test response: {Response}", connection);
-
-    var pythonService = scope.ServiceProvider.GetRequiredService<IPythonService>();
-    var upscalerConfig = scope.ServiceProvider.GetRequiredService<IOptions<UpscalerConfig>>();
-    if (!pythonService.IsPythonInstalled())
-    {
-        logger.LogError(
-            "Python is not installed on the system. Please install Python 3.6 or newer and ensure it is available on the system PATH."
-        );
-    }
-    else
-    {
-        logger.LogDebug("Python is installed on the system.");
-
-        Directory.CreateDirectory(upscalerConfig.Value.PythonEnvironmentDirectory);
-
-        PythonEnvironment environment = await pythonService.PreparePythonEnvironment(
-            upscalerConfig.Value.PythonEnvironmentDirectory,
-            upscalerConfig.Value.PreferredGpuBackend,
-            upscalerConfig.Value.ForceAcceptExistingEnvironment
-        );
-        PythonService.Environment = environment;
-
-        logger.LogDebug(
-            $"Python environment prepared at {environment.PythonExecutablePath} with {environment.InstalledBackend} backend"
-        );
-    }
 
     var upscaler = scope.ServiceProvider.GetRequiredService<IUpscaler>();
     await upscaler.DownloadModelsIfNecessary(CancellationToken.None);

@@ -1,5 +1,4 @@
 using MangaIngestWithUpscaling.Shared.Configuration;
-using MangaIngestWithUpscaling.Shared.Services.Python;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.Options;
 
@@ -57,8 +56,7 @@ public sealed class EngineIdentityProvider(IOptions<UpscalerConfig> config)
                 // needed.
                 string computed = EngineIdentity.ForUpscaler(
                     config.Value,
-                    PythonService.Environment?.InstalledBackend,
-                    PythonService.Environment?.EnvironmentVersion
+                    config.Value.PreferredGpuBackend
                 );
 
                 // Only cache a success, so a transient failure is retried on the next access.
@@ -75,7 +73,9 @@ public sealed class EngineIdentityProvider(IOptions<UpscalerConfig> config)
         {
             lock (_lock)
             {
-                return _detector ??= EngineIdentity.ForDetector();
+                return _detector ??= EngineIdentity.ForDetector(
+                    config.Value.ResolvedModelsDirectory
+                );
             }
         }
     }

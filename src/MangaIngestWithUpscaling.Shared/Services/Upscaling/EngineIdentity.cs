@@ -104,15 +104,14 @@ public static class EngineIdentity
     }
 
     /// <summary>
-    /// Identity of the page-break detector: its version plus a content hash of the bundled checkpoint
-    /// and config files (small enough to hash exactly).
+    /// Identity of the page-break detector: its version plus a content hash of the ONNX model file.
     /// </summary>
-    public static string ForDetector()
+    public static string ForDetector(string? modelsDirectory = null)
     {
         var material = new StringBuilder("detector|");
         material.Append(SplitDetectionService.CURRENT_DETECTOR_VERSION).Append('|');
-        AppendFileContentHash(material, SplitDetectionLayout.CheckpointPath);
-        AppendFileContentHash(material, SplitDetectionLayout.ConfigPath);
+        string modelPath = SplitDetectionLayout.ResolveModelPath(modelsDirectory);
+        AppendFileContentHash(material, modelPath);
         return Hash(material.ToString());
     }
 

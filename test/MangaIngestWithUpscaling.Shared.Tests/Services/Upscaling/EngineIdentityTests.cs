@@ -299,7 +299,7 @@ public class EngineIdentityTests
     {
         WithDetectorRoot(() =>
         {
-            WriteDetectorFiles(checkpoint: "model", config: "{}");
+            WriteDetectorFiles(model: "model");
 
             Assert.Equal(EngineIdentity.ForDetector(), EngineIdentity.ForDetector());
         });
@@ -311,11 +311,11 @@ public class EngineIdentityTests
     {
         WithDetectorRoot(() =>
         {
-            WriteDetectorFiles(checkpoint: "model", config: "{}");
+            WriteDetectorFiles(model: "model");
             string before = EngineIdentity.ForDetector();
 
             // Same length, different bytes: the identity must hash the content, not just the size.
-            WriteDetectorFiles(checkpoint: "modem", config: "{}");
+            WriteDetectorFiles(model: "modem");
             string after = EngineIdentity.ForDetector();
 
             Assert.NotEqual(before, after);
@@ -338,12 +338,10 @@ public class EngineIdentityTests
         }
     }
 
-    private static void WriteDetectorFiles(string checkpoint, string config)
+    private static void WriteDetectorFiles(string model)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(SplitDetectionLayout.CheckpointPath)!);
-        Directory.CreateDirectory(Path.GetDirectoryName(SplitDetectionLayout.ConfigPath)!);
-        File.WriteAllText(SplitDetectionLayout.CheckpointPath, checkpoint);
-        File.WriteAllText(SplitDetectionLayout.ConfigPath, config);
+        Directory.CreateDirectory(Path.GetDirectoryName(SplitDetectionLayout.OnnxModelPath)!);
+        File.WriteAllText(SplitDetectionLayout.OnnxModelPath, model);
     }
 
     private static UpscalerConfig Config() => new() { ModelsDirectory = "/nonexistent/models" };

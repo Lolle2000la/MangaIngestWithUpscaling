@@ -821,4 +821,115 @@ public class MangaJaNaiUpscalerTests : IDisposable
                     or HttpRequestException
         );
     }
+
+    [Fact]
+    [Trait("Category", "Download")]
+    [Trait("Category", "Integration")]
+    public async Task DownloadModelsIfNecessary_WhenModelMissing_DownloadsAndRestoresModel()
+    {
+        string modelsSource = Path.Combine(
+            AppContext.BaseDirectory,
+            "..",
+            "..",
+            "..",
+            "..",
+            "..",
+            "test_data",
+            "models"
+        );
+        if (!Directory.Exists(modelsSource))
+        {
+            modelsSource = Path.GetFullPath(
+                Path.Combine(Directory.GetCurrentDirectory(), "test_data", "models")
+            );
+        }
+
+        if (!Directory.Exists(modelsSource))
+        {
+            return; // Skip if test_data not present in runtime environment
+        }
+
+        // Copy all models except one target file
+        string missingModelFile = "2x_IllustrationJaNai_V1_ESRGAN_120k.onnx";
+        foreach (string file in Directory.EnumerateFiles(modelsSource))
+        {
+            if (file.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            string fileName = Path.GetFileName(file);
+            if (!string.Equals(fileName, missingModelFile, StringComparison.OrdinalIgnoreCase))
+            {
+                File.Copy(file, Path.Combine(_tempDir, fileName), overwrite: true);
+            }
+        }
+
+        string targetMissingPath = Path.Combine(_tempDir, missingModelFile);
+        Assert.False(File.Exists(targetMissingPath));
+
+        // Act: Run download if necessary
+        await _upscaler.DownloadModelsIfNecessary(CancellationToken.None);
+
+        // Assert: The missing file was downloaded and extracted from GitHub releases
+        Assert.True(File.Exists(targetMissingPath));
+        Assert.True(new FileInfo(targetMissingPath).Length > 0);
+    }
+
+    [Fact]
+    [Trait("Category", "Download")]
+    [Trait("Category", "Integration")]
+    public async Task DownloadModelsIfNecessary_WhenPageBreakDetectorMissing_DownloadsAndRestoresModel()
+    {
+        string modelsSource = Path.Combine(
+            AppContext.BaseDirectory,
+            "..",
+            "..",
+            "..",
+            "..",
+            "..",
+            "test_data",
+            "models"
+        );
+        if (!Directory.Exists(modelsSource))
+        {
+            modelsSource = Path.GetFullPath(
+                Path.Combine(Directory.GetCurrentDirectory(), "test_data", "models")
+            );
+        }
+
+        if (!Directory.Exists(modelsSource))
+        {
+            return;
+        }
+
+        // Copy all models except page_break_detector files
+        foreach (string file in Directory.EnumerateFiles(modelsSource))
+        {
+            if (file.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            string fileName = Path.GetFileName(file);
+            if (!fileName.StartsWith("page_break_detector", StringComparison.OrdinalIgnoreCase))
+            {
+                File.Copy(file, Path.Combine(_tempDir, fileName), overwrite: true);
+            }
+        }
+
+        string targetOnnxPath = Path.Combine(_tempDir, "page_break_detector.onnx");
+        string targetDataPath = Path.Combine(_tempDir, "page_break_detector.onnx.data");
+        Assert.False(File.Exists(targetOnnxPath));
+        Assert.False(File.Exists(targetDataPath));
+
+        // Act: Run download
+        await _upscaler.DownloadModelsIfNecessary(CancellationToken.None);
+
+        // Assert: The page_break_detector files were downloaded and extracted
+        Assert.True(File.Exists(targetOnnxPath));
+        Assert.True(File.Exists(targetDataPath));
+        Assert.True(new FileInfo(targetOnnxPath).Length > 0);
+        Assert.True(new FileInfo(targetDataPath).Length > 0);
+    }
 }
