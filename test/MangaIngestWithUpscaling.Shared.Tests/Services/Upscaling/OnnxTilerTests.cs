@@ -355,7 +355,7 @@ public class OnnxTilerTests
     [Fact]
     public void EstimateTileSize_Esrgan4x_ReturnsSafeTileSize()
     {
-        // ESRGAN 4x requires ~57 GB on 1600x2400; with 8 GB budget, tile size should be ~704
+        // ESRGAN 4x requires ~57 GB on 1600x2400; tile size is safely capped to 512 to prevent GTT spilling
         int tileSize = OnnxTiler.EstimateTileSize(
             1600,
             2400,
@@ -364,7 +364,7 @@ public class OnnxTilerTests
             memoryBudgetBytes: 8L * 1024 * 1024 * 1024,
             isFp16: false
         );
-        Assert.InRange(tileSize, 512, 832);
+        Assert.Equal(512, tileSize);
         Assert.Equal(0, tileSize % 64);
     }
 

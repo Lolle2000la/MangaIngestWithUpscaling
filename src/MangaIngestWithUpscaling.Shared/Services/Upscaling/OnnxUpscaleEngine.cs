@@ -96,15 +96,18 @@ public class OnnxUpscaleEngine(
                         isFp16
                     );
 
+                var (vramBefore, gttBefore) = OnnxTiler.GetGpuMemoryUsage();
                 logger.LogDebug(
-                    "Upscaling {InputPath} ({Width}x{Height}, isGrayscale={IsGrayscale}) using model {Model} with tile size {TileSize} (budget: {BudgetMb} MB)",
+                    "Upscaling {InputPath} ({Width}x{Height}, isGrayscale={IsGrayscale}) using model {Model} with tile size {TileSize} (budget: {BudgetMb} MB, VRAM: {VramMb} MB, GTT: {GttMb} MB)",
                     Path.GetFileName(inputPath),
                     origWidth,
                     origHeight,
                     isGrayscale,
                     Path.GetFileName(modelPath),
                     effectiveTileSize == 0 ? "Full image" : effectiveTileSize.ToString(),
-                    budget / (1024 * 1024)
+                    budget / (1024 * 1024),
+                    vramBefore / (1024 * 1024),
+                    gttBefore / (1024 * 1024)
                 );
 
                 byte[] upscaledBytes;
@@ -124,6 +127,17 @@ public class OnnxUpscaleEngine(
                 {
                     sessionFactory.InvalidateSession(modelPath);
                     throw;
+                }
+
+                var (vramAfter, gttAfter) = OnnxTiler.GetGpuMemoryUsage();
+                if (gttAfter > 500L * 1024 * 1024)
+                {
+                    logger.LogInformation(
+                        "GPU memory pressure for {InputPath}: VRAM {VramMb} MB, GTT {GttMb} MB",
+                        Path.GetFileName(inputPath),
+                        vramAfter / (1024 * 1024),
+                        gttAfter / (1024 * 1024)
+                    );
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();

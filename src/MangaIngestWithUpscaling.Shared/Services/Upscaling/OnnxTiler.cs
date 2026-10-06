@@ -377,14 +377,24 @@ public static class OnnxTiler
         double tilePixels = memoryBudgetBytes / (3.0 * elementSize * multiplier);
         int tileDim = (int)Math.Sqrt(Math.Max(16.0, tilePixels));
 
-        // Snap to multiple of 64, clamped between 256 and 1024
+        // Upper limit per architecture to avoid TTM / arena memory pressure
+        int maxAllowed = arch switch
+        {
+            ModelArchitecture.Esrgan or ModelArchitecture.HatL or ModelArchitecture.Dat2 => 512,
+            ModelArchitecture.FdatXl => 640,
+            ModelArchitecture.FdatM => 768,
+            _ => 1024,
+        };
+
+        // Snap to multiple of 64, clamped between 256 and maxAllowed
         int snapped = (tileDim / 64) * 64;
-        return Math.Clamp(snapped, 256, 1024);
+        return Math.Clamp(snapped, 256, maxAllowed);
     }
 
     /// <summary>
-    /// Discovers available GPU VRAM on Linux via AMDGPU/DRM sysfs, reserving a 25% safety margin,
-    /// or returns a safe 4 GiB default budget on other systems.
+    /// Discovers available GPU VRAM on Linux via AMDGPU/DRM sysfs, using at most 40% of free VRAM
+    /// (capped at 4 GiB) to avoid TTM memory manager spilling allocations into GTT.
+    /// Falls back to a safe 3 GiB default budget on other platforms.
     /// </summary>
     public static long GetAvailableVramBudget()
     {
@@ -421,8 +431,8 @@ public static class OnnxTiler
                             long free = Math.Max(0, total - used);
                             if (free > 0)
                             {
-                                // Reserve 25% of free VRAM as safety margin, cap budget at 12 GiB
-                                return Math.Min((long)(free * 0.75), 12L * 1024 * 1024 * 1024);
+                                // Use at most 40% of free VRAM, capped at 4 GiB
+                                return Math.Min((long)(free * 0.40), 4L * 1024 * 1024 * 1024);
                             }
                         }
                     }
@@ -434,8 +444,44 @@ public static class OnnxTiler
             // Fallback
         }
 
-        // Safe fallback for systems where sysfs is not accessible or on CPU/DirectML: 4 GiB
-        return 4L * 1024 * 1024 * 1024;
+        // Safe fallback for systems where sysfs is not accessible or on CPU/DirectML: 3 GiB
+        return 3L * 1024 * 1024 * 1024;
+    }
+
+    /// <summary>
+    /// Reads current VRAM and GTT used in bytes from Linux AMDGPU sysfs, or returns (0, 0) if unavailable.
+    /// </summary>
+    public static (long VramUsed, long GttUsed) GetGpuMemoryUsage()
+    {
+        try
+        {
+            if (Directory.Exists("/sys/class/drm"))
+            {
+                var cards = Directory.GetDirectories("/sys/class/drm", "card*");
+                foreach (var card in cards)
+                {
+                    string vramPath = Path.Combine(card, "device", "mem_info_vram_used");
+                    string gttPath = Path.Combine(card, "device", "mem_info_gtt_used");
+                    if (File.Exists(vramPath) && File.Exists(gttPath))
+                    {
+                        long.TryParse(
+                            File.ReadAllText(vramPath).Trim(),
+                            CultureInfo.InvariantCulture,
+                            out long vram
+                        );
+                        long.TryParse(
+                            File.ReadAllText(gttPath).Trim(),
+                            CultureInfo.InvariantCulture,
+                            out long gtt
+                        );
+                        return (vram, gtt);
+                    }
+                }
+            }
+        }
+        catch { }
+
+        return (0, 0);
     }
 
     /// <summary>
@@ -687,14 +733,14 @@ public static class OnnxTiler
                 halfData[i] = (Float16)tensorData[i];
             }
             var halfTensor = new DenseTensor<Float16>(halfData, [1, 3, paddedH, paddedW]);
-            var inputs = new[] { NamedOnnxValue.CreateFromTensor("input", halfTensor) };
-            outputs = session.Run(inputs);
+            var inVal = NamedOnnxValue.CreateFromTensor("input", halfTensor);
+            outputs = session.Run([inVal]);
         }
         else
         {
             var floatTensor = new DenseTensor<float>(tensorData, [1, 3, paddedH, paddedW]);
-            var inputs = new[] { NamedOnnxValue.CreateFromTensor("input", floatTensor) };
-            outputs = session.Run(inputs);
+            var inVal = NamedOnnxValue.CreateFromTensor("input", floatTensor);
+            outputs = session.Run([inVal]);
         }
 
         using (outputs)
