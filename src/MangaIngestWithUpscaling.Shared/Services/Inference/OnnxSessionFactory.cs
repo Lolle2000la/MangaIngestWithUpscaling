@@ -95,91 +95,149 @@ public sealed class OnnxSessionFactory(
         {
             if (backend is GpuBackend.CUDA or GpuBackend.CUDA_12_8)
             {
-                try
-                {
-                    logger.LogInformation(
-                        "Configuring CUDA execution provider (device {DeviceId}) for {Model}",
-                        deviceId,
-                        modelName
-                    );
-                    options.AppendExecutionProvider_CUDA(deviceId);
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    logger.LogWarning(
-                        ex,
-                        "Failed to append CUDA execution provider. Will try CPU fallback."
-                    );
-                    return false;
-                }
+                return TryConfigureCuda(options, deviceId, modelName);
             }
 
-            // For AMD / Auto / ROCm / ROCm_GFX120X on Linux: try MIGraphX
-            try
+            if (backend is GpuBackend.XPU or GpuBackend.OpenVINO)
             {
-                logger.LogInformation(
-                    "Configuring MIGraphX execution provider (device {DeviceId}) for {Model}",
-                    deviceId,
-                    modelName
-                );
-                options.AppendExecutionProvider_MIGraphX(deviceId);
+                return TryConfigureOpenVino(options, deviceId, modelName);
+            }
+
+            if (backend is GpuBackend.MIGraphX or GpuBackend.ROCm or GpuBackend.ROCm_GFX120X)
+            {
+                return TryConfigureMIGraphX(options, deviceId, modelName);
+            }
+
+            // GpuBackend.Auto on Linux: Try CUDA -> OpenVINO -> MIGraphX
+            if (TryConfigureCuda(options, deviceId, modelName))
+            {
                 return true;
             }
-            catch (Exception ex)
+
+            if (TryConfigureOpenVino(options, deviceId, modelName))
             {
-                logger.LogWarning(
-                    ex,
-                    "Failed to append MIGraphX execution provider. Will try CPU fallback."
-                );
-                return false;
+                return true;
             }
+
+            if (TryConfigureMIGraphX(options, deviceId, modelName))
+            {
+                return true;
+            }
+
+            return false;
         }
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
             if (backend is GpuBackend.CUDA or GpuBackend.CUDA_12_8)
             {
-                try
+                if (TryConfigureCuda(options, deviceId, modelName))
                 {
-                    logger.LogInformation(
-                        "Configuring CUDA execution provider (device {DeviceId}) for {Model}",
-                        deviceId,
-                        modelName
-                    );
-                    options.AppendExecutionProvider_CUDA(deviceId);
                     return true;
-                }
-                catch (Exception ex)
-                {
-                    logger.LogWarning(
-                        ex,
-                        "Failed to append CUDA execution provider. Will try DirectML/CPU."
-                    );
                 }
             }
 
-            try
+            if (backend is GpuBackend.XPU or GpuBackend.OpenVINO)
             {
-                logger.LogInformation(
-                    "Configuring DirectML execution provider (device {DeviceId}) for {Model}",
-                    deviceId,
-                    modelName
-                );
-                options.AppendExecutionProvider_DML(deviceId);
-                return true;
+                if (TryConfigureOpenVino(options, deviceId, modelName))
+                {
+                    return true;
+                }
             }
-            catch (Exception ex)
-            {
-                logger.LogWarning(
-                    ex,
-                    "Failed to append DirectML execution provider. Will try CPU fallback."
-                );
-                return false;
-            }
+
+            return TryConfigureDirectML(options, deviceId, modelName);
         }
 
         return false;
+    }
+
+    private bool TryConfigureCuda(SessionOptions options, int deviceId, string modelName)
+    {
+        try
+        {
+            logger.LogInformation(
+                "Configuring CUDA execution provider (device {DeviceId}) for {Model}",
+                deviceId,
+                modelName
+            );
+            options.AppendExecutionProvider_CUDA(deviceId);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to append CUDA execution provider. Will try next provider or CPU fallback."
+            );
+            return false;
+        }
+    }
+
+    private bool TryConfigureOpenVino(SessionOptions options, int deviceId, string modelName)
+    {
+        try
+        {
+            string targetDevice = deviceId > 0 ? $"GPU.{deviceId}" : "GPU";
+            logger.LogInformation(
+                "Configuring OpenVINO execution provider ({Device}) for {Model}",
+                targetDevice,
+                modelName
+            );
+            options.AppendExecutionProvider_OpenVINO(targetDevice);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to append OpenVINO execution provider. Will try next provider or CPU fallback."
+            );
+            return false;
+        }
+    }
+
+    private bool TryConfigureMIGraphX(SessionOptions options, int deviceId, string modelName)
+    {
+        try
+        {
+            logger.LogInformation(
+                "Configuring MIGraphX execution provider (device {DeviceId}) for {Model}",
+                deviceId,
+                modelName
+            );
+            options.AppendExecutionProvider_MIGraphX(deviceId);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to append MIGraphX execution provider. Will try next provider or CPU fallback."
+            );
+            return false;
+        }
+    }
+
+    private bool TryConfigureDirectML(SessionOptions options, int deviceId, string modelName)
+    {
+        try
+        {
+            logger.LogInformation(
+                "Configuring DirectML execution provider (device {DeviceId}) for {Model}",
+                deviceId,
+                modelName
+            );
+            options.AppendExecutionProvider_DML(deviceId);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to append DirectML execution provider. Will try CPU fallback."
+            );
+            return false;
+        }
     }
 
     public void Dispose()

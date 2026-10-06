@@ -10,6 +10,7 @@ public enum GpuBackend
     ROCm,
     ROCm_GFX120X,
     XPU,
+    OpenVINO,
     CPU,
 }
 

@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=rocm/dev-ubuntu-24.04:latest
+ARG BASE_IMAGE=openvino/ubuntu24_runtime:latest
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS dotnet-runtime
 
@@ -20,13 +20,14 @@ ARG TARGETARCH
 RUN dotnet publish "./MangaIngestWithUpscaling.RemoteWorker.csproj" -c Release -a $TARGETARCH -o /app/publish /p:UseAppHost=false /p:PublishAot=false -p:OnnxRuntimeFlavor=Managed
 
 FROM ${BASE_IMAGE} AS final
+USER root
 WORKDIR /app
 
 # Copy .NET 10 runtime
 COPY --from=dotnet-runtime /usr/share/dotnet /usr/share/dotnet
 ENV DOTNET_ROOT=/usr/share/dotnet
 ENV PATH="/usr/share/dotnet:${PATH}"
-ENV LD_LIBRARY_PATH="/opt/rocm/lib:${LD_LIBRARY_PATH}"
+ENV LD_LIBRARY_PATH="/opt/intel/openvino/runtime/lib/intel64:${LD_LIBRARY_PATH}"
 
 # Install dependencies for NetVips and .NET globalization
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -37,7 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=publish /app/publish .
 
 ENV Ingest_Upscaler__SelectedDeviceIndex=1
-ENV Ingest_Upscaler__PreferredGpuBackend=ROCm
+ENV Ingest_Upscaler__PreferredGpuBackend=OpenVINO
 ENV Ingest_Upscaler__ModelsDirectory=/models/MangaJaNai
 VOLUME /models
 VOLUME /data

@@ -60,4 +60,29 @@ public class OnnxSessionFactoryTests
 
         Assert.Same(session1, session2);
     }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public void CreateSession_OpenVinoBackend_FallsBackCleanlyToCpu()
+    {
+        if (!File.Exists(TestModelPath))
+        {
+            return;
+        }
+
+        var config = Options.Create(
+            new UpscalerConfig
+            {
+                UseCPU = false,
+                PreferredGpuBackend = GpuBackend.OpenVINO,
+                SelectedDeviceIndex = 1,
+            }
+        );
+        using var factory = new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance);
+
+        // When OpenVINO hardware is not available on this test host, it must cleanly fallback to CPU without throwing.
+        using InferenceSession session = factory.CreateSession(TestModelPath);
+        Assert.NotNull(session);
+        Assert.NotEmpty(session.InputMetadata);
+    }
 }
