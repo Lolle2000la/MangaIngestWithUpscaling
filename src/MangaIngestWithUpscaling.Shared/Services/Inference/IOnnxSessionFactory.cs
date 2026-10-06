@@ -22,4 +22,9 @@ public interface IOnnxSessionFactory : IDisposable
     /// Invalidates and disposes the cached session for the specified model path if present.
     /// </summary>
     void InvalidateSession(string modelPath);
+
+    /// <summary>
+    /// Invalidates and disposes all currently cached sessions, releasing GPU VRAM back to the driver.
+    /// </summary>
+    void InvalidateAllSessions();
 }

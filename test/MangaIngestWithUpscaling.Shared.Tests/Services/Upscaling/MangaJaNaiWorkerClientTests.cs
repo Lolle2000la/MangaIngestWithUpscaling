@@ -1,4 +1,5 @@
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Shared.Services.Inference;
 using MangaIngestWithUpscaling.Shared.Services.Upscaling;
 using Microsoft.Extensions.Logging.Abstractions;
 using NSubstitute;
@@ -41,8 +42,10 @@ public class MangaJaNaiWorkerClientTests
     public async Task RunJobAsync_WithCbzRequest_DelegatesToUpscaleEngine()
     {
         var engine = Substitute.For<IOnnxUpscaleEngine>();
+        var factory = Substitute.For<IOnnxSessionFactory>();
         var client = new MangaJaNaiWorkerClient(
             engine,
+            factory,
             NullLogger<MangaJaNaiWorkerClient>.Instance
         );
 
@@ -79,5 +82,25 @@ public class MangaJaNaiWorkerClientTests
                 null,
                 TestContext.Current.CancellationToken
             );
+
+        factory.Received(1).InvalidateAllSessions();
+    }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task ReleaseGpuCacheAsync_InvalidatesAllSessions()
+    {
+        var engine = Substitute.For<IOnnxUpscaleEngine>();
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        var client = new MangaJaNaiWorkerClient(
+            engine,
+            factory,
+            NullLogger<MangaJaNaiWorkerClient>.Instance
+        );
+
+        bool success = await client.ReleaseGpuCacheAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(success);
+        factory.Received(1).InvalidateAllSessions();
     }
 }

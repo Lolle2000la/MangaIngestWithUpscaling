@@ -63,6 +63,25 @@ public class OnnxSessionFactoryTests
 
     [Fact]
     [Trait("Category", "Integration")]
+    public void InvalidateAllSessions_RemovesAndDisposesCachedSessions()
+    {
+        if (!File.Exists(TestModelPath))
+        {
+            return;
+        }
+
+        var config = Options.Create(new UpscalerConfig { UseCPU = true });
+        using var factory = new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance);
+
+        InferenceSession session1 = factory.GetOrCreateSession(TestModelPath);
+        factory.InvalidateAllSessions();
+        InferenceSession session2 = factory.GetOrCreateSession(TestModelPath);
+
+        Assert.NotSame(session1, session2);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
     public void CreateSession_OpenVinoBackend_FallsBackCleanlyToCpu()
     {
         if (!File.Exists(TestModelPath))

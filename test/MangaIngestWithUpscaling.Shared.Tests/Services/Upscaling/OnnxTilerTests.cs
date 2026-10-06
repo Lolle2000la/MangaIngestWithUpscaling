@@ -355,7 +355,7 @@ public class OnnxTilerTests
     [Fact]
     public void EstimateTileSize_Esrgan4x_ReturnsSafeTileSize()
     {
-        // ESRGAN 4x requires ~57 GB on 1600x2400; tile size is safely capped to 512 to prevent GTT spilling
+        // ESRGAN 4x requires ~57 GB on 1600x2400; tile size is safely capped to 448 to prevent GTT spilling
         int tileSize = OnnxTiler.EstimateTileSize(
             1600,
             2400,
@@ -364,7 +364,23 @@ public class OnnxTilerTests
             memoryBudgetBytes: 8L * 1024 * 1024 * 1024,
             isFp16: false
         );
-        Assert.Equal(512, tileSize);
+        Assert.Equal(448, tileSize);
+        Assert.Equal(0, tileSize % 64);
+    }
+
+    [Fact]
+    public void EstimateTileSize_Esrgan2x_AllowsLargerTileSize()
+    {
+        // ESRGAN 2x has 4x smaller output tensors; tile size is allowed up to 896 for speed and quality
+        int tileSize = OnnxTiler.EstimateTileSize(
+            1600,
+            2400,
+            2,
+            "2x_MangaJaNai_1600p_V1_ESRGAN_90k.onnx",
+            memoryBudgetBytes: 8L * 1024 * 1024 * 1024,
+            isFp16: false
+        );
+        Assert.Equal(896, tileSize);
         Assert.Equal(0, tileSize % 64);
     }
 

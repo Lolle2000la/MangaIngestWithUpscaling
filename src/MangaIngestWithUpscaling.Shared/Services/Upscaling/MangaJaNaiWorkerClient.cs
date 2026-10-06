@@ -1,5 +1,6 @@
 using AutoRegisterInject;
 using MangaIngestWithUpscaling.Shared.Data.LibraryManagement;
+using MangaIngestWithUpscaling.Shared.Services.Inference;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -8,6 +9,7 @@ namespace MangaIngestWithUpscaling.Shared.Services.Upscaling;
 [RegisterSingleton]
 public class MangaJaNaiWorkerClient(
     IOnnxUpscaleEngine upscaleEngine,
+    IOnnxSessionFactory sessionFactory,
     ILogger<MangaJaNaiWorkerClient> logger
 ) : IMangaJaNaiWorkerClient, IHostedService
 {
@@ -91,6 +93,7 @@ public class MangaJaNaiWorkerClient(
             request.Id,
             sw.Elapsed.TotalSeconds
         );
+        await ReleaseGpuCacheAsync(CancellationToken.None);
         return new UpscaleJobResult(request.Id, "success", files, sw.Elapsed.TotalSeconds);
     }
 
@@ -167,6 +170,7 @@ public class MangaJaNaiWorkerClient(
             request.Id,
             sw.Elapsed.TotalSeconds
         );
+        await ReleaseGpuCacheAsync(CancellationToken.None);
         return new UpscaleJobResult(request.Id, "success", files, sw.Elapsed.TotalSeconds);
     }
 
@@ -175,8 +179,21 @@ public class MangaJaNaiWorkerClient(
     public Task ShutdownWorkerAsync(bool force, CancellationToken cancellationToken) =>
         Task.CompletedTask;
 
-    public Task<bool> ReleaseGpuCacheAsync(CancellationToken cancellationToken) =>
-        Task.FromResult(true);
+    public Task<bool> ReleaseGpuCacheAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            sessionFactory.InvalidateAllSessions();
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            return Task.FromResult(true);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to cleanly release GPU session cache.");
+            return Task.FromResult(false);
+        }
+    }
 
     public static string ToExtension(CompressionFormat format) =>
         format switch

@@ -324,6 +324,38 @@ public static class OnnxTiler
     }
 
     /// <summary>
+    /// Gets the empirically validated maximum safe tile dimension in pixels for a given architecture and scale,
+    /// preventing execution provider GPU memory allocations from exceeding driver chunk sizes and spilling into GTT.
+    /// </summary>
+    public static int GetMaxTileSizeForArchitecture(ModelArchitecture architecture, int scale)
+    {
+        if (scale <= 2)
+        {
+            return architecture switch
+            {
+                ModelArchitecture.Span => 1280,
+                ModelArchitecture.Esrgan => 896,
+                ModelArchitecture.FdatM => 640,
+                ModelArchitecture.FdatXl => 512,
+                ModelArchitecture.Dat2 => 512,
+                ModelArchitecture.HatL => 384,
+                _ => 896,
+            };
+        }
+
+        return architecture switch
+        {
+            ModelArchitecture.Span => 1024,
+            ModelArchitecture.Esrgan => 448,
+            ModelArchitecture.FdatM => 384,
+            ModelArchitecture.FdatXl => 320,
+            ModelArchitecture.Dat2 => 256,
+            ModelArchitecture.HatL => 256,
+            _ => 448,
+        };
+    }
+
+    /// <summary>
     /// Estimates peak activation memory in bytes required to upscale an image of the given dimensions.
     /// </summary>
     public static long EstimatePeakMemoryBytes(
@@ -345,7 +377,7 @@ public static class OnnxTiler
     /// <summary>
     /// Estimates a safe maximum tile dimension in pixels based on model architecture, scale,
     /// image dimensions, precision (FP16/FP32), and available memory budget.
-    /// If the whole image fits safely within the budget, returns 0 (no tiling needed).
+    /// If the whole image fits safely within the budget and architecture limits, returns 0 (no tiling needed).
     /// </summary>
     public static int EstimateTileSize(
         int width,
@@ -357,6 +389,9 @@ public static class OnnxTiler
         bool isFp16 = false
     )
     {
+        var arch = DetectArchitecture(modelNameOrPath);
+        int maxAllowed = GetMaxTileSizeForArchitecture(arch, scale);
+
         long peakMemory = EstimatePeakMemoryBytes(
             width,
             height,
@@ -367,28 +402,18 @@ public static class OnnxTiler
         );
         if (peakMemory <= memoryBudgetBytes)
         {
-            return 0; // Whole image fits within budget (single pass)!
+            return 0; // Whole image fits safely within budget (single pass)!
         }
 
-        var arch = DetectArchitecture(modelNameOrPath);
         double multiplier = GetMemoryMultiplier(arch, scale, modelSizeBytes);
         int elementSize = isFp16 ? 2 : 4;
 
         double tilePixels = memoryBudgetBytes / (3.0 * elementSize * multiplier);
         int tileDim = (int)Math.Sqrt(Math.Max(16.0, tilePixels));
 
-        // Upper limit per architecture to avoid TTM / arena memory pressure
-        int maxAllowed = arch switch
-        {
-            ModelArchitecture.Esrgan or ModelArchitecture.HatL or ModelArchitecture.Dat2 => 512,
-            ModelArchitecture.FdatXl => 640,
-            ModelArchitecture.FdatM => 768,
-            _ => 1024,
-        };
-
-        // Snap to multiple of 64, clamped between 256 and maxAllowed
+        // Snap to multiple of 64, clamped between architecture safe limits
         int snapped = (tileDim / 64) * 64;
-        return Math.Clamp(snapped, 256, maxAllowed);
+        return Math.Clamp(snapped, Math.Min(256, maxAllowed), maxAllowed);
     }
 
     /// <summary>
@@ -557,6 +582,14 @@ public static class OnnxTiler
             return UpscaleTile(rgbBytes, width, height, scale, session, cancellationToken);
         }
 
+        // Determine uniform padded dimensions across all tiles in this image.
+        // Passing uniform tensor shapes to ONNX Runtime (WebGPU / Dawn EP) prevents
+        // per-tile buffer re-allocation and memory arena accumulation in Vulkan VRAM/GTT.
+        int maxPaddedW = tileSizeX + 2 * overlap;
+        int maxPaddedH = tileSizeY + 2 * overlap;
+        int uniformTargetDim = Math.Max(maxPaddedW, maxPaddedH);
+        int uniformTargetSize = ((uniformTargetDim + 63) / 64) * 64;
+
         var imageBlender = new TileBlender(outWidth, outHeight, 3, BlendDirection.Vertical);
 
         for (int y = 0; y < tileCountY; y++)
@@ -597,7 +630,9 @@ public static class OnnxTiler
                     paddedH,
                     scale,
                     session,
-                    cancellationToken
+                    cancellationToken,
+                    targetW: uniformTargetSize,
+                    targetH: uniformTargetSize
                 );
 
                 var tileOverlap = new TileOverlap(padLeft * scale, padRight * scale);
@@ -610,7 +645,7 @@ public static class OnnxTiler
         return imageBlender.GetResult();
     }
 
-    private static bool IsMemoryException(Exception ex)
+    public static bool IsMemoryException(Exception ex)
     {
         if (ex is OutOfMemoryException)
         {
@@ -669,18 +704,20 @@ public static class OnnxTiler
         int tileH,
         int scale,
         InferenceSession session,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        int targetW = 0,
+        int targetH = 0
     )
     {
         cancellationToken.ThrowIfCancellationRequested();
 
         int padH = (16 - (tileH % 16)) % 16;
         int padW = (16 - (tileW % 16)) % 16;
-        int paddedW = tileW + padW;
-        int paddedH = tileH + padH;
+        int paddedW = Math.Max(targetW, tileW + padW);
+        int paddedH = Math.Max(targetH, tileH + padH);
 
         byte[] paddedInput;
-        if (padH == 0 && padW == 0)
+        if (paddedH == tileH && paddedW == tileW)
         {
             paddedInput = tileBytes;
         }

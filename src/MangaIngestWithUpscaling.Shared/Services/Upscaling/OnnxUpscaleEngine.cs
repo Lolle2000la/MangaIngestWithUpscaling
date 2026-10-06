@@ -111,33 +111,55 @@ public class OnnxUpscaleEngine(
                 );
 
                 byte[] upscaledBytes;
-                try
+                int attemptTileSize = effectiveTileSize;
+                while (true)
                 {
-                    upscaledBytes = OnnxTiler.UpscaleRgb(
-                        inputBytes,
-                        origWidth,
-                        origHeight,
-                        scale,
-                        session,
-                        tileSize: effectiveTileSize,
-                        cancellationToken: cancellationToken
-                    );
-                }
-                catch (Exception)
-                {
-                    sessionFactory.InvalidateSession(modelPath);
-                    throw;
+                    try
+                    {
+                        session = sessionFactory.GetOrCreateSession(modelPath);
+                        upscaledBytes = OnnxTiler.UpscaleRgb(
+                            inputBytes,
+                            origWidth,
+                            origHeight,
+                            scale,
+                            session,
+                            tileSize: attemptTileSize,
+                            cancellationToken: cancellationToken
+                        );
+                        break;
+                    }
+                    catch (Exception ex)
+                        when (OnnxTiler.IsMemoryException(ex) && attemptTileSize > 128)
+                    {
+                        logger.LogWarning(
+                            ex,
+                            "Memory pressure encountered upscaling {Input} with tile size {TileSize}. Halving tile size and recreating session.",
+                            Path.GetFileName(inputPath),
+                            attemptTileSize
+                        );
+                        sessionFactory.InvalidateSession(modelPath);
+                        attemptTileSize = Math.Max(128, attemptTileSize / 2);
+                        GC.Collect();
+                        GC.WaitForPendingFinalizers();
+                    }
+                    catch (Exception)
+                    {
+                        sessionFactory.InvalidateSession(modelPath);
+                        throw;
+                    }
                 }
 
                 var (vramAfter, gttAfter) = OnnxTiler.GetGpuMemoryUsage();
-                if (gttAfter > 500L * 1024 * 1024)
+                if (gttAfter > 1000L * 1024 * 1024)
                 {
-                    logger.LogInformation(
-                        "GPU memory pressure for {InputPath}: VRAM {VramMb} MB, GTT {GttMb} MB",
+                    logger.LogWarning(
+                        "GPU memory pressure detected after upscaling {InputPath}: VRAM {VramMb} MB, GTT {GttMb} MB. Trimming GPU session cache.",
                         Path.GetFileName(inputPath),
                         vramAfter / (1024 * 1024),
                         gttAfter / (1024 * 1024)
                     );
+                    sessionFactory.InvalidateSession(modelPath);
+                    GC.Collect();
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
@@ -279,6 +301,11 @@ public class OnnxUpscaleEngine(
             }
 
             File.Move(tempOutCbz, outputCbzPath);
+
+            // Invalidate cached sessions after a chapter completes to return all GPU VRAM and GTT
+            // buffers back to the driver. This guarantees zero cumulative memory creep across chapters.
+            sessionFactory.InvalidateAllSessions();
+            GC.Collect();
         }
         finally
         {

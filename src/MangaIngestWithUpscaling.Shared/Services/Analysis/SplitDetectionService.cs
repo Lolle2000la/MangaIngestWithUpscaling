@@ -29,6 +29,12 @@ public class SplitDetectionService(
         bool releaseUpscalerGpu = true
     )
     {
+        if (releaseUpscalerGpu)
+        {
+            onnxSessionFactory.InvalidateAllSessions();
+            GC.Collect();
+        }
+
         var results = new List<SplitDetectionResult>();
 
         if (File.Exists(inputPath))

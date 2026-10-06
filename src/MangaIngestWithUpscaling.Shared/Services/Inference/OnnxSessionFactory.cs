@@ -49,6 +49,16 @@ public sealed class OnnxSessionFactory(
         }
     }
 
+    public void InvalidateAllSessions()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        foreach (var key in _sessions.Keys.ToList())
+        {
+            InvalidateSession(key);
+        }
+    }
+
     public InferenceSession CreateSession(string modelPath)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
