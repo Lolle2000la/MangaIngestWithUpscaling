@@ -85,4 +85,28 @@ public class OnnxSessionFactoryTests
         Assert.NotNull(session);
         Assert.NotEmpty(session.InputMetadata);
     }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public void CreateSession_MigraphxBackend_CreatesOrFallsBackSuccessfully()
+    {
+        if (!File.Exists(TestModelPath))
+        {
+            return;
+        }
+
+        var config = Options.Create(
+            new UpscalerConfig
+            {
+                UseCPU = false,
+                PreferredGpuBackend = GpuBackend.MIGraphX,
+                SelectedDeviceIndex = 1,
+            }
+        );
+        using var factory = new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance);
+
+        using InferenceSession session = factory.CreateSession(TestModelPath);
+        Assert.NotNull(session);
+        Assert.NotEmpty(session.InputMetadata);
+    }
 }
