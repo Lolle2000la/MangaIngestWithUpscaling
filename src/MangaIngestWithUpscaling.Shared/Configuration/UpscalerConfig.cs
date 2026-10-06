@@ -3,6 +3,7 @@ namespace MangaIngestWithUpscaling.Shared.Configuration;
 public enum GpuBackend
 {
     Auto,
+    WebGPU,
     MIGraphX,
     DirectML,
     CUDA,

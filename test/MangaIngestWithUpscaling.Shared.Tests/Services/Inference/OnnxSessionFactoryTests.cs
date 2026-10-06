@@ -109,4 +109,52 @@ public class OnnxSessionFactoryTests
         Assert.NotNull(session);
         Assert.NotEmpty(session.InputMetadata);
     }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public void CreateSession_WebGpuBackend_CreatesOrFallsBackSuccessfully()
+    {
+        if (!File.Exists(TestModelPath))
+        {
+            return;
+        }
+
+        var config = Options.Create(
+            new UpscalerConfig
+            {
+                UseCPU = false,
+                PreferredGpuBackend = GpuBackend.WebGPU,
+                SelectedDeviceIndex = 1,
+            }
+        );
+        using var factory = new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance);
+
+        using InferenceSession session = factory.CreateSession(TestModelPath);
+        Assert.NotNull(session);
+        Assert.NotEmpty(session.InputMetadata);
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public void CreateSession_AutoBackend_CreatesOrFallsBackSuccessfully()
+    {
+        if (!File.Exists(TestModelPath))
+        {
+            return;
+        }
+
+        var config = Options.Create(
+            new UpscalerConfig
+            {
+                UseCPU = false,
+                PreferredGpuBackend = GpuBackend.Auto,
+                SelectedDeviceIndex = 1,
+            }
+        );
+        using var factory = new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance);
+
+        using InferenceSession session = factory.CreateSession(TestModelPath);
+        Assert.NotNull(session);
+        Assert.NotEmpty(session.InputMetadata);
+    }
 }

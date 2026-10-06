@@ -4,6 +4,7 @@ using MangaIngestWithUpscaling.Shared.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.ML.OnnxRuntime;
+using Microsoft.ML.OnnxRuntime.EP.WebGpu;
 
 namespace MangaIngestWithUpscaling.Shared.Services.Inference;
 
@@ -13,6 +14,8 @@ public sealed class OnnxSessionFactory(
     ILogger<OnnxSessionFactory> logger
 ) : IOnnxSessionFactory
 {
+    private static readonly Lock WebGpuInitLock = new();
+    private static bool _webGpuRegistered;
     private readonly ConcurrentDictionary<string, InferenceSession> _sessions = new();
     private bool _disposed;
 
@@ -91,6 +94,11 @@ public sealed class OnnxSessionFactory(
     {
         GpuBackend backend = currentConfig.PreferredGpuBackend;
 
+        if (backend == GpuBackend.WebGPU)
+        {
+            return TryConfigureWebGpu(options, deviceId, modelName);
+        }
+
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
         {
             if (backend is GpuBackend.CUDA or GpuBackend.CUDA_12_8)
@@ -98,28 +106,43 @@ public sealed class OnnxSessionFactory(
                 return TryConfigureCuda(options, deviceId, modelName);
             }
 
-            if (backend is GpuBackend.XPU or GpuBackend.OpenVINO)
-            {
-                return TryConfigureOpenVino(options, deviceId, modelName);
-            }
-
             if (backend is GpuBackend.MIGraphX or GpuBackend.ROCm or GpuBackend.ROCm_GFX120X)
             {
+                logger.LogInformation(
+                    "AMD GPU backend ({Backend}) configured; utilizing WebGPU (Vulkan) execution provider for {Model}.",
+                    backend,
+                    modelName
+                );
+                if (TryConfigureWebGpu(options, deviceId, modelName))
+                {
+                    return true;
+                }
+
                 return TryConfigureMIGraphX(options, deviceId, modelName);
             }
 
-            // GpuBackend.Auto on Linux: Try CUDA -> OpenVINO -> MIGraphX
+            if (backend is GpuBackend.XPU or GpuBackend.OpenVINO)
+            {
+                logger.LogInformation(
+                    "Intel backend ({Backend}) configured; utilizing WebGPU (Vulkan) execution provider for {Model}.",
+                    backend,
+                    modelName
+                );
+                if (TryConfigureWebGpu(options, deviceId, modelName))
+                {
+                    return true;
+                }
+
+                return TryConfigureOpenVino(options, deviceId, modelName);
+            }
+
+            // GpuBackend.Auto on Linux: Try CUDA -> WebGPU -> CPU
             if (TryConfigureCuda(options, deviceId, modelName))
             {
                 return true;
             }
 
-            if (TryConfigureOpenVino(options, deviceId, modelName))
-            {
-                return true;
-            }
-
-            if (TryConfigureMIGraphX(options, deviceId, modelName))
+            if (TryConfigureWebGpu(options, deviceId, modelName))
             {
                 return true;
             }
@@ -145,7 +168,17 @@ public sealed class OnnxSessionFactory(
                 }
             }
 
+            if (TryConfigureWebGpu(options, deviceId, modelName))
+            {
+                return true;
+            }
+
             return TryConfigureDirectML(options, deviceId, modelName);
+        }
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            return TryConfigureWebGpu(options, deviceId, modelName);
         }
 
         return false;
@@ -162,6 +195,18 @@ public sealed class OnnxSessionFactory(
             );
             options.AppendExecutionProvider_CUDA(deviceId);
             return true;
+        }
+        catch (EntryPointNotFoundException)
+        {
+            logger.LogDebug(
+                "CUDA execution provider entry point not found in this ONNX Runtime build."
+            );
+            return false;
+        }
+        catch (DllNotFoundException)
+        {
+            logger.LogDebug("CUDA runtime libraries not found on this system.");
+            return false;
         }
         catch (Exception ex)
         {
@@ -186,6 +231,18 @@ public sealed class OnnxSessionFactory(
             options.AppendExecutionProvider_OpenVINO(targetDevice);
             return true;
         }
+        catch (EntryPointNotFoundException)
+        {
+            logger.LogDebug(
+                "OpenVINO execution provider entry point not found in this ONNX Runtime build."
+            );
+            return false;
+        }
+        catch (DllNotFoundException)
+        {
+            logger.LogDebug("OpenVINO runtime libraries not found on this system.");
+            return false;
+        }
         catch (Exception ex)
         {
             logger.LogWarning(
@@ -207,6 +264,18 @@ public sealed class OnnxSessionFactory(
             );
             options.AppendExecutionProvider_MIGraphX(deviceId);
             return true;
+        }
+        catch (EntryPointNotFoundException)
+        {
+            logger.LogDebug(
+                "MIGraphX execution provider entry point not found in this ONNX Runtime build."
+            );
+            return false;
+        }
+        catch (DllNotFoundException)
+        {
+            logger.LogDebug("MIGraphX runtime libraries not found on this system.");
+            return false;
         }
         catch (Exception ex)
         {
@@ -235,6 +304,88 @@ public sealed class OnnxSessionFactory(
             logger.LogWarning(
                 ex,
                 "Failed to append DirectML execution provider. Will try CPU fallback."
+            );
+            return false;
+        }
+    }
+
+    private bool TryConfigureWebGpu(SessionOptions options, int deviceId, string modelName)
+    {
+        try
+        {
+            var env = OrtEnv.Instance();
+            if (!_webGpuRegistered)
+            {
+                lock (WebGpuInitLock)
+                {
+                    if (!_webGpuRegistered)
+                    {
+                        string libPath = WebGpuEp.GetLibraryPath();
+                        if (File.Exists(libPath))
+                        {
+                            env.RegisterExecutionProviderLibrary("webgpu_ep", libPath);
+                            _webGpuRegistered = true;
+                        }
+                        else
+                        {
+                            logger.LogWarning("WebGPU library not found at: {LibPath}", libPath);
+                            return false;
+                        }
+                    }
+                }
+            }
+
+            OrtEpDevice? webGpuDevice = null;
+            int foundIndex = 0;
+            foreach (var d in env.GetEpDevices())
+            {
+                if (d.EpName == WebGpuEp.GetEpName())
+                {
+                    if (foundIndex == deviceId)
+                    {
+                        webGpuDevice = d;
+                        break;
+                    }
+                    foundIndex++;
+                }
+            }
+
+            if (webGpuDevice is null && foundIndex > 0)
+            {
+                foreach (var d in env.GetEpDevices())
+                {
+                    if (d.EpName == WebGpuEp.GetEpName())
+                    {
+                        webGpuDevice = d;
+                        break;
+                    }
+                }
+            }
+
+            if (webGpuDevice is null)
+            {
+                logger.LogWarning("No WebGPU compatible device found for {Model}.", modelName);
+                return false;
+            }
+
+            logger.LogInformation(
+                "Configuring WebGPU execution provider ({Device}) for {Model}",
+                webGpuDevice.EpName,
+                modelName
+            );
+
+            options.AppendExecutionProvider(
+                env,
+                new[] { webGpuDevice },
+                new Dictionary<string, string>()
+            );
+            return true;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to append WebGPU execution provider. Will try next provider or CPU fallback."
             );
             return false;
         }

@@ -178,11 +178,12 @@ public class SplitDetectionService(
                         .AsTensor<float>();
 
                     const int edgeMargin = 100;
+                    bool applyEdgeMargin = edgeMargin > 0 && actualHeight > edgeMargin * 2;
                     var splits = new List<DetectedSplit>();
 
                     for (int y = 0; y < actualHeight; y++)
                     {
-                        if (edgeMargin > 0 && (y < edgeMargin || y >= actualHeight - edgeMargin))
+                        if (applyEdgeMargin && (y < edgeMargin || y >= actualHeight - edgeMargin))
                         {
                             continue;
                         }

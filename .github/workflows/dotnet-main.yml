@@ -22,10 +22,7 @@ on:
       - "MangaIngestWithUpscaling.sln"
       - "docker-compose.yml"
       - "Dockerfile"
-      - "rocm.Dockerfile"
-      - "remoteonly.Dockerfile"
-      - "cuda128.Dockerfile"
-      - "xpu.Dockerfile"
+      - "cuda.Dockerfile"
 
 jobs:
   build:

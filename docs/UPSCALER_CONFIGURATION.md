@@ -15,20 +15,20 @@ first as an **environment variable** and then as the equivalent `appsettings.jso
 
 ## Quick-start docker-compose snippets
 
-### NVIDIA GPU (CUDA 11.8 — recommended default)
+### NVIDIA GPU (CUDA)
 
 ```yaml
 services:
   mangaingestwithupscaling:
-    image: ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest
+    image: ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest-cuda
     restart: unless-stopped
     environment:
       TZ: Europe/Berlin                              # your timezone
-      Ingest_Upscaler__PreferredGpuBackend: CUDA    # NVIDIA (CUDA 11.8)
+      Ingest_Upscaler__PreferredGpuBackend: CUDA    # NVIDIA CUDA
       Ingest_Upscaler__UseFp16: "true"              # recommended for modern GPUs
       Ingest_Upscaler__SelectedDeviceIndex: "1"     # device index (0 = CPU, 1 = first GPU)
     volumes:
-      - ./data:/data       # database, logs, and Python environment
+      - ./data:/data       # database and logs
       - ./models:/models   # upscaling models
       - ./ingest:/ingest
       - ./library:/library
@@ -43,24 +43,19 @@ services:
               capabilities: [gpu]
 ```
 
-### AMD GPU (ROCm)
+### Universal (AMD Radeon / Intel / CPU)
 
 ```yaml
+services:
+  mangaingestwithupscaling:
+    image: ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest
+    restart: unless-stopped
     environment:
-      Ingest_Upscaler__PreferredGpuBackend: ROCm
+      Ingest_Upscaler__PreferredGpuBackend: Auto
       Ingest_Upscaler__UseFp16: "true"
+      Ingest_Upscaler__SelectedDeviceIndex: "1"
     devices:
-      - /dev/kfd
-      - /dev/dri
-    security_opt:
-      - seccomp:unconfined
-```
-
-### Intel Arc GPU (XPU)
-
-```yaml
-    environment:
-      Ingest_Upscaler__PreferredGpuBackend: XPU
+      - /dev/dri # GPU access for Vulkan (Mesa RADV / ANV)
 ```
 
 ### CPU-only (no GPU)
@@ -92,8 +87,8 @@ The environment variable for each setting follows the ASP.NET Core convention:
 
 | Setting | ENV variable | Default | Description |
 |---|---|---|---|
-| `PreferredGpuBackend` | `Ingest_Upscaler__PreferredGpuBackend` | `Auto` | Which GPU backend PyTorch should use. See [values](#preferredgpubackend-values). |
-| `SelectedDeviceIndex` | `Ingest_Upscaler__SelectedDeviceIndex` | `1` | Device index passed to PyTorch: `0` selects CPU, `1` is the first GPU, `2` the second, and so on. The resident split-detection server follows the same setting (mapped to `cuda:N` / `xpu:N` / `cpu`), so both backends run on the same device. |
+| `PreferredGpuBackend` | `Ingest_Upscaler__PreferredGpuBackend` | `Auto` | Which GPU execution provider to use. See [values](#preferredgpubackend-values). |
+| `SelectedDeviceIndex` | `Ingest_Upscaler__SelectedDeviceIndex` | `1` | Device index: `0` selects CPU, `1` is the first GPU, `2` the second, and so on. |
 | `UseFp16` | `Ingest_Upscaler__UseFp16` | `true` | Use half-precision (FP16) inference. Recommended for modern GPUs; turn off for CPU or older hardware. |
 | `UseCPU` | `Ingest_Upscaler__UseCPU` | `false` | Force CPU inference even when a GPU is available. |
 
@@ -101,12 +96,9 @@ The environment variable for each setting follows the ASP.NET Core convention:
 
 | Value | Backend |
 |---|---|
-| `Auto` | Detect automatically via OpenGL (default) |
-| `CUDA` | NVIDIA — CUDA 11.8 |
-| `CUDA_12_8` | NVIDIA — CUDA 12.8 (requires ≥ 12.8 drivers) |
-| `ROCm` | AMD |
-| `ROCm_GFX120X` | AMD 9000-series nightly ROCm build |
-| `XPU` | Intel Arc / Xe discrete |
+| `Auto` | Select best available execution provider automatically (default) |
+| `CUDA` | NVIDIA — CUDA & TensorRT |
+| `WebGPU` | AMD / Intel / Universal — WebGPU via Mesa RADV / ANV Vulkan |
 | `CPU` | CPU-only fallback |
 
 ### Storage settings
@@ -114,17 +106,6 @@ The environment variable for each setting follows the ASP.NET Core convention:
 | Setting | ENV variable | Default | Description |
 |---|---|---|---|
 | `ModelsDirectory` | `Ingest_Upscaler__ModelsDirectory` | `/models/MangaJaNai` (Docker) | Directory where upscaling models are stored. |
-| `PythonEnvironmentDirectory` | `Ingest_Upscaler__PythonEnvironmentDirectory` | `/data/pyenv` (Docker) | Directory where the Python/PyTorch environment is installed on first startup. Map to a separate volume if you want to store it on a different disk. |
-
-Example — store the Python environment on a separate (larger) volume:
-
-```yaml
-    volumes:
-      - ./data:/data
-      - /fast-ssd/pyenv:/pyenv   # separate volume
-    environment:
-      Ingest_Upscaler__PythonEnvironmentDirectory: /pyenv
-```
 
 ### Preprocessing settings
 

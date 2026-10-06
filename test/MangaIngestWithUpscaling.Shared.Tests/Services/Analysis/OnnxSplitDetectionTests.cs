@@ -70,4 +70,56 @@ public class OnnxSplitDetectionTests
         Assert.Equal(1058, result.OriginalHeight);
         Assert.NotNull(result.Splits);
     }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task DetectSplitsAsync_OnVerticalStrip_MatchesPythonParity()
+    {
+        string stripPath = Path.Combine(
+            AppContext.BaseDirectory,
+            "../../../../../test_data/sample_vertical_strip.jpg"
+        );
+        if (!File.Exists(stripPath))
+        {
+            stripPath = "test_data/sample_vertical_strip.jpg";
+            if (!File.Exists(stripPath))
+            {
+                return;
+            }
+        }
+
+        string modelPath = SplitDetectionLayout.ResolveModelPath();
+        if (!File.Exists(modelPath))
+        {
+            return;
+        }
+
+        var config = Options.Create(new UpscalerConfig { UseCPU = true });
+        using var factory = new OnnxSessionFactory(config, NullLogger<OnnxSessionFactory>.Instance);
+        var localizer = Substitute.For<IStringLocalizer<SplitDetectionService>>();
+
+        var service = new SplitDetectionService(
+            factory,
+            NullLogger<SplitDetectionService>.Instance,
+            localizer,
+            config
+        );
+
+        List<SplitDetectionResult> results = await service.DetectSplitsAsync(
+            stripPath,
+            cancellationToken: TestContext.Current.CancellationToken
+        );
+
+        Assert.Single(results);
+        var result = results[0];
+        Assert.Null(result.Error);
+        Assert.Equal(1125, result.OriginalWidth);
+        Assert.Equal(3200, result.OriginalHeight);
+        Assert.Single(result.Splits);
+
+        var split = result.Splits[0];
+        // Python detect_breaks.py found y_original = 1599, confidence = 0.9329
+        Assert.InRange(split.YOriginal, 1595, 1605);
+        Assert.InRange(split.Confidence, 0.90, 0.96);
+    }
 }
