@@ -7,7 +7,10 @@
     <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>
     <!-- ONNX Runtime Backend Selection: Cpu (default), Cuda, Managed -->
     <OnnxRuntimeFlavor Condition="'$(OnnxRuntimeFlavor)' == ''">Cpu</OnnxRuntimeFlavor>
-    <OnnxRuntimeVersion>1.29.0</OnnxRuntimeVersion>
+    <OnnxRuntimeVersion
+      Condition="'$(OnnxRuntimeFlavor)' == 'Managed' and '$(OnnxRuntimeVersion)' == ''"
+      >1.23.2</OnnxRuntimeVersion>
+    <OnnxRuntimeVersion Condition="'$(OnnxRuntimeVersion)' == ''">1.29.0</OnnxRuntimeVersion>
   </PropertyGroup>
 
   <ItemGroup Condition="'$(OnnxRuntimeFlavor)' == 'Cpu'">

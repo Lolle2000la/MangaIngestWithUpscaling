@@ -28,10 +28,14 @@ ENV DOTNET_ROOT=/usr/share/dotnet
 ENV PATH="/usr/share/dotnet:${PATH}"
 ENV LD_LIBRARY_PATH="/opt/rocm/lib:${LD_LIBRARY_PATH}"
 
-# Install dependencies for NetVips and .NET globalization
+# Install dependencies for NetVips, .NET globalization, and official AMD ONNX Runtime with MIGraphX
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget ca-certificates libicu-dev \
+    wget ca-certificates unzip libicu-dev \
     libjpeg-dev zlib1g-dev libtiff-dev libwebp-dev libopenjp2-7-dev && \
+    wget -q https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2.4/onnxruntime_migraphx-1.23.2-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl -O /tmp/ort.whl && \
+    unzip -j /tmp/ort.whl 'onnxruntime/capi/libonnxruntime*' -d /usr/lib/ && \
+    ln -sf /usr/lib/libonnxruntime.so.1.23.2 /usr/lib/libonnxruntime.so && \
+    rm -f /tmp/ort.whl && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=publish /app/publish .
@@ -39,6 +43,8 @@ COPY --from=publish /app/publish .
 ENV Ingest_Upscaler__SelectedDeviceIndex=1
 ENV Ingest_Upscaler__PreferredGpuBackend=ROCm
 ENV Ingest_Upscaler__ModelsDirectory=/models/MangaJaNai
+ENV ORT_MIGRAPHX_MODEL_CACHE_PATH=/models/cache
+ENV MIOPEN_FIND_MODE=2
 VOLUME /models
 VOLUME /data
 ENV ASPNETCORE_ENVIRONMENT=Production

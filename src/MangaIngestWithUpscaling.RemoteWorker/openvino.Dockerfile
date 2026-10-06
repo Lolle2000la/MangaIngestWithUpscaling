@@ -29,10 +29,12 @@ ENV DOTNET_ROOT=/usr/share/dotnet
 ENV PATH="/usr/share/dotnet:${PATH}"
 ENV LD_LIBRARY_PATH="/opt/intel/openvino/runtime/lib/intel64:${LD_LIBRARY_PATH}"
 
-# Install dependencies for NetVips and .NET globalization
+# Install dependencies for NetVips, .NET globalization, and official Intel ONNX Runtime with OpenVINO
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    wget ca-certificates libicu-dev \
+    wget ca-certificates python3-pip unzip libicu-dev \
     libjpeg-dev zlib1g-dev libtiff-dev libwebp-dev libopenjp2-7-dev && \
+    pip install --break-system-packages --no-cache-dir onnxruntime-openvino && \
+    cp -P /usr/local/lib/python3.12/dist-packages/onnxruntime/capi/libonnxruntime* /usr/lib/ 2>/dev/null || true && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=publish /app/publish .
@@ -40,6 +42,7 @@ COPY --from=publish /app/publish .
 ENV Ingest_Upscaler__SelectedDeviceIndex=1
 ENV Ingest_Upscaler__PreferredGpuBackend=OpenVINO
 ENV Ingest_Upscaler__ModelsDirectory=/models/MangaJaNai
+ENV ORT_OPENVINO_CACHE_DIR=/models/cache
 VOLUME /models
 VOLUME /data
 ENV ASPNETCORE_ENVIRONMENT=Production
