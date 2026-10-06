@@ -1,4 +1,5 @@
 using MangaIngestWithUpscaling.Shared.Configuration;
+using MangaIngestWithUpscaling.Shared.Services.Analysis;
 using MangaIngestWithUpscaling.Shared.Services.Inference;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
@@ -9,18 +10,10 @@ namespace MangaIngestWithUpscaling.Shared.Tests.Services.Inference;
 
 public class OnnxSessionFactoryTests
 {
-    private static readonly string TestModelPath = Path.Combine(
-        AppContext.BaseDirectory,
-        "backend",
-        "src",
-        "manga-vert-split-nn",
-        "models",
-        "BCE Only (v8)",
-        "final_deployment",
-        "page_break_detector.onnx"
-    );
+    private static readonly string TestModelPath = SplitDetectionLayout.ResolveModelPath();
 
     [Fact]
+    [Trait("Category", "Unit")]
     public void CreateSession_WithMissingFile_ThrowsFileNotFoundException()
     {
         var config = Options.Create(new UpscalerConfig { UseCPU = true });
@@ -32,6 +25,7 @@ public class OnnxSessionFactoryTests
     }
 
     [Fact]
+    [Trait("Category", "Integration")]
     public void CreateSession_Cpu_LoadsExistingOnnxModelSuccessfully()
     {
         if (!File.Exists(TestModelPath))
@@ -50,6 +44,7 @@ public class OnnxSessionFactoryTests
     }
 
     [Fact]
+    [Trait("Category", "Integration")]
     public void GetOrCreateSession_ReturnsCachedInstance()
     {
         if (!File.Exists(TestModelPath))

@@ -38,9 +38,11 @@ public class OnnxSplitDetectionTests
     }
 
     [Fact]
+    [Trait("Category", "Integration")]
     public async Task DetectSplitsAsync_OnSampleImage_ExecutesSuccessfully()
     {
-        if (!File.Exists(TestImagePath))
+        string modelPath = SplitDetectionLayout.ResolveModelPath();
+        if (!File.Exists(TestImagePath) || !File.Exists(modelPath))
         {
             return;
         }

@@ -76,4 +76,32 @@ public class SplitDetectionServiceTests : IDisposable
             )
         );
     }
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task DetectSplitsAsync_WhenModelDoesNotExist_ThrowsFileNotFoundException()
+    {
+        var factory = Substitute.For<IOnnxSessionFactory>();
+        var localizer = Substitute.For<IStringLocalizer<SplitDetectionService>>();
+        var config = Options.Create(
+            new UpscalerConfig { ModelsDirectory = Path.Combine(_root, "empty_models") }
+        );
+
+        var service = new SplitDetectionService(
+            factory,
+            NullLogger<SplitDetectionService>.Instance,
+            localizer,
+            config
+        );
+
+        string image = Path.Combine(_root, "sample.png");
+        await File.WriteAllBytesAsync(image, [1, 2, 3], TestContext.Current.CancellationToken);
+
+        await Assert.ThrowsAsync<FileNotFoundException>(() =>
+            service.DetectSplitsAsync(
+                image,
+                cancellationToken: TestContext.Current.CancellationToken
+            )
+        );
+    }
 }

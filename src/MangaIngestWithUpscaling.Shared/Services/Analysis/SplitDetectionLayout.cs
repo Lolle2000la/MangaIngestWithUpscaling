@@ -30,46 +30,50 @@ public static class SplitDetectionLayout
             }
         }
 
-        string directModelsPath = Path.Combine(
-            AppContext.BaseDirectory,
-            "models",
-            "page_break_detector.onnx"
-        );
-        if (File.Exists(directModelsPath))
-        {
-            return directModelsPath;
-        }
-
         if (File.Exists(OnnxModelPath))
         {
             return OnnxModelPath;
         }
 
-        string currentTestData = Path.Combine(
-            Directory.GetCurrentDirectory(),
-            "test_data",
-            "models",
-            "page_break_detector.onnx"
-        );
-        if (File.Exists(currentTestData))
+        // Only search host/repository fallback locations when running under the default root.
+        if (Root == AppContext.BaseDirectory)
         {
-            return currentTestData;
-        }
+            string directModelsPath = Path.Combine(
+                AppContext.BaseDirectory,
+                "models",
+                "page_break_detector.onnx"
+            );
+            if (File.Exists(directModelsPath))
+            {
+                return directModelsPath;
+            }
 
-        string upwardTestData = Path.Combine(
-            AppContext.BaseDirectory,
-            "..",
-            "..",
-            "..",
-            "..",
-            "..",
-            "test_data",
-            "models",
-            "page_break_detector.onnx"
-        );
-        if (File.Exists(upwardTestData))
-        {
-            return Path.GetFullPath(upwardTestData);
+            string currentTestData = Path.Combine(
+                Directory.GetCurrentDirectory(),
+                "test_data",
+                "models",
+                "page_break_detector.onnx"
+            );
+            if (File.Exists(currentTestData))
+            {
+                return currentTestData;
+            }
+
+            string upwardTestData = Path.Combine(
+                AppContext.BaseDirectory,
+                "..",
+                "..",
+                "..",
+                "..",
+                "..",
+                "test_data",
+                "models",
+                "page_break_detector.onnx"
+            );
+            if (File.Exists(upwardTestData))
+            {
+                return Path.GetFullPath(upwardTestData);
+            }
         }
 
         return !string.IsNullOrEmpty(modelsDirectory)
