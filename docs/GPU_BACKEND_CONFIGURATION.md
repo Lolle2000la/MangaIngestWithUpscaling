@@ -11,12 +11,12 @@ Hardware acceleration is achieved through native ONNX **Execution Providers (EP)
 
 ## Docker Image Flavors
 
-| Image Tag | Execution Provider | Target Hardware | Requirements |
-|---|---|---|---|
-| `:latest` / `:latest-dev` | **WebGPU** (Vulkan via Mesa RADV / ANV) + CPU fallback | AMD Radeon (RX 5000/6000/7000/9000), Intel Arc / Iris Xe, CPU fallback | Host GPU device access (`/dev/dri`) |
-| `:latest-cuda` / `:latest-dev-cuda` | **CUDA** & **TensorRT** | NVIDIA GeForce GTX/RTX, Quadro, Tesla | NVIDIA driver + `nvidia-container-toolkit` |
+| Image Tag | Execution Provider | Target Hardware | Requirements | Pre-configured `PreferredGpuBackend` |
+|---|---|---|---|---|
+| `:latest` / `:latest-dev` | **WebGPU** (Vulkan via Mesa RADV / ANV) + CPU fallback | AMD Radeon (RX 5000/6000/7000/9000), Intel Arc / Iris Xe, CPU fallback | Host GPU device access (`/dev/dri`) | `WebGPU` *(built-in default)* |
+| `:latest-cuda` / `:latest-dev-cuda` | **CUDA** & **TensorRT** | NVIDIA GeForce GTX/RTX, Quadro, Tesla | NVIDIA driver + `nvidia-container-toolkit` | `CUDA` *(built-in default)* |
 
-Both flavor tags are published for both the main web application (`manga-ingest-with-upscaling`) and the standalone remote worker (`manga-ingest-with-upscaling-remote-worker`).
+Both flavor tags are published for both the main web application (`manga-ingest-with-upscaling`) and the standalone remote worker (`manga-ingest-with-upscaling-remote-worker`). Each container image already has `Ingest_Upscaler__PreferredGpuBackend` pre-set to its matching provider, so you do not need to configure it in Docker Compose unless overriding it.
 
 ---
 
@@ -81,7 +81,7 @@ export Ingest_Upscaler__UseCPU=false
 
 ### Universal Image (AMD Radeon / Intel / CPU)
 
-The standard `:latest` image accelerates inference via WebGPU / Vulkan on AMD Radeon and Intel GPUs, with clean CPU fallback if no GPU is available:
+The standard `:latest` image accelerates inference via WebGPU / Vulkan on AMD Radeon and Intel GPUs, with clean CPU fallback if no GPU is available. `PreferredGpuBackend` defaults to `WebGPU` inside this container:
 
 ```yaml
 services:
@@ -90,7 +90,6 @@ services:
     restart: unless-stopped
     environment:
       TZ: Europe/Berlin
-      Ingest_Upscaler__PreferredGpuBackend: Auto
       Ingest_Upscaler__SelectedDeviceIndex: 1
       Ingest_Upscaler__UseFp16: true
     volumes:
@@ -107,7 +106,7 @@ services:
 
 ### NVIDIA GPU (CUDA)
 
-Use the `:latest-cuda` (or `:latest-dev-cuda`) image for native NVIDIA CUDA & TensorRT acceleration:
+Use the `:latest-cuda` (or `:latest-dev-cuda`) image for native NVIDIA CUDA & TensorRT acceleration. `PreferredGpuBackend` defaults to `CUDA` inside this container:
 
 ```yaml
 services:
@@ -116,7 +115,6 @@ services:
     restart: unless-stopped
     environment:
       TZ: Europe/Berlin
-      Ingest_Upscaler__PreferredGpuBackend: CUDA
       Ingest_Upscaler__SelectedDeviceIndex: 1
       Ingest_Upscaler__UseFp16: true
     volumes:

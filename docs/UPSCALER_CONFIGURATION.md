@@ -24,7 +24,6 @@ services:
     restart: unless-stopped
     environment:
       TZ: Europe/Berlin                              # your timezone
-      Ingest_Upscaler__PreferredGpuBackend: CUDA    # NVIDIA CUDA
       Ingest_Upscaler__UseFp16: "true"              # recommended for modern GPUs
       Ingest_Upscaler__SelectedDeviceIndex: "1"     # device index (0 = CPU, 1 = first GPU)
     volumes:
@@ -51,7 +50,6 @@ services:
     image: ghcr.io/lolle2000la/manga-ingest-with-upscaling:latest
     restart: unless-stopped
     environment:
-      Ingest_Upscaler__PreferredGpuBackend: Auto
       Ingest_Upscaler__UseFp16: "true"
       Ingest_Upscaler__SelectedDeviceIndex: "1"
     devices:
@@ -62,7 +60,6 @@ services:
 
 ```yaml
     environment:
-      Ingest_Upscaler__PreferredGpuBackend: CPU
       Ingest_Upscaler__UseCPU: "true"
 ```
 

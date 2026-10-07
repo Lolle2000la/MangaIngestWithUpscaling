@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y \
 	wget libjpeg-dev zlib1g-dev libtiff-dev libwebp-dev libopenjp2-7-dev && \
 	rm -rf /var/lib/apt/lists/*
 ENV Ingest_Upscaler__SelectedDeviceIndex=1
-ENV Ingest_Upscaler__PreferredGpuBackend=CUDA
+ENV Ingest_Upscaler__PreferredGpuBackend=WebGPU
 # configure models save directory
 ENV Ingest_Upscaler__ModelsDirectory=/models/MangaJaNai
 VOLUME /models

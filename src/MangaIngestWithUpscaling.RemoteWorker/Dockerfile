@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libjpeg-dev zlib1g-dev libtiff-dev libwebp-dev libopenjp2-7-dev && \
     rm -rf /var/lib/apt/lists/*
 ENV Ingest_Upscaler__SelectedDeviceIndex=1
-ENV Ingest_Upscaler__PreferredGpuBackend=Auto
+ENV Ingest_Upscaler__PreferredGpuBackend=WebGPU
 
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0-noble AS build
 ARG BUILD_CONFIGURATION=Release
