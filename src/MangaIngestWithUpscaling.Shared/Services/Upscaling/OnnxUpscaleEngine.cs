@@ -116,163 +116,80 @@ public class OnnxUpscaleEngine(
                     gttBefore / (1024 * 1024)
                 );
 
-                bool is10BitAvif = format == CompressionFormat.Avif && config.Value.Enable10BitAvif;
-                if (is10BitAvif)
+                byte[] upscaledBytes;
+                int attemptTileSize = effectiveTileSize;
+                while (true)
                 {
-                    ushort[] upscaledPixels;
-                    int attemptTileSize = effectiveTileSize;
-                    while (true)
+                    try
                     {
-                        try
-                        {
-                            session = sessionFactory.GetOrCreateSession(modelPath);
-                            upscaledPixels = OnnxTiler.UpscaleRgb16(
-                                inputBytes,
-                                origWidth,
-                                origHeight,
-                                scale,
-                                session,
-                                tileSize: attemptTileSize,
-                                cancellationToken: cancellationToken
-                            );
-                            break;
-                        }
-                        catch (Exception ex)
-                            when (OnnxTiler.IsMemoryException(ex) && attemptTileSize > 128)
-                        {
-                            logger.LogWarning(
-                                ex,
-                                "Memory pressure encountered upscaling {Input} with tile size {TileSize}. Halving tile size and recreating session.",
-                                Path.GetFileName(inputPath),
-                                attemptTileSize
-                            );
-                            sessionFactory.InvalidateSession(modelPath);
-                            attemptTileSize = Math.Max(128, attemptTileSize / 2);
-                            GC.Collect();
-                            GC.WaitForPendingFinalizers();
-                        }
-                        catch (Exception)
-                        {
-                            sessionFactory.InvalidateSession(modelPath);
-                            throw;
-                        }
+                        session = sessionFactory.GetOrCreateSession(modelPath);
+                        upscaledBytes = OnnxTiler.UpscaleRgb(
+                            inputBytes,
+                            origWidth,
+                            origHeight,
+                            scale,
+                            session,
+                            tileSize: attemptTileSize,
+                            cancellationToken: cancellationToken
+                        );
+                        break;
                     }
-
-                    var (vramAfter, gttAfter) = OnnxTiler.GetGpuMemoryUsage(deviceId);
-                    if (gttAfter > 1000L * 1024 * 1024)
+                    catch (Exception ex)
+                        when (OnnxTiler.IsMemoryException(ex) && attemptTileSize > 128)
                     {
                         logger.LogWarning(
-                            "Elevated GPU memory detected after upscaling {InputPath}: VRAM {VramMb} MB, GTT {GttMb} MB. Flushing session cache to release memory.",
+                            ex,
+                            "Memory pressure encountered upscaling {Input} with tile size {TileSize}. Halving tile size and recreating session.",
                             Path.GetFileName(inputPath),
-                            vramAfter / (1024 * 1024),
-                            gttAfter / (1024 * 1024)
+                            attemptTileSize
                         );
                         sessionFactory.InvalidateSession(modelPath);
+                        attemptTileSize = Math.Max(128, attemptTileSize / 2);
                         GC.Collect();
+                        GC.WaitForPendingFinalizers();
                     }
-
-                    cancellationToken.ThrowIfCancellationRequested();
-
-                    byte[] rawBytes = MemoryMarshal.AsBytes(upscaledPixels.AsSpan()).ToArray();
-                    using var rawImg = NetVips.Image.NewFromMemory(
-                        rawBytes,
-                        origWidth * scale,
-                        origHeight * scale,
-                        3,
-                        NetVips.Enums.BandFormat.Ushort
-                    );
-                    using var srgbImg = rawImg.Copy(
-                        interpretation: NetVips.Enums.Interpretation.Srgb
-                    );
-
-                    if (isGrayscale)
+                    catch (Exception)
                     {
-                        using var bwImg = srgbImg[0]
-                            .Copy(interpretation: NetVips.Enums.Interpretation.Bw);
-                        SaveImage(bwImg, outputPath, format, quality, enable10BitAvif: true);
+                        sessionFactory.InvalidateSession(modelPath);
+                        throw;
                     }
-                    else
-                    {
-                        SaveImage(srgbImg, outputPath, format, quality, enable10BitAvif: true);
-                    }
+                }
+
+                var (vramAfter, gttAfter) = OnnxTiler.GetGpuMemoryUsage(deviceId);
+                if (gttAfter > 1000L * 1024 * 1024)
+                {
+                    logger.LogWarning(
+                        "Elevated GPU memory detected after upscaling {InputPath}: VRAM {VramMb} MB, GTT {GttMb} MB. Flushing session cache to release memory.",
+                        Path.GetFileName(inputPath),
+                        vramAfter / (1024 * 1024),
+                        gttAfter / (1024 * 1024)
+                    );
+                    sessionFactory.InvalidateSession(modelPath);
+                    GC.Collect();
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+
+                using var outImage = NetVips.Image.NewFromMemory(
+                    upscaledBytes,
+                    origWidth * scale,
+                    origHeight * scale,
+                    3,
+                    NetVips.Enums.BandFormat.Uchar
+                );
+                using var srgbImg = outImage.Copy(
+                    interpretation: NetVips.Enums.Interpretation.Srgb
+                );
+
+                if (isGrayscale)
+                {
+                    using var bwImg = srgbImg[0]
+                        .Copy(interpretation: NetVips.Enums.Interpretation.Bw);
+                    SaveImage(bwImg, outputPath, format, quality);
                 }
                 else
                 {
-                    byte[] upscaledBytes;
-                    int attemptTileSize = effectiveTileSize;
-                    while (true)
-                    {
-                        try
-                        {
-                            session = sessionFactory.GetOrCreateSession(modelPath);
-                            upscaledBytes = OnnxTiler.UpscaleRgb(
-                                inputBytes,
-                                origWidth,
-                                origHeight,
-                                scale,
-                                session,
-                                tileSize: attemptTileSize,
-                                cancellationToken: cancellationToken
-                            );
-                            break;
-                        }
-                        catch (Exception ex)
-                            when (OnnxTiler.IsMemoryException(ex) && attemptTileSize > 128)
-                        {
-                            logger.LogWarning(
-                                ex,
-                                "Memory pressure encountered upscaling {Input} with tile size {TileSize}. Halving tile size and recreating session.",
-                                Path.GetFileName(inputPath),
-                                attemptTileSize
-                            );
-                            sessionFactory.InvalidateSession(modelPath);
-                            attemptTileSize = Math.Max(128, attemptTileSize / 2);
-                            GC.Collect();
-                            GC.WaitForPendingFinalizers();
-                        }
-                        catch (Exception)
-                        {
-                            sessionFactory.InvalidateSession(modelPath);
-                            throw;
-                        }
-                    }
-
-                    var (vramAfter, gttAfter) = OnnxTiler.GetGpuMemoryUsage(deviceId);
-                    if (gttAfter > 1000L * 1024 * 1024)
-                    {
-                        logger.LogWarning(
-                            "Elevated GPU memory detected after upscaling {InputPath}: VRAM {VramMb} MB, GTT {GttMb} MB. Flushing session cache to release memory.",
-                            Path.GetFileName(inputPath),
-                            vramAfter / (1024 * 1024),
-                            gttAfter / (1024 * 1024)
-                        );
-                        sessionFactory.InvalidateSession(modelPath);
-                        GC.Collect();
-                    }
-
-                    cancellationToken.ThrowIfCancellationRequested();
-
-                    using var outImage = NetVips.Image.NewFromMemory(
-                        upscaledBytes,
-                        origWidth * scale,
-                        origHeight * scale,
-                        3,
-                        NetVips.Enums.BandFormat.Uchar
-                    );
-                    using var srgbImg = outImage.Copy(
-                        interpretation: NetVips.Enums.Interpretation.Srgb
-                    );
-
-                    if (isGrayscale)
-                    {
-                        using var bwImg = srgbImg[0]
-                            .Copy(interpretation: NetVips.Enums.Interpretation.Bw);
-                        SaveImage(bwImg, outputPath, format, quality, enable10BitAvif: false);
-                    }
-                    else
-                    {
-                        SaveImage(srgbImg, outputPath, format, quality, enable10BitAvif: false);
-                    }
+                    SaveImage(srgbImg, outputPath, format, quality);
                 }
             },
             cancellationToken
@@ -581,8 +498,7 @@ public class OnnxUpscaleEngine(
         NetVips.Image image,
         string outputPath,
         CompressionFormat format,
-        int? quality,
-        bool enable10BitAvif = false
+        int? quality
     )
     {
         string? dir = Path.GetDirectoryName(outputPath);
@@ -594,23 +510,11 @@ public class OnnxUpscaleEngine(
         switch (format)
         {
             case CompressionFormat.Avif:
-                if (enable10BitAvif)
-                {
-                    image.Heifsave(
-                        outputPath,
-                        q: quality ?? 80,
-                        compression: NetVips.Enums.ForeignHeifCompression.Av1,
-                        bitdepth: 10
-                    );
-                }
-                else
-                {
-                    image.Heifsave(
-                        outputPath,
-                        q: quality ?? 80,
-                        compression: NetVips.Enums.ForeignHeifCompression.Av1
-                    );
-                }
+                image.Heifsave(
+                    outputPath,
+                    q: quality ?? 80,
+                    compression: NetVips.Enums.ForeignHeifCompression.Av1
+                );
                 break;
             case CompressionFormat.Webp:
                 image.Webpsave(outputPath, q: quality ?? 80);
