@@ -185,6 +185,27 @@ public class OnnxUpscaleEngineTests : IDisposable
     }
 
     [Fact]
+    public void IsGrayscale_RgbJpegChromaNoise_ReturnsTrue()
+    {
+        // 100x100 image mostly 128 gray, but with minor channel divergence simulating JPEG compression noise (max diff = 5, mean diff < 0.1)
+        byte[] rBytes = new byte[100 * 100];
+        byte[] gBytes = new byte[100 * 100];
+        byte[] bBytes = new byte[100 * 100];
+        Array.Fill(rBytes, (byte)128);
+        Array.Fill(gBytes, (byte)128);
+        Array.Fill(bBytes, (byte)128);
+        // Introduce small noise in a single pixel
+        rBytes[0] = 133; // diff = 5
+
+        using var r = Image.NewFromMemory(rBytes, 100, 100, 1, NetVips.Enums.BandFormat.Uchar);
+        using var g = Image.NewFromMemory(gBytes, 100, 100, 1, NetVips.Enums.BandFormat.Uchar);
+        using var b = Image.NewFromMemory(bBytes, 100, 100, 1, NetVips.Enums.BandFormat.Uchar);
+        using var rgb = r.Bandjoin(g).Bandjoin(b);
+
+        Assert.True(OnnxUpscaleEngine.IsGrayscale(rgb));
+    }
+
+    [Fact]
     public async Task UpscaleFileAsync_MissingInputFile_ThrowsFileNotFoundException()
     {
         var sessionFactory = Substitute.For<IOnnxSessionFactory>();

@@ -117,26 +117,31 @@ public sealed class TileBlender
                 if (blendSize > 0)
                 {
                     float[] blend = GetBlendWeights(blendSize);
-                    for (int y = 0; y < _height; y++)
-                    {
-                        int dstRowStart = (y * _width + (_offset - o.Start)) * _channels;
-                        int srcRowStart = (y * tileWidth + tileXStart) * _channels;
-
-                        for (int x = 0; x < blendSize; x++)
+                    Parallel.For(
+                        0,
+                        _height,
+                        y =>
                         {
-                            float b = blend[x];
-                            float invB = 1.0f - b;
-                            int dstIdx = dstRowStart + x * _channels;
-                            int srcIdx = srcRowStart + x * _channels;
+                            int dstRowStart = (y * _width + (_offset - o.Start)) * _channels;
+                            int srcRowStart = (y * tileWidth + tileXStart) * _channels;
 
-                            for (int c = 0; c < _channels; c++)
+                            for (int x = 0; x < blendSize; x++)
                             {
-                                float val = _result[dstIdx + c] * invB + tileBytes[srcIdx + c] * b;
-                                _result[dstIdx + c] = (byte)
-                                    Math.Clamp((int)MathF.Round(val), 0, 255);
+                                float b = blend[x];
+                                float invB = 1.0f - b;
+                                int dstIdx = dstRowStart + x * _channels;
+                                int srcIdx = srcRowStart + x * _channels;
+
+                                for (int c = 0; c < _channels; c++)
+                                {
+                                    float val =
+                                        _result[dstIdx + c] * invB + tileBytes[srcIdx + c] * b;
+                                    _result[dstIdx + c] = (byte)
+                                        Math.Clamp((int)(val + 0.5f), 0, 255);
+                                }
                             }
                         }
-                    }
+                    );
                 }
 
                 _offset += currentTileWidth - o.Total;
@@ -186,21 +191,26 @@ public sealed class TileBlender
                     float[] blend = GetBlendWeights(blendSize);
                     int rowBytes = _width * _channels;
 
-                    for (int y = 0; y < blendSize; y++)
-                    {
-                        float b = blend[y];
-                        float invB = 1.0f - b;
-                        int dstRowStart = (_offset - o.Start + y) * rowBytes;
-                        int srcRowStart = (tileYStart + y) * rowBytes;
-
-                        for (int i = 0; i < rowBytes; i++)
+                    Parallel.For(
+                        0,
+                        blendSize,
+                        y =>
                         {
-                            float val =
-                                _result[dstRowStart + i] * invB + tileBytes[srcRowStart + i] * b;
-                            _result[dstRowStart + i] = (byte)
-                                Math.Clamp((int)MathF.Round(val), 0, 255);
+                            float b = blend[y];
+                            float invB = 1.0f - b;
+                            int dstRowStart = (_offset - o.Start + y) * rowBytes;
+                            int srcRowStart = (tileYStart + y) * rowBytes;
+
+                            for (int i = 0; i < rowBytes; i++)
+                            {
+                                float val =
+                                    _result[dstRowStart + i] * invB
+                                    + tileBytes[srcRowStart + i] * b;
+                                _result[dstRowStart + i] = (byte)
+                                    Math.Clamp((int)(val + 0.5f), 0, 255);
+                            }
                         }
-                    }
+                    );
                 }
 
                 _offset += currentTileHeight - o.Total;
@@ -272,6 +282,29 @@ public static class OnnxTiler
     /// Default overlap padding in pixels between adjacent tiles.
     /// </summary>
     public const int DefaultTilePad = 16;
+
+    private static readonly float[] ByteToFloatLut = CreateByteToFloatLut();
+    private static readonly Float16[] ByteToFloat16Lut = CreateByteToFloat16Lut();
+
+    private static float[] CreateByteToFloatLut()
+    {
+        float[] lut = new float[256];
+        for (int i = 0; i < 256; i++)
+        {
+            lut[i] = i / 255.0f;
+        }
+        return lut;
+    }
+
+    private static Float16[] CreateByteToFloat16Lut()
+    {
+        Float16[] lut = new Float16[256];
+        for (int i = 0; i < 256; i++)
+        {
+            lut[i] = (Float16)(i / 255.0f);
+        }
+        return lut;
+    }
 
     /// <summary>
     /// Detects the neural network model architecture from its name or file path.
@@ -1016,38 +1049,35 @@ public static class OnnxTiler
         else
         {
             paddedInput = new byte[paddedW * paddedH * 3];
-            for (int py = 0; py < paddedH; py++)
-            {
-                int srcY = py < tileH ? py : (tileH - 1 - (py - tileH));
-                if (srcY < 0)
-                    srcY = 0;
-                for (int px = 0; px < paddedW; px++)
+            Parallel.For(
+                0,
+                paddedH,
+                py =>
                 {
-                    int srcX = px < tileW ? px : (tileW - 1 - (px - tileW));
-                    if (srcX < 0)
-                        srcX = 0;
-                    int srcIdx = (srcY * tileW + srcX) * 3;
-                    int dstIdx = (py * paddedW + px) * 3;
-                    paddedInput[dstIdx] = tileBytes[srcIdx];
-                    paddedInput[dstIdx + 1] = tileBytes[srcIdx + 1];
-                    paddedInput[dstIdx + 2] = tileBytes[srcIdx + 2];
+                    int srcY = py < tileH ? py : (tileH - 1 - (py - tileH));
+                    if (srcY < 0)
+                        srcY = 0;
+                    int dstRowOff = py * paddedW * 3;
+                    int srcRowOff = srcY * tileW * 3;
+                    for (int px = 0; px < paddedW; px++)
+                    {
+                        int srcX = px < tileW ? px : (tileW - 1 - (px - tileW));
+                        if (srcX < 0)
+                            srcX = 0;
+                        int srcIdx = srcRowOff + srcX * 3;
+                        int dstIdx = dstRowOff + px * 3;
+                        paddedInput[dstIdx] = tileBytes[srcIdx];
+                        paddedInput[dstIdx + 1] = tileBytes[srcIdx + 1];
+                        paddedInput[dstIdx + 2] = tileBytes[srcIdx + 2];
+                    }
                 }
-            }
+            );
         }
 
         int planeSize = paddedW * paddedH;
-        float[] tensorData = new float[1 * 3 * planeSize];
         int rOff = 0;
         int gOff = planeSize;
         int bOff = planeSize * 2;
-
-        for (int i = 0; i < planeSize; i++)
-        {
-            int bIdx = i * 3;
-            tensorData[rOff + i] = paddedInput[bIdx] / 255.0f;
-            tensorData[gOff + i] = paddedInput[bIdx + 1] / 255.0f;
-            tensorData[bOff + i] = paddedInput[bIdx + 2] / 255.0f;
-        }
 
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -1056,18 +1086,51 @@ public static class OnnxTiler
 
         if (elementType == typeof(Float16))
         {
-            Float16[] halfData = new Float16[tensorData.Length];
-            for (int i = 0; i < tensorData.Length; i++)
-            {
-                halfData[i] = (Float16)tensorData[i];
-            }
+            Float16[] halfData = new Float16[1 * 3 * planeSize];
+            Parallel.For(
+                0,
+                paddedH,
+                y =>
+                {
+                    int rowOff = y * paddedW;
+                    int bRowOff = rowOff * 3;
+                    for (int x = 0; x < paddedW; x++)
+                    {
+                        int pIdx = rowOff + x;
+                        int bIdx = bRowOff + x * 3;
+                        halfData[rOff + pIdx] = ByteToFloat16Lut[paddedInput[bIdx]];
+                        halfData[gOff + pIdx] = ByteToFloat16Lut[paddedInput[bIdx + 1]];
+                        halfData[bOff + pIdx] = ByteToFloat16Lut[paddedInput[bIdx + 2]];
+                    }
+                }
+            );
+
             var halfTensor = new DenseTensor<Float16>(halfData, [1, 3, paddedH, paddedW]);
             var inVal = NamedOnnxValue.CreateFromTensor("input", halfTensor);
             outputs = session.Run([inVal]);
         }
         else
         {
-            var floatTensor = new DenseTensor<float>(tensorData, [1, 3, paddedH, paddedW]);
+            float[] floatData = new float[1 * 3 * planeSize];
+            Parallel.For(
+                0,
+                paddedH,
+                y =>
+                {
+                    int rowOff = y * paddedW;
+                    int bRowOff = rowOff * 3;
+                    for (int x = 0; x < paddedW; x++)
+                    {
+                        int pIdx = rowOff + x;
+                        int bIdx = bRowOff + x * 3;
+                        floatData[rOff + pIdx] = ByteToFloatLut[paddedInput[bIdx]];
+                        floatData[gOff + pIdx] = ByteToFloatLut[paddedInput[bIdx + 1]];
+                        floatData[bOff + pIdx] = ByteToFloatLut[paddedInput[bIdx + 2]];
+                    }
+                }
+            );
+
+            var floatTensor = new DenseTensor<float>(floatData, [1, 3, paddedH, paddedW]);
             var inVal = NamedOnnxValue.CreateFromTensor("input", floatTensor);
             outputs = session.Run([inVal]);
         }
@@ -1088,48 +1151,58 @@ public static class OnnxTiler
 
             if (outNamedValue.Value is DenseTensor<Float16> halfOutTensor)
             {
-                ReadOnlySpan<Float16> halfSpan = halfOutTensor.Buffer.Span;
-                for (int oy = 0; oy < outTileH; oy++)
-                {
-                    int rowOffset = oy * outPaddedW;
-                    int dstRowOffset = oy * outTileW;
-                    for (int ox = 0; ox < outTileW; ox++)
+                Memory<Float16> halfMem = halfOutTensor.Buffer;
+                Parallel.For(
+                    0,
+                    outTileH,
+                    oy =>
                     {
-                        int pIdx = rowOffset + ox;
-                        int dstIdx = (dstRowOffset + ox) * 3;
+                        ReadOnlySpan<Float16> halfSpan = halfMem.Span;
+                        int rowOffset = oy * outPaddedW;
+                        int dstRowOffset = oy * outTileW * 3;
+                        for (int ox = 0; ox < outTileW; ox++)
+                        {
+                            int pIdx = rowOffset + ox;
+                            int dstIdx = dstRowOffset + ox * 3;
 
-                        float r = Math.Clamp((float)halfSpan[outROff + pIdx] * 255.0f, 0f, 255f);
-                        float g = Math.Clamp((float)halfSpan[outGOff + pIdx] * 255.0f, 0f, 255f);
-                        float b = Math.Clamp((float)halfSpan[outBOff + pIdx] * 255.0f, 0f, 255f);
+                            float r = (float)halfSpan[outROff + pIdx] * 255.0f;
+                            float g = (float)halfSpan[outGOff + pIdx] * 255.0f;
+                            float b = (float)halfSpan[outBOff + pIdx] * 255.0f;
 
-                        outCrop[dstIdx] = (byte)MathF.Round(r);
-                        outCrop[dstIdx + 1] = (byte)MathF.Round(g);
-                        outCrop[dstIdx + 2] = (byte)MathF.Round(b);
+                            outCrop[dstIdx] = (byte)Math.Clamp((int)(r + 0.5f), 0, 255);
+                            outCrop[dstIdx + 1] = (byte)Math.Clamp((int)(g + 0.5f), 0, 255);
+                            outCrop[dstIdx + 2] = (byte)Math.Clamp((int)(b + 0.5f), 0, 255);
+                        }
                     }
-                }
+                );
             }
             else
             {
                 var floatOutTensor = (DenseTensor<float>)outNamedValue.AsTensor<float>();
-                ReadOnlySpan<float> span = floatOutTensor.Buffer.Span;
-                for (int oy = 0; oy < outTileH; oy++)
-                {
-                    int rowOffset = oy * outPaddedW;
-                    int dstRowOffset = oy * outTileW;
-                    for (int ox = 0; ox < outTileW; ox++)
+                Memory<float> floatMem = floatOutTensor.Buffer;
+                Parallel.For(
+                    0,
+                    outTileH,
+                    oy =>
                     {
-                        int pIdx = rowOffset + ox;
-                        int dstIdx = (dstRowOffset + ox) * 3;
+                        ReadOnlySpan<float> span = floatMem.Span;
+                        int rowOffset = oy * outPaddedW;
+                        int dstRowOffset = oy * outTileW * 3;
+                        for (int ox = 0; ox < outTileW; ox++)
+                        {
+                            int pIdx = rowOffset + ox;
+                            int dstIdx = dstRowOffset + ox * 3;
 
-                        float r = Math.Clamp(span[outROff + pIdx] * 255.0f, 0f, 255f);
-                        float g = Math.Clamp(span[outGOff + pIdx] * 255.0f, 0f, 255f);
-                        float b = Math.Clamp(span[outBOff + pIdx] * 255.0f, 0f, 255f);
+                            float r = span[outROff + pIdx] * 255.0f;
+                            float g = span[outGOff + pIdx] * 255.0f;
+                            float b = span[outBOff + pIdx] * 255.0f;
 
-                        outCrop[dstIdx] = (byte)MathF.Round(r);
-                        outCrop[dstIdx + 1] = (byte)MathF.Round(g);
-                        outCrop[dstIdx + 2] = (byte)MathF.Round(b);
+                            outCrop[dstIdx] = (byte)Math.Clamp((int)(r + 0.5f), 0, 255);
+                            outCrop[dstIdx + 1] = (byte)Math.Clamp((int)(g + 0.5f), 0, 255);
+                            outCrop[dstIdx + 2] = (byte)Math.Clamp((int)(b + 0.5f), 0, 255);
+                        }
                     }
-                }
+                );
             }
 
             return outCrop;

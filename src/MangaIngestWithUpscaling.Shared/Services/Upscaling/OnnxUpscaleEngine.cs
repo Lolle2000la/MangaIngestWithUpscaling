@@ -345,7 +345,21 @@ public class OnnxUpscaleEngine(
             using var diff1 = (r - g).Abs();
             using var diff2 = (g - b).Abs();
             double maxDiff = Math.Max(diff1.Max(), diff2.Max());
-            return maxDiff <= 2.0;
+            if (maxDiff <= 2.0)
+            {
+                return true;
+            }
+
+            // In scanned manga or digital releases with JPEG compression, isolated chroma noise or subtle paper tint
+            // can produce small max differences across isolated pixels even though the entire page is grayscale.
+            // Check average channel divergence: grayscale pages have mean divergence < 0.5, while color pages have >> 2.0.
+            if (maxDiff <= 25.0)
+            {
+                double meanDiff = Math.Max(diff1.Avg(), diff2.Avg());
+                return meanDiff <= 0.5;
+            }
+
+            return false;
         }
 
         return false;

@@ -16,6 +16,10 @@ public sealed class OnnxSessionFactory(
 {
     private static readonly Lock WebGpuInitLock = new();
     private static bool _webGpuRegistered;
+    private static bool? _cudaAvailable;
+    private static bool? _openVinoAvailable;
+    private static bool? _migraphxAvailable;
+    private static bool? _directMlAvailable;
     private readonly ConcurrentDictionary<string, InferenceSession> _sessions = new();
     private bool _disposed;
 
@@ -101,6 +105,7 @@ public sealed class OnnxSessionFactory(
             GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
             ExecutionMode = ExecutionMode.ORT_SEQUENTIAL,
             EnableMemoryPattern = false,
+            LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
         };
         options.AddSessionConfigEntry("session.arena_extend_strategy", "kSameAsRequested");
         options.AddSessionConfigEntry("memory.enable_memory_arena_shrinkage", "cpu:0;gpu:0");
@@ -235,6 +240,11 @@ public sealed class OnnxSessionFactory(
 
     private bool TryConfigureCuda(SessionOptions options, int deviceId, string modelName)
     {
+        if (_cudaAvailable == false)
+        {
+            return false;
+        }
+
         try
         {
             logger.LogInformation(
@@ -243,6 +253,7 @@ public sealed class OnnxSessionFactory(
                 modelName
             );
             options.AppendExecutionProvider_CUDA(deviceId);
+            _cudaAvailable = true;
             return true;
         }
         catch (EntryPointNotFoundException)
@@ -250,11 +261,13 @@ public sealed class OnnxSessionFactory(
             logger.LogDebug(
                 "CUDA execution provider entry point not found in this ONNX Runtime build."
             );
+            _cudaAvailable = false;
             return false;
         }
         catch (DllNotFoundException)
         {
             logger.LogDebug("CUDA runtime libraries not found on this system.");
+            _cudaAvailable = false;
             return false;
         }
         catch (Exception ex)
@@ -263,12 +276,18 @@ public sealed class OnnxSessionFactory(
                 ex,
                 "Failed to append CUDA execution provider. Will try next provider or CPU fallback."
             );
+            _cudaAvailable = false;
             return false;
         }
     }
 
     private bool TryConfigureOpenVino(SessionOptions options, int deviceId, string modelName)
     {
+        if (_openVinoAvailable == false)
+        {
+            return false;
+        }
+
         try
         {
             string targetDevice = deviceId > 0 ? $"GPU.{deviceId}" : "GPU";
@@ -278,6 +297,7 @@ public sealed class OnnxSessionFactory(
                 modelName
             );
             options.AppendExecutionProvider_OpenVINO(targetDevice);
+            _openVinoAvailable = true;
             return true;
         }
         catch (EntryPointNotFoundException)
@@ -285,11 +305,13 @@ public sealed class OnnxSessionFactory(
             logger.LogDebug(
                 "OpenVINO execution provider entry point not found in this ONNX Runtime build."
             );
+            _openVinoAvailable = false;
             return false;
         }
         catch (DllNotFoundException)
         {
             logger.LogDebug("OpenVINO runtime libraries not found on this system.");
+            _openVinoAvailable = false;
             return false;
         }
         catch (Exception ex)
@@ -298,12 +320,18 @@ public sealed class OnnxSessionFactory(
                 ex,
                 "Failed to append OpenVINO execution provider. Will try next provider or CPU fallback."
             );
+            _openVinoAvailable = false;
             return false;
         }
     }
 
     private bool TryConfigureMIGraphX(SessionOptions options, int deviceId, string modelName)
     {
+        if (_migraphxAvailable == false)
+        {
+            return false;
+        }
+
         try
         {
             logger.LogInformation(
@@ -312,6 +340,7 @@ public sealed class OnnxSessionFactory(
                 modelName
             );
             options.AppendExecutionProvider_MIGraphX(deviceId);
+            _migraphxAvailable = true;
             return true;
         }
         catch (EntryPointNotFoundException)
@@ -319,11 +348,13 @@ public sealed class OnnxSessionFactory(
             logger.LogDebug(
                 "MIGraphX execution provider entry point not found in this ONNX Runtime build."
             );
+            _migraphxAvailable = false;
             return false;
         }
         catch (DllNotFoundException)
         {
             logger.LogDebug("MIGraphX runtime libraries not found on this system.");
+            _migraphxAvailable = false;
             return false;
         }
         catch (Exception ex)
@@ -332,12 +363,18 @@ public sealed class OnnxSessionFactory(
                 ex,
                 "Failed to append MIGraphX execution provider. Will try next provider or CPU fallback."
             );
+            _migraphxAvailable = false;
             return false;
         }
     }
 
     private bool TryConfigureDirectML(SessionOptions options, int deviceId, string modelName)
     {
+        if (_directMlAvailable == false)
+        {
+            return false;
+        }
+
         try
         {
             logger.LogInformation(
@@ -346,6 +383,7 @@ public sealed class OnnxSessionFactory(
                 modelName
             );
             options.AppendExecutionProvider_DML(deviceId);
+            _directMlAvailable = true;
             return true;
         }
         catch (Exception ex)
@@ -354,6 +392,7 @@ public sealed class OnnxSessionFactory(
                 ex,
                 "Failed to append DirectML execution provider. Will try CPU fallback."
             );
+            _directMlAvailable = false;
             return false;
         }
     }
