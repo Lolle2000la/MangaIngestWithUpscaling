@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using MangaIngestWithUpscaling.Shared.Services.GPU;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 
@@ -452,9 +453,9 @@ public static class OnnxTiler
 
     /// <summary>
     /// Discovers available GPU VRAM and computes the safe memory budget for tile size estimation.
-    /// Supports Linux AMD DRM sysfs, Intel Xe/i915 DRM sysfs, and NVIDIA via nvidia-smi.
+    /// Prioritizes Vulkan VK_EXT_memory_budget (driver-calculated memory budget across AMD, NVIDIA, Intel),
+    /// falling back to Linux DRM sysfs (AMD/Intel) and nvidia-smi (NVIDIA), and finally a safe default budget.
     /// Automatically adapts to dedicated/NAS vs desktop environments.
-    /// Falls back to a safe 4 GiB default budget on other platforms.
     /// </summary>
     public static long GetAvailableVramBudget(
         int deviceId = 0,
@@ -462,24 +463,68 @@ public static class OnnxTiler
         long? safetyMarginBytes = null
     )
     {
+        // 1. Try Vulkan VK_EXT_memory_budget (primary for all GPUs)
+        var vkMem = VulkanMemoryProvider.QueryDevice(deviceId);
+        if (vkMem != null && vkMem.TotalVramBytes > 0)
+        {
+            // If explicit overrides were provided, respect them
+            if (
+                (utilizationFraction.HasValue && utilizationFraction.Value > 0)
+                || (safetyMarginBytes.HasValue && safetyMarginBytes.Value >= 0)
+            )
+            {
+                return CalculateVramBudget(
+                    vkMem.TotalVramBytes,
+                    vkMem.UsedVramBytes,
+                    utilizationFraction,
+                    safetyMarginBytes
+                );
+            }
+
+            // Driver budget is calculated directly by the GPU driver taking OS & desktop into account
+            if (vkMem.BudgetBytes > 0)
+            {
+                return vkMem.BudgetBytes;
+            }
+
+            return CalculateVramBudget(
+                vkMem.TotalVramBytes,
+                vkMem.UsedVramBytes,
+                utilizationFraction,
+                safetyMarginBytes
+            );
+        }
+
+        // 2. Secondary fallback: DRM sysfs or nvidia-smi
         var (total, used, free) = GetGpuVramInfo(deviceId);
         if (total > 0 && free > 0)
         {
             return CalculateVramBudget(total, used, utilizationFraction, safetyMarginBytes);
         }
 
-        // Safe fallback for systems where sysfs is not accessible or on CPU/DirectML: 4 GiB
+        // Safe fallback for systems where no GPU query succeeded (e.g. CPU): 4 GiB
         return 4L * 1024 * 1024 * 1024;
     }
 
     /// <summary>
     /// Gets total, used, and free GPU VRAM in bytes for the specified device.
-    /// Supports Linux AMD DRM sysfs, Intel Xe/i915 DRM sysfs, and NVIDIA via nvidia-smi.
+    /// Supports Vulkan VK_EXT_memory_budget (primary), Linux AMD/Intel DRM sysfs, and NVIDIA via nvidia-smi.
     /// Returns (0, 0, 0) if GPU memory cannot be detected.
     /// </summary>
     public static (long Total, long Used, long Free) GetGpuVramInfo(int deviceId = 0)
     {
-        // 1. Try Linux DRM sysfs (AMD and Intel)
+        // 1. Primary: Vulkan VK_EXT_memory_budget
+        var vkMem = VulkanMemoryProvider.QueryDevice(deviceId);
+        if (vkMem != null && vkMem.TotalVramBytes > 0)
+        {
+            long free =
+                vkMem.BudgetBytes > 0
+                    ? vkMem.BudgetBytes
+                    : Math.Max(0, vkMem.TotalVramBytes - vkMem.UsedVramBytes);
+            return (vkMem.TotalVramBytes, vkMem.UsedVramBytes, free);
+        }
+
+        // 2. Fallback: Linux DRM sysfs (AMD and Intel)
         var drmCards = QueryDrmGpus();
         if (drmCards.Count > 0)
         {
@@ -492,7 +537,7 @@ public static class OnnxTiler
             return (selected.Total, selected.Used, free);
         }
 
-        // 2. Try NVIDIA (nvidia-smi)
+        // 3. Fallback: NVIDIA (nvidia-smi)
         var nvidiaInfo = TryGetNvidiaGpuMemory(deviceId);
         if (nvidiaInfo.HasValue && nvidiaInfo.Value.Total > 0)
         {
@@ -508,6 +553,7 @@ public static class OnnxTiler
     /// </summary>
     public static (long VramUsed, long GttUsed) GetGpuMemoryUsage(int deviceId = 0)
     {
+        // Linux DRM sysfs has direct kernel-level mem_info_gtt_used tracking for AMD
         var drmCards = QueryDrmGpus();
         if (drmCards.Count > 0)
         {
@@ -517,6 +563,13 @@ public static class OnnxTiler
                     : drmCards.OrderByDescending(c => c.Total).First();
 
             return (selected.Used, selected.GttUsed);
+        }
+
+        // Vulkan memory tracking
+        var vkMem = VulkanMemoryProvider.QueryDevice(deviceId);
+        if (vkMem != null && vkMem.TotalVramBytes > 0)
+        {
+            return (vkMem.UsedVramBytes, vkMem.UsedGttBytes);
         }
 
         var nvidiaInfo = TryGetNvidiaGpuMemory(deviceId);
