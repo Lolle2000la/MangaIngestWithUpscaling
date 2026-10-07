@@ -463,6 +463,112 @@ public class OnnxUpscaleEngineTests : IDisposable
         }
     }
 
+    [Fact]
+    public async Task GenerateComparisonAvifImages4x()
+    {
+        string? repoRoot = FindRepoRoot();
+        if (repoRoot == null)
+            return;
+
+        string testInput = Path.Combine(repoRoot, "test_data", "test_page.jpg");
+        string modelDir = Path.Combine(repoRoot, "test_data", "models");
+        string outDir = Path.Combine(repoRoot, "test_data", "upscaled_preview");
+
+        // 4x 8-bit AVIF
+        var config8 = Options.Create(
+            new UpscalerConfig
+            {
+                ModelsDirectory = modelDir,
+                PreferredGpuBackend = GpuBackend.Auto,
+                Enable10BitAvif = false,
+            }
+        );
+        using (var sf8 = new OnnxSessionFactory(config8, NullLogger<OnnxSessionFactory>.Instance))
+        {
+            var engine8 = new OnnxUpscaleEngine(
+                sf8,
+                config8,
+                NullLogger<OnnxUpscaleEngine>.Instance
+            );
+            await engine8.UpscaleFileAsync(
+                testInput,
+                Path.Combine(outDir, "test_page_4x_8bit.avif"),
+                scale: 4,
+                CompressionFormat.Avif,
+                quality: 80,
+                CancellationToken.None
+            );
+        }
+
+        // 4x 10-bit AVIF
+        var config10 = Options.Create(
+            new UpscalerConfig
+            {
+                ModelsDirectory = modelDir,
+                PreferredGpuBackend = GpuBackend.Auto,
+                Enable10BitAvif = true,
+            }
+        );
+        using (var sf10 = new OnnxSessionFactory(config10, NullLogger<OnnxSessionFactory>.Instance))
+        {
+            var engine10 = new OnnxUpscaleEngine(
+                sf10,
+                config10,
+                NullLogger<OnnxUpscaleEngine>.Instance
+            );
+            await engine10.UpscaleFileAsync(
+                testInput,
+                Path.Combine(outDir, "test_page_4x_10bit.avif"),
+                scale: 4,
+                CompressionFormat.Avif,
+                quality: 80,
+                CancellationToken.None
+            );
+        }
+
+        string mangaInput = Path.Combine(outDir, "001_original_manga.jpg");
+        if (File.Exists(mangaInput))
+        {
+            using (
+                var sf8 = new OnnxSessionFactory(config8, NullLogger<OnnxSessionFactory>.Instance)
+            )
+            {
+                var engine8 = new OnnxUpscaleEngine(
+                    sf8,
+                    config8,
+                    NullLogger<OnnxUpscaleEngine>.Instance
+                );
+                await engine8.UpscaleFileAsync(
+                    mangaInput,
+                    Path.Combine(outDir, "001_manga_4x_8bit.avif"),
+                    scale: 4,
+                    CompressionFormat.Avif,
+                    quality: 80,
+                    CancellationToken.None
+                );
+            }
+
+            using (
+                var sf10 = new OnnxSessionFactory(config10, NullLogger<OnnxSessionFactory>.Instance)
+            )
+            {
+                var engine10 = new OnnxUpscaleEngine(
+                    sf10,
+                    config10,
+                    NullLogger<OnnxUpscaleEngine>.Instance
+                );
+                await engine10.UpscaleFileAsync(
+                    mangaInput,
+                    Path.Combine(outDir, "001_manga_4x_10bit.avif"),
+                    scale: 4,
+                    CompressionFormat.Avif,
+                    quality: 80,
+                    CancellationToken.None
+                );
+            }
+        }
+    }
+
     private static string? FindRepoRoot()
     {
         string? dir = AppContext.BaseDirectory;
