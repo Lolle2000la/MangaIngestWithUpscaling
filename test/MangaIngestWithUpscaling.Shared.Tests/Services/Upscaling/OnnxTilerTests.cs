@@ -322,8 +322,8 @@ public class OnnxTilerTests
             "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
             isFp16: false
         );
-        // ~85-92 GB peak activation memory for full 1600x2400 page at 4x
-        Assert.InRange(esrgan4xPeak, 70L * 1024 * 1024 * 1024, 100L * 1024 * 1024 * 1024);
+        // ~148 GB peak activation/workspace memory for full 1600x2400 page at 4x in FP32
+        Assert.InRange(esrgan4xPeak, 120L * 1024 * 1024 * 1024, 160L * 1024 * 1024 * 1024);
 
         // 1600x2400 on 2x SPAN (FP16)
         long span2xPeak = OnnxTiler.EstimatePeakMemoryBytes(
@@ -355,7 +355,7 @@ public class OnnxTilerTests
     [Fact]
     public void EstimateTileSize_Esrgan4x_ReturnsSafeTileSize()
     {
-        // ESRGAN 4x under a 5 GiB budget dynamically yields 448x448 tiles
+        // ESRGAN 4x under a 5 GiB budget dynamically yields safe 320x320 tiles in FP32
         int tileSize = OnnxTiler.EstimateTileSize(
             1600,
             2400,
@@ -364,14 +364,14 @@ public class OnnxTilerTests
             memoryBudgetBytes: 5L * 1024 * 1024 * 1024,
             isFp16: false
         );
-        Assert.Equal(448, tileSize);
+        Assert.Equal(320, tileSize);
         Assert.Equal(0, tileSize % 64);
     }
 
     [Fact]
     public void EstimateTileSize_Esrgan2x_AllowsLargerTileSize()
     {
-        // ESRGAN 2x under a 5 GiB budget dynamically yields 896x896 tiles (scale^2 scaling)
+        // ESRGAN 2x under a 5 GiB budget dynamically yields larger 704x704 tiles (scale^2 scaling)
         int tileSize = OnnxTiler.EstimateTileSize(
             1600,
             2400,
@@ -380,7 +380,7 @@ public class OnnxTilerTests
             memoryBudgetBytes: 5L * 1024 * 1024 * 1024,
             isFp16: false
         );
-        Assert.Equal(896, tileSize);
+        Assert.Equal(704, tileSize);
         Assert.Equal(0, tileSize % 64);
     }
 
@@ -473,11 +473,11 @@ public class OnnxTilerTests
         long free = total - used; // 13.5 GB
         long budget = OnnxTiler.CalculateVramBudget(total, used);
 
-        // Budget should be ~12.8 GB (utilizing ~95% of the 13.5 GB free VRAM with ~700 MB safety margin)
+        // Budget should be ~11.1 GB (leaving a 15% / 2.4 GB safety margin to prevent AMDGPU/Intel GTT eviction at 85% VRAM)
         Assert.InRange(
             budget,
-            (long)(12.5 * 1024 * 1024 * 1024),
-            (long)(13.2 * 1024 * 1024 * 1024)
+            (long)(10.8 * 1024 * 1024 * 1024),
+            (long)(11.5 * 1024 * 1024 * 1024)
         );
         Assert.True(budget < free);
     }
@@ -524,7 +524,7 @@ public class OnnxTilerTests
     [Fact]
     public void EstimateTileSize_RespectsScaleAwareMaximumCap()
     {
-        // Even with huge 32 GiB memory budget, tile size is capped by scale to avoid intermediate activation VRAM spill
+        // Even with huge 32 GiB memory budget, tile size is bounded by single-buffer output limits (<= 3072 output)
         long hugeBudget = 32L * 1024 * 1024 * 1024;
 
         int tile4x = OnnxTiler.EstimateTileSize(
@@ -535,7 +535,7 @@ public class OnnxTilerTests
             memoryBudgetBytes: hugeBudget,
             isFp16: true
         );
-        Assert.Equal(512, tile4x);
+        Assert.Equal(768, tile4x);
 
         int tile3x = OnnxTiler.EstimateTileSize(
             4000,
@@ -545,7 +545,7 @@ public class OnnxTilerTests
             memoryBudgetBytes: hugeBudget,
             isFp16: true
         );
-        Assert.Equal(640, tile3x);
+        Assert.Equal(1024, tile3x);
 
         int tile2x = OnnxTiler.EstimateTileSize(
             4000,

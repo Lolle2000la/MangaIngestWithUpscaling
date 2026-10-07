@@ -305,9 +305,11 @@ public static class OnnxTiler
     }
 
     /// <summary>
-    /// Gets the ratio of peak intermediate activation memory to input tensor bytes for a given architecture and scale.
-    /// In super-resolution neural networks, peak workspace memory is quadratic with upscale factor (scale^2)
-    /// because the output stage convolution workspaces operate on (scale * W) * (scale * H) pixels.
+    /// Gets the ratio of peak intermediate activation and workspace memory to input tensor bytes for a given architecture and scale.
+    /// In super-resolution neural networks, peak workspace memory consists of:
+    /// 1. Backbone features at input resolution (W x H)
+    /// 2. Upsampling feature maps and convolution GEMM/im2col workspaces at output resolution ((scale*W) x (scale*H)),
+    ///    which scale quadratically with scale^2.
     /// </summary>
     public static double GetMemoryMultiplier(
         ModelArchitecture architecture,
@@ -318,12 +320,12 @@ public static class OnnxTiler
         int scaleFactorSq = scale * scale;
         return architecture switch
         {
-            ModelArchitecture.Span => 15.0 * scaleFactorSq,
-            ModelArchitecture.FdatM => 45.0 * scaleFactorSq,
-            ModelArchitecture.FdatXl => 80.0 * scaleFactorSq,
-            ModelArchitecture.Dat2 => 90.0 * scaleFactorSq,
-            ModelArchitecture.HatL => 175.0 * scaleFactorSq,
-            ModelArchitecture.Esrgan => 125.0 * scaleFactorSq,
+            ModelArchitecture.Span => 10.0 + 12.0 * scaleFactorSq,
+            ModelArchitecture.FdatM => 120.0 + 150.0 * scaleFactorSq,
+            ModelArchitecture.FdatXl => 200.0 + 250.0 * scaleFactorSq,
+            ModelArchitecture.Dat2 => 350.0 + 350.0 * scaleFactorSq,
+            ModelArchitecture.HatL => 500.0 + 500.0 * scaleFactorSq,
+            ModelArchitecture.Esrgan => 100.0 + 195.0 * scaleFactorSq,
             _ => (modelSizeBytes > 0 ? (modelSizeBytes / (1024.0 * 52.0)) : 75.0)
                 * (scaleFactorSq / 4.0),
         };
@@ -397,19 +399,10 @@ public static class OnnxTiler
         // Snap down to multiple of 64 for optimal GPU tensor alignment
         int snapped = (tileDim / 64) * 64;
 
-        // Cap maximum tile dimension based on upscale factor.
-        // For 4x+ models, each tile produces scale^2 = 16x output pixels; tiles larger than 512
-        // generate massive intermediate activation workspaces (>= 15-20 GB) that exceed
-        // GPU physical VRAM and cause driver spillover into system RAM (GTT).
-        // Capping at 512 for 4x models guarantees the output tile dimension stays <= 2048x2048,
-        // which runs in ~1 second with zero GTT spill.
-        int maxCap = scale switch
-        {
-            >= 4 => 512,
-            3 => 640,
-            _ => 1024,
-        };
-        snapped = Math.Min(maxCap, snapped);
+        // Upper bound: ensure single-pass output tile dimension does not exceed GPU single-buffer limits
+        // (3072x3072 max output tile in WebGPU) and input tile does not exceed 1024 (above which tiling overhead is negligible).
+        int maxTileDim = Math.Min(1024, 3072 / scale);
+        snapped = Math.Min(maxTileDim, snapped);
 
         // Never return less than 128 (tiling below 128 has excessive padding/blending overhead)
         return Math.Max(128, snapped);
@@ -452,8 +445,9 @@ public static class OnnxTiler
         // Minimal safety margin (256 MB or 3% of free memory) to maximize utilization up to 100%.
         //
         // When usedVram > 350 MB: Desktop environment with active display manager, compositor, or browser.
-        // Modest safety margin (5% of free VRAM, clamped between 512 MB and 1024 MB) to prevent
-        // desktop compositor stutters or sudden OOM spikes.
+        // GPU drivers (AMDGPU, Intel) begin evicting VRAM allocations into system memory (GTT) when total VRAM
+        // utilization crosses 85-90%. To prevent compositor stutters and driver GTT spill, reserve a 15%
+        // safety margin of total VRAM (clamped between 1.5 GiB and 3.0 GiB) so peak total GPU usage stays comfortably under 85%.
         long safetyMargin;
         if (usedVram <= 350L * 1024 * 1024)
         {
@@ -462,9 +456,9 @@ public static class OnnxTiler
         else
         {
             safetyMargin = Math.Clamp(
-                (long)(freeVram * 0.05),
-                512L * 1024 * 1024,
-                1024L * 1024 * 1024
+                (long)(totalVram * 0.15),
+                1536L * 1024 * 1024,
+                3072L * 1024 * 1024
             );
         }
 
