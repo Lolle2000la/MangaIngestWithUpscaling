@@ -113,6 +113,33 @@ public class OnnxUpscaleEngineTests : IDisposable
     }
 
     [Fact]
+    public void SelectModel_Color_PrefersFdatMOverDat2Bf16()
+    {
+        string[] modelFiles =
+        [
+            "4x_IllustrationJaNai_V3detail_DAT2_28k_bf16.onnx",
+            "4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx",
+            "4x_IllustrationJaNai_V3detail_HAT_L_28k_bf16.onnx",
+        ];
+
+        foreach (var file in modelFiles)
+        {
+            File.WriteAllText(Path.Combine(_tempDir, file), "dummy");
+        }
+
+        string selected = OnnxUpscaleEngine.SelectModel(
+            _tempDir,
+            isGrayscale: false,
+            height: 1200,
+            scale: 4
+        );
+        Assert.Equal(
+            Path.Combine(_tempDir, "4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx"),
+            selected
+        );
+    }
+
+    [Fact]
     public void SelectModel_Grayscale_FallbackToGenericMangaJaNai()
     {
         File.WriteAllText(Path.Combine(_tempDir, "2x_MangaJaNai_generic.onnx"), "dummy");

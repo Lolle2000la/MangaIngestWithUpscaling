@@ -24,6 +24,30 @@ public sealed class OnnxSessionFactory(
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         string fullPath = Path.GetFullPath(modelPath);
+        if (_sessions.TryGetValue(fullPath, out var existing))
+        {
+            return existing;
+        }
+
+        // Single-model active policy: Large super-resolution models consume gigabytes of GPU VRAM
+        // and execution provider buffers. Keeping multiple models loaded simultaneously causes
+        // VRAM exhaustion and driver spillover into system RAM (GTT).
+        // Evict any other active model sessions before creating the new one.
+        foreach (var key in _sessions.Keys.ToList())
+        {
+            if (!string.Equals(key, fullPath, StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogInformation(
+                    "Evicting cached model {OldModel} to free GPU memory for {NewModel}",
+                    Path.GetFileName(key),
+                    Path.GetFileName(fullPath)
+                );
+                InvalidateSession(key);
+            }
+        }
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+
         return _sessions.GetOrAdd(fullPath, CreateSession);
     }
 

@@ -860,11 +860,11 @@ public static class OnnxTiler
         int outWidth = width * scale;
         int outHeight = height * scale;
 
-        // Determine uniform padded dimensions across all tiles in this image.
-        // Passing uniform tensor shapes to ONNX Runtime (WebGPU / Dawn EP) prevents
-        // per-tile buffer re-allocation and memory arena accumulation in Vulkan VRAM/GTT.
-        int maxPaddedW = tileSizeX + 2 * overlap;
-        int maxPaddedH = tileSizeY + 2 * overlap;
+        // Determine uniform padded dimensions across all tiles across all images.
+        // Passing identical uniform tensor shapes to ONNX Runtime (WebGPU / Dawn EP) prevents
+        // per-tile and per-page buffer re-allocation and memory arena accumulation in Vulkan VRAM/GTT.
+        int maxPaddedW = maxTileSizeX + 2 * overlap;
+        int maxPaddedH = maxTileSizeY + 2 * overlap;
         int uniformTargetDim = Math.Max(maxPaddedW, maxPaddedH);
         int uniformTargetSize = ((uniformTargetDim + 63) / 64) * 64;
 

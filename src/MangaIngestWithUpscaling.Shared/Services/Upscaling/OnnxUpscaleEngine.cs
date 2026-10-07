@@ -408,7 +408,7 @@ public class OnnxUpscaleEngine(
         else
         {
             string colorKey = $"{scalePrefix}IllustrationJaNai_";
-            string[] preferred =
+            string[] preferredVersions =
             [
                 $"{scalePrefix}IllustrationJaNai_V3detail_",
                 $"{scalePrefix}IllustrationJaNai_V3denoise_",
@@ -416,13 +416,39 @@ public class OnnxUpscaleEngine(
                 $"{scalePrefix}IllustrationJaNai_V1_",
             ];
 
-            foreach (var pref in preferred)
+            // Architectures ordered by WebGPU/GPU compatibility and inference speed:
+            // Prioritize fast, native architectures (FDAT_M, ESRGAN, SPAN) over experimental/heavy models (DAT2, HAT_L).
+            // Avoid _bf16 models which cannot run natively on WebGPU execution provider.
+            string[] preferredArchs = ["FDAT_M", "ESRGAN", "SPAN", "FDAT_XL", "DAT2", "HAT_L"];
+
+            foreach (var pref in preferredVersions)
             {
-                string? match = onnxFiles.FirstOrDefault(f =>
-                    Path.GetFileName(f).StartsWith(pref, StringComparison.OrdinalIgnoreCase)
-                );
-                if (match != null)
-                    return match;
+                var candidates = onnxFiles
+                    .Where(f =>
+                        Path.GetFileName(f).StartsWith(pref, StringComparison.OrdinalIgnoreCase)
+                    )
+                    .ToList();
+
+                if (candidates.Count > 0)
+                {
+                    foreach (var arch in preferredArchs)
+                    {
+                        var nonBf16Match = candidates.FirstOrDefault(f =>
+                            f.Contains(arch, StringComparison.OrdinalIgnoreCase)
+                            && !f.Contains("bf16", StringComparison.OrdinalIgnoreCase)
+                        );
+                        if (nonBf16Match != null)
+                            return nonBf16Match;
+
+                        var anyArchMatch = candidates.FirstOrDefault(f =>
+                            f.Contains(arch, StringComparison.OrdinalIgnoreCase)
+                        );
+                        if (anyArchMatch != null)
+                            return anyArchMatch;
+                    }
+
+                    return candidates[0];
+                }
             }
 
             string? colorMatch = onnxFiles.FirstOrDefault(f =>
