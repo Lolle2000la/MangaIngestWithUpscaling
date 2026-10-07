@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
@@ -394,56 +395,77 @@ public static class OnnxTiler
     }
 
     /// <summary>
-    /// Discovers available GPU VRAM on Linux via AMDGPU/DRM sysfs, using at most 40% of free VRAM
-    /// (capped at 4 GiB) to avoid TTM memory manager spilling allocations into GTT.
-    /// Falls back to a safe 3 GiB default budget on other platforms.
+    /// Calculates the available VRAM budget for tile estimation from total and currently used VRAM.
+    /// In dedicated/headless environments (e.g. NAS) with exclusive GPU use (usedVram &lt;= 350 MB),
+    /// utilizes up to ~97% of free VRAM (leaving a minimal 256 MB buffer for driver/command submission).
+    /// In desktop environments (usedVram &gt; 350 MB) with display compositors/browsers,
+    /// utilizes ~95% of free VRAM with an adaptive 512 MB - 1024 MB safety margin to prevent compositor stutters.
+    /// Can be explicitly overridden with a custom utilization fraction or safety margin.
     /// </summary>
-    public static long GetAvailableVramBudget()
+    public static long CalculateVramBudget(
+        long totalVram,
+        long usedVram,
+        double? customUtilizationFraction = null,
+        long? customSafetyMarginBytes = null
+    )
     {
-        try
+        long freeVram = Math.Max(0, totalVram - usedVram);
+        if (freeVram <= 0)
         {
-            if (Directory.Exists("/sys/class/drm"))
-            {
-                var cards = Directory.GetDirectories("/sys/class/drm", "card*");
-                foreach (var card in cards)
-                {
-                    string totalPath = Path.Combine(card, "device", "mem_info_vram_total");
-                    string usedPath = Path.Combine(card, "device", "mem_info_vram_used");
-                    if (File.Exists(totalPath))
-                    {
-                        if (
-                            long.TryParse(
-                                File.ReadAllText(totalPath).Trim(),
-                                CultureInfo.InvariantCulture,
-                                out long total
-                            )
-                            && total > 0
-                        )
-                        {
-                            long used = 0;
-                            if (File.Exists(usedPath))
-                            {
-                                long.TryParse(
-                                    File.ReadAllText(usedPath).Trim(),
-                                    CultureInfo.InvariantCulture,
-                                    out used
-                                );
-                            }
-
-                            long free = Math.Max(0, total - used);
-                            if (free > 0)
-                            {
-                                // Use up to 65% of free VRAM, capped at 8 GiB
-                                return Math.Min((long)(free * 0.65), 8L * 1024 * 1024 * 1024);
-                            }
-                        }
-                    }
-                }
-            }
+            return 4L * 1024 * 1024 * 1024; // Safe fallback
         }
-        catch
+
+        if (customUtilizationFraction.HasValue && customUtilizationFraction.Value > 0)
         {
-            // Fallback
+            double fraction = Math.Clamp(customUtilizationFraction.Value, 0.1, 1.0);
+            return (long)(freeVram * fraction);
+        }
+
+        if (customSafetyMarginBytes.HasValue && customSafetyMarginBytes.Value >= 0)
+        {
+            return Math.Max(256L * 1024 * 1024, freeVram - customSafetyMarginBytes.Value);
+        }
+
+        // Automatic adaptive budgeting:
+        // When usedVram <= 350 MB: Headless / dedicated environment (e.g. NAS) with exclusive GPU use.
+        // Minimal safety margin (256 MB or 3% of free memory) to maximize utilization up to 100%.
+        //
+        // When usedVram > 350 MB: Desktop environment with active display manager, compositor, or browser.
+        // Modest safety margin (5% of free VRAM, clamped between 512 MB and 1024 MB) to prevent
+        // desktop compositor stutters or sudden OOM spikes.
+        long safetyMargin;
+        if (usedVram <= 350L * 1024 * 1024)
+        {
+            safetyMargin = Math.Min(256L * 1024 * 1024, (long)(freeVram * 0.03));
+        }
+        else
+        {
+            safetyMargin = Math.Clamp(
+                (long)(freeVram * 0.05),
+                512L * 1024 * 1024,
+                1024L * 1024 * 1024
+            );
+        }
+
+        return Math.Max(512L * 1024 * 1024, freeVram - safetyMargin);
+    }
+
+    /// <summary>
+    /// Discovers available GPU VRAM and computes the safe memory budget for tile size estimation.
+    /// Supports Linux AMD DRM sysfs, Intel Xe/i915 DRM sysfs, and NVIDIA via nvidia-smi.
+    /// Automatically adapts to dedicated/NAS vs desktop environments.
+    /// Falls back to a safe 4 GiB default budget on other platforms.
+    /// </summary>
+    public static long GetAvailableVramBudget(
+        int deviceId = 0,
+        double? utilizationFraction = null,
+        long? safetyMarginBytes = null
+    )
+    {
+        var (total, used, free) = GetGpuVramInfo(deviceId);
+        if (total > 0 && free > 0)
+        {
+            return CalculateVramBudget(total, used, utilizationFraction, safetyMarginBytes);
         }
 
         // Safe fallback for systems where sysfs is not accessible or on CPU/DirectML: 4 GiB
@@ -451,39 +473,256 @@ public static class OnnxTiler
     }
 
     /// <summary>
-    /// Reads current VRAM and GTT used in bytes from Linux AMDGPU sysfs, or returns (0, 0) if unavailable.
+    /// Gets total, used, and free GPU VRAM in bytes for the specified device.
+    /// Supports Linux AMD DRM sysfs, Intel Xe/i915 DRM sysfs, and NVIDIA via nvidia-smi.
+    /// Returns (0, 0, 0) if GPU memory cannot be detected.
     /// </summary>
-    public static (long VramUsed, long GttUsed) GetGpuMemoryUsage()
+    public static (long Total, long Used, long Free) GetGpuVramInfo(int deviceId = 0)
     {
+        // 1. Try Linux DRM sysfs (AMD and Intel)
+        var drmCards = QueryDrmGpus();
+        if (drmCards.Count > 0)
+        {
+            var selected =
+                (deviceId >= 0 && deviceId < drmCards.Count)
+                    ? drmCards[deviceId]
+                    : drmCards.OrderByDescending(c => c.Total).First();
+
+            long free = Math.Max(0, selected.Total - selected.Used);
+            return (selected.Total, selected.Used, free);
+        }
+
+        // 2. Try NVIDIA (nvidia-smi)
+        var nvidiaInfo = TryGetNvidiaGpuMemory(deviceId);
+        if (nvidiaInfo.HasValue && nvidiaInfo.Value.Total > 0)
+        {
+            long free = Math.Max(0, nvidiaInfo.Value.Total - nvidiaInfo.Value.Used);
+            return (nvidiaInfo.Value.Total, nvidiaInfo.Value.Used, free);
+        }
+
+        return (0, 0, 0);
+    }
+
+    /// <summary>
+    /// Reads current VRAM and GTT used in bytes, or returns (0, 0) if unavailable.
+    /// </summary>
+    public static (long VramUsed, long GttUsed) GetGpuMemoryUsage(int deviceId = 0)
+    {
+        var drmCards = QueryDrmGpus();
+        if (drmCards.Count > 0)
+        {
+            var selected =
+                (deviceId >= 0 && deviceId < drmCards.Count)
+                    ? drmCards[deviceId]
+                    : drmCards.OrderByDescending(c => c.Total).First();
+
+            return (selected.Used, selected.GttUsed);
+        }
+
+        var nvidiaInfo = TryGetNvidiaGpuMemory(deviceId);
+        if (nvidiaInfo.HasValue)
+        {
+            return (nvidiaInfo.Value.Used, 0);
+        }
+
+        return (0, 0);
+    }
+
+    private static List<(string CardPath, long Total, long Used, long GttUsed)> QueryDrmGpus()
+    {
+        var result = new List<(string CardPath, long Total, long Used, long GttUsed)>();
         try
         {
-            if (Directory.Exists("/sys/class/drm"))
+            if (!Directory.Exists("/sys/class/drm"))
             {
-                var cards = Directory.GetDirectories("/sys/class/drm", "card*");
-                foreach (var card in cards)
+                return result;
+            }
+
+            var cardDirs = Directory
+                .GetDirectories("/sys/class/drm", "card*")
+                .Where(d => !Path.GetFileName(d).Contains('-'))
+                .OrderBy(d => d)
+                .ToList();
+
+            foreach (var card in cardDirs)
+            {
+                string deviceDir = Path.Combine(card, "device");
+                if (!Directory.Exists(deviceDir))
                 {
-                    string vramPath = Path.Combine(card, "device", "mem_info_vram_used");
-                    string gttPath = Path.Combine(card, "device", "mem_info_gtt_used");
-                    if (File.Exists(vramPath) && File.Exists(gttPath))
+                    continue;
+                }
+
+                long total = 0;
+                long used = 0;
+                long gtt = 0;
+
+                // AMD GPU sysfs paths
+                string amdTotalPath = Path.Combine(deviceDir, "mem_info_vram_total");
+                string amdUsedPath = Path.Combine(deviceDir, "mem_info_vram_used");
+                string amdGttPath = Path.Combine(deviceDir, "mem_info_gtt_used");
+
+                if (
+                    File.Exists(amdTotalPath)
+                    && long.TryParse(
+                        File.ReadAllText(amdTotalPath).Trim(),
+                        CultureInfo.InvariantCulture,
+                        out long amdTotal
+                    )
+                    && amdTotal > 0
+                )
+                {
+                    total = amdTotal;
+                    if (
+                        File.Exists(amdUsedPath)
+                        && long.TryParse(
+                            File.ReadAllText(amdUsedPath).Trim(),
+                            CultureInfo.InvariantCulture,
+                            out long amdUsed
+                        )
+                    )
                     {
-                        long.TryParse(
-                            File.ReadAllText(vramPath).Trim(),
-                            CultureInfo.InvariantCulture,
-                            out long vram
-                        );
-                        long.TryParse(
-                            File.ReadAllText(gttPath).Trim(),
-                            CultureInfo.InvariantCulture,
-                            out long gtt
-                        );
-                        return (vram, gtt);
+                        used = amdUsed;
                     }
+                    if (
+                        File.Exists(amdGttPath)
+                        && long.TryParse(
+                            File.ReadAllText(amdGttPath).Trim(),
+                            CultureInfo.InvariantCulture,
+                            out long amdGtt
+                        )
+                    )
+                    {
+                        gtt = amdGtt;
+                    }
+                }
+                else
+                {
+                    // Intel Xe / i915 sysfs paths
+                    string intelTile0Total = Path.Combine(
+                        deviceDir,
+                        "tile0",
+                        "memory0",
+                        "total_bytes"
+                    );
+                    string intelTile0Alloc = Path.Combine(
+                        deviceDir,
+                        "tile0",
+                        "memory0",
+                        "alloc_bytes"
+                    );
+                    string intelLmemTotal = Path.Combine(deviceDir, "lmem_total_bytes");
+                    string intelLmemAlloc = Path.Combine(deviceDir, "lmem_alloc_bytes");
+
+                    if (
+                        File.Exists(intelTile0Total)
+                        && long.TryParse(
+                            File.ReadAllText(intelTile0Total).Trim(),
+                            CultureInfo.InvariantCulture,
+                            out long itTotal
+                        )
+                        && itTotal > 0
+                    )
+                    {
+                        total = itTotal;
+                        if (
+                            File.Exists(intelTile0Alloc)
+                            && long.TryParse(
+                                File.ReadAllText(intelTile0Alloc).Trim(),
+                                CultureInfo.InvariantCulture,
+                                out long itAlloc
+                            )
+                        )
+                        {
+                            used = itAlloc;
+                        }
+                    }
+                    else if (
+                        File.Exists(intelLmemTotal)
+                        && long.TryParse(
+                            File.ReadAllText(intelLmemTotal).Trim(),
+                            CultureInfo.InvariantCulture,
+                            out long ilTotal
+                        )
+                        && ilTotal > 0
+                    )
+                    {
+                        total = ilTotal;
+                        if (
+                            File.Exists(intelLmemAlloc)
+                            && long.TryParse(
+                                File.ReadAllText(intelLmemAlloc).Trim(),
+                                CultureInfo.InvariantCulture,
+                                out long ilAlloc
+                            )
+                        )
+                        {
+                            used = ilAlloc;
+                        }
+                    }
+                }
+
+                if (total > 0)
+                {
+                    result.Add((card, total, used, gtt));
                 }
             }
         }
-        catch { }
+        catch
+        {
+            // Ignore DRM sysfs read errors
+        }
 
-        return (0, 0);
+        return result;
+    }
+
+    private static (long Total, long Used)? TryGetNvidiaGpuMemory(int deviceId)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "nvidia-smi",
+                Arguments =
+                    $"--id={deviceId} --query-gpu=memory.total,memory.used --format=csv,noheader,nounits",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+
+            using var process = Process.Start(psi);
+            if (process == null)
+            {
+                return null;
+            }
+
+            string output = process.StandardOutput.ReadToEnd();
+            process.WaitForExit(1000);
+            if (process.ExitCode != 0)
+            {
+                return null;
+            }
+
+            // Output format: "16384, 2560" (values in MiB)
+            var parts = output.Split(
+                ',',
+                StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries
+            );
+            if (
+                parts.Length >= 2
+                && long.TryParse(parts[0], CultureInfo.InvariantCulture, out long totalMib)
+                && long.TryParse(parts[1], CultureInfo.InvariantCulture, out long usedMib)
+            )
+            {
+                return (totalMib * 1024L * 1024L, usedMib * 1024L * 1024L);
+            }
+        }
+        catch
+        {
+            // nvidia-smi not available or failed
+        }
+
+        return null;
     }
 
     /// <summary>

@@ -78,10 +78,15 @@ public class OnnxUpscaleEngine(
                     session.InputMetadata.TryGetValue("input", out var inputMeta)
                     && inputMeta.ElementType == typeof(Float16);
 
+                int deviceId = Math.Max(0, config.Value.SelectedDeviceIndex - 1);
                 long budget =
                     config.Value.MemoryBudgetBytes > 0
                         ? config.Value.MemoryBudgetBytes
-                        : OnnxTiler.GetAvailableVramBudget();
+                        : OnnxTiler.GetAvailableVramBudget(
+                            deviceId,
+                            config.Value.VramUtilizationFraction,
+                            config.Value.VramSafetyMarginBytes
+                        );
 
                 int effectiveTileSize =
                     config.Value.TileSize > 0 ? config.Value.TileSize
@@ -96,7 +101,7 @@ public class OnnxUpscaleEngine(
                         isFp16
                     );
 
-                var (vramBefore, gttBefore) = OnnxTiler.GetGpuMemoryUsage();
+                var (vramBefore, gttBefore) = OnnxTiler.GetGpuMemoryUsage(deviceId);
                 logger.LogDebug(
                     "Upscaling {InputPath} ({Width}x{Height}, isGrayscale={IsGrayscale}) using model {Model} with tile size {TileSize} (budget: {BudgetMb} MB, VRAM: {VramMb} MB, GTT: {GttMb} MB)",
                     Path.GetFileName(inputPath),
@@ -149,7 +154,7 @@ public class OnnxUpscaleEngine(
                     }
                 }
 
-                var (vramAfter, gttAfter) = OnnxTiler.GetGpuMemoryUsage();
+                var (vramAfter, gttAfter) = OnnxTiler.GetGpuMemoryUsage(deviceId);
                 if (gttAfter > 1000L * 1024 * 1024)
                 {
                     logger.LogWarning(

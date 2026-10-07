@@ -61,6 +61,19 @@ public record UpscalerConfig
     /// </summary>
     public long MemoryBudgetBytes { get; set; } = 0;
 
+    /// <summary>
+    ///     Optional fraction of free GPU VRAM to utilize for automatic tile budgeting (0.0 to 1.0).
+    ///     Defaults to null (automatic adaptive budgeting: ~97% when headless/NAS, ~95% with 512MB-1GB safety margin on desktop).
+    ///     Set to 1.0 on dedicated machines (like a NAS) to utilize 100% of free VRAM.
+    /// </summary>
+    public double? VramUtilizationFraction { get; set; } = null;
+
+    /// <summary>
+    ///     Optional safety margin in bytes subtracted from free VRAM when estimating tile budget.
+    ///     Defaults to null (automatically chosen: 256 MB in headless environments, 512 MB-1024 MB when desktop is active).
+    /// </summary>
+    public long? VramSafetyMarginBytes { get; set; } = null;
+
     public string ModelsDirectory { get; set; } =
         Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

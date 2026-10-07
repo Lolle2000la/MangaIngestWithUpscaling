@@ -398,4 +398,85 @@ public class OnnxTilerTests
         );
         Assert.Equal(0, tileSize);
     }
+
+    [Fact]
+    public void CalculateVramBudget_HeadlessNas8Gb_UtilizesNearlyFullVram()
+    {
+        // 8 GB card on a dedicated NAS with minimal driver usage (50 MB used)
+        long total = 8L * 1024 * 1024 * 1024;
+        long used = 50L * 1024 * 1024;
+        long budget = OnnxTiler.CalculateVramBudget(total, used);
+
+        // Should utilize ~7.7 GB of the 8 GB (only a 256 MB buffer subtracted)
+        Assert.InRange(budget, (long)(7.6 * 1024 * 1024 * 1024), total);
+    }
+
+    [Fact]
+    public void CalculateVramBudget_HeadlessNas12Gb_UtilizesNearlyFullVram()
+    {
+        // 12 GB card on a dedicated NAS with minimal driver usage (50 MB used)
+        long total = 12L * 1024 * 1024 * 1024;
+        long used = 50L * 1024 * 1024;
+        long budget = OnnxTiler.CalculateVramBudget(total, used);
+
+        // Should utilize ~11.7 GB of the 12 GB
+        Assert.InRange(budget, (long)(11.6 * 1024 * 1024 * 1024), total);
+    }
+
+    [Fact]
+    public void CalculateVramBudget_Desktop16Gb_LeavesSafetyMargin()
+    {
+        // 16 GB card with 2.5 GB used by desktop compositor / browser
+        long total = 16L * 1024 * 1024 * 1024;
+        long used = (long)(2.5 * 1024 * 1024 * 1024);
+        long free = total - used; // 13.5 GB
+        long budget = OnnxTiler.CalculateVramBudget(total, used);
+
+        // Budget should be ~12.8 GB (utilizing ~95% of the 13.5 GB free VRAM with ~700 MB safety margin)
+        Assert.InRange(
+            budget,
+            (long)(12.5 * 1024 * 1024 * 1024),
+            (long)(13.2 * 1024 * 1024 * 1024)
+        );
+        Assert.True(budget < free);
+    }
+
+    [Fact]
+    public void CalculateVramBudget_CustomUtilizationFraction_AppliesFraction()
+    {
+        long total = 16L * 1024 * 1024 * 1024;
+        long used = 2L * 1024 * 1024 * 1024; // 14 GB free
+        long free = total - used;
+
+        // Custom 100% utilization fraction (e.g. for dedicated worker)
+        long budget100 = OnnxTiler.CalculateVramBudget(total, used, customUtilizationFraction: 1.0);
+        Assert.Equal(free, budget100);
+
+        // Custom 80% utilization fraction
+        long budget80 = OnnxTiler.CalculateVramBudget(total, used, customUtilizationFraction: 0.80);
+        Assert.Equal((long)(free * 0.80), budget80);
+    }
+
+    [Fact]
+    public void CalculateVramBudget_CustomSafetyMargin_SubtractsMargin()
+    {
+        long total = 16L * 1024 * 1024 * 1024;
+        long used = 2L * 1024 * 1024 * 1024; // 14 GB free
+        long free = total - used;
+        long margin = 1024L * 1024 * 1024; // 1 GB safety margin
+
+        long budget = OnnxTiler.CalculateVramBudget(total, used, customSafetyMarginBytes: margin);
+        Assert.Equal(free - margin, budget);
+    }
+
+    [Fact]
+    public void GetGpuVramInfo_OnSupportedHost_DiscoversValidVram()
+    {
+        var (total, used, free) = OnnxTiler.GetGpuVramInfo(0);
+        if (total > 0)
+        {
+            Assert.True(total >= used);
+            Assert.Equal(total - used, free);
+        }
+    }
 }
