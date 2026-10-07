@@ -288,6 +288,67 @@ public static class OnnxTiler
     private static readonly Float16[] ByteToFloat16Lut = CreateByteToFloat16Lut();
     private static readonly byte[] Float16ToByteLut = CreateFloat16ToByteLut();
 
+    /// <summary>
+    /// 8x8 Bayer matrix normalized to [-0.5f, 0.5f] for sub-LSB ordered spatial dithering.
+    /// Dissolves quantization contour banding in subtle gradients without introducing visible noise.
+    /// </summary>
+    private static readonly float[,] Bayer8x8 = new float[8, 8]
+    {
+        { -32f / 64f, 0f / 64f, -24f / 64f, 8f / 64f, -30f / 64f, 2f / 64f, -22f / 64f, 10f / 64f },
+        {
+            16f / 64f,
+            -16f / 64f,
+            24f / 64f,
+            -8f / 64f,
+            18f / 64f,
+            -14f / 64f,
+            26f / 64f,
+            -6f / 64f,
+        },
+        {
+            -20f / 64f,
+            12f / 64f,
+            -28f / 64f,
+            4f / 64f,
+            -18f / 64f,
+            14f / 64f,
+            -26f / 64f,
+            6f / 64f,
+        },
+        {
+            28f / 64f,
+            -4f / 64f,
+            20f / 64f,
+            -12f / 64f,
+            30f / 64f,
+            -2f / 64f,
+            22f / 64f,
+            -10f / 64f,
+        },
+        { -29f / 64f, 3f / 64f, -21f / 64f, 11f / 64f, -31f / 64f, 1f / 64f, -23f / 64f, 9f / 64f },
+        {
+            19f / 64f,
+            -13f / 64f,
+            27f / 64f,
+            -5f / 64f,
+            17f / 64f,
+            -15f / 64f,
+            25f / 64f,
+            -7f / 64f,
+        },
+        {
+            -17f / 64f,
+            15f / 64f,
+            -25f / 64f,
+            7f / 64f,
+            -19f / 64f,
+            13f / 64f,
+            -27f / 64f,
+            5f / 64f,
+        },
+        { 31f / 64f, -1f / 64f, 23f / 64f, -9f / 64f, 29f / 64f, -3f / 64f, 21f / 64f, -11f / 64f },
+    };
+
     private static float[] CreateByteToFloatLut()
     {
         float[] lut = new float[256];
@@ -864,7 +925,8 @@ public static class OnnxTiler
         InferenceSession session,
         int tileSize = DefaultTileSize,
         int tilePad = DefaultTilePad,
-        CancellationToken cancellationToken = default
+        CancellationToken cancellationToken = default,
+        bool enableDither = false
     )
     {
         int currentMaxTileSizeX = tileSize > 0 ? tileSize : width;
@@ -883,7 +945,8 @@ public static class OnnxTiler
                     currentMaxTileSizeX,
                     currentMaxTileSizeY,
                     tilePad,
-                    cancellationToken
+                    cancellationToken,
+                    enableDither: enableDither
                 );
             }
             catch (Exception ex)
@@ -907,7 +970,8 @@ public static class OnnxTiler
         int maxTileSizeX,
         int maxTileSizeY,
         int overlap,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        bool enableDither = false
     )
     {
         int tileCountX = (int)Math.Ceiling((double)width / maxTileSizeX);
@@ -936,7 +1000,10 @@ public static class OnnxTiler
                 session,
                 cancellationToken,
                 targetW: uniformTargetSize,
-                targetH: uniformTargetSize
+                targetH: uniformTargetSize,
+                enableDither: enableDither,
+                globalOutX: 0,
+                globalOutY: 0
             );
         }
 
@@ -1097,6 +1164,8 @@ public static class OnnxTiler
                 }
 
                 prevJob = currentJob;
+                int jobGlobalOutX = currentJob.PaddedX * scale;
+                int jobGlobalOutY = currentJob.PaddedY * scale;
                 prevDecodeTask = Task.Run(
                     () =>
                         DecodeOutputTensor(
@@ -1106,7 +1175,10 @@ public static class OnnxTiler
                             effPaddedW,
                             effPaddedH,
                             scale,
-                            cancellationToken
+                            cancellationToken,
+                            enableDither,
+                            jobGlobalOutX,
+                            jobGlobalOutY
                         ),
                     cancellationToken
                 );
@@ -1328,7 +1400,10 @@ public static class OnnxTiler
         int paddedW,
         int paddedH,
         int scale,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        bool enableDither = false,
+        int globalOutX = 0,
+        int globalOutY = 0
     )
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -1350,55 +1425,125 @@ public static class OnnxTiler
             if (outNamedValue.Value is DenseTensor<Float16> halfOutTensor)
             {
                 Memory<Float16> halfMem = halfOutTensor.Buffer;
-                Parallel.For(
-                    0,
-                    outTileH,
-                    oy =>
-                    {
-                        ReadOnlySpan<ushort> halfBits = MemoryMarshal.Cast<Float16, ushort>(
-                            halfMem.Span
-                        );
-                        int rowOffset = oy * outPaddedW;
-                        int dstRowOffset = oy * outTileW * 3;
-                        for (int ox = 0; ox < outTileW; ox++)
+                if (!enableDither)
+                {
+                    Parallel.For(
+                        0,
+                        outTileH,
+                        oy =>
                         {
-                            int pIdx = rowOffset + ox;
-                            int dstIdx = dstRowOffset + ox * 3;
+                            ReadOnlySpan<ushort> halfBits = MemoryMarshal.Cast<Float16, ushort>(
+                                halfMem.Span
+                            );
+                            int rowOffset = oy * outPaddedW;
+                            int dstRowOffset = oy * outTileW * 3;
+                            for (int ox = 0; ox < outTileW; ox++)
+                            {
+                                int pIdx = rowOffset + ox;
+                                int dstIdx = dstRowOffset + ox * 3;
 
-                            outCrop[dstIdx] = Float16ToByteLut[halfBits[outROff + pIdx]];
-                            outCrop[dstIdx + 1] = Float16ToByteLut[halfBits[outGOff + pIdx]];
-                            outCrop[dstIdx + 2] = Float16ToByteLut[halfBits[outBOff + pIdx]];
+                                outCrop[dstIdx] = Float16ToByteLut[halfBits[outROff + pIdx]];
+                                outCrop[dstIdx + 1] = Float16ToByteLut[halfBits[outGOff + pIdx]];
+                                outCrop[dstIdx + 2] = Float16ToByteLut[halfBits[outBOff + pIdx]];
+                            }
                         }
-                    }
-                );
+                    );
+                }
+                else
+                {
+                    Parallel.For(
+                        0,
+                        outTileH,
+                        oy =>
+                        {
+                            ReadOnlySpan<Float16> halfSpan = halfMem.Span;
+                            int rowOffset = oy * outPaddedW;
+                            int dstRowOffset = oy * outTileW * 3;
+                            int py = globalOutY + oy;
+                            for (int ox = 0; ox < outTileW; ox++)
+                            {
+                                int pIdx = rowOffset + ox;
+                                int dstIdx = dstRowOffset + ox * 3;
+                                int px = globalOutX + ox;
+                                float dither = Bayer8x8[py & 7, px & 7];
+
+                                float r = (float)halfSpan[outROff + pIdx] * 255.0f;
+                                float g = (float)halfSpan[outGOff + pIdx] * 255.0f;
+                                float b = (float)halfSpan[outBOff + pIdx] * 255.0f;
+
+                                outCrop[dstIdx] = (byte)
+                                    Math.Clamp((int)(r + dither + 0.5f), 0, 255);
+                                outCrop[dstIdx + 1] = (byte)
+                                    Math.Clamp((int)(g + dither + 0.5f), 0, 255);
+                                outCrop[dstIdx + 2] = (byte)
+                                    Math.Clamp((int)(b + dither + 0.5f), 0, 255);
+                            }
+                        }
+                    );
+                }
             }
             else
             {
                 var floatOutTensor = (DenseTensor<float>)outNamedValue.AsTensor<float>();
                 Memory<float> floatMem = floatOutTensor.Buffer;
-                Parallel.For(
-                    0,
-                    outTileH,
-                    oy =>
-                    {
-                        ReadOnlySpan<float> span = floatMem.Span;
-                        int rowOffset = oy * outPaddedW;
-                        int dstRowOffset = oy * outTileW * 3;
-                        for (int ox = 0; ox < outTileW; ox++)
+                if (!enableDither)
+                {
+                    Parallel.For(
+                        0,
+                        outTileH,
+                        oy =>
                         {
-                            int pIdx = rowOffset + ox;
-                            int dstIdx = dstRowOffset + ox * 3;
+                            ReadOnlySpan<float> span = floatMem.Span;
+                            int rowOffset = oy * outPaddedW;
+                            int dstRowOffset = oy * outTileW * 3;
+                            for (int ox = 0; ox < outTileW; ox++)
+                            {
+                                int pIdx = rowOffset + ox;
+                                int dstIdx = dstRowOffset + ox * 3;
 
-                            float r = span[outROff + pIdx] * 255.0f;
-                            float g = span[outGOff + pIdx] * 255.0f;
-                            float b = span[outBOff + pIdx] * 255.0f;
+                                float r = span[outROff + pIdx] * 255.0f;
+                                float g = span[outGOff + pIdx] * 255.0f;
+                                float b = span[outBOff + pIdx] * 255.0f;
 
-                            outCrop[dstIdx] = (byte)Math.Clamp((int)(r + 0.5f), 0, 255);
-                            outCrop[dstIdx + 1] = (byte)Math.Clamp((int)(g + 0.5f), 0, 255);
-                            outCrop[dstIdx + 2] = (byte)Math.Clamp((int)(b + 0.5f), 0, 255);
+                                outCrop[dstIdx] = (byte)Math.Clamp((int)(r + 0.5f), 0, 255);
+                                outCrop[dstIdx + 1] = (byte)Math.Clamp((int)(g + 0.5f), 0, 255);
+                                outCrop[dstIdx + 2] = (byte)Math.Clamp((int)(b + 0.5f), 0, 255);
+                            }
                         }
-                    }
-                );
+                    );
+                }
+                else
+                {
+                    Parallel.For(
+                        0,
+                        outTileH,
+                        oy =>
+                        {
+                            ReadOnlySpan<float> span = floatMem.Span;
+                            int rowOffset = oy * outPaddedW;
+                            int dstRowOffset = oy * outTileW * 3;
+                            int py = globalOutY + oy;
+                            for (int ox = 0; ox < outTileW; ox++)
+                            {
+                                int pIdx = rowOffset + ox;
+                                int dstIdx = dstRowOffset + ox * 3;
+                                int px = globalOutX + ox;
+                                float dither = Bayer8x8[py & 7, px & 7];
+
+                                float r = span[outROff + pIdx] * 255.0f;
+                                float g = span[outGOff + pIdx] * 255.0f;
+                                float b = span[outBOff + pIdx] * 255.0f;
+
+                                outCrop[dstIdx] = (byte)
+                                    Math.Clamp((int)(r + dither + 0.5f), 0, 255);
+                                outCrop[dstIdx + 1] = (byte)
+                                    Math.Clamp((int)(g + dither + 0.5f), 0, 255);
+                                outCrop[dstIdx + 2] = (byte)
+                                    Math.Clamp((int)(b + dither + 0.5f), 0, 255);
+                            }
+                        }
+                    );
+                }
             }
 
             return outCrop;
@@ -1413,7 +1558,10 @@ public static class OnnxTiler
         InferenceSession session,
         CancellationToken cancellationToken,
         int targetW = 0,
-        int targetH = 0
+        int targetH = 0,
+        bool enableDither = false,
+        int globalOutX = 0,
+        int globalOutY = 0
     )
     {
         Type elementType = session.InputMetadata["input"].ElementType;
@@ -1436,7 +1584,10 @@ public static class OnnxTiler
             paddedW,
             paddedH,
             scale,
-            cancellationToken
+            cancellationToken,
+            enableDither,
+            globalOutX,
+            globalOutY
         );
     }
 }
