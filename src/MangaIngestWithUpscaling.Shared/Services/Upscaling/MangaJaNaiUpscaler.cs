@@ -377,7 +377,7 @@ public class MangaJaNaiUpscaler(
 
     private IReadOnlyList<ModelPackage> GetModelPackages()
     {
-        var packages = sharedConfig.Value.UseFp16 ? Fp16ModelPackages : Fp32ModelPackages;
+        var packages = sharedConfig.Value.ResolvedUseFp16 ? Fp16ModelPackages : Fp32ModelPackages;
         return [.. packages, PageBreakDetectorPackage];
     }
 

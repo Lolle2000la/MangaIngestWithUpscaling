@@ -89,7 +89,7 @@ The environment variable for each setting follows the ASP.NET Core convention:
 |---|---|---|---|
 | `PreferredGpuBackend` | `Ingest_Upscaler__PreferredGpuBackend` | `Auto` | Which GPU execution provider to use. See [values](#preferredgpubackend-values). |
 | `SelectedDeviceIndex` | `Ingest_Upscaler__SelectedDeviceIndex` | `1` | Device index: `0` selects CPU, `1` is the first GPU, `2` the second, and so on. |
-| `UseFp16` | `Ingest_Upscaler__UseFp16` | `true` | Use half-precision (FP16) inference. Recommended for modern GPUs; turn off for CPU or older hardware. |
+| `UseFp16` | `Ingest_Upscaler__UseFp16` | *(auto)* | Use half-precision (FP16) inference. Defaults to auto-detecting hardware capabilities (enabled on modern GPUs, disabled on CPU or unsupported hardware). Set to `true` or `false` to override. |
 | `UseCPU` | `Ingest_Upscaler__UseCPU` | `false` | Force CPU inference even when a GPU is available. |
 | `TileSize` | `Ingest_Upscaler__TileSize` | `0` | Tile size in pixels for ONNX inference. `0` = auto-estimate from model architecture and VRAM (default); `> 0` = manual tile size; `-1` = force single pass (no tiling). |
 | `MemoryBudgetBytes` | `Ingest_Upscaler__MemoryBudgetBytes` | `0` | VRAM memory budget in bytes for tile estimation. `0` = auto-detect free VRAM (default). |

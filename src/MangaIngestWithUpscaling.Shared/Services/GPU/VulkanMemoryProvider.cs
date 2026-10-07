@@ -36,15 +36,20 @@ public static class VulkanMemoryProvider
     private static IntPtr[]? _physicalDevices;
     private static string[]? _deviceNames;
     private static uint[]? _vendorIds;
+    private static uint[]? _deviceTypes;
 
     private static VkGetInstanceProcAddrDelegate? _vkGetInstanceProcAddr;
     private static VkGetPhysicalDeviceMemoryProperties2Delegate? _vkGetPhysicalDeviceMemoryProperties2;
     private static VkGetPhysicalDevicePropertiesDelegate? _vkGetPhysicalDeviceProperties;
+    private static VkGetPhysicalDeviceFeatures2Delegate? _vkGetPhysicalDeviceFeatures2;
 
     // Vulkan constants
     private const uint VK_STRUCTURE_TYPE_APPLICATION_INFO = 1;
     private const uint VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO = 10;
+    private const uint VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 = 1000059000;
     private const uint VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2 = 1000059006;
+    private const uint VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES = 1000082000;
+    private const uint VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES = 1000083000;
     private const uint VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT = 1000237000;
     private const uint VK_MEMORY_HEAP_DEVICE_LOCAL_BIT = 0x00000001;
 
@@ -195,6 +200,46 @@ public static class VulkanMemoryProvider
         ref VkPhysicalDeviceMemoryProperties2 pMemoryProperties
     );
 
+    [StructLayout(LayoutKind.Sequential)]
+    private unsafe struct VkPhysicalDeviceFeatures
+    {
+        public fixed uint features[55];
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct VkPhysicalDeviceFeatures2
+    {
+        public uint sType;
+        public IntPtr pNext;
+        public VkPhysicalDeviceFeatures features;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct VkPhysicalDeviceShaderFloat16Int8Features
+    {
+        public uint sType;
+        public IntPtr pNext;
+        public uint shaderFloat16;
+        public uint shaderInt8;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct VkPhysicalDevice16BitStorageFeatures
+    {
+        public uint sType;
+        public IntPtr pNext;
+        public uint storageBuffer16BitAccess;
+        public uint uniformAndStorageBuffer16BitAccess;
+        public uint storagePushConstant16;
+        public uint storageInputOutput16;
+    }
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void VkGetPhysicalDeviceFeatures2Delegate(
+        IntPtr physicalDevice,
+        ref VkPhysicalDeviceFeatures2 pFeatures
+    );
+
     /// <summary>
     /// Returns true if Vulkan is available and at least one physical device was successfully enumerated.
     /// </summary>
@@ -261,6 +306,100 @@ public static class VulkanMemoryProvider
             (deviceIndex >= 0 && deviceIndex < _physicalDevices.Length) ? deviceIndex : 0;
 
         return QueryDeviceInternal(targetIndex);
+    }
+
+    /// <summary>
+    /// Checks whether the specified Vulkan physical device is a software CPU device (e.g. llvmpipe, lavapipe).
+    /// </summary>
+    public static bool IsCpuDevice(int deviceIndex = 0)
+    {
+        EnsureInitialized();
+        if (!IsAvailable || _physicalDevices == null || _deviceTypes == null)
+        {
+            return false;
+        }
+
+        int targetIndex =
+            (deviceIndex >= 0 && deviceIndex < _physicalDevices.Length) ? deviceIndex : 0;
+
+        return _deviceTypes[targetIndex] == 4; // VK_PHYSICAL_DEVICE_TYPE_CPU
+    }
+
+    /// <summary>
+    /// Checks whether the specified Vulkan physical device supports native 16-bit floating point (FP16) arithmetic.
+    /// Returns false if Vulkan is unavailable, the device is a software CPU rasterizer, or FP16 is not supported.
+    /// </summary>
+    public static bool SupportsFp16(int deviceIndex = 0)
+    {
+        EnsureInitialized();
+        if (!IsAvailable || _physicalDevices == null)
+        {
+            return false;
+        }
+
+        int targetIndex =
+            (deviceIndex >= 0 && deviceIndex < _physicalDevices.Length) ? deviceIndex : 0;
+
+        // Disqualify CPU software rasterizers
+        if (IsCpuDevice(targetIndex))
+        {
+            return false;
+        }
+
+        IntPtr dev = _physicalDevices[targetIndex];
+        if (dev == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        if (_vkGetPhysicalDeviceFeatures2 != null)
+        {
+            try
+            {
+                unsafe
+                {
+                    var feat16 = new VkPhysicalDeviceShaderFloat16Int8Features
+                    {
+                        sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES,
+                        pNext = IntPtr.Zero,
+                    };
+
+                    var feat2 = new VkPhysicalDeviceFeatures2
+                    {
+                        sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+                        pNext = (IntPtr)(&feat16),
+                    };
+
+                    _vkGetPhysicalDeviceFeatures2(dev, ref feat2);
+                    if (feat16.shaderFloat16 != 0)
+                    {
+                        return true;
+                    }
+
+                    var featStorage = new VkPhysicalDevice16BitStorageFeatures
+                    {
+                        sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_16BIT_STORAGE_FEATURES,
+                        pNext = IntPtr.Zero,
+                    };
+                    feat2.pNext = (IntPtr)(&featStorage);
+                    _vkGetPhysicalDeviceFeatures2(dev, ref feat2);
+                    if (featStorage.storageBuffer16BitAccess != 0)
+                    {
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+                // Degrade gracefully
+            }
+        }
+
+        // Fallback for hardware GPUs if feature extension query failed:
+        // Known modern GPU vendors: NVIDIA (0x10DE), AMD (0x1002), Intel (0x8086), Apple (0x106B)
+        uint vendor =
+            _vendorIds != null && targetIndex < _vendorIds.Length ? _vendorIds[targetIndex] : 0;
+        return vendor is 0x10DE or 0x1002 or 0x8086 or 0x106B;
     }
 
     private static unsafe VulkanGpuMemory? QueryDeviceInternal(int index)
@@ -489,6 +628,20 @@ public static class VulkanMemoryProvider
                         );
                 }
 
+                IntPtr pfnFeat2 = _vkGetInstanceProcAddr(_instance, "vkGetPhysicalDeviceFeatures2");
+                if (pfnFeat2 == IntPtr.Zero)
+                {
+                    pfnFeat2 = _vkGetInstanceProcAddr(_instance, "vkGetPhysicalDeviceFeatures2KHR");
+                }
+
+                if (pfnFeat2 != IntPtr.Zero)
+                {
+                    _vkGetPhysicalDeviceFeatures2 =
+                        Marshal.GetDelegateForFunctionPointer<VkGetPhysicalDeviceFeatures2Delegate>(
+                            pfnFeat2
+                        );
+                }
+
                 IntPtr pfnEnumDevices = _vkGetInstanceProcAddr(
                     _instance,
                     "vkEnumeratePhysicalDevices"
@@ -520,6 +673,7 @@ public static class VulkanMemoryProvider
                 _physicalDevices = devices;
                 _deviceNames = new string[deviceCount];
                 _vendorIds = new uint[deviceCount];
+                _deviceTypes = new uint[deviceCount];
 
                 for (int i = 0; i < deviceCount; i++)
                 {
@@ -527,6 +681,7 @@ public static class VulkanMemoryProvider
                     {
                         _vkGetPhysicalDeviceProperties(devices[i], out var devProps);
                         _vendorIds[i] = devProps.vendorID;
+                        _deviceTypes[i] = devProps.deviceType;
 
                         unsafe
                         {
@@ -582,6 +737,7 @@ public static class VulkanMemoryProvider
             _physicalDevices = null;
             _deviceNames = null;
             _vendorIds = null;
+            _deviceTypes = null;
         }
     }
 

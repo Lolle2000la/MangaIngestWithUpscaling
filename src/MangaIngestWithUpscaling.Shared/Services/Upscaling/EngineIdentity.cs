@@ -71,7 +71,7 @@ public static class EngineIdentity
         // the spool there. Hashing the worker's local copy would be wrong in both directions: it would
         // miss a server-side change and spuriously reject a worker whose local config differs.
         material
-            .Append(config.UseFp16)
+            .Append(config.ResolvedUseFp16)
             .Append('|')
             // The effective compute mode, not just UseCPU: the worker maps
             // SelectedDeviceIndex = UseCPU ? 0 : SelectedDeviceIndex, and device 0 is the CPU switch.

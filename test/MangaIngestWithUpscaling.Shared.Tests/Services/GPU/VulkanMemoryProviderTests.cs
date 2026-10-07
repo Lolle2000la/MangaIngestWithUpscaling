@@ -58,4 +58,26 @@ public class VulkanMemoryProviderTests
         Assert.Equal(0, first.DeviceIndex);
         Assert.False(string.IsNullOrEmpty(first.DeviceName));
     }
+
+    [Fact]
+    public void SupportsFp16_WhenAvailable_ReturnsExpectedSupport()
+    {
+        if (!VulkanMemoryProvider.IsAvailable)
+        {
+            return;
+        }
+
+        bool supportsFp16 = VulkanMemoryProvider.SupportsFp16(0);
+        bool isCpu = VulkanMemoryProvider.IsCpuDevice(0);
+
+        if (isCpu)
+        {
+            Assert.False(supportsFp16);
+        }
+        else
+        {
+            // On a modern hardware GPU, FP16 is supported
+            Assert.True(supportsFp16);
+        }
+    }
 }

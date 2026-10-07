@@ -55,8 +55,9 @@ export Ingest_Upscaler__SelectedDeviceIndex=1
 ### `UseFp16`
 
 Enables half-precision (FP16) inference:
-- `true` *(default)*: Recommended for modern GPUs (higher throughput and lower memory consumption)
-- `false`: Uses full FP32 precision
+- *(unset / null, default)*: Automatically detects hardware capability (enabled for modern GPUs, disabled on CPU or unsupported hardware)
+- `true`: Forces half-precision FP16 models
+- `false`: Forces single-precision FP32 models
 
 Environment variable:
 ```bash

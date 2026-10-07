@@ -1,3 +1,5 @@
+using MangaIngestWithUpscaling.Shared.Services.GPU;
+
 namespace MangaIngestWithUpscaling.Shared.Configuration;
 
 public enum GpuBackend
@@ -44,7 +46,25 @@ public record UpscalerConfig
     /// </summary>
     public bool ForceAcceptExistingEnvironment { get; set; } = false;
 
-    public bool UseFp16 { get; set; } = true;
+    /// <summary>
+    ///     When true, uses 16-bit floating point (FP16) half-precision models.
+    ///     When false, uses 32-bit floating point (FP32) single-precision models.
+    ///     When null (default), automatically detects whether FP16 inference is supported
+    ///     by the active hardware/GPU backend.
+    /// </summary>
+    public bool? UseFp16 { get; set; } = null;
+
+    /// <summary>
+    ///     Gets the effective FP16 setting, auto-detecting hardware support if <see cref="UseFp16"/> is null.
+    /// </summary>
+    public bool ResolvedUseFp16 =>
+        UseFp16
+        ?? Fp16CapabilityDetector.IsFp16Supported(
+            Math.Max(0, SelectedDeviceIndex - 1),
+            PreferredGpuBackend,
+            UseCPU || SelectedDeviceIndex <= 0
+        );
+
     public bool UseCPU { get; set; } = false;
 
     /// <summary>
