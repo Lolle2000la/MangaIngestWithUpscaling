@@ -29,7 +29,7 @@ public class EngineIdentityTests
         // a spool on a hand-off.
         UpscalerConfig baseline = Config();
         UpscalerConfig changed = Config();
-        changed.EnableSmartDownscale = true;
+        changed.EnableSmartDownscale = false;
         changed.MaxDimensionBeforeUpscaling = 1600;
         changed.ImageFormatConversionRules =
         [

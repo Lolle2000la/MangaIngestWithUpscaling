@@ -205,8 +205,9 @@ public record UpscalerConfig
     ///     detected via a Laplacian-variance sharpness check and downscaled back toward their likely
     ///     native resolution before AI upscaling. This prevents double-upscaling artefacts and lets
     ///     the model see clean, high-contrast edges.
+    ///     Default: true.
     /// </summary>
-    public bool EnableSmartDownscale { get; set; } = false;
+    public bool EnableSmartDownscale { get; set; } = true;
 
     /// <summary>
     ///     Sharpness threshold used by the smart downscale check. A standard deviation of the

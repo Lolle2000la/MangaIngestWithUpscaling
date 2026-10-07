@@ -61,6 +61,7 @@ public class MangaJaNaiUpscalerTests : IDisposable
                 $"upscaler_test_{TestContext.Current.TestCase.TestCaseDisplayName}"
             ),
             ImageFormatConversionRules = [],
+            EnableSmartDownscale = false,
         };
         _mockConfig = Substitute.For<IOptions<UpscalerConfig>>();
         _mockConfig.Value.Returns(config);

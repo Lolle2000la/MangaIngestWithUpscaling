@@ -21,7 +21,7 @@ public class ImagePreprocessingOptions
     /// When true, images that appear to have been cheaply upscaled are detected via a
     /// Laplacian-variance sharpness check and conditionally downscaled before AI upscaling.
     /// </summary>
-    public bool EnableSmartDownscale { get; set; } = false;
+    public bool EnableSmartDownscale { get; set; } = true;
 
     /// <summary>
     /// Laplacian standard-deviation threshold below which an image is considered cheaply upscaled.
