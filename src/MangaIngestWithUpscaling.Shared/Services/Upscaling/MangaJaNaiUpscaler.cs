@@ -45,164 +45,164 @@ public class MangaJaNaiUpscaler(
     [
         new(
             "https://github.com/Lolle2000la/MangaJaNai/releases/download/v3.0.0-onnx/MangaJaNai_V1_FP16_ONNX.zip",
-            "d1e7594f1f074824eb67b5e30f88cc0c741fa54cb503a9d6301d7948d1a97f63",
+            "c0b4fd81f6368c1c34d9fb82e2033bb00754abc5a2a7ed1bbddf0ac9fe6837f3",
             new Dictionary<string, string>
             {
                 {
                     "2x_MangaJaNai_1200p_V1_ESRGAN_70k.onnx",
-                    "90cf432d8a333e7f8704afa5c03905e3d2d82844e8e550b4a36a6288f3f8f4df"
+                    "e9e841d06f5fe7e48f67fef7199b67b000702b3e2988f4af5d76a90a6a1acb9c"
                 },
                 {
                     "2x_MangaJaNai_1300p_V1_ESRGAN_75k.onnx",
-                    "9ed59dbc9c665e5626bacdad4747d3e9e2965d2bd9d3f98c3e3bb6414c0dc50c"
+                    "7f4cdecefd4ce2bdacaf551f2b5ca3c5bcb8bd10ddd917328de9b7917bd8919f"
                 },
                 {
                     "2x_MangaJaNai_1400p_V1_ESRGAN_70k.onnx",
-                    "412d35c10eca9d6c5c734d2dbba3cd739fb6f4d6abe18b79d76253a69a6aa929"
+                    "2f6eaae8cb6718468c83c34b44009d655914e7ffb32ffa9be43f87480e16e253"
                 },
                 {
                     "2x_MangaJaNai_1500p_V1_ESRGAN_90k.onnx",
-                    "0b0698556a4394ba3fb561590ed0114f8686bbe1a4029d949ae6d93305740abf"
+                    "afd6e8e2765b5cdb4751f5d4e05428407a19f010a46dc6872ba05990376a7b4b"
                 },
                 {
                     "2x_MangaJaNai_1600p_V1_ESRGAN_90k.onnx",
-                    "cdc3a4e36acd07ece3837f7bd4f3ca66db8e86064bd9d9ef9697690178137c81"
+                    "436b6d3496b8c8063937ba42bec01aea9129ba650666ccca9c5658ac00d277f7"
                 },
                 {
                     "2x_MangaJaNai_1920p_V1_ESRGAN_70k.onnx",
-                    "f627c925d7dd2fb7be8b5123e656fa84b37cf0bf383fef17b7f9cda941da10d8"
+                    "9c7cb1f6dffbdc8c17f634a0f4bce946958bf58b7b1295db273436e077fa6c82"
                 },
                 {
                     "2x_MangaJaNai_2048p_V1_ESRGAN_95k.onnx",
-                    "92a9ea379c29a00bd9a8127b5749e1648b1003a64522b0d943766b195786de44"
+                    "67aa004413115673fd032cb2a995281e23c9ce35aa12405df23bfaf80b5021fa"
                 },
                 {
                     "4x_MangaJaNai_1200p_V1_ESRGAN_70k.onnx",
-                    "8be065399a22ef79100adf7b09fac8a0d65e90e92b881f55bbbea8f99661fd51"
+                    "35c34e4e846239421ec874c9bac1d8a0c4f5cccfbd39af028292ef0e438671e7"
                 },
                 {
                     "4x_MangaJaNai_1300p_V1_ESRGAN_75k.onnx",
-                    "3bdaee0e2cb064ea09098262275de339a7af0c5befcd1f79e327f56871d87a56"
+                    "3bac04e572ee70efbcfcb5e03659426d6c921f9d5fc851118ab76880902dd2e8"
                 },
                 {
                     "4x_MangaJaNai_1400p_V1_ESRGAN_105k.onnx",
-                    "04e7b24ff70e46516000c5058870aa03df4a9a5d478527be628752c6ec57d0a6"
+                    "5e34e632a790a7a22be3b67d106e26c88af28caa72ce57b0553b1ea3a01f6225"
                 },
                 {
                     "4x_MangaJaNai_1500p_V1_ESRGAN_105k.onnx",
-                    "15035454241bc417eedaad5944bdab0ea9ac9083aeca959de0de442f5d299986"
+                    "0207630b16f5898d502007e7cc7f9ae176607afad3fa106a0770fefbdf2f19de"
                 },
                 {
                     "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
-                    "5b1fca557cbaedd6727832b4ee7afda4ecd3f26fe578a2412ed3117e16344744"
+                    "dc945390d875e708307b171519bb1afb56e265a078ae9f74498de0f7c1fa02e7"
                 },
                 {
                     "4x_MangaJaNai_1920p_V1_ESRGAN_105k.onnx",
-                    "87556590b33c2c42e99428b31bd8df6c1fa1c1afd3137572ba7f919f31ca15ea"
+                    "9c66ec4b7dc80cfc12e9679399ea365f1ab15e812b99ef311151f89217ce55e6"
                 },
                 {
                     "4x_MangaJaNai_2048p_V1_ESRGAN_70k.onnx",
-                    "76ae3d8493d95f3affcbb1ca065ffcb5e0a2c5334ea140d41722435f04764ec7"
+                    "5de460fe67f132269332b1f1efce48c28cb6e53951f476338ca1ce855eb95c8a"
                 },
             }
         ),
         new(
             "https://github.com/Lolle2000la/MangaJaNai/releases/download/v3.0.0-onnx/IllustrationJaNai_V1_FP16_ONNX.zip",
-            "ac24d048470d5856ead1f79efb7b48ac92228611d5e7c993e01363c8fecf38e6",
+            "1235d52be648aa4f40e18dd66ec5d02871a1527a292d5ca91f24ef013cc6feab",
             new Dictionary<string, string>
             {
                 {
                     "2x_IllustrationJaNai_V1_ESRGAN_120k.onnx",
-                    "b25c6078a7fcab756807c1df76ba3e536aff49f23629aa1c41a0388425552407"
+                    "7cb8e9aa0f104fd36eed22feb638bc4fa39d541f30dd7944368cb024c71e4343"
                 },
                 {
                     "4x_IllustrationJaNai_V1_DAT2_190k.onnx",
-                    "be50647a0d87eeba9bf9a378c33433523cbcc5f79a904bd79976eee7d85f0515"
+                    "b700aa1a64b6a6fbdeba756be1badf323fda09bcec874c29f3f58b5579e38132"
                 },
                 {
                     "4x_IllustrationJaNai_V1_ESRGAN_135k.onnx",
-                    "2dda30cd00a36b0e3699e7e65cff93b8bf815902e8cea717485be5b36a78d8fb"
+                    "d9f5adbe67a48534910064436e92baec7cd1feadce720b17ce9bd10dcddbeeb6"
                 },
             }
         ),
         new(
             "https://github.com/Lolle2000la/MangaJaNai/releases/download/v3.0.0-onnx/4x_IllustrationJaNai_V2standard_FP16_ONNX.zip",
-            "ada8176c6184dc2de732c9c795150b064015578782d8bcedc9f6d513769e324d",
+            "59be9e46b32f21fa689ccd99c17f4ea89613a21aa946265e8c8003c2a25fe153",
             new Dictionary<string, string>
             {
                 {
                     "2x_IllustrationJaNai_V2standard_FDAT_M_unshuffle_40k.onnx",
-                    "4e7b92b357b90dbba37e7c5f834e7156c481427c31f392e431d0a3f0383490bc"
+                    "296a17a440ff2f0d2b1dd9d61031ad40a367bb34a980d05db3ca6871effbe152"
                 },
                 {
                     "4x_IllustrationJaNai_V2standard_DAT2_27k.onnx",
-                    "d47106f9f298adcbadef75ca4aeef50e61588ca847a14783633d14a11af7a706"
+                    "77866ea12664c0e1c1a803ff6dc626a48d1bd1ef7285627fb612c24fb9c6f66b"
                 },
                 {
                     "4x_IllustrationJaNai_V2standard_FDAT_M_52k.onnx",
-                    "541f651f52844fa4486f09cae5d2f404ca1f76a3dae7f30d1114d843de2dda2f"
+                    "06f9af8df4fd5acc1f4e165b00eec94c5c4ea5a639292d8599ac17dcd0cb99c1"
                 },
                 {
                     "4x_IllustrationJaNai_V2standard_FDAT_XL_18k.onnx",
-                    "17148f7e0ff82137e2d31387ecbb2550a804ed8a8b9970e63580c684f20196ca"
+                    "b3e0d9fa5e95c720567767f55d5d3177b65090962de1c7d0bfb159cf24788b78"
                 },
             }
         ),
         new(
             "https://github.com/Lolle2000la/MangaJaNai/releases/download/v3.0.0-onnx/IllustrationJaNai_V3denoise_FP16_ONNX.zip",
-            "921fc95c8be8ed4c59242dfcd009f534b9225e45058c4c451d43ef3c7accc103",
+            "b38fd21c3d5b7e3f21a0844cb1012b7cad7b34e5fbb614cd687205fa76eec9bb",
             new Dictionary<string, string>
             {
                 {
                     "2x_IllustrationJaNai_V3denoise_FDAT_M_unshuffle_30k_fp16.onnx",
-                    "0678b9f53a22ec7262b666c4c6922a71e8cde6c757b3407b355adfe9fa006f70"
+                    "b1a6d9137b2dd8215e5b12e3233605e942b115be0aa41d869be2d8ccaef58e54"
                 },
                 {
                     "2x_IllustrationJaNai_V3denoise_SPAN_S_30k_fp16.onnx",
-                    "d29ac4cef6adf66ca72fe1757d20f57798351f1d4b737c837ad35a9fd30a8633"
+                    "1b96dd10e3241eeb76ce149342870f86e511ad861abba621b01d561cceca0f82"
                 },
                 {
                     "4x_IllustrationJaNai_V3denoise_DAT2_27k_bf16.onnx",
-                    "ee5199efd82f172d2de4b7b36986eafc968e1e752ce825b592bf81990f0e7855"
+                    "5c313112b090d8eba97314e809e9b5508a09dea55cb49152173f90447022c520"
                 },
                 {
                     "4x_IllustrationJaNai_V3denoise_FDAT_M_47k_fp16.onnx",
-                    "30d1ef0c597fbd1a980975868883861915ddbdd25f4e469ff776e679759bd9a6"
+                    "0cdc6f2597931fcddf5f5e6cc01b071b9f6da890b16db4b34a178f2757dd6989"
                 },
                 {
                     "4x_IllustrationJaNai_V3denoise_FDAT_XL_32k_bf16.onnx",
-                    "11c450291aa9b20c7a3303170187ae5cb97e65f81065e3bf375aeadbfa65ce7d"
+                    "d68de1754384eb4cb42f4a2891e570d939c6590c712c880c0e297bce34383ae6"
                 },
             }
         ),
         new(
             "https://github.com/Lolle2000la/MangaJaNai/releases/download/v3.0.0-onnx/IllustrationJaNai_V3detail_FP16_ONNX.zip",
-            "c60431c918dfde1b3d502bf11efafde5caf5e18c3c756d7f5db9788e0757eb94",
+            "f0142a0781a3a9d9ae1eda4ed0af6a12300649719441a1a54b917e7ee3a02134",
             new Dictionary<string, string>
             {
                 {
                     "2x_IllustrationJaNai_V3detail_FDAT_M_unshuffle_40k_fp16.onnx",
-                    "4b12a4da3be2e198bc826ae0881ee91bb56ade3c598754ee5433596e65cc7de9"
+                    "ae263428f29eb775fa0a190de6edece9e1e56409162b6f29099f3c9986e84705"
                 },
                 {
                     "2x_IllustrationJaNai_V3detail_SPAN_S_40k_fp16.onnx",
-                    "040f3d24bcb26cead6548e39972a9165775174d1b297ee404aefbda1a8380b5d"
+                    "77434949223b70bccd95869c1d52111397180cc9d23b18ef9585f9dc85c238e3"
                 },
                 {
                     "4x_IllustrationJaNai_V3detail_DAT2_28k_bf16.onnx",
-                    "825b50500a4b7bc20fe7853ca78a389005a61aeb90b2d02952536a0bb839867e"
+                    "ea850b31d42775e964ce4655e0710eeb058f0a27c35e2f7cf5fd6f52bcb21082"
                 },
                 {
                     "4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx",
-                    "585b6af155c04283404a0977eb5dd0b0cc2194fecce345792ae44112374f83fd"
+                    "e3e576f8822612c50a5967c36a87cdebf32470f206675cf6de7735d29e7c01ef"
                 },
                 {
                     "4x_IllustrationJaNai_V3detail_FDAT_XL_27k_bf16.onnx",
-                    "a13a4f79262f501ded148c2c83bc328fab5795673062e71123542fb71e80fb7e"
+                    "cdab4d3c34b3bc77c618f6af8a73da76602f05b14c438561a49247440ab89301"
                 },
                 {
                     "4x_IllustrationJaNai_V3detail_HAT_L_28k_bf16.onnx",
-                    "ce5bfd221954d128c4ed3278ea6a78f47baa492099dd431e4231a70354ec32b7"
+                    "0d7de5ec99c6d2d2bc523132d72849900d858a90b4d5116d1329dae141d53357"
                 },
             }
         ),
@@ -212,7 +212,7 @@ public class MangaJaNaiUpscaler(
     [
         new(
             "https://github.com/Lolle2000la/MangaJaNai/releases/download/v3.0.0-onnx/MangaJaNai_V1_ONNX.zip",
-            "cefaafc3837e7fe9b7109d9654086920407d1300943da5eda136616b5265a571",
+            "2f640c2debcd99618890a5b115e7d6790f2c3de110fc5e15bedcf622c2b4b190",
             new Dictionary<string, string>
             {
                 {
@@ -275,7 +275,7 @@ public class MangaJaNaiUpscaler(
         ),
         new(
             "https://github.com/Lolle2000la/MangaJaNai/releases/download/v3.0.0-onnx/IllustrationJaNai_V1_ONNX.zip",
-            "96df0b234644a472f8397a6beee039b8fc9aff734dc979e5f0af61fb55d6dfe1",
+            "9696715934533d9f6ca824b0f8eec1057e6df381695daa0a58b0a6378ada1baa",
             new Dictionary<string, string>
             {
                 {
@@ -294,7 +294,7 @@ public class MangaJaNaiUpscaler(
         ),
         new(
             "https://github.com/Lolle2000la/MangaJaNai/releases/download/v3.0.0-onnx/4x_IllustrationJaNai_V2standard_ONNX.zip",
-            "c5a391ad49cb5dd72dcfdd7129079d7fc4a56be3fa9b2c083f934b82968fde5a",
+            "41d38168f5fe7bb9272390c46223fc7ff251bbcdfcd779f78afd5799c15c82cd",
             new Dictionary<string, string>
             {
                 {
@@ -317,7 +317,7 @@ public class MangaJaNaiUpscaler(
         ),
         new(
             "https://github.com/Lolle2000la/MangaJaNai/releases/download/v3.0.0-onnx/IllustrationJaNai_V3denoise_ONNX.zip",
-            "7c19466a2945de2e0aca743f16604399476dc31a9f21239ce3d1678d04c58920",
+            "d5cbeee6175b34357c1bb02dbab6408f2d7ba5e50919fc81c16a3928edfc4607",
             new Dictionary<string, string>
             {
                 {
@@ -344,7 +344,7 @@ public class MangaJaNaiUpscaler(
         ),
         new(
             "https://github.com/Lolle2000la/MangaJaNai/releases/download/v3.0.0-onnx/IllustrationJaNai_V3detail_ONNX.zip",
-            "28bbc34d492f9a378c65f705297b4e961d97c45b105692ce1e0eebcbca6f42ba",
+            "03853d2185ad53c2fe5d38de9ace8a0b2855c6a508baa1d86124a4a2cd289d6f",
             new Dictionary<string, string>
             {
                 {
