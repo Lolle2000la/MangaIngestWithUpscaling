@@ -928,4 +928,48 @@ public class MangaJaNaiUpscalerTests : IDisposable
         Assert.True(File.Exists(targetOnnxPath));
         Assert.True(new FileInfo(targetOnnxPath).Length > 0);
     }
+
+    [Theory]
+    [InlineData(true, "MangaJaNai_V1_FP16_ONNX.zip")]
+    [InlineData(false, "MangaJaNai_V1_ONNX.zip")]
+    public void GetModelPackages_SelectsAppropriatePackageSuiteBasedOnUseFp16(
+        bool useFp16,
+        string expectedMainZip
+    )
+    {
+        var config = new UpscalerConfig { UseFp16 = useFp16, ModelsDirectory = _tempDir };
+        var mockConfig = Substitute.For<IOptions<UpscalerConfig>>();
+        mockConfig.Value.Returns(config);
+
+        var upscaler = new MangaJaNaiUpscaler(
+            _mockWorkerClient,
+            _mockLogger,
+            mockConfig,
+            _mockFileSystem,
+            _mockMetadataHandling,
+            _mockJsonHandling,
+            _mockImageResize,
+            _mockLocalizer
+        );
+
+        var method = typeof(MangaJaNaiUpscaler).GetMethod(
+            "GetModelPackages",
+            BindingFlags.NonPublic | BindingFlags.Instance
+        );
+        Assert.NotNull(method);
+
+        var packages = method.Invoke(upscaler, null) as System.Collections.IEnumerable;
+        Assert.NotNull(packages);
+
+        var list = packages.Cast<object>().ToList();
+        Assert.True(list.Count >= 6);
+
+        var firstPackage = list[0];
+        var urlProp = firstPackage.GetType().GetProperty("ZipUrl");
+        Assert.NotNull(urlProp);
+
+        string? url = urlProp.GetValue(firstPackage) as string;
+        Assert.NotNull(url);
+        Assert.Contains(expectedMainZip, url);
+    }
 }

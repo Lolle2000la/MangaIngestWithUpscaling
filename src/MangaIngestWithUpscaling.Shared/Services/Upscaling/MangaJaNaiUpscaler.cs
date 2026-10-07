@@ -29,7 +29,186 @@ public class MangaJaNaiUpscaler(
         Dictionary<string, string> ExpectedFileHashes
     );
 
-    private readonly List<ModelPackage> modelPackages =
+    private static readonly ModelPackage PageBreakDetectorPackage = new(
+        "https://github.com/Lolle2000la/manga-vert-split-nn/releases/download/1.0.0/page_break_detector.onnx.zip",
+        "122c184da5b4de58f68e91d25cfb07d684ea58b016727b8182af2193addc2e77",
+        new Dictionary<string, string>
+        {
+            {
+                "page_break_detector.onnx",
+                "974686b591317739ff493f94c3f284c45c4b6b21f3acffac1ec7643b1ab481ae"
+            },
+        }
+    );
+
+    private static readonly List<ModelPackage> Fp16ModelPackages =
+    [
+        new(
+            "https://github.com/Lolle2000la/MangaJaNai/releases/download/v3.0.0-onnx/MangaJaNai_V1_FP16_ONNX.zip",
+            "d1e7594f1f074824eb67b5e30f88cc0c741fa54cb503a9d6301d7948d1a97f63",
+            new Dictionary<string, string>
+            {
+                {
+                    "2x_MangaJaNai_1200p_V1_ESRGAN_70k.onnx",
+                    "90cf432d8a333e7f8704afa5c03905e3d2d82844e8e550b4a36a6288f3f8f4df"
+                },
+                {
+                    "2x_MangaJaNai_1300p_V1_ESRGAN_75k.onnx",
+                    "9ed59dbc9c665e5626bacdad4747d3e9e2965d2bd9d3f98c3e3bb6414c0dc50c"
+                },
+                {
+                    "2x_MangaJaNai_1400p_V1_ESRGAN_70k.onnx",
+                    "412d35c10eca9d6c5c734d2dbba3cd739fb6f4d6abe18b79d76253a69a6aa929"
+                },
+                {
+                    "2x_MangaJaNai_1500p_V1_ESRGAN_90k.onnx",
+                    "0b0698556a4394ba3fb561590ed0114f8686bbe1a4029d949ae6d93305740abf"
+                },
+                {
+                    "2x_MangaJaNai_1600p_V1_ESRGAN_90k.onnx",
+                    "cdc3a4e36acd07ece3837f7bd4f3ca66db8e86064bd9d9ef9697690178137c81"
+                },
+                {
+                    "2x_MangaJaNai_1920p_V1_ESRGAN_70k.onnx",
+                    "f627c925d7dd2fb7be8b5123e656fa84b37cf0bf383fef17b7f9cda941da10d8"
+                },
+                {
+                    "2x_MangaJaNai_2048p_V1_ESRGAN_95k.onnx",
+                    "92a9ea379c29a00bd9a8127b5749e1648b1003a64522b0d943766b195786de44"
+                },
+                {
+                    "4x_MangaJaNai_1200p_V1_ESRGAN_70k.onnx",
+                    "8be065399a22ef79100adf7b09fac8a0d65e90e92b881f55bbbea8f99661fd51"
+                },
+                {
+                    "4x_MangaJaNai_1300p_V1_ESRGAN_75k.onnx",
+                    "3bdaee0e2cb064ea09098262275de339a7af0c5befcd1f79e327f56871d87a56"
+                },
+                {
+                    "4x_MangaJaNai_1400p_V1_ESRGAN_105k.onnx",
+                    "04e7b24ff70e46516000c5058870aa03df4a9a5d478527be628752c6ec57d0a6"
+                },
+                {
+                    "4x_MangaJaNai_1500p_V1_ESRGAN_105k.onnx",
+                    "15035454241bc417eedaad5944bdab0ea9ac9083aeca959de0de442f5d299986"
+                },
+                {
+                    "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
+                    "5b1fca557cbaedd6727832b4ee7afda4ecd3f26fe578a2412ed3117e16344744"
+                },
+                {
+                    "4x_MangaJaNai_1920p_V1_ESRGAN_105k.onnx",
+                    "87556590b33c2c42e99428b31bd8df6c1fa1c1afd3137572ba7f919f31ca15ea"
+                },
+                {
+                    "4x_MangaJaNai_2048p_V1_ESRGAN_70k.onnx",
+                    "76ae3d8493d95f3affcbb1ca065ffcb5e0a2c5334ea140d41722435f04764ec7"
+                },
+            }
+        ),
+        new(
+            "https://github.com/Lolle2000la/MangaJaNai/releases/download/v3.0.0-onnx/IllustrationJaNai_V1_FP16_ONNX.zip",
+            "ac24d048470d5856ead1f79efb7b48ac92228611d5e7c993e01363c8fecf38e6",
+            new Dictionary<string, string>
+            {
+                {
+                    "2x_IllustrationJaNai_V1_ESRGAN_120k.onnx",
+                    "b25c6078a7fcab756807c1df76ba3e536aff49f23629aa1c41a0388425552407"
+                },
+                {
+                    "4x_IllustrationJaNai_V1_DAT2_190k.onnx",
+                    "be50647a0d87eeba9bf9a378c33433523cbcc5f79a904bd79976eee7d85f0515"
+                },
+                {
+                    "4x_IllustrationJaNai_V1_ESRGAN_135k.onnx",
+                    "2dda30cd00a36b0e3699e7e65cff93b8bf815902e8cea717485be5b36a78d8fb"
+                },
+            }
+        ),
+        new(
+            "https://github.com/Lolle2000la/MangaJaNai/releases/download/v3.0.0-onnx/4x_IllustrationJaNai_V2standard_FP16_ONNX.zip",
+            "ada8176c6184dc2de732c9c795150b064015578782d8bcedc9f6d513769e324d",
+            new Dictionary<string, string>
+            {
+                {
+                    "2x_IllustrationJaNai_V2standard_FDAT_M_unshuffle_40k.onnx",
+                    "4e7b92b357b90dbba37e7c5f834e7156c481427c31f392e431d0a3f0383490bc"
+                },
+                {
+                    "4x_IllustrationJaNai_V2standard_DAT2_27k.onnx",
+                    "d47106f9f298adcbadef75ca4aeef50e61588ca847a14783633d14a11af7a706"
+                },
+                {
+                    "4x_IllustrationJaNai_V2standard_FDAT_M_52k.onnx",
+                    "541f651f52844fa4486f09cae5d2f404ca1f76a3dae7f30d1114d843de2dda2f"
+                },
+                {
+                    "4x_IllustrationJaNai_V2standard_FDAT_XL_18k.onnx",
+                    "17148f7e0ff82137e2d31387ecbb2550a804ed8a8b9970e63580c684f20196ca"
+                },
+            }
+        ),
+        new(
+            "https://github.com/Lolle2000la/MangaJaNai/releases/download/v3.0.0-onnx/IllustrationJaNai_V3denoise_FP16_ONNX.zip",
+            "921fc95c8be8ed4c59242dfcd009f534b9225e45058c4c451d43ef3c7accc103",
+            new Dictionary<string, string>
+            {
+                {
+                    "2x_IllustrationJaNai_V3denoise_FDAT_M_unshuffle_30k_fp16.onnx",
+                    "0678b9f53a22ec7262b666c4c6922a71e8cde6c757b3407b355adfe9fa006f70"
+                },
+                {
+                    "2x_IllustrationJaNai_V3denoise_SPAN_S_30k_fp16.onnx",
+                    "d29ac4cef6adf66ca72fe1757d20f57798351f1d4b737c837ad35a9fd30a8633"
+                },
+                {
+                    "4x_IllustrationJaNai_V3denoise_DAT2_27k_bf16.onnx",
+                    "ee5199efd82f172d2de4b7b36986eafc968e1e752ce825b592bf81990f0e7855"
+                },
+                {
+                    "4x_IllustrationJaNai_V3denoise_FDAT_M_47k_fp16.onnx",
+                    "30d1ef0c597fbd1a980975868883861915ddbdd25f4e469ff776e679759bd9a6"
+                },
+                {
+                    "4x_IllustrationJaNai_V3denoise_FDAT_XL_32k_bf16.onnx",
+                    "11c450291aa9b20c7a3303170187ae5cb97e65f81065e3bf375aeadbfa65ce7d"
+                },
+            }
+        ),
+        new(
+            "https://github.com/Lolle2000la/MangaJaNai/releases/download/v3.0.0-onnx/IllustrationJaNai_V3detail_FP16_ONNX.zip",
+            "c60431c918dfde1b3d502bf11efafde5caf5e18c3c756d7f5db9788e0757eb94",
+            new Dictionary<string, string>
+            {
+                {
+                    "2x_IllustrationJaNai_V3detail_FDAT_M_unshuffle_40k_fp16.onnx",
+                    "4b12a4da3be2e198bc826ae0881ee91bb56ade3c598754ee5433596e65cc7de9"
+                },
+                {
+                    "2x_IllustrationJaNai_V3detail_SPAN_S_40k_fp16.onnx",
+                    "040f3d24bcb26cead6548e39972a9165775174d1b297ee404aefbda1a8380b5d"
+                },
+                {
+                    "4x_IllustrationJaNai_V3detail_DAT2_28k_bf16.onnx",
+                    "825b50500a4b7bc20fe7853ca78a389005a61aeb90b2d02952536a0bb839867e"
+                },
+                {
+                    "4x_IllustrationJaNai_V3detail_FDAT_M_40k_fp16.onnx",
+                    "585b6af155c04283404a0977eb5dd0b0cc2194fecce345792ae44112374f83fd"
+                },
+                {
+                    "4x_IllustrationJaNai_V3detail_FDAT_XL_27k_bf16.onnx",
+                    "a13a4f79262f501ded148c2c83bc328fab5795673062e71123542fb71e80fb7e"
+                },
+                {
+                    "4x_IllustrationJaNai_V3detail_HAT_L_28k_bf16.onnx",
+                    "ce5bfd221954d128c4ed3278ea6a78f47baa492099dd431e4231a70354ec32b7"
+                },
+            }
+        ),
+    ];
+
+    private static readonly List<ModelPackage> Fp32ModelPackages =
     [
         new(
             "https://github.com/Lolle2000la/MangaJaNai/releases/download/v3.0.0-onnx/MangaJaNai_V1_ONNX.zip",
@@ -194,18 +373,13 @@ public class MangaJaNaiUpscaler(
                 },
             }
         ),
-        new(
-            "https://github.com/Lolle2000la/manga-vert-split-nn/releases/download/1.0.0/page_break_detector.onnx.zip",
-            "122c184da5b4de58f68e91d25cfb07d684ea58b016727b8182af2193addc2e77",
-            new Dictionary<string, string>
-            {
-                {
-                    "page_break_detector.onnx",
-                    "974686b591317739ff493f94c3f284c45c4b6b21f3acffac1ec7643b1ab481ae"
-                },
-            }
-        ),
     ];
+
+    private IReadOnlyList<ModelPackage> GetModelPackages()
+    {
+        var packages = sharedConfig.Value.UseFp16 ? Fp16ModelPackages : Fp32ModelPackages;
+        return [.. packages, PageBreakDetectorPackage];
+    }
 
     private string ModelPath => sharedConfig.Value.ResolvedModelsDirectory;
 
@@ -216,7 +390,7 @@ public class MangaJaNaiUpscaler(
             fileSystem.CreateDirectory(ModelPath);
         }
 
-        foreach (var package in modelPackages)
+        foreach (var package in GetModelPackages())
         {
             bool needsDownload = await ShouldDownloadPackage(package, cancellationToken);
 
