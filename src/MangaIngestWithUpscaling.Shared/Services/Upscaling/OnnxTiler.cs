@@ -256,6 +256,220 @@ public sealed class TileBlender
 }
 
 /// <summary>
+/// Blends overlapping 16-bit tiles using half-sine weighting to eliminate visible seams,
+/// operating directly on 16-bit ushort pixels [0..65535].
+/// </summary>
+public sealed class TileBlender16
+{
+    private readonly int _width;
+    private readonly int _height;
+    private readonly int _channels;
+    private readonly BlendDirection _direction;
+    private readonly ushort[] _result;
+    private int _offset;
+    private int _lastEndOverlap;
+
+    public TileBlender16(int width, int height, int channels, BlendDirection direction)
+    {
+        _width = width;
+        _height = height;
+        _channels = channels;
+        _direction = direction;
+        _result = new ushort[width * height * channels];
+        _offset = 0;
+        _lastEndOverlap = 0;
+    }
+
+    public int Width => _width;
+    public int Height => _height;
+    public int Offset => _offset;
+
+    public void AddTile(ushort[] tilePixels, int tileWidth, int tileHeight, TileOverlap overlap)
+    {
+        TileOverlap o = overlap;
+
+        if (_direction == BlendDirection.Horizontal)
+        {
+            if (tileHeight != _height)
+            {
+                throw new ArgumentException(
+                    $"Tile height {tileHeight} does not match blender height {_height}."
+                );
+            }
+
+            int tileXStart = 0;
+            int currentTileWidth = tileWidth;
+
+            if (_offset == 0)
+            {
+                for (int y = 0; y < _height; y++)
+                {
+                    int srcOff = (y * tileWidth) * _channels;
+                    int dstOff = (y * _width) * _channels;
+                    Buffer.BlockCopy(
+                        tilePixels,
+                        srcOff * sizeof(ushort),
+                        _result,
+                        dstOff * sizeof(ushort),
+                        currentTileWidth * _channels * sizeof(ushort)
+                    );
+                }
+
+                _offset += currentTileWidth - o.End;
+                _lastEndOverlap = o.End;
+            }
+            else
+            {
+                if (_lastEndOverlap < o.Start)
+                {
+                    int diff = o.Start - _lastEndOverlap;
+                    tileXStart = diff;
+                    currentTileWidth -= diff;
+                    o = new TileOverlap(_lastEndOverlap, o.End);
+                }
+
+                int nonBlendWidth = currentTileWidth - o.Start * 2;
+                if (nonBlendWidth > 0)
+                {
+                    for (int y = 0; y < _height; y++)
+                    {
+                        int srcOff = (y * tileWidth + tileXStart + o.Start * 2) * _channels;
+                        int dstOff = (y * _width + _offset + o.Start) * _channels;
+                        Buffer.BlockCopy(
+                            tilePixels,
+                            srcOff * sizeof(ushort),
+                            _result,
+                            dstOff * sizeof(ushort),
+                            nonBlendWidth * _channels * sizeof(ushort)
+                        );
+                    }
+                }
+
+                int blendSize = o.Start * 2;
+                if (blendSize > 0)
+                {
+                    float[] blend = TileBlender.GetBlendWeights(blendSize);
+                    Parallel.For(
+                        0,
+                        _height,
+                        y =>
+                        {
+                            int dstRowStart = (y * _width + (_offset - o.Start)) * _channels;
+                            int srcRowStart = (y * tileWidth + tileXStart) * _channels;
+
+                            for (int x = 0; x < blendSize; x++)
+                            {
+                                float b = blend[x];
+                                float invB = 1.0f - b;
+                                int dstIdx = dstRowStart + x * _channels;
+                                int srcIdx = srcRowStart + x * _channels;
+
+                                for (int c = 0; c < _channels; c++)
+                                {
+                                    float val =
+                                        _result[dstIdx + c] * invB + tilePixels[srcIdx + c] * b;
+                                    _result[dstIdx + c] = (ushort)
+                                        Math.Clamp((int)(val + 0.5f), 0, 65535);
+                                }
+                            }
+                        }
+                    );
+                }
+
+                _offset += currentTileWidth - o.Total;
+                _lastEndOverlap = o.End;
+            }
+        }
+        else // Vertical
+        {
+            if (tileWidth != _width)
+            {
+                throw new ArgumentException(
+                    $"Tile width {tileWidth} does not match blender width {_width}."
+                );
+            }
+
+            int tileYStart = 0;
+            int currentTileHeight = tileHeight;
+
+            if (_offset == 0)
+            {
+                Buffer.BlockCopy(
+                    tilePixels,
+                    0,
+                    _result,
+                    0,
+                    _width * currentTileHeight * _channels * sizeof(ushort)
+                );
+                _offset += currentTileHeight - o.End;
+                _lastEndOverlap = o.End;
+            }
+            else
+            {
+                if (_lastEndOverlap < o.Start)
+                {
+                    int diff = o.Start - _lastEndOverlap;
+                    tileYStart = diff;
+                    currentTileHeight -= diff;
+                    o = new TileOverlap(_lastEndOverlap, o.End);
+                }
+
+                int nonBlendHeight = currentTileHeight - o.Start * 2;
+                if (nonBlendHeight > 0)
+                {
+                    int srcOff = (tileYStart + o.Start * 2) * _width * _channels;
+                    int dstOff = (_offset + o.Start) * _width * _channels;
+                    int byteCount = nonBlendHeight * _width * _channels * sizeof(ushort);
+                    Buffer.BlockCopy(
+                        tilePixels,
+                        srcOff * sizeof(ushort),
+                        _result,
+                        dstOff * sizeof(ushort),
+                        byteCount
+                    );
+                }
+
+                int blendSize = o.Start * 2;
+                if (blendSize > 0)
+                {
+                    float[] blend = TileBlender.GetBlendWeights(blendSize);
+                    int rowPixels = _width * _channels;
+
+                    Parallel.For(
+                        0,
+                        blendSize,
+                        y =>
+                        {
+                            float b = blend[y];
+                            float invB = 1.0f - b;
+                            int dstRowStart = (_offset - o.Start + y) * rowPixels;
+                            int srcRowStart = (tileYStart + y) * rowPixels;
+
+                            for (int i = 0; i < rowPixels; i++)
+                            {
+                                float val =
+                                    _result[dstRowStart + i] * invB
+                                    + tilePixels[srcRowStart + i] * b;
+                                _result[dstRowStart + i] = (ushort)
+                                    Math.Clamp((int)(val + 0.5f), 0, 65535);
+                            }
+                        }
+                    );
+                }
+
+                _offset += currentTileHeight - o.Total;
+                _lastEndOverlap = o.End;
+            }
+        }
+    }
+
+    public ushort[] GetResult()
+    {
+        return _result;
+    }
+}
+
+/// <summary>
 /// Known neural network architectures used by MangaJaNai and IllustrationJaNai models.
 /// </summary>
 public enum ModelArchitecture
@@ -287,6 +501,7 @@ public static class OnnxTiler
     private static readonly float[] ByteToFloatLut = CreateByteToFloatLut();
     private static readonly Float16[] ByteToFloat16Lut = CreateByteToFloat16Lut();
     private static readonly byte[] Float16ToByteLut = CreateFloat16ToByteLut();
+    private static readonly ushort[] Float16ToUshortLut = CreateFloat16ToUshortLut();
 
     private static float[] CreateByteToFloatLut()
     {
@@ -326,6 +541,29 @@ public static class OnnxTiler
             else
             {
                 lut[i] = (byte)(val + 0.5f);
+            }
+        }
+        return lut;
+    }
+
+    private static ushort[] CreateFloat16ToUshortLut()
+    {
+        ushort[] lut = new ushort[65536];
+        for (int i = 0; i < 65536; i++)
+        {
+            Half h = BitConverter.UInt16BitsToHalf((ushort)i);
+            float val = (float)h * 65535.0f;
+            if (float.IsNaN(val) || val <= 0f)
+            {
+                lut[i] = 0;
+            }
+            else if (val >= 65535f)
+            {
+                lut[i] = 65535;
+            }
+            else
+            {
+                lut[i] = (ushort)(val + 0.5f);
             }
         }
         return lut;
@@ -1145,6 +1383,292 @@ public static class OnnxTiler
         return imageBlender.GetResult();
     }
 
+    /// <summary>
+    /// Upscales an RGB image represented by raw interleaved RGB byte array, returning full 16-bit ushort pixels [0..65535].
+    /// Enables high-precision 10-bit AVIF encoding directly from model output tensors.
+    /// </summary>
+    public static ushort[] UpscaleRgb16(
+        byte[] rgbBytes,
+        int width,
+        int height,
+        int scale,
+        InferenceSession session,
+        int tileSize = DefaultTileSize,
+        int tilePad = DefaultTilePad,
+        CancellationToken cancellationToken = default
+    )
+    {
+        int currentMaxTileSizeX = tileSize > 0 ? tileSize : width;
+        int currentMaxTileSizeY = tileSize > 0 ? tileSize : height;
+
+        while (true)
+        {
+            try
+            {
+                return AutoSplit16(
+                    rgbBytes,
+                    width,
+                    height,
+                    scale,
+                    session,
+                    currentMaxTileSizeX,
+                    currentMaxTileSizeY,
+                    tilePad,
+                    cancellationToken
+                );
+            }
+            catch (Exception ex)
+                when (IsMemoryException(ex)
+                    && (currentMaxTileSizeX > 16 || currentMaxTileSizeY > 16)
+                )
+            {
+                currentMaxTileSizeX = Math.Max(16, currentMaxTileSizeX / 2);
+                currentMaxTileSizeY = Math.Max(16, currentMaxTileSizeY / 2);
+                GC.Collect();
+            }
+        }
+    }
+
+    private static ushort[] AutoSplit16(
+        byte[] rgbBytes,
+        int width,
+        int height,
+        int scale,
+        InferenceSession session,
+        int maxTileSizeX,
+        int maxTileSizeY,
+        int overlap,
+        CancellationToken cancellationToken
+    )
+    {
+        int tileCountX = (int)Math.Ceiling((double)width / maxTileSizeX);
+        int tileCountY = (int)Math.Ceiling((double)height / maxTileSizeY);
+        int tileSizeX = (int)Math.Ceiling((double)width / tileCountX);
+        int tileSizeY = (int)Math.Ceiling((double)height / tileCountY);
+
+        int outWidth = width * scale;
+        int outHeight = height * scale;
+
+        int maxPaddedW = maxTileSizeX + 2 * overlap;
+        int maxPaddedH = maxTileSizeY + 2 * overlap;
+        int uniformTargetDim = Math.Max(maxPaddedW, maxPaddedH);
+        int uniformTargetSize = ((uniformTargetDim + 63) / 64) * 64;
+
+        if (tileCountX <= 1 && tileCountY <= 1)
+        {
+            return UpscaleTile16(
+                rgbBytes,
+                width,
+                height,
+                scale,
+                session,
+                cancellationToken,
+                targetW: uniformTargetSize,
+                targetH: uniformTargetSize
+            );
+        }
+
+        Type elementType = session.InputMetadata["input"].ElementType;
+
+        var tileJobs = new List<TileJob>(tileCountX * tileCountY);
+        for (int y = 0; y < tileCountY; y++)
+        {
+            int tileY = y * tileSizeY;
+            int tileH = Math.Min(tileSizeY, height - tileY);
+            int padTop = Math.Min(tileY, overlap);
+            int padBottom = Math.Min(height - (tileY + tileH), overlap);
+            int paddedH = tileH + padTop + padBottom;
+
+            for (int x = 0; x < tileCountX; x++)
+            {
+                int tileX = x * tileSizeX;
+                int tileW = Math.Min(tileSizeX, width - tileX);
+                int padLeft = Math.Min(tileX, overlap);
+                int padRight = Math.Min(width - (tileX + tileW), overlap);
+                int paddedW = tileW + padLeft + padRight;
+
+                int paddedX = tileX - padLeft;
+                int paddedY = tileY - padTop;
+
+                tileJobs.Add(
+                    new TileJob(
+                        TileW: tileW,
+                        TileH: tileH,
+                        PadLeft: padLeft,
+                        PadRight: padRight,
+                        PadTop: padTop,
+                        PadBottom: padBottom,
+                        PaddedW: paddedW,
+                        PaddedH: paddedH,
+                        PaddedX: paddedX,
+                        PaddedY: paddedY,
+                        IsLastInRow: (x == tileCountX - 1)
+                    )
+                );
+            }
+        }
+
+        var imageBlender = new TileBlender16(outWidth, outHeight, 3, BlendDirection.Vertical);
+        TileBlender16? currentRowBlender = null;
+        TileOverlap currentRowOverlap = default;
+
+        Task<(NamedOnnxValue InVal, int PaddedW, int PaddedH)> nextInputTask = Task.Run(
+            () =>
+            {
+                byte[] crop = ExtractCrop(
+                    rgbBytes,
+                    width,
+                    tileJobs[0].PaddedX,
+                    tileJobs[0].PaddedY,
+                    tileJobs[0].PaddedW,
+                    tileJobs[0].PaddedH
+                );
+                return PrepareInputTensor(
+                    crop,
+                    tileJobs[0].PaddedW,
+                    tileJobs[0].PaddedH,
+                    uniformTargetSize,
+                    uniformTargetSize,
+                    elementType,
+                    cancellationToken
+                );
+            },
+            cancellationToken
+        );
+
+        Task<ushort[]>? prevDecodeTask = null;
+        TileJob prevJob = default;
+
+        try
+        {
+            for (int i = 0; i < tileJobs.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var currentJob = tileJobs[i];
+
+                var (inVal, effPaddedW, effPaddedH) = nextInputTask.GetAwaiter().GetResult();
+
+                if (i + 1 < tileJobs.Count)
+                {
+                    var nextJob = tileJobs[i + 1];
+                    nextInputTask = Task.Run(
+                        () =>
+                        {
+                            byte[] nextCrop = ExtractCrop(
+                                rgbBytes,
+                                width,
+                                nextJob.PaddedX,
+                                nextJob.PaddedY,
+                                nextJob.PaddedW,
+                                nextJob.PaddedH
+                            );
+                            return PrepareInputTensor(
+                                nextCrop,
+                                nextJob.PaddedW,
+                                nextJob.PaddedH,
+                                uniformTargetSize,
+                                uniformTargetSize,
+                                elementType,
+                                cancellationToken
+                            );
+                        },
+                        cancellationToken
+                    );
+                }
+
+                IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs = session.Run([
+                    inVal,
+                ]);
+
+                if (prevDecodeTask != null)
+                {
+                    ushort[] prevBytes = prevDecodeTask.GetAwaiter().GetResult();
+                    var prevOverlap = new TileOverlap(
+                        prevJob.PadLeft * scale,
+                        prevJob.PadRight * scale
+                    );
+                    currentRowBlender!.AddTile(
+                        prevBytes,
+                        prevJob.PaddedW * scale,
+                        prevJob.PaddedH * scale,
+                        prevOverlap
+                    );
+
+                    if (prevJob.IsLastInRow)
+                    {
+                        imageBlender.AddTile(
+                            currentRowBlender.GetResult(),
+                            outWidth,
+                            prevJob.PaddedH * scale,
+                            currentRowOverlap
+                        );
+                        currentRowBlender = null;
+                    }
+                }
+
+                if (currentRowBlender == null)
+                {
+                    currentRowBlender = new TileBlender16(
+                        outWidth,
+                        currentJob.PaddedH * scale,
+                        3,
+                        BlendDirection.Horizontal
+                    );
+                    currentRowOverlap = new TileOverlap(
+                        currentJob.PadTop * scale,
+                        currentJob.PadBottom * scale
+                    );
+                }
+
+                prevJob = currentJob;
+                prevDecodeTask = Task.Run(
+                    () =>
+                        DecodeOutputTensor16(
+                            outputs,
+                            currentJob.PaddedW,
+                            currentJob.PaddedH,
+                            effPaddedW,
+                            effPaddedH,
+                            scale,
+                            cancellationToken
+                        ),
+                    cancellationToken
+                );
+            }
+
+            if (prevDecodeTask != null)
+            {
+                ushort[] lastBytes = prevDecodeTask.GetAwaiter().GetResult();
+                var lastOverlap = new TileOverlap(
+                    prevJob.PadLeft * scale,
+                    prevJob.PadRight * scale
+                );
+                currentRowBlender!.AddTile(
+                    lastBytes,
+                    prevJob.PaddedW * scale,
+                    prevJob.PaddedH * scale,
+                    lastOverlap
+                );
+
+                if (prevJob.IsLastInRow)
+                {
+                    imageBlender.AddTile(
+                        currentRowBlender.GetResult(),
+                        outWidth,
+                        prevJob.PaddedH * scale,
+                        currentRowOverlap
+                    );
+                }
+            }
+        }
+        catch
+        {
+            throw;
+        }
+
+        return imageBlender.GetResult();
+    }
+
     private readonly record struct TileJob(
         int TileW,
         int TileH,
@@ -1430,6 +1954,125 @@ public static class OnnxTiler
         IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs = session.Run([inVal]);
 
         return DecodeOutputTensor(
+            outputs,
+            tileW,
+            tileH,
+            paddedW,
+            paddedH,
+            scale,
+            cancellationToken
+        );
+    }
+
+    public static ushort[] DecodeOutputTensor16(
+        IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs,
+        int tileW,
+        int tileH,
+        int paddedW,
+        int paddedH,
+        int scale,
+        CancellationToken cancellationToken
+    )
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using (outputs)
+        {
+            DisposableNamedOnnxValue outNamedValue = outputs.First(o => o.Name == "output");
+            int outTileW = tileW * scale;
+            int outTileH = tileH * scale;
+            int outPaddedW = paddedW * scale;
+            int outPaddedH = paddedH * scale;
+            int outPlane = outPaddedW * outPaddedH;
+            ushort[] outCrop = new ushort[outTileW * outTileH * 3];
+
+            int outROff = 0;
+            int outGOff = outPlane;
+            int outBOff = outPlane * 2;
+
+            if (outNamedValue.Value is DenseTensor<Float16> halfOutTensor)
+            {
+                Memory<Float16> halfMem = halfOutTensor.Buffer;
+                Parallel.For(
+                    0,
+                    outTileH,
+                    oy =>
+                    {
+                        ReadOnlySpan<ushort> halfBits = MemoryMarshal.Cast<Float16, ushort>(
+                            halfMem.Span
+                        );
+                        int rowOffset = oy * outPaddedW;
+                        int dstRowOffset = oy * outTileW * 3;
+                        for (int ox = 0; ox < outTileW; ox++)
+                        {
+                            int pIdx = rowOffset + ox;
+                            int dstIdx = dstRowOffset + ox * 3;
+
+                            outCrop[dstIdx] = Float16ToUshortLut[halfBits[outROff + pIdx]];
+                            outCrop[dstIdx + 1] = Float16ToUshortLut[halfBits[outGOff + pIdx]];
+                            outCrop[dstIdx + 2] = Float16ToUshortLut[halfBits[outBOff + pIdx]];
+                        }
+                    }
+                );
+            }
+            else
+            {
+                var floatOutTensor = (DenseTensor<float>)outNamedValue.AsTensor<float>();
+                Memory<float> floatMem = floatOutTensor.Buffer;
+                Parallel.For(
+                    0,
+                    outTileH,
+                    oy =>
+                    {
+                        ReadOnlySpan<float> span = floatMem.Span;
+                        int rowOffset = oy * outPaddedW;
+                        int dstRowOffset = oy * outTileW * 3;
+                        for (int ox = 0; ox < outTileW; ox++)
+                        {
+                            int pIdx = rowOffset + ox;
+                            int dstIdx = dstRowOffset + ox * 3;
+
+                            float r = span[outROff + pIdx] * 65535.0f;
+                            float g = span[outGOff + pIdx] * 65535.0f;
+                            float b = span[outBOff + pIdx] * 65535.0f;
+
+                            outCrop[dstIdx] = (ushort)Math.Clamp((int)(r + 0.5f), 0, 65535);
+                            outCrop[dstIdx + 1] = (ushort)Math.Clamp((int)(g + 0.5f), 0, 65535);
+                            outCrop[dstIdx + 2] = (ushort)Math.Clamp((int)(b + 0.5f), 0, 65535);
+                        }
+                    }
+                );
+            }
+
+            return outCrop;
+        }
+    }
+
+    public static ushort[] UpscaleTile16(
+        byte[] tileBytes,
+        int tileW,
+        int tileH,
+        int scale,
+        InferenceSession session,
+        CancellationToken cancellationToken,
+        int targetW = 0,
+        int targetH = 0
+    )
+    {
+        Type elementType = session.InputMetadata["input"].ElementType;
+        var (inVal, paddedW, paddedH) = PrepareInputTensor(
+            tileBytes,
+            tileW,
+            tileH,
+            targetW,
+            targetH,
+            elementType,
+            cancellationToken
+        );
+
+        IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs = session.Run([inVal]);
+
+        return DecodeOutputTensor16(
             outputs,
             tileW,
             tileH,

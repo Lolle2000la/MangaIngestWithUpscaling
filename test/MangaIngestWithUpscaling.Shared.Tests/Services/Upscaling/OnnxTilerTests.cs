@@ -237,6 +237,112 @@ public class OnnxTilerTests
     }
 
     [Fact]
+    public void TileBlender16_Vertical_SeamlessReconstruction()
+    {
+        int width = 40;
+        int height = 100;
+        ushort[] src = CreateTestImage16(width, height);
+
+        int r1H = 66; // [0, 66)
+        int r2H = 66; // [34, 100)
+        ushort[] r1 = ExtractCrop16(src, width, 0, 0, width, r1H);
+        ushort[] r2 = ExtractCrop16(src, width, 0, 34, width, r2H);
+
+        var blender = new TileBlender16(width, height, 3, BlendDirection.Vertical);
+        blender.AddTile(r1, width, r1H, new TileOverlap(0, 16));
+        blender.AddTile(r2, width, r2H, new TileOverlap(16, 0));
+
+        ushort[] result = blender.GetResult();
+        Assert.Equal(src, result);
+    }
+
+    [Fact]
+    public void TileBlender16_2DGrid_SeamlessReconstruction()
+    {
+        int width = 120;
+        int height = 140;
+        int maxTileSizeX = 70;
+        int maxTileSizeY = 80;
+        int overlap = 16;
+        ushort[] src = CreateTestImage16(width, height);
+
+        int tileCountX = (int)Math.Ceiling((double)width / maxTileSizeX);
+        int tileCountY = (int)Math.Ceiling((double)height / maxTileSizeY);
+        int tileSizeX = (int)Math.Ceiling((double)width / tileCountX);
+        int tileSizeY = (int)Math.Ceiling((double)height / tileCountY);
+
+        var imageBlender = new TileBlender16(width, height, 3, BlendDirection.Vertical);
+
+        for (int y = 0; y < tileCountY; y++)
+        {
+            int tileY = y * tileSizeY;
+            int tileH = Math.Min(tileSizeY, height - tileY);
+            int padTop = Math.Min(tileY, overlap);
+            int padBottom = Math.Min(height - (tileY + tileH), overlap);
+            int paddedH = tileH + padTop + padBottom;
+
+            var rowBlender = new TileBlender16(width, paddedH, 3, BlendDirection.Horizontal);
+            var rowOverlap = new TileOverlap(padTop, padBottom);
+
+            for (int x = 0; x < tileCountX; x++)
+            {
+                int tileX = x * tileSizeX;
+                int tileW = Math.Min(tileSizeX, width - tileX);
+                int padLeft = Math.Min(tileX, overlap);
+                int padRight = Math.Min(width - (tileX + tileW), overlap);
+                int paddedW = tileW + padLeft + padRight;
+
+                int paddedX = tileX - padLeft;
+                int paddedY = tileY - padTop;
+
+                ushort[] crop = ExtractCrop16(src, width, paddedX, paddedY, paddedW, paddedH);
+                var tileOverlap = new TileOverlap(padLeft, padRight);
+                rowBlender.AddTile(crop, paddedW, paddedH, tileOverlap);
+            }
+
+            imageBlender.AddTile(rowBlender.GetResult(), width, paddedH, rowOverlap);
+        }
+
+        ushort[] result = imageBlender.GetResult();
+        Assert.Equal(src, result);
+    }
+
+    private static ushort[] CreateTestImage16(int width, int height)
+    {
+        ushort[] img = new ushort[width * height * 3];
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                int idx = (y * width + x) * 3;
+                img[idx] = (ushort)((x * 300 + y * 700) % 65536);
+                img[idx + 1] = (ushort)((x * 1100 + y * 500) % 65536);
+                img[idx + 2] = (ushort)((x * 1300 + y * 1700) % 65536);
+            }
+        }
+        return img;
+    }
+
+    private static ushort[] ExtractCrop16(
+        ushort[] src,
+        int srcWidth,
+        int cropX,
+        int cropY,
+        int cropW,
+        int cropH
+    )
+    {
+        ushort[] crop = new ushort[cropW * cropH * 3];
+        for (int y = 0; y < cropH; y++)
+        {
+            int srcOffset = ((cropY + y) * srcWidth + cropX) * 3;
+            int dstOffset = y * cropW * 3;
+            Array.Copy(src, srcOffset, crop, dstOffset, cropW * 3);
+        }
+        return crop;
+    }
+
+    [Fact]
     [Trait("Category", "Integration")]
     public void UpscaleRgb_ProducesConsistentOutputBetweenSinglePassAndTiled()
     {

@@ -201,6 +201,14 @@ public record UpscalerConfig
     ];
 
     /// <summary>
+    ///     When enabled and output format is AVIF, encodes images with 10-bit depth
+    ///     directly from the model's high-precision float output, eliminating 8-bit quantization
+    ///     banding and reducing ringing artifacts on fine lines and smooth gradients.
+    ///     Defaults to false (standard 8-bit AVIF).
+    /// </summary>
+    public bool Enable10BitAvif { get; set; } = false;
+
+    /// <summary>
     ///     When enabled, images that appear to have been cheaply upscaled (e.g. bicubic/bilinear) are
     ///     detected via a Laplacian-variance sharpness check and downscaled back toward their likely
     ///     native resolution before AI upscaling. This prevents double-upscaling artefacts and lets
