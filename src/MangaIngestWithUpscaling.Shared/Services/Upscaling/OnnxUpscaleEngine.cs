@@ -158,11 +158,13 @@ public class OnnxUpscaleEngine(
                 if (gttAfter > 1000L * 1024 * 1024)
                 {
                     logger.LogWarning(
-                        "Elevated GPU memory detected after upscaling {InputPath}: VRAM {VramMb} MB, GTT {GttMb} MB.",
+                        "Elevated GPU memory detected after upscaling {InputPath}: VRAM {VramMb} MB, GTT {GttMb} MB. Flushing session cache to release memory.",
                         Path.GetFileName(inputPath),
                         vramAfter / (1024 * 1024),
                         gttAfter / (1024 * 1024)
                     );
+                    sessionFactory.InvalidateSession(modelPath);
+                    GC.Collect();
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();

@@ -520,4 +520,41 @@ public class OnnxTilerTests
             Assert.Equal(total - used, free);
         }
     }
+
+    [Fact]
+    public void EstimateTileSize_RespectsScaleAwareMaximumCap()
+    {
+        // Even with huge 32 GiB memory budget, tile size is capped by scale to avoid intermediate activation VRAM spill
+        long hugeBudget = 32L * 1024 * 1024 * 1024;
+
+        int tile4x = OnnxTiler.EstimateTileSize(
+            4000,
+            4000,
+            4,
+            "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
+            memoryBudgetBytes: hugeBudget,
+            isFp16: true
+        );
+        Assert.Equal(512, tile4x);
+
+        int tile3x = OnnxTiler.EstimateTileSize(
+            4000,
+            4000,
+            3,
+            "model.onnx",
+            memoryBudgetBytes: hugeBudget,
+            isFp16: true
+        );
+        Assert.Equal(640, tile3x);
+
+        int tile2x = OnnxTiler.EstimateTileSize(
+            4000,
+            4000,
+            2,
+            "2x_MangaJaNai_1600p_V1_ESRGAN_90k.onnx",
+            memoryBudgetBytes: hugeBudget,
+            isFp16: true
+        );
+        Assert.Equal(1024, tile2x);
+    }
 }

@@ -399,11 +399,14 @@ public sealed class OnnxSessionFactory(
                 modelName
             );
 
-            options.AppendExecutionProvider(
-                env,
-                new[] { webGpuDevice },
-                new Dictionary<string, string>()
-            );
+            var webGpuOptions = new Dictionary<string, string>
+            {
+                { "storageBufferCacheMode", "simple" },
+                { "defaultBufferCacheMode", "simple" },
+                { "uniformBufferCacheMode", "simple" },
+            };
+
+            options.AppendExecutionProvider(env, new[] { webGpuDevice }, webGpuOptions);
             return true;
         }
         catch (Exception ex)
