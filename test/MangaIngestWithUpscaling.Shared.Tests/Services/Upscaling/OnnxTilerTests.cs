@@ -400,6 +400,47 @@ public class OnnxTilerTests
     }
 
     [Fact]
+    public void EstimateTileSize_MangaJaNai_FP16_HalvesPeakMemoryAndExpandsTileSize()
+    {
+        long peakFp32 = OnnxTiler.EstimatePeakMemoryBytes(
+            1125,
+            1600,
+            2,
+            "2x_MangaJaNai_1600p_V1_ESRGAN_90k.onnx",
+            isFp16: false
+        );
+        long peakFp16 = OnnxTiler.EstimatePeakMemoryBytes(
+            1125,
+            1600,
+            2,
+            "2x_MangaJaNai_1600p_V1_ESRGAN_90k.onnx",
+            isFp16: true
+        );
+
+        Assert.Equal(peakFp32 / 2, peakFp16);
+
+        // Under a constrained 3 GiB budget, FP16 yields strictly larger tiles than FP32
+        int tileFp32 = OnnxTiler.EstimateTileSize(
+            1600,
+            2400,
+            4,
+            "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
+            memoryBudgetBytes: 3L * 1024 * 1024 * 1024,
+            isFp16: false
+        );
+        int tileFp16 = OnnxTiler.EstimateTileSize(
+            1600,
+            2400,
+            4,
+            "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
+            memoryBudgetBytes: 3L * 1024 * 1024 * 1024,
+            isFp16: true
+        );
+
+        Assert.True(tileFp16 > tileFp32);
+    }
+
+    [Fact]
     public void CalculateVramBudget_HeadlessNas8Gb_UtilizesNearlyFullVram()
     {
         // 8 GB card on a dedicated NAS with minimal driver usage (50 MB used)
