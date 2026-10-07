@@ -372,9 +372,14 @@ public static class OnnxTiler
             modelSizeBytes,
             isFp16
         );
-        if (peakMemory <= memoryBudgetBytes)
+
+        // Whole image in a single pass is ONLY safe if the peak activation memory is well below 2.5 GiB
+        // (such as small images or lightweight architectures like SPAN).
+        // Heavy architectures (ESRGAN, DAT2, HAT) on full manga pages (1125x1600+) require 6-12 GB in FP32,
+        // which exhausts GPU memory margins, risks driver spillover into GTT, and breaks uniform buffer reuse.
+        if (peakMemory <= Math.Min(memoryBudgetBytes, 2500L * 1024 * 1024))
         {
-            return 0; // Whole image fits safely within budget (single pass)!
+            return 0; // Fits safely in a single pass without risk of memory pressure
         }
 
         var arch = DetectArchitecture(modelNameOrPath);
@@ -391,6 +396,12 @@ public static class OnnxTiler
 
         // Snap down to multiple of 64 for optimal GPU tensor alignment
         int snapped = (tileDim / 64) * 64;
+
+        // Cap maximum tile dimension at 1024x1024.
+        // Tiles larger than 1024 produce diminishing throughput returns, hit WebGPU descriptor/storage
+        // limits, and risk thrashing GPU cache.
+        snapped = Math.Min(1024, snapped);
+
         // Never return less than 128 (tiling below 128 has excessive padding/blending overhead)
         return Math.Max(128, snapped);
     }
@@ -846,11 +857,6 @@ public static class OnnxTiler
         int outWidth = width * scale;
         int outHeight = height * scale;
 
-        if (tileCountX <= 1 && tileCountY <= 1)
-        {
-            return UpscaleTile(rgbBytes, width, height, scale, session, cancellationToken);
-        }
-
         // Determine uniform padded dimensions across all tiles in this image.
         // Passing uniform tensor shapes to ONNX Runtime (WebGPU / Dawn EP) prevents
         // per-tile buffer re-allocation and memory arena accumulation in Vulkan VRAM/GTT.
@@ -858,6 +864,20 @@ public static class OnnxTiler
         int maxPaddedH = tileSizeY + 2 * overlap;
         int uniformTargetDim = Math.Max(maxPaddedW, maxPaddedH);
         int uniformTargetSize = ((uniformTargetDim + 63) / 64) * 64;
+
+        if (tileCountX <= 1 && tileCountY <= 1)
+        {
+            return UpscaleTile(
+                rgbBytes,
+                width,
+                height,
+                scale,
+                session,
+                cancellationToken,
+                targetW: uniformTargetSize,
+                targetH: uniformTargetSize
+            );
+        }
 
         var imageBlender = new TileBlender(outWidth, outHeight, 3, BlendDirection.Vertical);
 
