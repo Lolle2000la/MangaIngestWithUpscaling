@@ -320,11 +320,6 @@ dotnet run --project src/MangaIngestWithUpscaling
 
 ### Common Issues and Solutions
 
-**"Could not find a suitable window platform" error:**
-- This is expected in headless environments
-- Application will fall back to CPU backend automatically
-- Use `RemoteOnly=true` to skip GPU detection entirely
-
 **Build timeout issues:**
 - Always set timeouts to 120+ seconds for builds
 - Never cancel long-running operations

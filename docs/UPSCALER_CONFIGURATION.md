@@ -99,8 +99,11 @@ The environment variable for each setting follows the ASP.NET Core convention:
 | Value | Backend |
 |---|---|
 | `Auto` | Select best available execution provider automatically (default) |
+| `WebGPU` | Universal GPU accelerator — Vulkan (Mesa RADV/ANV on Linux), Metal (macOS), D3D12 (Windows) |
 | `CUDA` | NVIDIA — CUDA & TensorRT |
-| `WebGPU` | AMD / Intel / Universal — WebGPU via Mesa RADV / ANV Vulkan |
+| `DirectML` | Windows — DirectX 12 machine learning execution provider |
+| `OpenVINO` | Intel — OpenVINO execution provider |
+| `MIGraphX` | AMD — MIGraphX execution provider |
 | `CPU` | CPU-only fallback |
 
 ### Storage settings

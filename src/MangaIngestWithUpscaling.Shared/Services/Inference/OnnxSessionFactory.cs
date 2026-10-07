@@ -132,49 +132,46 @@ public sealed class OnnxSessionFactory(
     {
         GpuBackend backend = currentConfig.PreferredGpuBackend;
 
+#pragma warning disable CS0618
+        if (backend is GpuBackend.ROCm or GpuBackend.ROCm_GFX120X or GpuBackend.XPU)
+        {
+            backend = GpuBackend.WebGPU;
+        }
+        else if (backend is GpuBackend.CUDA_12_8)
+        {
+            backend = GpuBackend.CUDA;
+        }
+#pragma warning restore CS0618
+
         if (backend == GpuBackend.WebGPU)
         {
             return TryConfigureWebGpu(options, deviceId, modelName);
         }
 
+        if (backend == GpuBackend.CUDA)
+        {
+            return TryConfigureCuda(options, deviceId, modelName);
+        }
+
+        if (backend == GpuBackend.DirectML)
+        {
+            return TryConfigureDirectML(options, deviceId, modelName);
+        }
+
+        if (backend == GpuBackend.OpenVINO)
+        {
+            return TryConfigureOpenVino(options, deviceId, modelName);
+        }
+
+        if (backend == GpuBackend.MIGraphX)
+        {
+            return TryConfigureMIGraphX(options, deviceId, modelName);
+        }
+
+        // GpuBackend.Auto: Platform-specific discovery
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
         {
-            if (backend is GpuBackend.CUDA or GpuBackend.CUDA_12_8)
-            {
-                return TryConfigureCuda(options, deviceId, modelName);
-            }
-
-            if (backend is GpuBackend.MIGraphX or GpuBackend.ROCm or GpuBackend.ROCm_GFX120X)
-            {
-                logger.LogInformation(
-                    "AMD GPU backend ({Backend}) configured; utilizing WebGPU (Vulkan) execution provider for {Model}.",
-                    backend,
-                    modelName
-                );
-                if (TryConfigureWebGpu(options, deviceId, modelName))
-                {
-                    return true;
-                }
-
-                return TryConfigureMIGraphX(options, deviceId, modelName);
-            }
-
-            if (backend is GpuBackend.XPU or GpuBackend.OpenVINO)
-            {
-                logger.LogInformation(
-                    "Intel backend ({Backend}) configured; utilizing WebGPU (Vulkan) execution provider for {Model}.",
-                    backend,
-                    modelName
-                );
-                if (TryConfigureWebGpu(options, deviceId, modelName))
-                {
-                    return true;
-                }
-
-                return TryConfigureOpenVino(options, deviceId, modelName);
-            }
-
-            // GpuBackend.Auto on Linux: Try CUDA -> WebGPU -> CPU
+            // Auto on Linux: Try CUDA -> WebGPU -> CPU
             if (TryConfigureCuda(options, deviceId, modelName))
             {
                 return true;
@@ -190,28 +187,18 @@ public sealed class OnnxSessionFactory(
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            if (backend is GpuBackend.CUDA or GpuBackend.CUDA_12_8)
-            {
-                if (TryConfigureCuda(options, deviceId, modelName))
-                {
-                    return true;
-                }
-            }
-
-            if (backend is GpuBackend.XPU or GpuBackend.OpenVINO)
-            {
-                if (TryConfigureOpenVino(options, deviceId, modelName))
-                {
-                    return true;
-                }
-            }
-
+            // Auto on Windows: Try WebGPU -> DirectML -> CUDA -> CPU
             if (TryConfigureWebGpu(options, deviceId, modelName))
             {
                 return true;
             }
 
-            return TryConfigureDirectML(options, deviceId, modelName);
+            if (TryConfigureDirectML(options, deviceId, modelName))
+            {
+                return true;
+            }
+
+            return TryConfigureCuda(options, deviceId, modelName);
         }
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))

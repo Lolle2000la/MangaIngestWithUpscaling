@@ -74,12 +74,12 @@ public class EngineIdentityTests
         UpscalerConfig cuda = Config();
         UpscalerConfig cudaOtherDevice = Config();
         cudaOtherDevice.SelectedDeviceIndex = 3;
-        UpscalerConfig rocm = Config();
-        rocm.PreferredGpuBackend = GpuBackend.ROCm;
-        rocm.SelectedDeviceIndex = 3;
+        UpscalerConfig webgpu = Config();
+        webgpu.PreferredGpuBackend = GpuBackend.WebGPU;
+        webgpu.SelectedDeviceIndex = 3;
 
         Assert.Equal(EngineIdentity.ForUpscaler(cuda), EngineIdentity.ForUpscaler(cudaOtherDevice));
-        Assert.NotEqual(EngineIdentity.ForUpscaler(cuda), EngineIdentity.ForUpscaler(rocm));
+        Assert.NotEqual(EngineIdentity.ForUpscaler(cuda), EngineIdentity.ForUpscaler(webgpu));
     }
 
     [Fact]
@@ -239,7 +239,7 @@ public class EngineIdentityTests
 
         Assert.NotEqual(
             EngineIdentity.ForUpscaler(config, GpuBackend.CUDA),
-            EngineIdentity.ForUpscaler(config, GpuBackend.ROCm)
+            EngineIdentity.ForUpscaler(config, GpuBackend.WebGPU)
         );
 
         // Falls back to the preference when the environment is not prepared yet (tests, first start).

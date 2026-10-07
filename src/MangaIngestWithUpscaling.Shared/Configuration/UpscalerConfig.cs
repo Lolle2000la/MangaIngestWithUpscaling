@@ -6,15 +6,24 @@ public enum GpuBackend
 {
     Auto,
     WebGPU,
-    MIGraphX,
-    DirectML,
     CUDA,
-    CUDA_12_8,
-    ROCm,
-    ROCm_GFX120X,
-    XPU,
+    DirectML,
     OpenVINO,
+    MIGraphX,
     CPU,
+
+    // Legacy PyTorch aliases retained for backwards compatibility with existing configuration files
+    [Obsolete("Use WebGPU or Auto instead")]
+    ROCm = 100,
+
+    [Obsolete("Use WebGPU or Auto instead")]
+    ROCm_GFX120X = 101,
+
+    [Obsolete("Use CUDA or Auto instead")]
+    CUDA_12_8 = 102,
+
+    [Obsolete("Use WebGPU or OpenVINO instead")]
+    XPU = 103,
 }
 
 public record UpscalerConfig
