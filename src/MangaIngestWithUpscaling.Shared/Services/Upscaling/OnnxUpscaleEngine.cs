@@ -22,7 +22,34 @@ public class OnnxUpscaleEngine(
 {
     private string ModelsDirectory => config.Value.ResolvedModelsDirectory;
 
+    private readonly record struct UpscaledPage(
+        byte[] Bytes,
+        int Width,
+        int Height,
+        bool IsGrayscale
+    );
+
     public async Task UpscaleFileAsync(
+        string inputPath,
+        string outputPath,
+        int scale,
+        CompressionFormat format,
+        int? quality,
+        CancellationToken cancellationToken
+    )
+    {
+        Task writeTask = await UpscaleFileStagedAsync(
+            inputPath,
+            outputPath,
+            scale,
+            format,
+            quality,
+            cancellationToken
+        );
+        await writeTask;
+    }
+
+    public async Task<Task> UpscaleFileStagedAsync(
         string inputPath,
         string outputPath,
         int scale,
@@ -38,7 +65,7 @@ public class OnnxUpscaleEngine(
             throw new FileNotFoundException($"Input image not found: {inputPath}", inputPath);
         }
 
-        await Task.Run(
+        UpscaledPage upscaled = await Task.Run(
             () =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -173,30 +200,53 @@ public class OnnxUpscaleEngine(
 
                 cancellationToken.ThrowIfCancellationRequested();
 
-                using var outImage = NetVips.Image.NewFromMemory(
+                return new UpscaledPage(
                     upscaledBytes,
                     origWidth * scale,
                     origHeight * scale,
-                    3,
-                    NetVips.Enums.BandFormat.Uchar
+                    isGrayscale
                 );
-                using var srgbImg = outImage.Copy(
-                    interpretation: NetVips.Enums.Interpretation.Srgb
-                );
-
-                if (isGrayscale)
-                {
-                    using var bwImg = srgbImg[0]
-                        .Copy(interpretation: NetVips.Enums.Interpretation.Bw);
-                    SaveImage(bwImg, outputPath, format, quality);
-                }
-                else
-                {
-                    SaveImage(srgbImg, outputPath, format, quality);
-                }
             },
             cancellationToken
         );
+
+        // Encoding is CPU-only (and takes seconds for a 4x page). Handing it back as a separate
+        // task lets the caller start the next page's inference instead of leaving the GPU idle.
+        return Task.Run(
+            () =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                WriteUpscaledPage(upscaled, outputPath, format, quality);
+            },
+            cancellationToken
+        );
+    }
+
+    private static void WriteUpscaledPage(
+        UpscaledPage page,
+        string outputPath,
+        CompressionFormat format,
+        int? quality
+    )
+    {
+        using var outImage = NetVips.Image.NewFromMemory(
+            page.Bytes,
+            page.Width,
+            page.Height,
+            3,
+            NetVips.Enums.BandFormat.Uchar
+        );
+        using var srgbImg = outImage.Copy(interpretation: NetVips.Enums.Interpretation.Srgb);
+
+        if (page.IsGrayscale)
+        {
+            using var bwImg = srgbImg[0].Copy(interpretation: NetVips.Enums.Interpretation.Bw);
+            SaveImage(bwImg, outputPath, format, quality);
+        }
+        else
+        {
+            SaveImage(srgbImg, outputPath, format, quality);
+        }
     }
 
     public async Task UpscaleCbzAsync(
@@ -261,52 +311,108 @@ public class OnnxUpscaleEngine(
                     await srcStream.CopyToAsync(dstStream, cancellationToken);
                 }
 
-                // Process image entries
-                foreach (var entry in imageEntries)
+                // Pipelined: while page N runs on the GPU, page N-1 finishes encoding and is added to
+                // the archive. Only this loop touches outArchive, so no extra synchronization is needed.
+                (ZipArchiveEntry Entry, string TempIn, string TempOut, Task Write)? pending = null;
+
+                async Task FinalizePendingAsync()
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-
-                    progress?.Report(
-                        new UpscaleProgress(total, current, "Upscaling", $"Upscaling {entry.Name}")
-                    );
-
-                    string tempInPage = Path.Combine(tempDir, $"in_{current}_{entry.Name}");
-                    string tempOutPage = Path.Combine(tempDir, $"out_{current}{targetExt}");
-
-                    entry.ExtractToFile(tempInPage, overwrite: true);
-
-                    await UpscaleFileAsync(
-                        tempInPage,
-                        tempOutPage,
-                        scale,
-                        format,
-                        quality,
-                        cancellationToken
-                    );
-
-                    string outEntryName = Path.ChangeExtension(entry.FullName, targetExt);
-                    outArchive.CreateEntryFromFile(
-                        tempOutPage,
-                        outEntryName,
-                        CompressionLevel.Optimal
-                    );
+                    if (pending is not { } p)
+                    {
+                        return;
+                    }
+                    pending = null;
 
                     try
                     {
-                        File.Delete(tempInPage);
+                        await p.Write;
+                        outArchive.CreateEntryFromFile(
+                            p.TempOut,
+                            Path.ChangeExtension(p.Entry.FullName, targetExt),
+                            CompressionLevel.Optimal
+                        );
                     }
-                    catch { }
-                    try
+                    finally
                     {
-                        File.Delete(tempOutPage);
+                        TryDeleteFile(p.TempIn);
+                        TryDeleteFile(p.TempOut);
                     }
-                    catch { }
 
                     current++;
-
                     progress?.Report(
-                        new UpscaleProgress(total, current, "Upscaling", $"Upscaled {entry.Name}")
+                        new UpscaleProgress(total, current, "Upscaling", $"Upscaled {p.Entry.Name}")
                     );
+                }
+
+                try
+                {
+                    // Process image entries
+                    foreach (var entry in imageEntries)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+
+                        progress?.Report(
+                            new UpscaleProgress(
+                                total,
+                                current,
+                                "Upscaling",
+                                $"Upscaling {entry.Name}"
+                            )
+                        );
+
+                        string pageId = (current + (pending.HasValue ? 1 : 0)).ToString();
+                        string tempInPage = Path.Combine(tempDir, $"in_{pageId}_{entry.Name}");
+                        string tempOutPage = Path.Combine(tempDir, $"out_{pageId}{targetExt}");
+
+                        entry.ExtractToFile(tempInPage, overwrite: true);
+
+                        Task<Task> inference = UpscaleFileStagedAsync(
+                            tempInPage,
+                            tempOutPage,
+                            scale,
+                            format,
+                            quality,
+                            cancellationToken
+                        );
+
+                        try
+                        {
+                            await FinalizePendingAsync();
+                        }
+                        catch
+                        {
+                            // Never leave inference or an encode in flight while the temp dir is torn down.
+                            await ObserveStagedAsync(inference);
+                            TryDeleteFile(tempInPage);
+                            TryDeleteFile(tempOutPage);
+                            throw;
+                        }
+
+                        Task write;
+                        try
+                        {
+                            write = await inference;
+                        }
+                        catch
+                        {
+                            TryDeleteFile(tempInPage);
+                            TryDeleteFile(tempOutPage);
+                            throw;
+                        }
+                        pending = (entry, tempInPage, tempOutPage, write);
+                    }
+
+                    await FinalizePendingAsync();
+                }
+                finally
+                {
+                    if (pending is { } leftover)
+                    {
+                        pending = null;
+                        await ObserveAsync(leftover.Write);
+                        TryDeleteFile(leftover.TempIn);
+                        TryDeleteFile(leftover.TempOut);
+                    }
                 }
             }
 
@@ -339,6 +445,33 @@ public class OnnxUpscaleEngine(
             }
             catch { }
         }
+    }
+
+    private static async Task ObserveAsync(Task task)
+    {
+        try
+        {
+            await task;
+        }
+        catch { }
+    }
+
+    private static async Task ObserveStagedAsync(Task<Task> staged)
+    {
+        try
+        {
+            await await staged;
+        }
+        catch { }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch { }
     }
 
     public static bool IsGrayscale(NetVips.Image image)

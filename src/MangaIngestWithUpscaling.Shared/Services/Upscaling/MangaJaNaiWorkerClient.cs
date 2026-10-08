@@ -169,34 +169,78 @@ public class MangaJaNaiWorkerClient(
 
         try
         {
-            await foreach (var page in pages.WithCancellation(effectiveToken))
+            // Pipelined: page N-1 finishes encoding and is reported done while page N runs on the GPU.
+            (ChapterPage Page, string OutPath, Task Write)? pending = null;
+
+            void RecordPage(UpscaleJobFile jobFile, string pageName)
             {
-                effectiveToken.ThrowIfCancellationRequested();
-
-                if (timeoutCts != null && timeout.HasValue && timeout.Value > TimeSpan.Zero)
-                {
-                    try
-                    {
-                        timeoutCts.CancelAfter(timeout.Value);
-                    }
-                    catch (ObjectDisposedException) { }
-                }
-
-                string outFileName = Path.GetFileNameWithoutExtension(page.Name) + targetExt;
-                string outPath = Path.Combine(request.OutputFolder, outFileName);
-
+                files.Add(jobFile);
+                onPageDone(jobFile);
+                current++;
                 progress?.Report(
                     new UpscaleProgress(
                         request.TotalPages,
                         current,
                         "Upscaling",
-                        $"Upscaling {page.Name}"
+                        $"Upscaled {pageName}"
                     )
                 );
+            }
 
+            async Task FinalizePendingAsync()
+            {
+                if (pending is not { } p)
+                {
+                    return;
+                }
+                pending = null;
+
+                UpscaleJobFile jobFile;
                 try
                 {
-                    await upscaleEngine.UpscaleFileAsync(
+                    await p.Write;
+                    jobFile = new UpscaleJobFile(p.Page.Path, p.OutPath, "success");
+                }
+                catch (OperationCanceledException) when (effectiveToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to upscale page {PageName}", p.Page.Name);
+                    jobFile = new UpscaleJobFile(p.Page.Path, p.OutPath, "error");
+                }
+                RecordPage(jobFile, p.Page.Name);
+            }
+
+            try
+            {
+                await foreach (var page in pages.WithCancellation(effectiveToken))
+                {
+                    effectiveToken.ThrowIfCancellationRequested();
+
+                    if (timeoutCts != null && timeout.HasValue && timeout.Value > TimeSpan.Zero)
+                    {
+                        try
+                        {
+                            timeoutCts.CancelAfter(timeout.Value);
+                        }
+                        catch (ObjectDisposedException) { }
+                    }
+
+                    string outFileName = Path.GetFileNameWithoutExtension(page.Name) + targetExt;
+                    string outPath = Path.Combine(request.OutputFolder, outFileName);
+
+                    progress?.Report(
+                        new UpscaleProgress(
+                            request.TotalPages,
+                            current,
+                            "Upscaling",
+                            $"Upscaling {page.Name}"
+                        )
+                    );
+
+                    Task<Task> inference = upscaleEngine.UpscaleFileStagedAsync(
                         page.Path,
                         outPath,
                         scale,
@@ -205,31 +249,49 @@ public class MangaJaNaiWorkerClient(
                         effectiveToken
                     );
 
-                    var jobFile = new UpscaleJobFile(page.Path, outPath, "success");
-                    files.Add(jobFile);
-                    onPageDone(jobFile);
-                }
-                catch (OperationCanceledException) when (effectiveToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, "Failed to upscale page {PageName}", page.Name);
-                    var jobFile = new UpscaleJobFile(page.Path, outPath, "error");
-                    files.Add(jobFile);
-                    onPageDone(jobFile);
+                    try
+                    {
+                        await FinalizePendingAsync();
+                    }
+                    catch
+                    {
+                        // Don't leave inference or an encode running behind a failed/cancelled job.
+                        try
+                        {
+                            await await inference;
+                        }
+                        catch { }
+                        throw;
+                    }
+
+                    try
+                    {
+                        pending = (page, outPath, await inference);
+                    }
+                    catch (OperationCanceledException) when (effectiveToken.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex, "Failed to upscale page {PageName}", page.Name);
+                        RecordPage(new UpscaleJobFile(page.Path, outPath, "error"), page.Name);
+                    }
                 }
 
-                current++;
-                progress?.Report(
-                    new UpscaleProgress(
-                        request.TotalPages,
-                        current,
-                        "Upscaling",
-                        $"Upscaled {page.Name}"
-                    )
-                );
+                await FinalizePendingAsync();
+            }
+            finally
+            {
+                if (pending is { } leftover)
+                {
+                    pending = null;
+                    try
+                    {
+                        await leftover.Write;
+                    }
+                    catch { }
+                }
             }
         }
         catch (OperationCanceledException)
