@@ -400,6 +400,21 @@ public class OnnxTilerTests
     }
 
     [Fact]
+    public void EstimateTileSize_TightBudget_EnforcesMinimum256()
+    {
+        // Even under a very low budget (e.g. 500 MB), tile dimension should never drop below 256
+        int tileSize = OnnxTiler.EstimateTileSize(
+            1600,
+            2400,
+            4,
+            "4x_MangaJaNai_1600p_V1_ESRGAN_70k.onnx",
+            memoryBudgetBytes: 500L * 1024 * 1024,
+            isFp16: false
+        );
+        Assert.Equal(256, tileSize);
+    }
+
+    [Fact]
     public void EstimateTileSize_MangaJaNai_FP16_HalvesPeakMemoryAndExpandsTileSize()
     {
         long peakFp32 = OnnxTiler.EstimatePeakMemoryBytes(

@@ -474,8 +474,9 @@ public static class OnnxTiler
         };
         snapped = Math.Min(maxCap, snapped);
 
-        // Never return less than 128 (tiling below 128 has excessive padding/blending overhead)
-        return Math.Max(128, snapped);
+        // Never return less than 256 (tiling below 256 impairs receptive field context on manga screentones
+        // and has excessive padding/blending overhead)
+        return Math.Max(256, snapped);
     }
 
     /// <summary>
